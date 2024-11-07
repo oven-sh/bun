@@ -87,31 +87,40 @@ function lazyCpus({ cpus }) {
 // all logic based on `process.platform` and `process.arch` is inlined at bundle time
 function bound(obj) {
   return {
-    availableParallelism: () => navigator.hardwareConcurrency,
-    arch: () => process.arch,
+    availableParallelism: function () {
+      return navigator.hardwareConcurrency;
+    },
+    arch: function () {
+      return process.arch;
+    },
     cpus: lazyCpus(obj),
-    endianness: () => (process.arch === "arm64" || process.arch === "x64" ? "LE" : $bundleError("TODO: endianness")),
+    endianness: function () {
+      return process.arch === "arm64" || process.arch === "x64" ? "LE" : $bundleError("TODO: endianness");
+    },
     freemem: obj.freemem.bind(obj),
     getPriority: obj.getPriority.bind(obj),
     homedir: obj.homedir.bind(obj),
     hostname: obj.hostname.bind(obj),
     loadavg: obj.loadavg.bind(obj),
     networkInterfaces: obj.networkInterfaces.bind(obj),
-    platform: () => process.platform,
+    platform: function () {
+      return process.platform;
+    },
     release: obj.release.bind(obj),
     setPriority: obj.setPriority.bind(obj),
     get tmpdir() {
       return tmpdir;
     },
     totalmem: obj.totalmem.bind(obj),
-    type: () =>
-      process.platform === "win32"
+    type: function () {
+      return process.platform === "win32"
         ? "Windows_NT"
         : process.platform === "darwin"
           ? "Darwin"
           : process.platform === "linux"
             ? "Linux"
-            : $bundleError("TODO: type"),
+            : $bundleError("TODO: type");
+    },
     uptime: obj.uptime.bind(obj),
     userInfo: obj.userInfo.bind(obj),
     version: obj.version.bind(obj),

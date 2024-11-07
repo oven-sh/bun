@@ -169,8 +169,14 @@ function getPipeline(buildId) {
    */
 
   const getKey = platform => {
-    const { os, arch, baseline } = platform;
+    const { os, arch, abi, baseline } = platform;
 
+    if (abi) {
+      if (baseline) {
+        return `${os}-${arch}-${abi}-baseline`;
+      }
+      return `${os}-${arch}-${abi}`;
+    }
     if (baseline) {
       return `${os}-${arch}-baseline`;
     }
@@ -179,8 +185,11 @@ function getPipeline(buildId) {
   };
 
   const getLabel = platform => {
-    const { os, arch, baseline, release } = platform;
+    const { os, arch, abi, baseline, release } = platform;
     let label = release ? `:${os}: ${release} ${arch}` : `:${os}: ${arch}`;
+    if (abi) {
+      label += `-${abi}`;
+    }
     if (baseline) {
       label += `-baseline`;
     }
@@ -218,15 +227,16 @@ function getPipeline(buildId) {
    */
 
   const getBuildVendorStep = platform => {
-    const { os, arch, baseline } = platform;
+    const { os, arch, abi, baseline } = platform;
 
     return {
       key: `${getKey(platform)}-build-vendor`,
-      label: `${getLabel(platform)} - build-vendor`,
+      label: `build-vendor`,
       agents: {
         os,
         arch,
-        queue: `build-${os}`,
+        abi,
+        queue: abi ? `build-${os}-${abi}` : `build-${os}`,
       },
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
@@ -238,15 +248,16 @@ function getPipeline(buildId) {
   };
 
   const getBuildCppStep = platform => {
-    const { os, arch, baseline } = platform;
+    const { os, arch, abi, baseline } = platform;
 
     return {
       key: `${getKey(platform)}-build-cpp`,
-      label: `${getLabel(platform)} - build-cpp`,
+      label: `build-cpp`,
       agents: {
         os,
         arch,
-        queue: `build-${os}`,
+        abi,
+        queue: abi ? `build-${os}-${abi}` : `build-${os}`,
       },
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
@@ -259,12 +270,12 @@ function getPipeline(buildId) {
   };
 
   const getBuildZigStep = platform => {
-    const { os, arch, baseline } = platform;
-    const toolchain = baseline ? `${os}-${arch}-baseline` : `${os}-${arch}`;
+    const { os, arch, abi, baseline } = platform;
+    const toolchain = getKey(platform);
 
     return {
       key: `${getKey(platform)}-build-zig`,
-      label: `${getLabel(platform)} - build-zig`,
+      label: `build-zig`,
       agents: {
         queue: "build-zig",
       },
@@ -278,11 +289,11 @@ function getPipeline(buildId) {
   };
 
   const getBuildBunStep = platform => {
-    const { os, arch, baseline } = platform;
+    const { os, arch, abi, baseline } = platform;
 
     return {
       key: `${getKey(platform)}-build-bun`,
-      label: `${getLabel(platform)} - build-bun`,
+      label: `build-bun`,
       depends_on: [
         `${getKey(platform)}-build-vendor`,
         `${getKey(platform)}-build-cpp`,
@@ -291,6 +302,7 @@ function getPipeline(buildId) {
       agents: {
         os,
         arch,
+        abi,
         queue: `build-${os}`,
       },
       retry: getRetry(),
@@ -304,7 +316,7 @@ function getPipeline(buildId) {
   };
 
   const getTestBunStep = platform => {
-    const { os, arch, distro, release } = platform;
+    const { os, arch, abi, distro, release } = platform;
 
     let name;
     if (os === "darwin" || os === "windows") {
@@ -315,11 +327,11 @@ function getPipeline(buildId) {
 
     let agents;
     if (os === "darwin") {
-      agents = { os, arch, queue: `test-darwin` };
+      agents = { os, arch, abi, queue: `test-darwin` };
     } else if (os === "windows") {
-      agents = { os, arch, robobun: true };
+      agents = { os, arch, abi, robobun: true };
     } else {
-      agents = { os, arch, distro, release, robobun: true };
+      agents = { os, arch, abi, distro, release, robobun: true };
     }
 
     let command;
@@ -375,8 +387,10 @@ function getPipeline(buildId) {
     { os: "darwin", arch: "aarch64" },
     { os: "darwin", arch: "x64" },
     { os: "linux", arch: "aarch64" },
+    // { os: "linux", arch: "aarch64", abi: "musl" }, // TODO:
     { os: "linux", arch: "x64" },
     { os: "linux", arch: "x64", baseline: true },
+    // { os: "linux", arch: "x64", abi: "musl" }, // TODO:
     { os: "windows", arch: "x64" },
     { os: "windows", arch: "x64", baseline: true },
   ];
@@ -389,12 +403,14 @@ function getPipeline(buildId) {
     { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
     { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
+    // { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "edge" }, // TODO:
     { os: "linux", arch: "x64", distro: "debian", release: "12" },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
     { os: "linux", arch: "x64", distro: "debian", release: "12", baseline: true },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04", baseline: true },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04", baseline: true },
+    // { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "edge" }, // TODO:
     { os: "windows", arch: "x64", distro: "server", release: "2019" },
     { os: "windows", arch: "x64", distro: "server", release: "2019", baseline: true },
   ];

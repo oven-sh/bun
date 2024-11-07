@@ -45,7 +45,7 @@ Stream.isDisturbed = utils.isDisturbed;
 Stream.isErrored = utils.isErrored;
 Stream.isReadable = utils.isReadable;
 Stream.isWritable = utils.isWritable;
-
+Stream.eos = eos;
 Stream.Readable = require("internal/streams/readable");
 const streamKeys = Object.keys(streamReturningOperators);
 for (let i = 0; i < streamKeys.length; i++) {

@@ -26,6 +26,20 @@
       "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
+      "type": "bun",
+      "request": "launch",
+      "name": "bun test [file] JS debugger",
+      "runtimeArgs": ["test"],
+      "program": "${file}",
+      "cwd": "${workspaceFolder}",
+      "runtime": "${workspaceFolder}/build/debug/bun-debug",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
+      },
+    },
+    {
       "type": "lldb",
       "request": "launch",
       "name": "bun test [file] --only",

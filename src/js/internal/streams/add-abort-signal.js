@@ -2,9 +2,9 @@
 const primordials = require("internal/primordials");
 const { SymbolDispose } = primordials;
 
-const { isNodeStream, isWebStream, kControllerErrorFunction } = require("./utils");
+const { isNodeStream, isWebStream, kControllerErrorFunction } = require("internal/streams/utils");
 
-const { AbortError } = require("../../node/events");
+const { AbortError } = require("node:events");
 
 const eos = require("./end-of-stream");
 let addAbortListener;

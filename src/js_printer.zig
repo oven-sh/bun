@@ -84,7 +84,7 @@ pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, com
     if (c <= last_ascii) {
         return c >= first_ascii and c != '\\' and c != '"' and c != '\'' and c != '`' and c != '$';
     } else {
-        return !ascii_only and c != 0xFEFF and (c < first_high_surrogate or c > last_low_surrogate);
+        return !ascii_only and c != 0xFEFF and c != 0x2028 and c != 0x2029 and (c < first_high_surrogate or c > last_low_surrogate);
     }
 }
 

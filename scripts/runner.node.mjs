@@ -37,6 +37,7 @@ import {
   tmpdir,
   unzip,
 } from "./utils.mjs";
+import { userInfo } from "node:os";
 
 const cwd = dirname(import.meta.dirname);
 const testsPath = join(cwd, "test");
@@ -453,10 +454,13 @@ async function spawnSafe(options) {
 async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   const path = addPath(dirname(execPath), process.env.PATH);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
+  const { username, homedir } = userInfo();
   const bunEnv = {
     ...process.env,
     PATH: path,
     TMPDIR: tmpdirPath,
+    USER: username,
+    HOME: homedir,
     FORCE_COLOR: "1",
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
     BUN_DEBUG_QUIET_LOGS: "1",

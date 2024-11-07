@@ -3,17 +3,29 @@ import { mile𐃘add1 as m } from "./import_target";
 import * as i from "./import_target";
 import { test, expect } from "bun:test";
 import { $ } from "bun";
-
-import { name as name1 } from "./mod\u1011.ts";
-import { name as name2 } from "./modထ.ts";
-import { bunExe } from "harness";
+import { bunExe, tempDirWithFiles } from "harness";
 
 test("unicode imports", () => {
   expect(mile𐃘add1(25)).toBe(26);
   expect(i.mile𐃘add1(25)).toBe(26);
   expect(m(25)).toBe(26);
-  expect(name1).toBe("hi");
-  expect(name2).toBe("hi");
+});
+
+test("more unicode imports", async () => {
+  const dir = tempDirWithFiles("more-unicode-imports", {
+    "mod_importer.ts": `
+      import { nထme as nထme𐃘1 } from "./mod\\u1011.ts";
+      import { nထme as nထme𐃘2 } from "./modထ.ts";
+
+      console.log(nထme𐃘1, nထme𐃘2);
+    `,
+    "modထ.ts": `
+      export const nထme = "𐃘1";
+    `,
+  });
+  expect((await $`${bunExe()} run ${dir}/mod_importer.ts`.text()).trim()).toBe("𐃘1 𐃘1");
+  console.log(await $`${bunExe()} build --target=bun ${dir}/mod_importer.ts`.text());
+  console.log(await $`${bunExe()} build --target=node ${dir}/mod_importer.ts`.text());
 });
 
 // prettier-ignore
@@ -41,10 +53,6 @@ test("string escapes", () => {
   expect({ "\\": 1 }[String.fromCodePoint(0x5c)]).toBe(1);
   const tag = (a: TemplateStringsArray) => a.raw;
   expect(tag`$one \$two`).toEqual(["$one \\$two"]);
-});
-
-test("can bundle escaped import", async () => {
-  await $`${bunExe()} build ${import.meta.dirname}/mod_importer.ts`;
 });
 
 test("constant-folded equals doesn't lie", async () => {

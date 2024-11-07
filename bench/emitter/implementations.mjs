@@ -1,5 +1,5 @@
-import { group } from "../runner.mjs";
 import EventEmitterNative from "node:events";
+import { group } from "../runner.mjs";
 
 export const implementations = [
   {

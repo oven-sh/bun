@@ -1,4 +1,4 @@
-import { bench, run, group } from "../runner.mjs";
+import { bench, group, run } from "../runner.mjs";
 
 const sizes = [
   ["small (63 bytes)", 63],

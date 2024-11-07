@@ -10,7 +10,7 @@ const veryComplexPattern = "{a,b,HI{c,e,LMAO{d,f}Q}}{1,2,{3,4},5}";
 
 console.log(braces(complexPattern, { expand: true }));
 function benchPattern(pattern, name) {
-  const _name = `${name} pattern: "${pattern}"`
+  const _name = `${name} pattern: "${pattern}"`;
   group({ name: _name, summary: true }, () => {
     if (typeof Bun !== "undefined")
       bench(`Bun (${_name})`, () => {

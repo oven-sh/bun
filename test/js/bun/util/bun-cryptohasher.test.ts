@@ -123,6 +123,8 @@ describe("Hash is consistent", () => {
       test("base64", () => {
         for (let buffer of inputs) {
           for (let i = 0; i < 100; i++) {
+            const hasher = new Bun.CryptoHasher(algorithm);
+            expect(hasher.update(buffer)).toBeInstanceOf(Bun.CryptoHasher);
             expect(Bun.CryptoHasher.hash(algorithm, buffer, "base64")).toEqual(
               Bun.CryptoHasher.hash(algorithm, buffer, "base64"),
             );
@@ -141,6 +143,8 @@ describe("Hash is consistent", () => {
       test("hex", () => {
         for (let buffer of inputs) {
           for (let i = 0; i < 100; i++) {
+            const hasher = new Bun.CryptoHasher(algorithm);
+            expect(hasher.update(buffer)).toBeInstanceOf(Bun.CryptoHasher);
             expect(Bun.CryptoHasher.hash(algorithm, buffer, "hex")).toEqual(
               Bun.CryptoHasher.hash(algorithm, buffer, "hex"),
             );

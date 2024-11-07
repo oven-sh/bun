@@ -118,6 +118,8 @@ type LaunchRequest = DAP.LaunchRequest & {
   stopOnEntry?: boolean;
   noDebug?: boolean;
   watchMode?: boolean | "hot";
+  __skipValidation?: boolean;
+  stdin?: string;
 };
 
 type AttachRequest = DAP.AttachRequest & {
@@ -211,6 +213,24 @@ const debugSilentEvents = new Set(["Adapter.event", "Inspector.event"]);
 
 let threadId = 1;
 
+// Add these helper functions at the top level
+function normalizeSourcePath(sourcePath: string, untitledDocPath?: string, bunEvalPath?: string): string {
+  if (!sourcePath) return sourcePath;
+
+  // Handle eval source paths
+  if (sourcePath === bunEvalPath) {
+    return bunEvalPath!;
+  }
+
+  // Handle untitled documents
+  if (sourcePath === untitledDocPath) {
+    return bunEvalPath!;
+  }
+
+  // Handle normal file paths
+  return path.normalize(sourcePath);
+}
+
 export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements IDebugAdapter {
   #threadId: number;
   #inspector: WebSocketInspector;
@@ -229,8 +249,10 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #variables: Map<number, Variable>;
   #initialized?: InitializeRequest;
   #options?: DebuggerOptions;
+  #untitledDocPath?: string;
+  #bunEvalPath?: string;
 
-  constructor(url?: string | URL) {
+  constructor(url?: string | URL, untitledDocPath?: string, bunEvalPath?: string) {
     super();
     this.#threadId = threadId++;
     this.#inspector = new WebSocketInspector(url);
@@ -252,6 +274,8 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#targets = new Map();
     this.#variableId = 1;
     this.#variables = new Map();
+    this.#untitledDocPath = untitledDocPath;
+    this.#bunEvalPath = bunEvalPath;
   }
 
   /**
@@ -474,19 +498,25 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       strictEnv = false,
       watchMode = false,
       stopOnEntry = false,
+      __skipValidation = false,
+      stdin,
     } = request;
 
-    if (!program) {
-      throw new Error("No program specified. Did you set the 'program' property in your launch.json?");
+    if (!__skipValidation && !program) {
+      throw new Error("No program specified");
     }
 
-    if (!isJavaScript(program)) {
-      throw new Error("Program must be a JavaScript or TypeScript file.");
+    const processArgs = [...runtimeArgs];
+
+    if (program === "-" && stdin) {
+      processArgs.push("--eval", stdin);
+    } else if (program) {
+      processArgs.push(program);
     }
 
-    const processArgs = [...runtimeArgs, program, ...args];
+    processArgs.push(...args);
 
-    if (isTestJavaScript(program) && !runtimeArgs.includes("test")) {
+    if (program && isTestJavaScript(program) && !runtimeArgs.includes("test")) {
       processArgs.unshift("test");
     }
 
@@ -1073,15 +1103,21 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   #getBreakpointByLocation(source: Source, location: DAP.SourceBreakpoint): Breakpoint | undefined {
-    console.log("getBreakpointByLocation", {
-      source: sourceToId(source),
-      location,
-      ids: this.#getBreakpoints(sourceToId(source)).map(({ id }) => id),
-      breakpointIds: this.#getBreakpoints(sourceToId(source)).map(({ breakpointId }) => breakpointId),
-      lines: this.#getBreakpoints(sourceToId(source)).map(({ line }) => line),
-      columns: this.#getBreakpoints(sourceToId(source)).map(({ column }) => column),
-    });
-    const sourceId = sourceToId(source);
+    if (isDebug) {
+      console.log("getBreakpointByLocation", {
+        source: sourceToId(source),
+        location,
+        ids: this.#getBreakpoints(sourceToId(source)).map(({ id }) => id),
+        breakpointIds: this.#getBreakpoints(sourceToId(source)).map(({ breakpointId }) => breakpointId),
+        lines: this.#getBreakpoints(sourceToId(source)).map(({ line }) => line),
+        columns: this.#getBreakpoints(sourceToId(source)).map(({ column }) => column),
+      });
+    }
+    let sourceId = sourceToId(source);
+    const untitledDocPath = this.#untitledDocPath;
+    if (sourceId === untitledDocPath && this.#bunEvalPath) {
+      sourceId = this.#bunEvalPath;
+    }
     const [breakpoint] = this.#getBreakpoints(sourceId).filter(
       ({ source, request }) => source && sourceToId(source) === sourceId && request?.line === location.line,
     );
@@ -1089,7 +1125,18 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   #getBreakpoints(sourceId: string | number): Breakpoint[] {
-    return [...this.#breakpoints.values()].flat().filter(({ source }) => source && sourceToId(source) === sourceId);
+    let output = [];
+    let all = this.#breakpoints;
+    for (const breakpoints of all.values()) {
+      for (const breakpoint of breakpoints) {
+        const source = breakpoint.source;
+        if (source && sourceToId(source) === sourceId) {
+          output.push(breakpoint);
+        }
+      }
+    }
+
+    return output;
   }
 
   #getFutureBreakpoints(breakpointId: string): FutureBreakpoint[] {
@@ -1632,7 +1679,12 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   #addSource(source: Source): Source {
-    const { sourceId, scriptId, path, sourceReference } = source;
+    let { sourceId, scriptId, path } = source;
+
+    // Normalize the source path
+    if (path) {
+      path = source.path = normalizeSourcePath(path, this.#untitledDocPath, this.#bunEvalPath);
+    }
 
     const oldSource = this.#getSourceIfPresent(sourceId);
     if (oldSource) {
@@ -1704,10 +1756,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       return source;
     }
 
-    // If the source does not have a path or is a builtin module,
-    // it cannot be retrieved from the file system.
-    if (typeof sourceId === "number" || !path.isAbsolute(sourceId)) {
-      throw new Error(`Source not found: ${sourceId}`);
+    // Normalize the source path before lookup
+    if (typeof sourceId === "string") {
+      sourceId = normalizeSourcePath(sourceId, this.#untitledDocPath, this.#bunEvalPath);
     }
 
     // If the source is not present, it may not have been loaded yet.

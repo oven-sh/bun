@@ -5,7 +5,7 @@ import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_proce
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { hostname, tmpdir as nodeTmpdir, userInfo } from "node:os";
+import { hostname, tmpdir as nodeTmpdir, userInfo, release } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
@@ -1174,19 +1174,71 @@ export function getArch() {
 }
 
 /**
+ * @returns {string}
+ */
+export function getKernel() {
+  return release();
+}
+
+/**
  * @returns {"musl" | "gnu" | undefined}
  */
 export function getAbi() {
-  if (isLinux) {
-    const arch = getArch() === "x64" ? "x86_64" : "aarch64";
-    const muslLibPath = `/lib/ld-musl-${arch}.so.1`;
-    if (existsSync(muslLibPath)) {
+  if (!isLinux) {
+    return;
+  }
+
+  if (existsSync("/etc/alpine-release")) {
+    return "musl";
+  }
+
+  const arch = getArch() === "x64" ? "x86_64" : "aarch64";
+  const muslLibPath = `/lib/ld-musl-${arch}.so.1`;
+  if (existsSync(muslLibPath)) {
+    return "musl";
+  }
+
+  const gnuLibPath = `/lib/ld-linux-${arch}.so.2`;
+  if (existsSync(gnuLibPath)) {
+    return "gnu";
+  }
+
+  const { error, stdout } = spawnSync(["ldd", "--version"]);
+  if (!error) {
+    if (/musl/i.test(stdout)) {
       return "musl";
     }
-
-    const gnuLibPath = `/lib/ld-linux-${arch}.so.2`;
-    if (existsSync(gnuLibPath)) {
+    if (/gnu|glibc/i.test(stdout)) {
       return "gnu";
+    }
+  }
+}
+
+/**
+ * @returns {string | undefined}
+ */
+export function getAbiVersion() {
+  if (!isLinux) {
+    return;
+  }
+
+  if (existsSync("/etc/alpine-release")) {
+    const releaseFile = readFile("/etc/alpine-release", { cache: true }).trim();
+    if (releaseFile.includes("_")) {
+      return releaseFile.substring(0, releaseFile.indexOf("_"));
+    }
+    return releaseFile;
+  }
+
+  const { error, stdout } = spawnSync(["ldd", "--version"]);
+  if (!error) {
+    const match = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(stdout);
+    if (match) {
+      const [, major, minor, patch] = match;
+      if (patch) {
+        return `${major}.${minor}.${patch}`;
+      }
+      return `${major}.${minor}`;
     }
   }
 }
@@ -1360,17 +1412,24 @@ export async function downloadTarget(target, release) {
 }
 
 /**
- * @returns {string | undefined}
+ * @returns {string}
  */
-export function getTailscaleIp() {
-  let tailscale = "tailscale";
+export function getTailscale() {
   if (isMacOS) {
     const tailscaleApp = "/Applications/Tailscale.app/Contents/MacOS/tailscale";
     if (existsSync(tailscaleApp)) {
-      tailscale = tailscaleApp;
+      return tailscaleApp;
     }
   }
 
+  return "tailscale";
+}
+
+/**
+ * @returns {string | undefined}
+ */
+export function getTailscaleIp() {
+  const tailscale = getTailscale();
   const { error, stdout } = spawnSync([tailscale, "ip", "--1"]);
   if (!error) {
     return stdout.trim();
@@ -1492,6 +1551,157 @@ export function getDistroRelease() {
 }
 
 /**
+ * @typedef {"aws" | "google"} Cloud
+ */
+
+/** @type {Cloud | undefined} */
+let detectedCloud;
+
+/**
+ * @returns {Promise<boolean | undefined>}
+ */
+export async function isAws() {
+  if (typeof detectedCloud === "string") {
+    return detectedCloud === "aws";
+  }
+
+  async function checkAws() {
+    if (isLinux) {
+      const kernel = getKernel();
+      if (kernel.endsWith("-aws")) {
+        return true;
+      }
+
+      const { error: systemdError, stdout } = await spawn(["systemd-detect-virt"]);
+      if (!systemdError) {
+        if (stdout.includes("amazon")) {
+          return true;
+        }
+      }
+
+      const dmiPath = "/sys/devices/virtual/dmi/id/board_asset_tag";
+      if (existsSync(dmiPath)) {
+        const dmiFile = readFileSync(dmiPath, { encoding: "utf-8" });
+        if (dmiFile.startsWith("i-")) {
+          return true;
+        }
+      }
+    }
+
+    if (isWindows) {
+      const executionEnv = getEnv("AWS_EXECUTION_ENV", false);
+      if (executionEnv === "EC2") {
+        return true;
+      }
+
+      const { error: powershellError, stdout } = await spawn([
+        "powershell",
+        "-Command",
+        "Get-CimInstance -ClassName Win32_ComputerSystem | Select-Object Manufacturer",
+      ]);
+      if (!powershellError) {
+        return stdout.includes("Amazon");
+      }
+    }
+
+    const instanceId = await getCloudMetadata("instance-id", "google");
+    if (instanceId) {
+      return true;
+    }
+  }
+
+  if (await checkAws()) {
+    detectedCloud = "aws";
+    return true;
+  }
+}
+
+/**
+ * @returns {Promise<boolean | undefined>}
+ */
+export async function isGoogleCloud() {
+  if (typeof detectedCloud === "string") {
+    return detectedCloud === "google";
+  }
+
+  async function detectGoogleCloud() {
+    if (isLinux) {
+      const vendorPaths = [
+        "/sys/class/dmi/id/sys_vendor",
+        "/sys/class/dmi/id/bios_vendor",
+        "/sys/class/dmi/id/product_name",
+      ];
+
+      for (const vendorPath of vendorPaths) {
+        if (existsSync(vendorPath)) {
+          const vendorFile = readFileSync(vendorPath, { encoding: "utf-8" });
+          if (vendorFile.includes("Google")) {
+            return true;
+          }
+        }
+      }
+    }
+
+    const instanceId = await getCloudMetadata("id", "google");
+    if (instanceId) {
+      return true;
+    }
+  }
+
+  if (await detectGoogleCloud()) {
+    detectedCloud = "google";
+    return true;
+  }
+}
+
+/**
+ * @returns {Promise<Cloud | undefined>}
+ */
+export async function getCloud() {
+  if (typeof detectedCloud === "string") {
+    return detectedCloud;
+  }
+
+  if (await isAws()) {
+    return "aws";
+  }
+
+  if (await isGoogleCloud()) {
+    return "google";
+  }
+}
+
+/**
+ * @param {string} name
+ * @param {Cloud} [cloud]
+ * @returns {Promise<string | undefined>}
+ */
+export async function getCloudMetadata(name, cloud) {
+  cloud ??= await getCloud();
+  if (!cloud) {
+    return;
+  }
+
+  let url;
+  let headers;
+  if (cloud === "aws") {
+    url = new URL(name, "http://169.254.169.254/latest/meta-data/");
+  } else if (cloud === "google") {
+    url = new URL(name, "http://metadata.google.internal/computeMetadata/v1/instance/");
+    headers = { "Metadata-Flavor": "Google" };
+  } else {
+    throw new Error(`Unsupported cloud: ${inspect(cloud)}`);
+  }
+
+  const { error, body } = await curl(url, { headers, retries: 0 });
+  if (error) {
+    return;
+  }
+
+  return body.trim();
+}
+
+/**
  * @returns {Promise<number | undefined>}
  */
 export async function getCanaryRevision() {
@@ -1575,8 +1785,10 @@ export function printEnvironment() {
   startGroup("Machine", () => {
     console.log("Operating System:", getOs());
     console.log("Architecture:", getArch());
+    console.log("Kernel:", getKernel());
     if (isLinux) {
       console.log("ABI:", getAbi());
+      console.log("ABI Version:", getAbiVersion());
     }
     console.log("Distro:", getDistro());
     console.log("Release:", getDistroRelease());

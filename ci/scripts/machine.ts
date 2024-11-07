@@ -7,7 +7,7 @@ import { exists, readdir, readFile } from "node:fs/promises";
 import { inspect, parseArgs } from "node:util";
 
 type Platform = {
-  os: "linux" | "windows";
+  os: "linux" | "darwin" | "windows";
   arch: "aarch64" | "x64";
   distro: string;
   release: string;
@@ -49,7 +49,7 @@ type AwsInstance = {
 };
 
 type AwsCloud = Cloud & {
-  describeImages(options?: Record<string, string>): Promise<AwsImage[]>;
+  describeImages(options?: Record<string, string | undefined>): Promise<AwsImage[]>;
   describeInstances(options?: Record<string, string>): Promise<AwsInstance[]>;
   runInstances(options?: Record<string, string>, runOptions?: { wait?: boolean }): Promise<AwsInstance[]>;
   terminateInstances(...instanceIds: string[]): Promise<void>;
@@ -121,6 +121,8 @@ const docker: DockerCloud = {
         url = `docker.io/library/ubuntu:${release}`;
       } else if (distro === "amazonlinux") {
         url = `public.ecr.aws/amazonlinux/amazonlinux:${release}`;
+      } else if (distro === "alpine") {
+        url = `docker.io/library/alpine:${release}`;
       }
     }
 
@@ -143,14 +145,34 @@ const aws: AwsCloud = {
   async createMachine(platform) {
     const image = await aws.getImage(platform);
     const userData = await getUserData(platform, image);
-    const { id, username } = image;
+    const { id, username, RootDeviceName, BlockDeviceMappings } = image as any;
     const { arch } = platform;
+
+    const blockDeviceMappings = BlockDeviceMappings.map(device => {
+      const { DeviceName } = device;
+      if (DeviceName === RootDeviceName) {
+        return {
+          ...device,
+          Ebs: {
+            VolumeSize: 20,
+          },
+        };
+      }
+      return device;
+    });
 
     const [instance] = await aws.runInstances(
       {
         ["image-id"]: id,
         ["instance-type"]: arch === "aarch64" ? "t4g.large" : "t3.large",
-        ["user-data"]: Buffer.from(userData).toString("base64"),
+        ["user-data"]: userData,
+        ["block-device-mappings"]: JSON.stringify(blockDeviceMappings),
+        ["metadata-options"]: JSON.stringify({
+          "HttpTokens": "optional",
+          "HttpEndpoint": "enabled",
+          "HttpProtocolIpv6": "enabled",
+          "InstanceMetadataTags": "enabled",
+        }),
       },
       {
         wait: true,
@@ -184,9 +206,11 @@ const aws: AwsCloud = {
     const { os, arch, distro, release } = platform;
     const armOrAmd = arch === "aarch64" ? "arm64" : "amd64";
     const armOr64 = arch === "aarch64" ? "arm64" : "x86_64";
+    const aarchOr64 = arch === "aarch64" ? "aarch64" : "x86_64";
 
     let name: string | undefined;
     let username: string | undefined;
+    let owner: string | undefined = "amazon";
     if (os === "linux") {
       if (distro === "debian") {
         name = `debian-${release}-${armOrAmd}-*`;
@@ -203,6 +227,10 @@ const aws: AwsCloud = {
         } else {
           name = `al${release}-ami-*-${armOr64}`;
         }
+      } else if (distro === "alpine") {
+        owner = undefined;
+        name = `alpine-${release}.*-${aarchOr64}-uefi-cloudinit-*`;
+        username = "root";
       }
     } else if (os === "windows") {
       if (distro === "server") {
@@ -212,14 +240,16 @@ const aws: AwsCloud = {
     }
 
     if (name && username) {
-      const images = await aws.describeImages({ state: "available", "owner-alias": "amazon", name });
+      const images = await aws.describeImages({ state: "available", "owner-alias": owner, name });
       if (images.length) {
         const [image] = images;
-        const { Name, ImageId } = image;
+        const { Name, ImageId, RootDeviceName, BlockDeviceMappings } = image as any;
         return {
           id: ImageId,
           name: Name,
           username,
+          RootDeviceName,
+          BlockDeviceMappings,
         };
       }
     }
@@ -228,7 +258,9 @@ const aws: AwsCloud = {
   },
 
   async describeImages(options = {}) {
-    const filters = Object.entries(options).map(([key, value]) => `Name=${key},Values=${value}`);
+    const filters = Object.entries(options)
+      .filter(([_, value]) => value)
+      .map(([key, value]) => `Name=${key},Values=${value}`);
     const { stdout } = await spawnSafe(["aws", "ec2", "describe-images", "--filters", ...filters, "--output", "json"]);
     const { Images }: { Images: AwsImage[] } = JSON.parse(stdout);
 
@@ -384,7 +416,6 @@ const google: GoogleCloud = {
       const images = await google.listImages({ name, architecture });
       if (images.length) {
         const [image] = images;
-        console.log(image);
         const { name, selfLink } = image;
         return {
           id: selfLink,
@@ -524,13 +555,31 @@ async function getUserData(platform: Platform, image: Image): Promise<string> {
 
   if (os === "linux") {
     const authorizedKeys = await getAuthorizedKeys();
-    return `
-#cloud-config
+    return `#cloud-config
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+  - ca-certificates
+  - openssh
+
+write_files:
+  - path: /etc/ssh/sshd_config
+    content: |
+      PermitRootLogin yes
+      PasswordAuthentication yes
+
+chpasswd:
+  expire: false
+  list: |
+    root:${crypto.randomUUID()}
+    ${username}:${crypto.randomUUID()}
 
 disable_root: false
-ssh_pwauth: false
-ssh_authorized_keys: [${authorizedKeys ? authorizedKeys.map(key => `"${key}"`).join(", ") : ""}]
-`;
+ssh_pwauth: true
+ssh_authorized_keys: [${authorizedKeys ? authorizedKeys.map(key => JSON.stringify(key)).join(", ") : ""}]`;
   } else if (os === "windows") {
     const authorizedKeys = await getAuthorizedKeys();
     return `
@@ -601,7 +650,7 @@ async function getAuthorizedKeys(): Promise<string[] | undefined> {
       .map(({ name }) => join(sshPath, name));
 
     const sshKeys: string[] = await Promise.all(sshPaths.map(path => readFile(path, "utf8")));
-    return sshKeys.map(key => key.trim()).filter(key => key.length);
+    return sshKeys.map(key => key.split(" ").slice(0, 2).join(" ")).filter(key => key.length);
   }
 }
 
@@ -647,31 +696,7 @@ async function main() {
   });
 
   const { cloud, os, arch, distro, release } = values;
-  const platforms: Platform[] = [
-    { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
-    { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
-    { os: "linux", arch: "aarch64", distro: "debian", release: "10" },
-    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
-    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
-    { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023" },
-    { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2" },
-    { os: "linux", arch: "x64", distro: "debian", release: "12" },
-    { os: "linux", arch: "x64", distro: "debian", release: "11" },
-    { os: "linux", arch: "x64", distro: "debian", release: "10" },
-    { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
-    { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
-    { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023" },
-    { os: "linux", arch: "x64", distro: "amazonlinux", release: "2" },
-    { os: "windows", arch: "x64", distro: "server", release: "2019" },
-  ];
-
-  const platform = platforms.find(
-    platform =>
-      os === platform.os && arch === platform.arch && distro === platform.distro && release === platform.release,
-  );
-  if (!platform) {
-    throw new Error(`Unsupported platform: ${inspect(values)}`);
-  }
+  const platform: Platform = { os, arch, distro, release } as any;
 
   let provider: Cloud;
   if (cloud === "docker") {

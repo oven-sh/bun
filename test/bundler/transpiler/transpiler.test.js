@@ -1835,7 +1835,7 @@ export const { dead } = { dead: "hello world!" };
       expect(bunTranspiler.transformSync(input, object).trim()).toBe(output);
     });
 
-    it.skip("rewrite string to length", () => {
+    it("rewrite string to length", () => {
       expectBunPrinted_(`export const foo = "a".length + "b".length;`, `export const foo = 2`);
       // check rope string
       expectBunPrinted_(`export const foo = ("a" + "b").length;`, `export const foo = 2`);
@@ -1844,6 +1844,8 @@ export const { dead } = { dead: "hello world!" };
         `export const foo = "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌".length;`,
         `export const foo = 52`,
       );
+      // no rope string for non-ascii
+      expectBunPrinted_(`export const foo = ("æ" + "™").length;`, `export const foo = ("æ" + "™").length`);
     });
 
     describe("Bun.js", () => {

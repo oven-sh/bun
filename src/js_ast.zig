@@ -2402,22 +2402,20 @@ pub const E = struct {
             return str.string(allocator);
         }
 
-        pub fn javascriptLength(s: *const String) u32 {
+        pub fn javascriptLength(s: *const String) ?u32 {
             if (s.rope_len > 0) {
                 // We only support ascii ropes for now
                 return s.rope_len;
             }
 
             if (s.isUTF8()) {
-                if (comptime !Environment.isNative) {
-                    const allocated = (strings.toUTF16Alloc(bun.default_allocator, s.data, false, false) catch return 0) orelse return s.data.len;
-                    defer bun.default_allocator.free(allocated);
-                    return @as(u32, @truncate(allocated.len));
+                if (!strings.isAllASCII(s.data)) {
+                    return null;
                 }
-                return @as(u32, @truncate(bun.simdutf.length.utf16.from.utf8(s.data)));
+                return @truncate(s.data.len);
             }
 
-            return @as(u32, @truncate(s.slice16().len));
+            return @truncate(s.slice16().len);
         }
 
         pub inline fn len(s: *const String) usize {

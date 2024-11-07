@@ -3,9 +3,6 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("minify/TemplateStringFolding", {
-    // TODO: https://github.com/oven-sh/bun/issues/4217
-    todo: true,
-
     files: {
       "/entry.js": /* js */ `
         capture(\`\${1}-\${2}-\${3}-\${null}-\${undefined}-\${true}-\${false}\`);
@@ -28,6 +25,11 @@ describe("bundler", () => {
         capture(\`😋📋👌\`.length == 6)
         capture(\`😋📋👌\`.length === 2)
         capture(\`😋📋👌\`.length == 2)
+        capture(\`\\n\`.length)
+        capture(\`\n\`.length)
+        capture("\\uD800\\uDF34".length)
+        capture("\\u{10334}".length)
+        capture("𐌴".length)
       `,
     },
     capture: [
@@ -51,6 +53,11 @@ describe("bundler", () => {
       "!0",
       "!1",
       "!1",
+      "1",
+      "1",
+      "2",
+      "2",
+      "2",
     ],
     minifySyntax: true,
     target: "bun",

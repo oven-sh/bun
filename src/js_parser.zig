@@ -18682,12 +18682,11 @@ fn NewParser_(
                 },
                 // TODO: e_inlined_enum -> .e_string -> "length" should inline the length
                 .e_string => |str| {
-                    // Disable until https://github.com/oven-sh/bun/issues/4217 is fixed
-                    if (comptime FeatureFlags.minify_javascript_string_length) {
-                        if (p.options.features.minify_syntax) {
-                            // minify "long-string".length to 11
-                            if (strings.eqlComptime(name, "length")) {
-                                return p.newExpr(E.Number{ .value = @floatFromInt(str.javascriptLength()) }, loc);
+                    if (p.options.features.minify_syntax) {
+                        // minify "long-string".length to 11
+                        if (strings.eqlComptime(name, "length")) {
+                            if (str.javascriptLength()) |len| {
+                                return p.newExpr(E.Number{ .value = @floatFromInt(len) }, loc);
                             }
                         }
                     }

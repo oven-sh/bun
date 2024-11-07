@@ -236,9 +236,10 @@ pub fn build(b: *Build) !void {
         ),
 
         .sha = sha: {
-            const sha = b.option([]const u8, "sha", "Force the git sha") orelse
-                b.graph.env_map.get("GITHUB_SHA") orelse
-                b.graph.env_map.get("GIT_SHA") orelse fetch_sha: {
+            const sha_buildoption = b.option([]const u8, "sha", "Force the git sha");
+            const sha_github = b.graph.env_map.get("GITHUB_SHA");
+            const sha_env = b.graph.env_map.get("GIT_SHA");
+            const sha = sha_buildoption orelse sha_github orelse sha_env orelse fetch_sha: {
                 const result = std.process.Child.run(.{
                     .allocator = b.allocator,
                     .argv = &.{

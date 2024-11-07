@@ -53,6 +53,6 @@ test("net stream behavior", async () => {
   } finally {
     server.close();
   }
-}, 100000);
+});
 
 //<#END_FILE: test-net-stream.js

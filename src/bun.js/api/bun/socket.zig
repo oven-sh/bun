@@ -730,7 +730,7 @@ pub const Listener = struct {
         } else .{
             .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
         };
-
+        var errno: c_int = 0;
         const listen_socket: *uws.ListenSocket = brk: {
             switch (connection) {
                 .host => |c| {
@@ -744,6 +744,7 @@ pub const Listener = struct {
                         c.port,
                         socket_flags,
                         8,
+                        &errno,
                     );
                     // should return the assigned port
                     if (socket) |s| {
@@ -754,7 +755,7 @@ pub const Listener = struct {
                 .unix => |u| {
                     const host = bun.default_allocator.dupeZ(u8, u) catch bun.outOfMemory();
                     defer bun.default_allocator.free(host);
-                    break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8);
+                    break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8, &errno);
                 },
                 .fd => {
                     // don't call listen() on an fd
@@ -773,7 +774,6 @@ pub const Listener = struct {
                     bun.span(hostname_or_unix.slice()),
                 },
             );
-            const errno = @intFromEnum(bun.C.getErrno(@as(c_int, -1)));
             log("Failed to listen {d}", .{errno});
             if (errno != 0) {
                 err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));

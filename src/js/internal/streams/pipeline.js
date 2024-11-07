@@ -78,7 +78,6 @@ function makeAsyncIterable(val) {
     // Legacy streams are not Iterable.
     return fromReadable(val);
   }
-  console.log("makeAsyncIterable", val);
   throw $ERR_INVALID_ARG_TYPE("val", ["Readable", "Iterable", "AsyncIterable"], val);
 }
 

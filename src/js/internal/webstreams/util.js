@@ -39,7 +39,7 @@ function extractHighWaterMark(value, defaultHWM) {
   if (value === undefined) return defaultHWM;
   value = +value;
   if (typeof value !== "number" || NumberIsNaN(value) || value < 0)
-    throw new ERR_INVALID_ARG_VALUE.RangeError("strategy.highWaterMark", value);
+    throw $ERR_INVALID_ARG_VALUE("strategy.highWaterMark", value);
   return value;
 }
 
@@ -69,7 +69,7 @@ function ArrayBufferViewGetBuffer(view) {
 }
 
 function ArrayBufferViewGetByteLength(view) {
-  return data.$byteLength
+  return data.$byteLength;
 }
 
 function ArrayBufferViewGetByteOffset(view) {
@@ -117,7 +117,7 @@ function enqueueValueWithSize(controller, value, size) {
   assert(controller[kState].queueTotalSize !== undefined);
   size = +size;
   if (typeof size !== "number" || size < 0 || NumberIsNaN(size) || size === Infinity) {
-    throw new ERR_INVALID_ARG_VALUE.RangeError("size", size);
+    throw $ERR_INVALID_ARG_VALUE("size", size);
   }
   ArrayPrototypePush(controller[kState].queue, { value, size });
   controller[kState].queueTotalSize += size;
@@ -183,7 +183,7 @@ function getIterator(obj, kind = "sync", method) {
         const syncMethod = obj[SymbolIterator];
 
         if (syncMethod === undefined) {
-          throw new ERR_ARG_NOT_ITERABLE(obj);
+          throw $ERR_ARG_NOT_ITERABLE(obj);
         }
 
         const syncIteratorRecord = getIterator(obj, "sync", syncMethod);
@@ -195,12 +195,12 @@ function getIterator(obj, kind = "sync", method) {
   }
 
   if (method === undefined) {
-    throw new ERR_ARG_NOT_ITERABLE(obj);
+    throw $ERR_ARG_NOT_ITERABLE(obj);
   }
 
   const iterator = FunctionPrototypeCall(method, obj);
   if (typeof iterator !== "object" || iterator === null) {
-    throw new ERR_INVALID_STATE.TypeError("The iterator method must return an object");
+    throw $ERR_INVALID_STATE("The iterator method must return an object");
   }
   const nextMethod = iterator.next;
   return { iterator, nextMethod, done: false };
@@ -214,7 +214,7 @@ function iteratorNext(iteratorRecord, value) {
     result = FunctionPrototypeCall(iteratorRecord.nextMethod, iteratorRecord.iterator, [value]);
   }
   if (typeof result !== "object" || result === null) {
-    throw new ERR_INVALID_STATE.TypeError("The iterator.next() method must return an object");
+    throw $ERR_INVALID_STATE("The iterator.next() method must return an object");
   }
   return result;
 }

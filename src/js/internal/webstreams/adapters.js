@@ -296,7 +296,7 @@ function newWritableStreamFromStreamWritable(streamWritable) {
     typeof streamWritable?.write === 'function' &&
     typeof streamWritable?.on === 'function';
   if (!checkIfWritableOrOutgoingMessage) {
-    throw new ERR_INVALID_ARG_TYPE(
+    throw $ERR_INVALID_ARG_TYPE(
       'streamWritable',
       'stream.Writable',
       streamWritable,
@@ -399,7 +399,7 @@ function newWritableStreamFromStreamWritable(streamWritable) {
  */
 function newStreamWritableFromWritableStream(writableStream, options = kEmptyObject) {
   if (!$isWritableStream(writableStream)) {
-    throw new ERR_INVALID_ARG_TYPE(
+    throw $ERR_INVALID_ARG_TYPE(
       'writableStream',
       'WritableStream',
       writableStream);
@@ -1114,7 +1114,7 @@ function newStreamReadableFromReadableStream(readableStream, options = {}) {
   } = options;
 
   if (encoding !== undefined && !Buffer.isEncoding(encoding))
-    throw new ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
+    throw $ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
   validateBoolean(objectMode, "options.objectMode");
 
   // validateBoolean(native, "options.native");

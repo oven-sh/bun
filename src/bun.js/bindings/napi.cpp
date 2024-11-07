@@ -2893,6 +2893,15 @@ extern "C" JS_EXPORT napi_status node_api_create_buffer_from_arraybuffer(napi_en
     return napi_set_last_error(env, napi_ok);
 }
 
+extern "C" JS_EXPORT napi_status node_api_get_module_file_name(napi_env env,
+    const char** result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, result);
+    *result = env->filename;
+    NAPI_RETURN_SUCCESS(env);
+}
+
 extern "C" void napi_internal_cleanup_env_cpp(napi_env env)
 {
     env->cleanup();

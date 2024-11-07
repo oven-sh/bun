@@ -567,6 +567,8 @@ EXPORTS
   napi_is_detached_arraybuffer
   napi_create_external_buffer
   napi_fatal_exception
+  node_api_create_buffer_from_arraybuffer
+  node_api_get_module_file_name
   ?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ
   ?GetCurrent@Isolate@v8@@SAPEAV12@XZ
   ?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VContext@v8@@@2@XZ

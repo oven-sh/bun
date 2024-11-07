@@ -761,7 +761,7 @@ if(NOT WIN32)
   )
   if(DEBUG)
     # TODO: this shouldn't be necessary long term
-    if (NOT IS_MUSL)
+    if (NOT ABI STREQUAL "musl")
       set(ABI_PUBLIC_FLAGS
         -fsanitize=null
         -fsanitize-recover=all
@@ -911,7 +911,7 @@ else()
     )
   endif()
 
-  if (NOT IS_MUSL)
+  if (NOT ABI STREQUAL "musl")
     set(ABI_WRAP_FLAGS
       -Wl,--wrap=cosf
       -Wl,--wrap=exp

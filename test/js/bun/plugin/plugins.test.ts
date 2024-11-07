@@ -797,6 +797,58 @@ console.log(foo);
     },
   });
 
+  itBundled("calling defer more than once errors", {
+    experimentalCss: true,
+    files: {
+      "/index.ts": /* ts */ `
+  import { lmao } from "./lmao.ts";
+  import foo from "./a.css";
+
+  console.log("Foo", foo, lmao);
+        `,
+      "/lmao.ts": `
+  import { foo } from "./foo.ts";
+  export const lmao = "lolss";
+  console.log(foo);
+        `,
+      "/foo.ts": `
+  export const foo = "LOL bro";
+  console.log("FOOOO", foo);
+        `,
+      "/a.css": `
+        /* helllooo friends */
+              `,
+    },
+    entryPoints: ["index.ts"],
+    plugins: [
+      {
+        name: "demo",
+        setup(build) {
+          build.onLoad({ filter: /\.css/ }, async ({ path }) => {
+            return {
+              // this fails, because it causes a Build error I think?
+              contents: `hello friends`,
+              loader: "css",
+            };
+          });
+
+          build.onLoad({ filter: /\.(ts)/ }, async ({ defer, path }) => {
+            if (path.includes("index.ts")) {
+              return undefined;
+            }
+            await defer();
+            await defer();
+          });
+        },
+      },
+    ],
+    outdir: "/out",
+    bundleErrors: {
+      "/a.css": ["end_of_input"],
+      "/lmao.ts": ["can't call .defer() more than once within an onLoad plugin"],
+    },
+  });
+
   test("integration", async () => {
     const folder = tempDirWithFiles("integration", {
       "module_data.json": "{}",

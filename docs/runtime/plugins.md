@@ -408,3 +408,5 @@ build.onLoad({ filter: /server-routes\.json/ }, ({ defer }) => {
   };
 });
 ```
+
+Note that the `.defer()` function currently has the limitation that it can only be called once per `onLoad` callback.

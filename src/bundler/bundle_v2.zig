@@ -564,7 +564,7 @@ pub const BundleV2 = struct {
     }
 
     fn isDone(this: *BundleV2) bool {
-        if (@atomicLoad(usize, &this.graph.parse_pending, .acq_rel) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .monotonic) == 0) {
+        if (@atomicLoad(usize, &this.graph.parse_pending, .acquire) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .monotonic) == 0) {
             if (this.graph.drainDeferredTasks(this) > 0) {
                 return false;
             }

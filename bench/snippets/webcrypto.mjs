@@ -9,7 +9,7 @@ for (let [name, size] of sizes) {
   group(name, () => {
     var buf = new Uint8Array(size);
     for (let algorithm of ["SHA-1", "SHA-256", "SHA-384", "SHA-512"]) {
-      bench(algorithm, async () => {
+      bench(`${algorithm} (${name})`, async () => {
         await crypto.subtle.digest(algorithm, buf);
       });
     }

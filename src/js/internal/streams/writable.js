@@ -483,7 +483,7 @@ function _write(stream, chunk, encoding, cb) {
   if ((state[kState] & kEnding) !== 0) {
     err = $ERR_STREAM_WRITE_AFTER_END("write");
   } else if ((state[kState] & kDestroyed) !== 0) {
-    err = $ERR_STREAM_DESTROYED("write");
+    err = $ERR_STREAM_DESTROYED("Cannot call write after a stream was destroyed");
   }
 
   if (err) {

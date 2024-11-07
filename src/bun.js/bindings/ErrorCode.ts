@@ -30,7 +30,7 @@ export default [
   ["ERR_STREAM_ALREADY_FINISHED", Error, "Error"],
   ["ERR_STREAM_CANNOT_PIPE", Error, "Error"],
   ["ERR_STREAM_DESTROYED", Error, "Error"],
-  ["ERR_STREAM_NULL_VALUES", Error, "Error"],
+  ["ERR_STREAM_NULL_VALUES", TypeError, "TypeError"],
   ["ERR_STREAM_WRITE_AFTER_END", Error, "Error"],
   ["ERR_STREAM_PREMATURE_CLOSE", Error, "Error"],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error, "Error"],
@@ -48,7 +48,7 @@ export default [
   ["ERR_UNKNOWN_SIGNAL", TypeError, "TypeError"],
   ["ERR_SOCKET_BAD_PORT", RangeError, "RangeError"],
   ["ERR_EVENT_RECURSION", Error, "Error"],
-  ["ERR_MULTIPLE_CALLBACK", TypeError, "TypeError"],
+  ["ERR_MULTIPLE_CALLBACK", Error, "Error"],
   ["ERR_METHOD_NOT_IMPLEMENTED", Error, "Error"],
   ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
 

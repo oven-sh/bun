@@ -62,7 +62,6 @@ console.groupEnd();
 console.group("Complex types");
 console.log({ a: 1, b: 2 });
 console.log([1, 2, 3]);
-console.log(new Date());
 console.groupEnd();
 
 // Falsy values as group labels

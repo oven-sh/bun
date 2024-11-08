@@ -984,6 +984,10 @@ extern "C" void napi_module_register(napi_module* mod)
 
     if (mod->nm_register_func) {
         resultValue = toJS(mod->nm_register_func(env, toNapi(object, globalObject)));
+    } else {
+        JSValue errorInstance = createError(globalObject, makeString("Module has no declared entry point."_s));
+        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
+        return;
     }
 
     RETURN_IF_EXCEPTION(scope, void());

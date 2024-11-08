@@ -1233,7 +1233,7 @@ pub export fn napi_fatal_error(location_ptr: ?[*:0]const u8, location_len: usize
 
     const location = napiSpan(location_ptr, location_len);
     if (location.len > 0) {
-        bun.Output.panic("napi: {s}\n  {s}", .{ message, location });
+        bun.Output.panic("FATAL ERROR: {s} {s}", .{ location, message });
     }
 
     bun.Output.panic("napi: {s}", .{message});

@@ -3,8 +3,16 @@
 
 import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { hostname, tmpdir as nodeTmpdir, userInfo, release } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
@@ -670,7 +678,7 @@ export async function curl(url, options = {}) {
     try {
       if (filename && ok) {
         const buffer = await response.arrayBuffer();
-        await writeFile(filename, new Uint8Array(buffer));
+        writeFile(filename, new Uint8Array(buffer));
       } else if (arrayBuffer && ok) {
         body = await response.arrayBuffer();
       } else if (json && ok) {
@@ -750,6 +758,51 @@ export function readFile(filename, options = {}) {
   }
 
   return content;
+}
+
+/**
+ * @param {string} filename
+ * @param {string | Buffer} content
+ * @param {object} [options]
+ * @param {number} [options.mode]
+ */
+export function writeFile(filename, content, options = {}) {
+  const parent = dirname(filename);
+  if (!existsSync(parent)) {
+    mkdirSync(parent, { recursive: true });
+  }
+
+  writeFileSync(filename, content);
+
+  if (options["mode"]) {
+    chmodSync(filename, options["mode"]);
+  }
+}
+
+/**
+ * @param {string | string[]} command
+ * @param {object} [options]
+ * @param {boolean} [options.required]
+ * @returns {string | undefined}
+ */
+export function which(command, options = {}) {
+  const commands = Array.isArray(command) ? command : [command];
+  const path = getEnv("PATH", false) || "";
+  const binPaths = path.split(isWindows ? ";" : ":");
+
+  for (const binPath of binPaths) {
+    for (const command of commands) {
+      const commandPath = join(binPath, command);
+      if (existsSync(commandPath)) {
+        return commandPath;
+      }
+    }
+  }
+
+  if (options["required"]) {
+    const description = commands.join(" or ");
+    throw new Error(`Command not found: ${description}`);
+  }
 }
 
 /**
@@ -1177,7 +1230,18 @@ export function getArch() {
  * @returns {string}
  */
 export function getKernel() {
-  return release();
+  const kernel = release();
+  const match = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(kernel);
+
+  if (match) {
+    const [, major, minor, patch] = match;
+    if (patch) {
+      return `${major}.${minor}.${patch}`;
+    }
+    return `${major}.${minor}`;
+  }
+
+  return kernel;
 }
 
 /**
@@ -1220,14 +1284,6 @@ export function getAbi() {
 export function getAbiVersion() {
   if (!isLinux) {
     return;
-  }
-
-  if (existsSync("/etc/alpine-release")) {
-    const releaseFile = readFile("/etc/alpine-release", { cache: true }).trim();
-    if (releaseFile.includes("_")) {
-      return releaseFile.substring(0, releaseFile.indexOf("_"));
-    }
-    return releaseFile;
   }
 
   const { error, stdout } = spawnSync(["ldd", "--version"]);
@@ -1478,7 +1534,31 @@ export function getUsername() {
 }
 
 /**
- * @returns {string}
+ * @typedef {object} User
+ * @property {string} username
+ * @property {number} uid
+ * @property {number} gid
+ */
+
+/**
+ * @param {string} username
+ * @returns {Promise<User>}
+ */
+export async function getUser(username) {
+  if (isWindows) {
+    throw new Error("TODO: Windows");
+  }
+
+  const [uid, gid] = await Promise.all([
+    spawnSafe(["id", "-u", username]).then(({ stdout }) => parseInt(stdout.trim())),
+    spawnSafe(["id", "-g", username]).then(({ stdout }) => parseInt(stdout.trim())),
+  ]);
+
+  return { username, uid, gid };
+}
+
+/**
+ * @returns {string | undefined}
  */
 export function getDistro() {
   if (isMacOS) {
@@ -1486,6 +1566,11 @@ export function getDistro() {
   }
 
   if (isLinux) {
+    const alpinePath = "/etc/alpine-release";
+    if (existsSync(alpinePath)) {
+      return "alpine";
+    }
+
     const releasePath = "/etc/os-release";
     if (existsSync(releasePath)) {
       const releaseFile = readFile(releasePath, { cache: true });
@@ -1497,10 +1582,8 @@ export function getDistro() {
 
     const { error, stdout } = spawnSync(["lsb_release", "-is"]);
     if (!error) {
-      return stdout.trim();
+      return stdout.trim().toLowerCase();
     }
-
-    return "Linux";
   }
 
   if (isWindows) {
@@ -1508,17 +1591,13 @@ export function getDistro() {
     if (!error) {
       return stdout.trim();
     }
-
-    return "Windows";
   }
-
-  return `${process.platform} ${process.arch}`;
 }
 
 /**
  * @returns {string | undefined}
  */
-export function getDistroRelease() {
+export function getDistroVersion() {
   if (isMacOS) {
     const { error, stdout } = spawnSync(["sw_vers", "-productVersion"]);
     if (!error) {
@@ -1527,6 +1606,16 @@ export function getDistroRelease() {
   }
 
   if (isLinux) {
+    const alpinePath = "/etc/alpine-release";
+    if (existsSync(alpinePath)) {
+      const release = readFile(alpinePath, { cache: true }).trim();
+      if (release.includes("_")) {
+        const [version] = release.split("_");
+        return `${version}-edge`;
+      }
+      return release;
+    }
+
     const releasePath = "/etc/os-release";
     if (existsSync(releasePath)) {
       const releaseFile = readFile(releasePath, { cache: true });
@@ -1567,7 +1656,7 @@ export async function isAws() {
 
   async function checkAws() {
     if (isLinux) {
-      const kernel = getKernel();
+      const kernel = release();
       if (kernel.endsWith("-aws")) {
         return true;
       }
@@ -1672,7 +1761,7 @@ export async function getCloud() {
 }
 
 /**
- * @param {string} name
+ * @param {string | Record<Cloud, string>} name
  * @param {Cloud} [cloud]
  * @returns {Promise<string | undefined>}
  */
@@ -1680,6 +1769,10 @@ export async function getCloudMetadata(name, cloud) {
   cloud ??= await getCloud();
   if (!cloud) {
     return;
+  }
+
+  if (typeof name === "object") {
+    name = name[cloud];
   }
 
   let url;
@@ -1699,6 +1792,19 @@ export async function getCloudMetadata(name, cloud) {
   }
 
   return body.trim();
+}
+
+/**
+ * @param {string} tag
+ * @param {Cloud} [cloud]
+ * @returns {Promise<string | undefined>}
+ */
+export function getCloudMetadataTag(tag, cloud) {
+  const metadata = {
+    "aws": `tags/instance/${tag}`,
+  };
+
+  return getCloudMetadata(metadata, cloud);
 }
 
 /**
@@ -1791,7 +1897,7 @@ export function printEnvironment() {
       console.log("ABI Version:", getAbiVersion());
     }
     console.log("Distro:", getDistro());
-    console.log("Release:", getDistroRelease());
+    console.log("Distro Version:", getDistroVersion());
     console.log("Hostname:", getHostname());
     if (isCI) {
       console.log("Tailscale IP:", getTailscaleIp());

@@ -6,7 +6,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { curlSafe } from "../utils.mjs";
+import { curlSafe, spawnSafe } from "../utils.mjs";
 
 /**
  * @typedef {object} UserData
@@ -42,7 +42,8 @@ export async function getCloudInit(userData) {
   const password = userData["password"] || crypto.randomUUID();
   const authorizedKeys = userData["authorizedKeys"] || getAuthorizedKeys();
   const bootstrapScript = getBootrapScript(userData["os"]);
-  const bootstrapUrl = await uploadTmpFile(bootstrapScript);
+  const agentScript = await getAgentScript();
+  const [bootstrapUrl, agentUrl] = await Promise.all([uploadTmpFile(bootstrapScript), uploadTmpFile(agentScript)]);
 
   // https://cloudinit.readthedocs.io/en/stable/
   return `#cloud-config
@@ -58,6 +59,10 @@ export async function getCloudInit(userData) {
         content: |
           PermitRootLogin yes
           PasswordAuthentication yes
+      - path: /tmp/agent.sh
+        permissions: "0755"
+        content: |
+          node /tmp/agent.mjs 2>&1 | tee /tmp/agent.log
       - path: /tmp/bootstrap.sh
         permissions: "0755"
         content: |
@@ -66,10 +71,14 @@ export async function getCloudInit(userData) {
           # then download and replace it at boot time.
           curl -fsSL "${bootstrapUrl}" -o /tmp/bootstrap.sh
           chmod +x /tmp/bootstrap.sh
+          curl -fsSL "${agentUrl}" -o /tmp/agent.mjs
+          chmod +x /tmp/agent.mjs
+          export CI=true
           sh /tmp/bootstrap.sh 2>&1 | tee /tmp/bootstrap.log
 
     runcmd:
       - [cloud-init-per, once, bootstrap, sh, /tmp/bootstrap.sh]
+      - [sh, -c, "/tmp/agent.sh &"]
 
     chpasswd:
       expire: false
@@ -117,6 +126,19 @@ export function getBootrapScript(os) {
   }
 
   return readFileSync(scriptPath, "utf8");
+}
+
+/**
+ * @returns {Promise<string>}
+ */
+export async function getAgentScript() {
+  const scriptPath = resolve(import.meta.dirname, "agent.mjs");
+  if (!existsSync(scriptPath)) {
+    throw new Error(`Script not found: ${scriptPath}`);
+  }
+
+  const { stdout } = await spawnSafe(["bunx", "esbuild", "--platform=node", "--format=esm", "--bundle", scriptPath]);
+  return stdout;
 }
 
 /**

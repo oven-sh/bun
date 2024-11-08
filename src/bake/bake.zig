@@ -12,19 +12,15 @@ pub const api_name = "app";
 
 /// Zig version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub const UserOptions = struct {
-    allocations: AllocationList,
+    arena: std.heap.ArenaAllocator.State,
+    allocations: StringRefList,
 
     root: []const u8,
     framework: Framework,
-
     bundler_options: SplitBundlerOptions,
 
-    // TODO: move to FrameworkRouter
-    routes: []DevServer.Route,
-
     pub fn deinit(options: *UserOptions) void {
-        bun.default_allocator.free(options.routes);
-        options.framework.deinit(bun.default_allocator);
+        options.arena.promote(bun.default_allocator).deinit();
         options.allocations.free();
     }
 
@@ -32,71 +28,42 @@ pub const UserOptions = struct {
         if (!config.isObject()) {
             return global.throwInvalidArguments2("'" ++ api_name ++ "' is not an object", .{});
         }
+        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        errdefer arena.deinit();
+        const alloc = arena.allocator();
 
-        var allocations = AllocationList.empty;
+        var allocations = StringRefList.empty;
         errdefer allocations.free();
         var bundler_options: SplitBundlerOptions = .{};
-        // errdefer bundler_options.deinit();
 
-        const routes_js: JSValue = try config.getArray(global, "routes") orelse {
-            return global.throwInvalidArguments2("'" ++ api_name ++ "' is missing 'routes'", .{});
-        };
-
-        const len = routes_js.getLength(global);
-        const routes = try bun.default_allocator.alloc(DevServer.Route, len);
-
-        var it = routes_js.arrayIterator(global);
-        var i: usize = 0;
-        while (it.next()) |route| : (i += 1) {
-            if (!route.isObject()) {
-                return global.throwInvalidArguments2("'routes[{d}]' is not an object", .{i});
-            }
-
-            const pattern = try route.getOptional(global, "pattern", ZigString.Slice) orelse {
-                return global.throwInvalidArguments2("'routes[{d}]' is missing 'pattern'", .{i});
-            };
-            defer pattern.deinit();
-
-            const entry_point = try getOptionalString(route, global, "entrypoint", &allocations) orelse {
-                return global.throwInvalidArguments2("'routes[{d}]' is missing 'entrypoint'", .{i});
-            };
-
-            routes[i] = .{
-                .pattern = allocations.trackSliceZ(try bun.default_allocator.dupeZ(u8, pattern.slice())),
-                .entry_point = entry_point,
-            };
-        }
-
-        var framework = try Framework.fromJS(
+        const framework = try Framework.fromJS(
             try config.get2(global, "framework") orelse {
                 return global.throwInvalidArguments2("'" ++ api_name ++ "' is missing 'framework'", .{});
             },
             global,
             &allocations,
             &bundler_options,
+            alloc,
         );
-        errdefer framework.deinit(bun.default_allocator);
 
         const root = if (try config.getOptional(global, "root", ZigString.Slice)) |slice|
             allocations.track(slice)
         else
-            allocations.trackSlice(
-                bun.getcwdAlloc(bun.default_allocator) catch |err| switch (err) {
-                    error.OutOfMemory => {
-                        global.throwOutOfMemory();
-                        return global.jsErrorFromCPP();
-                    },
-                    else => {
-                        global.throwError(err, "while querying current working directory");
-                        return global.jsErrorFromCPP();
-                    },
+            bun.getcwdAlloc(alloc) catch |err| switch (err) {
+                error.OutOfMemory => {
+                    global.throwOutOfMemory();
+                    return global.jsErrorFromCPP();
                 },
-            );
+                else => {
+                    global.throwError(err, "while querying current working directory");
+                    return global.jsErrorFromCPP();
+                },
+            };
 
         return .{
+            .arena = arena.state,
             .allocations = allocations,
             .root = root,
-            .routes = routes,
             .framework = framework,
             .bundler_options = bundler_options,
         };
@@ -104,30 +71,20 @@ pub const UserOptions = struct {
 };
 
 /// Each string stores its allocator since some may hold reference counts to JSC
-const AllocationList = struct {
-    allocations: std.ArrayListUnmanaged(ZigString.Slice),
+const StringRefList = struct {
+    strings: std.ArrayListUnmanaged(ZigString.Slice),
 
-    pub fn track(al: *AllocationList, str: ZigString.Slice) []const u8 {
-        al.allocations.append(bun.default_allocator, str) catch bun.outOfMemory();
+    pub fn track(al: *StringRefList, str: ZigString.Slice) []const u8 {
+        al.strings.append(bun.default_allocator, str) catch bun.outOfMemory();
         return str.slice();
     }
 
-    pub fn trackSlice(al: *AllocationList, str: []const u8) []const u8 {
-        al.allocations.append(bun.default_allocator, ZigString.Slice.init(bun.default_allocator, str)) catch bun.outOfMemory();
-        return str;
+    pub fn free(al: *StringRefList) void {
+        for (al.strings.items) |item| item.deinit();
+        al.strings.clearAndFree(bun.default_allocator);
     }
 
-    pub fn trackSliceZ(al: *AllocationList, str: [:0]const u8) [:0]const u8 {
-        al.allocations.append(bun.default_allocator, ZigString.Slice.init(bun.default_allocator, str)) catch bun.outOfMemory();
-        return str;
-    }
-
-    pub fn free(al: *AllocationList) void {
-        for (al.allocations.items) |item| item.deinit();
-        al.allocations.clearAndFree(bun.default_allocator);
-    }
-
-    pub const empty: AllocationList = .{ .allocations = .{} };
+    pub const empty: StringRefList = .{ .strings = .{} };
 };
 
 const SplitBundlerOptions = struct {
@@ -170,36 +127,42 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !J
 
 /// A "Framework" in our eyes is simply set of bundler options that a framework
 /// author would set in order to integrate the framework with the application.
+/// Since many fields have default values which may point to static memory, this
+/// structure is always arena-allocated, usually owned by the arena in `UserOptions`
 ///
 /// Full documentation on these fields is located in the TypeScript definitions.
 pub const Framework = struct {
-    entry_client: []const u8,
-    entry_server: []const u8,
-
+    file_system_router_types: []FileSystemRouterType,
+    // static_routers: [][]const u8,
     server_components: ?ServerComponents = null,
     react_fast_refresh: ?ReactFastRefresh = null,
-
     built_in_modules: bun.StringArrayHashMapUnmanaged(BuiltInModule) = .{},
-
-    pub fn deinit(fw: *Framework, alloc: std.mem.Allocator) void {
-        fw.built_in_modules.deinit(alloc);
-    }
 
     /// Bun provides built-in support for using React as a framework.
     /// Depends on externally provided React
     ///
     /// $ bun i react@experimental react-dom@experimental react-server-dom-webpack@experimental react-refresh@experimental
-    pub fn react() Framework {
+    pub fn react(arena: std.mem.Allocator) !Framework {
         return .{
             .server_components = .{
                 .separate_ssr_graph = true,
                 .server_runtime_import = "react-server-dom-webpack/server",
-                // .client_runtime_import = "react-server-dom-webpack/client",
             },
             .react_fast_refresh = .{},
-            .entry_client = "bun-framework-react/client.tsx",
-            .entry_server = "bun-framework-react/server.tsx",
-            .built_in_modules = bun.StringArrayHashMapUnmanaged(BuiltInModule).init(bun.default_allocator, &.{
+            .file_system_router_types = try arena.dupe(FileSystemRouterType, &.{
+                .{
+                    .root = "pages",
+                    .prefix = "/",
+                    .entry_client = "bun-framework-react/client.tsx",
+                    .entry_server = "bun-framework-react/server.tsx",
+                    .ignore_underscores = true,
+                    .ignore_dirs = &.{ "node_modules", ".git" },
+                    .extensions = &.{ ".tsx", ".jsx" },
+                    .style = .@"nextjs-pages-ui",
+                },
+            }),
+            // .static_routers = try arena.dupe([]const u8, &.{"public"}),
+            .built_in_modules = bun.StringArrayHashMapUnmanaged(BuiltInModule).init(arena, &.{
                 "bun-framework-react/client.tsx",
                 "bun-framework-react/server.tsx",
                 "bun-framework-react/ssr.tsx",
@@ -208,12 +171,24 @@ pub const Framework = struct {
                 .{ .code = @embedFile("./bun-framework-react/server.tsx") },
                 .{ .code = @embedFile("./bun-framework-react/ssr.tsx") },
             } else &.{
+                // Cannot use .import because resolution must happen from the user's POV
                 .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/client.tsx") },
                 .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/server.tsx") },
                 .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/ssr.tsx") },
             }) catch bun.outOfMemory(),
         };
     }
+
+    const FileSystemRouterType = struct {
+        root: []const u8,
+        prefix: []const u8,
+        entry_server: []const u8,
+        entry_client: ?[]const u8,
+        ignore_underscores: bool,
+        ignore_dirs: []const []const u8,
+        extensions: []const []const u8,
+        style: FrameworkRouter.Style,
+    };
 
     const BuiltInModule = union(enum) {
         import: []const u8,
@@ -241,9 +216,6 @@ pub const Framework = struct {
         var clone = f;
         var had_errors: bool = false;
 
-        f.resolveHelper(client, &clone.entry_client, &had_errors, "client entrypoint");
-        f.resolveHelper(server, &clone.entry_server, &had_errors, "server entrypoint");
-
         if (clone.react_fast_refresh) |*react_fast_refresh| {
             f.resolveHelper(client, &react_fast_refresh.import_source, &had_errors, "react refresh runtime");
         }
@@ -251,6 +223,12 @@ pub const Framework = struct {
         if (clone.server_components) |*sc| {
             f.resolveHelper(server, &sc.server_runtime_import, &had_errors, "server components runtime");
             // f.resolveHelper(client, &sc.client_runtime_import, &had_errors);
+        }
+
+        for (clone.file_system_router_types) |*fsr| {
+            fsr.root = bun.path.joinAbs(server.fs.top_level_dir, .auto, fsr.root);
+            if (fsr.entry_client) |*entry_client| f.resolveHelper(client, entry_client, &had_errors, "client side entrypoint");
+            f.resolveHelper(client, &fsr.entry_server, &had_errors, "server side entrypoint");
         }
 
         if (had_errors) return error.ModuleNotFound;
@@ -278,8 +256,9 @@ pub const Framework = struct {
     fn fromJS(
         opts: JSValue,
         global: *JSC.JSGlobalObject,
-        allocations: *AllocationList,
+        refs: *StringRefList,
         bundler_options: *SplitBundlerOptions,
+        arena: Allocator,
     ) !Framework {
         _ = bundler_options; // autofix
         if (opts.isString()) {
@@ -288,12 +267,12 @@ pub const Framework = struct {
 
             // Deprecated
             if (str.eqlComptime("react-server-components")) {
-                bun.Output.warn("framework: 'react-server-components' will be renamed to 'react'", .{});
-                return Framework.react();
+                bun.Output.warn("deprecation notice: 'react-server-components' will be renamed to 'react'", .{});
+                return Framework.react(arena);
             }
 
             if (str.eqlComptime("react")) {
-                return Framework.react();
+                return Framework.react(arena);
             }
         }
 
@@ -301,99 +280,183 @@ pub const Framework = struct {
             return global.throwInvalidArguments2("Framework must be an object", .{});
         }
 
-        var framework: Framework = .{
-            .entry_server = try getOptionalString(opts, global, "serverEntryPoint", allocations) orelse {
-                return global.throwInvalidArguments2("Missing 'framework.serverEntryPoint'", .{});
-            },
-            .entry_client = try getOptionalString(opts, global, "clientEntryPoint", allocations) orelse {
-                return global.throwInvalidArguments2("Missing 'framework.clientEntryPoint'", .{});
-            },
-            .react_fast_refresh = brk: {
-                const rfr: JSValue = try opts.get2(global, "reactFastRefresh") orelse
-                    break :brk null;
+        if (try opts.get2(global, "serverEntryPoint") != null) {
+            bun.Output.warn("deprecation notice: 'framework.serverEntryPoint' has been replaced with 'fileSystemRouterTypes[n].serverEntryPoint'", .{});
+        }
+        if (try opts.get2(global, "clientEntryPoint") != null) {
+            bun.Output.warn("deprecation notice: 'framework.clientEntryPoint' has been replaced with 'fileSystemRouterTypes[n].clientEntryPoint'", .{});
+        }
 
-                if (rfr == .true) break :brk .{};
-                if (rfr == .false or rfr == .null or rfr == .undefined) break :brk null;
+        const react_fast_refresh: ?ReactFastRefresh = brk: {
+            const rfr: JSValue = try opts.get2(global, "reactFastRefresh") orelse
+                break :brk null;
 
-                if (!rfr.isObject()) {
-                    return global.throwInvalidArguments2("'framework.reactFastRefresh' must be an object or 'true'", .{});
-                }
+            if (rfr == .true) break :brk .{};
+            if (rfr == .false or rfr == .null or rfr == .undefined) break :brk null;
 
-                const prop = rfr.get(global, "importSource") orelse {
-                    return global.throwInvalidArguments2("'framework.reactFastRefresh' is missing 'importSource'", .{});
-                };
+            if (!rfr.isObject()) {
+                return global.throwInvalidArguments2("'framework.reactFastRefresh' must be an object or 'true'", .{});
+            }
 
-                const str = try prop.toBunString2(global);
-                defer str.deref();
+            const prop = rfr.get(global, "importSource") orelse {
+                return global.throwInvalidArguments2("'framework.reactFastRefresh' is missing 'importSource'", .{});
+            };
 
-                break :brk .{
-                    .import_source = allocations.track(str.toUTF8(bun.default_allocator)),
-                };
-            },
-            .server_components = sc: {
-                const sc: JSValue = try opts.get2(global, "serverComponents") orelse
-                    break :sc null;
-                if (sc == .false or sc == .null or sc == .undefined) break :sc null;
+            const str = try prop.toBunString2(global);
+            defer str.deref();
 
-                if (!sc.isObject()) {
-                    return global.throwInvalidArguments2("'framework.serverComponents' must be an object or 'undefined'", .{});
-                }
+            break :brk .{
+                .import_source = refs.track(str.toUTF8(arena)),
+            };
+        };
+        const server_components: ?ServerComponents = sc: {
+            const sc: JSValue = try opts.get2(global, "serverComponents") orelse
+                break :sc null;
+            if (sc == .false or sc == .null or sc == .undefined) break :sc null;
 
-                break :sc .{
-                    .separate_ssr_graph = brk: {
-                        // Intentionally not using a truthiness check
-                        const prop = try sc.getOptional(global, "separateSSRGraph", JSValue) orelse {
-                            return global.throwInvalidArguments2("Missing 'framework.serverComponents.separateSSRGraph'", .{});
-                        };
-                        if (prop == .true) break :brk true;
-                        if (prop == .false) break :brk false;
-                        return global.throwInvalidArguments2("'framework.serverComponents.separateSSRGraph' must be a boolean", .{});
+            if (!sc.isObject()) {
+                return global.throwInvalidArguments2("'framework.serverComponents' must be an object or 'undefined'", .{});
+            }
+
+            break :sc .{
+                .separate_ssr_graph = brk: {
+                    // Intentionally not using a truthiness check
+                    const prop = try sc.getOptional(global, "separateSSRGraph", JSValue) orelse {
+                        return global.throwInvalidArguments2("Missing 'framework.serverComponents.separateSSRGraph'", .{});
+                    };
+                    if (prop == .true) break :brk true;
+                    if (prop == .false) break :brk false;
+                    return global.throwInvalidArguments2("'framework.serverComponents.separateSSRGraph' must be a boolean", .{});
+                },
+                .server_runtime_import = refs.track(
+                    try sc.getOptional(global, "serverRuntimeImportSource", ZigString.Slice) orelse {
+                        return global.throwInvalidArguments2("Missing 'framework.serverComponents.serverRuntimeImportSource'", .{});
                     },
-                    .server_runtime_import = allocations.track(
-                        try sc.getOptional(global, "serverRuntimeImportSource", ZigString.Slice) orelse {
-                            return global.throwInvalidArguments2("Missing 'framework.serverComponents.serverRuntimeImportSource'", .{});
-                        },
-                    ),
-                    .server_register_client_reference = allocations.track(
-                        try sc.getOptional(global, "serverRegisterClientReferenceExport", ZigString.Slice) orelse {
-                            return global.throwInvalidArguments2("Missing 'framework.serverComponents.serverRegisterClientReferenceExport'", .{});
-                        },
-                    ),
+                ),
+                .server_register_client_reference = refs.track(
+                    try sc.getOptional(global, "serverRegisterClientReferenceExport", ZigString.Slice) orelse {
+                        return global.throwInvalidArguments2("Missing 'framework.serverComponents.serverRegisterClientReferenceExport'", .{});
+                    },
+                ),
+            };
+        };
+        const built_in_modules: bun.StringArrayHashMapUnmanaged(BuiltInModule) = built_in_modules: {
+            const array = try opts.getArray(global, "builtInModules") orelse
+                break :built_in_modules .{};
+
+            const len = array.getLength(global);
+            var files: bun.StringArrayHashMapUnmanaged(BuiltInModule) = .{};
+            try files.ensureTotalCapacity(arena, len);
+
+            var it = array.arrayIterator(global);
+            var i: usize = 0;
+            while (it.next()) |file| : (i += 1) {
+                if (!file.isObject()) {
+                    return global.throwInvalidArguments2("'builtInModules[{d}]' is not an object", .{i});
+                }
+
+                const path = try getOptionalString(file, global, "import", refs, arena) orelse {
+                    return global.throwInvalidArguments2("'builtInModules[{d}]' is missing 'import'", .{i});
                 };
-            },
-            .built_in_modules = built_in_modules: {
-                const array = try opts.getArray(global, "builtInModules") orelse
-                    break :built_in_modules .{};
 
-                const len = array.getLength(global);
-                var files: bun.StringArrayHashMapUnmanaged(BuiltInModule) = .{};
-                try files.ensureTotalCapacity(bun.default_allocator, len);
+                const value: BuiltInModule = if (try getOptionalString(file, global, "path", refs, arena)) |str|
+                    .{ .import = str }
+                else if (try getOptionalString(file, global, "code", refs, arena)) |str|
+                    .{ .code = str }
+                else
+                    return global.throwInvalidArguments2("'builtInModules[{d}]' needs either 'path' or 'code'", .{i});
 
-                var it = array.arrayIterator(global);
-                var i: usize = 0;
-                while (it.next()) |file| : (i += 1) {
-                    if (!file.isObject()) {
-                        return global.throwInvalidArguments2("'builtInModules[{d}]' is not an object", .{i});
+                files.putAssumeCapacity(path, value);
+            }
+
+            break :built_in_modules files;
+        };
+        const file_system_router_types: []FileSystemRouterType = brk: {
+            const array: JSValue = try opts.getArray(global, "fileSystemRouterTypes") orelse {
+                return global.throwInvalidArguments2("Missing 'framework.fileSystemRouterTypes'", .{});
+            };
+            const len = array.getLength(global);
+            if (len > 256) {
+                return global.throwInvalidArguments2("Framework can only define up to 256 file-system router types", .{});
+            }
+            const file_system_router_types = try arena.alloc(FileSystemRouterType, len);
+
+            var it = array.arrayIterator(global);
+            var i: usize = 0;
+            while (it.next()) |fsr_opts| : (i += 1) {
+                const root = try getOptionalString(fsr_opts, global, "root", refs, arena) orelse {
+                    return global.throwInvalidArguments2("'fileSystemRouterTypes[{d}]' is missing 'root'", .{i});
+                };
+                const server_entry_point = try getOptionalString(fsr_opts, global, "serverEntryPoint", refs, arena) orelse {
+                    return global.throwInvalidArguments2("'fileSystemRouterTypes[{d}]' is missing 'serverEntryPoint'", .{i});
+                };
+                const client_entry_point = try getOptionalString(fsr_opts, global, "clientEntryPoint", refs, arena);
+                const prefix = try getOptionalString(fsr_opts, global, "prefix", refs, arena) orelse "/";
+                const ignore_underscores = try fsr_opts.getBooleanStrict(global, "ignoreUnderscores") orelse false;
+
+                const style = try validators.validateStringEnum(
+                    FrameworkRouter.Style,
+                    global,
+                    try opts.getOptional(global, "style", JSValue) orelse .undefined,
+                    "style",
+                    .{},
+                );
+
+                const extensions: []const []const u8 = if (try fsr_opts.get2(global, "extensions")) |exts_js| exts: {
+                    if (exts_js.isString()) {
+                        const str = try exts_js.toSlice2(global, arena);
+                        defer str.deinit();
+                        if (bun.strings.eqlComptime(str.slice(), "*")) {
+                            break :exts &.{};
+                        }
+                    } else if (exts_js.isArray()) {
+                        var it_2 = array.arrayIterator(global);
+                        var i_2: usize = 0;
+                        const extensions = try arena.alloc([]const u8, len);
+                        while (it_2.next()) |array_item| : (i_2 += 1) {
+                            extensions[i_2] = refs.track(try array_item.toSlice2(global, arena));
+                        }
+                        break :exts extensions;
                     }
 
-                    const path = try getOptionalString(file, global, "import", allocations) orelse {
-                        return global.throwInvalidArguments2("'builtInModules[{d}]' is missing 'import'", .{i});
-                    };
+                    return global.throwInvalidArguments2("'extensions' must be an array of strings or \"*\" for all extensions", .{});
+                } else &.{ ".jsx", ".tsx", ".js", ".ts", ".cjs", ".cts", ".mjs", ".mts" };
 
-                    const value: BuiltInModule = if (try getOptionalString(file, global, "path", allocations)) |str|
-                        .{ .import = str }
-                    else if (try getOptionalString(file, global, "code", allocations)) |str|
-                        .{ .code = str }
-                    else
-                        return global.throwInvalidArguments2("'builtInModules[{d}]' needs either 'path' or 'code'", .{i});
+                const ignore_dirs: []const []const u8 = if (try fsr_opts.get2(global, "ignoreDirs")) |exts_js| exts: {
+                    if (exts_js.isArray()) {
+                        var it_2 = array.arrayIterator(global);
+                        var i_2: usize = 0;
+                        const dirs = try arena.alloc([]const u8, len);
+                        while (it_2.next()) |array_item| : (i_2 += 1) {
+                            dirs[i_2] = refs.track(try array_item.toSlice2(global, arena));
+                        }
+                        break :exts dirs;
+                    }
 
-                    files.putAssumeCapacity(path, value);
-                }
+                    return global.throwInvalidArguments2("'extensions' must be an array of strings or \"*\" for all extensions", .{});
+                } else &.{ ".git", "node_modules" };
 
-                break :built_in_modules files;
-            },
+                file_system_router_types[i] = .{
+                    .root = root,
+                    .prefix = prefix,
+                    .style = style,
+                    .entry_server = server_entry_point,
+                    .entry_client = client_entry_point,
+                    .ignore_underscores = ignore_underscores,
+                    .extensions = extensions,
+                    .ignore_dirs = ignore_dirs,
+                };
+            }
+
+            break :brk file_system_router_types;
         };
-        errdefer framework.deinit(bun.default_allocator);
+
+        const framework: Framework = .{
+            .file_system_router_types = file_system_router_types,
+            .react_fast_refresh = react_fast_refresh,
+            .server_components = server_components,
+            .built_in_modules = built_in_modules,
+        };
 
         if (try opts.getOptional(global, "bundlerOptions", JSValue)) |js_options| {
             _ = js_options; // autofix
@@ -484,14 +547,15 @@ fn getOptionalString(
     target: JSValue,
     global: *JSC.JSGlobalObject,
     property: []const u8,
-    allocations: *AllocationList,
+    allocations: *StringRefList,
+    arena: Allocator,
 ) !?[]const u8 {
     const value = try target.get2(global, property) orelse
         return null;
     if (value == .undefined or value == .null)
         return null;
     const str = try value.toBunString2(global);
-    return allocations.track(str.toUTF8(bun.default_allocator));
+    return allocations.track(str.toUTF8(arena));
 }
 
 export fn Bun__getTemporaryDevServer(global: *JSC.JSGlobalObject) JSValue {
@@ -567,30 +631,6 @@ pub fn addImportMetaDefines(
     );
 }
 
-// bun.Output.warn(
-//     \\Be advised that Bun Bake is highly experimental, and its API
-//     \\will have breaking changes. Join the <magenta>#bake<r> Discord
-//     \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
-//     \\
-//     \\
-// , .{});
-// bun.Output.flush();
-
-// const options = try UserOptions.fromJS(callframe.argument(0), global);
-
-// var dev = DevServer.init(.{
-//     .root = options.root,
-//     .framework = options.framework,
-//     .routes = options.routes,
-//     .vm = global.bunVM(),
-// }) catch |err| {
-//     global.throwError(err, "while initializing Bun Dev Server");
-//     return .zero;
-// };
-// _ = &dev;
-
-// return .undefined;
-
 pub const server_virtual_source: bun.logger.Source = .{
     .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/server"),
     .contents = "", // Virtual
@@ -604,6 +644,7 @@ pub const client_virtual_source: bun.logger.Source = .{
 };
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const bun = @import("root").bun;
 const Environment = bun.Environment;
@@ -611,3 +652,4 @@ const ZigString = bun.JSC.ZigString;
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
+const validators = bun.JSC.Node.validators;

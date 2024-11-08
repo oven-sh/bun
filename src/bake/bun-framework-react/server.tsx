@@ -39,6 +39,30 @@ function getPage(route, meta: Bake.RouteMetadata) {
   );
 }
 
+function getPage2(meta: Bake.RouteMetadata) {
+  const { styles } = meta;
+
+  const Page = meta.pageModule.default;
+  let route = <Page />;
+  for (const layout of meta.layouts) {
+    const Layout = layout.default;
+    route = <Layout>{route}</Layout>;
+  }
+
+  return (
+    <html lang="en">
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Bun + React Server Components</title>
+        {styles.map(url => (
+          <link key={url} rel="stylesheet" href={url} />
+        ))}
+      </head>
+      <body>{route}</body>
+    </html>
+  );
+}
+
 // `server.tsx` exports a function to be used for handling user routes. It takes
 // in the Request object, the route's module, and extra route metadata.
 export default async function render(request: Request, route: any, meta: Bake.RouteMetadata): Promise<Response> {

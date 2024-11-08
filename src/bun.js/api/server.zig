@@ -6668,6 +6668,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 , .{});
                 bun.Output.flush();
 
+                {
+                    @panic("Sorry, DevServer is currently regressed until FrameworkRouter is integrated correctly into it.");
+                }
+
                 break :dev_server bun.bake.DevServer.init(.{
                     .root = bake_options.root,
                     .framework = bake_options.framework,
@@ -7184,8 +7188,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 app.get("/src:/*", *ThisServer, this, onSrcRequest);
             }
 
-            if (this.dev_server) |dev|
+            if (this.dev_server) |dev| {
+                {
+                    @panic("TODO: Revive DevServer");
+                }
                 dev.attachRoutes(this, this.config.onRequest != .zero) catch bun.outOfMemory();
+            }
         }
 
         pub fn listen(this: *ThisServer) void {

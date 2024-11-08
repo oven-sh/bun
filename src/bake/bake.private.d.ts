@@ -112,7 +112,7 @@ declare module "react-server-dom-webpack/server.node.unbundled.js" {
 declare module "react-dom/server.node" {
   import type { PipeableStream } from "react-server-dom-webpack/server.node.unbundled.js";
   import type { ReactElement } from "react";
- 
+
   export type RenderToPipeableStreamOptions = any;
   export function renderToPipeableStream(
     model: ReactElement,

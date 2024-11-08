@@ -15,16 +15,14 @@ export function react(): Bake.Framework {
     ],
     fileSystemRouterTypes: [
       {
-        root: 'pages',
+        root: "pages",
         clientEntryPoint: "bun-framework-react/client.tsx",
         serverEntryPoint: "bun-framework-react/server.tsx",
         extensions: ["jsx", "tsx"],
-        style: 'nextjs-pages',
+        style: "nextjs-pages-ui",
       },
     ],
-    staticRouters: [
-      "public",
-    ],
+    staticRouters: ["public"],
     reactFastRefresh: {
       importSource: "react-refresh/runtime",
     },
@@ -35,8 +33,8 @@ export function react(): Bake.Framework {
     },
     bundlerOptions: {
       ssr: {
-        conditions: ['react-server'],
+        conditions: ["react-server"],
       },
-    }
+    },
   };
 }

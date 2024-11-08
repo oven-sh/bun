@@ -337,7 +337,7 @@ pub const strings = @import("string_immutable.zig");
 pub const MutableString = @import("string_mutable.zig").MutableString;
 pub const RefCount = @import("./ref_count.zig").RefCount;
 
-pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
+pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.max_path_bytes;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
 pub const WPathBuffer = [std.os.windows.PATH_MAX_WIDE]u16;
 pub const OSPathChar = if (Environment.isWindows) u16 else u8;
@@ -3323,6 +3323,7 @@ pub inline fn resolveSourcePath(
     comptime sub_path: string,
 ) string {
     return comptime path: {
+        @setEvalBranchQuota(2000000);
         var buf: bun.PathBuffer = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const resolved = (std.fs.path.resolve(fba.allocator(), &.{

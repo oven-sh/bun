@@ -1,6 +1,6 @@
 //! Discovers routes from the filesystem, as instructed by the framework
-//! configuration. Supports incrementally updating for DevServer, or
-//! serializing to a binary for production builds.
+//! configuration. Agnotic to all different paradigms. Supports incrementally
+//! updating for DevServer, or serializing to a binary for use in production.
 const FrameworkRouter = @This();
 
 /// Metadata for route files is specified out of line, either in DevServer where
@@ -338,11 +338,11 @@ pub const Part = union(enum(u3)) {
     pub fn format(part: Part, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         comptime bun.assert(fmt.len == 0);
         try writer.writeAll("Part \"");
-        try part.toStringForTesting(writer);
+        try part.toStringForInternalUse(writer);
         try writer.writeAll("\"");
     }
 
-    fn toStringForTesting(part: Part, writer: anytype) !void {
+    fn toStringForInternalUse(part: Part, writer: anytype) !void {
         switch (part) {
             .text => |text| try writer.print("/{s}", .{text}),
             .param => |param_name| try writer.print(":{s}", .{param_name}),
@@ -370,28 +370,35 @@ pub const ParsedPattern = struct {
 };
 
 pub const Style = enum {
-    @"nextjs-pages",
+    @"nextjs-pages-ui",
+    @"nextjs-pages-routes",
     @"nextjs-app-ui",
-    @"nextjs-app-route",
+    @"nextjs-app-routes",
+    javascript_defined,
+
+    pub const UiOrRoutes = enum { ui, routes };
+    const NextRoutingConvention = enum { app, pages };
 
     pub fn parse(style: Style, file_path: []const u8, ext: []const u8, log: *TinyLog, arena: Allocator) !?ParsedPattern {
         bun.assert(file_path[0] == '/');
 
         return switch (style) {
-            .@"nextjs-pages" => parseNextJsPages(file_path, ext, log, arena),
+            .@"nextjs-pages-ui" => parseNextJsPages(file_path, ext, log, arena, .ui),
+            .@"nextjs-pages-routes" => parseNextJsPages(file_path, ext, log, arena, .routes),
             .@"nextjs-app-ui" => parseNextJsApp(file_path, ext, log, arena, .ui),
-            .@"nextjs-app-route" => parseNextJsApp(file_path, ext, log, arena, .route),
+            .@"nextjs-app-routes" => parseNextJsApp(file_path, ext, log, arena, .routes),
+            .javascript_defined => @panic("TODO: customizable Style"),
         };
     }
 
     /// Implements the pages router parser from Next.js:
     /// https://nextjs.org/docs/getting-started/project-structure#pages-routing-conventions
-    pub fn parseNextJsPages(file_path_raw: []const u8, ext: []const u8, log: *TinyLog, arena: Allocator) !?ParsedPattern {
+    pub fn parseNextJsPages(file_path_raw: []const u8, ext: []const u8, log: *TinyLog, arena: Allocator, extract: UiOrRoutes) !?ParsedPattern {
         var file_path = file_path_raw[0 .. file_path_raw.len - ext.len];
         var kind: ParsedPattern.Kind = .page;
         if (strings.hasSuffixComptime(file_path, "/index")) {
             file_path.len -= "/index".len;
-        } else if (strings.hasSuffixComptime(file_path, "/_layout")) {
+        } else if (extract == .ui and strings.hasSuffixComptime(file_path, "/_layout")) {
             file_path.len -= "/_layout".len;
             kind = .layout;
         }
@@ -413,7 +420,7 @@ pub const Style = enum {
         ext: []const u8,
         log: *TinyLog,
         arena: Allocator,
-        comptime extract: enum { ui, route },
+        comptime extract: UiOrRoutes,
     ) !?ParsedPattern {
         const without_ext = file_path_raw[0 .. file_path_raw.len - ext.len];
         const basename = std.fs.path.basename(without_ext);
@@ -435,7 +442,7 @@ pub const Style = enum {
                 .{ "loading", .extra },
                 .{ "not-found", .extra },
             },
-            .route => .{
+            .routes => .{
                 .{ "route", .page },
             },
         }).get(basename) orelse
@@ -453,7 +460,6 @@ pub const Style = enum {
         };
     }
 
-    const NextRoutingConvention = enum { app, pages };
     fn parseNextJsLikeRouteSegment(
         raw_input: []const u8,
         route_segment: []const u8,
@@ -492,6 +498,9 @@ pub const Style = enum {
                     return log.fail("Parameter name cannot start with \".\" (use \"...\" for catch-all)", .{}, start, len);
                 if (is_optional and !is_catch_all)
                     return log.fail("Optional parameters can only be catch-all (change to \"[[...{s}]]\" or remove extra brackets)", .{param_name}, start, len);
+                // Potential future proofing
+                if (std.mem.indexOfAny(u8, param_name, "?*{}()=:#,")) |bad_char_index|
+                    return log.fail("Parameter name cannot contain \"{c}\"", .{param_name[bad_char_index]}, start + bad_char_index, 1);
 
                 if (has_ending_double_bracket and !is_optional)
                     return log.fail("Extra \"]\" in route parameter", .{}, end, 1)
@@ -715,7 +724,7 @@ pub fn matchSlow(fr: *FrameworkRouter, path: []const u8, params: *MatchedParams)
     return null;
 }
 
-fn routePtr(fr: *FrameworkRouter, i: Route.Index) *Route {
+pub fn routePtr(fr: *FrameworkRouter, i: Route.Index) *Route {
     return &fr.routes.items[i.get()];
 }
 
@@ -759,7 +768,7 @@ pub const TinyLog = struct {
 };
 
 // `ctx` is a pointer to something which implements:
-// - "fn getFileIdForRouter(ctx, abs_path: []const u8) File.Index"
+// - "fn getFileIdForRouter(ctx, abs_path: []const u8) OpaqueFileId"
 // - "fn handleFileRouterError(ctx, ...) !void"
 pub fn scan(
     fw: *FrameworkRouter,
@@ -779,7 +788,7 @@ pub fn scan(
     try fw.scanInner(alloc, t, ty, r, root_info, &arena_state, ctx);
 }
 
-pub fn scanInner(
+fn scanInner(
     fw: *FrameworkRouter,
     alloc: Allocator,
     t: *const Type,
@@ -837,17 +846,28 @@ pub fn scanInner(
                         @panic("TODO: propagate error message")) orelse continue :outer;
 
                     var static_total_len: usize = 0;
-                    const has_dynamic = for (parsed.parts) |part| {
+                    var param_count: usize = 0;
+                    for (parsed.parts) |part| {
                         switch (part) {
                             .text => |data| static_total_len += 1 + data.len,
-                            .group => {},
-                            .param, .catch_all, .catch_all_optional => {
-                                break true;
-                            },
-                        }
-                    } else false;
 
-                    const result = switch (has_dynamic) {
+                            .param,
+                            .catch_all,
+                            .catch_all_optional,
+                            => param_count += 1,
+
+                            .group => {},
+                        }
+                    }
+
+                    if (param_count > 64) {
+                        @panic("TODO: propagate error for more than 64 params");
+                    }
+
+                    if (parsed.kind == .page and t.ignore_underscores and bun.strings.hasPrefixComptime(base, "_"))
+                        continue :outer;
+
+                    const result = switch (param_count > 0) {
                         inline else => |has_dynamic_comptime| result: {
                             const pattern = if (has_dynamic_comptime)
                                 try EncodedPattern.initFromParts(parsed.parts, alloc)
@@ -1071,7 +1091,7 @@ pub const JSFrameworkRouter = struct {
             return .null;
 
         var rendered = try std.ArrayList(u8).initCapacity(alloc, filepath.slice().len);
-        for (parsed.parts) |part| try part.toStringForTesting(rendered.writer());
+        for (parsed.parts) |part| try part.toStringForInternalUse(rendered.writer());
 
         var out = bun.String.init(rendered.items);
         const obj = JSValue.createEmptyObject(global, 2);
@@ -1084,7 +1104,7 @@ pub const JSFrameworkRouter = struct {
         var rendered = try std.ArrayList(u8).initCapacity(temp_allocator, pattern.data.len);
         defer rendered.deinit();
         var it = pattern.iterate();
-        while (it.next()) |part| try part.toStringForTesting(rendered.writer());
+        while (it.next()) |part| try part.toStringForInternalUse(rendered.writer());
         var str = bun.String.createUTF8(rendered.items);
         return str.transferToJS(global);
     }
@@ -1092,7 +1112,7 @@ pub const JSFrameworkRouter = struct {
     fn partToJS(global: *JSGlobalObject, part: Part, temp_allocator: Allocator) !JSValue {
         var rendered = std.ArrayList(u8).init(temp_allocator);
         defer rendered.deinit();
-        try part.toStringForTesting(rendered.writer());
+        try part.toStringForInternalUse(rendered.writer());
         var str = bun.String.createUTF8(rendered.items);
         return str.transferToJS(global);
     }

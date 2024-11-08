@@ -3097,7 +3097,7 @@ pub const MessageId = enum(u8) {
     ///   - `u32`: File index of the imported file
     visualizer = 'v',
 
-    pub fn char(id: MessageId) u8 {
+    pub inline fn char(id: MessageId) u8 {
         return @intFromEnum(id);
     }
 };
@@ -3116,12 +3116,12 @@ const HmrSocket = struct {
     pub const global_topic = "*";
     pub const visualizer_topic = "v";
 
-    pub fn onOpen(dw: *HmrSocket, ws: AnyWebSocket) void {
-        _ = ws.send(&(.{MessageId.version.char()} ++ dw.dev.configuration_hash_key), .binary, false, true);
+    pub fn onOpen(s: *HmrSocket, ws: AnyWebSocket) void {
+        _ = ws.send(&(.{MessageId.version.char()} ++ s.dev.configuration_hash_key), .binary, false, true);
         _ = ws.subscribe(global_topic);
     }
 
-    pub fn onMessage(dw: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
+    pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
         _ = opcode;
 
         if (msg.len == 0) {
@@ -3131,11 +3131,11 @@ const HmrSocket = struct {
 
         switch (@as(IncomingMessageId, @enumFromInt(msg[0]))) {
             .visualizer => {
-                if (!dw.emit_visualizer_events) {
-                    dw.emit_visualizer_events = true;
-                    dw.dev.emit_visualizer_events += 1;
+                if (!s.emit_visualizer_events) {
+                    s.emit_visualizer_events = true;
+                    s.dev.emit_visualizer_events += 1;
                     _ = ws.subscribe(visualizer_topic);
-                    dw.dev.emitVisualizerMessageIfNeeded() catch bun.outOfMemory();
+                    s.dev.emitVisualizerMessageIfNeeded() catch bun.outOfMemory();
                 }
             },
             else => {
@@ -3144,16 +3144,16 @@ const HmrSocket = struct {
         }
     }
 
-    pub fn onClose(dw: *HmrSocket, ws: AnyWebSocket, exit_code: i32, message: []const u8) void {
+    pub fn onClose(s: *HmrSocket, ws: AnyWebSocket, exit_code: i32, message: []const u8) void {
         _ = ws;
         _ = exit_code;
         _ = message;
 
-        if (dw.emit_visualizer_events) {
-            dw.dev.emit_visualizer_events -= 1;
+        if (s.emit_visualizer_events) {
+            s.dev.emit_visualizer_events -= 1;
         }
 
-        defer dw.dev.allocator.destroy(dw);
+        defer s.dev.allocator.destroy(s);
     }
 };
 
@@ -3365,6 +3365,9 @@ pub const HotReloadTask = struct {
     }
 
     pub fn run(initial: *HotReloadTask) void {
+        {
+            @panic("Revive dev server");
+        }
         debug.log("HMR Task start", .{});
         defer debug.log("HMR Task end", .{});
 

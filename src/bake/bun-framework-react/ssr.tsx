@@ -25,7 +25,7 @@ const createFromNodeStreamOptions: Manifest = {
 const bootstrapScriptContent = "self.__webpack_require__=i=>import(i)";
 // TODO: The above does not work in production. The following also doesn't but I think is closer.
 // const bootstrapScriptContent = "let m=new Map;"
-//   + "self.__webpack_chunk_load__=x=>import(x).then(y=>(m.set(x,y),y));" 
+//   + "self.__webpack_chunk_load__=x=>import(x).then(y=>(m.set(x,y),y));"
 //   + "self.__webpack_require__=i=>m.get(i)";
 
 // The `renderToHtml` function not only implements converting the RSC payload

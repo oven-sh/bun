@@ -81,7 +81,7 @@ declare module "bun" {
        * new ideas to be explored too.
        * @default []
        */
-      fileSystemRouterTypes?: FrameworkFileSystemRouterType[] ;
+      fileSystemRouterTypes?: FrameworkFileSystemRouterType[];
       /**
        * A list of directories that should be served statically. If the directory
        * does not exist in the user's project, it is ignored.
@@ -250,8 +250,12 @@ declare module "bun" {
        * a client will not be bundled, and the route will not receive bundling
        * for client-side interactivity.
        */
-      clientEntryPoint?: ImportSource<ClientEntryPoint> | null;
-      /** Do not traverse into directories and files that start with an `_` */
+      clientEntryPoint?: ImportSource<ClientEntryPoint> | undefined;
+      /**
+       * Do not traverse into directories and files that start with an `_`.  Do
+       * not index pages that start with an `_`. Does not prevent stuff like
+       * `_layout.tsx` from being recognized.
+       */
       ignoreUnderscores?: boolean;
       /**
        * @default ["node_modules", ".git"]
@@ -264,11 +268,33 @@ declare module "bun" {
       extensions: string[] | "*";
       /**
        * 'nextjs-app' builds routes out of directories with `page.tsx` and `layout.tsx`
-       * 'nextjs-pages' builds routes out of any `.tsx` file and layouts with `_layout.tsx`. Component routes are marked as "use client".
+       * 'nextjs-pages' builds routes out of any `.tsx` file and layouts with `_layout.tsx`.
        *
        * Eventually, an API will be added to add custom styles.
        */
-      style: "nextjs-app" | "nextjs-pages" | CustomFileSystemRouterFunction;
+      style: "nextjs-pages" | "nextjs-app-ui" | "nextjs-app-routes" | CustomFileSystemRouterFunction;
+      /**
+       * If true, this will track route layouts and provide them as an array during SSR.
+       * @default false
+       */
+      layouts?: boolean | undefined;
+      // /**
+      //  * If true, layouts act as navigation endpoints. This can be used to
+      //  * implement Remix.run's router design, where `hello._index` and `hello`
+      //  * are the same URL, but an allowed collision.
+      //  *
+      //  * @default false
+      //  */
+      // navigatableLayouts?: boolean | undefined;
+      // /**
+      //  * Controls how the route entry point is bundled with regards to server components:
+      //  * - server-component: Default server components.
+      //  * - client-boundary: As if "use client" was used on every route.
+      //  * - disabled: As if server components was completely disabled.
+      //  *
+      //  * @default "server-component" if serverComponents is enabled, "disabled" otherwise
+      //  */
+      // serverComponentsMode?: "server-component" | "client-boundary" | "disabled";
     }
 
     type StaticRouter =
@@ -294,13 +320,16 @@ declare module "bun" {
       /**
        * Use this file as a route. Routes may nest, where a framework
        * can use parent routes to implement layouts.
-       *
-       * TODO: API design for sanely linking routes to their parent.
        */
       | {
-          type: "route";
-          pattern: RoutePattern;
-          navigatable: boolean;
+          /**
+           * Route pattern can include `:param` for parameters, '*' for
+           * catch-all, and '*?' for optional catch-all. Parameters must take
+           * the full component of a path segment. Parameters cannot have
+           * constraints at this moment.
+           */
+          pattern: string;
+          type: "route" | "layout" | "extra";
         };
 
     /**
@@ -323,7 +352,7 @@ declare module "bun" {
        * multiple output files. Note that `import.meta.env.STATIC` will
        * be inlined to true during a static build.
        */
-      prerender: (routeModule: unknown, routeMetadata: RouteMetadata) => Awaitable<PrerenderResult | null>;
+      prerender: (routeMetadata: RouteMetadata) => Awaitable<PrerenderResult | null>;
     }
 
     interface PrerenderResult {
@@ -347,22 +376,39 @@ declare module "bun" {
      * is not safe to mutate it at all.
      */
     interface RouteMetadata {
-      // readonly routeModule: unknown;
-      // readonly layouts: ReadonlyArray<LayoutMetadata>;
+      /**
+       * The loaded module of the page itself.
+       */
+      readonly pageModule: any;
+      /**
+       * The loaded module of all of the route layouts. The first one is the
+       * inner-most, the last is the root layout.
+       *
+       * An example of converting the layout list into a nested JSX structure:
+       *     const Page = meta.pageModule.default;
+       *     let route = <Page />
+       *     for (const layout of meta.layouts) {
+       *       const Layout = layout.default;
+       *       route = <Layout>{route}</Layout>;
+       *     }
+       */
+      readonly layouts: ReadonlyArray<any>;
+      /** Received route params. `null` if the route does not take params */
+      readonly params: null | Record<string, string>;
       /**
        * A list of js files that the route will need to be interactive.
        */
       readonly scripts: ReadonlyArray<string>;
       /**
+       * A list of js files that should be preloaded.
+       *
+       *   <link rel="modulepreload" href="..." />
+       */
+      readonly modulepreload: ReadonlyArray<string>;
+      /**
        * A list of css files that the route will need to be styled.
        */
       readonly styles: ReadonlyArray<string>;
-      /**
-       * Can be used by the framework to mention the route file. Only provided in
-       * development mode to prevent leaking these details into production
-       * builds.
-       */
-      devRoutePath?: string;
     }
   }
 

@@ -3146,7 +3146,6 @@ const ServerComponentBoundary = js_ast.ServerComponentBoundary;
 /// It enqueues a task to be run on the JS thread which resolves the promise
 /// for every onLoad callback which called `.defer()`.
 pub const DeferredBatchTask = struct {
-    js_task: JSC.AnyTask = undefined,
     running: if (Environment.isDebug) bool else u0 = if (Environment.isDebug) false else 0,
 
     const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
@@ -3154,7 +3153,7 @@ pub const DeferredBatchTask = struct {
     pub fn init(this: *DeferredBatchTask) void {
         bun.debugAssert(!this.running);
         this.* = .{
-            .js_task = AnyTask.init(this),
+            .running = if (comptime Environment.isDebug) false else 0,
         };
     }
 
@@ -3168,8 +3167,7 @@ pub const DeferredBatchTask = struct {
             bun.assert(!this.running);
             this.running = false;
         }
-        const concurrent_task = JSC.ConcurrentTask.createFrom(&this.js_task);
-        this.getCompletion().?.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+        this.getCompletion().?.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
     }
 
     pub fn deinit(this: *DeferredBatchTask) void {

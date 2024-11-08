@@ -364,7 +364,27 @@ The `onLoad` method optionally accepts a `namespace` in addition to the `filter`
 
 ### `onStart`
 
-This callback runs once the bundler starts.
+```ts
+onStart(callback: () => void): Promise<void> | void;
+```
+
+Registers a callback to be run when the bundler starts a new bundle.
+
+```ts
+import { plugin } from "bun";
+
+plugin({
+  name: "onStart example",
+
+  setup(build) {
+    build.onStart(() => {
+      console.log("Bundler started!");
+    });
+  },
+});
+```
+
+The callback can return a `Promise`. All `.onStart()` callbacks are run after every plugin in the bundle has been setup.
 
 ### `onResolve`
 
@@ -384,10 +404,10 @@ This allows you to delay execution of the `onLoad` callback until all other modu
 
 This is useful for returning contens of a module that depends on other modules.
 
-```ts
-// Example: generating a JSON file which contains every server route which is bundled
+##### Example: tracking and reporting unused exports
 
-// This will be populated by
+```ts
+// This will be populated by the first .onLoad callback below
 let serverRoutes: ServerRoute[] = [];
 
 build.onLoad({ filter: /routes\/\.(ts|tsx)$/ }, ({ path, contents, defer }) => {

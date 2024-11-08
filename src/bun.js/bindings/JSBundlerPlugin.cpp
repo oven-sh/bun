@@ -410,7 +410,9 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     Bun::JSBundlerPlugin* plugin,
     JSC::EncodedJSValue encodedSetupFunction,
-    JSC::EncodedJSValue encodedConfig)
+    JSC::EncodedJSValue encodedConfig,
+    JSC::EncodedJSValue encodedOnstartPromisesArray,
+    JSC::EncodedJSValue encodedIsLast)
 {
     auto& vm = plugin->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);
@@ -426,16 +428,11 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     MarkedArgumentBuffer arguments;
     arguments.append(JSValue::decode(encodedSetupFunction));
     arguments.append(JSValue::decode(encodedConfig));
+    arguments.append(JSValue::decode(encodedOnstartPromisesArray));
+    arguments.append(JSValue::decode(encodedIsLast));
     auto* lexicalGlobalObject = jsCast<JSFunction*>(JSValue::decode(encodedSetupFunction))->globalObject();
 
-    auto result = call(lexicalGlobalObject, setupFunction, callData, plugin, arguments);
-    if (UNLIKELY(scope.exception())) {
-        auto exception = scope.exception();
-        scope.clearException();
-        return JSValue::encode(exception);
-    }
-
-    return JSValue::encode(result);
+    return JSC::JSValue::encode(JSC::call(lexicalGlobalObject, setupFunction, callData, plugin, arguments));
 }
 
 extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* config)

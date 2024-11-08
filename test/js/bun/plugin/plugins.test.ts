@@ -563,6 +563,113 @@ describe("start", () => {
       },
     });
   }
+
+  {
+    let action: string[] = [];
+    itBundled("executes after all plugins have been setup", {
+      experimentalCss: true,
+      minifyWhitespace: true,
+      files: {
+        "/entry.css": /* css */ `
+          body {
+            background: white;
+            color: blue; }
+        `,
+      },
+      plugins: [
+        {
+          name: "onStart 1",
+          setup(build) {
+            build.onStart(async () => {
+              action.push("onStart 1 setup");
+              await Bun.sleep(1000);
+              action.push("onStart 1 complete");
+            });
+          },
+        },
+        {
+          name: "onStart 2",
+          setup(build) {
+            build.onStart(async () => {
+              action.push("onStart 2 setup");
+              await Bun.sleep(1000);
+              action.push("onStart 2 complete");
+            });
+          },
+        },
+        {
+          name: "onStart 3",
+          setup(build) {
+            build.onStart(async () => {
+              action.push("onStart 3 setup");
+              await Bun.sleep(1000);
+              action.push("onStart 3 complete");
+            });
+          },
+        },
+      ],
+      outfile: "/out.js",
+      onAfterBundle(api) {
+        expect(action.slice(0, 3)).toStrictEqual(["onStart 1 setup", "onStart 2 setup", "onStart 3 setup"]);
+        expect(new Set(action.slice(3))).toStrictEqual(
+          new Set(["onStart 1 complete", "onStart 2 complete", "onStart 3 complete"]),
+        );
+      },
+    });
+  }
+
+  {
+    let action: string[] = [];
+    test("LMAO", async () => {
+      const folder = tempDirWithFiles("plz", {
+        "index.ts": "export const foo = {}",
+      });
+      try {
+        const result = await Bun.build({
+          entrypoints: [path.join(folder, "index.ts")],
+          experimentalCss: true,
+          minify: true,
+          plugins: [
+            {
+              name: "onStart 1",
+              setup(build) {
+                build.onStart(async () => {
+                  action.push("onStart 1 setup");
+                  throw new Error("WOOPS");
+                  // await Bun.sleep(1000);
+                });
+              },
+            },
+            {
+              name: "onStart 2",
+              setup(build) {
+                build.onStart(async () => {
+                  action.push("onStart 2 setup");
+                  await Bun.sleep(1000);
+                  action.push("onStart 2 complete");
+                });
+              },
+            },
+            {
+              name: "onStart 3",
+              setup(build) {
+                build.onStart(async () => {
+                  action.push("onStart 3 setup");
+                  await Bun.sleep(1000);
+                  action.push("onStart 3 complete");
+                });
+              },
+            },
+          ],
+        });
+        console.log(result);
+      } catch (err) {
+        expect(err).toBeDefined();
+        return;
+      }
+      throw new Error("DIDNT GET ERRROR!");
+    });
+  }
 });
 
 describe("defer", () => {

@@ -115,8 +115,11 @@ pub const JSBundler = struct {
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
             if (try config.getArray(globalThis, "plugins")) |array| {
+                const length = array.getLength(globalThis);
                 var iter = array.arrayIterator(globalThis);
-                while (iter.next()) |plugin| {
+                var onstart_promise_array: JSValue = JSValue.undefined;
+                var i: usize = 0;
+                while (iter.next()) |plugin| : (i += 1) {
                     if (!plugin.isObject()) {
                         globalThis.throwInvalidArguments("Expected plugin to be an object", .{});
                         return error.JSError;
@@ -150,19 +153,34 @@ pub const JSBundler = struct {
                         break :brk plugins.*.?;
                     };
 
-                    var plugin_result = bun_plugins.addPlugin(function, config);
+                    const is_last = i == length - 1;
+                    var plugin_result = try bun_plugins.addPlugin(function, config, onstart_promise_array, is_last);
 
                     if (!plugin_result.isEmptyOrUndefinedOrNull()) {
                         if (plugin_result.asAnyPromise()) |promise| {
+                            promise.setHandled(globalThis.vm());
                             globalThis.bunVM().waitForPromise(promise);
-                            plugin_result = promise.result(globalThis.vm());
+                            switch (promise.unwrap(globalThis.vm(), .mark_handled)) {
+                                .pending => unreachable,
+                                .fulfilled => |val| {
+                                    plugin_result = val;
+                                },
+                                .rejected => |err| {
+                                    globalThis.throwValue(err);
+                                    return error.JSError;
+                                },
+                            }
                         }
                     }
 
                     if (plugin_result.toError()) |err| {
                         globalThis.throwValue(err);
                         return error.JSError;
+                    } else if (globalThis.hasException()) {
+                        return error.JSError;
                     }
+
+                    onstart_promise_array = plugin_result;
                 }
             }
 
@@ -1074,11 +1092,15 @@ pub const JSBundler = struct {
             this: *Plugin,
             object: JSC.JSValue,
             config: JSC.JSValue,
-        ) JSValue {
+            onstart_promises_array: JSC.JSValue,
+            is_last: bool,
+        ) !JSValue {
             JSC.markBinding(@src());
             const tracer = bun.tracy.traceNamed(@src(), "JSBundler.addPlugin");
             defer tracer.end();
-            return JSBundlerPlugin__runSetupFunction(this, object, config);
+            const value = JSBundlerPlugin__runSetupFunction(this, object, config, onstart_promises_array, JSValue.jsBoolean(is_last));
+            if (value == .zero) return error.JSError;
+            return value;
         }
 
         pub fn drainDeferred(this: *Plugin, rejected: bool) void {
@@ -1100,6 +1122,8 @@ pub const JSBundler = struct {
 
         extern fn JSBundlerPlugin__runSetupFunction(
             *Plugin,
+            JSC.JSValue,
+            JSC.JSValue,
             JSC.JSValue,
             JSC.JSValue,
         ) JSValue;

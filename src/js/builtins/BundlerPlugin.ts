@@ -24,6 +24,7 @@ interface BundlerPlugin {
   addError(internalID, error, number): void;
   addFilter(filter, namespace, number): void;
   generateDeferPromise(): Promise<void>;
+  promises: Array<Promise<any>> | undefined;
 }
 
 // Extra types
@@ -48,7 +49,14 @@ interface PluginBuilderExt extends PluginBuilder {
   esbuild: any;
 }
 
-export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: BuildConfigExt) {
+export function runSetupFunction(
+  this: BundlerPlugin,
+  setup: Setup,
+  config: BuildConfigExt,
+  promises: Array<Promise<any>> | undefined,
+  is_last: boolean,
+) {
+  this.promises = promises;
   var onLoadPlugins = new Map<string, [RegExp, AnyFunction][]>();
   var onResolvePlugins = new Map<string, [RegExp, AnyFunction][]>();
 
@@ -100,12 +108,19 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     validate(filterObject, callback, onResolvePlugins);
   }
 
+  const self = this;
   function onStart(callback) {
     if (!$isCallable(callback)) {
       throw new TypeError("callback must be a function");
     }
 
-    return callback();
+    const ret = callback();
+    if ($isPromise(ret)) {
+      if (($getPromiseInternalField(ret, $promiseFieldFlags) & $promiseStateMask) != $promiseStateFulfilled) {
+        self.promises ??= [];
+        self.promises.push(ret);
+      }
+    }
   }
 
   const processSetupResult = () => {
@@ -160,7 +175,11 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
       }
     }
 
-    return anyOnLoad || anyOnResolve;
+    if (is_last) {
+      this.promises = undefined;
+    }
+
+    return this.promises;
   };
 
   var setupResult = setup({
@@ -193,8 +212,32 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     if ($getPromiseInternalField(setupResult, $promiseFieldFlags) & $promiseStateFulfilled) {
       setupResult = $getPromiseInternalField(setupResult, $promiseFieldReactionsOrResult);
     } else {
-      return setupResult.$then(processSetupResult);
+      return setupResult.$then(() => {
+        if (is_last && self.promises !== undefined && self.promises.length > 0) {
+          const awaitAll = Promise.all(self.promises);
+          // if (awaitAll && $isPromise(awaitAll)) {
+          //   if ($getPromiseInternalField(awaitAll, $promiseFieldFlags) & $promiseStateFulfilled) {
+          //   } else {
+          return awaitAll.$then(processSetupResult);
+          //   }
+          // }
+        }
+        return processSetupResult();
+      });
     }
+  }
+
+  if (is_last && this.promises !== undefined && this.promises.length > 0) {
+    const awaitAll = Promise.all(this.promises);
+    return awaitAll.$then(processSetupResult);
+    // if (awaitAll && $isPromise(awaitAll)) {
+    //   const foo = $getPromiseInternalField(awaitAll, $promiseFieldFlags) & $promiseStateMask;
+    //   console.log("LOL", foo);
+    //   console.log("LMAO", $promiseStateFulfilled);
+    //   if (foo === $promiseStateFulfilled) {
+    //   } else {
+    // }
+    // }
   }
 
   return processSetupResult();

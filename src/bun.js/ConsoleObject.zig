@@ -1143,7 +1143,7 @@ pub const Formatter = struct {
                 };
             }
 
-            if (js_type.canGet()) {
+            if (js_type.canGet() and js_type != .ProxyObject) {
                 // Attempt to get custom formatter
                 if (value.fastGet(globalThis, .inspectCustom)) |callback_value| {
                     if (callback_value.isCallable(globalThis.vm())) {
@@ -1202,7 +1202,7 @@ pub const Formatter = struct {
             }
 
             // Is this a react element?
-            if (js_type.isObject()) {
+            if (js_type.isObject() and js_type != .ProxyObject) {
                 if (value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
                     var reactElement = ZigString.init("react.element");
                     var react_fragment = ZigString.init("react.fragment");

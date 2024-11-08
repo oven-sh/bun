@@ -340,10 +340,12 @@ Bun.build({
     {
       name: "demo",
       setup(build) {
-        build.config.minify = true; // ✅ good! modifying it directly in the setup() function
+        // ✅ good! modifying it directly in the setup() function
+        build.config.minify = true;
 
         build.onStart(() => {
-          build.config.minify = false; // 🚫 bad!
+          // 🚫 uh-oh! this won't work!
+          build.config.minify = false;
         });
       },
     },
@@ -353,7 +355,15 @@ Bun.build({
 
 {% /callout %}
 
-## Reference
+## Lifecycle callbacks
+
+Plugins can register callbacks to be run at various points in the lifecycle of a bundle:
+
+- [`onStart()`](#onstart): Run once the bundler has started a bundle
+- [`onResolve()`](#onresolve): Run before a module is resolved
+- [`onLoad()`](#onload): Run before a module is loaded.
+
+A rough overview of the types (please refer to Bun's `bun.d.ts` for the full type definitions):
 
 ```ts
 namespace Bun {
@@ -383,10 +393,10 @@ type PluginBuilder = {
   config: BuildConfig;
 };
 
-type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "object";
+type Loader = "js" | "jsx" | "ts" | "tsx" | "css" | "json" | "toml" | "object";
 ```
 
-### What is a namespace?
+### Namespaces
 
 `onLoad` and `onResolve` accept an optional `namespace` string. What is a namespaace?
 
@@ -459,13 +469,13 @@ Note that `onStart()` callbacks (like every other lifecycle callback) do not hav
 ### `onResolve`
 
 ```ts
-onResolve: (
+onResolve(
   args: { filter: RegExp; namespace?: string },
   callback: (args: { path: string; importer: string }) => {
     path: string;
     namespace?: string;
   } | void,
-) => void;
+): void;
 ```
 
 To bundle your project, Bun walks down the dependency tree of all modules in your project. For each imported module, Bun actually has to find and read that module. The "finding" part is known as "resolving" a module.
@@ -500,19 +510,21 @@ plugin({
 ### `onLoad`
 
 ```ts
-onLoad: (
+onLoad(
   args: { filter: RegExp; namespace?: string },
   callback: (args: { path: string, importer: string, namespace: string, kind: ImportKind  }) => {
     loader?: Loader;
     contents?: string;
     exports?: Record<string, any>;
   },
-) => void;
+): void;
 ```
 
-After Bun's bundler has resolved a module, it needs to read the contents of the module and parse it. The `onLoad()` plugin lifecycle callback allows you to modify the _contents_ of a module before it is read and parsed by Bun.
+After Bun's bundler has resolved a module, it needs to read the contents of the module and parse it.
 
-Like `onResolve()`, `onLoad()` the first argument to `onLoad()` allows you to filter which modules will this invocation of `onLoad()` will apply to.
+The `onLoad()` plugin lifecycle callback allows you to modify the _contents_ of a module before it is read and parsed by Bun.
+
+Like `onResolve()`, the first argument to `onLoad()` allows you to filter which modules this invocation of `onLoad()` will apply to.
 
 The second argument to `onLoad()` is a callback which is run for each matching module _before_ Bun loads the contents of the module into memory.
 

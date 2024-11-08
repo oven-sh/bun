@@ -376,6 +376,8 @@ pub const BundleV2 = struct {
     unique_key: u64 = 0,
     dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
 
+    drain_defer_task: DeferredBatchTask = .{},
+
     const BakeOptions = struct {
         framework: bake.Framework,
         client_bundler: *Bundler,
@@ -3144,32 +3146,41 @@ const ServerComponentBoundary = js_ast.ServerComponentBoundary;
 /// It enqueues a task to be run on the JS thread which resolves the promise
 /// for every onLoad callback which called `.defer()`.
 pub const DeferredBatchTask = struct {
-    completion: ?*bun.BundleV2.JSBundleCompletionTask,
     js_task: JSC.AnyTask = undefined,
+    running: if (Environment.isDebug) bool else u0 = if (Environment.isDebug) false else 0,
 
     const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
 
-    pub fn new(completion: *bun.BundleV2.JSBundleCompletionTask) *DeferredBatchTask {
-        var deferred_batch_task = bun.create(bun.default_allocator, DeferredBatchTask, .{
-            .completion = completion,
-        });
+    pub fn init(this: *DeferredBatchTask) void {
+        bun.debugAssert(!this.running);
+        this.* = .{
+            .js_task = AnyTask.init(this),
+        };
+    }
 
-        deferred_batch_task.js_task = AnyTask.init(deferred_batch_task);
-        return deferred_batch_task;
+    pub fn getCompletion(this: *DeferredBatchTask) ?*bun.BundleV2.JSBundleCompletionTask {
+        const bundler: *BundleV2 = @alignCast(@fieldParentPtr("drain_defer_task", this));
+        return bundler.completion;
     }
 
     pub fn schedule(this: *DeferredBatchTask) void {
+        if (comptime Environment.isDebug) {
+            bun.assert(!this.running);
+            this.running = false;
+        }
         const concurrent_task = JSC.ConcurrentTask.createFrom(&this.js_task);
-        this.completion.?.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+        this.getCompletion().?.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
     }
 
     pub fn deinit(this: *DeferredBatchTask) void {
-        bun.default_allocator.destroy(this);
+        if (comptime Environment.isDebug) {
+            this.running = false;
+        }
     }
 
     pub fn runOnJSThread(this: *DeferredBatchTask) void {
         defer this.deinit();
-        var completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
+        var completion: *bun.BundleV2.JSBundleCompletionTask = this.getCompletion() orelse {
             return;
         };
 
@@ -4452,8 +4463,8 @@ pub const Graph = struct {
         const pending_deferred = this.deferred_pending.swap(0, .acq_rel);
         if (pending_deferred > 0) {
             _ = @atomicRmw(usize, &this.parse_pending, .Add, pending_deferred, .acq_rel);
-            var task = DeferredBatchTask.new(bundler.completion.?);
-            task.schedule();
+            bundler.drain_defer_task.init();
+            bundler.drain_defer_task.schedule();
             return pending_deferred;
         }
         return pending_deferred;

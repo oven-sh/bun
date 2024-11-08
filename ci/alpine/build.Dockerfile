@@ -14,8 +14,7 @@ RUN file ./build/release/bun
 RUN ldd ./build/release/bun
 RUN ./build/release/bun
 
-WORKDIR /output
-RUN cp -R /app/bun/build/* .
+RUN cp -R /app/bun/build/* /output
 
 FROM scratch AS artifact
 COPY --from=build /output /

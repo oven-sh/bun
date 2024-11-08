@@ -3102,7 +3102,8 @@ pub const PostgresSQLConnection = struct {
                     break :brk ctx_;
                 };
                 ptr.socket = .{
-                    .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr) catch |err| {
+                    // TODO: investigate if allowHalfOpen: true is necessary here or if brings some advantage
+                    .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
                         globalObject.throwError(err, "failed to connect to postgresql");
                         ptr.deinit();
                         return .zero;

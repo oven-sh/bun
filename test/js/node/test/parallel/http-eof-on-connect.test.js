@@ -37,7 +37,7 @@ test("EOF on connect", async () => {
 
   await new Promise(resolve => {
     server.on("listening", () => {
-      const client = net.createConnection(server.address().port);
+      const client = net.createConnection(server.address().port, "127.0.0.1");
 
       client.on("connect", () => {
         client.destroy();

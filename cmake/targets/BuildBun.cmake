@@ -501,6 +501,11 @@ else()
   unsupported(CMAKE_SYSTEM_PROCESSOR)
 endif()
 
+set(ZIG_FLAGS_BUN)
+if(NOT "${REVISION}" STREQUAL "")
+  set(ZIG_FLAGS_BUN ${ZIG_FLAGS_BUN} -Dsha=${REVISION})
+endif()
+
 register_command(
   TARGET
     bun-zig
@@ -519,11 +524,11 @@ register_command(
       -Dcpu=${ZIG_CPU}
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
       -Dversion=${VERSION}
-      -Dsha=${REVISION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
       -Dcodegen_path=${CODEGEN_PATH}
       -Dcodegen_embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
+      ${ZIG_FLAGS_BUN}
   ARTIFACTS
     ${BUN_ZIG_OUTPUT}
   TARGETS

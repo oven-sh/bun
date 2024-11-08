@@ -1,65 +1,10 @@
 #!/usr/bin/env bun
 
-import { spawn as nodeSpawn } from "node:child_process";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { exists, readdir, readFile } from "node:fs/promises";
 import { inspect, parseArgs } from "node:util";
+import { getUserData } from "./user-data.mjs";
+import { spawn } from "../utils.mjs";
 
-type Platform = {
-  os: "linux" | "darwin" | "windows";
-  arch: "aarch64" | "x64";
-  distro: string;
-  release: string;
-};
-
-type Image = {
-  id: string;
-  name: string;
-  username: string;
-};
-
-type Machine = {
-  exec(command: string[]): Promise<SpawnResult>;
-  attach(): Promise<void>;
-  close(): Promise<void>;
-  [Symbol.asyncDispose](): Promise<void>;
-};
-
-type Cloud = {
-  createMachine(platform: Platform): Promise<Machine>;
-  getImage(platform: Platform): Promise<Image>;
-};
-
-type AwsImage = {
-  ImageId: string;
-  Name: string;
-  CreationDate: string;
-};
-
-type AwsReservation = {
-  Instances: AwsInstance[];
-};
-
-type AwsInstance = {
-  InstanceId: string;
-  ImageId: string;
-  PublicIpAddress: string;
-  LaunchTime: string;
-};
-
-type AwsCloud = Cloud & {
-  describeImages(options?: Record<string, string | undefined>): Promise<AwsImage[]>;
-  describeInstances(options?: Record<string, string>): Promise<AwsInstance[]>;
-  runInstances(options?: Record<string, string>, runOptions?: { wait?: boolean }): Promise<AwsInstance[]>;
-  terminateInstances(...instanceIds: string[]): Promise<void>;
-};
-
-type DockerCloud = Cloud & {
-  getPlatform(platform: Platform): string;
-};
-
-const docker: DockerCloud = {
+const docker = {
   getPlatform(platform) {
     const { os, arch } = platform;
 
@@ -82,7 +27,7 @@ const docker: DockerCloud = {
     const { stdout } = await spawnSafe(["docker", "run", "--rm", "--platform", platformString, "-d", id, ...command]);
     const containerId = stdout.trim();
 
-    const exec = async (command: string[]) => {
+    const exec = async command => {
       return spawnSafe(["docker", "exec", containerId, ...command]);
     };
 
@@ -113,7 +58,7 @@ const docker: DockerCloud = {
   async getImage(platform) {
     const { os, distro, release } = platform;
 
-    let url: string | undefined;
+    let url;
     if (os === "linux") {
       if (distro === "debian") {
         url = `docker.io/library/debian:${release}`;
@@ -141,12 +86,12 @@ const docker: DockerCloud = {
   },
 };
 
-const aws: AwsCloud = {
+const aws = {
   async createMachine(platform) {
     const image = await aws.getImage(platform);
-    const userData = await getUserData(platform, image);
-    const { id, username, RootDeviceName, BlockDeviceMappings } = image as any;
-    const { arch } = platform;
+    const userData = await getUserData({ ...platform, username: image["username"] });
+    const { id, username, RootDeviceName, BlockDeviceMappings } = image;
+    const { os, arch } = platform;
 
     const blockDeviceMappings = BlockDeviceMappings.map(device => {
       const { DeviceName } = device;
@@ -154,7 +99,7 @@ const aws: AwsCloud = {
         return {
           ...device,
           Ebs: {
-            VolumeSize: 20,
+            VolumeSize: os === "windows" ? 40 : 20,
           },
         };
       }
@@ -182,7 +127,7 @@ const aws: AwsCloud = {
     const { InstanceId, PublicIpAddress } = instance;
     const options = { hostname: PublicIpAddress, username };
 
-    const exec = (command?: string[] | undefined) => {
+    const exec = command => {
       return spawnSsh({ ...options, command });
     };
 
@@ -208,9 +153,9 @@ const aws: AwsCloud = {
     const armOr64 = arch === "aarch64" ? "arm64" : "x86_64";
     const aarchOr64 = arch === "aarch64" ? "aarch64" : "x86_64";
 
-    let name: string | undefined;
-    let username: string | undefined;
-    let owner: string | undefined = "amazon";
+    let name;
+    let username;
+    let owner = "amazon";
     if (os === "linux") {
       if (distro === "debian") {
         name = `debian-${release}-${armOrAmd}-*`;
@@ -243,7 +188,7 @@ const aws: AwsCloud = {
       const images = await aws.describeImages({ state: "available", "owner-alias": owner, name });
       if (images.length) {
         const [image] = images;
-        const { Name, ImageId, RootDeviceName, BlockDeviceMappings } = image as any;
+        const { Name, ImageId, RootDeviceName, BlockDeviceMappings } = image;
         return {
           id: ImageId,
           name: Name,
@@ -262,7 +207,7 @@ const aws: AwsCloud = {
       .filter(([_, value]) => value)
       .map(([key, value]) => `Name=${key},Values=${value}`);
     const { stdout } = await spawnSafe(["aws", "ec2", "describe-images", "--filters", ...filters, "--output", "json"]);
-    const { Images }: { Images: AwsImage[] } = JSON.parse(stdout);
+    const { Images } = JSON.parse(stdout);
 
     return Images.sort((a, b) => (a.CreationDate < b.CreationDate ? 1 : -1));
   },
@@ -278,7 +223,7 @@ const aws: AwsCloud = {
       "--output",
       "json",
     ]);
-    const { Reservations }: { Reservations: AwsReservation[] } = JSON.parse(stdout);
+    const { Reservations } = JSON.parse(stdout);
     const instances = Reservations.flatMap(({ Instances }) => Instances);
 
     return instances.sort((a, b) => (a.LaunchTime < b.LaunchTime ? 1 : -1));
@@ -287,7 +232,7 @@ const aws: AwsCloud = {
   async runInstances(options = {}, runOptions = {}) {
     const flags = Object.entries(options).map(([key, value]) => `--${key}=${value}`);
     const { stdout } = await spawnSafe(["aws", "ec2", "run-instances", ...flags, "--output", "json"]);
-    const { Instances }: { Instances: AwsInstance[] } = JSON.parse(stdout);
+    const { Instances } = JSON.parse(stdout);
 
     if (runOptions["wait"]) {
       const instanceIds = Instances.map(({ InstanceId }) => InstanceId);
@@ -303,41 +248,7 @@ const aws: AwsCloud = {
   },
 };
 
-type GoogleCloud = Cloud & {
-  listImages(options?: Record<string, string>): Promise<GoogleImage[]>;
-  createInstances(
-    options?: Record<string, string | boolean>,
-    createOptions?: { wait?: boolean },
-  ): Promise<GoogleInstance[]>;
-  listInstances(options?: Record<string, string>): Promise<GoogleInstance[]>;
-  deleteInstance(instanceId: string): Promise<void>;
-};
-
-type GoogleImage = {
-  id: string;
-  name: string;
-  description: string;
-  status: string; // "READY"
-  selfLink: string;
-  creationTimestamp: string;
-};
-
-type GoogleInstance = {
-  id: string;
-  name: string;
-  status: string; // "RUNNING"
-  networkInterfaces: {
-    networkIP: string;
-    stackType: "IPV4_ONLY" | "IPV6_ONLY" | "IPV4_IPV6";
-    accessConfigs: {
-      natIP: string;
-      type: "ONE_TO_ONE_NAT" | "EPHEMERAL";
-    }[];
-  }[];
-  creationTimestamp: string;
-};
-
-const google: GoogleCloud = {
+const google = {
   async createMachine(platform) {
     const image = await google.getImage(platform);
     const { id: imageId, username } = image;
@@ -369,7 +280,7 @@ const google: GoogleCloud = {
       throw new Error(`Failed to find public IP for instance: ${id}`);
     };
 
-    const exec = (command?: string[] | undefined) => {
+    const exec = command => {
       const hostname = publicIp();
       return spawnSsh({ hostname, username, command });
     };
@@ -395,8 +306,8 @@ const google: GoogleCloud = {
     const { os, arch, distro, release } = platform;
     const architecture = arch === "aarch64" ? "ARM64" : "X86_64";
 
-    let name: string | undefined;
-    let username: string | undefined;
+    let name;
+    let username;
     if (os === "linux") {
       if (distro === "debian") {
         name = `debian-${release}-*`;
@@ -434,7 +345,7 @@ const google: GoogleCloud = {
       .join(" AND ");
     const filters = filter ? ["--filter", filter] : [];
     const { stdout } = await spawnSafe(["gcloud", "compute", "images", "list", ...filters, "--format", "json"]);
-    const images: GoogleImage[] = JSON.parse(stdout);
+    const images = JSON.parse(stdout);
     return images.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
   },
 
@@ -444,7 +355,7 @@ const google: GoogleCloud = {
       .join(" AND ");
     const filters = filter ? ["--filter", filter] : [];
     const { stdout } = await spawnSafe(["gcloud", "compute", "instances", "list", ...filters, "--format", "json"]);
-    const instances: GoogleInstance[] = JSON.parse(stdout);
+    const instances = JSON.parse(stdout);
     return instances.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
   },
 
@@ -463,7 +374,7 @@ const google: GoogleCloud = {
       "--format",
       "json",
     ]);
-    const instances: GoogleInstance[] = JSON.parse(stdout);
+    const instances = JSON.parse(stdout);
     return instances.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
   },
 
@@ -472,143 +383,7 @@ const google: GoogleCloud = {
   },
 };
 
-type SpawnOptions = {
-  stdio?: "inherit" | "pipe";
-};
-
-type SpawnResult = {
-  exitCode: number;
-  signalCode?: string;
-  stdout: string;
-  stderr: string;
-  spawnError?: Error;
-};
-
-async function spawn(command: string[], options: SpawnOptions = {}): Promise<SpawnResult> {
-  console.log("$", ...command);
-
-  let exitCode: number = 1;
-  let signalCode: string | undefined;
-  let stdout = "";
-  let stderr = "";
-  let spawnError: Error | undefined;
-
-  await new Promise((resolve: () => void) => {
-    const [cmd, ...args] = command;
-    const subprocess = nodeSpawn(cmd, args, { stdio: "pipe", ...options });
-
-    subprocess.on("error", error => {
-      exitCode = 1;
-      stderr = inspect(error);
-      resolve();
-    });
-
-    subprocess.on("exit", (code: number, signal: string | undefined) => {
-      exitCode = code;
-      signalCode = signal;
-      resolve();
-    });
-
-    subprocess.stdout?.on("data", chunk => {
-      stdout += chunk.toString("utf8");
-    });
-
-    subprocess.stderr?.on("data", chunk => {
-      stderr += chunk.toString("utf8");
-    });
-  });
-
-  if (exitCode !== 0 || signalCode) {
-    const reason = command.join(" ");
-    const cause = stderr.trim() || stdout.trim() || undefined;
-
-    if (signalCode) {
-      spawnError = new Error(`Command killed with ${signalCode}: ${reason}`, { cause });
-    } else {
-      spawnError = new Error(`Command exited with ${exitCode}: ${reason}`, { cause });
-    }
-  }
-
-  return {
-    exitCode,
-    signalCode,
-    stdout,
-    stderr,
-    spawnError,
-  };
-}
-
-async function spawnSafe(command: string[], options?: SpawnOptions): Promise<SpawnResult> {
-  const result = await spawn(command, options);
-
-  const { spawnError } = result;
-  if (spawnError) {
-    throw spawnError;
-  }
-
-  return result;
-}
-
-async function getUserData(platform: Platform, image: Image): Promise<string> {
-  const { os, arch, distro, release } = platform;
-  const { username } = image;
-
-  if (os === "linux") {
-    const authorizedKeys = await getAuthorizedKeys();
-    return `#cloud-config
-
-package_update: true
-package_upgrade: true
-
-packages:
-  - curl
-  - ca-certificates
-  - openssh
-
-write_files:
-  - path: /etc/ssh/sshd_config
-    content: |
-      PermitRootLogin yes
-      PasswordAuthentication yes
-
-chpasswd:
-  expire: false
-  list: |
-    root:${crypto.randomUUID()}
-    ${username}:${crypto.randomUUID()}
-
-disable_root: false
-ssh_pwauth: true
-ssh_authorized_keys: [${authorizedKeys ? authorizedKeys.map(key => JSON.stringify(key)).join(", ") : ""}]`;
-  } else if (os === "windows") {
-    const authorizedKeys = await getAuthorizedKeys();
-    return `
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-Start-Service sshd
-Set-Service -Name sshd -StartupType 'Automatic'
-New-ItemProperty -Path "HKLM:\\SOFTWARE\\OpenSSH" -Name DefaultShell -Value $(Get-Command powershell).Source -PropertyType String -Force
-Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
-$authorizedKeysPath = "C:\\ProgramData\\ssh\\administrators_authorized_keys"
-Set-Content $authorizedKeysPath -Value @"
-${authorizedKeys?.join("\r\n") ?? ""}
-"@
-icacls.exe $authorizedKeysPath /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"
-`;
-  }
-
-  throw new Error(`Unsupported user data: ${inspect(platform)}`);
-}
-
-type SshOptions = {
-  hostname: string;
-  port?: string;
-  username?: string;
-  command?: string[];
-  retries?: number;
-};
-
-async function spawnSsh(options: SshOptions): Promise<SpawnResult> {
+async function spawnSsh(options) {
   const { hostname, port, username, command, retries = 10 } = options;
   const ssh = ["ssh", hostname, "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"];
   if (port) {
@@ -622,7 +397,7 @@ async function spawnSsh(options: SshOptions): Promise<SpawnResult> {
     ssh.push(...command);
   }
 
-  let cause: string | undefined;
+  let cause;
   for (let i = 0; i < retries; i++) {
     const result = await spawn(ssh, { stdio });
     const { exitCode, stderr } = result;
@@ -633,53 +408,10 @@ async function spawnSsh(options: SshOptions): Promise<SpawnResult> {
     if (/bad configuration option/i.test(stderr)) {
       break;
     }
-    await new Promise((resolve: () => void) => setTimeout(resolve, Math.pow(2, i) * 1000));
+    await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
   }
 
   throw new Error(`SSH failed: ${username}@${hostname}`, { cause });
-}
-
-async function getAuthorizedKeys(): Promise<string[] | undefined> {
-  const homePath = homedir();
-  const sshPath = join(homePath, ".ssh");
-
-  if (await exists(sshPath)) {
-    const sshFiles = await readdir(sshPath, { withFileTypes: true });
-    const sshPaths = sshFiles
-      .filter(entry => entry.isFile() && entry.name.endsWith(".pub"))
-      .map(({ name }) => join(sshPath, name));
-
-    const sshKeys: string[] = await Promise.all(sshPaths.map(path => readFile(path, "utf8")));
-    return sshKeys.map(key => key.split(" ").slice(0, 2).join(" ")).filter(key => key.length);
-  }
-}
-
-async function getAuthorizedKeysForOrganization(organization: string): Promise<string[] | undefined> {
-  const response = await fetch(`https://api.github.com/orgs/${organization}/members`);
-  if (!response.ok) {
-    return;
-  }
-
-  const members = await response.json();
-  const responses: Response[] = await Promise.all(
-    members.map(({ login }) => fetch(`https://github.com/${login}.keys`)),
-  );
-
-  const authorizedKeys: string[][] = await Promise.all(
-    responses.flatMap(async response => {
-      if (!response.ok) {
-        return [];
-      }
-
-      const body = await response.text();
-      return body
-        .split("\n")
-        .map(line => line.trim())
-        .filter(line => line.length);
-    }),
-  );
-
-  return authorizedKeys.flat();
 }
 
 async function main() {
@@ -696,9 +428,9 @@ async function main() {
   });
 
   const { cloud, os, arch, distro, release } = values;
-  const platform: Platform = { os, arch, distro, release } as any;
+  const platform = { os, arch, distro, release };
 
-  let provider: Cloud;
+  let provider;
   if (cloud === "docker") {
     provider = docker;
   } else if (cloud === "aws") {

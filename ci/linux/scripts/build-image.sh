@@ -39,7 +39,7 @@ build_docker_image() {
   esac
   
   case "$2" in
-  debian | ubuntu | amazonlinux)
+  debian | ubuntu | amazonlinux | alpine)
     distro="$2"
     ;;
   *)
@@ -58,10 +58,10 @@ build_docker_image() {
     --file linux/Dockerfile \
     --build-arg "IMAGE=docker.io/library/$distro:$release"
 
-  if [ "$distro" = "debian" ] && [ "$release" = "11" ]; then
+  if [ "$distro" = "alpine" ]; then
     script="mkdir /workspace && cd /workspace && git clone --single-branch --depth 1 https://github.com/oven-sh/bun bun && cd bun && bun run build:ci && node scripts/runner.node.mjs --exec-path ./build/release-ci/bun || exit 0"
   else
-    script="mkdir /workspace && cd /workspace && git clone --single-branch --depth 1 https://github.com/oven-sh/bun bun && cd bun && bun upgrade --canary && node scripts/runner.node.mjs || exit 0"
+    script="mkdir /workspace && cd /workspace && git clone --single-branch --depth 1 https://github.com/oven-sh/bun bun && cd bun && node scripts/runner.node.mjs || exit 0"
   fi
 
   execute docker run \

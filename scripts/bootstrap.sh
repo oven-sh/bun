@@ -615,8 +615,11 @@ install_build_essentials() {
 
 llvm_version_exact() {
 	case "$os-$abi" in
-	darwin-* | windows-* | linux-musl)
+	darwin-* | windows-*)
 		print "18.1.8"
+		;;
+	linux-musl)
+		print "18.1.6"
 		;;
 	linux-*)
 		print "16.0.6"

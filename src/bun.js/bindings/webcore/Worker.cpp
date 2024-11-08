@@ -151,7 +151,12 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
 
     WTF::String url = urlInit;
     if (url.startsWith("file://"_s)) {
-        url = WTF::URL(url).fileSystemPath();
+        WTF::URL urlObject = WTF::URL(url);
+        if (urlObject.isValid()) {
+            url = urlObject.fileSystemPath();
+        } else {
+            return Exception { TypeError, makeString("Invalid file URL: \""_s, urlInit, '"') };
+        }
     }
     BunString urlStr = Bun::toString(url);
     BunString errorMessage = BunStringEmpty;
@@ -167,7 +172,11 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     preloadModules.reserveInitialCapacity(preloadModuleStrings->size());
     for (auto& str : *preloadModuleStrings) {
         if (str.startsWith("file://"_s)) {
-            str = WTF::URL(str).fileSystemPath();
+            WTF::URL urlObject = WTF::URL(str);
+            if (!urlObject.isValid()) {
+                return Exception { TypeError, makeString("Invalid file URL: \""_s, str, '"') };
+            }
+            str = urlObject.fileSystemPath();
         }
 
         preloadModules.append(Bun::toString(str));

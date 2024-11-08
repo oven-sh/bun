@@ -18,7 +18,17 @@ describe("web worker", () => {
   }
 
   describe("preload", () => {
-    test("array of string", async () => {
+    test("invalid file URL", async () => {
+      expect(() => new Worker("file://:!:!:!!!!", {})).toThrow(/Invalid file URL/);
+      expect(
+        () =>
+          new Worker(import.meta.url, {
+            preload: ["file://:!:!:!!!!", "file://:!:!:!!!!2"],
+          }),
+      ).toThrow(/Invalid file URL/);
+    });
+
+    test("string", async () => {
       const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
         preload: new URL("worker-fixture-preload.js", import.meta.url).href,
       });
@@ -37,7 +47,7 @@ describe("web worker", () => {
       expect(result).toEqual("hello world world");
     });
 
-    test("string", async () => {
+    test("array of string", async () => {
       const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
         preload: [new URL("worker-fixture-preload.js", import.meta.url).href],
       });

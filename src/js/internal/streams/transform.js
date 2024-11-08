@@ -154,7 +154,7 @@ Transform.prototype.constructor = Transform;
 Transform.prototype._final = final;
 
 Transform.prototype._transform = function (chunk, encoding, callback) {
-  throw $ERR_METHOD_NOT_IMPLEMENTED();
+  throw $ERR_METHOD_NOT_IMPLEMENTED("Transform._transform");
 };
 
 Transform.prototype._write = function (chunk, encoding, callback) {

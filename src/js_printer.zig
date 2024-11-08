@@ -205,7 +205,7 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     return bytes;
 }
 
-pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime encoding: strings.Encoding) !void {
+pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
     const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
     var i: usize = 0;
     const n: usize = text.len;
@@ -352,7 +352,16 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
             else => {
                 i += @as(usize, width);
 
-                if (c < 0xFFFF) {
+                if (c < 0xFF and !json) {
+                    const k = @as(usize, @intCast(c));
+
+                    try writer.writeAll(&[_]u8{
+                        '\\',
+                        'x',
+                        hex_chars[(k >> 4) & 0xF],
+                        hex_chars[k & 0xF],
+                    });
+                } else if (c < 0xFFFF) {
                     const k = @as(usize, @intCast(c));
 
                     try writer.writeAll(&[_]u8{
@@ -392,13 +401,13 @@ pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime asci
 
     try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
     try bytes.appendChar('"');
-    try writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, .utf8);
+    try writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, true, .utf8);
     bytes.appendChar('"') catch unreachable;
 }
 
 pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
     try writer.writeAll("\"");
-    try writePreQuotedString(input, Writer, writer, '"', false, encoding);
+    try writePreQuotedString(input, Writer, writer, '"', false, true, encoding);
     try writer.writeAll("\"");
 }
 
@@ -1585,9 +1594,9 @@ fn NewPrinter(
         pub fn printStringCharactersUTF8(e: *Printer, text: []const u8, quote: u8) void {
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', ascii_only, .utf8),
-                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, .utf8),
-                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', ascii_only, .utf8),
+                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', ascii_only, false, .utf8),
+                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, false, .utf8),
+                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', ascii_only, false, .utf8),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
@@ -1596,9 +1605,9 @@ fn NewPrinter(
 
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', ascii_only, .utf16),
-                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', ascii_only, .utf16),
-                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', ascii_only, .utf16),
+                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', ascii_only, false, .utf16),
+                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', ascii_only, false, .utf16),
+                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', ascii_only, false, .utf16),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
@@ -1890,6 +1899,12 @@ fn NewPrinter(
             p.printWhitespacer(ws("/* @__PURE__ */ "));
         }
 
+        pub fn printStringLiteralEString(p: *Printer, str: *E.String, allow_backtick: bool) void {
+            const quote = bestQuoteCharForEString(str, allow_backtick);
+            p.print(quote);
+            p.printStringCharactersEString(str, quote);
+            p.print(quote);
+        }
         pub fn printStringLiteralUTF8(p: *Printer, str: string, allow_backtick: bool) void {
             if (std.debug.runtime_safety) std.debug.assert(std.unicode.wtf8ValidateSlice(str));
 
@@ -2740,11 +2755,7 @@ fn NewPrinter(
                         return;
                     }
 
-                    const c = bestQuoteCharForEString(e, true);
-
-                    p.print(c);
-                    p.printStringCharactersEString(e, c);
-                    p.print(c);
+                    p.printStringLiteralEString(e, true);
                 },
                 .e_utf8_string => |e| {
                     p.addSourceMapping(expr.loc);
@@ -3339,10 +3350,7 @@ fn NewPrinter(
                             p.printIdentifier(key.data);
                         } else {
                             allow_shorthand = false;
-                            const quote_char = bestQuoteCharForEString(key, false);
-                            p.print(quote_char);
-                            p.printStringCharactersEString(key, quote_char);
-                            p.print(quote_char);
+                            p.printStringLiteralEString(key, false);
                         }
 
                         // Use a shorthand property if the names are the same

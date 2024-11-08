@@ -1946,14 +1946,8 @@ fn NewSocket(comptime ssl: bool) type {
             const this_value = this.getThisValue(globalObject);
             var js_error: JSValue = .undefined;
             if (err != 0) {
-                if (bun.C.SystemErrno.init(err)) |str| {
-                    js_error = globalObject.createErrorInstance("Error: {s}", .{@tagName(str)});
-                    js_error.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(err));
-                    js_error.put(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
-                } else {
-                    js_error = globalObject.createErrorInstance("Unknown error: {d}", .{err});
-                    js_error.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(err));
-                }
+                // errors here are always a read error
+                js_error = bun.sys.Error.fromCode((bun.C.SystemErrno.init(err) orelse bun.C.SystemErrno.EUNKNOWN), .read).toJS(globalObject);
             }
 
             _ = callback.call(globalObject, this_value, &[_]JSValue{

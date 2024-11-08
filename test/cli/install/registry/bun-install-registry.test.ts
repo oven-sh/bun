@@ -642,6 +642,22 @@ describe("certificate authority", () => {
     expect(await exited).toBe(1);
   });
 
+  test("non-existent --cafile (absolute path)", async () => {
+    await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--cafile", "/does/not/exist"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+    const out = await Bun.readableStreamToText(stdout);
+    expect(out).not.toContain("no-deps");
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).toContain(`HTTPThread: could not find CA file: '/does/not/exist'`);
+    expect(await exited).toBe(1);
+  });
+
   test("cafile from bunfig does not exist", async () => {
     await Promise.all([
       write(

@@ -3151,7 +3151,7 @@ pub const DeferredBatchTask = struct {
     const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
 
     pub fn init(this: *DeferredBatchTask) void {
-        bun.debugAssert(!this.running);
+        if (comptime Environment.isDebug) bun.debugAssert(!this.running);
         this.* = .{
             .running = if (comptime Environment.isDebug) false else 0,
         };

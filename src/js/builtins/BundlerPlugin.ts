@@ -215,12 +215,7 @@ export function runSetupFunction(
       return setupResult.$then(() => {
         if (is_last && self.promises !== undefined && self.promises.length > 0) {
           const awaitAll = Promise.all(self.promises);
-          // if (awaitAll && $isPromise(awaitAll)) {
-          //   if ($getPromiseInternalField(awaitAll, $promiseFieldFlags) & $promiseStateFulfilled) {
-          //   } else {
           return awaitAll.$then(processSetupResult);
-          //   }
-          // }
         }
         return processSetupResult();
       });
@@ -230,14 +225,6 @@ export function runSetupFunction(
   if (is_last && this.promises !== undefined && this.promises.length > 0) {
     const awaitAll = Promise.all(this.promises);
     return awaitAll.$then(processSetupResult);
-    // if (awaitAll && $isPromise(awaitAll)) {
-    //   const foo = $getPromiseInternalField(awaitAll, $promiseFieldFlags) & $promiseStateMask;
-    //   console.log("LOL", foo);
-    //   console.log("LMAO", $promiseStateFulfilled);
-    //   if (foo === $promiseStateFulfilled) {
-    //   } else {
-    // }
-    // }
   }
 
   return processSetupResult();

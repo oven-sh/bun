@@ -30,7 +30,7 @@ public:
 
     ~napi_env__()
     {
-        std::free(filename);
+        delete[] filename;
     }
 
     void cleanup()

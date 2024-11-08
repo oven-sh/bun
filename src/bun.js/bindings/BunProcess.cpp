@@ -273,6 +273,53 @@ extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
 
+/// Returns a pointer that needs to be freed with `delete[]`.
+static char* toFileURI(std::string_view path)
+{
+    auto needs_escape = [](char ch) {
+        return !(('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z') || ('0' <= ch && ch <= '9')
+            || ch == '_' || ch == '-' || ch == '.' || ch == '!' || ch == '~' || ch == '*' || ch == '\'' || ch == '(' || ch == ')' || ch == '/');
+    };
+
+    auto to_hex = [](uint8_t nybble) -> char {
+        if (nybble < 0xa) {
+            return '0' + nybble;
+        }
+
+        return 'a' + (nybble - 0xa);
+    };
+
+    size_t escape_count = 0;
+    for (char ch : path) {
+        if (needs_escape(ch)) {
+            ++escape_count;
+        }
+    }
+
+    const size_t string_size = sizeof("file://") + path.size() + 2 * escape_count; // null byte is included in the sizeof expression
+    char* characters = new char[string_size];
+    strcat(characters, "file://");
+    size_t i = sizeof("file://") - 1;
+    for (char ch : path) {
+        if (needs_escape(ch)) {
+            characters[i++] = '%';
+            characters[i++] = to_hex(static_cast<uint8_t>(ch) >> 4);
+            characters[i++] = to_hex(ch & 0xf);
+        } else {
+            characters[i++] = ch;
+        }
+    }
+
+    characters[i] = '\0';
+    ASSERT(i + 1 == string_size);
+    return characters;
+}
+
+static char* toFileURI(std::span<const uint8_t> span)
+{
+    return toFileURI(std::string_view(reinterpret_cast<const char*>(span.data()), span.size()));
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -421,8 +468,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
 
-    // TODO(@heimskr): escape characters like % and #
-    char* filename_cstr = strdup(("file://" + filename.utf8().toStdString()).c_str());
+    char* filename_cstr = toFileURI(filename.utf8().span());
 
     napi_module nmodule {
         .nm_version = module_version,

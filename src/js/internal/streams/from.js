@@ -98,7 +98,7 @@ function from(Readable, iterable, opts) {
 
         if (value === null) {
           reading = false;
-          throw $ERR_STREAM_NULL_VALUES();
+          throw $ERR_STREAM_NULL_VALUES("Null value");
         }
 
         if (readable.push(value)) {
@@ -121,7 +121,7 @@ function from(Readable, iterable, opts) {
 
       if (res === null) {
         reading = false;
-        throw $ERR_STREAM_NULL_VALUES();
+        throw $ERR_STREAM_NULL_VALUES("Null value   ");
       }
 
       if (readable.push(res)) {
@@ -149,7 +149,7 @@ function from(Readable, iterable, opts) {
 
         if (res === null) {
           reading = false;
-          throw $ERR_STREAM_NULL_VALUES();
+          throw $ERR_STREAM_NULL_VALUES("Null value");
         }
 
         if (readable.push(res)) {
@@ -176,7 +176,7 @@ function from(Readable, iterable, opts) {
 
         if (value === null) {
           reading = false;
-          throw $ERR_STREAM_NULL_VALUES();
+          throw $ERR_STREAM_NULL_VALUES("Null value");
         }
 
         if (readable.push(value)) {

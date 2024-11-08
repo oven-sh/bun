@@ -2,6 +2,9 @@
 
 #include "utils.h"
 
+#include <array>
+#include <utility>
+
 namespace napitests {
 
 // double_to_i32(any): number|undefined

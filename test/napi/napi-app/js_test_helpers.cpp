@@ -10,32 +10,28 @@ static bool finalize_called = false;
 
 static void finalize_cb(napi_env env, void *finalize_data,
                         void *finalize_hint) {
-  // only do this in bun
-  bool &create_handle_scope = *reinterpret_cast<bool *>(finalize_hint);
-  if (create_handle_scope) {
-    napi_handle_scope hs;
-    NODE_API_CALL_CUSTOM_RETURN(env, void(), napi_open_handle_scope(env, &hs));
-    NODE_API_CALL_CUSTOM_RETURN(env, void(), napi_close_handle_scope(env, hs));
-  }
-  delete &create_handle_scope;
-  finalize_called = true;
+  node_api_post_finalizer(
+      env,
+      +[](napi_env env, void *data, void *hint) {
+        napi_handle_scope hs;
+        NODE_API_CALL_CUSTOM_RETURN(env, void(),
+                                    napi_open_handle_scope(env, &hs));
+        NODE_API_CALL_CUSTOM_RETURN(env, void(),
+                                    napi_close_handle_scope(env, hs));
+        finalize_called = true;
+      },
+      finalize_data, finalize_hint);
 }
 
 static napi_value create_ref_with_finalizer(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
-  napi_value create_handle_scope_in_finalizer = info[0];
 
   napi_value object;
   NODE_API_CALL(env, napi_create_object(env, &object));
 
-  bool *finalize_hint = new bool;
-  NODE_API_CALL(env, napi_get_value_bool(env, create_handle_scope_in_finalizer,
-                                         finalize_hint));
-
   napi_ref ref;
-
-  NODE_API_CALL(env, napi_wrap(env, object, nullptr, finalize_cb,
-                               reinterpret_cast<bool *>(finalize_hint), &ref));
+  NODE_API_CALL(env,
+                napi_wrap(env, object, nullptr, finalize_cb, nullptr, &ref));
 
   return ok(env);
 }

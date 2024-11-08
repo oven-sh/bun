@@ -1490,11 +1490,13 @@ fn NewSocket(comptime ssl: bool) type {
 
             const initialDelay: u32 = brk: {
                 if (args.len > 1) {
-                    const signedDelay = args.ptr[1].coerce(i32, globalThis);
-                    if (signedDelay < 0) {
-                        globalThis.throwInvalidArguments("initialDelay must be a positive number", .{});
+                    if (globalThis.validateIntegerRange(args.ptr[1], i32, 0, .{
+                        .min = 0,
+                        .field_name = "initialDelay",
+                    })) |signedDelay| {
+                        break :brk @intCast(signedDelay);
                     }
-                    break :brk @intCast(signedDelay);
+                    return .zero;
                 }
                 break :brk 0;
             };

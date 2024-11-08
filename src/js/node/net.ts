@@ -267,8 +267,8 @@ const Socket = (function (InternalSocket) {
       detachSocket(self);
       if (!self.#ended) {
         // close event can be emitted when we still have data to read from the socket
-        // we will force the close (not allowing half open) and emit the end event after some time
-        setTimeout(Socket.#EmitEndNT, 0, self, err);
+        // we will force the close (not allowing half open) and emit the end when everything is consumed
+        Socket.#EmitEndNT(self, err);
       }
       self.data = null;
     }
@@ -979,10 +979,17 @@ const Socket = (function (InternalSocket) {
       const allBuffers = data.allBuffers;
       const chunks = data;
       if (allBuffers) {
+        if (data.length === 1) {
+          return this._write(data[0], "buffer", callback);
+        }
         for (let i = 0; i < data.length; i++) {
           data[i] = data[i].chunk;
         }
       } else {
+        if (data.length === 1) {
+          const { chunk, encoding } = data[0];
+          return this._write(chunk, encoding, callback);
+        }
         for (let i = 0; i < data.length; i++) {
           const { chunk, encoding } = data[i];
           if (typeof chunk === "string") {

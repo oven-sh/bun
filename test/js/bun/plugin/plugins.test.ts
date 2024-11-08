@@ -573,10 +573,10 @@ describe("defer", () => {
     };
     let actions: Action[] = [];
     function logLoad(path: string) {
-      actions.push({ type: "load", path });
+      actions.push({ type: "load", path: path.replaceAll("\\", "/") });
     }
     function logDefer(path: string) {
-      actions.push({ type: "defer", path });
+      actions.push({ type: "defer", path: path.replaceAll("\\", "/") });
     }
 
     itBundled("basic", {

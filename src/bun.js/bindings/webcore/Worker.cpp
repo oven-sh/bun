@@ -121,7 +121,9 @@ extern "C" void* WebWorker__create(
     StringImpl* argvPtr,
     uint32_t argvLen,
     StringImpl* execArgvPtr,
-    uint32_t execArgvLen);
+    uint32_t execArgvLen,
+    StringImpl** preloadModulesPtr,
+    uint32_t preloadModulesLen);
 extern "C" void WebWorker__setRef(
     void* worker,
     bool ref);
@@ -160,6 +162,16 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
 
     Vector<String>* argv = worker->m_options.bun.argv.get();
     Vector<String>* execArgv = worker->m_options.bun.execArgv.get();
+    Vector<String>* preloadModuleStrings = &worker->m_options.bun.preloadModules;
+    Vector<BunString> preloadModules;
+    preloadModules.reserveInitialCapacity(preloadModuleStrings->size());
+    for (auto& str : *preloadModuleStrings) {
+        if (str.startsWith("file://"_s)) {
+            str = WTF::URL(str).fileSystemPath();
+        }
+
+        preloadModules.append(Bun::toString(str));
+    }
 
     void* impl = WebWorker__create(
         worker.ptr(),
@@ -174,7 +186,11 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         argv ? reinterpret_cast<StringImpl*>(argv->data()) : nullptr,
         argv ? static_cast<uint32_t>(argv->size()) : 0,
         execArgv ? reinterpret_cast<StringImpl*>(execArgv->data()) : nullptr,
-        execArgv ? static_cast<uint32_t>(execArgv->size()) : 0);
+        execArgv ? static_cast<uint32_t>(execArgv->size()) : 0,
+        preloadModules.size() ? reinterpret_cast<StringImpl**>(preloadModules.data()) : nullptr,
+        static_cast<uint32_t>(preloadModules.size()));
+
+    preloadModuleStrings->clear();
 
     if (!impl) {
         return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };

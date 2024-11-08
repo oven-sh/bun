@@ -2,7 +2,7 @@
 
 import { inspect, parseArgs } from "node:util";
 import { getUserData } from "./user-data.mjs";
-import { spawn } from "../utils.mjs";
+import { spawn, spawnSafe } from "../utils.mjs";
 
 const docker = {
   getPlatform(platform) {
@@ -91,7 +91,7 @@ const aws = {
     const image = await aws.getImage(platform);
     const userData = await getUserData({ ...platform, username: image["username"] });
     const { id, username, RootDeviceName, BlockDeviceMappings } = image;
-    const { os, arch } = platform;
+    const { os, arch, type } = platform;
 
     const blockDeviceMappings = BlockDeviceMappings.map(device => {
       const { DeviceName } = device;
@@ -106,10 +106,11 @@ const aws = {
       return device;
     });
 
+    const instanceType = type || (arch === "aarch64" ? "t4g.large" : "t3.large");
     const [instance] = await aws.runInstances(
       {
         ["image-id"]: id,
-        ["instance-type"]: arch === "aarch64" ? "t4g.large" : "t3.large",
+        ["instance-type"]: instanceType,
         ["user-data"]: userData,
         ["block-device-mappings"]: JSON.stringify(blockDeviceMappings),
         ["metadata-options"]: JSON.stringify({
@@ -256,15 +257,18 @@ const google = {
     const authorizedKeys = await getAuthorizedKeys();
     const sshKeys = authorizedKeys?.map(key => `${username}:${key}`).join("\n") ?? "";
 
+    const { os, type } = platform;
+    const instanceType = type || "e2-standard-4";
+
     let metadata = `ssh-keys=${sshKeys}`;
-    if (platform["os"] === "windows") {
+    if (os === "windows") {
       metadata += `,sysprep-specialize-script-cmd=googet -noconfirm=true install google-compute-engine-ssh,enable-windows-ssh=TRUE`;
     }
 
     const [{ id, networkInterfaces }] = await google.createInstances({
       ["zone"]: "us-central1-a",
       ["image"]: imageId,
-      ["machine-type"]: "e2-standard-4",
+      ["machine-type"]: instanceType,
       ["boot-disk-auto-delete"]: true,
       // ["boot-disk-size"]: "10GB",
       // ["boot-disk-type"]: "pd-standard",
@@ -424,11 +428,12 @@ async function main() {
       arch: { type: "string", default: process.arch === "arm64" ? "aarch64" : "x64" },
       distro: { type: "string", default: "debian" },
       release: { type: "string", default: "11" },
+      type: { type: "string" },
     },
   });
 
-  const { cloud, os, arch, distro, release } = values;
-  const platform = { os, arch, distro, release };
+  const { cloud, os, arch, distro, release, type } = values;
+  const platform = { os, arch, distro, release, type };
 
   let provider;
   if (cloud === "docker") {

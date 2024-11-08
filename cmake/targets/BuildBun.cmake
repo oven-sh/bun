@@ -857,33 +857,6 @@ elseif(APPLE)
     -Wl,-map,${bun}.linker-map
   )
 else()
-  # Try to use lld-16 if available, otherwise fallback to lld
-  # Cache it so we don't have to re-run CMake to pick it up
-  if((NOT DEFINED LLD_NAME) AND (NOT CI OR BUN_LINK_ONLY))
-    find_program(LLD_EXECUTABLE_NAME lld-${LLVM_VERSION_MAJOR})
-
-    if(NOT LLD_EXECUTABLE_NAME)
-      if(CI)
-        # Ensure we don't use a differing version of lld in CI vs clang
-        message(FATAL_ERROR "lld-${LLVM_VERSION_MAJOR} not found. Please make sure you have LLVM ${LLVM_VERSION_MAJOR}.x installed and set to lld-${LLVM_VERSION_MAJOR}")
-      endif()
-
-      # To make it easier for contributors, allow differing versions of lld vs clang/cmake
-      find_program(LLD_EXECUTABLE_NAME lld)
-    endif()
-
-    if(NOT LLD_EXECUTABLE_NAME)
-      message(FATAL_ERROR "LLD not found. Please make sure you have LLVM ${LLVM_VERSION_MAJOR}.x installed and lld is available in your PATH as lld-${LLVM_VERSION_MAJOR}")
-    endif()
-
-    # normalize to basename so it can be used with -fuse-ld
-    get_filename_component(LLD_NAME ${LLD_EXECUTABLE_NAME} NAME CACHE)
-    message(STATUS "Using linker: ${LLD_NAME} (${LLD_EXECUTABLE_NAME})")
-  elseif(NOT DEFINED LLD_NAME)
-    set(LLD_NAME lld-${LLVM_VERSION_MAJOR})
-  endif()
-
-  if (NOT IS_MUSL)
   if (IS_ARM64)
     set(ARCH_WRAP_FLAGS
       -Wl,--wrap=fcntl64
@@ -935,7 +908,7 @@ else()
   endif()
 
   target_link_options(${bun} PUBLIC
-    -fuse-ld=${LLD_NAME}
+    --ld-path=${LLD_PROGRAM}
     -fno-pic
     -static-libstdc++
     -static-libgcc

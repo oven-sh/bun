@@ -857,9 +857,6 @@ pub const JSBundler = struct {
 
         pub fn deinit(this: *Load) void {
             debug_deferred("Deinit Load(0{x}, {s})", .{ @intFromPtr(this), this.path });
-            if (std.mem.indexOf(u8, this.path, "foo.ts") != null) {
-                std.debug.print("HI\n", .{});
-            }
             this.value.deinit();
             if (this.completion) |completion|
                 completion.deref();

@@ -1902,6 +1902,14 @@ pub const PosixToWinNormalizer = struct {
         return resolveWithExternalBuf(&this._raw_bytes, source_dir, maybe_posix_path);
     }
 
+    pub inline fn resolveZ(
+        this: *PosixToWinNormalizer,
+        source_dir: []const u8,
+        maybe_posix_path: [:0]const u8,
+    ) [:0]const u8 {
+        return resolveWithExternalBufZ(&this._raw_bytes, source_dir, maybe_posix_path);
+    }
+
     pub inline fn resolveCWD(
         this: *PosixToWinNormalizer,
         maybe_posix_path: []const u8,
@@ -1933,6 +1941,32 @@ pub const PosixToWinNormalizer = struct {
                     @memcpy(buf[0..source_root.len], source_root);
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                     const res = buf[0 .. source_root.len + maybe_posix_path.len - 1];
+                    assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    assert(std.fs.path.isAbsoluteWindows(res));
+                    return res;
+                }
+            }
+            assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path));
+        }
+        return maybe_posix_path;
+    }
+
+    fn resolveWithExternalBufZ(
+        buf: *Buf,
+        source_dir: []const u8,
+        maybe_posix_path: [:0]const u8,
+    ) [:0]const u8 {
+        assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
+        if (bun.Environment.isWindows) {
+            const root = windowsFilesystemRoot(maybe_posix_path);
+            if (root.len == 1) {
+                assert(isSepAny(root[0]));
+                if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
+                    const source_root = windowsFilesystemRoot(source_dir);
+                    @memcpy(buf[0..source_root.len], source_root);
+                    @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
+                    buf[source_root.len + maybe_posix_path.len - 1] = 0;
+                    const res = buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
                     assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
                     assert(std.fs.path.isAbsoluteWindows(res));
                     return res;

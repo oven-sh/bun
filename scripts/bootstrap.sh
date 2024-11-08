@@ -645,7 +645,7 @@ install_llvm() {
 		install_packages \
 			"llvm$(llvm_version)-dev" \
 			"clang$(llvm_version)-dev" \
-			"lld$(llvm_version)-dev"
+			"lld$(llvm_version)"
 		;;
 	esac
 }

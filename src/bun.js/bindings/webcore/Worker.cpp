@@ -122,7 +122,7 @@ extern "C" void* WebWorker__create(
     uint32_t argvLen,
     StringImpl* execArgvPtr,
     uint32_t execArgvLen,
-    StringImpl** preloadModulesPtr,
+    BunString* preloadModulesPtr,
     uint32_t preloadModulesLen);
 extern "C" void WebWorker__setRef(
     void* worker,
@@ -196,7 +196,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         argv ? static_cast<uint32_t>(argv->size()) : 0,
         execArgv ? reinterpret_cast<StringImpl*>(execArgv->data()) : nullptr,
         execArgv ? static_cast<uint32_t>(execArgv->size()) : 0,
-        preloadModules.size() ? reinterpret_cast<StringImpl**>(preloadModules.data()) : nullptr,
+        preloadModules.size() ? preloadModules.data() : nullptr,
         static_cast<uint32_t>(preloadModules.size()));
 
     preloadModuleStrings->clear();

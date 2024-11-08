@@ -400,15 +400,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 #undef dlsym
 #endif
 
-    if (!napi_register_module_v1 || !node_api_module_get_api_version_v1) {
+    if (!napi_register_module_v1) {
 #if OS(WINDOWS)
         FreeLibrary(handle);
 #else
         dlclose(handle);
 #endif
-    }
 
-    if (!napi_register_module_v1) {
         JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
         return {};
     }

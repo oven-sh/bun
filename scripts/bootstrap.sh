@@ -509,9 +509,16 @@ install_nodejs() {
 }
 
 install_bun() {
-	case "$os-$arch-$abi" in
-	linux-aarch64-musl)
-		exe="$(download_file https://pub-61e0d0e2da4146a099e4545a59a9f0f7.r2.dev/bun-musl-arm64)"
+	case "$os-$abi" in
+	linux-musl)
+		case "$arch" in
+		x64)
+			exe="$(download_file https://pub-61e0d0e2da4146a099e4545a59a9f0f7.r2.dev/bun-musl-x64)"
+			;;
+		aarch64)
+			exe="$(download_file https://pub-61e0d0e2da4146a099e4545a59a9f0f7.r2.dev/bun-musl-arm64)"
+			;;
+		esac
 		execute chmod +x "$exe"
 		execute mkdir -p "$home/.bun/bin"
 		execute mv "$exe" "$home/.bun/bin/bun"

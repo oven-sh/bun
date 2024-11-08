@@ -99,7 +99,7 @@ const aws = {
         return {
           ...device,
           Ebs: {
-            VolumeSize: os === "windows" ? 40 : 20,
+            VolumeSize: os === "windows" ? 50 : 30,
           },
         };
       }

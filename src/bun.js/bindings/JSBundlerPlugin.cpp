@@ -454,7 +454,6 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
         }
         promise.clear();
     }
-    return;
 }
 
 extern "C" void JSBundlerPlugin__tombestone(Bun::JSBundlerPlugin* plugin)

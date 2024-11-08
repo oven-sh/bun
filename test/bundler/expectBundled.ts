@@ -1052,7 +1052,6 @@ for (const [key, blob] of build.outputs) {
         const build = await Bun.build(buildConfig);
         if (onAfterApiBundle) await onAfterApiBundle(build);
         configRef = null!;
-        console.log("Running GC!");
         Bun.gc(true);
 
         const buildLogs = build.logs.filter(x => x.level === "error");

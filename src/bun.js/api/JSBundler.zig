@@ -856,7 +856,7 @@ pub const JSBundler = struct {
         };
 
         pub fn deinit(this: *Load) void {
-            debug_deferred("Deinit Load(0{x}, {s})", .{ @intFromPtr(this), this.path });
+            debug("Deinit Load(0{x}, {s})", .{ @intFromPtr(this), this.path });
             this.value.deinit();
             if (this.completion) |completion|
                 completion.deref();

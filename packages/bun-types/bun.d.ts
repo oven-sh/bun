@@ -3875,15 +3875,9 @@ declare module "bun" {
     loader: Loader;
 
     /**
-     * Defer the execution of this plugin until
-     * @returns
+     * Defer the execution of this callback until all other modules have been parsed.
      *
-     *
-     * Strong to the defer promise
-     *
-     * Drain the regular tasks
-     * then the deferred tasks
-     * in while loop until nothing done basically
+     * @returns Promise which will be resolved when all modules have been parsed
      */
     defer: () => Promise<void>;
   }
@@ -3973,7 +3967,7 @@ declare module "bun" {
      * ```ts
      * Bun.plugin({
      *   setup(builder) {
-     *     builder.onStarrt(() => {
+     *     builder.onStart(() => {
      *       console.log("bundle just started!!")
      *     });
      *   },

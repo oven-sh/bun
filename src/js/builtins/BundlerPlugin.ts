@@ -101,11 +101,11 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
   }
 
   function onStart(callback) {
-    if (!callback || !$isCallable(callback)) {
+    if (!$isCallable(callback)) {
       throw new TypeError("callback must be a function");
     }
 
-    callback();
+    return callback();
   }
 
   const processSetupResult = () => {

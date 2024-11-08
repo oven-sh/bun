@@ -161,8 +161,6 @@ pub const ImportRecord = struct {
     wrap_with_to_esm: bool = false,
     wrap_with_to_commonjs: bool = false,
 
-    tailwind: bool = false,
-
     pub const List = bun.BabyList(ImportRecord);
 
     pub fn loader(this: *const ImportRecord) ?bun.options.Loader {
@@ -195,6 +193,7 @@ pub const ImportRecord = struct {
         with_type_file,
 
         css,
+        tailwind,
 
         pub fn loader(this: Tag) ?bun.options.Loader {
             return switch (this) {

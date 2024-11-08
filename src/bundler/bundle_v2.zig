@@ -1982,7 +1982,6 @@ pub const BundleV2 = struct {
     }
 
     pub fn deinit(this: *BundleV2) void {
-        // this.deferred_tasks.deinit(bun.default_allocator);
         defer this.graph.ast.deinit(bun.default_allocator);
         defer this.graph.input_files.deinit(bun.default_allocator);
         if (this.graph.pool.workers_assignments.count() > 0) {
@@ -5868,7 +5867,7 @@ pub const LinkerContext = struct {
                     source_index,
                 ) catch bun.outOfMemory();
 
-                const repr: *const bun.css.BundlerStyleSheet = visitor.css_asts[source_index.get()] orelse return;
+                const repr: *const bun.css.BundlerStyleSheet = visitor.css_asts[source_index.get()] orelse return; // Sanity check
                 const top_level_rules = &repr.rules;
 
                 // TODO: should we even do this? @import rules have to be the first rules in the stylesheet, why even allow pre-import layers?

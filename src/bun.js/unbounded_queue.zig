@@ -44,18 +44,6 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
             pub fn iterator(self: Self.Batch) Self.Batch.Iterator {
                 return .{ .batch = self };
             }
-
-            /// This is not safe to call on other threads
-            pub fn push(self: *Self.Batch, item: *T) void {
-                if (self.last) |l| {
-                    l.next = item;
-                } else {
-                    // Means batch is empty, add to front as well as back
-                    self.front = item;
-                }
-                self.last = item;
-                self.count += 1;
-            }
         };
         const next = next_name;
 

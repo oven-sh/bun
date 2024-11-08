@@ -446,7 +446,7 @@ async function main() {
     throw new Error(`Unsupported cloud: ${inspect(cloud)}`);
   }
 
-  await using machine = await provider.createMachine(platform);
+  const machine = await provider.createMachine(platform);
   process.on("SIGINT", () => {
     machine.close().finally(() => process.exit(1));
   });
@@ -456,6 +456,7 @@ async function main() {
   } else {
     await machine.attach();
   }
+  await machine.close();
 }
 
 await main();

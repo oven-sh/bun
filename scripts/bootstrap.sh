@@ -213,7 +213,12 @@ check_operating_system() {
 	linux)
 		if [ -f "/etc/alpine-release" ]; then
 			distro="alpine"
-			release="$(cat /etc/alpine-release | cut -d_ -f1)"
+			alpine="$(cat /etc/alpine-release)"
+			if [ "$alpine" ~ "_" ]; then
+				release="$(echo "$alpine" | cut -d_ -f1)-edge"
+			else
+				release="$alpine"
+			fi
 		elif [ -f "/etc/os-release" ]; then
 			. /etc/os-release
 			if [ -n "$ID" ]; then
@@ -305,9 +310,17 @@ check_package_manager() {
 	esac
 	print "Package manager: $pm"
 
+	print "Updating package manager..."
 	case "$pm" in
 	apt)
 		package_manager update -y
+		;;
+	apk)
+		if [ -f "/etc/apk/repositories" ] && ! [ "$release" ~ "edge" ]; then
+			append_to_file "/etc/apk/repositories" "https://dl-cdn.alpinelinux.org/alpine/edge/main"
+			append_to_file "/etc/apk/repositories" "https://dl-cdn.alpinelinux.org/alpine/edge/community"
+		fi
+		package_manager update
 		;;
 	esac
 }
@@ -394,7 +407,7 @@ install_packages() {
 		package_manager link --force --overwrite "$@"
 		;;
 	apk)
-		package_manager add --force --no-cache --no-interactive --no-progress "$@"
+		package_manager add --no-cache --no-interactive --no-progress "$@"
 		;;
 	*)
 		error "Unsupported package manager: $pm"
@@ -588,6 +601,7 @@ install_build_essentials() {
 		install_packages \
 			musl-dev \
 			ninja \
+			go \
 			xz
 		;;
 	esac
@@ -603,8 +617,7 @@ install_build_essentials() {
 		python3 \
 		libtool \
 		ruby \
-		perl \
-		golang
+		perl
 
 	install_cmake
 	install_llvm
@@ -645,7 +658,7 @@ install_llvm() {
 		install_packages \
 			"llvm$(llvm_version)-dev" \
 			"clang$(llvm_version)-dev" \
-			"lld$(llvm_version)"
+			"lld$(llvm_version)-dev"
 		;;
 	esac
 }

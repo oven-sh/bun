@@ -25,7 +25,8 @@ test("net large string", done => {
     // we connect to the server using 127.0.0.1 to avoid happy eyeballs
     const client = net.createConnection(server.address().port, "127.0.0.1");
     client.on("end", () => {
-      server.close(done);
+      server.close();
+      done();
     });
     client.write(data, encoding);
     client.end();

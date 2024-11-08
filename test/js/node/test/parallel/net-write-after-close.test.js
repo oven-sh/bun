@@ -5,37 +5,30 @@
 
 const net = require("net");
 
-let serverSocket;
-let server;
-
-beforeAll(done => {
-  server = net.createServer(socket => {
-    serverSocket = socket;
-    socket.resume();
-    socket.on("error", error => {
-      throw new Error("Server socket should not emit error");
-    });
-  });
-
-  server.listen(0, () => {
-    done();
-  });
-});
-
-afterAll(() => {
-  server.close();
-});
-
-test("write after close", done => {
-  const client = net.connect(server.address().port, "127.0.0.1", () => {
-    client.on("end", () => {
-      serverSocket.write("test", err => {
-        expect(err).toBeTruthy();
-        done();
+test("write after close", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  const { promise: writePromise, resolve: writeResolve } = Promise.withResolvers();
+  let server;
+  try {
+    server = net.createServer(socket => {
+      socket.on("end", () => resolve(socket));
+      socket.resume();
+      socket.on("error", error => {
+        throw new Error("Server socket should not emit error");
       });
     });
-    client.end();
-  });
+
+    server.listen(0, () => {
+      const client = net.connect(server.address().port, "127.0.0.1", () => {
+        client.end();
+      });
+    });
+    (await promise).write("test", writeResolve);
+    const err = await writePromise;
+    expect(err).toBeTruthy();
+  } finally {
+    server.close();
+  }
 });
 
 //<#END_FILE: test-net-write-after-close.js

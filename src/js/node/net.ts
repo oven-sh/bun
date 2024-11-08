@@ -265,11 +265,7 @@ const Socket = (function (InternalSocket) {
       self.#closed = true;
       //socket cannot be used after close
       detachSocket(self);
-      if (!self.#ended) {
-        // close event can be emitted when we still have data to read from the socket
-        // we will force the close (not allowing half open) and emit the end when everything is consumed
-        Socket.#EmitEndNT(self, err);
-      }
+      Socket.#EmitEndNT(self, err);
       self.data = null;
     }
 
@@ -1023,7 +1019,6 @@ const Socket = (function (InternalSocket) {
       this._pendingData = null;
       this._pendingEncoding = "";
       this.#writeCallback = null;
-
       const socket = this._handle;
       if (!socket) {
         callback($ERR_SOCKET_CLOSED("Socket is closed"));

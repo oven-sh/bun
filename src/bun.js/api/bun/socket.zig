@@ -1947,7 +1947,7 @@ fn NewSocket(comptime ssl: bool) type {
             var js_error: JSValue = .undefined;
             if (err != 0) {
                 // errors here are always a read error
-                js_error = bun.sys.Error.fromCode((bun.C.SystemErrno.init(err) orelse if (Environment.isWindows) bun.C.SystemErrno.EUNKNOWN else bun.C.SystemErrno.EINVAL).toE(), .read).toSystemError().toJS(globalObject);
+                js_error = bun.sys.Error.fromCodeInt(err, .read).toJSC(globalObject);
             }
 
             _ = callback.call(globalObject, this_value, &[_]JSValue{

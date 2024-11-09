@@ -3,7 +3,7 @@
 // An agent that starts buildkite-agent and runs others services.
 
 import { join } from "node:path";
-import { appendFileSync, chownSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, realpathSync } from "node:fs";
 import {
   isWindows,
   getOs,
@@ -16,27 +16,41 @@ import {
   getHostname,
   getCloud,
   getCloudMetadataTag,
+  which,
+  getEnv,
+  spawnSyncSafe,
   writeFile,
   spawnSafe,
-  which,
-  getUser,
 } from "../utils.mjs";
+import { parseArgs } from "node:util";
 
 /**
- * @param {string} token
- * @returns {Promise<Service>}
+ * @param {"install" | "start"} action
  */
-export async function getAgentService(token) {
+export async function doAgent(action) {
+  const username = "buildkite-agent";
   const command = which("buildkite-agent", { required: true });
-  const { username, uid, gid } = await getUser("buildkite-agent");
 
-  let shell;
-  if (isWindows) {
-    const pwsh = which(["pwsh", "powershell"], { required: true });
-    shell = `${pwsh} -Command`;
-  } else {
-    const sh = which(["bash", "sh"], { required: true });
-    shell = `${sh} -c`;
+  /**
+   * @param {...string} args
+   * @returns {string}
+   */
+  function getPath(...args) {
+    const lastArg = args.at(-1);
+    const options = typeof lastArg === "object" ? lastArg : undefined;
+    const paths = options ? args.slice(0, -1) : args;
+    const path = join(...paths);
+
+    if (action === "install") {
+      if (options?.["mkdir"]) {
+        mkdirSync(path, { recursive: true });
+      } else if (options?.["touch"]) {
+        appendFileSync(path, "");
+      }
+      spawnSyncSafe(["chown", "-R", `${username}:${username}`, path]);
+    }
+
+    return path;
   }
 
   let homePath, cachePath, logsPath, agentLogPath, socketPath, pidPath;
@@ -44,124 +58,157 @@ export async function getAgentService(token) {
     throw new Error("TODO: Windows");
   } else {
     const varPath = join("/", "var");
-    homePath = getPath(varPath, "lib", "buildkite-agent", { uid, gid, mkdir: true });
-    cachePath = getPath(varPath, "cache", "buildkite-agent", { uid, gid, mkdir: true });
-    logsPath = getPath(varPath, "log", "buildkite-agent", { uid, gid, mkdir: true });
-    agentLogPath = getPath(logsPath, "buildkite-agent.log", { uid, gid, touch: true });
-    socketPath = getPath(varPath, "run", "buildkite-agent.sock", { uid, gid, mkdir: true });
-    pidPath = getPath(varPath, "run", "buildkite-agent.pid", { uid, gid, touch: true });
+    homePath = getPath(varPath, "lib", "buildkite-agent", { mkdir: true });
+    cachePath = getPath(varPath, "cache", "buildkite-agent", { mkdir: true });
+    logsPath = getPath(varPath, "log", "buildkite-agent", { mkdir: true });
+    agentLogPath = getPath(logsPath, "buildkite-agent.log", { touch: true });
+    socketPath = getPath(varPath, "run", "buildkite-agent.sock", { mkdir: true });
+    pidPath = getPath(varPath, "run", "buildkite-agent.pid", { touch: true });
   }
 
-  const flags = ["enable-job-log-tmpfile", "no-feature-reporting"];
-  const options = {
-    "name": getHostname(),
-    "token": token,
-    "shell": shell,
-    "sockets-path": socketPath,
-    "job-log-path": logsPath,
-    "git-mirrors-path": join(cachePath, "git"),
-    "build-path": join(homePath, "builds"),
-    "hooks-path": join(homePath, "hooks"),
-    "plugins-path": join(homePath, "plugins"),
-    "experiment": "normalised-upload-paths,resolve-commit-after-checkout,agent-api",
-  };
+  function escape(string) {
+    return JSON.stringify(string);
+  }
 
-  let oneShot;
-  const cloud = await getCloud();
-  if (cloud) {
-    const jobId = await getCloudMetadataTag("buildkite:job-uuid");
-    if (jobId) {
-      options["acquire-job"] = jobId;
-      flags.push("disconnect-after-job");
-      oneShot = true;
+  async function install() {
+    const command = process.execPath;
+    const args = [realpathSync(process.argv[1]), "start"];
+
+    if (isOpenRc()) {
+      const servicePath = join("etc", "init.d", "buildkite-agent");
+      const service = `#!/sbin/openrc-run
+        name="buildkite-agent"
+        description="Buildkite Agent"
+        command=${escape(command)}
+        command_args=${escape(args.map(escape).join(" "))}
+        command_user=${escape(username)}
+
+        pidfile=${escape(pidPath)}
+        start_stop_daemon_args=" \
+          --background \
+          --make-pidfile \
+          --stdout ${escape(agentLogPath)} \
+          --stderr ${escape(agentLogPath)}"
+
+        depend() {
+          need net
+          use dns logger
+        }
+      `;
+      writeFile(servicePath, service, { mode: 0o755 });
+      await spawnSafe(["rc-update", "add", "buildkite-agent", "default"]);
+    }
+
+    if (isSystemd()) {
+      const servicePath = join("etc", "systemd", "system", "buildkite-agent.service");
+      const service = `
+        [Unit]
+        Description=Buildkite Agent
+        After=syslog.target
+        After=network-online.target
+      
+        [Service]
+        Type=simple
+        User=${username}
+        ExecStart=${escape(command)} ${escape(args.map(escape).join(" "))}
+        RestartSec=5
+        Restart=on-failure
+        KillMode=process
+
+        [Journal]
+        Storage=persistent
+        StateDirectory=${escape(agentLogPath)}
+      
+        [Install]
+        WantedBy=multi-user.target
+      `;
+      writeFile(servicePath, service);
+      await spawnSafe(["systemctl", "daemon-reload"]);
+      await spawnSafe(["systemctl", "enable", "buildkite-agent"]);
     }
   }
 
-  const tags = {
-    "os": getOs(),
-    "arch": getArch(),
-    "kernel": getKernel(),
-    "abi": getAbi(),
-    "abi-version": getAbiVersion(),
-    "distro": getDistro(),
-    "distro-version": getDistroVersion(),
-    "cloud": cloud,
-  };
+  async function start() {
+    const cloud = await getCloud();
 
-  options["tags"] = Object.entries(tags)
-    .filter(([, value]) => value)
-    .map(([key, value]) => `${key}=${value}`)
-    .join(",");
+    let token = getEnv("BUILDKITE_AGENT_TOKEN", false);
+    if (!token && cloud) {
+      token = await getCloudMetadataTag("buildkite:token");
+    }
 
-  const args = [
-    "start",
-    ...flags.map(flag => `--${flag}`),
-    ...Object.entries(options).map(([key, value]) => `--${key}=${value}`),
-  ];
+    let shell;
+    if (isWindows) {
+      const pwsh = which(["pwsh", "powershell"], { required: true });
+      shell = `${pwsh} -Command`;
+    } else {
+      const sh = which(["bash", "sh"], { required: true });
+      shell = `${sh} -c`;
+    }
 
-  if (isSystemd()) {
-    const service = `
-      [Unit]
-      Description=Buildkite Agent
-      Documentation=https://buildkite.com/docs/agent/v3/configuration
-      After=syslog.target
-      After=network-online.target
-    
-      [Service]
-      Type=${oneShot ? "oneshot" : "simple"}
-      User=${username}
-      Environment=HOME=${homePath}
-      ExecStart=${command} ${args.map(arg => JSON.stringify(arg)).join(" ")}
-      RestartSec=5
-      Restart=on-failure
-      KillMode=process
+    const flags = ["enable-job-log-tmpfile", "no-feature-reporting"];
+    const options = {
+      "name": getHostname(),
+      "token": token || "xxx",
+      "shell": shell,
+      "sockets-path": socketPath,
+      "job-log-path": logsPath,
+      "git-mirrors-path": join(cachePath, "git"),
+      "build-path": join(homePath, "builds"),
+      "hooks-path": join(homePath, "hooks"),
+      "plugins-path": join(homePath, "plugins"),
+      "experiment": "normalised-upload-paths,resolve-commit-after-checkout,agent-api",
+    };
 
-      [Journal]
-      Storage=persistent
-      StateDirectory=${agentLogPath}
-    
-      [Install]
-      WantedBy=multi-user.target
-    `;
-    return getSystemdService("buildkite-agent", service);
-  }
-
-  if (isOpenRc()) {
-    const service = `#!/sbin/openrc-run
-      name="buildkite-agent"
-      description="Buildkite Agent"
-      command=${JSON.stringify(command)}
-      command_args=${JSON.stringify(args.map(arg => JSON.stringify(arg)).join(" "))}
-      command_user=${JSON.stringify(username)}
-
-      pidfile=${JSON.stringify(pidPath)}
-      start_stop_daemon_args=" \
-        --background \
-        --make-pidfile \
-        --stdout ${agentLogPath} \
-        --stderr ${agentLogPath}"
-
-      depend() {
-        need net
-        use dns logger
+    if (cloud) {
+      const jobId = await getCloudMetadataTag("buildkite:job-uuid");
+      if (jobId) {
+        options["acquire-job"] = jobId;
+        flags.push("disconnect-after-job");
       }
-    `;
-    return getOpenRcService("buildkite-agent", service);
+    }
+
+    const tags = {
+      "os": getOs(),
+      "arch": getArch(),
+      "kernel": getKernel(),
+      "abi": getAbi(),
+      "abi-version": getAbiVersion(),
+      "distro": getDistro(),
+      "distro-version": getDistroVersion(),
+      "cloud": cloud,
+    };
+
+    if (cloud) {
+      const robobun = await getCloudMetadataTag("robobun");
+      if (robobun === "true") {
+        tags["robobun"] = "true";
+      }
+    }
+
+    options["tags"] = Object.entries(tags)
+      .filter(([, value]) => value)
+      .map(([key, value]) => `${key}=${value}`)
+      .join(",");
+
+    await spawnSafe(
+      [
+        command,
+        "start",
+        ...flags.map(flag => `--${flag}`),
+        ...Object.entries(options).map(([key, value]) => `--${key}=${value}`),
+      ],
+      {
+        stdio: "inherit",
+      },
+    );
   }
 
-  throw new Error(`Unsupported service manager: ${getOs()}`);
+  if (action === "install") {
+    await install();
+  } else if (action === "start") {
+    await start();
+  }
 }
-
-/**
- * @typedef {object} Service
- * @property {string} name
- * @property {() => Promise<void>} install
- * @property {() => Promise<void>} enable
- * @property {() => Promise<void>} disable
- * @property {() => Promise<void>} start
- * @property {() => Promise<void>} stop
- * @property {() => Promise<void>} restart
- */
 
 /**
  * @returns {boolean}
@@ -192,112 +239,20 @@ export function isOpenRc() {
   return true;
 }
 
-/**
- * @param {string} name
- * @param {string} service
- * @returns {Service}
- */
-export function getSystemdService(name, service) {
-  const systemctl = which("systemctl");
-  const systemdPath = join("etc", "systemd", "system");
-
-  return {
-    name,
-    async install() {
-      writeFile(join(systemdPath, `${name}.service`), service);
-      await spawnSafe([systemctl, "daemon-reload"]);
-    },
-    async enable() {
-      await spawnSafe([systemctl, "enable", name], { stdio: "inherit" });
-    },
-    async disable() {
-      await spawnSafe([systemctl, "disable", name], { stdio: "inherit" });
-    },
-    async start() {
-      await spawnSafe([systemctl, "start", name], { stdio: "inherit" });
-    },
-    async stop() {
-      await spawnSafe([systemctl, "stop", name], { stdio: "inherit" });
-    },
-    async restart() {
-      await spawnSafe([systemctl, "restart", name], { stdio: "inherit" });
-    },
-  };
-}
-
-/**
- * @param {string} name
- * @param {string} service
- * @returns {Service}
- */
-export function getOpenRcService(name, service) {
-  const configPath = join("etc", "init.d");
-  const serviceRc = which("rc-service");
-  const updateRc = which("rc-update");
-
-  return {
-    name,
-    async install() {
-      const servicePath = join(configPath, name);
-      writeFile(servicePath, service, { mode: 0o755 });
-    },
-    async enable() {
-      await spawnSafe([updateRc, "add", name, "default"], { stdio: "inherit" });
-    },
-    async disable() {
-      await spawnSafe([updateRc, "del", name, "default"], { stdio: "inherit" });
-    },
-    async start() {
-      await spawnSafe([serviceRc, name, "start"], { stdio: "inherit" });
-    },
-    async stop() {
-      await spawnSafe([serviceRc, name, "stop"], { stdio: "inherit" });
-    },
-    async restart() {
-      await spawnSafe([serviceRc, name, "restart"], { stdio: "inherit" });
-    },
-  };
-}
-
-/**
- * @param {...string} args
- * @returns {string}
- */
-function getPath(...args) {
-  const lastArg = args.at(-1);
-  const options = typeof lastArg === "object" ? lastArg : undefined;
-  const paths = options ? args.slice(0, -1) : args;
-  const path = join(...paths);
-
-  if (options?.["clean"]) {
-    if (existsSync(path)) {
-      rmSync(path, { recursive: true });
-    }
-  }
-
-  if (options?.["mkdir"]) {
-    mkdirSync(path, { recursive: true });
-  } else if (options?.["touch"]) {
-    appendFileSync(path, "");
-  }
-
-  if (options?.["uid"] && options?.["gid"]) {
-    chownSync(path, options["uid"], options["gid"]);
-  }
-
-  return path;
-}
-
 export async function main() {
-  const service = await getAgentService("");
-  const { name } = service;
-  console.log("Created service:", name);
+  const { positionals: args } = parseArgs({
+    allowPositionals: true,
+  });
 
-  await service.install();
-  console.log("Installed service:", name);
+  if (!args.length || args.includes("install")) {
+    console.log("Installing agent...");
+    await doAgent("install");
+  }
 
-  await service.enable();
-  console.log("Enabled service:", name);
+  if (args.includes("start")) {
+    console.log("Starting agent...");
+    await doAgent("start");
+  }
 }
 
 await main();

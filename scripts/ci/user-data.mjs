@@ -6,17 +6,18 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { curlSafe, spawnSafe } from "../utils.mjs";
+import { parseArgs } from "node:util";
 
 /**
  * @typedef {object} UserData
  * @property {"darwin" | "linux" | "windows"} os
- * @property {"x64" | "aarch64"} [arch]
- * @property {string} [distro]
- * @property {string} [release]
  * @property {string} [username]
  * @property {string} [password]
  * @property {string[]} [authorizedKeys]
+ * @property {string} [tailscaleAuthkey]
+ * @property {string} [buildkiteToken]
  */
 
 /**
@@ -27,6 +28,8 @@ export async function getUserData(userData) {
   if (userData["os"] === "linux") {
     return getCloudInit(userData);
   }
+
+  throw new Error(`Unsupported operating system: ${userData["os"]}`);
 }
 
 /**
@@ -42,6 +45,8 @@ export async function getCloudInit(userData) {
   const password = userData["password"] || crypto.randomUUID();
   const authorizedKeys = userData["authorizedKeys"] || getAuthorizedKeys();
   const bootstrapScript = getBootrapScript(userData["os"]);
+  const tailscaleAuthkey = userData["tailscaleAuthkey"];
+  const agentToken = userData["buildkiteToken"];
   const agentScript = await getAgentScript();
   const [bootstrapUrl, agentUrl] = await Promise.all([uploadTmpFile(bootstrapScript), uploadTmpFile(agentScript)]);
 
@@ -62,6 +67,8 @@ export async function getCloudInit(userData) {
       - path: /tmp/agent.sh
         permissions: "0755"
         content: |
+          export BUILDKITE_AGENT_TOKEN=${JSON.stringify(agentToken) || ""}
+          export TAILSCALE_AUTHKEY=${JSON.stringify(tailscaleAuthkey) || ""}
           node /tmp/agent.mjs 2>&1 | tee /tmp/agent.log
       - path: /tmp/bootstrap.sh
         permissions: "0755"
@@ -69,9 +76,9 @@ export async function getCloudInit(userData) {
           # Most cloud platforms have limits on the size of the user-data script.
           # To work around this, we upload the bootstrap script to a temporary URL
           # then download and replace it at boot time.
-          curl -fsSL "${bootstrapUrl}" -o /tmp/bootstrap.sh
+          curl -fsSL ${JSON.stringify(bootstrapUrl)} -o /tmp/bootstrap.sh
           chmod +x /tmp/bootstrap.sh
-          curl -fsSL "${agentUrl}" -o /tmp/agent.mjs
+          curl -fsSL ${JSON.stringify(agentUrl)} -o /tmp/agent.mjs
           chmod +x /tmp/agent.mjs
           export CI=true
           sh /tmp/bootstrap.sh 2>&1 | tee /tmp/bootstrap.log
@@ -180,4 +187,30 @@ export async function getGithubAuthorizedKeys(organization) {
   );
 
   return sshKeys.flat();
+}
+
+export async function main() {
+  const { values: args } = parseArgs({
+    options: {
+      "os": { type: "string", default: "linux" },
+      "username": { type: "string" },
+      "password": { type: "string" },
+      "tailscale-authkey": { type: "string" },
+      "buildkite-token": { type: "string" },
+    },
+  });
+
+  const userData = {
+    os: args["os"],
+    username: args["username"],
+    password: args["password"],
+    tailscaleAuthkey: args["tailscale-authkey"],
+    buildkiteToken: args["buildkite-token"],
+  };
+
+  console.log(await getUserData(userData));
+}
+
+if (import.meta.main || fileURLToPath(import.meta.url) === process.argv[1]) {
+  await main();
 }

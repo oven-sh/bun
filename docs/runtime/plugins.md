@@ -402,7 +402,7 @@ type Loader = "js" | "jsx" | "ts" | "tsx" | "css" | "json" | "toml" | "object";
 
 Every module has a namespace. Namespaces are used to prefix the import in transpiled code; for instance, a loader with a `filter: /\.yaml$/` and `namespace: "yaml:"` will transform an import from `./myfile.yaml` into `yaml:./myfile.yaml`.
 
-The default namespace is `"file"` and it is not necessary to specify it, for instance: `import myModule frmo "./my-module.ts"` is the same as `import myModule from "file:./my-module.ts"`.
+The default namespace is `"file"` and it is not necessary to specify it, for instance: `import myModule from "./my-module.ts"` is the same as `import myModule from "file:./my-module.ts"`.
 
 Other common namespaces are:
 

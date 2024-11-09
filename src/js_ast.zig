@@ -1443,7 +1443,6 @@ pub const OptionalChain = enum(u1) {
 };
 
 pub const E = struct {
-    pub const ToJsOpts = struct {};
     pub const Array = struct {
         items: ExprNodeList = ExprNodeList{},
         comma_after_spread: ?logger.Loc = null,
@@ -1501,13 +1500,13 @@ pub const E = struct {
             return ExprNodeList.init(out[0 .. out.len - remain.len]);
         }
 
-        pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject, comptime opts: ToJsOpts) ToJSError!JSC.JSValue {
+        pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
             const items = this.items.slice();
             var array = JSC.JSValue.createEmptyArray(globalObject, items.len);
             array.protect();
             defer array.unprotect();
             for (items, 0..) |expr, j| {
-                array.putIndex(globalObject, @as(u32, @truncate(j)), try expr.data.toJS(allocator, globalObject, opts));
+                array.putIndex(globalObject, @as(u32, @truncate(j)), try expr.data.toJS(allocator, globalObject));
             }
 
             return array;
@@ -1949,7 +1948,7 @@ pub const E = struct {
             return if (asProperty(self, key)) |query| query.expr else @as(?Expr, null);
         }
 
-        pub fn toJS(this: *Object, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject, comptime opts: ToJsOpts) ToJSError!JSC.JSValue {
+        pub fn toJS(this: *Object, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
             var obj = JSC.JSValue.createEmptyObject(globalObject, this.properties.len);
             obj.protect();
             defer obj.unprotect();
@@ -1959,7 +1958,7 @@ pub const E = struct {
                     return error.@"Cannot convert argument type to JS";
                 }
                 var key = prop.key.?.data.e_string.toZigString(allocator);
-                obj.put(globalObject, &key, try prop.value.?.toJS(allocator, globalObject, opts));
+                obj.put(globalObject, &key, try prop.value.?.toJS(allocator, globalObject));
             }
 
             return obj;
@@ -2529,7 +2528,7 @@ pub const E = struct {
             }
         }
 
-        pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject, comptime _: ToJsOpts) !JSC.JSValue {
+        pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) !JSC.JSValue {
             s.resolveRopeIfNeeded(allocator);
             if (!s.isPresent()) {
                 var emp = bun.String.empty;
@@ -3408,8 +3407,8 @@ pub const Expr = struct {
         return false;
     }
 
-    pub fn toJS(this: Expr, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject, comptime opts: E.ToJsOpts) ToJSError!JSC.JSValue {
-        return this.data.toJS(allocator, globalObject, opts);
+    pub fn toJS(this: Expr, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
+        return this.data.toJS(allocator, globalObject);
     }
 
     pub inline fn isArray(this: *const Expr) bool {
@@ -6252,11 +6251,11 @@ pub const Expr = struct {
             return Equality.unknown;
         }
 
-        pub fn toJS(this: Data, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject, comptime opts: E.ToJsOpts) ToJSError!JSC.JSValue {
+        pub fn toJS(this: Data, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
             return switch (this) {
-                .e_array => |e| e.toJS(allocator, globalObject, opts),
-                .e_object => |e| e.toJS(allocator, globalObject, opts),
-                .e_string => |e| e.toJS(allocator, globalObject, opts),
+                .e_array => |e| e.toJS(allocator, globalObject),
+                .e_object => |e| e.toJS(allocator, globalObject),
+                .e_string => |e| e.toJS(allocator, globalObject),
                 .e_utf8_string => |e| JSC.ZigString.fromUTF8(e.data).toJS(globalObject),
                 .e_null => JSC.JSValue.null,
                 .e_undefined => JSC.JSValue.undefined,
@@ -6267,7 +6266,7 @@ pub const Expr = struct {
                 .e_number => |e| e.toJS(),
                 // .e_big_int => |e| e.toJS(ctx, exception),
 
-                .e_inlined_enum => |inlined| inlined.value.data.toJS(allocator, globalObject, .{}),
+                .e_inlined_enum => |inlined| inlined.value.data.toJS(allocator, globalObject),
 
                 .e_identifier,
                 .e_import_identifier,
@@ -8509,7 +8508,6 @@ pub const Macro = struct {
                         const value = in.toJS(
                             allocator,
                             globalObject,
-                            .{},
                         ) catch |e| {
                             // Keeping a separate variable instead of modifying js_args.len
                             // due to allocator.free call in defer

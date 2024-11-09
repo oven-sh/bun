@@ -1827,7 +1827,9 @@ class Http2Stream extends Duplex {
           chunk,
           undefined,
           (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
-          callback,
+          function () {
+            process.nextTick(this, ...arguments);
+          }.bind(callback),
         );
         return;
       }
@@ -1846,14 +1848,15 @@ class Http2Stream extends Duplex {
           chunk,
           encoding,
           (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
-          callback,
+          function () {
+            process.nextTick(this, ...arguments);
+          }.bind(callback),
         );
         return;
       }
     }
-    if (typeof callback == "function") {
-      callback();
-    }
+
+    typeof callback === "function" && callback();
   }
 }
 class ClientHttp2Stream extends Http2Stream {

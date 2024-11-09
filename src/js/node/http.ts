@@ -1514,23 +1514,24 @@ class ClientRequest extends OutgoingMessage {
   }
 
   _write(chunk, encoding, callback) {
+    this._writableState.length += chunk.length;
     if (!this.#bodyChunks) {
       this.#bodyChunks = [chunk];
-      callback();
+      process.nextTick(callback);
       return;
     }
     this.#bodyChunks.push(chunk);
-    callback();
+    process.nextTick(callback);
   }
 
   _writev(chunks, callback) {
     if (!this.#bodyChunks) {
       this.#bodyChunks = chunks;
-      callback();
+      process.nextTick(callback);
       return;
     }
     this.#bodyChunks.push(...chunks);
-    callback();
+    process.nextTick(callback);
   }
 
   _destroy(err, callback) {

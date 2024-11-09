@@ -13,7 +13,7 @@
       "request": "launch",
       "name": "bun test [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${file}"],
+      "args": ["test", "${file}", "--timeout", "0"],
       "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
@@ -192,6 +192,20 @@
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
       "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+    },
+    {
+      "type": "bun",
+      "request": "launch",
+      "name": "bun run [file] JS debugger",
+      "runtimeArgs": ["run"],
+      "program": "${file}",
+      "cwd": "${fileDirname}",
+      "runtime": "${workspaceFolder}/build/debug/bun-debug",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
+      },
     },
     {
       "type": "lldb",

@@ -194,6 +194,16 @@ pub const RunCommand = struct {
                     delimiter = 0;
                 },
 
+                ' ' => {
+                    delimiter = ' ';
+                },
+                '"' => {
+                    delimiter = '"';
+                },
+                '\'' => {
+                    delimiter = '\'';
+                },
+
                 'n' => {
                     if (delimiter > 0) {
                         if (strings.hasPrefixComptime(script[start..], "npm run ")) {

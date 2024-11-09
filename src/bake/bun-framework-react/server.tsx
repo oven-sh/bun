@@ -7,45 +7,22 @@ import { renderToHtml, renderToStaticHtml } from "bun-framework-react/ssr.tsx" w
 import { serverManifest } from "bun:bake/server";
 import { PassThrough } from "node:stream";
 
-function getPage(route, meta: Bake.RouteMetadata) {
-  const Route = route.default;
-  const { styles } = meta;
-
-  // Avoid running this on every production request
-  if (import.meta.env.DEV || import.meta.env.STATIC) {
-    if (typeof Route !== "function") {
-      throw new Error(
-        "Expected the default export of " +
-          JSON.stringify(meta.devRoutePath) +
-          " to be a React component, got " +
-          JSON.stringify(Route),
-      );
-    }
+function assertReactComponent(Component: any) {
+  if (typeof Component !== "function") {
+    console.log("Expected a React component", Component, typeof Component);
+    throw new Error("Expected a React component");
   }
-
-  return (
-    <html lang="en">
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Bun + React Server Components</title>
-        {styles.map(url => (
-          <link key={url} rel="stylesheet" href={url} />
-        ))}
-      </head>
-      <body>
-        <Route />
-      </body>
-    </html>
-  );
 }
 
-function getPage2(meta: Bake.RouteMetadata) {
+function getPage(meta: Bake.RouteMetadata) {
   const { styles } = meta;
 
   const Page = meta.pageModule.default;
+  assertReactComponent(Page);
   let route = <Page />;
   for (const layout of meta.layouts) {
     const Layout = layout.default;
+    assertReactComponent(Layout);
     route = <Layout>{route}</Layout>;
   }
 
@@ -65,7 +42,7 @@ function getPage2(meta: Bake.RouteMetadata) {
 
 // `server.tsx` exports a function to be used for handling user routes. It takes
 // in the Request object, the route's module, and extra route metadata.
-export default async function render(request: Request, route: any, meta: Bake.RouteMetadata): Promise<Response> {
+export default async function render(request: Request, meta: Bake.RouteMetadata): Promise<Response> {
   // The framework generally has two rendering modes.
   // - Standard browser navigation
   // - Client-side navigation
@@ -75,7 +52,7 @@ export default async function render(request: Request, route: any, meta: Bake.Ro
   // rendering modes. This is signaled by `client.tsx` via the `Accept` header.
   const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
 
-  const page = getPage(route, meta);
+  const page = getPage(meta);
 
   // This renders Server Components to a ReadableStream "RSC Payload"
   const rscPayload = renderToPipeableStream(page, serverManifest)
@@ -99,8 +76,8 @@ export default async function render(request: Request, route: any, meta: Bake.Ro
 // When a production build is performed, pre-rendering is invoked here. If this
 // function returns no files, the route is always dynamic. When building an app
 // to static files, all routes get pre-rendered (build failure if not possible).
-export async function prerender(route: any, meta: Bake.RouteMetadata) {
-  const page = getPage(route, meta);
+export async function prerender(meta: Bake.RouteMetadata) {
+  const page = getPage(meta);
 
   const rscPayload = renderToPipeableStream(page, serverManifest)
     // TODO: write a lightweight version of PassThrough

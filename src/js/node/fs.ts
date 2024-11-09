@@ -1639,3 +1639,5 @@ setName(fdatasync, "fdatasync");
 setName(fdatasyncSync, "fdatasyncSync");
 setName(openAsBlob, "openAsBlob");
 setName(opendir, "opendir");
+
+$assert($isPromiseResolved(Promise.resolve()));

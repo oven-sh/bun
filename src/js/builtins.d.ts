@@ -15,6 +15,9 @@ declare function $debug(...args: any[]): void;
  */
 declare function $assert(check: any, ...message: any[]): asserts check;
 
+/** Asserts the input is a promise. Returns `true` if the promise is resolved */
+declare function $isPromiseResolved(promise: Promise<any>): boolean;
+
 declare const IS_BUN_DEVELOPMENT: boolean;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */

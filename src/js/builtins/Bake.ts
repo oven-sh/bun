@@ -24,7 +24,7 @@ export function renderRoutesForProdStatic(
   paramInformation: Array<null | string[]>,
   styles: string[][],
 ): Promise<void> {
-  console.log({
+  $debug({
     outBase,
     allServerFiles,
     renderStatic,
@@ -64,7 +64,9 @@ export function renderRoutesForProdStatic(
       }
 
       // Call the framework's rendering function
-      const results = await renderStatic[type].$call(globalThis, {
+      const callback = renderStatic[type];
+      $assert(callback != null && $isCallable(callback));
+      const results = await callback({
         scripts: [clientEntryUrl[type]],
         modulepreload: [],
         styles: styles[i],
@@ -77,7 +79,7 @@ export function renderRoutesForProdStatic(
       }
       if (typeof results !== "object") {
         throw new Error(
-          `Rendering route ${sourceRouteFiles[i]} did not return an object, got ${Bun.inspect(results)}. This is a bug in the framework.`,
+          `Rendering route ${JSON.stringify(sourceRouteFiles[i])} did not return an object, got ${Bun.inspect(results)}. This is a bug in the framework.`,
         );
       }
       const { files } = results;
@@ -86,8 +88,7 @@ export function renderRoutesForProdStatic(
       }
       await Promise.all(
         Object.entries(files).map(([key, value]) => {
-          const base = patterns;
-          return Bun.write(pathJoin(outBase, base + key), value);
+          return Bun.write(pathJoin(outBase, patterns[i] + key), value);
         }),
       );
     }),

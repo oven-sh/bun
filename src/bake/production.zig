@@ -228,9 +228,12 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             .style = fsr.style,
         });
 
-        path_map.route_types.append(allocator, .{
-            .server_file = path_map.getFileIdForRouter(fsr.entry_server),
-            .client_file = if (fsr.entry_client) |client| path_map.getClientFile(client) else .none,
+        try path_map.route_types.append(allocator, .{
+            .server_file = try path_map.getFileIdForRouter(fsr.entry_server),
+            .client_file = if (fsr.entry_client) |client|
+                (try path_map.getClientFile(client)).toOptional()
+            else
+                .none,
         });
     }
 
@@ -536,7 +539,7 @@ fn BakeRegisterProductionChunk(global: *JSC.JSGlobalObject, key: bun.String, sou
     return result;
 }
 
-fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.C) bun.String {
+export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.C) bun.String {
     var sfa = std.heap.stackFallback(@sizeOf(bun.PathBuffer) * 2, bun.default_allocator);
     const alloc = sfa.get();
 
@@ -582,8 +585,8 @@ const ProductionPathMap = struct {
     out_module_keys: []JSValue,
 
     const RouteType = struct {
-        client_file: u32,
-        server_file: u32,
+        client_file: FrameworkRouter.OpaqueFileId.Optional,
+        server_file: FrameworkRouter.OpaqueFileId,
     };
 
     fn getOutIndex(ppm: *ProductionPathMap, index: FrameworkRouter.OpaqueFileId) u32 {
@@ -602,7 +605,7 @@ const ProductionPathMap = struct {
     }
 
     pub fn getClientFile(ctx: *ProductionPathMap, abs_path: []const u8) !FrameworkRouter.OpaqueFileId {
-        const gop = try ctx.client_files.getOrPut(ctx.allocator, abs_path);
+        const gop = try ctx.route_files.getOrPut(ctx.allocator, abs_path);
         if (!gop.found_existing) {
             const dupe = try ctx.allocator.dupe(u8, abs_path);
             try ctx.entry_points.append(ctx.allocator, BakeEntryPoint.initClientWrapped(dupe, .client));
@@ -612,11 +615,6 @@ const ProductionPathMap = struct {
         return FrameworkRouter.OpaqueFileId.init(@intCast(gop.index));
     }
 };
-
-comptime {
-    if (bun.FeatureFlags.bake)
-        @export(BakeProdResolve, .{ .name = "BakeProdResolve" });
-}
 
 const TypeAndFlags = packed struct(i32) {
     type: u8,

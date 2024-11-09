@@ -933,7 +933,7 @@ fn NewPrinter(
                     p.writer.print(@TypeOf(span), span);
                 },
                 else => {
-                    if (std.debug.runtime_safety and ascii_only) {
+                    if (Environment.allow_assert and ascii_only) {
                         for (str) |char| std.debug.assert(char > 0 and char < 0x80);
                     }
                     p.writer.print(StringType, str);
@@ -1906,7 +1906,7 @@ fn NewPrinter(
             p.print(quote);
         }
         pub fn printStringLiteralUTF8(p: *Printer, str: string, allow_backtick: bool) void {
-            if (std.debug.runtime_safety) std.debug.assert(std.unicode.wtf8ValidateSlice(str));
+            if (Environment.allow_assert) std.debug.assert(std.unicode.wtf8ValidateSlice(str));
 
             const quote = if (comptime !is_json)
                 bestQuoteCharForString(u8, str, allow_backtick)

@@ -544,7 +544,6 @@ EXPORTS
   napi_reference_ref
   napi_reference_unref
   napi_get_reference_value
-  napi_get_reference_value_internal
   napi_throw
   napi_throw_error
   napi_throw_type_error

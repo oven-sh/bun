@@ -17,6 +17,7 @@
 #include "helpers.h"
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSCellInlines.h>
+#include <iostream>
 #include <wtf/text/ExternalStringImpl.h>
 #include <wtf/text/StringCommon.h>
 #include <wtf/text/StringImpl.h>
@@ -236,51 +237,20 @@ JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSOb
     return JSC::makeSource(sourceCodeBuilder.toString(), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted, keyString, WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
 }
 
-}
-
-static void handleFinalizer(NapiRef* ref)
+void NapiRefWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
-    if (ref->finalizer) {
-        if (ref->defer) {
-            napi_internal_enqueue_finalizer(ref->env, ref->finalizer->callback(), ref->data, ref->finalizer->hint());
-        } else {
-            ref->finalizer->call(ref->env, ref->data, true);
-        }
-    }
+    auto* weakValue = reinterpret_cast<NapiRef*>(context);
+    weakValue->handleFinalizer();
 }
 
-class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
-public:
-    // Equivalent to v8impl::Ownership::kUserland
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final
-    {
-        auto* weakValue = reinterpret_cast<NapiRef*>(context);
-        handleFinalizer(weakValue);
-    }
+void NapiRefSelfDeletingWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
+{
+    auto* weakValue = reinterpret_cast<NapiRef*>(context);
+    weakValue->handleFinalizer();
+    delete weakValue;
+}
 
-    static NapiRefWeakHandleOwner& weakValueHandleOwner()
-    {
-        static NeverDestroyed<NapiRefWeakHandleOwner> jscWeakValueHandleOwner;
-        return jscWeakValueHandleOwner;
-    }
-};
-
-class NapiRefSelfDeletingWeakHandleOwner final : public JSC::WeakHandleOwner {
-public:
-    // Equivalent to v8impl::Ownership::kRuntime
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final
-    {
-        auto* weakValue = reinterpret_cast<NapiRef*>(context);
-        handleFinalizer(weakValue);
-        delete weakValue;
-    }
-
-    static NapiRefSelfDeletingWeakHandleOwner& weakValueHandleOwner()
-    {
-        static NeverDestroyed<NapiRefSelfDeletingWeakHandleOwner> jscWeakValueHandleOwner;
-        return jscWeakValueHandleOwner;
-    }
-};
+}
 
 void NapiRef::ref()
 {
@@ -316,6 +286,7 @@ void NapiRef::clear()
     globalObject.clear();
     weakValueRef.clear();
     strongRef.clear();
+    eternalGlobalSymbolRef.clear();
 }
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
@@ -1045,9 +1016,9 @@ extern "C" napi_status napi_wrap(napi_env env,
     auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer::create(finalize_cb, finalize_hint), env->mustAlwaysDefer());
     ref->data = native_object;
     if (result) {
-        ref->weakValueRef.set(value, NapiRefWeakHandleOwner::weakValueHandleOwner(), ref);
+        ref->weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), ref);
     } else {
-        ref->weakValueRef.set(value, NapiRefSelfDeletingWeakHandleOwner::weakValueHandleOwner(), ref);
+        ref->weakValueRef.set(value, Napi::NapiRefSelfDeletingWeakHandleOwner::weakValueHandleOwner(), ref);
     }
     // wrap the ref in an external so that it can serve as a JSValue
     auto* external = Bun::NapiExternal::create(globalObject->vm(), globalObject->NapiExternalStructure(), ref, nullptr, env, nullptr);
@@ -1268,29 +1239,19 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     NAPI_CHECK_ARG(env, value);
 
     JSValue val = toJS(value);
-    NAPI_RETURN_EARLY_IF_FALSE(env, val.isCell(), napi_object_expected);
 
-    Zig::GlobalObject* globalObject = toJS(env);
+    bool can_be_weak = true;
+
+    if (!(val.isObject() || val.isCallable() || val.isSymbol())) {
+        NAPI_RETURN_EARLY_IF_FALSE(env, env->napiModule().nm_version == NAPI_VERSION_EXPERIMENTAL, napi_invalid_arg);
+        can_be_weak = false;
+    }
 
     auto* ref = new NapiRef(env, initial_refcount, nullptr, env->mustAlwaysDefer());
-    if (initial_refcount > 0) {
-        ref->strongRef.set(globalObject->vm(), val);
-    }
-    ref->weakValueRef.set(val, NapiRefWeakHandleOwner::weakValueHandleOwner(), ref);
+    ref->setValueInitial(val, can_be_weak);
 
     *result = toNapi(ref);
     NAPI_RETURN_SUCCESS(env);
-}
-
-extern "C" void napi_set_ref(NapiRef* ref, JSC__JSValue val_)
-{
-    NAPI_LOG_CURRENT_FUNCTION;
-    JSValue val = JSValue::decode(val_);
-    if (val) {
-        ref->strongRef.set(ref->globalObject->vm(), val);
-    } else {
-        ref->strongRef.clear();
-    }
 }
 
 extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
@@ -1313,7 +1274,8 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
     if (result) {
         // If they're expecting a Ref, use the ref.
         auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer::create(finalize_cb, finalize_hint), env->mustAlwaysDefer());
-        ref->weakValueRef.set(object, NapiRefWeakHandleOwner::weakValueHandleOwner(), ref);
+        // TODO(@heimskr): consider detecting whether the value can't be weak, as we do in napi_create_reference.
+        ref->setValueInitial(object, true);
         ref->data = native_object;
         *result = toNapi(ref);
     } else {
@@ -1367,12 +1329,6 @@ extern "C" napi_status napi_get_reference_value(napi_env env, napi_ref ref,
     *result = toNapi(napiRef->value(), toJS(env));
 
     NAPI_RETURN_SUCCESS(env);
-}
-
-extern "C" JSC__JSValue napi_get_reference_value_internal(NapiRef* napiRef)
-{
-    NAPI_LOG_CURRENT_FUNCTION;
-    return JSValue::encode(napiRef->value());
 }
 
 extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,

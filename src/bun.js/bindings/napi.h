@@ -152,6 +152,30 @@ class JSSourceCode;
 
 namespace Napi {
 JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject);
+
+class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
+public:
+    // Equivalent to v8impl::Ownership::kUserland
+    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+
+    static NapiRefWeakHandleOwner& weakValueHandleOwner()
+    {
+        static NeverDestroyed<NapiRefWeakHandleOwner> jscWeakValueHandleOwner;
+        return jscWeakValueHandleOwner;
+    }
+};
+
+class NapiRefSelfDeletingWeakHandleOwner final : public JSC::WeakHandleOwner {
+public:
+    // Equivalent to v8impl::Ownership::kRuntime
+    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+
+    static NapiRefSelfDeletingWeakHandleOwner& weakValueHandleOwner()
+    {
+        static NeverDestroyed<NapiRefSelfDeletingWeakHandleOwner> jscWeakValueHandleOwner;
+        return jscWeakValueHandleOwner;
+    }
+};
 }
 
 namespace Zig {
@@ -276,11 +300,50 @@ public:
 
     JSC::JSValue value() const
     {
+        if (isEternal) {
+            return eternalGlobalSymbolRef.get();
+        }
+
         if (refCount == 0) {
             return weakValueRef.get();
         }
 
         return strongRef.get();
+    }
+
+    void setValueInitial(JSC::JSValue value, bool can_be_weak)
+    {
+        if (refCount > 0) {
+            strongRef.set(globalObject->vm(), value);
+        }
+
+        // In NAPI non-experimental, types other than object, function and symbol can't be used as values for references.
+        // In NAPI experimental, they can be, but we must not store weak references to them.
+        if (can_be_weak) {
+            weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), this);
+        }
+
+        if (value.isSymbol()) {
+            auto* symbol = jsDynamicCast<JSC::Symbol*>(value);
+            ASSERT(symbol != nullptr);
+            if (symbol->uid().isRegistered()) {
+                // Global symbols must always be retrievable,
+                // even if garbage collection happens while the ref count is 0.
+                eternalGlobalSymbolRef.set(globalObject->vm(), symbol);
+                isEternal = true;
+            }
+        }
+    }
+
+    void handleFinalizer()
+    {
+        if (finalizer) {
+            if (defer) {
+                napi_internal_enqueue_finalizer(env, finalizer->callback(), data, finalizer->hint());
+            } else {
+                finalizer->call(env, data, true);
+            }
+        }
     }
 
     ~NapiRef()
@@ -300,6 +363,11 @@ public:
     uint32_t refCount = 0;
     bool isOwnedByRuntime = false;
     bool defer = false;
+    bool releaseOnWeaken = false;
+
+private:
+    JSC::Strong<JSC::Symbol> eternalGlobalSymbolRef;
+    bool isEternal = false;
 };
 
 static inline napi_ref toNapi(NapiRef* val)

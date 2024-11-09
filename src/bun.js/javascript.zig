@@ -743,7 +743,7 @@ const AutoKiller = struct {
         while (this.processes.popOrNull()) |process| {
             if (!process.key.hasExited()) {
                 log("process.kill {d}", .{process.key.pid});
-                count += @as(u32, @intFromBool(process.key.kill(bun.SignalCode.default) == .result));
+                count += @as(u32, @intFromBool(process.key.kill(bun.SignalCode.SIGKILL) == .result));
             }
         }
         return count;

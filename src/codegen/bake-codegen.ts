@@ -28,7 +28,7 @@ process.chdir(base_dir); // to make bun build predictable in development
 function convertZigEnum(zig: string) {
   const startTrigger = "\npub const MessageId = enum(u8) {";
   const start = zig.indexOf(startTrigger) + startTrigger.length;
-  const endTrigger = /\n    pub fn |\n};/g;
+  const endTrigger = /\n    pub (inline )?fn |\n};/g;
   const end = zig.slice(start).search(endTrigger) + start;
   const enumText = zig.slice(start, end);
   const values = enumText.replaceAll("\n    ", "\n  ").replace(/\n\s*(\w+)\s*=\s*'(.+?)',/g, (_, name, value) => {

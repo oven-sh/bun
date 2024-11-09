@@ -6934,7 +6934,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            const prepared = this.prepareJsRequestContext(req, resp, this.config.onRequest, 1, .{this.thisObject});
+            const prepared = this.prepareJsRequestContext(req, resp) orelse return;
             const ctx = prepared.ctx;
 
             bun.assert(this.config.onRequest != .zero);
@@ -6946,7 +6946,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             defer {
                 // uWS request will not live longer than this function
-                prepared.request_context.detachRequest();
+                prepared.request_object.request_context.detachRequest();
             }
             const original_state = ctx.defer_deinit_until_callback_completes;
             var should_deinit_context = false;
@@ -7145,8 +7145,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.defer_deinit_until_callback_completes = &should_deinit_context;
             ctx.onResponse(
                 this,
-                req,
-                request_object,
                 request_value,
                 response_value,
             );

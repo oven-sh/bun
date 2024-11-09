@@ -6,13 +6,14 @@
 //! adjusting imports) must always rebundle only that one file.
 //!
 //! All work is held in-memory, using manually managed data-oriented design.
+//!
+//! TODO: Currently does not have a `deinit()`, as it was assumed to be alive for
+//! the remainder of this process' lifespan. Later, it will be required to fully
+//! clean up server state.
 pub const DevServer = @This();
 pub const debug = bun.Output.Scoped(.Bake, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 
-// TODO: Currently does not have a `deinit()`, as it was assumed to be alive for
-// the remainder of this process' lifespan. Later, it will be required to fully
-// clean up server state.
 pub const Options = struct {
     root: []const u8,
     framework: bake.Framework,
@@ -1238,6 +1239,7 @@ fn onRequest(dev: *DevServer, req: *Request, resp: *Response) void {
     if (dev.router.matchSlow(req.url(), &params)) |route_index| {
         const prepared = dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp) orelse
             return;
+        _ = prepared; // autofix
 
         const bundle_index = dev.router.routePtr(route_index).bundle.unwrap() orelse {
             const server_file_names = dev.server_graph.bundled_files.keys();
@@ -1248,12 +1250,19 @@ fn onRequest(dev: *DevServer, req: *Request, resp: *Response) void {
             var entry_points = std.ArrayList(BakeEntryPoint).init(temp_alloc);
             defer entry_points.deinit();
 
-            const main_route = dev.router.routePtr(route_index);
-            try appendOpaqueEntryPoint(entry_points, server_file_names, .server, main_route.file_page);
-
             // Build a list of all files that have not yet been bundled,
             // then bundle them.
+            var route = dev.router.routePtr(route_index);
+            appendOpaqueEntryPoint(server_file_names, &entry_points, .server, route.file_page) catch bun.outOfMemory();
+            appendOpaqueEntryPoint(server_file_names, &entry_points, .server, route.file_layout) catch bun.outOfMemory();
+            while (route.parent.unwrap()) |parent_index| {
+                route = dev.router.routePtr(parent_index);
+                appendOpaqueEntryPoint(server_file_names, &entry_points, .server, route.file_layout) catch bun.outOfMemory();
+            }
 
+            {
+                @panic("awa");
+            }
             // const node = bun.create(dev.allocator, DeferredRequest.Node, .{
             //     .request = prepared.save(dev.vm.global, req, resp),
             //     .route_index = route_index,
@@ -1262,7 +1271,9 @@ fn onRequest(dev: *DevServer, req: *Request, resp: *Response) void {
             return;
         };
         _ = bundle_index; // autofix
-        dev.getRouteBundle(prepared, route_index);
+        // dev.getRouteBundle(prepared, route_index);
+
+        @panic("awa");
     }
 
     sendBuiltInNotFound(resp);

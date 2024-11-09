@@ -524,6 +524,7 @@ register_command(
       -Dcanary=${CANARY_REVISION}
       -Dcodegen_path=${CODEGEN_PATH}
       -Dcodegen_embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
+      --prominent-compile-errors
   ARTIFACTS
     ${BUN_ZIG_OUTPUT}
   TARGETS

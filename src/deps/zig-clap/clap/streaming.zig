@@ -120,28 +120,34 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                 },
                 .short => {
                     if (arg.len == 1) {
-                        // Single short flag
-                        return parser.parseShortFlag(arg[0]) catch |err1| {
-                            if (err1 == error.InvalidArgument) {
-                                if (warn_on_unrecognized_flag) {
-                                    Output.warn("unrecognized flag: -{c}\n", .{arg[0]});
-                                    Output.flush();
-                                }
-                                // Continue parsing after unrecognized flag
-                                return parser.next();
+                        for (parser.params) |*param| {
+                            const short = param.names.short orelse continue;
+                            if (short != arg[0]) continue;
+
+                            if (param.takes_value == .none) {
+                                return Arg(Id){ .param = param };
                             }
-                            return err1;
-                        };
-                    } else {
-                        // Multiple short flags combined
-                        parser.state = .{
-                            .chaining = .{
-                                .arg = arg,
-                                .index = 0,
-                            },
-                        };
-                        return try parser.chainging(parser.state.chaining);
+
+                            const value = parser.iter.next() orelse {
+                                return parser.err(arg, .{ .short = arg[0] }, error.MissingValue);
+                            };
+                            return Arg(Id){ .param = param, .value = value };
+                        }
+
+                        if (warn_on_unrecognized_flag) {
+                            Output.warn("unrecognized flag: -{s}\n", .{arg});
+                            Output.flush();
+                        }
+                        return parser.next();
                     }
+
+                    parser.state = .{
+                        .chaining = .{
+                            .arg = arg,
+                            .index = 0,
+                        },
+                    };
+                    return try parser.chainging(parser.state.chaining);
                 },
                 .positional => if (parser.positionalParam()) |param| {
                     // If we find a positional with the value `--` then we
@@ -184,14 +190,12 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
             const index = state.index;
             const flag = arg[index];
 
-            const result = parser.parseShortFlag(flag) catch |err1| {
-                if (err1 == error.InvalidArgument) {
-                    if (warn_on_unrecognized_flag) {
-                        Output.warn("unrecognized flag: -{c}\n", .{flag});
-                        Output.flush();
-                    }
-                    // Move to the next flag in the chain
-                    const next_index = index + 1;
+            for (parser.params) |*param| {
+                const short = param.names.short orelse continue;
+                if (short != flag) continue;
+
+                const next_index = index + 1;
+                if (param.takes_value == .none) {
                     if (next_index < arg.len) {
                         parser.state = .{
                             .chaining = .{
@@ -199,16 +203,28 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                                 .index = next_index,
                             },
                         };
-                        return parser.chainging(parser.state.chaining);
                     } else {
                         parser.state = .normal;
-                        return parser.next();
                     }
+                    return Arg(Id){ .param = param };
                 }
-                return err1;
-            };
 
-            // Prepare for the next flag in the chain
+                const value = if (next_index < arg.len)
+                    arg[next_index..]
+                else
+                    parser.iter.next() orelse {
+                        return parser.err(arg, .{ .short = flag }, error.MissingValue);
+                    };
+
+                parser.state = .normal;
+                return Arg(Id){ .param = param, .value = value };
+            }
+
+            if (warn_on_unrecognized_flag) {
+                Output.warn("unrecognized flag: -{c}\n", .{flag});
+                Output.flush();
+            }
+
             const next_index = index + 1;
             if (next_index < arg.len) {
                 parser.state = .{
@@ -217,11 +233,11 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                         .index = next_index,
                     },
                 };
-            } else {
-                parser.state = .normal;
+                return parser.chainging(parser.state.chaining);
             }
 
-            return result;
+            parser.state = .normal;
+            return parser.next();
         }
 
         fn positionalParam(parser: *@This()) ?*const clap.Param(Id) {

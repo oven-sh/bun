@@ -74,8 +74,6 @@ pub const JSONOptions = struct {
     /// mark as originally for a macro to enable inlining
     was_originally_macro: bool = false,
 
-    always_decode_escape_sequences: bool = false,
-
     guess_indentation: bool = false,
 };
 
@@ -90,7 +88,6 @@ pub fn NewLexer(
         json_options.ignore_trailing_escape_sequences,
         json_options.json_warn_duplicate_keys,
         json_options.was_originally_macro,
-        json_options.always_decode_escape_sequences,
         json_options.guess_indentation,
     );
 }
@@ -103,7 +100,6 @@ fn NewLexer_(
     comptime json_options_ignore_trailing_escape_sequences: bool,
     comptime json_options_json_warn_duplicate_keys: bool,
     comptime json_options_was_originally_macro: bool,
-    comptime json_options_always_decode_escape_sequences: bool,
     comptime json_options_guess_indentation: bool,
 ) type {
     const json_options = JSONOptions{
@@ -114,7 +110,6 @@ fn NewLexer_(
         .ignore_trailing_escape_sequences = json_options_ignore_trailing_escape_sequences,
         .json_warn_duplicate_keys = json_options_json_warn_duplicate_keys,
         .was_originally_macro = json_options_was_originally_macro,
-        .always_decode_escape_sequences = json_options_always_decode_escape_sequences,
         .guess_indentation = json_options_guess_indentation,
     };
     return struct {

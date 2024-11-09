@@ -113,7 +113,7 @@ pub const TSConfigJSON = struct {
     // "${configDir}" with "./" and then convert it to an absolute path sometimes.
     // We convert it to an absolute path during module resolution, so we shouldn't need to do that here.
     // https://github.com/microsoft/TypeScript/blob/ef802b1e4ddaf8d6e61d6005614dd796520448f8/src/compiler/commandLineParser.ts#L3243-L3245
-    fn strReplacingTemplates(allocator: std.mem.Allocator, input: string, source: *const logger.Source) !string {
+    fn strReplacingTemplates(allocator: std.mem.Allocator, input: string, source: *const logger.Source) bun.OOM!string {
         var remaining = input;
         var string_builder = bun.StringBuilder{};
         const configDir = source.path.sourceDir();

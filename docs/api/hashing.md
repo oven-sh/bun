@@ -69,9 +69,19 @@ const isMatch = Bun.password.verifySync(password, hash);
 
 When you use `Bun.password.hash`, a salt is automatically generated and included in the hash.
 
-#### Modular Crypt Format
+### bcrypt - Modular Crypt Format
 
 In the following [Modular Crypt Format](https://passlib.readthedocs.io/en/stable/modular_crypt_format.html) hash (used by `bcrypt`):
+
+Input:
+
+```ts
+await Bun.password.hash("hello", {
+  algorithm: "bcrypt",
+});
+```
+
+Output:
 
 ```sh
 $2b$10$Lyj9kHYZtiyfxh2G60TEfeqs7xkkGiEFFDi3iJGc50ZG/XJ1sxIFi;
@@ -84,9 +94,29 @@ The format is composed of:
 - `salt`: `$Lyj9kHYZtiyfxh2G60TEfeqs7xkkGiEFFDi3iJGc50ZG/XJ1sxIFi`
 - `hash`: `$GzJ8PuBi+K+BVojzPfS5mjnC8OpLGtv8KJqF99eP6a4`
 
-#### PHC format
+By default, the bcrypt library truncates passwords longer than 72 bytes. In Bun, if you pass `Bun.password.hash` a password longer than 72 bytes and use the `bcrypt` algorithm, the password will be hashed via SHA-512 before being passed to bcrypt.
+
+```ts
+await Bun.password.hash("hello".repeat(100), {
+  algorithm: "bcrypt",
+});
+```
+
+So instead of sending bcrypt a 500-byte password silently truncated to 72 bytes, Bun will hash the password using SHA-512 first, and return the result in Modular Crypt Format. This is a more secure default behavior.
+
+### argon2 - PHC format
 
 In the following [PHC format](https://github.com/P-H-C/phc-string-format/blob/master/phc-sf-spec.md) hash (used by `argon2`):
+
+Input:
+
+```ts
+await Bun.password.hash("hello", {
+  algorithm: "argon2id",
+});
+```
+
+Output:
 
 ```sh
 $argon2id$v=19$m=65536,t=2,p=1$xXnlSvPh4ym5KYmxKAuuHVlDvy2QGHBNuI6bJJrRDOs$2YY6M48XmHn+s5NoBaL+ficzXajq2Yj8wut3r0vnrwI
@@ -94,7 +124,7 @@ $argon2id$v=19$m=65536,t=2,p=1$xXnlSvPh4ym5KYmxKAuuHVlDvy2QGHBNuI6bJJrRDOs$2YY6M
 
 The format is composed of:
 
-- `argon2id`: `$argon2id`
+- `algorithm`: `$argon2id`
 - `version`: `$v=19`
 - `memory cost`: `65536`
 - `iterations`: `t=2`

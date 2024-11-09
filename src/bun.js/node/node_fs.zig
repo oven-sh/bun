@@ -4001,11 +4001,7 @@ pub const NodeFS = struct {
 
     pub fn access(this: *NodeFS, args: Arguments.Access, comptime _: Flavor) Maybe(Return.Access) {
         const path = args.path.sliceZ(&this.sync_error_buf);
-        if (Environment.isWindows) {
-            return Syscall.access(path, @intFromEnum(args.mode));
-        }
-        const rc = Syscall.system.access(path, @intFromEnum(args.mode));
-        return Maybe(Return.Access).errnoSysP(rc, .access, path) orelse Maybe(Return.Access).success;
+        return Syscall.access(path, @intFromEnum(args.mode));
     }
 
     pub fn appendFile(this: *NodeFS, args: Arguments.AppendFile, comptime flavor: Flavor) Maybe(Return.AppendFile) {
@@ -5804,16 +5800,15 @@ pub const NodeFS = struct {
                         // on mac, it's relatively positioned
                         0
                     else brk: {
-                        // on linux, it's absolutely positioned
-                        const pos = bun.sys.system.lseek(
-                            fd.cast(),
+                        // on linux, it's absolutely positione
+
+                        switch (Syscall.lseek(
+                            fd,
                             @as(std.posix.off_t, @intCast(0)),
                             std.os.linux.SEEK.CUR,
-                        );
-
-                        switch (bun.sys.getErrno(pos)) {
-                            .SUCCESS => break :brk @as(usize, @intCast(pos)),
-                            else => break :preallocate,
+                        )) {
+                            .err => break :preallocate,
+                            .result => |pos| break :brk @as(usize, @intCast(pos)),
                         }
                     };
 

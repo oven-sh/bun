@@ -2191,13 +2191,12 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
         pub fn isDanglingSymlink(path: [:0]const u8) bool {
             if (comptime Environment.isLinux) {
-                const rc = Syscall.system.open(path, .{ .PATH = true }, @as(u32, 0));
-                switch (Syscall.getErrno(rc)) {
-                    .SUCCESS => {
-                        _ = bun.sys.close(bun.toFD(@as(i32, @intCast(rc))));
+                switch (Syscall.open(path, bun.O.PATH, @as(u32, 0))) {
+                    .err => return true,
+                    .result => |fd| {
+                        _ = bun.sys.close(fd);
                         return false;
                     },
-                    else => return true,
                 }
             } else if (comptime Environment.isWindows) {
                 switch (bun.sys.sys_uv.open(path, 0, 0)) {
@@ -2210,13 +2209,12 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     },
                 }
             } else {
-                const rc = Syscall.system.open(path, .{}, .{});
-                switch (Syscall.getErrno(rc)) {
-                    .SUCCESS => {
-                        _ = Syscall.system.close(rc);
+                switch (Syscall.open(path, bun.O.PATH, @as(u32, 0))) {
+                    .err => return true,
+                    .result => |fd| {
+                        _ = bun.sys.close(fd);
                         return false;
                     },
-                    else => return true,
                 }
             }
         }

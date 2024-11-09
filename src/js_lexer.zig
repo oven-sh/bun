@@ -299,6 +299,7 @@ fn NewLexer_(
         }
 
         pub fn deinit(this: *LexerType) void {
+            this.temp_buffer_u16.clearAndFree();
             this.all_comments.clearAndFree();
             this.comments_to_preserve_before.clearAndFree();
         }

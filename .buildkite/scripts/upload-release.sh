@@ -163,16 +163,21 @@ function upload_s3_file() {
 }
 
 function send_bench_webhook() {
+  if [ -z "$BENCHMARK_URL" ]; then
+    return 1
+  fi
+
   local tag="$1"
   local commit="$BUILDKITE_COMMIT"
   local artifact_path="${commit}"
-  
+
   if [ "$tag" == "canary" ]; then
     artifact_path="${commit}-canary"
   fi
 
   local artifact_url="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/$artifact_path/bun-linux-x64.zip"
-  local webhook_url="$BENCH_URL?tag=$tag&commit=$commit&artifact_url=$artifact_url"
+  local webhook_url="$BENCHMARK_URL?tag=$tag&commit=$commit&artifact_url=$artifact_url"
+  
   curl -X POST "$webhook_url"
 }
 

@@ -120,7 +120,7 @@ for (const name in enums) {
   if (typeof value === null) throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
   const keys = Array.isArray(value) ? value : Object.keys(value).filter(k => !k.match(/^[0-9]+$/));
   define[`$${name}IdToLabel`] = "[" + keys.map(k => `"${k}"`).join(", ") + "]";
-  define[`$${name}LabelToId`] = "{" + keys.map(k => `"${k}": ${keys.indexOf(k)}`).join(", ") + "}";
+  define[`$${name}LabelToId`] = "{" + keys.map(k => `"${k}": ${keys.indexOf(k) + 1}`).join(", ") + "}";
 }
 
 for (const name of globalsToPrefix) {

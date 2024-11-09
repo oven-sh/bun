@@ -25,6 +25,7 @@ pub const isLinux = @import("builtin").target.os.tag == .linux;
 pub const isAarch64 = @import("builtin").target.cpu.arch.isAARCH64();
 pub const isX86 = @import("builtin").target.cpu.arch.isX86();
 pub const isX64 = @import("builtin").target.cpu.arch == .x86_64;
+pub const isMusl = builtin.target.abi.isMusl();
 pub const allow_assert = isDebug or isTest or std.builtin.Mode.ReleaseSafe == @import("builtin").mode;
 
 pub const build_options = @import("build_options");

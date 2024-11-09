@@ -43,7 +43,7 @@ pub fn ValidQueryCondition(comptime T: type) void {
 /// A [media query list](https://drafts.csswg.org/mediaqueries/#mq-list).
 pub const MediaList = struct {
     /// The list of media queries.
-    media_queries: ArrayList(MediaQuery),
+    media_queries: ArrayList(MediaQuery) = .{},
 
     /// Parse a media query list from CSS.
     pub fn parse(input: *css.Parser) Result(MediaList) {

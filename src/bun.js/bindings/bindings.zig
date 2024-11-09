@@ -3894,7 +3894,6 @@ pub const JSValue = enum(i64) {
         MaxJS = 0b11111111,
         Event = 0b11101111,
         DOMWrapper = 0b11101110,
-        Blob = 0b11111100,
 
         /// This means that we don't have Zig bindings for the type yet, but it
         /// implements .toJSON()
@@ -4455,8 +4454,6 @@ pub const JSValue = enum(i64) {
 
             return ZigType.fromJS(value);
         }
-
-        return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
     }
 
     extern fn JSC__JSValue__dateInstanceFromNullTerminatedString(*JSGlobalObject, [*:0]const u8) JSValue;
@@ -4477,13 +4474,6 @@ pub const JSValue = enum(i64) {
 
     pub fn isDate(this: JSValue) bool {
         return this.jsType() == .JSDate;
-    }
-
-    pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {
-        if (!ZigType.Class.isLoaded() or value.isUndefinedOrNull())
-            return null;
-
-        return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
     }
 
     pub fn protect(this: JSValue) void {

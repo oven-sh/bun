@@ -380,15 +380,13 @@ pub const BlobOrStringOrBuffer = union(enum) {
 
     pub fn fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, is_async: bool, allow_request_response: bool) ?BlobOrStringOrBuffer {
         switch (value.jsType()) {
-            .Blob => {
+            .DOMWrapper => {
                 if (value.as(JSC.WebCore.Blob)) |blob| {
                     if (blob.store) |store| {
                         store.ref();
                     }
                     return .{ .blob = blob.* };
                 }
-            },
-            .DOMWrapper => {
                 if (allow_request_response) {
                     if (value.as(JSC.WebCore.Request)) |request| {
                         request.body.value.toBlobIfPossible();

@@ -381,7 +381,7 @@ export interface BundlerTestRef {
   options: BundlerTestInput;
 }
 
-interface ErrorMeta {
+export interface ErrorMeta {
   file: string;
   error: string;
   line?: string;
@@ -719,6 +719,7 @@ function expectBundled(
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
+              experimentalCss && "--experimental-css",
               external && external.map(x => `--external:${x}`),
               packages && ["--packages", packages],
               conditions && `--conditions=${conditions.join(",")}`,
@@ -1017,6 +1018,7 @@ function expectBundled(
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,
+          experimentalCss,
           drop,
         } as BuildConfig;
 
@@ -1132,6 +1134,7 @@ for (const [key, blob] of build.outputs) {
 
             return testRef(id, opts);
           }
+
           throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
         } else if (expectedErrors && expectedErrors.length > 0) {
           throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));

@@ -178,6 +178,7 @@ int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_socket_nodelay(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
+int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay);
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol);
 
@@ -205,9 +206,9 @@ int bsd_would_block();
 
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error);
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t pathlen, int options);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t pathlen, int options, int* error);
 
 /* Creates an UDP socket bound to the hostname and port */
 LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port);

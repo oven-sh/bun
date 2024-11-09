@@ -1104,3 +1104,7 @@ fn packageNameFromPath(pkg_path: []const u8) []const u8 {
 
     return pkg_path[pkg_name_start..];
 }
+
+test {
+    _ = @import("./migration/yarn.zig");
+}

@@ -325,7 +325,7 @@ pub const BakeEntryPoint = struct {
 
     css: bool = false,
     client_wrapped: bool = false,
-    route_index: bake.DevServer.Route.Index.Optional = .none,
+    route_index: bake.DevServer.RouteBundle.Index.Optional = .none,
 
     pub fn init(path: []const u8, graph: bake.Graph) BakeEntryPoint {
         return .{ .path = path, .graph = graph };
@@ -335,7 +335,7 @@ pub const BakeEntryPoint = struct {
         return .{ .path = path, .graph = graph, .client_wrapped = true };
     }
 
-    pub fn route(path: []const u8, index: bake.DevServer.Route.Index) BakeEntryPoint {
+    pub fn route(path: []const u8, index: bake.DevServer.RouteBundle.Index) BakeEntryPoint {
         return .{
             .path = path,
             .graph = .server,

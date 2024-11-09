@@ -346,17 +346,73 @@ declare module "bun" {
        * A common pattern would be to enforce the object is
        * `{ default: ReactComponent }`
        */
-      render: (request: Request, routeModule: unknown, routeMetadata: RouteMetadata) => Awaitable<Response>;
+      render: (request: Request, routeMetadata: RouteMetadata) => Awaitable<Response>;
       /**
-       * Static rendering does not take a response in, and can generate
-       * multiple output files. Note that `import.meta.env.STATIC` will
-       * be inlined to true during a static build.
+       * Prerendering does not use a request, and is allowed to generate
+       * multiple responses. This is used for static site generation, but not
+       * not named `staticRender` as it is invoked during a dynamic build to
+       * allow deterministic routes to be prerendered. 
+       * 
+       * Note that `import.meta.env.STATIC` will be inlined to true during
+       * a static build.
        */
-      prerender: (routeMetadata: RouteMetadata) => Awaitable<PrerenderResult | null>;
+      prerender?: (routeMetadata: RouteMetadata) => Awaitable<PrerenderResult | null>;
+      // TODO: prerenderWithoutProps (for partial prerendering)
+      /**
+       * For prerendering routes with dynamic parameters, such as `/blog/:slug`,
+       * this will be called to get the list of parameters to prerender. This
+       * allows static builds to render every page at build time.
+       * 
+       * `getParams` may return an object with an array of pages. For example,
+       * to generate two pages, `/blog/hello` and `/blog/world`:
+       * 
+       *      return {
+       *          pages: [{ slug: 'hello' }, { slug: 'world' }],
+       *          exhaustive: true,
+       *      }
+       * 
+       * "exhaustive" tells Bun that the list is complete. If it is not, a
+       * static site cannot be generated as it would otherwise be missing
+       * routes. A non-exhaustive list can speed up build times by only
+       * specifying a few important pages (such as 10 most recent), leaving
+       * the rest to be generated on-demand at runtime.
+       * 
+       * To stream results, `getParams` may return an async iterator, which
+       * Bun will start rendering as more parameters are provided:
+       * 
+       *     export async function* getParams(meta: Bake.ParamsMetadata) {
+       *         yield { slug: await fetchSlug() };
+       *         yield { slug: await fetchSlug() };
+       *         return { exhaustive: false };
+       *     }
+       */
+      getParams?: (paramsMetadata: ParamsMetadata) => Awaitable<ParamsResult>;
     }
+
+    type GetParamIterator = 
+      | AsyncIterable<Record<string, string>, GetParamsFinalOpts> 
+      | Iterable<Record<string, string>, GetParamsFinalOpts>
+      | ({ pages: Array<Record<String, String>> } & GetParamsFinalOpts);
+
+    type GetParamsFinalOpts = void | null | {
+      /**
+       * @default true
+       */
+      exhaustive?: boolean | undefined;
+    };
 
     interface PrerenderResult {
       files?: Record<string, Blob | NodeJS.TypedArray | ArrayBufferLike | string | Bun.BlobPart[]>;
+      // /**
+      //  * For dynamic builds, `partialData` will be provided to `render` to allow
+      //  * to implement Partial Pre-rendering, a technique where the a page shell
+      //  * is rendered first, and the rendering is resumed. The bytes passed
+      //  * here will be passed to the `render` function as `partialData`.
+      //  */
+      // partialData?: Uint8Array;
+
+      // TODO: support incremental static regeneration + stale while revalidate here
+      // cache: unknown;
     }
 
     interface ClientEntryPoint {
@@ -409,6 +465,15 @@ declare module "bun" {
        * A list of css files that the route will need to be styled.
        */
       readonly styles: ReadonlyArray<string>;
+    }
+
+    /**
+     * This object and it's children may be re-used between invocations, so it
+     * is not safe to mutate it at all.
+     */
+    interface ParamsMetadata {
+      readonly pageModule: any;
+      readonly layouts: ReadonlyArray<any>; 
     }
   }
 

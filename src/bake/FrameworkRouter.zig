@@ -67,8 +67,16 @@ pub fn initEmpty(types: []const Type, allocator: Allocator) !FrameworkRouter {
     };
 }
 
-fn deinit(fr: *FrameworkRouter, allocator: Allocator) void {
+pub fn deinit(fr: *FrameworkRouter, allocator: Allocator) void {
     fr.routes.deinit(allocator);
+    allocator.free(fr.types);
+}
+
+pub fn scanAll(fr: *FrameworkRouter, allocator: Allocator, r: *Resolver, ctx: anytype) !void {
+    for (fr.types, 0..) |ty, i| {
+        _ = ty;
+        try fr.scan(allocator, FrameworkRouter.Type.Index.init(@intCast(i)), r, ctx);
+    }
 }
 
 /// A logical route, for which layouts are looked up on after resolving a route.
@@ -83,9 +91,12 @@ pub const Route = struct {
 
     // Note: A route may be associated with no files, in which it is just a
     // construct for building the tree.
-    file_page: OpaqueFileId.Optional,
-    file_layout: OpaqueFileId.Optional,
-    // file_not_found: OpaqueFileId.Optional,
+    file_page: OpaqueFileId.Optional = .none,
+    file_layout: OpaqueFileId.Optional = .none,
+    // file_not_found: OpaqueFileId.Optional = .none,
+
+    /// Only used by the dev server, if this route is navigatable
+    bundle: bun.bake.DevServer.RouteBundle.Index.Optional = .none,
 
     inline fn filePtr(r: *Route, file_kind: FileKind) *OpaqueFileId.Optional {
         return &switch (file_kind) {
@@ -110,6 +121,10 @@ pub const Type = struct {
     ignore_dirs: []const []const u8 = &.{ ".git", "node_modules" },
     extensions: []const []const u8,
     style: Style,
+    /// `FrameworkRouter` does not use this value.
+    client_file: OpaqueFileId.Optional,
+    /// `FrameworkRouter` does not use this value.
+    server_file: OpaqueFileId,
 
     pub const Index = bun.GenericIndex(u8, Type);
 };
@@ -631,9 +646,6 @@ pub fn insert(
                 .first_child = .none,
                 .prev_sibling = Route.Index.Optional.init(next),
                 .next_sibling = .none,
-                .file_page = .none,
-                .file_layout = .none,
-                // .file_not_found = .none,
             });
 
             if (next) |attach| {
@@ -652,9 +664,6 @@ pub fn insert(
                     .first_child = .none,
                     .prev_sibling = Route.Index.Optional.init(next),
                     .next_sibling = .none,
-                    .file_page = .none,
-                    .file_layout = .none,
-                    // .file_not_found = .none,
                 });
                 fr.routePtr(new_route_index).first_child = newer_route_index.toOptional();
                 new_route_index = newer_route_index;
@@ -676,7 +685,10 @@ pub fn insert(
 
     if (file_kind == .page) switch (insertion_kind) {
         .static => {
-            const gop = try fr.static_routes.getOrPut(alloc, pattern.route_path);
+            const gop = try fr.static_routes.getOrPut(
+                alloc,
+                if (pattern.route_path.len == 0) "/" else pattern.route_path,
+            );
             if (gop.found_existing) {
                 @panic("TODO: propagate aliased route error");
             }
@@ -789,7 +801,7 @@ pub fn scan(
 }
 
 fn scanInner(
-    fw: *FrameworkRouter,
+    fr: *FrameworkRouter,
     alloc: Allocator,
     t: *const Type,
     t_index: Type.Index,
@@ -818,7 +830,7 @@ fn scanInner(
                     }
 
                     if (r.readDirInfoIgnoreError(fs.abs(&.{ file.dir, file.base() }))) |child_info| {
-                        try fw.scanInner(alloc, t, t_index, r, child_info, arena_state, ctx);
+                        try fr.scanInner(alloc, t, t_index, r, child_info, arena_state, ctx);
                     }
                 },
                 .file => {
@@ -888,7 +900,7 @@ fn scanInner(
                             };
                             var out_colliding_file_id: OpaqueFileId = undefined;
 
-                            break :result fw.insert(
+                            break :result fr.insert(
                                 alloc,
                                 t_index,
                                 if (has_dynamic_comptime) .dynamic else .static,
@@ -959,6 +971,9 @@ pub const JSFrameworkRouter = struct {
             .ignore_underscores = false,
             .extensions = &.{ ".tsx", ".ts", ".jsx", ".js" },
             .style = style,
+            // Unused by JSFrameworkRouter
+            .client_file = undefined,
+            .server_file = undefined,
         }});
         errdefer bun.default_allocator.free(types);
 

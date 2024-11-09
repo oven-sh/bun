@@ -579,7 +579,10 @@ pub const Mode = enum {
     production_dynamic,
     production_static,
 };
-pub const Side = enum { client, server };
+pub const Side = enum(u1) {
+    client,
+    server,
+};
 pub const Graph = enum(u2) {
     client,
     server,

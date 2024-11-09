@@ -207,7 +207,6 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     var path_map: ProductionPathMap = .{
         .allocator = allocator,
         .entry_points = .{},
-        .route_types = try std.ArrayListUnmanaged(ProductionPathMap.RouteType).initCapacity(allocator, router_types.capacity),
         .route_files = .{},
         .client_files = .{},
         .out_index_map = &.{},
@@ -226,9 +225,6 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             .ignore_dirs = fsr.ignore_dirs,
             .extensions = fsr.extensions,
             .style = fsr.style,
-        });
-
-        try path_map.route_types.append(allocator, .{
             .server_file = try path_map.getFileIdForRouter(fsr.entry_server),
             .client_file = if (fsr.entry_client) |client|
                 (try path_map.getClientFile(client)).toOptional()
@@ -238,10 +234,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     }
 
     var router = try FrameworkRouter.initEmpty(router_types.items, allocator);
-    for (router_types.items, 0..) |ty, i| {
-        _ = ty;
-        try router.scan(allocator, FrameworkRouter.Type.Index.init(@intCast(i)), &server_bundler.resolver, &path_map);
-    }
+    try router.scanAll(allocator, &server_bundler.resolver, &path_map);
 
     const bundled_outputs_list = try bun.BundleV2.generateFromBakeProductionCLI(
         path_map.entry_points.items,
@@ -333,10 +326,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     }
 
     // Static site generator
-    const server_render_funcs = JSValue.createEmptyArray(global, router_types.items.len);
-    const client_entry_urls = JSValue.createEmptyArray(global, router_types.items.len);
+    const server_render_funcs = JSValue.createEmptyArray(global, router.types.len);
+    const client_entry_urls = JSValue.createEmptyArray(global, router.types.len);
 
-    for (path_map.route_types.items, 0..) |router_type, i| {
+    for (router.types, 0..) |router_type, i| {
         if (router_type.client_file.unwrap()) |client_file| {
             const str = (try bun.String.createFormat("{s}{s}", .{
                 public_path,
@@ -576,7 +569,6 @@ const ProductionPathMap = struct {
     allocator: std.mem.Allocator,
 
     entry_points: std.ArrayListUnmanaged(BakeEntryPoint),
-    route_types: std.ArrayListUnmanaged(RouteType),
     route_files: bun.StringArrayHashMapUnmanaged(void),
     client_files: bun.StringArrayHashMapUnmanaged(void),
     /// OpaqueFileId -> index into output_files

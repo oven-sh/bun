@@ -42,7 +42,7 @@ function getPage(meta: Bake.RouteMetadata) {
 
 // `server.tsx` exports a function to be used for handling user routes. It takes
 // in the Request object, the route's module, and extra route metadata.
-export default async function render(request: Request, meta: Bake.RouteMetadata): Promise<Response> {
+export async function render(request: Request, meta: Bake.RouteMetadata): Promise<Response> {
   // The framework generally has two rendering modes.
   // - Standard browser navigation
   // - Client-side navigation
@@ -110,3 +110,10 @@ export async function prerender(meta: Bake.RouteMetadata) {
     // expose caching options here.
   };
 }
+
+// When a dynamic build uses static assets, Bun can map content types in the
+// user's `Accept` header to the different static files.
+export const contentTypeToStaticFile = {
+  'text/html': 'index.html',
+  'text/x-component': 'index.rsc',
+};

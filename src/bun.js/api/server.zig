@@ -3215,13 +3215,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onResponse(
             ctx: *RequestContext,
             this: *ThisServer,
-            req: *uws.Request,
-            request_object: *Request,
             request_value: JSValue,
             response_value: JSValue,
         ) void {
-            _ = request_object;
-            _ = req;
             request_value.ensureStillAlive();
             response_value.ensureStillAlive();
             ctx.drainMicrotasks();
@@ -6668,14 +6664,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 , .{});
                 bun.Output.flush();
 
-                {
-                    @panic("Sorry, DevServer is currently regressed until FrameworkRouter is integrated correctly into it.");
-                }
-
                 break :dev_server bun.bake.DevServer.init(.{
                     .root = bake_options.root,
                     .framework = bake_options.framework,
-                    .routes = bake_options.routes,
                     .vm = global.bunVM(),
                 }) catch |err| {
                     global.throwError(err, "while initializing Bun Dev Server");
@@ -6943,17 +6934,73 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            this.onRequestExtra(req, resp, this.config.onRequest, 1, .{this.thisObject});
+            const prepared = this.prepareJsRequestContext(req, resp, this.config.onRequest, 1, .{this.thisObject});
+            const ctx = prepared.ctx;
+
+            bun.assert(this.config.onRequest != .zero);
+            const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &.{
+                prepared.js_request,
+                this.thisObject,
+            }) catch |err|
+                this.globalThis.takeException(err);
+
+            defer {
+                // uWS request will not live longer than this function
+                prepared.request_context.detachRequest();
+            }
+            const original_state = ctx.defer_deinit_until_callback_completes;
+            var should_deinit_context = false;
+            ctx.defer_deinit_until_callback_completes = &should_deinit_context;
+            ctx.onResponse(this, prepared.js_request, response_value);
+            ctx.defer_deinit_until_callback_completes = original_state;
+
+            // Reference in the stack here in case it is not for whatever reason
+            prepared.js_request.ensureStillAlive();
+
+            if (should_deinit_context) {
+                ctx.deinit();
+                return;
+            }
+
+            if (ctx.shouldRenderMissing()) {
+                ctx.renderMissing();
+                return;
+            }
+
+            // The request is asynchronous, and all information from `req` must be copied
+            // since the provided uws.Request will be re-used for future requests (stack allocated).
+            ctx.toAsync(req, prepared.request_object);
         }
 
-        pub fn onRequestExtra(
-            this: *ThisServer,
-            req: *uws.Request,
-            resp: *App.Response,
-            callback: JSC.JSValue,
-            comptime extra_arg_count: usize,
-            extra_args: [extra_arg_count]JSValue,
-        ) void {
+        pub const PreparedRequest = struct {
+            js_request: JSValue,
+            request_object: *Request,
+            ctx: *RequestContext,
+
+            /// This is used by DevServer for deferring calling the JS handler
+            /// to until the bundle is actually ready.
+            pub fn save(
+                prepared: PreparedRequest,
+                global: *JSC.JSGlobalObject,
+                req: *uws.Request,
+                resp: *App.Response,
+            ) SavedRequest {
+                _ = resp; // autofix
+                // By saving a request, all information from `req` must be
+                // copied since the provided uws.Request will be re-used for
+                // future requests (stack allocated).
+                prepared.ctx.toAsync(req, prepared.request_object);
+
+                return .{
+                    .js_request = JSC.Strong.create(prepared.js_request, global),
+                    .request = prepared.request_object,
+                    .ctx = AnyRequestContext.init(prepared.ctx),
+                    .response = uws.AnyResponse,
+                };
+            }
+        };
+
+        pub fn prepareJsRequestContext(this: *ThisServer, req: *uws.Request, resp: *App.Response) ?PreparedRequest {
             JSC.markBinding(@src());
             this.onPendingRequest();
             if (comptime Environment.isDebug) {
@@ -6974,10 +7021,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 resp.onTimeout(*anyopaque, onTimeoutForIdleWarn, &did_send_idletimeout_warning_once);
             }
 
-            var ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
+            const ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
             ctx.create(this, req, resp);
             this.vm.jsc.reportExtraMemory(@sizeOf(RequestContext));
-            var body = this.vm.initRequestBodyValue(.{ .Null = {} }) catch unreachable;
+            const body = this.vm.initRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
             var signal = JSC.WebCore.AbortSignal.new(this.globalThis);
@@ -7021,7 +7068,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     resp.writeStatus("413 Request Entity Too Large");
                     resp.endWithoutBody(true);
                     this.finalize();
-                    return;
+                    return null;
                 }
 
                 ctx.request_body_content_len = req_len;
@@ -7044,47 +7091,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     resp.onData(*RequestContext, RequestContext.onBufferedBodyChunk, ctx);
                 }
             }
-            const js_request = request_object.toJS(this.globalThis);
 
-            // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
-            const args = [_]JSC.JSValue{js_request} ++ extra_args;
-
-            bun.assert(callback != .zero);
-            const response_value = callback.call(this.globalThis, this.thisObject, &args) catch |err|
-                this.globalThis.takeException(err);
-
-            // Ensure that the arguments are all on the stack after the js callback was run
-            inline for (args) |a| a.ensureStillAlive();
-
-            defer {
-                // uWS request will not live longer than this function
-                request_object.request_context.detachRequest();
-            }
-            const original_state = ctx.defer_deinit_until_callback_completes;
-            var should_deinit_context = false;
-            ctx.defer_deinit_until_callback_completes = &should_deinit_context;
-            ctx.onResponse(
-                this,
-                req,
-                request_object,
-                js_request,
-                response_value,
-            );
-            ctx.defer_deinit_until_callback_completes = original_state;
-
-            js_request.ensureStillAlive();
-
-            if (should_deinit_context) {
-                ctx.deinit();
-                return;
-            }
-
-            if (ctx.shouldRenderMissing()) {
-                ctx.renderMissing();
-                return;
-            }
-
-            ctx.toAsync(req, request_object);
+            return .{
+                .js_request = request_object.toJS(this.globalThis),
+                .request_object = request_object,
+                .ctx = ctx,
+            };
         }
 
         pub fn onWebSocketUpgrade(
@@ -7175,9 +7187,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 );
             }
 
-            if (this.config.onRequest != .zero)
-                app.any("/*", *ThisServer, this, onRequest);
-
             if (comptime debug_mode) {
                 app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
                 if (this.config.inspector) {
@@ -7189,10 +7198,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (this.dev_server) |dev| {
-                {
-                    @panic("TODO: Revive DevServer");
-                }
-                dev.attachRoutes(this, this.config.onRequest != .zero) catch bun.outOfMemory();
+                dev.attachRoutes(this) catch bun.outOfMemory();
+            } else {
+                bun.assert(this.config.onRequest != .zero);
+                app.any("/*", *ThisServer, this, onRequest);
             }
         }
 
@@ -7342,6 +7351,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
     };
 }
+
+pub const SavedRequest = struct {
+    js_request: JSC.Strong,
+    response: *Response,
+    request: uws.AnyResponse,
+    ctx: AnyRequestContext,
+};
 
 pub const ServerAllConnectionsClosedTask = struct {
     globalObject: *JSC.JSGlobalObject,

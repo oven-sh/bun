@@ -5483,7 +5483,7 @@ pub const JSValue = enum(i64) {
     /// throw. Null indicates the property does not exist. Undefined can exist
     /// as a property.
     ///
-    /// `property` must be either `[]const u8`. A comptime slice will defer to
+    /// `property` must be either `[]const u8`. A comptime slice may defer to
     /// calling `fastGet`, which use a more optimal code path.
     ///
     /// This function will eventually replace `get`.

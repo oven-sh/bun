@@ -1,7 +1,9 @@
 // Hardcoded module "node:fs/promises"
 import type { Dirent } from "fs";
 const EventEmitter = require("node:events");
-const fs = $zig("node_fs_binding.zig", "createBinding");
+const internalBinding = $zig("node_fs_binding.zig", "createBinding");
+
+const { 0: fs, 1: fsCallbacks } = internalBinding;
 const constants = $processBindingConstants.fs;
 
 var PromisePrototypeFinally = Promise.prototype.finally; //TODO
@@ -151,6 +153,7 @@ const private_symbols = {
   kFd,
   FileHandle: null,
   fs,
+  fsCallbacks,
 };
 
 const _readFile = fs.readFile.bind(fs);

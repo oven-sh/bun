@@ -660,7 +660,6 @@ pub const ToStringFormatter = struct {
             .e_number => try writer.print("{d}", .{this.d.e_number.value}),
             .e_string => try writer.print("{s}", .{this.d.e_string.data}),
             .e_null => try writer.print("null", .{}),
-            .e_utf8_string => try writer.print("{s}", .{this.d.e_utf8_string.data}),
 
             else => |tag| if (bun.Environment.isDebug) {
                 Output.panic("Unexpected AST node: {s}", .{@tagName(tag)});

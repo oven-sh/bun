@@ -2757,10 +2757,6 @@ fn NewPrinter(
 
                     p.printStringLiteralEString(e, true);
                 },
-                .e_utf8_string => |e| {
-                    p.addSourceMapping(expr.loc);
-                    p.printStringLiteralUTF8(e.data, true);
-                },
                 .e_template => |e| {
                     if (e.tag) |tag| {
                         p.addSourceMapping(expr.loc);

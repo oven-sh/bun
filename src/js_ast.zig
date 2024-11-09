@@ -1529,11 +1529,6 @@ pub const E = struct {
         };
     };
 
-    /// A string which will be printed as JSON by the JSPrinter.
-    pub const UTF8String = struct {
-        data: []const u8,
-    };
-
     pub const Unary = struct {
         op: Op.Code,
         value: ExprNodeIndex,
@@ -3600,7 +3595,7 @@ pub const Expr = struct {
 
     pub inline fn isString(expr: *const Expr) bool {
         return switch (expr.data) {
-            .e_string, .e_utf8_string => true,
+            .e_string => true,
             else => false,
         };
     }
@@ -3608,7 +3603,6 @@ pub const Expr = struct {
     pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         switch (expr.data) {
             .e_string => |str| return str.string(allocator) catch bun.outOfMemory(),
-            .e_utf8_string => |str| return str.data,
             else => return null,
         }
     }
@@ -3620,7 +3614,6 @@ pub const Expr = struct {
                 defer allocator.free(utf8_str);
                 return hash_fn(utf8_str);
             },
-            .e_utf8_string => |str| return hash_fn(str.data),
             else => return null,
         }
     }
@@ -3628,7 +3621,6 @@ pub const Expr = struct {
     pub inline fn asStringCloned(expr: *const Expr, allocator: std.mem.Allocator) OOM!?string {
         switch (expr.data) {
             .e_string => |str| return try str.stringCloned(allocator),
-            .e_utf8_string => |str| return try allocator.dupe(u8, str.data),
             else => return null,
         }
     }
@@ -3636,7 +3628,6 @@ pub const Expr = struct {
     pub inline fn asStringZ(expr: *const Expr, allocator: std.mem.Allocator) OOM!?stringZ {
         switch (expr.data) {
             .e_string => |str| return try str.stringZ(allocator),
-            .e_utf8_string => |str| return try allocator.dupeZ(u8, str.data),
             else => return null,
         }
     }
@@ -3811,18 +3802,6 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_array = brk: {
-                            const item = allocator.create(Type) catch unreachable;
-                            item.* = st;
-                            break :brk item;
-                        },
-                    },
-                };
-            },
-            E.UTF8String => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_utf8_string = brk: {
                             const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
@@ -4240,14 +4219,6 @@ pub const Expr = struct {
         Data.Store.assert();
 
         switch (Type) {
-            E.UTF8String => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_utf8_string = Data.Store.append(Type, st),
-                    },
-                };
-            },
             E.Array => {
                 return Expr{
                     .loc = loc,
@@ -4630,9 +4601,6 @@ pub const Expr = struct {
         e_import_meta_main,
         e_require_main,
         e_inlined_enum,
-
-        /// A string that is UTF-8 encoded without escaping for use in JavaScript.
-        e_utf8_string,
 
         // object, regex and array may have had side effects
         pub fn isPrimitiveLiteral(tag: Tag) bool {
@@ -5327,7 +5295,6 @@ pub const Expr = struct {
         e_require_main,
 
         e_inlined_enum: *E.InlinedEnum,
-        e_utf8_string: *E.UTF8String,
 
         comptime {
             bun.assert_eql(@sizeOf(Data), 24); // Do not increase the size of Expr
@@ -5787,9 +5754,6 @@ pub const Expr = struct {
                     // pretend there is no comment
                     e.value.data.writeToHasher(hasher, symbol_table);
                 },
-                .e_utf8_string => |e| {
-                    hasher.update(e.data);
-                },
 
                 // no data
                 .e_require_call_target,
@@ -5849,7 +5813,6 @@ pub const Expr = struct {
                 .e_string,
                 .e_inlined_enum,
                 .e_import_meta,
-                .e_utf8_string,
                 => true,
 
                 .e_template => |template| template.tag == null and template.parts.len == 0,
@@ -6256,7 +6219,6 @@ pub const Expr = struct {
                 .e_array => |e| e.toJS(allocator, globalObject),
                 .e_object => |e| e.toJS(allocator, globalObject),
                 .e_string => |e| e.toJS(allocator, globalObject),
-                .e_utf8_string => |e| JSC.ZigString.fromUTF8(e.data).toJS(globalObject),
                 .e_null => JSC.JSValue.null,
                 .e_undefined => JSC.JSValue.undefined,
                 .e_boolean => |boolean| if (boolean.value)
@@ -6312,7 +6274,6 @@ pub const Expr = struct {
                 E.Template,
                 E.TemplatePart,
                 E.Unary,
-                E.UTF8String,
                 E.Yield,
             }, 512);
 

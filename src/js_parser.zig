@@ -3516,7 +3516,7 @@ pub const Parser = struct {
                     decls[0] = .{
                         .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
                         .value = p.newExpr(
-                            E.UTF8String{
+                            E.String{
                                 .data = p.source.path.name.dir,
                             },
                             logger.Loc.Empty,
@@ -3528,7 +3528,7 @@ pub const Parser = struct {
                     decls[@as(usize, @intFromBool(uses_dirname))] = .{
                         .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
                         .value = p.newExpr(
-                            E.UTF8String{
+                            E.String{
                                 .data = p.source.path.text,
                             },
                             logger.Loc.Empty,

@@ -1301,7 +1301,7 @@ pub const Bundler = struct {
                 break :brk logger.Source.initPathString(path.text, "");
             }
 
-            if (strings.startsWith(path.text, "data:")) {
+            if (strings.hasPrefixComptime(path.text, "data:")) {
                 const data_url = DataURL.parseWithoutCheck(path.text) catch |err| {
                     bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} parsing data url \"{s}\"", .{ @errorName(err), path.text }) catch {};
                     return null;

@@ -2347,6 +2347,10 @@ pub const ModuleLoader = struct {
                     break :loader options.Loader.tsx;
                 }
 
+                if (strings.hasPrefixComptime(path.name.dir, "data:")) {
+                    break :loader options.Loader.tsx;
+                }
+
                 // Unknown extensions are to be treated as file loader
                 break :loader options.Loader.file;
             } else {

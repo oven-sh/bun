@@ -27,6 +27,5 @@ extern "C" int Bun__JSC_onBeforeWait(JSC::VM* vm)
 
 extern "C" void Bun__JSC_onAfterWait(JSC::VM* vm)
 {
-
     vm->heap.acquireAccess();
 }

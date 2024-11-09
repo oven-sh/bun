@@ -6165,16 +6165,19 @@ pub const VM = extern struct {
     extern fn Bun__JSC_onAfterWait(vm: *VM) void;
     pub const ReleaseHeapAccess = struct {
         vm: *VM,
-        needs_to_release: bool,
+        needs_to_acquire: bool,
         pub fn acquire(this: *const ReleaseHeapAccess) void {
-            if (this.needs_to_release) {
+            if (this.needs_to_acquire) {
                 Bun__JSC_onAfterWait(this.vm);
             }
         }
     };
 
+    /// Temporarily give up access to the heap, allowing other work to proceed. Call acquire() on
+    /// the return value at scope exit. If you did not already have heap access, release and acquire
+    /// are both safe no-ops.
     pub fn releaseHeapAccess(vm: *VM) ReleaseHeapAccess {
-        return .{ .vm = vm, .needs_to_release = Bun__JSC_onBeforeWait(vm) != 0 };
+        return .{ .vm = vm, .needs_to_acquire = Bun__JSC_onBeforeWait(vm) != 0 };
     }
 
     pub fn create(heap_type: HeapType) *VM {

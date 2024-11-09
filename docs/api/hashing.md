@@ -102,7 +102,7 @@ await Bun.password.hash("hello".repeat(100), {
 });
 ```
 
-So instead of sending bcrypt a 500-byte password silently truncated to 72 bytes, Bun will hash the password using SHA-512 first, and return the result in Modular Crypt Format. This is a more secure default behavior.
+So instead of sending bcrypt a 500-byte password silently truncated to 72 bytes, Bun will hash the password using SHA-512 and send the hashed password to bcrypt (only if it exceeds 72 bytes). This is a more secure default behavior.
 
 ### argon2 - PHC format
 

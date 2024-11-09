@@ -1365,3 +1365,11 @@ export function waitForFileToExist(path: string, interval: number) {
     sleepSync(interval);
   }
 }
+
+export function libcPathForDlopen() {
+  switch (process.platform) {
+    case "linux": return "/usr/lib/libc.so";
+    case "darwin": return "libc.dylib";
+    default: throw new Error("TODO");
+  }
+}

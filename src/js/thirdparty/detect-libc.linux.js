@@ -1,10 +1,13 @@
 // Hardcoded module "detect-libc" for linux
+
+const is_glibc = process.report.getReport().header.glibcVersionCompiler !== undefined;
+
 function family() {
   return Promise.resolve(familySync());
 }
 
 function familySync() {
-  return GLIBC;
+  return is_glibc ? GLIBC : MUSL;
 }
 
 const GLIBC = "glibc";
@@ -15,11 +18,11 @@ function version() {
 }
 
 function versionSync() {
-  return "2.29";
+  return is_glibc ? "2.29" : "1.2.5";
 }
 
 function isNonGlibcLinuxSync() {
-  return false;
+  return !is_glibc;
 }
 
 function isNonGlibcLinux() {

@@ -4,7 +4,7 @@
 /// <reference lib="dom" />
 import * as React from "react";
 import { hydrateRoot } from "react-dom/client";
-import { createFromReadableStream } from "react-server-dom-webpack/client.browser";
+import { createFromReadableStream } from "react-server-dom-bun/client.browser";
 import { bundleRouteForDevelopment } from "bun:bake/client";
 
 let encoder = new TextEncoder();

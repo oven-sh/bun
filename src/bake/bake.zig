@@ -146,7 +146,7 @@ pub const Framework = struct {
         return .{
             .server_components = .{
                 .separate_ssr_graph = true,
-                .server_runtime_import = "react-server-dom-webpack/server",
+                .server_runtime_import = "react-server-dom-bun/server",
             },
             .react_fast_refresh = .{},
             .file_system_router_types = try arena.dupe(FileSystemRouterType, &.{

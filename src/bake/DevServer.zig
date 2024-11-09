@@ -3648,7 +3648,7 @@ fn fromOpaqueFileId(comptime side: bake.Side, id: OpaqueFileId) IncrementalGraph
         assert(side == safe.side);
         return IncrementalGraph(side).FileIndex.init(safe.index);
     }
-    return IncrementalGraph(side).FileIndex.init(id.get());
+    return IncrementalGraph(side).FileIndex.init(@intCast(id.get()));
 }
 
 fn getRouteBundle(dev: *DevServer, route: Route.Index) !RouteBundle.Index {

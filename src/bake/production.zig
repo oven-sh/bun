@@ -394,6 +394,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
 
         var file_count: u32 = 1;
         var css_file_count: u32 = @intCast(bundled_outputs[main_file_index].referenced_css_files.len);
+        if (route.file_layout.unwrap()) |file| {
+            css_file_count += @intCast(bundled_outputs[path_map.getOutIndex(file)].referenced_css_files.len);
+            file_count += 1;
+        }
         var next: ?FrameworkRouter.Route.Index = route.parent.unwrap();
         while (next) |parent_index| {
             const parent = router.routePtr(parent_index);
@@ -413,6 +417,14 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         for (bundled_outputs[main_file_index].referenced_css_files) |ref| {
             styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
             css_file_count += 1;
+        }
+        if (route.file_layout.unwrap()) |file| {
+            file_list.putIndex(global, file_count, JSValue.jsNumberFromInt32(@intCast(file.get())));
+            for (bundled_outputs[path_map.getOutIndex(file)].referenced_css_files) |ref| {
+                styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
+                css_file_count += 1;
+            }
+            file_count += 1;
         }
         while (next) |parent_index| {
             const parent = router.routePtr(parent_index);

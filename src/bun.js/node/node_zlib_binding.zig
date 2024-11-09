@@ -7,7 +7,7 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const validators = @import("./util/validators.zig");
 
-pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     const arguments = callframe.arguments(2).ptr;
 
     const data: ZigString.Slice = blk: {

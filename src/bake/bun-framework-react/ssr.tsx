@@ -5,7 +5,7 @@ import * as React from "react";
 import { clientManifest } from "bun:bake/server";
 import type { Readable } from "node:stream";
 import { EventEmitter } from "node:events";
-import { createFromNodeStream, type Manifest } from "react-server-dom-webpack/client.node.unbundled.js";
+import { createFromNodeStream, type Manifest } from "react-server-dom-bun/client.node.unbundled.js";
 import { renderToPipeableStream } from "react-dom/server.node";
 
 // Verify that React 19 is being used.

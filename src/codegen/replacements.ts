@@ -233,7 +233,7 @@ export function applyReplacements(src: string, length: number) {
         // use a property on @lazy as a temporary holder for the expression. only in debug!
         args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),(__intrinsic__getPromiseInternalField(__intrinsic__lazy.temp, __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === (__intrinsic__lazy.temp = undefined, __intrinsic__promiseStateFulfilled))`;
       } else {
-        args = `(__intrinsic__getPromiseInternalField(${inner.result.slice(0,-1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStateFulfilled)`;
+        args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0,-1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStateFulfilled)`;
       }
       return [slice.slice(0, match.index) + args, inner.rest, true];
     } else {

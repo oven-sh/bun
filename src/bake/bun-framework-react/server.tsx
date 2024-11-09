@@ -2,7 +2,7 @@ import type { Bake } from "bun";
 // Bun uses `node.unbundled` from react to
 // - The `node` variant avoids ReadableStream, a slower streaming API
 // - The `unbundled` variant uses `import` instead of `__webpack_require__`
-import { renderToPipeableStream } from "react-server-dom-webpack/server.node.unbundled.js";
+import { renderToPipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
 import { renderToHtml, renderToStaticHtml } from "bun-framework-react/ssr.tsx" with { bunBakeGraph: "ssr" };
 import { serverManifest } from "bun:bake/server";
 import { PassThrough } from "node:stream";

@@ -3964,6 +3964,7 @@ const Return = struct {
     pub const ReadFile = StringOrBuffer;
     pub const ReadFileWithOptions = union(enum) {
         string: string,
+        transcoded_string: bun.String,
         buffer: JSC.Node.Buffer,
         null_terminated: [:0]const u8,
     };
@@ -5524,6 +5525,19 @@ pub const NodeFS = struct {
                         .buffer = ret.result.buffer,
                     },
                 },
+                .transcoded_string => |str| {
+                    if (str.tag == .Dead) {
+                        return .{ .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path) };
+                    }
+
+                    return .{
+                        .result = .{
+                            .string = .{
+                                .underlying = str,
+                            },
+                        },
+                    };
+                },
                 .string => brk: {
                     const str = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(@constCast(ret.result.string), args.encoding);
 
@@ -5538,7 +5552,7 @@ pub const NodeFS = struct {
         };
     }
 
-    pub fn readFileWithOptions(this: *NodeFS, args: Arguments.ReadFile, comptime _: Flavor, comptime string_type: StringType) Maybe(Return.ReadFileWithOptions) {
+    pub fn readFileWithOptions(this: *NodeFS, args: Arguments.ReadFile, comptime flavor: Flavor, comptime string_type: StringType) Maybe(Return.ReadFileWithOptions) {
         var path: [:0]const u8 = undefined;
         const fd_maybe_windows: FileDescriptor = switch (args.path) {
             .path => brk: {
@@ -5602,6 +5616,107 @@ pub const NodeFS = struct {
                 _ = Syscall.close(fd);
         }
 
+        // Only used in DOMFormData
+        if (args.offset > 0) {
+            _ = Syscall.setFileOffset(fd, args.offset);
+        }
+
+        var did_succeed = false;
+        var total: usize = 0;
+        var async_stack_buffer: [if (flavor == .sync) 0 else 256 * 1024]u8 = undefined;
+
+        // --- Optimization: attempt to read up to 256 KB before calling stat()
+        // If we manage to read the entire file, we don't need to call stat() at all.
+        // This will make it slightly slower to read e.g. 512 KB files, but usually the OS won't return a full 512 KB in one read anyway.
+        const temporary_read_buffer_before_stat_call = brk: {
+            const temporary_read_buffer = temporary_read_buffer: {
+                var temporary_read_buffer: []u8 = &async_stack_buffer;
+
+                if (comptime flavor == .sync) {
+                    if (this.vm) |vm| {
+                        temporary_read_buffer = vm.rareData().pipeReadBuffer();
+                    }
+                }
+
+                var available = temporary_read_buffer;
+                while (available.len > 0) {
+                    switch (Syscall.read(fd, available)) {
+                        .err => |err| return .{
+                            .err = err,
+                        },
+                        .result => |amt| {
+                            if (amt == 0) {
+                                did_succeed = true;
+                                break;
+                            }
+                            total += amt;
+                            available = available[amt..];
+                        },
+                    }
+                }
+                break :temporary_read_buffer temporary_read_buffer[0..total];
+            };
+
+            if (did_succeed) {
+                switch (args.encoding) {
+                    .buffer => {
+                        if (comptime flavor == .sync and string_type == .default) {
+                            if (this.vm) |vm| {
+                                // Attempt to create the buffer in JSC's heap.
+                                // This avoids creating a WastefulTypedArray.
+                                const array_buffer = JSC.ArrayBuffer.createBuffer(vm.global, temporary_read_buffer);
+                                array_buffer.ensureStillAlive();
+                                return .{
+                                    .result = .{
+                                        .buffer = JSC.MarkedArrayBuffer{
+                                            .buffer = array_buffer.asArrayBuffer(vm.global) orelse {
+                                                // This case shouldn't really happen.
+                                                return .{
+                                                    .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path),
+                                                };
+                                            },
+                                        },
+                                    },
+                                };
+                            }
+                        }
+
+                        return .{
+                            .result = .{
+                                .buffer = Buffer.fromBytes(
+                                    bun.default_allocator.dupe(u8, temporary_read_buffer) catch return .{
+                                        .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path),
+                                    },
+                                    bun.default_allocator,
+                                    .Uint8Array,
+                                ),
+                            },
+                        };
+                    },
+                    else => {
+                        if (comptime string_type == .default) {
+                            return .{
+                                .result = .{
+                                    .transcoded_string = JSC.WebCore.Encoder.toWTFString(temporary_read_buffer, args.encoding),
+                                },
+                            };
+                        } else {
+                            return .{
+                                .result = .{
+                                    .null_terminated = bun.default_allocator.dupeZ(u8, temporary_read_buffer) catch return .{
+                                        .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path),
+                                    },
+                                },
+                            };
+                        }
+                    },
+                }
+            }
+
+            break :brk temporary_read_buffer;
+        };
+        // ----------------------------
+
         const stat_ = switch (Syscall.fstat(fd)) {
             .err => |err| return .{
                 .err = err,
@@ -5609,10 +5724,6 @@ pub const NodeFS = struct {
             .result => |stat_| stat_,
         };
 
-        // Only used in DOMFormData
-        if (args.offset > 0) {
-            _ = Syscall.setFileOffset(fd, args.offset);
-        }
         // For certain files, the size might be 0 but the file might still have contents.
         // https://github.com/oven-sh/bun/issues/1220
         const max_size = args.max_size orelse std.math.maxInt(JSC.WebCore.Blob.SizeType);
@@ -5626,6 +5737,7 @@ pub const NodeFS = struct {
                     // Only used in DOMFormData
                     max_size,
                 ),
+                @as(i64, @intCast(total)),
                 0,
             ),
         ) + @intFromBool(comptime string_type == .null_terminated);
@@ -5639,14 +5751,18 @@ pub const NodeFS = struct {
             }
         }
 
-        var did_succeed = false;
+        if (total > size) {
+            total = size;
+        }
         var buf = std.ArrayList(u8).init(bun.default_allocator);
         defer if (!did_succeed) buf.clearAndFree();
-        buf.ensureTotalCapacityPrecise(size + 16) catch return .{
+        buf.ensureTotalCapacityPrecise(@max(size, total) + 16) catch return .{
             .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path),
         };
+        if (temporary_read_buffer_before_stat_call.len > 0) {
+            buf.appendSliceAssumeCapacity(temporary_read_buffer_before_stat_call);
+        }
         buf.expandToCapacity();
-        var total: usize = 0;
 
         while (total < size) {
             switch (Syscall.read(fd, buf.items.ptr[total..@min(buf.capacity, max_size)])) {

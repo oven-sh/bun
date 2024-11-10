@@ -128,7 +128,6 @@ Update `index.ts` to use `figlet` in the `fetch` handler.
     fetch(req) {
 +     const body = figlet.textSync("Bun!");
 +     return new Response(body);
--     return new Response("Bun!");
     },
   });
 ```

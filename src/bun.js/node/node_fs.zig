@@ -5751,16 +5751,21 @@ pub const NodeFS = struct {
             }
         }
 
-        if (total > size) {
-            total = size;
-        }
         var buf = std.ArrayList(u8).init(bun.default_allocator);
         defer if (!did_succeed) buf.clearAndFree();
-        buf.ensureTotalCapacityPrecise(@max(size, total) + 16) catch return .{
+        buf.ensureTotalCapacityPrecise(
+            @min(
+                @max(temporary_read_buffer_before_stat_call.len, size) + 16,
+                max_size,
+                1024 * 1024 * 1024 * 8,
+            ),
+        ) catch return .{
             .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path),
         };
         if (temporary_read_buffer_before_stat_call.len > 0) {
-            buf.appendSliceAssumeCapacity(temporary_read_buffer_before_stat_call);
+            buf.appendSlice(temporary_read_buffer_before_stat_call) catch return .{
+                .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path),
+            };
         }
         buf.expandToCapacity();
 

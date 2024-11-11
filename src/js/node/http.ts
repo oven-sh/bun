@@ -1514,7 +1514,6 @@ class ClientRequest extends OutgoingMessage {
   }
 
   _write(chunk, encoding, callback) {
-    this._writableState.length += chunk.length;
     if (!this.#bodyChunks) {
       this.#bodyChunks = [chunk];
       process.nextTick(callback);

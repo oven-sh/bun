@@ -2785,7 +2785,6 @@ pub const PackageManager = struct {
 
         pub const GetJSONOptions = struct {
             init_reset_store: bool = true,
-            always_decode_escape_sequences: bool = true,
             guess_indentation: bool = false,
         };
 
@@ -2845,7 +2844,6 @@ pub const PackageManager = struct {
                     .is_json = true,
                     .allow_comments = true,
                     .allow_trailing_commas = true,
-                    .always_decode_escape_sequences = opts.always_decode_escape_sequences,
                     .guess_indentation = opts.guess_indentation,
                 },
             ) catch |err| {
@@ -2899,7 +2897,6 @@ pub const PackageManager = struct {
                     .is_json = true,
                     .allow_comments = true,
                     .allow_trailing_commas = true,
-                    .always_decode_escape_sequences = opts.always_decode_escape_sequences,
                     .guess_indentation = opts.guess_indentation,
                 },
             );
@@ -10466,7 +10463,6 @@ pub const PackageManager = struct {
             manager.log,
             manager.original_package_json_path,
             .{
-                .always_decode_escape_sequences = false,
                 .guess_indentation = true,
             },
         )) {

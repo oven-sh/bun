@@ -1594,7 +1594,7 @@ pub const Bundler = struct {
             },
             // TODO: use lazy export AST
             .text => {
-                const expr = js_ast.Expr.init(js_ast.E.UTF8String, js_ast.E.UTF8String{
+                const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
                     .data = source.contents,
                 }, logger.Loc.Empty);
                 const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{

@@ -228,6 +228,13 @@ pub const FileSystemRouter = struct {
                         continue :outer;
                     }
                     if(entry.kind(&vm.bundler.fs.fs, false) == .dir) {
+
+                        inline for (Router.banned_dirs) |banned_dir| {
+                            if (strings.eqlComptime(entry.base(), comptime banned_dir)) {
+                                continue :outer;
+                            }
+                        }
+
                         var abs_parts_con = [_]string{ entry.dir, entry.base() };
                         const full_path = vm.bundler.fs.abs(&abs_parts_con);
                         _ = vm.bundler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(full_path));

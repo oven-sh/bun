@@ -167,24 +167,6 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
             }
         }
 
-        fn parseShortFlag(parser: *@This(), flag: u8) ArgError!Arg(Id) {
-            for (parser.params) |*param| {
-                const short = param.names.short orelse continue;
-                if (short != flag) continue;
-
-                if (param.takes_value == .none) {
-                    return Arg(Id){ .param = param };
-                }
-
-                const value = parser.iter.next() orelse {
-                    return parser.err(&[_]u8{flag}, .{ .short = flag }, error.MissingValue);
-                };
-                return Arg(Id){ .param = param, .value = value };
-            }
-
-            return parser.err(&[_]u8{flag}, .{ .short = flag }, error.InvalidArgument);
-        }
-
         fn chaining(parser: *@This(), state: State.Chaining) ArgError!?Arg(Id) {
             const arg = state.arg;
             const index = state.index;

@@ -25,6 +25,12 @@ pub fn Arg(comptime Id: type) type {
     };
 }
 
+pub const ArgError = error{
+    DoesntTakeValue,
+    MissingValue,
+    InvalidArgument,
+};
+
 /// A command line argument parser which, given an ArgIterator, will parse arguments according
 /// to the params. StreamingClap parses in an iterating manner, so you have to use a loop together with
 /// StreamingClap.next to parse all the arguments of your program.
@@ -41,13 +47,12 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
             };
         };
 
-        const ArgError = error{ DoesntTakeValue, MissingValue, InvalidArgument };
-
         params: []const clap.Param(Id),
         iter: *ArgIterator,
         state: State = .normal,
         positional: ?*const clap.Param(Id) = null,
         diagnostic: ?*clap.Diagnostic = null,
+        assignment_separators: []const u8 = clap.default_assignment_separators,
 
         /// Get the next Arg that matches a Param.
         pub fn next(parser: *@This()) ArgError!?Arg(Id) {
@@ -143,56 +148,52 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
         fn chaining(parser: *@This(), state: State.Chaining) ArgError!?Arg(Id) {
             const arg = state.arg;
             const index = state.index;
-            const flag = arg[index];
+            const next_index = index + 1;
 
             for (parser.params) |*param| {
                 const short = param.names.short orelse continue;
-                if (short != flag) continue;
+                if (short != arg[index])
+                    continue;
 
-                const next_index = index + 1;
-                if (param.takes_value == .none) {
-                    if (next_index < arg.len) {
+                // Before we return, we have to set the new state of the clap
+                defer {
+                    if (arg.len <= next_index or param.takes_value != .none) {
+                        parser.state = .normal;
+                    } else {
                         parser.state = .{
                             .chaining = .{
                                 .arg = arg,
                                 .index = next_index,
                             },
                         };
-                    } else {
-                        parser.state = .normal;
                     }
+                }
+
+                const next_is_separator = if (next_index < arg.len)
+                    std.mem.indexOfScalar(u8, parser.assignment_separators, arg[next_index]) != null
+                else
+                    false;
+
+                if (param.takes_value == .none) {
+                    if (next_is_separator)
+                        return parser.err(arg, .{ .short = short }, error.DoesntTakeValue);
                     return Arg(Id){ .param = param };
                 }
 
-                const value = if (next_index < arg.len)
-                    arg[next_index..]
-                else
-                    parser.iter.next() orelse {
-                        return parser.err(arg, .{ .short = flag }, error.MissingValue);
-                    };
+                if (arg.len <= next_index) {
+                    const value = parser.iter.next() orelse
+                        return parser.err(arg, .{ .short = short }, error.MissingValue);
 
-                parser.state = .normal;
-                return Arg(Id){ .param = param, .value = value };
+                    return Arg(Id){ .param = param, .value = value };
+                }
+
+                if (next_is_separator)
+                    return Arg(Id){ .param = param, .value = arg[next_index + 1 ..] };
+
+                return Arg(Id){ .param = param, .value = arg[next_index..] };
             }
 
-            if (warn_on_unrecognized_flag) {
-                Output.warn("unrecognized flag: -{c}\n", .{flag});
-                Output.flush();
-            }
-
-            const next_index = index + 1;
-            if (next_index < arg.len) {
-                parser.state = .{
-                    .chaining = .{
-                        .arg = arg,
-                        .index = next_index,
-                    },
-                };
-                return parser.chaining(parser.state.chaining);
-            }
-
-            parser.state = .normal;
-            return parser.next();
+            return parser.err(arg, .{ .short = arg[index] }, error.InvalidArgument);
         }
 
         fn positionalParam(parser: *@This()) ?*const clap.Param(Id) {

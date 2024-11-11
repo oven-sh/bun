@@ -227,8 +227,7 @@ pub const FileSystemRouter = struct {
                     if (entry.base()[0] == '.') {
                         continue :outer;
                     }
-                    if(entry.kind(&vm.bundler.fs.fs, false) == .dir) {
-
+                    if (entry.kind(&vm.bundler.fs.fs, false) == .dir) {
                         inline for (Router.banned_dirs) |banned_dir| {
                             if (strings.eqlComptime(entry.base(), comptime banned_dir)) {
                                 continue :outer;
@@ -263,7 +262,6 @@ pub const FileSystemRouter = struct {
         var log = Log.Log.init(allocator);
         vm.bundler.resolver.log = &log;
         defer vm.bundler.resolver.log = orig_log;
-
 
         bustDirCache(this, globalThis);
 

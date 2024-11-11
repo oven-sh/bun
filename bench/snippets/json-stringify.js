@@ -1,4 +1,4 @@
-import { bench, run } from "mitata";
+import { bench, run } from "../runner.mjs";
 
 bench("JSON.stringify({hello: 'world'})", () => JSON.stringify({ hello: "world" }));
 

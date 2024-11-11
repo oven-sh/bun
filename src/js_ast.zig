@@ -1443,9 +1443,6 @@ pub const OptionalChain = enum(u1) {
 };
 
 pub const E = struct {
-    pub const ToJsOpts = struct {
-        decode_escape_sequences: bool = true,
-    };
     pub const Array = struct {
         items: ExprNodeList = ExprNodeList{},
         comma_after_spread: ?logger.Loc = null,
@@ -1503,13 +1500,13 @@ pub const E = struct {
             return ExprNodeList.init(out[0 .. out.len - remain.len]);
         }
 
-        pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject, comptime opts: ToJsOpts) ToJSError!JSC.JSValue {
+        pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
             const items = this.items.slice();
             var array = JSC.JSValue.createEmptyArray(globalObject, items.len);
             array.protect();
             defer array.unprotect();
             for (items, 0..) |expr, j| {
-                array.putIndex(globalObject, @as(u32, @truncate(j)), try expr.data.toJS(allocator, globalObject, opts));
+                array.putIndex(globalObject, @as(u32, @truncate(j)), try expr.data.toJS(allocator, globalObject));
             }
 
             return array;
@@ -1530,11 +1527,6 @@ pub const E = struct {
                 return strings.cmpStringsAsc(ctx, lhs.data.e_string.data, rhs.data.e_string.data);
             }
         };
-    };
-
-    /// A string which will be printed as JSON by the JSPrinter.
-    pub const UTF8String = struct {
-        data: []const u8,
     };
 
     pub const Unary = struct {
@@ -1951,7 +1943,7 @@ pub const E = struct {
             return if (asProperty(self, key)) |query| query.expr else @as(?Expr, null);
         }
 
-        pub fn toJS(this: *Object, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject, comptime opts: ToJsOpts) ToJSError!JSC.JSValue {
+        pub fn toJS(this: *Object, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
             var obj = JSC.JSValue.createEmptyObject(globalObject, this.properties.len);
             obj.protect();
             defer obj.unprotect();
@@ -1961,7 +1953,7 @@ pub const E = struct {
                     return error.@"Cannot convert argument type to JS";
                 }
                 var key = prop.key.?.data.e_string.toZigString(allocator);
-                obj.put(globalObject, &key, try prop.value.?.toJS(allocator, globalObject, opts));
+                obj.put(globalObject, &key, try prop.value.?.toJS(allocator, globalObject));
             }
 
             return obj;
@@ -2404,22 +2396,20 @@ pub const E = struct {
             return str.string(allocator);
         }
 
-        pub fn javascriptLength(s: *const String) u32 {
+        pub fn javascriptLength(s: *const String) ?u32 {
             if (s.rope_len > 0) {
                 // We only support ascii ropes for now
                 return s.rope_len;
             }
 
             if (s.isUTF8()) {
-                if (comptime !Environment.isNative) {
-                    const allocated = (strings.toUTF16Alloc(bun.default_allocator, s.data, false, false) catch return 0) orelse return s.data.len;
-                    defer bun.default_allocator.free(allocated);
-                    return @as(u32, @truncate(allocated.len));
+                if (!strings.isAllASCII(s.data)) {
+                    return null;
                 }
-                return @as(u32, @truncate(bun.simdutf.length.utf16.from.utf8(s.data)));
+                return @truncate(s.data.len);
             }
 
-            return @as(u32, @truncate(s.slice16().len));
+            return @truncate(s.slice16().len);
         }
 
         pub inline fn len(s: *const String) usize {
@@ -2521,12 +2511,6 @@ pub const E = struct {
             }
         }
 
-        pub fn stringDecodedUTF8(s: *const String, allocator: std.mem.Allocator) !bun.string {
-            const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(try s.string(allocator), allocator);
-            defer allocator.free(utf16_decode);
-            return try bun.strings.toUTF8Alloc(allocator, utf16_decode);
-        }
-
         pub fn hash(s: *const String) u64 {
             if (s.isBlank()) return 0;
 
@@ -2539,32 +2523,30 @@ pub const E = struct {
             }
         }
 
-        pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject, comptime opts: ToJsOpts) JSC.JSValue {
+        pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) !JSC.JSValue {
+            s.resolveRopeIfNeeded(allocator);
             if (!s.isPresent()) {
                 var emp = bun.String.empty;
                 return emp.toJS(globalObject);
             }
 
-            if (s.is_utf16) {
-                var out, const chars = bun.String.createUninitialized(.utf16, s.len());
+            if (s.isUTF8()) {
+                if (try strings.toUTF16Alloc(allocator, s.slice8(), false, false)) |utf16| {
+                    var out, const chars = bun.String.createUninitialized(.utf16, utf16.len);
+                    defer out.deref();
+                    @memcpy(chars, utf16);
+                    return out.toJS(globalObject);
+                } else {
+                    var out, const chars = bun.String.createUninitialized(.latin1, s.slice8().len);
+                    defer out.deref();
+                    @memcpy(chars, s.slice8());
+                    return out.toJS(globalObject);
+                }
+            } else {
+                var out, const chars = bun.String.createUninitialized(.utf16, s.slice16().len);
                 defer out.deref();
                 @memcpy(chars, s.slice16());
                 return out.toJS(globalObject);
-            }
-
-            if (comptime opts.decode_escape_sequences) {
-                s.resolveRopeIfNeeded(allocator);
-
-                const decoded = js_lexer.decodeStringLiteralEscapeSequencesToUTF16(s.slice(allocator), allocator) catch unreachable;
-                defer allocator.free(decoded);
-
-                var out, const chars = bun.String.createUninitialized(.utf16, decoded.len);
-                defer out.deref();
-                @memcpy(chars, decoded);
-
-                return out.toJS(globalObject);
-            } else {
-                return JSC.ZigString.fromUTF8(s.data).toValueGC(globalObject);
             }
         }
 
@@ -3420,8 +3402,8 @@ pub const Expr = struct {
         return false;
     }
 
-    pub fn toJS(this: Expr, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject, comptime opts: E.ToJsOpts) ToJSError!JSC.JSValue {
-        return this.data.toJS(allocator, globalObject, opts);
+    pub fn toJS(this: Expr, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
+        return this.data.toJS(allocator, globalObject);
     }
 
     pub inline fn isArray(this: *const Expr) bool {
@@ -3613,7 +3595,7 @@ pub const Expr = struct {
 
     pub inline fn isString(expr: *const Expr) bool {
         return switch (expr.data) {
-            .e_string, .e_utf8_string => true,
+            .e_string => true,
             else => false,
         };
     }
@@ -3621,7 +3603,6 @@ pub const Expr = struct {
     pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         switch (expr.data) {
             .e_string => |str| return str.string(allocator) catch bun.outOfMemory(),
-            .e_utf8_string => |str| return str.data,
             else => return null,
         }
     }
@@ -3633,7 +3614,6 @@ pub const Expr = struct {
                 defer allocator.free(utf8_str);
                 return hash_fn(utf8_str);
             },
-            .e_utf8_string => |str| return hash_fn(str.data),
             else => return null,
         }
     }
@@ -3641,7 +3621,6 @@ pub const Expr = struct {
     pub inline fn asStringCloned(expr: *const Expr, allocator: std.mem.Allocator) OOM!?string {
         switch (expr.data) {
             .e_string => |str| return try str.stringCloned(allocator),
-            .e_utf8_string => |str| return try allocator.dupe(u8, str.data),
             else => return null,
         }
     }
@@ -3649,7 +3628,6 @@ pub const Expr = struct {
     pub inline fn asStringZ(expr: *const Expr, allocator: std.mem.Allocator) OOM!?stringZ {
         switch (expr.data) {
             .e_string => |str| return try str.stringZ(allocator),
-            .e_utf8_string => |str| return try allocator.dupeZ(u8, str.data),
             else => return null,
         }
     }
@@ -3824,18 +3802,6 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_array = brk: {
-                            const item = allocator.create(Type) catch unreachable;
-                            item.* = st;
-                            break :brk item;
-                        },
-                    },
-                };
-            },
-            E.UTF8String => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_utf8_string = brk: {
                             const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
@@ -4253,14 +4219,6 @@ pub const Expr = struct {
         Data.Store.assert();
 
         switch (Type) {
-            E.UTF8String => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_utf8_string = Data.Store.append(Type, st),
-                    },
-                };
-            },
             E.Array => {
                 return Expr{
                     .loc = loc,
@@ -4643,9 +4601,6 @@ pub const Expr = struct {
         e_import_meta_main,
         e_require_main,
         e_inlined_enum,
-
-        /// A string that is UTF-8 encoded without escaping for use in JavaScript.
-        e_utf8_string,
 
         // object, regex and array may have had side effects
         pub fn isPrimitiveLiteral(tag: Tag) bool {
@@ -5340,7 +5295,6 @@ pub const Expr = struct {
         e_require_main,
 
         e_inlined_enum: *E.InlinedEnum,
-        e_utf8_string: *E.UTF8String,
 
         comptime {
             bun.assert_eql(@sizeOf(Data), 24); // Do not increase the size of Expr
@@ -5800,9 +5754,6 @@ pub const Expr = struct {
                     // pretend there is no comment
                     e.value.data.writeToHasher(hasher, symbol_table);
                 },
-                .e_utf8_string => |e| {
-                    hasher.update(e.data);
-                },
 
                 // no data
                 .e_require_call_target,
@@ -5862,7 +5813,6 @@ pub const Expr = struct {
                 .e_string,
                 .e_inlined_enum,
                 .e_import_meta,
-                .e_utf8_string,
                 => true,
 
                 .e_template => |template| template.tag == null and template.parts.len == 0,
@@ -6264,12 +6214,11 @@ pub const Expr = struct {
             return Equality.unknown;
         }
 
-        pub fn toJS(this: Data, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject, comptime opts: E.ToJsOpts) ToJSError!JSC.JSValue {
+        pub fn toJS(this: Data, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
             return switch (this) {
-                .e_array => |e| e.toJS(allocator, globalObject, opts),
-                .e_object => |e| e.toJS(allocator, globalObject, opts),
-                .e_string => |e| e.toJS(allocator, globalObject, opts),
-                .e_utf8_string => |e| JSC.ZigString.fromUTF8(e.data).toJS(globalObject),
+                .e_array => |e| e.toJS(allocator, globalObject),
+                .e_object => |e| e.toJS(allocator, globalObject),
+                .e_string => |e| e.toJS(allocator, globalObject),
                 .e_null => JSC.JSValue.null,
                 .e_undefined => JSC.JSValue.undefined,
                 .e_boolean => |boolean| if (boolean.value)
@@ -6279,7 +6228,7 @@ pub const Expr = struct {
                 .e_number => |e| e.toJS(),
                 // .e_big_int => |e| e.toJS(ctx, exception),
 
-                .e_inlined_enum => |inlined| inlined.value.data.toJS(allocator, globalObject, .{}),
+                .e_inlined_enum => |inlined| inlined.value.data.toJS(allocator, globalObject),
 
                 .e_identifier,
                 .e_import_identifier,
@@ -6325,7 +6274,6 @@ pub const Expr = struct {
                 E.Template,
                 E.TemplatePart,
                 E.Unary,
-                E.UTF8String,
                 E.Yield,
             }, 512);
 
@@ -8521,7 +8469,6 @@ pub const Macro = struct {
                         const value = in.toJS(
                             allocator,
                             globalObject,
-                            .{},
                         ) catch |e| {
                             // Keeping a separate variable instead of modifying js_args.len
                             // due to allocator.free call in defer

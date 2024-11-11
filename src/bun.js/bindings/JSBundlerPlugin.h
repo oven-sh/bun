@@ -7,7 +7,6 @@
 #include <JavaScriptCore/RegularExpression.h>
 #include "helpers.h"
 #include <JavaScriptCore/Yarr.h>
-#include <JavaScriptCore/Strong.h>
 
 typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
@@ -61,6 +60,8 @@ public:
     NamespaceList onLoad = {};
     NamespaceList onResolve = {};
     BunPluginTarget target { BunPluginTargetBrowser };
+
+    Vector<Strong<JSPromise>> deferredPromises = {};
 
     JSBundlerPluginAddErrorCallback addError;
     JSBundlerPluginOnLoadAsyncCallback onLoadAsync;

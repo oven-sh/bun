@@ -10,7 +10,6 @@ const net = require("node:net");
 const fs = require("node:fs");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
-const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const kInfoHeaders = Symbol("sent-info-headers");
 
 const Stream = require("node:stream");
@@ -2443,7 +2442,7 @@ class ServerHttp2Session extends Http2Session {
       this.#alpnProtocol = "h2c";
     }
     this[bunHTTP2Socket] = socket;
-    const nativeSocket = socket[bunSocketInternal];
+    const nativeSocket = socket._handle;
     this.#encrypted = socket instanceof TLSSocket;
 
     this.#parser = new H2FrameParser({
@@ -2827,7 +2826,7 @@ class ClientHttp2Session extends Http2Session {
     } else {
       this.#alpnProtocol = "h2c";
     }
-    const nativeSocket = socket[bunSocketInternal];
+    const nativeSocket = socket._handle;
     if (nativeSocket) {
       this.#parser.setNativeSocket(nativeSocket);
     }
@@ -3028,7 +3027,7 @@ class ClientHttp2Session extends Http2Session {
       this[bunHTTP2Socket] = socket;
     }
     this.#encrypted = socket instanceof TLSSocket;
-    const nativeSocket = socket[bunSocketInternal];
+    const nativeSocket = socket._handle;
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,

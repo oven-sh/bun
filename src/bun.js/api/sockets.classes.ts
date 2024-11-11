@@ -12,7 +12,14 @@ function generate(ssl) {
         fn: "getAuthorizationError",
         length: 0,
       },
-
+      resume: {
+        fn: "resumeFromJS",
+        length: 0,
+      },
+      pause: {
+        fn: "pauseFromJS",
+        length: 0,
+      },
       getTLSFinishedMessage: {
         fn: "getTLSFinishedMessage",
         length: 0,
@@ -82,6 +89,17 @@ function generate(ssl) {
       },
       alpnProtocol: {
         getter: "getALPNProtocol",
+      },
+      bytesWritten: {
+        getter: "getBytesWritten",
+      },
+      setNoDelay: {
+        fn: "setNoDelay",
+        length: 1,
+      },
+      setKeepAlive: {
+        fn: "setKeepAlive",
+        length: 2,
       },
       write: {
         fn: "write",

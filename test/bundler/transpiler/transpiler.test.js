@@ -1668,8 +1668,33 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`import("./foo.json", { type: "json" });`, `import("./foo.json")`);
     });
 
-    it("import with unicode escape", () => {
-      expectPrinted_(`import { name } from 'mod\\u1011';`, `import { name } from "mod\\u1011"`);
+    it("import with unicode", () => {
+      expectPrinted_(`import { name } from 'modထ';`, `import { name } from "modထ"`);
+      expectPrinted_(`import { name } from 'mod\\u1011';`, `import { name } from "modထ"`);
+      expectPrinted_(`import('modထ');`, `import("modထ")`);
+      expectPrinted_(`import('mod\\u1011');`, `import("modထ")`);
+    });
+    it("import with quote", () => {
+      expectPrinted_(`import { name } from '".ts';`, `import { name } from '".ts'`);
+    });
+
+    it("string quote selection", () => {
+      expectPrinted_(`console.log("\\n")`, "console.log(`\n`)");
+      expectPrinted_(`console.log("\\"")`, `console.log('"')`);
+      expectPrinted_(`console.log('\\'')`, `console.log("'")`);
+      expectPrinted_("console.log(`\\`hi\\``)", "console.log(`\\`hi\\``)");
+      expectPrinted_(`console.log("ထ")`, `console.log("ထ")`);
+      expectPrinted_(`console.log("\\u1011")`, `console.log("ထ")`);
+    });
+
+    it("unicode surrogates", () => {
+      expectPrinted_(`console.log("𐌴")`, 'console.log("\\uD800\\uDF34")');
+      expectPrinted_(`console.log("\\u{10334}")`, 'console.log("\\uD800\\uDF34")');
+      expectPrinted_(`console.log("\\uD800\\uDF34")`, 'console.log("\\uD800\\uDF34")');
+      expectPrinted_(`console.log("\\u{10334}" === "\\uD800\\uDF34")`, "console.log(true)");
+      expectPrinted_(`console.log("\\u{10334}" === "\\uDF34\\uD800")`, "console.log(false)");
+      expectPrintedMin_(`console.log("abc" + "def")`, 'console.log("abcdef")');
+      expectPrintedMin_(`console.log("\\uD800" + "\\uDF34")`, 'console.log("\\uD800" + "\\uDF34")');
     });
 
     it("fold string addition", () => {
@@ -1810,7 +1835,7 @@ export const { dead } = { dead: "hello world!" };
       expect(bunTranspiler.transformSync(input, object).trim()).toBe(output);
     });
 
-    it.skip("rewrite string to length", () => {
+    it("rewrite string to length", () => {
       expectBunPrinted_(`export const foo = "a".length + "b".length;`, `export const foo = 2`);
       // check rope string
       expectBunPrinted_(`export const foo = ("a" + "b").length;`, `export const foo = 2`);
@@ -1819,6 +1844,8 @@ export const { dead } = { dead: "hello world!" };
         `export const foo = "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌".length;`,
         `export const foo = 52`,
       );
+      // no rope string for non-ascii
+      expectBunPrinted_(`export const foo = ("æ" + "™").length;`, `export const foo = ("æ" + "™").length`);
     });
 
     describe("Bun.js", () => {

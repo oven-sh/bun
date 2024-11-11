@@ -124,8 +124,8 @@ append_to_path() {
 		error "Could not find directory: \"$path\""
 	fi
 
-	append_to_profile "export PATH=\"$path:\$PATH\""
-	export PATH="$path:$PATH"
+	append_to_profile "export PATH=\"\$PATH\":$path"
+	export PATH="$PATH:$path"
 }
 
 check_system() {
@@ -468,7 +468,7 @@ install_build_essentials() {
 		install_packages ninja pkg-config golang
     ;;
 	apk)
-		install_packages ninja xz
+		install_packages musl-dev ninja xz
     ;;
 	esac
 
@@ -517,6 +517,7 @@ install_llvm() {
     ;;
   apk)
     install_packages "llvm$(llvm_version)-dev" "clang$(llvm_version)-dev" "lld$(llvm_version)-dev"
+		append_to_path "/usr/lib/llvm$(llvm_version)/bin"
     ;;
 	esac
 }
@@ -531,7 +532,9 @@ install_ccache() {
 
 install_rust() {
 	if [ "$os" = "linux" ] && [ "$distro" = "alpine" ]; then
-		install_packages rust
+		install_packages rust cargo
+		mkdir -p "$HOME/.cargo/bin"
+		append_to_path "$HOME/.cargo/bin"
 		return
 	fi
   sh="$(require sh)"
@@ -546,6 +549,9 @@ install_docker() {
     if ! [ -d "/Applications/Docker.app" ]; then
 		  package_manager install docker --cask
     fi
+		;;
+	apk)
+		install_packages docker
 		;;
 	*)
     case "$distro-$release" in

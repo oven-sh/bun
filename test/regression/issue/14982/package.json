@@ -9,6 +9,8 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "express": "^4.21.1",
+    "fastify": "^5.1.0"
   }
 }

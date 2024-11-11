@@ -3,6 +3,7 @@ import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
 import { tmpdirSync } from "harness";
 import path, { dirname } from "path";
+import { createTest } from "node-harness";
 
 function createTree(basedir: string, paths: string[]) {
   for (const end of paths) {
@@ -343,6 +344,22 @@ it("reload() works", () => {
   router.reload();
   expect(router.match("/posts")!.name).toBe("/posts");
 });
+
+it("reload() works with new dirs/files", () => {
+  const { dir } = make(["posts.tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+    assetPrefix: "/_next/static/",
+    origin: "https://nextjs.org",
+  });
+
+  expect(router.match("/posts")!.name).toBe("/posts");
+  createTree(dir, ['test/recursive/index.ts']);
+  router.reload();
+  expect(router.match("/test/recursive")!.name).toBe("/test/recursive");
+})
 
 it(".query works with dynamic routes, including params", () => {
   // set up the test

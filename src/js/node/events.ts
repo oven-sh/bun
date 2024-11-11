@@ -760,6 +760,7 @@ Object.assign(EventEmitter, {
   addAbortListener,
   init: EventEmitter,
   listenerCount,
+  AbortError,
 });
 
 export default EventEmitter;

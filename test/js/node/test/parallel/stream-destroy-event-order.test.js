@@ -1,36 +1,39 @@
 //#FILE: test-stream-destroy-event-order.js
 //#SHA1: 0d5e12d85e093a1d7c118a2e15cf0c38c1ab96f6
 //-----------------
-"use strict";
+'use strict';
 
-const { Readable } = require("stream");
+const { Readable } = require('stream');
 
-test("Readable stream destroy event order", () => {
+test('Stream destroy event order', (done) => {
   const rs = new Readable({
-    read() {},
+    read() {}
   });
 
   let closed = false;
   let errored = false;
 
-  rs.on("close", () => {
-    closed = true;
-    expect(errored).toBe(true);
-  });
-
-  rs.on("error", () => {
+  const errorHandler = jest.fn(() => {
     errored = true;
     expect(closed).toBe(false);
   });
 
-  rs.destroy(new Error("kaboom"));
+  const closeHandler = jest.fn(() => {
+    closed = true;
+    expect(errored).toBe(true);
+    expect(errorHandler).toHaveBeenCalled();
+    done();
+  });
 
-  return new Promise(resolve => {
-    rs.on("close", () => {
-      expect(closed).toBe(true);
-      expect(errored).toBe(true);
-      resolve();
-    });
+  rs.on('close', closeHandler);
+  rs.on('error', errorHandler);
+
+  rs.destroy(new Error('kaboom'));
+
+  // Ensure that the event handlers are called
+  setImmediate(() => {
+    expect(errorHandler).toHaveBeenCalled();
+    expect(closeHandler).toHaveBeenCalled();
   });
 });
 

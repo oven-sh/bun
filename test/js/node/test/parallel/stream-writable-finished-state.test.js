@@ -1,11 +1,11 @@
 //#FILE: test-stream-writable-finished-state.js
 //#SHA1: e9ea6f7cc3e0262bf187b9cf08e9a054c93d7b5f
 //-----------------
-"use strict";
+'use strict';
 
-const stream = require("stream");
+const stream = require('stream');
 
-test("Writable stream finished state", done => {
+test('Writable stream finished state', (done) => {
   const writable = new stream.Writable();
 
   writable._write = (chunk, encoding, cb) => {
@@ -14,13 +14,26 @@ test("Writable stream finished state", done => {
     cb();
   };
 
-  writable.on("finish", () => {
+  let finishCalled = false;
+  let endCalled = false;
+
+  function checkDone() {
+    if (finishCalled && endCalled) {
+      expect(writable._writableState.finished).toBe(true);
+      done();
+    }
+  }
+
+  writable.on('finish', () => {
     expect(writable._writableState.finished).toBe(true);
+    finishCalled = true;
+    checkDone();
   });
 
-  writable.end("testing finished state", () => {
+  writable.end('testing finished state', () => {
     expect(writable._writableState.finished).toBe(true);
-    done();
+    endCalled = true;
+    checkDone();
   });
 });
 

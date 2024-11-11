@@ -278,7 +278,26 @@ function aborted(signal: AbortSignal, resource: object) {
   return promise;
 }
 
+function createDeferredPromise() {
+  return $newPromiseCapability(Promise);
+}
+
+var kEmptyObject = Object.freeze({ __proto__: null });
+
+function once(callback, { preserveReturnValue = false } = kEmptyObject) {
+  let called = false;
+  let returnValue;
+  return function (...args) {
+    if (called) return returnValue;
+    called = true;
+    const result = callback.$apply(this, args);
+    returnValue = preserveReturnValue ? result : undefined;
+    return result;
+  };
+}
+
 cjs_exports = {
+  createDeferredPromise,
   format,
   formatWithOptions,
   stripVTControlCharacters,
@@ -303,7 +322,13 @@ cjs_exports = {
   isError,
   isPrimitive,
   isBuffer,
+  kEmptyObject,
+  kEnumerableProperty: {
+    __proto__: null,
+    enumerable: true,
+  },
   log,
+  once,
   inherits,
   toUSVString,
   promisify,

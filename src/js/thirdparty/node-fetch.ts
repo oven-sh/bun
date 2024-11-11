@@ -39,7 +39,7 @@ const HeadersPrototype = Headers.prototype;
 
 var BodyReadable;
 function loadBodyReadable() {
-  ({ _ReadableFromWebForUndici: BodyReadable } = require("node:stream")[Symbol.for("::bunternal::")]);
+  ({ ReadableFromWeb: BodyReadable } = require("internal/webstreams/adapters"));
 }
 
 class Response extends WebResponse {

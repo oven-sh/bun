@@ -1,45 +1,45 @@
 //#FILE: test-stream2-readable-wrap-destroy.js
 //#SHA1: 632a198f6b4fc882942984df461383047f6b78a6
 //-----------------
-"use strict";
+'use strict';
 
-const { Readable } = require("stream");
-const EventEmitter = require("events");
+const { Readable } = require('stream');
+const EventEmitter = require('events');
 
-test('Readable.wrap should call destroy on "destroy" event', () => {
-  const oldStream = new EventEmitter();
-  oldStream.pause = jest.fn();
-  oldStream.resume = jest.fn();
+describe('Readable.wrap destroy behavior', () => {
+  let oldStream;
 
-  const destroyMock = jest.fn();
-
-  const readable = new Readable({
-    autoDestroy: false,
-    destroy: destroyMock,
+  beforeEach(() => {
+    oldStream = new EventEmitter();
+    oldStream.pause = jest.fn();
+    oldStream.resume = jest.fn();
   });
 
-  readable.wrap(oldStream);
-  oldStream.emit("destroy");
+  test('should call destroy when "destroy" event is emitted', () => {
+    const destroyMock = jest.fn();
+    const readable = new Readable({
+      autoDestroy: false,
+      destroy: destroyMock
+    });
 
-  expect(destroyMock).toHaveBeenCalledTimes(1);
-});
+    readable.wrap(oldStream);
+    oldStream.emit('destroy');
 
-test('Readable.wrap should call destroy on "close" event', () => {
-  const oldStream = new EventEmitter();
-  oldStream.pause = jest.fn();
-  oldStream.resume = jest.fn();
-
-  const destroyMock = jest.fn();
-
-  const readable = new Readable({
-    autoDestroy: false,
-    destroy: destroyMock,
+    expect(destroyMock).toHaveBeenCalledTimes(1);
   });
 
-  readable.wrap(oldStream);
-  oldStream.emit("close");
+  test('should call destroy when "close" event is emitted', () => {
+    const destroyMock = jest.fn();
+    const readable = new Readable({
+      autoDestroy: false,
+      destroy: destroyMock
+    });
 
-  expect(destroyMock).toHaveBeenCalledTimes(1);
+    readable.wrap(oldStream);
+    oldStream.emit('close');
+
+    expect(destroyMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 //<#END_FILE: test-stream2-readable-wrap-destroy.js

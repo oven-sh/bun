@@ -11,7 +11,7 @@
 #include "BunClientData.h"
 #include "wtf/text/StringImpl.h"
 #include "wtf/unicode/CharacterNames.h"
-
+#include "JSBufferEncodingType.h"
 namespace WebCore {
 
 using namespace JSC;
@@ -485,16 +485,31 @@ static JSC_DEFINE_CUSTOM_GETTER(jsStringDecoder_lastTotal, (JSGlobalObject * lex
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(thisObject->m_lastTotal)));
 }
+static JSC_DEFINE_CUSTOM_GETTER(jsStringDecoder_encoding, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
+{
+    JSValue stringDecoderValue = JSValue::decode(jsStringDecoderCast(lexicalGlobalObject, JSValue::decode(thisValue)));
+    if (stringDecoderValue.isEmpty() || !stringDecoderValue.isCell()) {
+        return JSValue::encode(stringDecoderValue);
+    }
+    JSStringDecoder* thisObject = jsCast<JSStringDecoder*>(stringDecoderValue);
+    return JSC::JSValue::encode(WebCore::convertEnumerationToJS<BufferEncodingType>(*lexicalGlobalObject, thisObject->getEncoding()));
+}
+
+static JSC_DEFINE_CUSTOM_SETTER(jsStringDecoder_encodingSetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName attributeName))
+{
+    return true;
+}
 
 /* Hash table for prototype */
 static const HashTableValue JSStringDecoderPrototypeTableValues[]
     = {
+          { "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsStringDecoder_encoding, jsStringDecoder_encodingSetter } },
+          { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStringDecoderPrototypeFunction_end, 1 } },
           { "lastChar"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsStringDecoder_lastChar, 0 } },
           { "lastNeed"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsStringDecoder_lastNeed, 0 } },
           { "lastTotal"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsStringDecoder_lastTotal, 0 } },
-          { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStringDecoderPrototypeFunction_write, 1 } },
-          { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStringDecoderPrototypeFunction_end, 1 } },
           { "text"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStringDecoderPrototypeFunction_text, 2 } },
+          { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStringDecoderPrototypeFunction_write, 1 } },
       };
 
 void JSStringDecoderPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)

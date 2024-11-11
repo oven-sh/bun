@@ -5,14 +5,12 @@ const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 const types = require("node:util/types");
 
-const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE } = require("internal/errors");
 const { validateInteger } = require("internal/validators");
 
 const NumberIsFinite = Number.isFinite;
 const DateNow = Date.now;
 const DatePrototypeGetTime = Date.prototype.getTime;
 const isDate = types.isDate;
-const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 // Private exports
 const { FileHandle, kRef, kUnref, kFd, fs } = promises.$data;
@@ -841,7 +839,7 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
   } else if (end !== Infinity) {
     validateInteger(end, "end", 0);
     if (start !== undefined && start > end) {
-      throw new ERR_OUT_OF_RANGE("start", `<= "end" (here: ${end})`, start);
+      throw $ERR_OUT_OF_RANGE("start", `<= "end" (here: ${end})`, start);
     }
   }
 

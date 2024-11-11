@@ -1,59 +1,53 @@
 //#FILE: test-stream-wrap.js
 //#SHA1: 675a22f043e5a5a38cdd7fff376f269f8d341aab
 //-----------------
-"use strict";
+'use strict';
 
-const { Duplex } = require("stream");
+const { Duplex } = require('stream');
 
-// Remove internal bindings and StreamWrap import as they're not accessible in a normal environment
-// We'll mock the necessary functionality instead
-
-test("StreamWrap shutdown behavior", done => {
-  const stream = new Duplex({
-    read: function () {},
-    write: function () {},
-  });
-
-  // Mock StreamWrap
-  class MockStreamWrap {
-    constructor(stream) {
-      this.stream = stream;
-      this._handle = {
-        shutdown: jest.fn(req => {
-          // Simulate async completion with error
-          process.nextTick(() => {
-            req.oncomplete(-1);
-          });
-        }),
-      };
-    }
-
-    destroy() {
-      // Simulate handle closure
-    }
+// Mock StreamWrap
+class StreamWrap {
+  constructor(stream) {
+    this._handle = {
+      shutdown: jest.fn((req) => {
+        process.nextTick(() => req.oncomplete(-1));
+      })
+    };
   }
 
-  // Mock ShutdownWrap
-  class MockShutdownWrap {
-    oncomplete = null;
+  destroy() {
+    // Simulate handle closure
   }
+}
 
-  function testShutdown(callback) {
-    const wrap = new MockStreamWrap(stream);
+// Mock ShutdownWrap
+class ShutdownWrap {
+  constructor() {
+    this.oncomplete = null;
+    this.handle = null;
+  }
+}
 
-    const req = new MockShutdownWrap();
-    req.oncomplete = function (code) {
+describe('StreamWrap', () => {
+  test('shutdown should call oncomplete with negative code', (done) => {
+    const stream = new Duplex({
+      read: () => {},
+      write: () => {}
+    });
+
+    const wrap = new StreamWrap(stream);
+
+    const req = new ShutdownWrap();
+    req.oncomplete = (code) => {
       expect(code).toBeLessThan(0);
-      callback();
+      done();
     };
     req.handle = wrap._handle;
 
     // Close the handle to simulate
     wrap.destroy();
     req.handle.shutdown(req);
-  }
-
-  testShutdown(done);
+  });
 });
 
 //<#END_FILE: test-stream-wrap.js

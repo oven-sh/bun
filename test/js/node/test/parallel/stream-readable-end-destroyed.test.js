@@ -1,25 +1,29 @@
 //#FILE: test-stream-readable-end-destroyed.js
 //#SHA1: 20c8bb870db11018d2eaa1c9e4dece071917d03d
 //-----------------
-"use strict";
+'use strict';
 
-const { Readable } = require("stream");
+const { Readable } = require('stream');
 
-test("Don't emit 'end' after 'close'", () => {
+test("Don't emit 'end' after 'close'", (done) => {
   const r = new Readable();
 
   const endListener = jest.fn();
-  r.on("end", endListener);
-  r.resume();
-  r.destroy();
-
-  return new Promise(resolve => {
-    r.on("close", () => {
-      r.push(null);
+  const closeListener = jest.fn(() => {
+    r.push(null);
+    
+    // Use setImmediate to ensure all microtasks have been processed
+    setImmediate(() => {
       expect(endListener).not.toHaveBeenCalled();
-      resolve();
+      expect(closeListener).toHaveBeenCalled();
+      done();
     });
   });
+
+  r.on('end', endListener);
+  r.resume();
+  r.destroy();
+  r.on('close', closeListener);
 });
 
 //<#END_FILE: test-stream-readable-end-destroyed.js

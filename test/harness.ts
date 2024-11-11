@@ -1365,3 +1365,6 @@ export function waitForFileToExist(path: string, interval: number) {
     sleepSync(interval);
   }
 }
+
+// Ensure process.nextTick is available.
+process.nextTick(() => {});

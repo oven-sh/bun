@@ -29,8 +29,7 @@ function getGetter(cls, getter) {
 }
 
 function uncurryThis(func) {
-  // Intrinsics do not have `call` as a valid identifier, so this cannot be `Function.prototype.call.bind`.
-  return FunctionPrototypeCall.bind(func);
+  return (...args) => func.$call(...args);
 }
 
 const copyProps = (src, dest) => {
@@ -89,7 +88,9 @@ export default {
   makeSafe, // exported for testing
   Array,
   ArrayFrom: Array.from,
+  ArrayPrototypeReduce: Array.prototype.reduce,
   ArrayIsArray: Array.isArray,
+  Boolean,
   SafeArrayIterator: createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext),
   ArrayPrototypeFlat: uncurryThis(Array.prototype.flat),
   ArrayPrototypeFilter: uncurryThis(Array.prototype.filter),
@@ -104,7 +105,9 @@ export default {
   ArrayPrototypeSlice: uncurryThis(Array.prototype.slice),
   ArrayPrototypeSort: uncurryThis(Array.prototype.sort),
   ArrayPrototypeSplice: uncurryThis(Array.prototype.splice),
+  ArrayPrototypeShift: uncurryThis(Array.prototype.shift),
   ArrayPrototypeUnshift: uncurryThis(Array.prototype.unshift),
+  ArrayBufferPrototypeSlice: uncurryThis(ArrayBuffer.prototype.slice),
   BigIntPrototypeValueOf: uncurryThis(BigInt.prototype.valueOf),
   BooleanPrototypeValueOf: uncurryThis(Boolean.prototype.valueOf),
   DatePrototypeGetTime: uncurryThis(Date.prototype.getTime),
@@ -127,6 +130,7 @@ export default {
   Number,
   NumberIsFinite: Number.isFinite,
   NumberIsNaN: Number.isNaN,
+  NumberIsInteger: Number.isInteger,
   NumberParseFloat: Number.parseFloat,
   NumberParseInt: Number.parseInt,
   NumberPrototypeToString: uncurryThis(Number.prototype.toString),
@@ -135,7 +139,9 @@ export default {
   ObjectAssign: Object.assign,
   ObjectCreate: Object.create,
   ObjectDefineProperty: Object.defineProperty,
+  ObjectDefineProperties: Object.defineProperties,
   ObjectEntries: Object.entries,
+  ObjectFreeze: Object.freeze,
   ObjectGetOwnPropertyDescriptor: Object.getOwnPropertyDescriptor,
   ObjectGetOwnPropertyDescriptors: Object.getOwnPropertyDescriptors,
   ObjectGetOwnPropertyNames: Object.getOwnPropertyNames,
@@ -148,6 +154,10 @@ export default {
   ObjectPrototypeToString: uncurryThis(Object.prototype.toString),
   ObjectSeal: Object.seal,
   ObjectSetPrototypeOf: Object.setPrototypeOf,
+  Promise,
+  PromiseResolve: Promise.resolve,
+  PromiseReject: Promise.reject,
+  PromisePrototypeThen: uncurryThis(Promise.prototype.then),
   ReflectOwnKeys: Reflect.ownKeys,
   RegExp,
   RegExpPrototypeExec: uncurryThis(RegExp.prototype.exec),
@@ -156,9 +166,19 @@ export default {
   RegExpPrototypeTest: uncurryThis(RegExp.prototype.test),
   RegExpPrototypeToString: uncurryThis(RegExp.prototype.toString),
   SafeStringIterator: createSafeIterator(StringIterator, uncurryThis(StringIteratorPrototype.next)),
+  SafePromisePrototypeFinally: uncurryThis(Promise.prototype.finally),
+  SafePromiseAll: uncurryThis(Promise.all),
   SafeMap: makeSafe(
     Map,
     class SafeMap extends Map {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
+  SafeWeakMap: makeSafe(
+    WeakMap,
+    class SafeWeakMap extends WeakMap {
       constructor(i) {
         super(i);
       }
@@ -172,12 +192,38 @@ export default {
       }
     },
   ),
+  SafeWeakSet: makeSafe(
+    WeakSet,
+    class SafeWeakSet extends WeakSet {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
+  SafeWeakRef: makeSafe(
+    WeakRef,
+    class SafeWeakRef extends WeakRef {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
+  SafeFinalizationRegistry: makeSafe(
+    FinalizationRegistry,
+    class SafeFinalizationRegistry extends FinalizationRegistry {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
   DatePrototypeGetMilliseconds: uncurryThis(Date.prototype.getMilliseconds),
   DatePrototypeToUTCString: uncurryThis(Date.prototype.toUTCString),
   SetPrototypeGetSize: getGetter(Set, "size"),
   SetPrototypeEntries: uncurryThis(Set.prototype.entries),
   SetPrototypeValues: uncurryThis(Set.prototype.values),
   String,
+  Symbol,
+  SymbolSpecies: Symbol.species,
   StringPrototypeCharCodeAt: uncurryThis(String.prototype.charCodeAt),
   StringPrototypeCodePointAt: uncurryThis(String.prototype.codePointAt),
   StringPrototypeEndsWith: uncurryThis(String.prototype.endsWith),
@@ -200,7 +246,9 @@ export default {
   SymbolPrototypeToString: uncurryThis(Symbol.prototype.toString),
   SymbolPrototypeValueOf: uncurryThis(Symbol.prototype.valueOf),
   FunctionPrototypeToString: uncurryThis(Function.prototype.toString),
+  FunctionPrototypeCall,
   FunctionPrototypeBind: uncurryThis(Function.prototype.bind),
+  SafePromiseAll: uncurryThis(Promise.all),
   SymbolDispose: Symbol.dispose,
   SymbolAsyncDispose: Symbol.asyncDispose,
   SymbolIterator: Symbol.iterator,
@@ -209,6 +257,9 @@ export default {
   SymbolToStringTag: Symbol.toStringTag,
   TypedArrayPrototypeGetLength: getGetter(Uint8Array, "length"),
   TypedArrayPrototypeGetSymbolToStringTag: getGetter(Uint8Array, Symbol.toStringTag),
+  TypedArrayPrototypeGetBuffer: getGetter(Uint8Array, "buffer"),
+  TypedArrayPrototypeGetByteOffset: getGetter(Uint8Array, "byteOffset"),
+  TypedArrayPrototypeGetByteLength: getGetter(Uint8Array, "byteLength"),
   Uint8ClampedArray,
   Uint8Array,
   Uint16Array,
@@ -222,4 +273,5 @@ export default {
   BigUint64Array,
   BigInt64Array,
   uncurryThis,
+  FunctionPrototypeSymbolHasInstance: Function.prototype[Symbol.hasInstance].bind(Function.prototype),
 };

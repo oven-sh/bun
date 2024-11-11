@@ -58,6 +58,8 @@ public:
     uint8_t m_lastTotal;
     uint8_t m_lastChar[4];
 
+    BufferEncodingType getEncoding() const { return m_encoding; }
+
 private:
     JSC::JSValue fillLast(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
     JSC::JSValue text(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t, uint32_t);

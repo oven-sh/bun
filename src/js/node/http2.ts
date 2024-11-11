@@ -1835,7 +1835,7 @@ class Http2Stream extends Duplex {
       }
     }
     if (typeof callback == "function") {
-      callback();
+      process.nextTick(callback);
     }
   }
   _write(chunk, encoding, callback) {
@@ -1856,7 +1856,7 @@ class Http2Stream extends Duplex {
       }
     }
 
-    typeof callback === "function" && callback();
+    typeof callback === "function" && process.nextTick(callback);
   }
 }
 class ClientHttp2Stream extends Http2Stream {

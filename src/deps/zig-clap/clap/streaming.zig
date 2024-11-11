@@ -118,37 +118,10 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                     }
                     return null;
                 },
-                .short => {
-                    if (arg.len == 1) {
-                        for (parser.params) |*param| {
-                            const short = param.names.short orelse continue;
-                            if (short != arg[0]) continue;
-
-                            if (param.takes_value == .none) {
-                                return Arg(Id){ .param = param };
-                            }
-
-                            const value = parser.iter.next() orelse {
-                                return parser.err(arg, .{ .short = arg[0] }, error.MissingValue);
-                            };
-                            return Arg(Id){ .param = param, .value = value };
-                        }
-
-                        if (warn_on_unrecognized_flag) {
-                            Output.warn("unrecognized flag: -{s}\n", .{arg});
-                            Output.flush();
-                        }
-                        return parser.next();
-                    }
-
-                    parser.state = .{
-                        .chaining = .{
-                            .arg = arg,
-                            .index = 0,
-                        },
-                    };
-                    return try parser.chaining(parser.state.chaining);
-                },
+                .short => return try parser.chaining(.{
+                    .arg = arg,
+                    .index = 0,
+                }),
                 .positional => if (parser.positionalParam()) |param| {
                     // If we find a positional with the value `--` then we
                     // interpret the rest of the arguments as positional

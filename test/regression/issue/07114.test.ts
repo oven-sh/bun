@@ -20,12 +20,13 @@ test("short flags should be properly parsed", () => {
 
   // Test multiple combined short flags
   const multipleFlags = Bun.spawnSync({
-    cmd: [bunExe(), "-abc"],
+    cmd: [bunExe(), "-ab"],
     cwd: dir,
     env: bunEnv,
     stderr: "pipe",
   });
   expect(multipleFlags.stderr.toString().toLowerCase()).not.toContain("invalid argument");
+  expect(multipleFlags.stderr.toString().toLowerCase()).not.toContain("requires a value but none was supplied");
 
   // Test short flag with value
   const flagWithValue = Bun.spawnSync({
@@ -35,4 +36,13 @@ test("short flags should be properly parsed", () => {
     stderr: "pipe",
   });
   expect(flagWithValue.stderr.toString().toLowerCase()).not.toContain("invalid argument '-p'");
+
+  // Test short flag that requires a value but none was supplied
+  const flagWithoutValue = Bun.spawnSync({
+    cmd: [bunExe(), "-p"],
+    cwd: dir,
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  expect(flagWithoutValue.stderr.toString().toLowerCase()).toContain("requires a value but none was supplied");
 });

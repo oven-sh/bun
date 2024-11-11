@@ -1827,15 +1827,17 @@ class Http2Stream extends Duplex {
           chunk,
           undefined,
           (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
-          function () {
+          /* function () {
             process.nextTick(this, ...arguments);
-          }.bind(callback),
+          }.bind(callback), */
+          callback,
         );
         return;
       }
     }
     if (typeof callback == "function") {
-      process.nextTick(callback);
+      // process.nextTick(callback);
+      callback();
     }
   }
   _write(chunk, encoding, callback) {
@@ -1848,15 +1850,17 @@ class Http2Stream extends Duplex {
           chunk,
           encoding,
           (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
-          function () {
+          /* function () {
             process.nextTick(this, ...arguments);
-          }.bind(callback),
+          }.bind(callback), */
+          callback,
         );
         return;
       }
     }
 
-    typeof callback === "function" && process.nextTick(callback);
+    typeof callback === "function" && callback();
+    // process.nextTick(callback);
   }
 }
 class ClientHttp2Stream extends Http2Stream {

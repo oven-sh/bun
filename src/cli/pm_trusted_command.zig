@@ -74,7 +74,7 @@ pub const UntrustedCommand = struct {
         var untrusted_deps: std.AutoArrayHashMapUnmanaged(DependencyID, Lockfile.Package.Scripts.List) = .{};
         defer untrusted_deps.deinit(ctx.allocator);
 
-        var tree_iterator = Lockfile.Tree.Iterator.init(lockfile);
+        var tree_iterator = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
 
         const top_level_without_trailing_slash = strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir);
         var abs_node_modules_path: std.ArrayListUnmanaged(u8) = .{};
@@ -82,7 +82,7 @@ pub const UntrustedCommand = struct {
         try abs_node_modules_path.appendSlice(ctx.allocator, top_level_without_trailing_slash);
         try abs_node_modules_path.append(ctx.allocator, std.fs.path.sep);
 
-        while (tree_iterator.nextNodeModulesFolder(null)) |node_modules| {
+        while (tree_iterator.next(null)) |node_modules| {
             // + 1 because we want to keep the path separator
             abs_node_modules_path.items.len = top_level_without_trailing_slash.len + 1;
             try abs_node_modules_path.appendSlice(ctx.allocator, node_modules.relative_path);
@@ -231,7 +231,7 @@ pub const TrustCommand = struct {
         // Instead of running them right away, we group scripts by depth in the node_modules
         // file structure, then run them starting at max depth. This ensures lifecycle scripts are run
         // in the correct order as they would during a normal install
-        var tree_iter = Lockfile.Tree.Iterator.init(lockfile);
+        var tree_iter = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
 
         const top_level_without_trailing_slash = strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir);
         var abs_node_modules_path: std.ArrayListUnmanaged(u8) = .{};
@@ -248,7 +248,7 @@ pub const TrustCommand = struct {
 
         var scripts_count: usize = 0;
 
-        while (tree_iter.nextNodeModulesFolder(null)) |node_modules| {
+        while (tree_iter.next(null)) |node_modules| {
             abs_node_modules_path.items.len = top_level_without_trailing_slash.len + 1;
             try abs_node_modules_path.appendSlice(ctx.allocator, node_modules.relative_path);
 

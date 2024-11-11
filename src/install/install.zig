@@ -25,6 +25,7 @@ const File = bun.sys.File;
 const JSLexer = bun.js_lexer;
 const logger = bun.logger;
 const OOM = bun.OOM;
+const TextLockfile = @import("./bun.lock.zig");
 
 const js_parser = bun.js_parser;
 const JSON = bun.JSON;
@@ -8945,7 +8946,7 @@ pub const PackageManager = struct {
                 break :try_lockfile;
             };
 
-            switch (try Lockfile.loadFromSource(&lockfile_source, allocator, log, .binary)) {
+            switch (try Lockfile.load(&lockfile_source, allocator, log, .binary)) {
                 .ok => |load| {
                     bun.assertWithLocation(load.lockfile == .binary, @src());
                     return .{ manager, load.lockfile.binary };
@@ -10857,8 +10858,8 @@ pub const PackageManager = struct {
         return lockfile;
     }
 
-    fn nodeModulesFolderForDependencyIDs(iterator: *Lockfile.Tree.Iterator, ids: []const IdPair) !?Lockfile.Tree.NodeModulesFolder {
-        while (iterator.nextNodeModulesFolder(null)) |node_modules| {
+    fn nodeModulesFolderForDependencyIDs(iterator: *Lockfile.Tree.Iterator(.node_modules), ids: []const IdPair) !?Lockfile.Tree.Iterator(.node_modules).NextResult {
+        while (iterator.next(null)) |node_modules| {
             for (ids) |id| {
                 _ = std.mem.indexOfScalar(DependencyID, node_modules.dependencies, id[0]) orelse continue;
                 return node_modules;
@@ -10867,8 +10868,8 @@ pub const PackageManager = struct {
         return null;
     }
 
-    fn nodeModulesFolderForDependencyID(iterator: *Lockfile.Tree.Iterator, dependency_id: DependencyID) !?Lockfile.Tree.NodeModulesFolder {
-        while (iterator.nextNodeModulesFolder(null)) |node_modules| {
+    fn nodeModulesFolderForDependencyID(iterator: *Lockfile.Tree.Iterator(.node_modules), dependency_id: DependencyID) !?Lockfile.Tree.Iterator(.node_modules).NextResult {
+        while (iterator.next(null)) |node_modules| {
             _ = std.mem.indexOfScalar(DependencyID, node_modules.dependencies, dependency_id) orelse continue;
             return node_modules;
         }
@@ -10880,11 +10881,11 @@ pub const PackageManager = struct {
 
     fn pkgInfoForNameAndVersion(
         lockfile: *Lockfile,
-        iterator: *Lockfile.Tree.Iterator,
+        iterator: *Lockfile.Tree.Iterator(.node_modules),
         pkg_maybe_version_to_patch: []const u8,
         name: []const u8,
         version: ?[]const u8,
-    ) struct { PackageID, Lockfile.Tree.NodeModulesFolder } {
+    ) struct { PackageID, Lockfile.Tree.Iterator(.node_modules).NextResult } {
         var sfb = std.heap.stackFallback(@sizeOf(IdPair) * 4, lockfile.allocator);
         var pairs = std.ArrayList(IdPair).initCapacity(sfb.get(), 8) catch bun.outOfMemory();
         defer pairs.deinit();
@@ -11058,7 +11059,7 @@ pub const PackageManager = struct {
         const arg_kind: PatchArgKind = PatchArgKind.fromArg(argument);
 
         var folder_path_buf: bun.PathBuffer = undefined;
-        var iterator = Lockfile.Tree.Iterator.init(lockfile);
+        var iterator = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
         var resolution_buf: [1024]u8 = undefined;
 
         var win_normalizer: if (bun.Environment.isWindows) bun.PathBuffer else struct {} = undefined;
@@ -11494,7 +11495,7 @@ pub const PackageManager = struct {
         };
         defer root_node_modules.close();
 
-        var iterator = Lockfile.Tree.Iterator.init(lockfile);
+        var iterator = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
         var resolution_buf: [1024]u8 = undefined;
         const _cache_dir: std.fs.Dir, const _cache_dir_subpath: stringZ, const _changes_dir: []const u8, const _pkg: Package = switch (arg_kind) {
             .path => result: {
@@ -12095,7 +12096,7 @@ pub const PackageManager = struct {
         lockfile: *Lockfile,
         progress: *Progress,
 
-        // relative paths from `nextNodeModulesFolder` will be copied into this list.
+        // relative paths from `next` will be copied into this list.
         node_modules: NodeModulesFolder,
 
         skip_verify_installed_version_number: bool,
@@ -12112,7 +12113,6 @@ pub const PackageManager = struct {
         destination_dir_subpath_buf: bun.PathBuffer = undefined,
         folder_path_buf: bun.PathBuffer = undefined,
         successfully_installed: Bitset,
-        tree_iterator: *Lockfile.Tree.Iterator,
         command_ctx: Command.Context,
         current_tree_id: Lockfile.Tree.Id = Lockfile.Tree.invalid_id,
 
@@ -12263,7 +12263,7 @@ pub const PackageManager = struct {
         }
 
         pub fn linkRemainingBins(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
-            var depth_buf: Lockfile.Tree.Iterator.DepthBuf = undefined;
+            var depth_buf: Lockfile.Tree.DepthBuf = undefined;
             var node_modules_rel_path_buf: bun.PathBuffer = undefined;
             @memcpy(node_modules_rel_path_buf[0.."node_modules".len], "node_modules");
 
@@ -12281,6 +12281,7 @@ pub const PackageManager = struct {
                         @intCast(tree_id),
                         &node_modules_rel_path_buf,
                         &depth_buf,
+                        .node_modules,
                     );
 
                     this.node_modules.path.appendSlice(rel_path) catch bun.outOfMemory();
@@ -12625,7 +12626,7 @@ pub const PackageManager = struct {
             }
 
             switch (resolution_tag) {
-                .git, .github, .gitlab, .root => {
+                .git, .github, .root => {
                     inline for (Lockfile.Scripts.names) |script_name| {
                         count += @intFromBool(!@field(scripts, script_name).isEmpty());
                     }
@@ -13622,7 +13623,7 @@ pub const PackageManager = struct {
         };
 
         {
-            var iterator = Lockfile.Tree.Iterator.init(lockfile);
+            var iterator = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
             if (comptime Environment.isPosix) {
                 Bin.Linker.ensureUmask();
             }
@@ -13737,7 +13738,6 @@ pub const PackageManager = struct {
                         this.allocator,
                         lockfile.packages.len,
                     ),
-                    .tree_iterator = &iterator,
                     .command_ctx = ctx,
                     .tree_ids_to_trees_the_id_depends_on = tree_ids_to_trees_the_id_depends_on,
                     .completed_trees = completed_trees,
@@ -13762,7 +13762,7 @@ pub const PackageManager = struct {
 
             defer installer.deinit();
 
-            while (iterator.nextNodeModulesFolder(&installer.completed_trees)) |node_modules| {
+            while (iterator.next(&installer.completed_trees)) |node_modules| {
                 installer.node_modules.path.items.len = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir).len + 1;
                 try installer.node_modules.path.appendSlice(node_modules.relative_path);
                 installer.node_modules.tree_id = node_modules.tree_id;
@@ -14007,6 +14007,22 @@ pub const PackageManager = struct {
         }
     }
 
+    // fn installWithTextLockfile(
+    //     manager: *PackageManager,
+    //     lockfile: *TextLockfile,
+    //     ctx: Command.Context,
+    //     root_package_json_contents: string,
+    //     comptime log_level: Options.LogLevel,
+    // ) void {
+    //     _ = manager;
+    //     _ = lockfile;
+    //     _ = ctx;
+    //     _ = root_package_json_contents;
+    //     _ = log_level;
+
+    //     for ()
+    // }
+
     fn installWithManager(
         manager: *PackageManager,
         ctx: Command.Context,
@@ -14095,8 +14111,8 @@ pub const PackageManager = struct {
                     .binary, .@"package-lock.json" => |l| l,
                     .text => |text_lockfile| {
                         _ = text_lockfile;
-                        // return manager.installFromTextLockfile(text_lockfile);
-                        @panic("OOPS");
+                        // return manager.installWithTextLockfile(text_lockfile);
+                        @panic("oop");
                     },
                 };
 
@@ -15061,7 +15077,7 @@ pub const bun_install_js_bindings = struct {
             return .zero;
         };
 
-        const load_result: Lockfile.LoadResult = Lockfile.loadFromSource(&lockfile_source, allocator, &log, .binary) catch bun.outOfMemory();
+        const load_result: Lockfile.LoadResult = Lockfile.load(&lockfile_source, allocator, &log, .binary) catch bun.outOfMemory();
 
         const lockfile = switch (load_result) {
             .err => |err| {

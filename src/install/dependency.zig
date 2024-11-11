@@ -1376,6 +1376,10 @@ pub const Behavior = packed struct(u8) {
         return @as(u8, @bitCast(lhs)) == @as(u8, @bitCast(rhs));
     }
 
+    pub inline fn includes(lhs: Behavior, rhs: Behavior) bool {
+        return @as(u8, @bitCast(lhs)) & @as(u8, @bitCast(rhs)) != 0;
+    }
+
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
         if (eq(lhs, rhs)) {
             return .eq;

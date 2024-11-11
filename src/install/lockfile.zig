@@ -267,8 +267,24 @@ pub fn loadFromCwd(
 ) LoadResult {
     if (comptime Environment.allow_assert) assert(FileSystem.instance_loaded);
 
-    var format: Format = .text;
-    const file = File.open("bun.lock", bun.O.RDONLY, 0).unwrap() catch |err1| file: {
+    test_text_lockfile: {
+        var timer = std.time.Timer.start() catch unreachable;
+        const source = File.toSource("bun.lock", allocator).unwrap() catch break :test_text_lockfile;
+        defer allocator.free(source.contents);
+        const lockfile = TextLockfile.load(allocator, &source, log) catch {
+            log.print(Output.errorWriter()) catch {};
+            Output.flush();
+            log.reset();
+            break :test_text_lockfile;
+        };
+        std.debug.print("{} - loaded text lockfile\n", .{bun.fmt.fmtDuration(timer.read())});
+        lockfile.dump();
+    }
+
+    // TODO(dylan-conway) format = .text and 'bun.lock'
+    var format: Format = .binary;
+    var timer = std.time.Timer.start() catch unreachable;
+    const file = File.open("bun.lockb", bun.O.RDONLY, 0).unwrap() catch |err1| file: {
         if (err1 != error.ENOENT) {
             return .{ .err = .{
                 .step = .open_file,
@@ -280,11 +296,13 @@ pub fn loadFromCwd(
         format = .binary;
         break :file File.open("bun.lockb", bun.O.RDONLY, 0).unwrap() catch |err2| {
             if (err2 != error.ENOENT) {
-                return .{ .err = .{
-                    .step = .open_file,
-                    .err = err2,
-                    .lockfile_path = "bun.lockb",
-                } };
+                return .{
+                    .err = .{
+                        .step = .open_file,
+                        .err = err2,
+                        .lockfile_path = "bun.lockb",
+                    },
+                };
             }
             if (comptime attempt_migrate) {
                 return migration.detectAndLoadOtherLockfileFromCwd(
@@ -309,7 +327,7 @@ pub fn loadFromCwd(
         };
     };
 
-    return loadFromSource(
+    const loaded = load(
         &logger.Source.initPathString(format.filename(), contents),
         allocator,
         log,
@@ -319,47 +337,63 @@ pub fn loadFromCwd(
             error.OutOfMemory => bun.outOfMemory(),
         }
     };
+    std.debug.print("{} - loaded binary lockfile\n", .{bun.fmt.fmtDuration(timer.read())});
+    return loaded;
 }
 
-pub fn loadFromSource(
-    // this: *Lockfile,
+pub fn load(
     source: *const logger.Source,
     allocator: Allocator,
     log: *logger.Log,
     format: Format,
 ) OOM!LoadResult {
-    if (format == .binary) {
-        const this = try allocator.create(Lockfile);
-
-        var stream = Stream{ .buffer = source.contents, .pos = 0 };
-
-        this.binary_format_version = BinaryFormatVersion.current;
-        this.scripts = .{};
-        this.trusted_dependencies = null;
-        this.workspace_paths = .{};
-        this.workspace_versions = .{};
-        this.overrides = .{};
-        this.patched_dependencies = .{};
-
-        const load_result = Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
-            return LoadResult{ .err = .{ .step = .parse_file, .err = err, .lockfile_path = "bun.lockb" } };
+    if (format == .text) {
+        const text_lockfile = TextLockfile.load(allocator, source, log) catch |err| {
+            return .{ .err = .{
+                .step = .parse_file,
+                .err = err,
+                .lockfile_path = "bun.lock",
+            } };
         };
 
-        if (Environment.allow_assert) {
-            this.verifyData() catch @panic("lockfile data is corrupt");
-        }
-
-        return LoadResult{
+        return .{
             .ok = .{
                 .lockfile = .{
-                    .binary = this,
+                    .text = text_lockfile,
                 },
-                .serializer_result = load_result,
+                .serializer_result = .{},
             },
         };
     }
 
-    return .not_found;
+    const this = try allocator.create(Lockfile);
+
+    var stream = Stream{ .buffer = source.contents, .pos = 0 };
+
+    this.binary_format_version = BinaryFormatVersion.current;
+    this.scripts = .{};
+    this.trusted_dependencies = null;
+    this.workspace_paths = .{};
+    this.workspace_versions = .{};
+    this.overrides = .{};
+    this.patched_dependencies = .{};
+
+    const load_result = Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
+        return LoadResult{ .err = .{ .step = .parse_file, .err = err, .lockfile_path = "bun.lockb" } };
+    };
+
+    if (Environment.allow_assert) {
+        this.verifyData() catch @panic("lockfile data is corrupt");
+    }
+
+    return LoadResult{
+        .ok = .{
+            .lockfile = .{
+                .binary = this,
+            },
+            .serializer_result = load_result,
+        },
+    };
 }
 
 pub const InstallResult = struct {
@@ -410,89 +444,102 @@ pub const Tree = struct {
 
     const SubtreeError = error{ OutOfMemory, DependencyLoop };
 
-    pub const NodeModulesFolder = struct {
-        relative_path: stringZ,
-        dependencies: []const DependencyID,
-        tree_id: Tree.Id,
-
-        /// depth of the node_modules folder in the tree
-        ///
-        ///            0 (./node_modules)
-        ///           / \
-        ///          1   1
-        ///         /
-        ///        2
-        depth: usize,
-    };
-
     // max number of node_modules folders
     pub const max_depth = (bun.MAX_PATH_BYTES / "node_modules".len) + 1;
 
-    pub const Iterator = struct {
-        tree_id: Id,
-        path_buf: bun.PathBuffer = undefined,
-        last_parent: Id = invalid_id,
+    pub const DepthBuf = [max_depth]Id;
 
-        lockfile: *const Lockfile,
+    const IteratorPathStyle = enum {
+        node_modules,
+        path_spec,
+    };
 
-        depth_stack: DepthBuf = undefined,
+    pub fn Iterator(comptime path_style: IteratorPathStyle) type {
+        return struct {
+            tree_id: Id,
+            path_buf: bun.PathBuffer = undefined,
+            last_parent: Id = invalid_id,
 
-        pub const DepthBuf = [max_depth]Id;
+            lockfile: *const Lockfile,
 
-        pub fn init(lockfile: *const Lockfile) Iterator {
-            var iter = Iterator{
-                .tree_id = 0,
-                .lockfile = lockfile,
-            };
-            @memcpy(iter.path_buf[0.."node_modules".len], "node_modules");
-            return iter;
-        }
+            depth_stack: DepthBuf = undefined,
 
-        pub fn reset(this: *Iterator) void {
-            this.tree_id = 0;
-        }
-
-        pub fn nextNodeModulesFolder(this: *Iterator, completed_trees: ?*Bitset) ?NodeModulesFolder {
-            const trees = this.lockfile.buffers.trees.items;
-
-            if (this.tree_id >= trees.len) return null;
-
-            while (trees[this.tree_id].dependencies.len == 0) {
-                if (completed_trees) |_completed_trees| {
-                    _completed_trees.set(this.tree_id);
+            pub fn init(lockfile: *const Lockfile) @This() {
+                var iter: @This() = .{
+                    .tree_id = 0,
+                    .lockfile = lockfile,
+                };
+                if (comptime path_style == .node_modules) {
+                    @memcpy(iter.path_buf[0.."node_modules".len], "node_modules");
                 }
-                this.tree_id += 1;
-                if (this.tree_id >= trees.len) return null;
+                return iter;
             }
 
-            const current_tree_id = this.tree_id;
-            const tree = trees[current_tree_id];
-            const tree_dependencies = tree.dependencies.get(this.lockfile.buffers.hoisted_dependencies.items);
+            pub fn reset(this: *@This()) void {
+                this.tree_id = 0;
+            }
 
-            const relative_path, const depth = relativePathAndDepth(
-                this.lockfile,
-                current_tree_id,
-                &this.path_buf,
-                &this.depth_stack,
-            );
+            pub const NextResult = struct {
+                relative_path: stringZ,
+                dependencies: []const DependencyID,
+                tree_id: Tree.Id,
 
-            this.tree_id += 1;
-
-            return .{
-                .relative_path = relative_path,
-                .dependencies = tree_dependencies,
-                .tree_id = current_tree_id,
-                .depth = depth,
+                /// depth of the node_modules folder in the tree
+                ///
+                ///            0 (./node_modules)
+                ///           / \
+                ///          1   1
+                ///         /
+                ///        2
+                depth: usize,
             };
-        }
-    };
+
+            pub fn next(this: *@This(), completed_trees: if (path_style == .node_modules) ?*Bitset else void) ?NextResult {
+                const trees = this.lockfile.buffers.trees.items;
+
+                if (this.tree_id >= trees.len) return null;
+
+                while (trees[this.tree_id].dependencies.len == 0) {
+                    if (comptime path_style == .node_modules) {
+                        if (completed_trees) |_completed_trees| {
+                            _completed_trees.set(this.tree_id);
+                        }
+                    }
+                    this.tree_id += 1;
+                    if (this.tree_id >= trees.len) return null;
+                }
+
+                const current_tree_id = this.tree_id;
+                const tree = trees[current_tree_id];
+                const tree_dependencies = tree.dependencies.get(this.lockfile.buffers.hoisted_dependencies.items);
+
+                const relative_path, const depth = relativePathAndDepth(
+                    this.lockfile,
+                    current_tree_id,
+                    &this.path_buf,
+                    &this.depth_stack,
+                    path_style,
+                );
+
+                this.tree_id += 1;
+
+                return .{
+                    .relative_path = relative_path,
+                    .dependencies = tree_dependencies,
+                    .tree_id = current_tree_id,
+                    .depth = depth,
+                };
+            }
+        };
+    }
 
     /// Returns relative path and the depth of the tree
     pub fn relativePathAndDepth(
         lockfile: *const Lockfile,
         tree_id: Id,
         path_buf: *bun.PathBuffer,
-        depth_buf: *Iterator.DepthBuf,
+        depth_buf: *DepthBuf,
+        comptime path_style: IteratorPathStyle,
     ) struct { stringZ, usize } {
         const trees = lockfile.buffers.trees.items;
         var depth: usize = 0;
@@ -500,7 +547,10 @@ pub const Tree = struct {
         const tree = trees[tree_id];
 
         var parent_id = tree.id;
-        var path_written: usize = "node_modules".len;
+        var path_written: usize = switch (comptime path_style) {
+            .node_modules => "node_modules".len,
+            .path_spec => 0,
+        };
 
         depth_buf[0] = 0;
 
@@ -519,16 +569,25 @@ pub const Tree = struct {
 
             depth = depth_buf_len;
             while (depth_buf_len > 0) : (depth_buf_len -= 1) {
-                path_buf[path_written] = std.fs.path.sep;
-                path_written += 1;
+                if (comptime path_style == .path_spec) {
+                    if (depth_buf_len != depth) {
+                        path_buf[path_written] = '/';
+                        path_written += 1;
+                    }
+                } else {
+                    path_buf[path_written] = std.fs.path.sep;
+                    path_written += 1;
+                }
 
                 const id = depth_buf[depth_buf_len];
                 const name = dependencies[trees[id].dependency_id].name.slice(buf);
                 @memcpy(path_buf[path_written..][0..name.len], name);
                 path_written += name.len;
 
-                @memcpy(path_buf[path_written..][0.."/node_modules".len], std.fs.path.sep_str ++ "node_modules");
-                path_written += "/node_modules".len;
+                if (comptime path_style == .node_modules) {
+                    @memcpy(path_buf[path_written..][0.."/node_modules".len], std.fs.path.sep_str ++ "node_modules");
+                    path_written += "/node_modules".len;
+                }
             }
         }
         path_buf[path_written] = 0;
@@ -2089,10 +2148,13 @@ pub fn saveToDisk(this: *Lockfile, format: Format) void {
         assert(FileSystem.instance_loaded);
     }
 
-    var bytes = std.ArrayList(u8).init(bun.default_allocator);
-    defer bytes.deinit();
-
-    {
+    var timer = std.time.Timer.start() catch unreachable;
+    const bytes = if (format == .text)
+        TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this) catch |err| switch (err) {
+            error.OutOfMemory => bun.outOfMemory(),
+        }
+    else bytes: {
+        var bytes = std.ArrayList(u8).init(bun.default_allocator);
         var total_size: usize = 0;
         var end_pos: usize = 0;
         Lockfile.Serializer.save(this, &bytes, &total_size, &end_pos) catch |err| {
@@ -2101,12 +2163,18 @@ pub fn saveToDisk(this: *Lockfile, format: Format) void {
         };
         if (bytes.items.len >= end_pos)
             bytes.items[end_pos..][0..@sizeOf(usize)].* = @bitCast(total_size);
-    }
+        break :bytes bytes.items;
+    };
+    defer bun.default_allocator.free(bytes);
+    std.debug.print("time to write {s}: {}\n", .{ @tagName(format), bun.fmt.fmtDuration(timer.read()) });
 
     var tmpname_buf: [512]u8 = undefined;
     var base64_bytes: [8]u8 = undefined;
     bun.rand(&base64_bytes);
-    const tmpname = std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+    const tmpname = if (format == .text)
+        std.fmt.bufPrintZ(&tmpname_buf, ".lock-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable
+    else
+        std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
 
     const file = switch (File.openat(std.fs.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
@@ -2116,7 +2184,7 @@ pub fn saveToDisk(this: *Lockfile, format: Format) void {
         .result => |f| f,
     };
 
-    switch (file.writeAll(bytes.items)) {
+    switch (file.writeAll(bytes)) {
         .err => |e| {
             file.close();
             _ = bun.sys.unlink(tmpname);
@@ -2999,7 +3067,7 @@ pub const Package = extern struct {
             }
 
             switch (resolution_tag) {
-                .git, .github, .gitlab, .root => {
+                .git, .github, .root => {
                     const prepare_scripts = .{
                         "preprepare",
                         "prepare",
@@ -6624,7 +6692,6 @@ pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
 
 pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: DependencyID, dep: Dependency, res: PackageID) !void {
     const sb = this.buffers.string_bytes.items;
-    var buf: [2048]u8 = undefined;
 
     try w.beginObject();
     defer w.endObject() catch {};
@@ -6653,7 +6720,7 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Depend
             try w.write(info.name.slice(sb));
 
             try w.objectField("version");
-            try w.write(try std.fmt.bufPrint(&buf, "{}", .{info.version.fmt(sb)}));
+            try w.print("{}", .{info.version.fmt(sb)});
         },
         .dist_tag => {
             try w.beginObject();
@@ -6747,7 +6814,7 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Depend
 }
 
 pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
-    var buf: [2048]u8 = undefined;
+    var buf: [100]u8 = undefined;
     const sb = this.buffers.string_bytes.items;
     try w.beginObject();
     defer w.endObject() catch {};
@@ -6791,7 +6858,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         const dependencies = this.buffers.dependencies.items;
         const hoisted_deps = this.buffers.hoisted_dependencies.items;
         const resolutions = this.buffers.resolutions.items;
-        var depth_buf: Tree.Iterator.DepthBuf = undefined;
+        var depth_buf: Tree.DepthBuf = undefined;
         var path_buf: bun.PathBuffer = undefined;
         @memcpy(path_buf[0.."node_modules".len], "node_modules");
 
@@ -6809,11 +6876,11 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 @intCast(tree_id),
                 &path_buf,
                 &depth_buf,
+                .node_modules,
             );
 
             try w.objectField("path");
-            const formatted = try std.fmt.bufPrint(&buf, "{}", .{bun.fmt.fmtPath(u8, relative_path, .{ .path_sep = .posix })});
-            try w.write(formatted);
+            try w.print("{}", .{bun.fmt.fmtPath(u8, relative_path, .{ .path_sep = .posix })});
 
             try w.objectField("depth");
             try w.write(depth);
@@ -6887,12 +6954,10 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 try w.write(@tagName(res.tag));
 
                 try w.objectField("value");
-                const formatted = try std.fmt.bufPrint(&buf, "{s}", .{res.fmt(sb, .posix)});
-                try w.write(formatted);
+                try w.print("{s}", .{res.fmt(sb, .posix)});
 
                 try w.objectField("resolved");
-                const formatted_url = try std.fmt.bufPrint(&buf, "{}", .{res.fmtURL(sb)});
-                try w.write(formatted_url);
+                try w.print("{}", .{res.fmtURL(sb)});
             }
 
             try w.objectField("dependencies");
@@ -6931,7 +6996,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
 
             try w.objectField("integrity");
             if (pkg.meta.integrity.tag != .unknown) {
-                try w.write(try std.fmt.bufPrint(&buf, "{}", .{pkg.meta.integrity}));
+                try w.print("{}", .{pkg.meta.integrity});
             } else {
                 try w.write(null);
             }
@@ -7001,7 +7066,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         defer w.endObject() catch {};
 
         for (this.workspace_paths.keys(), this.workspace_paths.values()) |k, v| {
-            try w.objectField(try std.fmt.bufPrint(&buf, "{d}", .{k}));
+            try w.objectField(std.fmt.bufPrintIntToSlice(&buf, k, 10, .lower, .{}));
             try w.write(v.slice(sb));
         }
     }
@@ -7011,8 +7076,8 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         defer w.endObject() catch {};
 
         for (this.workspace_versions.keys(), this.workspace_versions.values()) |k, v| {
-            try w.objectField(try std.fmt.bufPrint(&buf, "{d}", .{k}));
-            try w.write(try std.fmt.bufPrint(&buf, "{}", .{v.fmt(sb)}));
+            try w.objectField(std.fmt.bufPrintIntToSlice(&buf, k, 10, .lower, .{}));
+            try w.print("{}", .{v.fmt(sb)});
         }
     }
 }

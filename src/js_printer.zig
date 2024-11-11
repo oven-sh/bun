@@ -336,8 +336,10 @@ pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime asci
     bytes.appendChar('"') catch unreachable;
 }
 
-pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
-    try writer.writeAll("\"");
+pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding, comptime quote: bool) !void {
+    if (comptime quote) {
+        try writer.writeAll("\"");
+    }
     var text = input;
     const end = text.ptr + text.len;
     if (comptime encoding == .utf16) {
@@ -461,7 +463,10 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
             },
         }
     }
-    try writer.writeAll("\"");
+
+    if (comptime quote) {
+        try writer.writeAll("\"");
+    }
 }
 
 pub const SourceMapHandler = struct {

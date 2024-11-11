@@ -2323,6 +2323,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             @TypeOf(w),
                             w,
                             .utf8,
+                            true,
                         );
                         switch (side) {
                             .client => {
@@ -2336,6 +2337,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                         @TypeOf(w),
                                         w,
                                         .utf8,
+                                        true,
                                     );
                                 }
                             },

@@ -15,7 +15,7 @@ const PackageID = Install.PackageID;
 const DependencyID = Install.DependencyID;
 const PackageManager = Install.PackageManager;
 const Lockfile = @import("../install/lockfile.zig");
-const NodeModulesFolder = Lockfile.Tree.NodeModulesFolder;
+const TreeIterator = Lockfile.Tree.Iterator(.node_modules);
 const Path = @import("../resolver/resolve_path.zig");
 const String = @import("../install/semver.zig").String;
 const ArrayIdentityContext = bun.ArrayIdentityContext;
@@ -76,7 +76,7 @@ pub const PackageManagerCommand = struct {
             Global.crash();
         };
 
-        const load_result = Lockfile.loadFromSource(&lockfile_source, ctx.allocator, ctx.log, .binary) catch bun.outOfMemory();
+        const load_result = Lockfile.load(&lockfile_source, ctx.allocator, ctx.log, .binary) catch bun.outOfMemory();
 
         const lockfile = handleLoadLockfileErrors(load_result, &pm.options);
 
@@ -306,13 +306,13 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
-            var iterator = Lockfile.Tree.Iterator.init(lockfile);
+            var iterator = TreeIterator.init(lockfile);
 
             var max_depth: usize = 0;
 
-            var directories = std.ArrayList(NodeModulesFolder).init(ctx.allocator);
+            var directories = std.ArrayList(TreeIterator.NextResult).init(ctx.allocator);
             defer directories.deinit();
-            while (iterator.nextNodeModulesFolder(null)) |node_modules| {
+            while (iterator.next(null)) |node_modules| {
                 const path_len = node_modules.relative_path.len;
                 const path = try ctx.allocator.alloc(u8, path_len + 1);
                 bun.copy(u8, path, node_modules.relative_path);
@@ -419,10 +419,10 @@ pub const PackageManagerCommand = struct {
 };
 
 fn printNodeModulesFolderStructure(
-    directory: *const NodeModulesFolder,
+    directory: *const TreeIterator.NextResult,
     directory_package_id: ?PackageID,
     depth: usize,
-    directories: *std.ArrayList(NodeModulesFolder),
+    directories: *std.ArrayList(TreeIterator.NextResult),
     lockfile: *Lockfile,
     more_packages: []bool,
 ) !void {

@@ -11,7 +11,7 @@ test("short flags should be properly parsed", () => {
 
   // Test single short flag
   const singleFlag = Bun.spawnSync({
-    cmd: [bunExe(), "-t"],
+    cmd: [bunExe(), "-t"], // as in `bun create expo ./awesome-project -t tabs`
     cwd: dir,
     env: bunEnv,
     stderr: "pipe",

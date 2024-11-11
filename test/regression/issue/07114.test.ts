@@ -16,7 +16,7 @@ test("short flags should be properly parsed", () => {
     env: bunEnv,
     stderr: "pipe",
   });
-  expect(singleFlag.stderr.toString()).not.toContain("Invalid argument '-t'");
+  expect(singleFlag.stderr.toString().toLowerCase()).not.toContain("invalid argument '-t'");
 
   // Test multiple combined short flags
   const multipleFlags = Bun.spawnSync({
@@ -25,7 +25,7 @@ test("short flags should be properly parsed", () => {
     env: bunEnv,
     stderr: "pipe",
   });
-  expect(multipleFlags.stderr.toString()).not.toContain("Invalid argument");
+  expect(multipleFlags.stderr.toString().toLowerCase()).not.toContain("invalid argument");
 
   // Test short flag with value
   const flagWithValue = Bun.spawnSync({
@@ -34,5 +34,5 @@ test("short flags should be properly parsed", () => {
     env: bunEnv,
     stderr: "pipe",
   });
-  expect(flagWithValue.stderr.toString()).not.toContain("Invalid argument '-p'");
+  expect(flagWithValue.stderr.toString().toLowerCase()).not.toContain("invalid argument '-p'");
 });

@@ -211,6 +211,38 @@ pub const FileSystemRouter = struct {
         return fs_router;
     }
 
+    pub fn bustDirCacheRecursive(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, path: []const u8) void {
+        var vm = globalThis.bunVM();
+
+        const root_dir_info = vm.bundler.resolver.readDirInfo(path) catch {
+            return;
+        };
+
+        if (root_dir_info) |dir| {
+            if (dir.getEntriesConst()) |entries| {
+                var iter = entries.data.iterator();
+                outer: while (iter.next()) |entry_ptr| {
+                    const entry = entry_ptr.value_ptr.*;
+
+                    if (entry.base()[0] == '.') {
+                        continue :outer;
+                    }
+                    if(entry.kind(&vm.bundler.fs.fs, false) == .dir) {
+                        var abs_parts_con = [_]string{ entry.dir, entry.base() };
+                        const full_path = vm.bundler.fs.abs(&abs_parts_con);
+                        _ = vm.bundler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(full_path));
+                        bustDirCacheRecursive(this, globalThis, full_path);
+                    }
+                }
+            }
+        }
+        _ = vm.bundler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(path));
+    }
+
+    pub fn bustDirCache(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) void {
+        bustDirCacheRecursive(this, globalThis, this.router.config.dir);
+    }
+
     pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         const this_value = callframe.this();
 
@@ -224,6 +256,9 @@ pub const FileSystemRouter = struct {
         var log = Log.Log.init(allocator);
         vm.bundler.resolver.log = &log;
         defer vm.bundler.resolver.log = orig_log;
+
+
+        bustDirCache(this, globalThis);
 
         const root_dir_info = vm.bundler.resolver.readDirInfo(this.router.config.dir) catch {
             globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { getSecret } from "harness";
 import postgres from "postgres";
 
-const databaseUrl = getSecret("TLS_POSTGRES_DATABASE_URL");
+const databaseUrl = getSecret("TLS_POSTGRES_DATABASE_URL") as string;
 
 describe.skipIf(!databaseUrl)("postgres", () => {
   test("should connect using TLS", async () => {

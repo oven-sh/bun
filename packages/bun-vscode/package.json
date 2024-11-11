@@ -114,6 +114,14 @@
         "category": "Bun",
         "enablement": "!inDebugMode",
         "icon": "$(debug-alt)"
+      },
+      {
+        "command": "extension.bun.runUnsavedCode",
+        "title": "Run Unsaved Code with Bun",
+        "shortTitle": "Run with Bun",
+        "category": "Bun",
+        "enablement": "!inDebugMode && resourceLangId =~ /^(javascript|typescript|javascriptreact|typescriptreact)$/ && !isInDiffEditor && resourceScheme == 'untitled'",
+        "icon": "$(play-circle)"
       }
     ],
     "menus": {
@@ -137,6 +145,20 @@
         {
           "command": "extension.bun.debugFile",
           "when": "resourceLangId == javascript || resourceLangId == javascriptreact || resourceLangId == typescript || resourceLangId == typescriptreact"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "extension.bun.runUnsavedCode",
+          "when": "resourceLangId =~ /^(javascript|typescript|javascriptreact|typescriptreact)$/ && !isInDiffEditor && resourceScheme == 'untitled'",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "extension.bun.runUnsavedCode",
+          "when": "resourceLangId =~ /^(javascript|typescript|javascriptreact|typescriptreact)$/ && !isInDiffEditor && resourceScheme == 'untitled'",
+          "group": "1_run"
         }
       ]
     },

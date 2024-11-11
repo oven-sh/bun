@@ -2780,7 +2780,6 @@ pub const PackageManager = struct {
 
         pub const GetJSONOptions = struct {
             init_reset_store: bool = true,
-            always_decode_escape_sequences: bool = true,
             guess_indentation: bool = false,
         };
 
@@ -2840,7 +2839,6 @@ pub const PackageManager = struct {
                     .is_json = true,
                     .allow_comments = true,
                     .allow_trailing_commas = true,
-                    .always_decode_escape_sequences = opts.always_decode_escape_sequences,
                     .guess_indentation = opts.guess_indentation,
                 },
             ) catch |err| {
@@ -2894,7 +2892,6 @@ pub const PackageManager = struct {
                     .is_json = true,
                     .allow_comments = true,
                     .allow_trailing_commas = true,
-                    .always_decode_escape_sequences = opts.always_decode_escape_sequences,
                     .guess_indentation = opts.guess_indentation,
                 },
             );
@@ -8367,7 +8364,9 @@ pub const PackageManager = struct {
     fn httpThreadOnInitError(err: HTTP.InitError, opts: HTTP.HTTPThread.InitOpts) noreturn {
         switch (err) {
             error.LoadCAFile => {
-                if (!bun.sys.existsZ(opts.abs_ca_file_name)) {
+                var normalizer: bun.path.PosixToWinNormalizer = .{};
+                const normalized = normalizer.resolveZ(FileSystem.instance.top_level_dir, opts.abs_ca_file_name);
+                if (!bun.sys.existsZ(normalized)) {
                     Output.err("HTTPThread", "could not find CA file: '{s}'", .{opts.abs_ca_file_name});
                 } else {
                     Output.err("HTTPThread", "invalid CA file: '{s}'", .{opts.abs_ca_file_name});
@@ -10410,7 +10409,6 @@ pub const PackageManager = struct {
             manager.log,
             manager.original_package_json_path,
             .{
-                .always_decode_escape_sequences = false,
                 .guess_indentation = true,
             },
         )) {
@@ -12521,6 +12519,7 @@ pub const PackageManager = struct {
         ) usize {
             if (comptime Environment.allow_assert) {
                 bun.assertWithLocation(resolution_tag != .root, @src());
+                bun.assertWithLocation(resolution_tag != .workspace, @src());
                 bun.assertWithLocation(package_id != 0, @src());
             }
             var count: usize = 0;
@@ -13010,23 +13009,28 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        if (resolution.tag != .workspace and !is_trusted and this.lockfile.packages.items(.meta)[package_id].hasInstallScript()) {
-                            // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
-                            // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
-                            const count = this.getInstalledPackageScriptsCount(alias, package_id, resolution.tag, destination_dir, log_level);
-                            if (count > 0) {
-                                if (comptime log_level.isVerbose()) {
-                                    Output.prettyError("Blocked {d} scripts for: {s}@{}\n", .{
-                                        count,
-                                        alias,
-                                        resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
-                                    });
+                        switch (resolution.tag) {
+                            .root, .workspace => {
+                                // these will never be blocked
+                            },
+                            else => if (!is_trusted and this.metas[package_id].hasInstallScript()) {
+                                // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
+                                // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
+                                const count = this.getInstalledPackageScriptsCount(alias, package_id, resolution.tag, destination_dir, log_level);
+                                if (count > 0) {
+                                    if (comptime log_level.isVerbose()) {
+                                        Output.prettyError("Blocked {d} scripts for: {s}@{}\n", .{
+                                            count,
+                                            alias,
+                                            resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
+                                        });
+                                    }
                                 }
 
                                 const entry = this.summary.packages_with_blocked_scripts.getOrPut(this.manager.allocator, name_hash) catch bun.outOfMemory();
                                 if (!entry.found_existing) entry.value_ptr.* = 0;
                                 entry.value_ptr.* += count;
-                            }
+                            },
                         }
 
                         if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, destination_dir, !is_pending_package_install, log_level);

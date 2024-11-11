@@ -162,6 +162,25 @@ function upload_s3_file() {
   run_command aws --endpoint-url="$AWS_ENDPOINT" s3 cp "$file" "s3://$AWS_BUCKET/$folder/$file"
 }
 
+function send_bench_webhook() {
+  if [ -z "$BENCHMARK_URL" ]; then
+    return 1
+  fi
+
+  local tag="$1"
+  local commit="$BUILDKITE_COMMIT"
+  local artifact_path="${commit}"
+
+  if [ "$tag" == "canary" ]; then
+    artifact_path="${commit}-canary"
+  fi
+
+  local artifact_url="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/$artifact_path/bun-linux-x64.zip"
+  local webhook_url="$BENCHMARK_URL?tag=$tag&commit=$commit&artifact_url=$artifact_url"
+  
+  curl -X POST "$webhook_url"
+}
+
 function create_release() {
   assert_main
   assert_buildkite_agent
@@ -206,6 +225,7 @@ function create_release() {
 
   update_github_release "$tag"
   create_sentry_release "$tag"
+  send_bench_webhook "$tag"
 }
 
 function assert_canary() {

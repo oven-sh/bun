@@ -308,6 +308,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 HTTPClient,
                 client,
                 "tcp",
+                false,
             )) |out| {
                 // I don't think this case gets reached.
                 if (out.state == .failed) {

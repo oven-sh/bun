@@ -1098,24 +1098,42 @@ pub const PostgresSQLConnection = struct {
             this.fail("Failed to write startup message", err);
         };
 
+        const event_loop = this.globalObject.bunVM().eventLoop();
+        event_loop.enter();
+        defer event_loop.exit();
         this.flushData();
     }
 
     pub fn onTimeout(this: *PostgresSQLConnection) void {
-        var vm = this.globalObject.bunVM();
-        defer vm.drainMicrotasks();
+        _ = this; // autofix
         debug("onTimeout", .{});
     }
 
     pub fn onDrain(this: *PostgresSQLConnection) void {
-        var vm = this.globalObject.bunVM();
-        defer vm.drainMicrotasks();
+        const event_loop = this.globalObject.bunVM().eventLoop();
+        event_loop.enter();
+        defer event_loop.exit();
         this.flushData();
     }
 
     pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
-        var vm = this.globalObject.bunVM();
-        defer vm.drainMicrotasks();
+        this.ref();
+        const vm = this.globalObject.bunVM();
+        defer {
+            if (this.status == .connected and this.requests.readableLength() == 0 and this.write_buffer.remaining().len == 0) {
+                // Don't keep the process alive when there's nothing to do.
+                this.poll_ref.unref(vm);
+            } else if (this.status == .connected) {
+                // Keep the process alive if there's something to do.
+                this.poll_ref.ref(vm);
+            }
+
+            this.deref();
+        }
+
+        const event_loop = vm.eventLoop();
+        event_loop.enter();
+        defer event_loop.exit();
         SocketMonitor.read(data);
         if (this.read_buffer.remaining().len == 0) {
             var consumed: usize = 0;

@@ -1,6 +1,8 @@
 import { postgres, sql } from "bun:sql";
 import { expect, test } from "bun:test";
-import { isCI, withoutAggressiveGC } from "harness";
+import { $ } from "bun";
+import { bunExe, isCI, withoutAggressiveGC } from "harness";
+import path from "path";
 
 if (!isCI) {
   require("./bootstrap.js");
@@ -2647,4 +2649,11 @@ if (!isCI) {
   //     xs.map(x => x.x).join('')
   //   ]
   // })
+
+  test("keeps process alive when it should", async () => {
+    const file = path.posix.join(__dirname, "sql-fixture-ref.ts");
+    const result = await $`DATABASE_URL=${process.env.DATABASE_URL} ${bunExe()} ${file}`;
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString().split("\n")).toEqual(["1", "2", ""]);
+  });
 }

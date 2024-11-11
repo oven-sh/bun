@@ -1,5 +1,5 @@
 import { memfd_create, setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { closeSync, readFileSync, writeSync } from "fs";
 import { isLinux, isPosix } from "harness";
 setSyntheticAllocationLimitForTesting(128 * 1024 * 1024);
@@ -22,26 +22,27 @@ if (isPosix) {
 
 // memfd is linux only.
 if (isLinux) {
-  test("fs.readFileSync large file show OOM without crashing the process.", () => {
-    const memfd = memfd_create(1024 * 1024 * 256 + 1);
-    {
-      let buf = new Uint8Array(32 * 1024 * 1024);
-      for (let i = 0; i < 1024 * 1024 * 256 + 1; i += buf.byteLength) {
-        writeSync(memfd, buf, i, buf.byteLength);
-      }
-    }
-    setSyntheticAllocationLimitForTesting(128 * 1024 * 1024);
+  describe("fs.readFileSync large file show OOM without crashing the process.", () => {
+    test.each(["buffer", "utf8", "ucs2", "latin1"] as const)("%s encoding", encoding => {
+      const memfd = memfd_create(1024 * 1024 * 16 + 1);
+      (function (memfd) {
+        let buf = new Uint8Array(8 * 1024 * 1024);
+        buf.fill(42);
+        for (let i = 0; i < 1024 * 1024 * 16 + 1; i += buf.byteLength) {
+          writeSync(memfd, buf, i, buf.byteLength);
+        }
+      })(memfd);
+      Bun.gc(true);
+      setSyntheticAllocationLimitForTesting(2 * 1024 * 1024);
 
-    try {
-      expect(() => readFileSync(memfd)).toThrow("Out of memory");
-      Bun.gc(true);
-      expect(() => readFileSync(memfd, "utf8")).toThrow("Out of memory");
-      Bun.gc(true);
-      expect(() => readFileSync(memfd, "latin1")).toThrow("Out of memory");
-      Bun.gc(true);
-      // it is difficult in CI to test the other encodings.
-    } finally {
-      closeSync(memfd);
-    }
+      try {
+        expect(() => (encoding === "buffer" ? readFileSync(memfd) : readFileSync(memfd, encoding))).toThrow(
+          "Out of memory",
+        );
+      } finally {
+        Bun.gc(true);
+        closeSync(memfd);
+      }
+    });
   });
 }

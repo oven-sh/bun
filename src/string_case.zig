@@ -4,13 +4,6 @@ const bun = @import("root").bun;
 const BunString = bun.String;
 const JSC = bun.JSC;
 
-pub const CaseOptions = struct {
-    comptime seperator: []const u8 = "",
-    comptime capitalize_first: bool = false,
-    comptime capitalize_word: bool = false,
-    comptime uppercase_word: bool = false,
-};
-
 pub fn StringCaseConverter(comptime OutputType: type) type {
     return struct {
         fn isSeperator(c: u8) bool {

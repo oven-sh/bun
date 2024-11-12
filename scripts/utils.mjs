@@ -332,7 +332,7 @@ export function parseGitUrl(url) {
 export function getRepositoryUrl(cwd) {
   if (!cwd) {
     if (isBuildkite) {
-      const repository = getEnv("BUILDKITE_REPO", false);
+      const repository = getEnv("BUILDKITE_PULL_REQUEST_REPO", false) || getEnv("BUILDKITE_REPO", false);
       if (repository) {
         return parseGitUrl(repository);
       }
@@ -372,6 +372,20 @@ export function getRepository(cwd) {
     const { hostname, pathname } = new URL(url);
     if (hostname == "github.com") {
       return pathname.slice(1);
+    }
+  }
+}
+
+/**
+ * @param {string} [cwd]
+ * @returns {string | undefined}
+ */
+export function getRepositoryOwner(cwd) {
+  const repository = getRepository(cwd);
+  if (repository) {
+    const [owner] = repository.split("/");
+    if (owner) {
+      return owner;
     }
   }
 }

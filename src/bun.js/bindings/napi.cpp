@@ -17,7 +17,6 @@
 #include "helpers.h"
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSCellInlines.h>
-#include <iostream>
 #include <wtf/text/ExternalStringImpl.h>
 #include <wtf/text/StringCommon.h>
 #include <wtf/text/StringImpl.h>

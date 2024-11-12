@@ -380,6 +380,20 @@ export function getRepository(cwd) {
  * @param {string} [cwd]
  * @returns {string | undefined}
  */
+export function getRepositoryOwner(cwd) {
+  const repository = getRepository(cwd);
+  if (repository) {
+    const [owner] = repository.split("/");
+    if (owner) {
+      return owner;
+    }
+  }
+}
+
+/**
+ * @param {string} [cwd]
+ * @returns {string | undefined}
+ */
 export function getCommit(cwd) {
   if (!cwd) {
     if (isBuildkite) {

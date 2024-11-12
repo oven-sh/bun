@@ -483,7 +483,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     static_assert(sizeof(napi_value) == sizeof(EncodedJSValue), "EncodedJSValue must be reinterpretable as a pointer");
 
     auto env = globalObject->makeNapiEnv(nmodule);
-    env->filename = filename_cstr;
+    env->m_filename = filename_cstr;
 
     JSC::JSValue resultValue = JSValue::decode(reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env, reinterpret_cast<napi_value>(exportsValue))));
 

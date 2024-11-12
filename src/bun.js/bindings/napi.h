@@ -19,6 +19,7 @@
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
 extern "C" void napi_internal_crash_in_gc(napi_env);
 
+// Named this way so we can manipulate napi_env values directly (since napi_env is defined as a pointer to struct napi_env__)
 struct napi_env__ {
 public:
     napi_env__(Zig::GlobalObject* globalObject, const napi_module& napiModule)
@@ -30,7 +31,7 @@ public:
 
     ~napi_env__()
     {
-        delete[] filename;
+        delete[] m_filename;
     }
 
     void cleanup()
@@ -57,7 +58,7 @@ public:
 
     void checkGC()
     {
-        if (UNLIKELY(!mustAlwaysDefer() && m_globalObject->vm().heap.mutatorState() == JSC::MutatorState::Sweeping)) {
+        if (UNLIKELY(!mustDeferFinalizers() && m_globalObject->vm().heap.mutatorState() == JSC::MutatorState::Sweeping)) {
             RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE(
                 "Attempted to call a non-GC-safe function inside a NAPI finalizer from a NAPI module with version %d.\n"
                 "Finalizers must not create new objects during garbage collection. Use the `node_api_post_finalizer` function\n"
@@ -72,7 +73,7 @@ public:
             return;
         }
 
-        if (mustAlwaysDefer()) {
+        if (mustDeferFinalizers()) {
             napi_internal_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
         } else {
             finalize_cb(this, data, finalize_hint);
@@ -82,7 +83,8 @@ public:
     inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
     inline const napi_module& napiModule() const { return m_napiModule; }
 
-    inline bool mustAlwaysDefer() const { return m_napiModule.nm_version <= 8; }
+    // Returns true if finalizers from this module need to be scheduled for the next tick after garbage collection, instead of running during garbage collection
+    inline bool mustDeferFinalizers() const { return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL; }
 
     // Almost all NAPI functions should set error_code to the status they're returning right before
     // they return it
@@ -95,9 +97,9 @@ public:
         .error_code = napi_ok,
     };
 
-    void* instanceData = nullptr;
-    WTF::RefPtr<Bun::NapiFinalizer> instanceDataFinalizer;
-    char* filename = nullptr;
+    void* m_instanceData = nullptr;
+    WTF::RefPtr<Bun::NapiFinalizer> m_instanceDataFinalizer;
+    char* m_filename = nullptr;
 
 private:
     struct BoundFinalizer {

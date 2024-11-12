@@ -1012,7 +1012,7 @@ extern "C" napi_status napi_wrap(napi_env env,
     }
 
     // create a new weak reference (refcount 0)
-    auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer::create(finalize_cb, finalize_hint), env->mustAlwaysDefer());
+    auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer::create(finalize_cb, finalize_hint), env->mustDeferFinalizers());
     ref->data = native_object;
     if (result) {
         ref->weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), ref);
@@ -1246,7 +1246,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
         can_be_weak = false;
     }
 
-    auto* ref = new NapiRef(env, initial_refcount, nullptr, env->mustAlwaysDefer());
+    auto* ref = new NapiRef(env, initial_refcount, nullptr, env->mustDeferFinalizers());
     ref->setValueInitial(val, can_be_weak);
 
     *result = toNapi(ref);
@@ -1272,7 +1272,7 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
 
     if (result) {
         // If they're expecting a Ref, use the ref.
-        auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer::create(finalize_cb, finalize_hint), env->mustAlwaysDefer());
+        auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer::create(finalize_cb, finalize_hint), env->mustDeferFinalizers());
         // TODO(@heimskr): consider detecting whether the value can't be weak, as we do in napi_create_reference.
         ref->setValueInitial(object, true);
         ref->data = native_object;
@@ -2559,7 +2559,7 @@ extern "C" napi_status napi_get_instance_data(napi_env env,
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, data);
 
-    *data = env->instanceData;
+    *data = env->m_instanceData;
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -2602,8 +2602,8 @@ extern "C" napi_status napi_set_instance_data(napi_env env,
 {
     NAPI_PREAMBLE(env);
 
-    env->instanceData = data;
-    env->instanceDataFinalizer = Bun::NapiFinalizer::create(finalize_cb, finalize_hint);
+    env->m_instanceData = data;
+    env->m_instanceDataFinalizer = Bun::NapiFinalizer::create(finalize_cb, finalize_hint);
 
     NAPI_RETURN_SUCCESS(env);
 }
@@ -2857,7 +2857,7 @@ extern "C" JS_EXPORT napi_status node_api_get_module_file_name(napi_env env,
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
-    *result = env->filename;
+    *result = env->m_filename;
     NAPI_RETURN_SUCCESS(env);
 }
 

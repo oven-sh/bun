@@ -1164,8 +1164,8 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 GlobalObject::~GlobalObject()
 {
     for (const auto& env : m_napiEnvs) {
-        if (env->instanceDataFinalizer) {
-            env->instanceDataFinalizer->call(env.get(), env->instanceData);
+        if (env->m_instanceDataFinalizer) {
+            env->m_instanceDataFinalizer->call(env.get(), env->m_instanceData);
         }
     }
 

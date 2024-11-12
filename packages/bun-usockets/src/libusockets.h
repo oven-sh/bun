@@ -36,9 +36,9 @@
 #define LIBUSOCKETS_H
 
 #ifdef BUN_DEBUG
-#define nonnull_arg _Nonnull
-#else
 #define nonnull_arg
+#else
+#define nonnull_arg _Nonnull
 #endif
 
 #ifdef BUN_DEBUG
@@ -91,9 +91,11 @@ extern "C" {
 
 enum {
     /* No meaning, default listen option */
-    LIBUS_LISTEN_DEFAULT,
+    LIBUS_LISTEN_DEFAULT = 0,
     /* We exclusively own this port, do not share it */
-    LIBUS_LISTEN_EXCLUSIVE_PORT
+    LIBUS_LISTEN_EXCLUSIVE_PORT = 1,
+    /* Allow socket to keep writing after readable side closes */
+    LIBUS_SOCKET_ALLOW_HALF_OPEN = 2,
 };
 
 /* Library types publicly available */
@@ -295,10 +297,10 @@ void us_socket_context_close(int ssl, us_socket_context_r context);
 
 /* Listen for connections. Acts as the main driving cog in a server. Will call set async callbacks. */
 struct us_listen_socket_t *us_socket_context_listen(int ssl, us_socket_context_r context,
-    const char *host, int port, int options, int socket_ext_size);
+    const char *host, int port, int options, int socket_ext_size, int* error);
 
 struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, us_socket_context_r context,
-    const char *path, size_t pathlen, int options, int socket_ext_size);
+    const char *path, size_t pathlen, int options, int socket_ext_size, int* error);
 
 /* listen_socket.c/.h */
 void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) nonnull_fn_decl;
@@ -464,6 +466,11 @@ int us_socket_get_error(int ssl, us_socket_r s);
 
 void us_socket_ref(us_socket_r s);
 void us_socket_unref(us_socket_r s);
+
+void us_socket_nodelay(us_socket_r s, int enabled);
+int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay);
+void us_socket_resume(int ssl, us_socket_r s);
+void us_socket_pause(int ssl, us_socket_r s);
 
 #ifdef __cplusplus
 }

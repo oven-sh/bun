@@ -840,8 +840,7 @@ pub fn printMetadata(writer: anytype) !void {
     {
         const platform = bun.Analytics.GenerateHeader.GeneratePlatform.forOS();
         const cpu_features = CPUFeatures.get();
-        if (bun.Environment.isLinux) {
-            // TODO: musl
+        if (bun.Environment.isLinux and !bun.Environment.isMusl) {
             const version = gnu_get_libc_version() orelse "";
             const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
             if (platform.os == .wsl) {
@@ -849,6 +848,9 @@ pub fn printMetadata(writer: anytype) !void {
             } else {
                 try writer.print("Linux Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
             }
+        } else if (bun.Environment.isLinux and bun.Environment.isMusl) {
+            const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+            try writer.print("Linux Kernel v{d}.{d}.{d} | musl\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch });
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
         } else if (bun.Environment.isWindows) {

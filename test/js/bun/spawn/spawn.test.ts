@@ -152,7 +152,7 @@ for (let [gcTick, label] of [
 
       it("nothing to stdout and sleeping doesn't keep process open 4ever", async () => {
         const proc = spawn({
-          cmd: [shellExe(), "-c", "sleep", "0.1"],
+          cmd: [shellExe(), "-c", "sleep 0.1"],
         });
         gcTick();
         for await (const _ of proc.stdout) {
@@ -366,7 +366,7 @@ for (let [gcTick, label] of [
 
       it("kill(SIGKILL) works", async () => {
         const process = spawn({
-          cmd: [shellExe(), "-c", "sleep", "1000"],
+          cmd: [shellExe(), "-c", "sleep 1000"],
           stdout: "pipe",
         });
         gcTick();
@@ -377,7 +377,7 @@ for (let [gcTick, label] of [
 
       it("kill() works", async () => {
         const process = spawn({
-          cmd: [shellExe(), "-c", "sleep", "1000"],
+          cmd: [shellExe(), "-c", "sleep 1000"],
           stdout: "pipe",
         });
         gcTick();
@@ -551,7 +551,7 @@ if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && isPosix && !isMacOS) {
 }
 
 describe("spawn unref and kill should not hang", () => {
-  const cmd = [shellExe(), "-c", "sleep", "0.001"];
+  const cmd = [shellExe(), "-c", "sleep 0.001"];
 
   it("kill and await exited", async () => {
     const promises = new Array(10);
@@ -635,7 +635,7 @@ async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited
   console.log("running", order.join(","), "x 100");
   for (let i = 0; i < (isWindows ? 10 : 100); i++) {
     const proc = spawn({
-      cmd: [shellExe(), "-c", "sleep", sleep],
+      cmd: [shellExe(), "-c", `sleep ${sleep}`],
       stdout: "ignore",
       stderr: "ignore",
       stdin: "ignore",

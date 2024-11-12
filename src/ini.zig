@@ -286,7 +286,7 @@ pub const Parser = struct {
                 const c = val[i];
                 if (esc) {
                     switch (c) {
-                        '\\' => try unesc.appendSlice(&[_]u8{ '\\', '\\' }),
+                        '\\' => try unesc.appendSlice(&[_]u8{'\\'}),
                         ';', '#', '$' => try unesc.append(c),
                         '.' => {
                             if (comptime usage == .section) {
@@ -636,7 +636,7 @@ pub const IniTestingAPIs = struct {
             }
         };
 
-        return parser.out.toJS(bun.default_allocator, globalThis, .{ .decode_escape_sequences = true }) catch |e| {
+        return parser.out.toJS(bun.default_allocator, globalThis) catch |e| {
             globalThis.throwError(e, "failed to turn AST into JS");
             return .undefined;
         };
@@ -660,7 +660,6 @@ pub const ToStringFormatter = struct {
             .e_number => try writer.print("{d}", .{this.d.e_number.value}),
             .e_string => try writer.print("{s}", .{this.d.e_string.data}),
             .e_null => try writer.print("null", .{}),
-            .e_utf8_string => try writer.print("{s}", .{this.d.e_utf8_string.data}),
 
             else => |tag| if (bun.Environment.isDebug) {
                 Output.panic("Unexpected AST node: {s}", .{@tagName(tag)});

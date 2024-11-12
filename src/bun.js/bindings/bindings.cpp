@@ -5003,9 +5003,9 @@ enum class BuiltinNamesMap : uint8_t {
     encoding,
 };
 
-static const JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
+static inline const JSC::Identifier builtinNameMap(JSC::VM& vm, unsigned char name)
 {
-    auto& vm = globalObject->vm();
+
     auto clientData = WebCore::clientData(vm);
     switch (static_cast<BuiltinNamesMap>(name)) {
     case BuiltinNamesMap::method: {
@@ -5076,14 +5076,20 @@ JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalOb
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     ASSERT(value.isCell());
-    return JSValue::encode(value.getObject()->getDirect(globalObject->vm(), PropertyName(builtinNameMap(globalObject, arg2))));
+    return JSValue::encode(value.getObject()->getDirect(globalObject->vm(), PropertyName(builtinNameMap(globalObject->vm(), arg2))));
 }
 
 JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     ASSERT(value.isCell());
-    return JSValue::encode(value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
+
+    JSC::JSObject* object = value.getObject();
+    ASSERT_WITH_MESSAGE(object, "fastGet() called on non-object. Check that the JSValue is an object before calling fastGet().");
+    auto& vm = globalObject->vm();
+    const auto property = JSC::PropertyName(builtinNameMap(vm, arg2));
+
+    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigation(vm, globalObject, object, property));
 }
 
 extern "C" JSC__JSValue JSC__JSValue__fastGetOwn(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
@@ -5091,7 +5097,7 @@ extern "C" JSC__JSValue JSC__JSValue__fastGetOwn(JSC__JSValue JSValue0, JSC__JSG
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     ASSERT(value.isCell());
     PropertySlot slot = PropertySlot(value, PropertySlot::InternalMethodType::GetOwnProperty);
-    const Identifier name = builtinNameMap(globalObject, arg2);
+    const Identifier name = builtinNameMap(globalObject->vm(), arg2);
     auto* object = value.getObject();
     if (object->getOwnPropertySlot(object, globalObject, name, slot)) {
         return JSValue::encode(slot.getValue(globalObject, name));
@@ -5622,13 +5628,50 @@ CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC__JSValue timeValue)
     if (!date)
         return PNaN;
 
-    return date->internalNumber();
+    double number = date->internalNumber();
+
+    return number;
+}
+
+extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnByValue(JSC__JSValue value, JSC__JSGlobalObject* globalObject, JSC__JSValue propertyValue)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSObject* object = JSValue::decode(value).getObject();
+    JSC::JSValue property = JSValue::decode(propertyValue);
+    uint32_t index;
+
+    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+    if (property.getUInt32(index)) {
+        if (!object->getOwnPropertySlotByIndex(object, globalObject, index, slot))
+            return JSC::JSValue::encode({});
+
+        RETURN_IF_EXCEPTION(scope, {});
+
+        return JSC::JSValue::encode(slot.getValue(globalObject, index));
+    } else {
+        auto propertyName = property.toPropertyKey(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!object->getOwnNonIndexPropertySlot(vm, object->structure(), propertyName, slot))
+            return JSC::JSValue::encode({});
+
+        RETURN_IF_EXCEPTION(scope, {});
+
+        return JSC::JSValue::encode(slot.getValue(globalObject, propertyName));
+    }
 }
 
 extern "C" double Bun__parseDate(JSC::JSGlobalObject* globalObject, BunString* str)
 {
     auto& vm = globalObject->vm();
     return vm.dateCache.parseDate(globalObject, vm, str->toWTFString());
+}
+
+extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)
+{
+    auto& vm = globalObject->vm();
+    JSC::DateInstance* date = JSC::DateInstance::create(vm, globalObject->dateStructure(), unixTimestamp);
+    return JSValue::encode(date);
 }
 
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC::JSGlobalObject* globalObject, const LChar* nullTerminatedChars)

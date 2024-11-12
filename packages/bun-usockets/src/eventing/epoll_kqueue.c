@@ -158,6 +158,8 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     return ret;
 }
 
+extern int Bun__isEpollPwait2SupportedOnLinuxKernel();
+
 #endif
 
 /* Loop */
@@ -172,6 +174,13 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 
 #ifdef LIBUS_USE_EPOLL
     loop->fd = epoll_create1(EPOLL_CLOEXEC);
+
+    if (has_epoll_pwait2 == -1) {
+        if (Bun__isEpollPwait2SupportedOnLinuxKernel() == 0) {
+            has_epoll_pwait2 = 0;
+        } 
+    }
+
 #else
     loop->fd = kqueue();
 #endif
@@ -208,7 +217,8 @@ void us_loop_run(struct us_loop_t *loop) {
                 }
 #ifdef LIBUS_USE_EPOLL
                 int events = loop->ready_polls[loop->current_ready_poll].events;
-                const int error = events & (EPOLLERR | EPOLLHUP);
+                const int error = events & EPOLLERR;
+                const int eof = events & EPOLLHUP;
 #else
                 const struct kevent64_s* current_kevent = &loop->ready_polls[loop->current_ready_poll];
                 const int16_t filter = current_kevent->filter;
@@ -221,12 +231,13 @@ void us_loop_run(struct us_loop_t *loop) {
                 int events = 0
                     | ((filter & EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
                     | ((filter & EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
-                const int error = (flags & (EV_ERROR | EV_EOF)) ? ((int)fflags || 1) : 0;
+                const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;
+                const int eof = (flags & (EV_EOF));
 #endif
                 /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
                 events &= us_poll_events(poll);
-                if (events || error) {
-                    us_internal_dispatch_ready_poll(poll, error, events);
+                if (events || error || eof) {
+                    us_internal_dispatch_ready_poll(poll, error, eof, events);
                 }
             }
         }
@@ -284,7 +295,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
             }
 #ifdef LIBUS_USE_EPOLL
             int events = loop->ready_polls[loop->current_ready_poll].events;
-            const int error = events & (EPOLLERR | EPOLLHUP);
+            const int error = events & EPOLLERR;
+            const int eof = events & EPOLLHUP;
 #else
             const struct kevent64_s* current_kevent = &loop->ready_polls[loop->current_ready_poll];
             const int16_t filter = current_kevent->filter;
@@ -298,12 +310,14 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
                 | ((filter & EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
 
             // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
-            const int error = (flags & (EV_ERROR | EV_EOF)) ? ((int)fflags || 1) : 0;
+            const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;
+            const int eof = (flags & (EV_EOF));
+
 #endif
             /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
             events &= us_poll_events(poll);
-            if (events || error) {
-                us_internal_dispatch_ready_poll(poll, error, events);
+            if (events || error || eof) {
+                us_internal_dispatch_ready_poll(poll, error, eof, events);
             }
         }
     }

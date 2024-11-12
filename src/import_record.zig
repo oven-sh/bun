@@ -193,6 +193,7 @@ pub const ImportRecord = struct {
         with_type_file,
 
         css,
+        tailwind,
 
         pub fn loader(this: Tag) ?bun.options.Loader {
             return switch (this) {

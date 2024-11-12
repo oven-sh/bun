@@ -242,7 +242,7 @@ pub const FDImpl = packed struct {
                 const fd = this.encode();
                 bun.assert(fd != bun.invalid_fd);
                 bun.assert(fd.cast() >= 0);
-                break :result switch (bun.C.getErrno(bun.sys.system.close(fd.cast()))) {
+                break :result switch (bun.C.getErrno(bun.sys.syscall.close(fd.cast()))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(posix.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
@@ -251,7 +251,7 @@ pub const FDImpl = packed struct {
                 const fd = this.encode();
                 bun.assert(fd != bun.invalid_fd);
                 bun.assert(fd.cast() >= 0);
-                break :result switch (bun.C.getErrno(bun.sys.system.@"close$NOCANCEL"(fd.cast()))) {
+                break :result switch (bun.C.getErrno(bun.sys.syscall.@"close$NOCANCEL"(fd.cast()))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(posix.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };

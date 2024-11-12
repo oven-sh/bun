@@ -1803,43 +1803,40 @@ class Http2Stream extends Duplex {
       this.once("ready", this._writev.bind(this, data, callback));
       return;
     }
-    if (this.destroyed) return;
-
     const session = this[bunHTTP2Session];
-    if (session) {
-      const native = session[bunHTTP2Native];
-      if (native) {
-        const allBuffers = data.allBuffers;
-        let chunks;
-        chunks = data;
-        if (allBuffers) {
-          for (let i = 0; i < data.length; i++) {
-            data[i] = data[i].chunk;
-          }
-        } else {
-          for (let i = 0; i < data.length; i++) {
-            const { chunk, encoding } = data[i];
-            if (typeof chunk === "string") {
-              data[i] = Buffer.from(chunk, encoding);
-            } else {
-              data[i] = chunk;
-            }
+
+    if (!session) return;
+
+    const native = session[bunHTTP2Native];
+    if (native) {
+      const allBuffers = data.allBuffers;
+      let chunks;
+      chunks = data;
+      if (allBuffers) {
+        for (let i = 0; i < data.length; i++) {
+          data[i] = data[i].chunk;
+        }
+      } else {
+        for (let i = 0; i < data.length; i++) {
+          const { chunk, encoding } = data[i];
+          if (typeof chunk === "string") {
+            data[i] = Buffer.from(chunk, encoding);
+          } else {
+            data[i] = chunk;
           }
         }
-        const chunk = Buffer.concat(chunks || []);
-        native.writeStream(
-          this.#id,
-          chunk,
-          undefined,
-          (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
-          /* function () {
-            process.nextTick(this, ...arguments);
-          }.bind(callback), */
-          callback,
-        );
-        return;
       }
+      const chunk = Buffer.concat(chunks || []);
+      native.writeStream(
+        this.#id,
+        chunk,
+        undefined,
+        (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
+        callback,
+      );
+      return;
     }
+
     if (typeof callback == "function") {
       // process.nextTick(callback);
       callback();
@@ -1850,28 +1847,25 @@ class Http2Stream extends Duplex {
       this.once("ready", this._write.bind(this, chunk, encoding, callback));
       return;
     }
-    if (this.destroyed) return;
-
     const session = this[bunHTTP2Session];
-    if (session) {
-      const native = session[bunHTTP2Native];
-      if (native) {
-        native.writeStream(
-          this.#id,
-          chunk,
-          encoding,
-          (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
-          /* function () {
-            process.nextTick(this, ...arguments);
-          }.bind(callback), */
-          callback,
-        );
-        return;
-      }
+
+    if (!session) return;
+
+    const native = session[bunHTTP2Native];
+    if (native) {
+      native.writeStream(
+        this.#id,
+        chunk,
+        encoding,
+        (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
+        callback,
+      );
+      return;
     }
 
-    typeof callback === "function" && callback();
-    // process.nextTick(callback);
+    if (typeof callback == "function") {
+      callback();
+    }
   }
 }
 class ClientHttp2Stream extends Http2Stream {

@@ -116,6 +116,23 @@ declare module "bun" {
   function dotCase(str: string): string;
 
   /**
+   * Convert a string to kebab-case.
+   *
+   * @param str The string to convert to kebab-case
+   * @returns The kebab-cased string
+   *
+   * @example
+   * ```ts
+   * import { kebabCase } from "bun";
+   *
+   * kebabCase("foo-bar"); // "foo-bar"
+   * kebabCase("foo_bar"); // "foo-bar"
+   * kebabCase("fooBar"); // "foo-bar"
+   * ```
+   */
+  function kebabCase(str: string): string;
+
+  /**
    * Get the column count of a string as it would be displayed in a terminal.
    * Supports ANSI escape codes, emoji, and wide characters.
    *

@@ -211,3 +211,64 @@ describe("dotCase", () => {
     expect(Bun.dotCase("HelloWonderfulWorld")).toBe("hello.wonderful.world");
   });
 });
+
+describe("kebabCase", () => {
+  test("converts space separated words", () => {
+    expect(Bun.kebabCase("hello world")).toBe("hello-world");
+    expect(Bun.kebabCase("hello wonderful world")).toBe("hello-wonderful-world");
+  });
+
+  test("converts camelCase", () => {
+    expect(Bun.kebabCase("helloWorld")).toBe("hello-world");
+    expect(Bun.kebabCase("helloWonderfulWorld")).toBe("hello-wonderful-world");
+  });
+
+  test("converts PascalCase", () => {
+    expect(Bun.kebabCase("HelloWorld")).toBe("hello-world");
+    expect(Bun.kebabCase("HelloWonderfulWorld")).toBe("hello-wonderful-world");
+  });
+
+  test("converts snake_case", () => {
+    expect(Bun.kebabCase("hello_world")).toBe("hello-world");
+    expect(Bun.kebabCase("hello_wonderful_world")).toBe("hello-wonderful-world");
+  });
+
+  test("handles existing kebab-case", () => {
+    expect(Bun.kebabCase("hello-world")).toBe("hello-world");
+    expect(Bun.kebabCase("hello-wonderful-world")).toBe("hello-wonderful-world");
+  });
+
+  test("handles mixed separators", () => {
+    expect(Bun.kebabCase("hello.world-nice_day")).toBe("hello-world-nice-day");
+    expect(Bun.kebabCase("hello_world-nice day")).toBe("hello-world-nice-day");
+  });
+
+  test("handles consecutive separators", () => {
+    expect(Bun.kebabCase("hello__world")).toBe("hello-world");
+    expect(Bun.kebabCase("hello--world")).toBe("hello-world");
+    expect(Bun.kebabCase("hello  world")).toBe("hello-world");
+  });
+
+  test("handles edge cases", () => {
+    expect(Bun.kebabCase("")).toBe("");
+    expect(Bun.kebabCase(" ")).toBe("");
+    expect(Bun.kebabCase("a")).toBe("a");
+    expect(Bun.kebabCase("A")).toBe("a");
+  });
+
+  test("handles non-ASCII characters", () => {
+    // FIXME: upper case for non ascii characters not implemented yet
+    // expect(Bun.kebabCase("HÉLLO_WÖRLD")).toBe("héllo-wörld");
+    expect(Bun.kebabCase("こんにちは-世界")).toBe("こんにちは-世界");
+  });
+
+  test("handles camelCase input", () => {
+    expect(Bun.kebabCase("helloWorld")).toBe("hello-world");
+    expect(Bun.kebabCase("helloWonderfulWorld")).toBe("hello-wonderful-world");
+  });
+
+  test("handles PascalCase input", () => {
+    expect(Bun.kebabCase("HelloWorld")).toBe("hello-world");
+    expect(Bun.kebabCase("HelloWonderfulWorld")).toBe("hello-wonderful-world");
+  });
+});

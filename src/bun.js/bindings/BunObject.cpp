@@ -618,6 +618,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     inspect                                        BunObject_getter_wrap_inspect                                       DontDelete|PropertyCallback
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
+    kebabCase                                      BunObject_callback_kebabCase                                        DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1
     udpSocket                                        BunObject_callback_udpSocket                                          DontDelete|Function 1
     main                                           BunObject_getter_wrap_main                                          DontDelete|PropertyCallback

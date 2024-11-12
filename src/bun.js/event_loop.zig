@@ -767,8 +767,9 @@ pub const EventLoop = struct {
     ///
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
     immediate_tasks: Queue = undefined,
-    napi_finalizer_queue: JSC.napi.Finalizer.Queue = undefined,
     next_immediate_tasks: Queue = undefined,
+
+    napi_finalizer_queue: JSC.napi.Finalizer.Queue = undefined,
 
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
     global: *JSGlobalObject = undefined,

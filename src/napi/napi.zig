@@ -13,7 +13,7 @@ const log = bun.Output.scoped(.napi, false);
 
 const Async = bun.Async;
 
-/// Actually a JSGlobalObject
+/// This is `struct napi_env__` from napi.h
 pub const NapiEnv = opaque {
     pub fn toJS(self: *NapiEnv) *JSC.JSGlobalObject {
         return NapiEnv__globalObject(self);
@@ -49,10 +49,12 @@ pub const NapiEnv = opaque {
         return self.setLastError(.generic_failure);
     }
 
+    /// Assert that we're not currently performing garbage collection
     pub fn checkGC(self: *NapiEnv) void {
         napi_internal_check_gc(self);
     }
 
+    /// Return the Node-API version number declared by the module we are running code from
     pub fn getVersion(self: *NapiEnv) u32 {
         return napi_internal_get_version(self);
     }
@@ -1232,7 +1234,7 @@ pub export fn napi_fatal_error(location_ptr: ?[*:0]const u8, location_len: usize
 
     const location = napiSpan(location_ptr, location_len);
     if (location.len > 0) {
-        bun.Output.panic("FATAL ERROR: {s} {s}", .{ location, message });
+        bun.Output.panic("NAPI FATAL ERROR: {s} {s}", .{ location, message });
     }
 
     bun.Output.panic("napi: {s}", .{message});
@@ -1483,8 +1485,9 @@ pub const Finalizer = struct {
         }
     }
 
-    /// Node defers finalizers to the immediate task queue.
-    /// This is most likely to account for napi addons which cause GC inside of the finalizer.
+    /// For Node-API modules not built with NAPI_EXPERIMENTAL, finalizers should be deferred to the
+    /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
+    /// which they couldn't if they ran immediately while the garbage collector is still running.
     pub export fn napi_internal_enqueue_finalizer(env: napi_env, fun: napi_finalize, data: ?*anyopaque, hint: ?*anyopaque) callconv(.C) void {
         const vm = JSC.VirtualMachine.get();
         vm.eventLoop().napi_finalizer_queue.writeItem(.{ .env = env, .fun = fun, .data = data, .hint = hint }) catch bun.outOfMemory();

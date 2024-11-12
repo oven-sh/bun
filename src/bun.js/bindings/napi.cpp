@@ -56,7 +56,6 @@
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/JSWeakMapInlines.h>
-#include <JavaScriptCore/JSMapInlines.h>
 #include "ScriptExecutionContext.h"
 #include "Strong.h"
 
@@ -105,6 +104,7 @@ using namespace Zig;
         }                                                       \
     } while (0)
 
+// Assert that the environment is not performing garbage collection
 #define NAPI_CHECK_ENV_NOT_IN_GC(_env) \
     do {                               \
         (_env)->checkGC();             \
@@ -1046,12 +1046,7 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
         *result = ref->data;
     }
 
-    if (ref->isOwnedByRuntime) {
-        delete ref;
-    } else {
-        ref->finalizer.clear();
-    }
-
+    ref->finalizer.clear();
     external->m_value = nullptr;
     globalObject->napiWraps()->remove(value.asCell());
 
@@ -1689,27 +1684,27 @@ static JSC::JSArrayBufferView* createArrayBufferView(
     Structure* structure = globalObject->typedArrayStructure(getTypedArrayTypeFromNAPI(type), arrayBuffer->isResizableOrGrowableShared());
     switch (type) {
     case napi_int8_array:
-        return JSC::JSInt8Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+        return JSC::JSInt8Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
     case napi_uint8_array:
-        return JSC::JSUint8Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+        return JSC::JSUint8Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
     case napi_uint8_clamped_array:
-        return JSC::JSUint8ClampedArray::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+        return JSC::JSUint8ClampedArray::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
     case napi_int16_array:
-        return JSC::JSInt16Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+        return JSC::JSInt16Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
     case napi_uint16_array:
-        return JSC::JSUint16Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+        return JSC::JSUint16Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
     case napi_int32_array:
-        return JSC::JSInt32Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+        return JSC::JSInt32Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
     case napi_uint32_array:
-        return JSC::JSUint32Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+        return JSC::JSUint32Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
     case napi_float32_array:
-        return JSC::JSFloat32Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+        return JSC::JSFloat32Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
     case napi_float64_array:
-        return JSC::JSFloat64Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+        return JSC::JSFloat64Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
     case napi_bigint64_array:
-        return JSC::JSBigInt64Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+        return JSC::JSBigInt64Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
     case napi_biguint64_array:
-        return JSC::JSBigUint64Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+        return JSC::JSBigUint64Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
     default:
         ASSERT_NOT_REACHED_WITH_MESSAGE("Unexpected napi_typedarray_type");
     }
@@ -1723,18 +1718,18 @@ extern "C" napi_status napi_create_typedarray(
     size_t byte_offset,
     napi_value* result)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE(env);
     Zig::GlobalObject* globalObject = toJS(env);
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
+    NAPI_RETURN_IF_EXCEPTION(env);
     NAPI_CHECK_ARG(env, arraybuffer);
     NAPI_CHECK_ARG(env, result);
     JSValue arraybufferValue = toJS(arraybuffer);
     auto arraybufferPtr = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(arraybufferValue);
     NAPI_RETURN_EARLY_IF_FALSE(env, arraybufferPtr, napi_arraybuffer_expected);
     JSC::JSArrayBufferView* view = createArrayBufferView(globalObject, type, arraybufferPtr->impl(), byte_offset, length);
+    NAPI_RETURN_IF_EXCEPTION(env);
     *result = toNapi(view, globalObject);
-    RELEASE_AND_RETURN(scope, napi_set_last_error(env, napi_ok));
+    NAPI_RETURN_SUCCESS(env);
 }
 
 namespace Zig {

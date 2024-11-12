@@ -58,7 +58,7 @@ public:
 
     void checkGC()
     {
-        if (UNLIKELY(!mustDeferFinalizers() && m_globalObject->vm().heap.mutatorState() == JSC::MutatorState::Sweeping)) {
+        if (UNLIKELY(m_globalObject->vm().heap.mutatorState() == JSC::MutatorState::Sweeping)) {
             RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE(
                 "Attempted to call a non-GC-safe function inside a NAPI finalizer from a NAPI module with version %d.\n"
                 "Finalizers must not create new objects during garbage collection. Use the `node_api_post_finalizer` function\n"
@@ -357,7 +357,6 @@ public:
     Bun::NapiFinalizer finalizer;
     void* data = nullptr;
     uint32_t refCount = 0;
-    bool isOwnedByRuntime = false;
     bool defer = false;
     bool releaseOnWeaken = false;
 

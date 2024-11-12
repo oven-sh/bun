@@ -16,7 +16,6 @@ const JSValue = JSC.JSValue;
 const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
 const JSType = JSValue.JSType;
-const JSError = JSC.JSError;
 const JSObject = JSC.JSObject;
 const CallFrame = JSC.CallFrame;
 const ZigString = JSC.ZigString;

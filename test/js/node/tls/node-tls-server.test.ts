@@ -690,6 +690,7 @@ it("connectionListener should emit the right amount of times, and with alpnProto
         ca: COMMON_CERT.cert,
         rejectUnauthorized: false,
         port: server.address().port,
+        host: "127.0.0.1",
         ALPNProtocols: ["bun"],
       },
       () => {

@@ -126,7 +126,7 @@ var ResponsePrototype = Response.prototype;
 const kUrl = Symbol("kUrl");
 
 class Request extends WebRequest {
-  [kUrl]: string;
+  [kUrl]?: string;
 
   constructor(input, init) {
     // node-fetch is relaxed with the URL, for example, it allows "/" as a valid URL.
@@ -137,12 +137,11 @@ class Request extends WebRequest {
       this[kUrl] = input;
     } else {
       super(input, init);
-      this[kUrl] = input.url;
     }
   }
 
   get url() {
-    return this[kUrl];
+    return this[kUrl] ?? super.url;
   }
 }
 

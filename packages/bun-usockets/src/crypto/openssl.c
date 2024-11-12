@@ -768,11 +768,20 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
   }
 
   if (options.passphrase) {
+    #ifdef _WIN32
+    /* When freeing the CTX we need to check
+     * SSL_CTX_get_default_passwd_cb_userdata and free it if set */
+    SSL_CTX_set_default_passwd_cb_userdata(ssl_context,
+                                           (void *)_strdup(options.passphrase));
+    SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
+
+    #else
     /* When freeing the CTX we need to check
      * SSL_CTX_get_default_passwd_cb_userdata and free it if set */
     SSL_CTX_set_default_passwd_cb_userdata(ssl_context,
                                            (void *)strdup(options.passphrase));
     SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
+    #endif
   }
 
   /* This one most probably do not need the cert_file_name string to be kept
@@ -1135,11 +1144,19 @@ SSL_CTX *create_ssl_context_from_bun_options(
   }
 
   if (options.passphrase) {
+    #ifdef _WIN32
+    /* When freeing the CTX we need to check
+     * SSL_CTX_get_default_passwd_cb_userdata and free it if set */
+    SSL_CTX_set_default_passwd_cb_userdata(ssl_context,
+                                           (void *)_strdup(options.passphrase));
+    SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
+    #else
     /* When freeing the CTX we need to check
      * SSL_CTX_get_default_passwd_cb_userdata and free it if set */
     SSL_CTX_set_default_passwd_cb_userdata(ssl_context,
                                            (void *)strdup(options.passphrase));
     SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
+    #endif
   }
 
   /* This one most probably do not need the cert_file_name string to be kept
@@ -1552,20 +1569,20 @@ void us_internal_ssl_socket_context_free(
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
     struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, int options, int socket_ext_size) {
+    int port, int options, int socket_ext_size, int* error) {
   return us_socket_context_listen(0, &context->sc, host, port, options,
                                   sizeof(struct us_internal_ssl_socket_t) -
                                       sizeof(struct us_socket_t) +
-                                      socket_ext_size);
+                                      socket_ext_size, error);
 }
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
     struct us_internal_ssl_socket_context_t *context, const char *path,
-    size_t pathlen, int options, int socket_ext_size) {
+    size_t pathlen, int options, int socket_ext_size, int* error) {
   return us_socket_context_listen_unix(0, &context->sc, path, pathlen, options,
                                        sizeof(struct us_internal_ssl_socket_t) -
                                            sizeof(struct us_socket_t) +
-                                           socket_ext_size);
+                                           socket_ext_size, error);
 }
 
 // TODO does this need more changes?

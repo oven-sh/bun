@@ -131,17 +131,24 @@ pub fn StringCaseConverter(comptime OutputType: type) type {
                 // First pass calculating length
                 var total_len: usize = 0;
                 var word_count: usize = 0;
-                var prev_was_seperator = true;
+                var should_add_seperator = true;
+                var prev_c: i32 = 0;
 
                 while (iter.next(&cursor)) {
                     const is_seperator = cursor.c <= 127 and isSeperator(@intCast(cursor.c));
+                    const is_case_boundary = prev_c != 0 and
+                        prev_c <= 127 and
+                        cursor.c <= 127 and
+                        std.ascii.isLower(@intCast(prev_c)) and
+                        std.ascii.isUpper(@intCast(cursor.c));
 
                     if (!is_seperator) {
                         total_len += cursor.width;
-                        if (prev_was_seperator) word_count += 1;
+                        if (should_add_seperator or is_case_boundary) word_count += 1;
                     }
 
-                    prev_was_seperator = is_seperator;
+                    should_add_seperator = is_seperator;
+                    prev_c = cursor.c;
                 }
 
                 total_len += seperator.len * (word_count -| 1);
@@ -154,16 +161,32 @@ pub fn StringCaseConverter(comptime OutputType: type) type {
 
                 var pos: usize = 0;
                 var word_index: usize = 0;
-                prev_was_seperator = true;
+                should_add_seperator = false;
+                prev_c = 0;
 
                 while (iter.next(&cursor)) {
                     const is_seperator = cursor.c <= 127 and isSeperator(@intCast(cursor.c));
+                    const is_case_boundary = prev_c != 0 and
+                        prev_c <= 127 and
+                        cursor.c <= 127 and
+                        std.ascii.isLower(@intCast(prev_c)) and
+                        std.ascii.isUpper(@intCast(cursor.c));
+
                     if (is_seperator) {
-                        prev_was_seperator = true;
+                        should_add_seperator = true;
+                        prev_c = cursor.c;
                         continue;
                     }
 
-                    if (!prev_was_seperator and word_index > 0 and seperator.len > 0) {
+                    if (should_add_seperator or is_case_boundary) {
+                        word_index += 1;
+                    }
+
+                    if ((should_add_seperator or is_case_boundary) and
+                        word_index > 0 and
+                        word_index < word_count and
+                        seperator.len > 0)
+                    {
                         @memcpy(result[pos..][0..seperator.len], seperator);
                         pos += seperator.len;
                     }
@@ -171,8 +194,10 @@ pub fn StringCaseConverter(comptime OutputType: type) type {
                     if (cursor.c <= 127) {
                         const c: u8 = @intCast(cursor.c);
                         const should_capitalize = uppercase_word or
-                            (word_index > 0 and capitalize_word and prev_was_seperator) or
-                            (word_index == 0 and capitalize_first);
+                            (word_index > 0 and
+                            capitalize_word and
+                            (should_add_seperator or is_case_boundary)) or
+                            (word_index == 0 and cursor.i == 0 and capitalize_first);
 
                         result[pos] = brk: {
                             if (should_capitalize)
@@ -188,8 +213,8 @@ pub fn StringCaseConverter(comptime OutputType: type) type {
                         pos += cursor.width;
                     }
 
-                    if (prev_was_seperator) word_index += 1;
-                    prev_was_seperator = false;
+                    should_add_seperator = false;
+                    prev_c = cursor.c;
                 }
 
                 return switch (OutputType) {

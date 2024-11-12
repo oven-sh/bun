@@ -261,8 +261,7 @@ pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     const module = NodeJSFS.new(.{});
 
     const vm = globalObject.bunVM();
-    if (vm.standalone_module_graph != null)
-        module.node_fs.vm = vm;
+    module.node_fs.vm = vm;
 
     return module.toJS(globalObject);
 }

@@ -1,3 +1,9 @@
+const enum QueryStatus {
+  active = 1 << 1,
+  cancelled = 1 << 2,
+  error = 1 << 3,
+  executed = 1 << 4,
+}
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
 const PublicArray = globalThis.Array;
@@ -9,11 +15,6 @@ class SQLResultArray extends PublicArray {
   command;
   count;
 }
-
-const queryStatus_active = 1 << 1;
-const queryStatus_cancelled = 1 << 2;
-const queryStatus_error = 1 << 3;
-const queryStatus_executed = 1 << 4;
 
 const rawMode_values = 1;
 const rawMode_objects = 2;
@@ -50,51 +51,51 @@ class Query extends PublicPromise {
     this[_reject] = reject_;
     this[_handle] = handle;
     this[_handler] = handler;
-    this[_queryStatus] = handle ? 0 : queryStatus_cancelled;
+    this[_queryStatus] = handle ? 0 : QueryStatus.cancelled;
   }
 
   async [_run]() {
     const { [_handle]: handle, [_handler]: handler, [_queryStatus]: status } = this;
 
-    if (status & (queryStatus_executed | queryStatus_cancelled)) {
+    if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled)) {
       return;
     }
 
-    this[_queryStatus] |= queryStatus_executed;
+    this[_queryStatus] |= QueryStatus.executed;
     await 1;
     return handler(this, handle);
   }
 
   get active() {
-    return (this[_queryStatus] & queryStatus_active) !== 0;
+    return (this[_queryStatus] & QueryStatus.active) != 0;
   }
 
   set active(value) {
     const status = this[_queryStatus];
-    if (status & (queryStatus_cancelled | queryStatus_error)) {
+    if (status & (QueryStatus.cancelled | QueryStatus.error)) {
       return;
     }
 
     if (value) {
-      this[_queryStatus] |= queryStatus_active;
+      this[_queryStatus] |= QueryStatus.active;
     } else {
-      this[_queryStatus] &= ~queryStatus_active;
+      this[_queryStatus] &= ~QueryStatus.active;
     }
   }
 
   get cancelled() {
-    return (this[_queryStatus] & queryStatus_cancelled) !== 0;
+    return (this[_queryStatus] & QueryStatus.cancelled) !== 0;
   }
 
   resolve(x) {
-    this[_queryStatus] &= ~queryStatus_active;
+    this[_queryStatus] &= ~QueryStatus.active;
     this[_handle].done();
     return this[_resolve](x);
   }
 
   reject(x) {
-    this[_queryStatus] &= ~queryStatus_active;
-    this[_queryStatus] |= queryStatus_error;
+    this[_queryStatus] &= ~QueryStatus.active;
+    this[_queryStatus] |= QueryStatus.error;
     this[_handle].done();
 
     return this[_reject](x);
@@ -102,12 +103,12 @@ class Query extends PublicPromise {
 
   cancel() {
     var status = this[_queryStatus];
-    if (status & queryStatus_cancelled) {
+    if (status & QueryStatus.cancelled) {
       return this;
     }
-    this[_queryStatus] |= queryStatus_cancelled;
+    this[_queryStatus] |= QueryStatus.cancelled;
 
-    if (status & queryStatus_executed) {
+    if (status & QueryStatus.executed) {
       this[_handle].cancel();
     }
 
@@ -188,7 +189,9 @@ function createConnection({ hostname, port, username, password, tls, query, data
   );
 }
 
-function normalizeStrings(strings) {
+var hasSQLArrayParameter = false;
+function normalizeStrings(strings, values) {
+  hasSQLArrayParameter = false;
   if ($isJSArray(strings)) {
     const count = strings.length;
     if (count === 0) {
@@ -196,14 +199,81 @@ function normalizeStrings(strings) {
     }
 
     var out = strings[0];
+
+    // For now, only support insert queries with array parameters
+    //
+    // insert into users ${sql(users)}
+    //
+    if (values.length > 0 && typeof values[0] === "object" && values[0] && values[0] instanceof SQLArrayParameter) {
+      if (values.length > 1) {
+        throw new Error("Cannot mix array parameters with other values");
+      }
+      hasSQLArrayParameter = true;
+      const { columns, value } = values[0];
+      const groupCount = value.length;
+      out += `values `;
+
+      let columnIndex = 1;
+      let columnCount = columns.length;
+      let lastColumnIndex = columnCount - 1;
+
+      for (var i = 0; i < groupCount; i++) {
+        out += i > 0 ? `, (` : `(`;
+
+        for (var j = 0; j < lastColumnIndex; j++) {
+          out += `$${columnIndex++}, `;
+        }
+
+        out += `$${columnIndex++})`;
+      }
+
+      for (var i = 1; i < count; i++) {
+        out += strings[i];
+      }
+
+      return out;
+    }
+
     for (var i = 1; i < count; i++) {
-      out += "$" + i;
-      out += strings[i];
+      out += `$${i}${strings[i]}`;
     }
     return out;
   }
 
   return strings + "";
+}
+
+class SQLArrayParameter {
+  value: any;
+  columns: string[];
+  constructor(value, keys) {
+    if (keys?.length === 0) {
+      keys = Object.keys(value[0]);
+    }
+
+    for (let key of keys) {
+      if (typeof key === "string") {
+        const asNumber = Number(key);
+        if (Number.isNaN(asNumber)) {
+          continue;
+        }
+        key = asNumber;
+      }
+
+      if (typeof key !== "string") {
+        if (Number.isSafeInteger(key)) {
+          if (key >= 0 && key <= 64 * 1024) {
+            continue;
+          }
+        }
+
+        throw new Error(`Invalid key: ${key}`);
+      }
+    }
+
+    this.value = value;
+    this.columns = keys;
+  }
 }
 
 function loadOptions(o) {
@@ -318,8 +388,21 @@ function SQL(o) {
     onConnected(err, undefined);
   }
 
+  function doCreateQuery(strings, values) {
+    const sqlString = normalizeStrings(strings, values);
+    let columns;
+    if (hasSQLArrayParameter) {
+      hasSQLArrayParameter = false;
+      const v = values[0];
+      columns = v.columns;
+      values = v.value;
+    }
+
+    return createQuery(sqlString, values, new SQLResultArray(), columns);
+  }
+
   function connectedSQL(strings, values) {
-    return new Query(createQuery(normalizeStrings(strings), values, new SQLResultArray()), connectedHandler);
+    return new Query(doCreateQuery(strings, values), connectedHandler);
   }
 
   function closedSQL(strings, values) {
@@ -327,10 +410,27 @@ function SQL(o) {
   }
 
   function pendingSQL(strings, values) {
-    return new Query(createQuery(normalizeStrings(strings), values, new SQLResultArray()), pendingConnectionHandler);
+    return new Query(doCreateQuery(strings, values), pendingConnectionHandler);
   }
 
   function sql(strings, ...values) {
+    /**
+     * const users = [
+     * {
+     *   name: "Alice",
+     *   age: 25,
+     * },
+     * {
+     *   name: "Bob",
+     *   age: 30,
+     * },
+     * ]
+     * sql`insert into users ${sql(users)}`
+     */
+    if ($isJSArray(strings) && strings[0] && typeof strings[0] === "object") {
+      return new SQLArrayParameter(strings, values);
+    }
+
     if (closed) {
       return closedSQL(strings, values);
     }

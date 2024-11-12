@@ -99,6 +99,23 @@ declare module "bun" {
   function constantCase(str: string): string;
 
   /**
+   * Convert a string to dot.case.
+   *
+   * @param str The string to convert to dot.case
+   * @returns The dot.cased string
+   *
+   * @example
+   * ```ts
+   * import { dotCase } from "bun";
+   *
+   * dotCase("foo-bar"); // "foo.bar"
+   * dotCase("foo_bar"); // "foo.bar"
+   * dotCase("fooBar"); // "foo.bar"
+   * ```
+   */
+  function dotCase(str: string): string;
+
+  /**
    * Get the column count of a string as it would be displayed in a terminal.
    * Supports ANSI escape codes, emoji, and wide characters.
    *

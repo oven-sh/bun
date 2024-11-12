@@ -65,6 +65,23 @@ declare module "bun" {
   function camelCase(str: string): string;
 
   /**
+   * Convert a string to Capital Case.
+   *
+   * @param str The string to convert to Capital Case
+   * @returns The Capital Cased string
+   *
+   * @example
+   * ```ts
+   * import { capitalCase } from "bun";
+   *
+   * capitalCase("foo-bar"); // "Foo Bar"
+   * capitalCase("foo_bar"); // "Foo Bar"
+   * capitalCase("fooBar"); // "Foo Bar"
+   * ```
+   */
+  function capitalCase(str: string): string;
+
+  /**
    * Get the column count of a string as it would be displayed in a terminal.
    * Supports ANSI escape codes, emoji, and wide characters.
    *

@@ -12,6 +12,8 @@ pub const BunObject = struct {
     pub const allocUnsafe = toJSCallback(Bun.allocUnsafe);
     pub const braces = toJSCallback(Bun.braces);
     pub const build = toJSCallback(Bun.JSBundler.buildFn);
+    pub const camelCase = toJSCallback(bun.string_case.camelCase);
+    pub const capitalCase = toJSCallback(bun.string_case.capitalCase);
     pub const color = toJSCallback(bun.css.CssColor.jsFunctionColor);
     pub const connect = toJSCallback(JSC.wrapStaticMethod(JSC.API.Listener, "connect", false));
     pub const createParsedShellScript = toJSCallback(bun.shell.ParsedShellScript.createParsedShellScript);
@@ -43,7 +45,6 @@ pub const BunObject = struct {
     pub const udpSocket = toJSCallback(JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false));
     pub const which = toJSCallback(Bun.which);
     pub const write = toJSCallback(JSC.WebCore.Blob.writeFile);
-    pub const camelCase = toJSCallback(bun.string_case.camelCase);
     // --- Callbacks ---
 
     // --- Getters ---
@@ -136,10 +137,11 @@ pub const BunObject = struct {
         // --- Getters --
 
         // -- Callbacks --
-        @export(BunObject.camelCase, .{ .name = callbackName("camelCase") });
         @export(BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
         @export(BunObject.braces, .{ .name = callbackName("braces") });
         @export(BunObject.build, .{ .name = callbackName("build") });
+        @export(BunObject.camelCase, .{ .name = callbackName("camelCase") });
+        @export(BunObject.capitalCase, .{ .name = callbackName("capitalCase") });
         @export(BunObject.color, .{ .name = callbackName("color") });
         @export(BunObject.connect, .{ .name = callbackName("connect") });
         @export(BunObject.createParsedShellScript, .{ .name = callbackName("createParsedShellScript") });

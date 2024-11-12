@@ -2191,13 +2191,12 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
         pub fn isDanglingSymlink(path: [:0]const u8) bool {
             if (comptime Environment.isLinux) {
-                const rc = Syscall.system.open(path, .{ .PATH = true }, @as(u32, 0));
-                switch (Syscall.getErrno(rc)) {
-                    .SUCCESS => {
-                        _ = bun.sys.close(bun.toFD(@as(i32, @intCast(rc))));
+                switch (Syscall.open(path, bun.O.PATH, @as(u32, 0))) {
+                    .err => return true,
+                    .result => |fd| {
+                        _ = bun.sys.close(fd);
                         return false;
                     },
-                    else => return true,
                 }
             } else if (comptime Environment.isWindows) {
                 switch (bun.sys.sys_uv.open(path, 0, 0)) {
@@ -2210,13 +2209,12 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     },
                 }
             } else {
-                const rc = Syscall.system.open(path, .{}, .{});
-                switch (Syscall.getErrno(rc)) {
-                    .SUCCESS => {
-                        _ = Syscall.system.close(rc);
+                switch (Syscall.open(path, bun.O.PATH, @as(u32, 0))) {
+                    .err => return true,
+                    .result => |fd| {
+                        _ = bun.sys.close(fd);
                         return false;
                     },
-                    else => return true,
                 }
             }
         }
@@ -2780,7 +2778,6 @@ pub const PackageManager = struct {
 
         pub const GetJSONOptions = struct {
             init_reset_store: bool = true,
-            always_decode_escape_sequences: bool = true,
             guess_indentation: bool = false,
         };
 
@@ -2840,7 +2837,6 @@ pub const PackageManager = struct {
                     .is_json = true,
                     .allow_comments = true,
                     .allow_trailing_commas = true,
-                    .always_decode_escape_sequences = opts.always_decode_escape_sequences,
                     .guess_indentation = opts.guess_indentation,
                 },
             ) catch |err| {
@@ -2894,7 +2890,6 @@ pub const PackageManager = struct {
                     .is_json = true,
                     .allow_comments = true,
                     .allow_trailing_commas = true,
-                    .always_decode_escape_sequences = opts.always_decode_escape_sequences,
                     .guess_indentation = opts.guess_indentation,
                 },
             );
@@ -10412,7 +10407,6 @@ pub const PackageManager = struct {
             manager.log,
             manager.original_package_json_path,
             .{
-                .always_decode_escape_sequences = false,
                 .guess_indentation = true,
             },
         )) {

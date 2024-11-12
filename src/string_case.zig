@@ -111,6 +111,17 @@ pub fn StringCaseConverter(comptime OutputType: type) type {
             );
         }
 
+        pub fn toPascalCase(input: []const u8, allocator: std.mem.Allocator) !OutputType {
+            return convert(
+                input,
+                allocator,
+                "",
+                true,
+                true,
+                false,
+            );
+        }
+
         // TODO: implement proper case conversion for unicode
         pub fn convert(
             input: []const u8,
@@ -384,6 +395,31 @@ pub fn kebabCase(
 
     const result: BunString = JSCaseConverter.toKebabCase(utf8.byteSlice(), bun.default_allocator) catch |err| {
         globalThis.throw("toKebabCase() internal error: {s}", .{@errorName(err)});
+        return .undefined;
+    };
+    defer result.deref();
+
+    return result.toJS(globalThis);
+}
+
+pub fn pascalCase(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) JSC.JSValue {
+    const arguments = callframe.arguments(1);
+    if (arguments.len < 1) {
+        globalThis.throwNotEnoughArguments("pascalCase()", 1, 0);
+    }
+
+    const input = arguments.ptr[0].toBunString(globalThis);
+    defer input.deref();
+
+    // TODO: better input handling
+    const utf8 = input.toUTF8(bun.default_allocator);
+    defer utf8.deinit();
+
+    const result: BunString = JSCaseConverter.toPascalCase(utf8.byteSlice(), bun.default_allocator) catch |err| {
+        globalThis.throw("toPascalCase() internal error: {s}", .{@errorName(err)});
         return .undefined;
     };
     defer result.deref();

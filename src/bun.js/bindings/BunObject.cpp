@@ -628,6 +628,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     origin                                         BunObject_getter_wrap_origin                                        DontDelete|PropertyCallback
     version_with_sha                               constructBunVersionWithSha                                          ReadOnly|DontDelete|PropertyCallback
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback
+    pascalCase                                     BunObject_callback_pascalCase                                       DontDelete|Function 1
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback

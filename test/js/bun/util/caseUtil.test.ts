@@ -272,3 +272,58 @@ describe("kebabCase", () => {
     expect(Bun.kebabCase("HelloWonderfulWorld")).toBe("hello-wonderful-world");
   });
 });
+
+describe("pascalCase", () => {
+  test("converts space separated words", () => {
+    expect(Bun.pascalCase("hello world")).toBe("HelloWorld");
+    expect(Bun.pascalCase("hello wonderful world")).toBe("HelloWonderfulWorld");
+  });
+
+  test("converts kebab-case", () => {
+    expect(Bun.pascalCase("hello-world")).toBe("HelloWorld");
+    expect(Bun.pascalCase("hello-wonderful-world")).toBe("HelloWonderfulWorld");
+  });
+
+  test("converts snake_case", () => {
+    expect(Bun.pascalCase("hello_world")).toBe("HelloWorld");
+    expect(Bun.pascalCase("hello_wonderful_world")).toBe("HelloWonderfulWorld");
+  });
+
+  test("handles existing PascalCase", () => {
+    expect(Bun.pascalCase("HelloWorld")).toBe("HelloWorld");
+    expect(Bun.pascalCase("HelloWonderfulWorld")).toBe("HelloWonderfulWorld");
+  });
+
+  test("handles mixed separators", () => {
+    expect(Bun.pascalCase("hello.world-nice_day")).toBe("HelloWorldNiceDay");
+    expect(Bun.pascalCase("hello_world-nice day")).toBe("HelloWorldNiceDay");
+  });
+
+  test("handles consecutive separators", () => {
+    expect(Bun.pascalCase("hello__world")).toBe("HelloWorld");
+    expect(Bun.pascalCase("hello--world")).toBe("HelloWorld");
+    expect(Bun.pascalCase("hello  world")).toBe("HelloWorld");
+  });
+
+  test("handles edge cases", () => {
+    expect(Bun.pascalCase("")).toBe("");
+    expect(Bun.pascalCase(" ")).toBe("");
+    expect(Bun.pascalCase("a")).toBe("A");
+    expect(Bun.pascalCase("A")).toBe("A");
+  });
+
+  test("handles non-ASCII characters", () => {
+    expect(Bun.pascalCase("héllo wörld")).toBe("HélloWörld");
+    expect(Bun.pascalCase("こんにちは-世界")).toBe("こんにちは世界");
+  });
+
+  test("handles camelCase input", () => {
+    expect(Bun.pascalCase("helloWorld")).toBe("HelloWorld");
+    expect(Bun.pascalCase("helloWonderfulWorld")).toBe("HelloWonderfulWorld");
+  });
+
+  test("handles PascalCase input", () => {
+    expect(Bun.pascalCase("HelloWorld")).toBe("HelloWorld");
+    expect(Bun.pascalCase("HelloWonderfulWorld")).toBe("HelloWonderfulWorld");
+  });
+});

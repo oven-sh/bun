@@ -133,6 +133,23 @@ declare module "bun" {
   function kebabCase(str: string): string;
 
   /**
+   * Convert a string to PascalCase.
+   *
+   * @param str The string to convert to PascalCase
+   * @returns The PascalCased string
+   *
+   * @example
+   * ```ts
+   * import { pascalCase } from "bun";
+   *
+   * pascalCase("foo-bar"); // "FooBar"
+   * pascalCase("foo_bar"); // "FooBar"
+   * pascalCase("fooBar"); // "FooBar"
+   * ```
+   */
+  function pascalCase(str: string): string;
+
+  /**
    * Get the column count of a string as it would be displayed in a terminal.
    * Supports ANSI escape codes, emoji, and wide characters.
    *

@@ -394,7 +394,7 @@ pub const WriteFileWindows = struct {
 
         switch (file_blob.store.?.data.file.pathlike) {
             .path => {
-                write_file.open();
+                write_file.open(file_blob.store.?);
             },
             .fd => {
                 write_file.fd = brk: {
@@ -426,8 +426,8 @@ pub const WriteFileWindows = struct {
         return this.event_loop.virtual_machine.event_loop_handle.?;
     }
 
-    pub fn open(this: *WriteFileWindows) void {
-        const path = this.file_blob.store.?.data.file.pathlike.path.slice();
+    pub fn open(this: *WriteFileWindows, store: *Blob.Store) void {
+        const path = store.data.file.pathlike.path.slice();
         this.io_request.data = this;
         const rc = uv.uv_fs_open(
             this.loop(),
@@ -515,7 +515,7 @@ pub const WriteFileWindows = struct {
             return;
         }
 
-        this.open();
+        this.open(this.file_blob.store.?);
     }
 
     fn onMkdirpCompleteConcurrent(this: *WriteFileWindows, err_: JSC.Maybe(void)) void {

@@ -1516,25 +1516,25 @@ class ClientRequest extends OutgoingMessage {
   _write(chunk, encoding, callback) {
     if (!this.#bodyChunks) {
       this.#bodyChunks = [chunk];
-      // process.nextTick(callback);
-      callback();
+      process.nextTick(callback);
+      // callback();
       return;
     }
     this.#bodyChunks.push(chunk);
-    // process.nextTick(callback);
-    callback();
+    process.nextTick(callback);
+    // callback();
   }
 
   _writev(chunks, callback) {
     if (!this.#bodyChunks) {
       this.#bodyChunks = chunks;
-      // process.nextTick(callback);
-      callback();
+      process.nextTick(callback);
+      // callback();
       return;
     }
     this.#bodyChunks.push(...chunks);
-    // process.nextTick(callback);
-    callback();
+    process.nextTick(callback);
+    // callback();
   }
 
   _destroy(err, callback) {

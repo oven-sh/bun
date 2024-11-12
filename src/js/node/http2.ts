@@ -1564,6 +1564,7 @@ class Http2Stream extends Duplex {
     this.#id = streamId;
     this[bunHTTP2Session] = session;
     this[bunHTTP2Headers] = headers;
+    this.cork();
   }
 
   get scheme() {
@@ -1838,7 +1839,6 @@ class Http2Stream extends Duplex {
     }
 
     if (typeof callback == "function") {
-      // process.nextTick(callback);
       callback();
     }
   }
@@ -1852,20 +1852,15 @@ class Http2Stream extends Duplex {
     if (!session) return;
 
     const native = session[bunHTTP2Native];
-    if (native) {
-      native.writeStream(
-        this.#id,
-        chunk,
-        encoding,
-        (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
-        callback,
-      );
-      return;
-    }
+    if (!native) return;
 
-    if (typeof callback == "function") {
-      callback();
-    }
+    native.writeStream(
+      this.#id,
+      chunk,
+      encoding,
+      (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
+      callback,
+    );
   }
 }
 class ClientHttp2Stream extends Http2Stream {
@@ -2219,6 +2214,11 @@ function toHeaderObject(headers, sensitiveHeadersValue) {
   }
   return obj;
 }
+
+function emitReadyNT(stream) {
+  stream.uncork();
+  stream.emit("ready");
+}
 class ServerHttp2Session extends Http2Session {
   [kServer]: Http2Server = null;
   /// close indicates that we called closed
@@ -2254,6 +2254,8 @@ class ServerHttp2Session extends Http2Session {
       self.#connections++;
       const stream = new ServerHttp2Stream(stream_id, self, null);
       self.#parser?.setStreamContext(stream_id, stream);
+
+      process.nextTick(emitReadyNT, stream);
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
@@ -3162,7 +3164,7 @@ class ClientHttp2Session extends Http2Session {
     } else {
       this.#parser.request(stream_id, req, headers, sensitiveNames, options);
     }
-    req.emit("ready");
+    process.nextTick(emitReadyNT, req);
     return req;
   }
   static connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {

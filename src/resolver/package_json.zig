@@ -686,9 +686,21 @@ pub const PackageJSON = struct {
             }
         }
 
-        // If we're coming from `bun run`
-        // We do not need to parse all this stuff.
-        if (comptime !include_scripts) {
+        // Read the "main" fields
+        for (r.opts.main_fields) |main| {
+            if (json.asProperty(main)) |main_json| {
+                const expr: js_ast.Expr = main_json.expr;
+
+                if ((expr.asString(allocator))) |str| {
+                    if (str.len > 0) {
+                        package_json.main_fields.put(main, str) catch unreachable;
+                    }
+                }
+            }
+        }
+
+        // Not needed for `bun run`
+        if (!include_scripts) {
             if (json.asProperty("type")) |type_json| {
                 if (type_json.expr.asString(allocator)) |type_str| {
                     switch (options.ModuleType.List.get(type_str) orelse options.ModuleType.unknown) {
@@ -710,19 +722,6 @@ pub const PackageJSON = struct {
                     }
                 } else {
                     r.log.addWarning(&json_source, type_json.loc, "The value for \"type\" must be a string") catch unreachable;
-                }
-            }
-
-            // Read the "main" fields
-            for (r.opts.main_fields) |main| {
-                if (json.asProperty(main)) |main_json| {
-                    const expr: js_ast.Expr = main_json.expr;
-
-                    if ((expr.asString(allocator))) |str| {
-                        if (str.len > 0) {
-                            package_json.main_fields.put(main, str) catch unreachable;
-                        }
-                    }
                 }
             }
 

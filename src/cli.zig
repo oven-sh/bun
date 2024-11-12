@@ -2023,7 +2023,7 @@ pub const Command = struct {
                 }
 
                 if (ctx.positionals.len > 0) {
-                    if (try RunCommand.exec(ctx, false, true, false)) {
+                    if (try RunCommand.exec(ctx, false, true)) {
                         return;
                     }
 
@@ -2098,91 +2098,16 @@ pub const Command = struct {
                     }
                 }
 
-                var was_js_like = false;
-                // If we start bun with:
-                // 1. `bun foo.js`, assume it's a JavaScript file.
-                // 2. `bun /absolute/path/to/bin/foo` assume its a JavaScript file.
-                //                                  ^ no file extension
-                //
-                // #!/usr/bin/env bun
-                // will pass us an absolute path to the script.
-                // This means a non-standard file extension will not work, but that is better than the current state
-                // which is file extension-less doesn't work
-                const default_loader = options.defaultLoaders.get(extension) orelse brk: {
-                    if (extension.len == 0 and ctx.args.entry_points.len > 0 and ctx.args.entry_points[0].len > 0 and std.fs.path.isAbsolute(ctx.args.entry_points[0])) {
-                        break :brk options.Loader.js;
-                    }
-
-                    if (extension.len > 0) {
-                        if (strings.endsWithComptime(ctx.args.entry_points[0], ".sh")) {
-                            break :brk options.Loader.bunsh;
-                        }
-
-                        if (!ctx.debug.loaded_bunfig) {
-                            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
-                        }
-
-                        if (ctx.preloads.len > 0)
-                            break :brk options.Loader.js;
-                    }
-
-                    break :brk null;
-                };
-
-                const force_using_bun = ctx.debug.run_in_bun;
-                var did_check = false;
-                if (default_loader) |loader| {
-                    if (loader.canBeRunByBun()) {
-                        was_js_like = true;
-                        if (maybeOpenWithBunJS(ctx)) {
-                            return;
-                        }
-                        did_check = true;
-                    }
-                }
-
-                if (force_using_bun and !did_check) {
-                    if (maybeOpenWithBunJS(ctx)) {
-                        return;
-                    }
-                }
-
-                if (ctx.positionals.len > 0 and extension.len == 0) {
+                if (ctx.positionals.len > 0) {
                     if (ctx.filters.len > 0) {
                         Output.prettyln("<r><yellow>warn<r>: Filters are ignored for auto command", .{});
                     }
-                    if (try RunCommand.exec(ctx, true, false, true)) {
+                    if (try RunCommand.exec(ctx, true, true)) {
                         return;
                     }
-
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Script not found \"{s}\"<r>", .{
-                        ctx.positionals[0],
-                    });
-
-                    Global.exit(1);
-                }
-
-                if (ctx.runtime_options.if_present) {
                     return;
                 }
 
-                if (was_js_like) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Module not found \"{s}\"<r>", .{
-                        ctx.positionals[0],
-                    });
-                    Global.exit(1);
-                } else if (ctx.positionals.len > 0) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>File not found: \"{s}\"<r>", .{
-                        ctx.positionals[0],
-                    });
-                    Global.exit(1);
-                }
-
-                // if we get here, the command was not parsed
-                // or the user just ran `bun` with no arguments
-                if (ctx.positionals.len > 0) {
-                    Output.warn("failed to parse command\n", .{});
-                }
                 Output.flush();
                 try HelpCommand.exec(allocator);
             },

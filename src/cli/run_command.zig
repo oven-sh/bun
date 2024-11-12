@@ -806,8 +806,8 @@ pub const RunCommand = struct {
         this_bundler.resolver.care_about_scripts = true;
         this_bundler.resolver.store_fd = store_root_fd;
 
-        this_bundler.resolver.opts.load_tsconfig_json = false;
-        this_bundler.options.load_tsconfig_json = false;
+        this_bundler.resolver.opts.load_tsconfig_json = true;
+        this_bundler.options.load_tsconfig_json = true;
 
         this_bundler.configureLinker();
 
@@ -1245,149 +1245,69 @@ pub const RunCommand = struct {
         ctx: Command.Context,
         comptime bin_dirs_only: bool,
         comptime log_errors: bool,
-        comptime did_try_open_with_bun_js: bool,
     ) !bool {
-        // Step 1. Figure out what we're trying to run
+
+        // notes:
+        // const default_loader = options.defaultLoaders.get(extension) orelse brk: {
+        //     if (extension.len == 0 and ctx.args.entry_points.len > 0 and ctx.args.entry_points[0].len > 0 and std.fs.path.isAbsolute(ctx.args.entry_points[0])) {
+        //         break :brk options.Loader.js;
+        //     }
+        //     if (extension.len > 0) {
+        //         if (strings.endsWithComptime(ctx.args.entry_points[0], ".sh")) {
+        //             break :brk options.Loader.bunsh;
+        //         }
+        //         if (!ctx.debug.loaded_bunfig) {
+        //             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
+        //         }
+        //         if (ctx.preloads.len > 0)
+        //             break :brk options.Loader.js;
+        //     }
+        //     break :brk null;
+        // };
+        // if (default_loader) |loader| {
+        //     if (loader.canBeRunByBun()) {
+        //         was_js_like = true;
+        //         if (maybeOpenWithBunJS(ctx)) {
+        //             return;
+        //         }
+        //         did_check = true;
+        //     }
+        // }
+        // if (force_using_bun and !did_check) {
+        //     if (maybeOpenWithBunJS(ctx)) {
+        //         return;
+        //     }
+        // }
+
+        // find what to run
+
         var positionals = ctx.positionals;
-        if (positionals.len > 0 and strings.eqlComptime(positionals[0], "run") or strings.eqlComptime(positionals[0], "r")) {
+        if (positionals.len > 0 and strings.eqlComptime(positionals[0], "run")) {
             positionals = positionals[1..];
         }
 
-        var script_name_to_search: string = "";
-
+        var target_name: string = "";
         if (positionals.len > 0) {
-            script_name_to_search = positionals[0];
+            target_name = positionals[0];
+            positionals = positionals[1..];
         }
+        const passthrough = ctx.passthrough; // unclear why passthrough is an escaped string, it should probably be []const []const u8 and allow its users to escape it.
 
-        const passthrough = ctx.passthrough;
+        // setup
+
         const force_using_bun = ctx.debug.run_in_bun;
-
-        // This doesn't cover every case
-        if ((script_name_to_search.len == 1 and script_name_to_search[0] == '.') or
-            (script_name_to_search.len == 2 and @as(u16, @bitCast(script_name_to_search[0..2].*)) == @as(u16, @bitCast([_]u8{ '.', '/' }))))
-        {
-            Run.boot(ctx, ".") catch |err| {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                ctx.log.print(Output.errorWriter()) catch {};
-
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                    script_name_to_search,
-                    @errorName(err),
-                });
-                Global.exit(1);
-            };
-            return true;
-        }
-
-        if (!did_try_open_with_bun_js and (log_errors or force_using_bun)) {
-            if (script_name_to_search.len > 0) {
-                possibly_open_with_bun_js: {
-                    const ext = std.fs.path.extension(script_name_to_search);
-                    var has_loader = false;
-                    if (!force_using_bun) {
-                        if (options.defaultLoaders.get(ext)) |load| {
-                            has_loader = true;
-                            if (!load.canBeRunByBun())
-                                break :possibly_open_with_bun_js;
-                            // if there are preloads, allow weirdo file extensions
-                        } else {
-                            // you can have package.json scripts with file extensions in the name
-                            // eg "foo.zip"
-                            // in those cases, we don't know
-                            if (ext.len == 0 or strings.containsChar(script_name_to_search, ':'))
-                                break :possibly_open_with_bun_js;
-                        }
-                    }
-
-                    var file_path = script_name_to_search;
-                    const file_: anyerror!std.fs.File = brk: {
-                        if (std.fs.path.isAbsolute(script_name_to_search)) {
-                            var resolver = resolve_path.PosixToWinNormalizer{};
-                            break :brk bun.openFile(try resolver.resolveCWD(script_name_to_search), .{ .mode = .read_only });
-                        } else {
-                            const cwd = bun.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
-                            path_buf[cwd.len] = std.fs.path.sep_posix;
-                            var parts = [_]string{script_name_to_search};
-                            file_path = resolve_path.joinAbsStringBuf(
-                                path_buf[0 .. cwd.len + 1],
-                                &path_buf2,
-                                &parts,
-                                .auto,
-                            );
-                            if (file_path.len == 0) break :possibly_open_with_bun_js;
-                            path_buf2[file_path.len] = 0;
-                            const file_pathZ = path_buf2[0..file_path.len :0];
-                            break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
-                        }
-                    };
-
-                    const file = file_ catch break :possibly_open_with_bun_js;
-
-                    if (!force_using_bun) {
-                        // Due to preload, we don't know if they intend to run
-                        // this as a script or as a regular file
-                        // once we know it's a file, check if they have any preloads
-                        if (ext.len > 0 and !has_loader) {
-                            if (!ctx.debug.loaded_bunfig) {
-                                try CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
-                            }
-
-                            if (ctx.preloads.len == 0)
-                                break :possibly_open_with_bun_js;
-                        }
-
-                        // ignore the shebang if they explicitly passed `--bun`
-                        // "White space after #! is optional."
-                        var shebang_buf: [64]u8 = undefined;
-                        const shebang_size = file.pread(&shebang_buf, 0) catch |err| {
-                            if (!ctx.debug.silent)
-                                Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
-                            Global.exit(1);
-                        };
-
-                        var shebang: string = shebang_buf[0..shebang_size];
-
-                        shebang = std.mem.trim(u8, shebang, " \r\n\t");
-                        if (strings.hasPrefixComptime(shebang, "#!")) {
-                            const first_arg: string = if (bun.argv.len > 0) bun.argv[0] else "";
-                            const filename = std.fs.path.basename(first_arg);
-                            // are we attempting to run the script with bun?
-                            if (!strings.contains(shebang, filename)) {
-                                break :possibly_open_with_bun_js;
-                            }
-                        }
-                    }
-
-                    Global.configureAllocator(.{ .long_running = true });
-                    const out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
-                    Run.boot(ctx, out_path) catch |err| {
-                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                        ctx.log.print(Output.errorWriter()) catch {};
-
-                        Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                            std.fs.path.basename(file_path),
-                            @errorName(err),
-                        });
-                        Global.exit(1);
-                    };
-
-                    return true;
-                }
-            }
-        }
-
-        Global.configureAllocator(.{ .long_running = false });
-
         var ORIGINAL_PATH: string = "";
         var this_bundler: bundler.Bundler = undefined;
         const root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors, false);
         try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
-        this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
 
-        if (script_name_to_search.len == 0) {
-            // naked "bun run"
+        if (!ctx.debug.loaded_bunfig) {
+            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+        }
+
+        // check for empty command
+
+        if (target_name.len == 0) {
             if (root_dir_info.enclosing_package_json) |package_json| {
                 RunCommand.printHelp(package_json);
             } else {
@@ -1399,12 +1319,49 @@ pub const RunCommand = struct {
             return true;
         }
 
-        // Run package.json script
+        // check for stdin
+
+        if (target_name.len == 1 and target_name[0] == '-') {
+            log("Executing from stdin", .{});
+
+            // read from stdin
+            var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
+            var list = std.ArrayList(u8).init(stack_fallback.get());
+            errdefer list.deinit();
+
+            std.io.getStdIn().reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;
+            ctx.runtime_options.eval.script = list.items;
+
+            const trigger = bun.pathLiteral("/[stdin]");
+            var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+            const cwd = try std.posix.getcwd(&entry_point_buf);
+            @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+            const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
+
+            Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false) catch |err| {
+                ctx.log.print(Output.errorWriter()) catch {};
+
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                    std.fs.path.basename(target_name),
+                    @errorName(err),
+                });
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                Global.exit(1);
+            };
+            return true;
+        }
+
+        // run script with matching name
+
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.scripts) |scripts| {
-                if (scripts.get(script_name_to_search)) |script_content| {
+                if (scripts.get(target_name)) |script_content| {
+                    log("Found matching script `{s}`", .{script_content});
+                    Global.configureAllocator(.{ .long_running = false });
+                    this_bundler.env.map.put("npm_lifecycle_event", target_name) catch unreachable;
+
                     // allocate enough to hold "post${scriptname}"
-                    var temp_script_buffer = try std.fmt.allocPrint(ctx.allocator, "ppre{s}", .{script_name_to_search});
+                    var temp_script_buffer = try std.fmt.allocPrint(ctx.allocator, "\x00pre{s}", .{target_name});
                     defer ctx.allocator.free(temp_script_buffer);
 
                     if (scripts.get(temp_script_buffer[1..])) |prescript| {
@@ -1425,7 +1382,7 @@ pub const RunCommand = struct {
                         ctx,
                         ctx.allocator,
                         script_content,
-                        script_name_to_search,
+                        target_name,
                         this_bundler.fs.top_level_dir,
                         this_bundler.env,
                         passthrough,
@@ -1454,50 +1411,44 @@ pub const RunCommand = struct {
             }
         }
 
-        // Run absolute/relative path
-        if (std.fs.path.isAbsolute(script_name_to_search) or
-            (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
-        {
-            Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
+        // load module and run that module
+        // TODO: run module resolution here - try the next condition if the module can't be found
+
+        log("Try resolve `{s}` in `{s}`", .{ target_name, this_bundler.fs.top_level_dir });
+        // this doesn't work
+        if (this_bundler.resolver.resolve(this_bundler.fs.top_level_dir, target_name, .entry_point)) |resolved| {
+            var resolved_mutable = resolved;
+            log("Resolved to: `{s}`", .{resolved_mutable.path().?.text});
+            Run.boot(ctx, ctx.allocator.dupe(u8, resolved_mutable.path().?.text) catch bun.outOfMemory()) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
                 ctx.log.print(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                    std.fs.path.basename(script_name_to_search),
+                    std.fs.path.basename(target_name),
                     @errorName(err),
                 });
-                Global.exit(1);
-            };
-        }
-
-        if (script_name_to_search.len == 1 and script_name_to_search[0] == '-') {
-            // read from stdin
-            var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
-            var list = std.ArrayList(u8).init(stack_fallback.get());
-            errdefer list.deinit();
-
-            std.io.getStdIn().reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;
-            ctx.runtime_options.eval.script = list.items;
-
-            const trigger = bun.pathLiteral("/[stdin]");
-            var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
-            const cwd = try std.posix.getcwd(&entry_point_buf);
-            @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
-            const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
-
-            Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false) catch |err| {
-                ctx.log.print(Output.errorWriter()) catch {};
-
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                    std.fs.path.basename(script_name_to_search),
-                    @errorName(err),
-                });
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 Global.exit(1);
             };
             return true;
-        }
+        } else |_| if (this_bundler.resolver.resolve(this_bundler.fs.top_level_dir, try std.mem.join(ctx.allocator, "", &.{ "./", target_name }), .entry_point)) |resolved| {
+            var resolved_mutable = resolved;
+            log("Resolved with `./` to: `{s}`", .{resolved_mutable.path().?.text});
+            Run.boot(ctx, ctx.allocator.dupe(u8, resolved_mutable.path().?.text) catch bun.outOfMemory()) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
+                ctx.log.print(Output.errorWriter()) catch {};
+
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                    std.fs.path.basename(target_name),
+                    @errorName(err),
+                });
+                Global.exit(1);
+            };
+            return true;
+        } else |_| {}
+
+        // execute a node_modules/.bin/<X> command, or (run only) a system command like 'ls'
 
         if (Environment.isWindows and bun.FeatureFlags.windows_bunx_fast_path) try_bunx_file: {
             // Attempt to find a ".bunx" file on disk, and run it, skipping the
@@ -1517,13 +1468,13 @@ pub const RunCommand = struct {
             const prefix = comptime bun.strings.w("\\node_modules\\.bin\\");
             @memcpy(ptr[0..prefix.len], prefix);
             ptr = ptr[prefix.len..];
-            const encoded = bun.strings.convertUTF8toUTF16InBuffer(ptr[0..], script_name_to_search);
+            const encoded = bun.strings.convertUTF8toUTF16InBuffer(ptr[0..], target_name);
             ptr = ptr[encoded.len..];
             const ext = comptime bun.strings.w(".bunx");
             @memcpy(ptr[0..ext.len], ext);
             ptr[ext.len] = 0;
 
-            const l = root.len + cwd_len + prefix.len + script_name_to_search.len + ext.len;
+            const l = root.len + cwd_len + prefix.len + target_name.len + ext.len;
             const path_to_use = BunXFastPath.direct_launch_buffer[0..l :0];
             BunXFastPath.tryLaunch(ctx, path_to_use, this_bundler.env, ctx.passthrough);
         }
@@ -1539,7 +1490,7 @@ pub const RunCommand = struct {
         }
 
         if (path_for_which.len > 0) {
-            if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, script_name_to_search)) |destination| {
+            if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, target_name)) |destination| {
                 const out = bun.asByteSlice(destination);
                 return try runBinaryWithoutBunxPath(
                     ctx,
@@ -1548,17 +1499,19 @@ pub const RunCommand = struct {
                     this_bundler.fs.top_level_dir,
                     this_bundler.env,
                     passthrough,
-                    script_name_to_search,
+                    target_name,
                 );
             }
         }
+
+        // failure
 
         if (ctx.runtime_options.if_present) {
             return true;
         }
 
         if (comptime log_errors) {
-            Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{script_name_to_search});
+            Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{target_name});
             Global.exit(1);
         }
 

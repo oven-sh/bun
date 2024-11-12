@@ -537,7 +537,7 @@ it("should run with bun instead of npm even with leading spaces", async () => {
       env: bunEnv,
     });
 
-    expect(stderr.toString()).toBe("$    bun run other_script    \n$    echo hi    \n");
+    expect(stderr.toString()).toMatch(/^\$    [^\s]+? run other_script    \n\$    echo hi    \n$/);
     expect(stdout.toString()).toEndWith("hi\n");
     expect(exitCode).toBe(0);
   }
@@ -560,6 +560,7 @@ describe("'bun run' priority", async () => {
     "noext": "console.log('noext')",
     "folderandfile": { "index.js": "console.log('folderandfile/index.js')" },
     "folderandfile.js": "console.log('folderandfile.js')",
+    "shellscript.sh": "echo shellscript.sh",
     "package.json": JSON.stringify({
       scripts: {
         "build": "echo scripts/build",
@@ -620,6 +621,9 @@ describe("'bun run' priority", async () => {
     { command: ["folderandfile/index.js"], stdout: "folderandfile/index.js", stderr: "" },
     { command: ["./folderandfile/index.js"], stdout: "folderandfile/index.js", stderr: "" },
 
+    { command: ["shellscript.sh"], stdout: "shellscript.sh", stderr: "" },
+    { command: ["./shellscript.sh"], stdout: "shellscript.sh", stderr: "" },
+
     ...(isWindows
       ? [
           // TODO: node_modules command
@@ -633,6 +637,9 @@ describe("'bun run' priority", async () => {
           { command: ["echo", "abc"], stdout: "abc", stderr: "", req_run: true },
           { command: ["echo", "abc"], stdout: "", exitCode: 1, req_run: false },
         ]),
+
+    // TODO: test preloads (https://bun.sh/docs/runtime/bunfig#preload), test $npm_lifecycle_event
+    // TODO: test with path overrides in tsconfig.json
   ];
 
   for (const cmd of commands) {

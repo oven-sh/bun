@@ -438,7 +438,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
     // (bun/src/env.zig:36) and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
-    auto napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(napi_env, napi_value)>(
+    auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(
         dlsym(handle, "napi_register_module_v1"));
 
     auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
@@ -485,7 +485,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     auto env = globalObject->makeNapiEnv(nmodule);
     env->filename = filename_cstr;
 
-    JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(env, reinterpret_cast<napi_value>(exportsValue)));
+    JSC::JSValue resultValue = JSValue::decode(reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env, reinterpret_cast<napi_value>(exportsValue))));
 
     RETURN_IF_EXCEPTION(scope, {});
 

@@ -1320,9 +1320,14 @@ pub const VirtualMachine = struct {
 
     pub fn onBeforeExit(this: *VirtualMachine) void {
         Bun__queueFinishNapiFinalizers(this.global);
-        while (this.isEventLoopAlive()) {
-            this.tick();
-            this.eventLoop().autoTickActive();
+
+        if (this.eventLoop().napi_finalizer_queue.count > 0) {
+            // If we have any finalizers queued, we need to run the event loop until the finalizers are done.
+            // If there are no finalizers remaining, this isn't necessary.
+            while (this.isEventLoopAlive()) {
+                this.tick();
+                this.eventLoop().autoTickActive();
+            }
         }
 
         this.exit_handler.dispatchOnBeforeExit();

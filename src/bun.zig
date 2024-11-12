@@ -909,6 +909,18 @@ pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
     }.get();
 }
 
+pub fn getenvZAnyCase(key: [:0]const u8) ?[]const u8 {
+    for (std.os.environ) |lineZ| {
+        const line = sliceTo(lineZ, 0);
+        const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
+        if (strings.eqlCaseInsensitiveASCII(line[0..key_end], key, true)) {
+            return line[@min(key_end + 1, line.len)..];
+        }
+    }
+
+    return null;
+}
+
 /// This wrapper exists to avoid the call to sliceTo(0)
 /// Zig's sliceTo(0) is scalar
 pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
@@ -917,16 +929,7 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
     }
 
     if (comptime Environment.isWindows) {
-        // Windows UCRT will fill this in for us
-        for (std.os.environ) |lineZ| {
-            const line = sliceTo(lineZ, 0);
-            const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
-            if (strings.eqlCaseInsensitiveASCII(line[0..key_end], key, true)) {
-                return line[@min(key_end + 1, line.len)..];
-            }
-        }
-
-        return null;
+        return getenvZAnyCase(key);
     }
 
     const ptr = std.c.getenv(key.ptr) orelse return null;

@@ -285,7 +285,7 @@ If you see this error when compiling, run:
 $ xcode-select --install
 ```
 
-## Cannot find `libatomic.a`
+### Cannot find `libatomic.a`
 
 Bun defaults to linking `libatomic` statically, as not all systems have it. If you are building on a distro that does not have a static libatomic available, you can run the following command to enable dynamic linking:
 
@@ -295,7 +295,7 @@ $ bun run build -DUSE_STATIC_LIBATOMIC=OFF
 
 The built version of Bun may not work on other systems if compiled this way.
 
-## ccache conflicts with building TinyCC on macOS
+### ccache conflicts with building TinyCC on macOS
 
 If you run into issues with `ccache` when building TinyCC, try reinstalling ccache
 
@@ -303,3 +303,9 @@ If you run into issues with `ccache` when building TinyCC, try reinstalling ccac
 brew uninstall ccache
 brew install ccache
 ```
+
+## Using bun-debug
+
+- Disable logging: `BUN_DEBUG_QUIET_LOGS=1 bun-debug ...` (to disable all debug logging)
+- Enable logging for a specific zig scope: `BUN_DEBUG_EventLoop=1 bun-debug ...` (to allow `std.log.scoped(.EventLoop)`)
+- Bun transpiles every file it runs, to see the actual executed source in a debug build find it in `/tmp/bun-debug-src/...path/to/file`, for example the transpiled version of `/home/bun/index.ts` would be in `/tmp/bun-debug-src/home/bun/index.ts`

@@ -6,6 +6,7 @@ namespace Bun {
 NapiExternal::~NapiExternal()
 {
     if (m_finalizer) {
+        ASSERT(m_env);
         m_finalizer->call(m_env, m_value);
     }
 }

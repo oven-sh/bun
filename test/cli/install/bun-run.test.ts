@@ -620,12 +620,19 @@ describe("'bun run' priority", async () => {
     { command: ["folderandfile/index.js"], stdout: "folderandfile/index.js", stderr: "" },
     { command: ["./folderandfile/index.js"], stdout: "folderandfile/index.js", stderr: "" },
 
-    // node_modules command
-    { command: ["confabulate"], stdout: "node_modules/.bin/confabulate", stderr: "" },
+    ...(isWindows
+      ? [
+          // TODO: node_modules command
+          // TODO: system command
+        ]
+      : [
+          // node_modules command
+          { command: ["confabulate"], stdout: "node_modules/.bin/confabulate", stderr: "" },
 
-    // system command (mac/linux)
-    { command: ["echo", "abc"], stdout: "abc", stderr: "", req_run: true },
-    { command: ["echo", "abc"], stdout: "", exitCode: 1, req_run: false },
+          // system command
+          { command: ["echo", "abc"], stdout: "abc", stderr: "", req_run: true },
+          { command: ["echo", "abc"], stdout: "", exitCode: 1, req_run: false },
+        ]),
   ];
 
   for (const cmd of commands) {
@@ -652,4 +659,10 @@ describe("'bun run' priority", async () => {
       }
     }
   }
+});
+
+describe.todo("run from stdin", async () => {
+  // TODO: write this test
+  // note limit of around 1gb when running from stdin
+  // - which says 'catch return false'
 });

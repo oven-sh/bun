@@ -1799,6 +1799,12 @@ class Http2Stream extends Duplex {
   }
 
   _writev(data, callback) {
+    if (this.pending) {
+      this.once("ready", this._writev.bind(this, data, callback));
+      return;
+    }
+    if (this.destroyed) return;
+
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
@@ -1840,6 +1846,12 @@ class Http2Stream extends Duplex {
     }
   }
   _write(chunk, encoding, callback) {
+    if (this.pending) {
+      this.once("ready", this._write.bind(this, chunk, encoding, callback));
+      return;
+    }
+    if (this.destroyed) return;
+
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];

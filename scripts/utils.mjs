@@ -504,7 +504,7 @@ export function isMainBranch(cwd) {
  */
 export function isPullRequest() {
   if (isBuildkite) {
-    return getEnv("BUILDKITE_PULL_REQUEST", false) === "true";
+    return !isNaN(parseInt(getEnv("BUILDKITE_PULL_REQUEST", false)));
   }
 
   if (isGithubAction) {

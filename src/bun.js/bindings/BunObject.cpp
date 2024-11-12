@@ -592,6 +592,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     build                                          BunObject_callback_build                                            DontDelete|Function 1
     camelCase                                      BunObject_callback_camelCase                                        DontDelete|Function 1
     capitalCase                                    BunObject_callback_capitalCase                                      DontDelete|Function 1
+    constantCase                                   BunObject_callback_constantCase                                     DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 3
     connect                                        BunObject_callback_connect                                          DontDelete|Function 1
     cwd                                            BunObject_getter_wrap_cwd                                           DontEnum|DontDelete|PropertyCallback

@@ -82,6 +82,23 @@ declare module "bun" {
   function capitalCase(str: string): string;
 
   /**
+   * Convert a string to CONSTANT_CASE.
+   *
+   * @param str The string to convert to CONSTANT_CASE
+   * @returns The CONSTANT_CASED string
+   *
+   * @example
+   * ```ts
+   * import { constantCase } from "bun";
+   *
+   * constantCase("foo-bar"); // "FOO_BAR"
+   * constantCase("foo_bar"); // "FOO_BAR"
+   * constantCase("fooBar"); // "FOO_BAR"
+   * ```
+   */
+  function constantCase(str: string): string;
+
+  /**
    * Get the column count of a string as it would be displayed in a terminal.
    * Supports ANSI escape codes, emoji, and wide characters.
    *

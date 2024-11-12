@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import ts from "typescript";
+import path from 'path'
 
 /**
  * Find all matching test via ts AST
@@ -75,7 +76,7 @@ export function registerTestCodeLens(context: vscode.ExtensionContext) {
   const codeLensProvider = new TestCodeLensProvider();
 
   // Get the user-defined file pattern from the settings, or use the default
-  // Setting is: 
+  // Setting is:
   // bun.test.filePattern
   const pattern = vscode.workspace.getConfiguration("bun.test").get("filePattern", DEFAULT_FILE_PATTERN);
   const options = { scheme: "file", pattern };
@@ -102,51 +103,68 @@ let activeTerminal: vscode.Terminal | null = null;
  * This function registers the test runner commands.
  */
 export function registerTestRunner(context: vscode.ExtensionContext) {
-
-
-
   // Register the "Run Test" command
   const runTestCommand = vscode.commands.registerCommand(
     "extension.bun.runTest",
-    async (fileName?: string, testName?: string, watchMode: boolean = false) => {
-
+    async (filePath?: string, testName?: string, isWatchMode: boolean = false) => {
       // Get custom flag
       const customFlag = vscode.workspace.getConfiguration("bun.test").get("customFlag", "").trim();
       const customScriptSetting = vscode.workspace.getConfiguration("bun.test").get("customScript", "bun test").trim();
+      
       const customScript = customScriptSetting.length ? customScriptSetting : "bun test";
       // When this command is called from the command palette, the fileName and testName arguments are not passed (commands in package.json)
       // so then fileName is taken from the active text editor and it run for the whole file.
-      if (!fileName) {
+      if (!filePath) {
         const editor = vscode.window.activeTextEditor;
         if (editor) {
-          fileName = editor.document.fileName;
+          filePath = editor.document.fileName;
         }
       }
+
+      // Detect if along file path there is package.json, like in mono-repo, if so, then switch to that directory
+      const packageJsonPaths = await vscode.workspace.findFiles("**/package.json");
+      // Sort by length, so the longest path is first, so we can switch to the deepest directory
+      const packagesRootPaths = packageJsonPaths
+        .map(uri => uri.fsPath.replace("/package.json", ""))
+        .sort((a, b) => b.length - a.length);
+      const packageJsonPath: string | undefined = packagesRootPaths.find(path => filePath && filePath.includes(path));
 
       if (activeTerminal) {
         activeTerminal.dispose();
         activeTerminal = null;
       }
 
-      activeTerminal = vscode.window.createTerminal("Bun Test Runner");
+      const cwd = packageJsonPath || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd()
+
+      const message =  isWatchMode
+      ? `Watching \x1b[1m\x1b[32m${testName || filePath}\x1b[0m test`
+      : `Running \x1b[1m\x1b[32m${testName || filePath}\x1b[0m test`;
+      const terminalOptions: vscode.TerminalOptions = {
+        cwd,
+        name: "Bun Test Runner",
+        location: vscode.TerminalLocation.Panel,
+        message,
+        hideFromUser: true,
+      };
+      activeTerminal = vscode.window.createTerminal(terminalOptions);
       activeTerminal.show();
       let command = customScript;
-      if (fileName.length) {
-          command += ` ${fileName}`;
-      } 
+      if (filePath.length) {
+        command += ` ${filePath}`;
+      }
       if (testName.length) {
         if (customScriptSetting.length) {
           // escape the quotes in the test name
-          command += ` -t \\"${testName}\\"`;
+          command += ` -t "${testName}"`;
         } else {
           command += ` -t "${testName}"`;
         }
       }
-      if (watchMode) {
-          command += ` --watch`;
+      if (isWatchMode) {
+        command += ` --watch`;
       }
       if (customFlag.length) {
-          command += ` ${customFlag}`;
+        command += ` ${customFlag}`;
       }
       activeTerminal.sendText(command);
     },

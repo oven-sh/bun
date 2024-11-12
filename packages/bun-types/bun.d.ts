@@ -48,6 +48,23 @@ declare module "bun" {
   function which(command: string, options?: { PATH?: string; cwd?: string }): string | null;
 
   /**
+   * Convert a string to camelCase.
+   *
+   * @param str The string to convert to camelCase
+   * @returns The camelCased string
+   *
+   * @example
+   * ```ts
+   * import { camelCase } from "bun";
+   *
+   * camelCase("foo-bar"); // "fooBar"
+   * camelCase("foo_bar"); // "fooBar"
+   * camelCase("Foo Bar"); // "fooBar"
+   * ```
+   */
+  function camelCase(str: string): string;
+
+  /**
    * Get the column count of a string as it would be displayed in a terminal.
    * Supports ANSI escape codes, emoji, and wide characters.
    *

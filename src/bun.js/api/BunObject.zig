@@ -43,6 +43,7 @@ pub const BunObject = struct {
     pub const udpSocket = toJSCallback(JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false));
     pub const which = toJSCallback(Bun.which);
     pub const write = toJSCallback(JSC.WebCore.Blob.writeFile);
+    pub const camelCase = toJSCallback(bun.string_case.camelCase);
     // --- Callbacks ---
 
     // --- Getters ---
@@ -135,6 +136,7 @@ pub const BunObject = struct {
         // --- Getters --
 
         // -- Callbacks --
+        @export(BunObject.camelCase, .{ .name = callbackName("camelCase") });
         @export(BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
         @export(BunObject.braces, .{ .name = callbackName("braces") });
         @export(BunObject.build, .{ .name = callbackName("build") });
@@ -258,6 +260,7 @@ const Async = bun.Async;
 const SemverObject = @import("../../install/semver.zig").SemverObject;
 const Braces = @import("../../shell/braces.zig");
 const Shell = @import("../../shell/shell.zig");
+const string_case = @import("../../string_case.zig");
 
 pub fn shellEscape(
     globalThis: *JSC.JSGlobalObject,

@@ -651,6 +651,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stdin                                          BunObject_getter_wrap_stdin                                         DontDelete|PropertyCallback
     stdout                                         BunObject_getter_wrap_stdout                                        DontDelete|PropertyCallback
     stringWidth                                    BunObject_callback_stringWidth                                      DontDelete|Function 2
+    camelCase                                      BunObject_callback_camelCase                                        DontDelete|Function 1
     unsafe                                         BunObject_getter_wrap_unsafe                                        DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1

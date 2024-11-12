@@ -4,7 +4,7 @@ function family() {
 }
 
 function familySync() {
-  return GLIBC;
+  return MUSL;
 }
 
 const GLIBC = "glibc";
@@ -15,11 +15,11 @@ function version() {
 }
 
 function versionSync() {
-  return "2.29";
+  return "1.2.5";
 }
 
 function isNonGlibcLinuxSync() {
-  return false;
+  return true;
 }
 
 function isNonGlibcLinux() {

@@ -20,6 +20,7 @@ const X509 = @import("./x509.zig");
 const Async = bun.Async;
 const uv = bun.windows.libuv;
 const H2FrameParser = @import("./h2_frame_parser.zig").H2FrameParser;
+const NodePath = @import("../../node/path.zig");
 noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []const u8) JSValue {
     var zig_str: ZigString = ZigString.init("");
     var output_buf: [4096]u8 = undefined;
@@ -453,10 +454,44 @@ pub const SocketConfig = struct {
 };
 
 fn isValidPipeName(pipe_name: []const u8) bool {
-    return strings.startsWith(pipe_name, "\\\\.\\pipe\\") or
-        strings.startsWith(pipe_name, "\\\\?\\pipe\\") or
-        strings.startsWith(pipe_name, "//./pipe/") or
-        strings.startsWith(pipe_name, "//?/pipe/");
+    if (!Environment.isWindows) {
+        return false;
+    }
+    // check for valid pipe names
+    // at minimum we need to have \\.\pipe\ or \\?\pipe\ + 1 char that is not a separator
+    if (pipe_name.len > 9) {
+        if (NodePath.isSepWindowsT(u8, pipe_name[0])) {
+            if (NodePath.isSepWindowsT(u8, pipe_name[1])) {
+                if (pipe_name[2] == '.' or pipe_name[2] == '?') {
+                    if (NodePath.isSepWindowsT(u8, pipe_name[3])) {
+                        if (strings.eql(pipe_name[4..8], "pipe")) {
+                            if (NodePath.isSepWindowsT(u8, pipe_name[8])) {
+                                return !NodePath.isSepWindowsT(u8, pipe_name[9]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+fn normalizePipeName(pipe_name: []const u8, buffer: []u8) ?[]const u8 {
+    if (Environment.isWindows) {
+        bun.assert(pipe_name.len < buffer.len);
+        if (!isValidPipeName(pipe_name)) {
+            return null;
+        }
+        // normalize pipe name with can have mixed slashes
+        // pipes are simple and this will be faster than using node:path.resolve()
+        // we dont wanna to normalize the pipe name it self only the pipe identifier (//./pipe/, //?/pipe/, etc)
+        @memcpy(buffer[0..9], "\\\\.\\pipe\\");
+        @memcpy(buffer[9..pipe_name.len], pipe_name[9..]);
+        return buffer[0..pipe_name.len];
+    } else {
+        return null;
+    }
 }
 pub const Listener = struct {
     pub const log = Output.scoped(.Listener, false);
@@ -612,8 +647,9 @@ pub const Listener = struct {
         if (Environment.isWindows) {
             if (port == null) {
                 // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
-                const pipe_name = hostname_or_unix.slice();
-                if (isValidPipeName(pipe_name)) {
+                const slice = hostname_or_unix.slice();
+                var buf: bun.PathBuffer = undefined;
+                if (normalizePipeName(slice, buf[0..])) |pipe_name| {
                     const connection: Listener.UnixOrHost = .{ .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice() };
                     if (ssl_enabled) {
                         if (ssl.?.protos) |p| {
@@ -1105,9 +1141,14 @@ pub const Listener = struct {
         };
 
         if (Environment.isWindows) {
+            var buf: bun.PathBuffer = undefined;
+            var pipe_name: ?[]const u8 = null;
             const isNamedPipe = switch (connection) {
                 // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
-                .unix => |pipe_name| isValidPipeName(pipe_name),
+                .unix => |slice| brk: {
+                    pipe_name = normalizePipeName(slice, buf[0..]);
+                    break :brk (pipe_name != null);
+                },
                 .fd => |fd| brk: {
                     const uvfd = bun.uvfdcast(fd);
                     const fd_type = uv.uv_guess_handle(uvfd);
@@ -1152,7 +1193,7 @@ pub const Listener = struct {
                     tls.poll_ref.ref(handlers.vm);
                     tls.ref();
                     if (connection == .unix) {
-                        const named_pipe = WindowsNamedPipeContext.connect(globalObject, connection.unix, ssl, .{ .tls = tls }) catch {
+                        const named_pipe = WindowsNamedPipeContext.connect(globalObject, pipe_name.?, ssl, .{ .tls = tls }) catch {
                             return promise_value;
                         };
                         tls.socket = TLSSocket.Socket.fromNamedPipe(named_pipe);
@@ -1178,7 +1219,7 @@ pub const Listener = struct {
                     tcp.poll_ref.ref(handlers.vm);
 
                     if (connection == .unix) {
-                        const named_pipe = WindowsNamedPipeContext.connect(globalObject, connection.unix, null, .{ .tcp = tcp }) catch {
+                        const named_pipe = WindowsNamedPipeContext.connect(globalObject, pipe_name.?, null, .{ .tcp = tcp }) catch {
                             return promise_value;
                         };
                         tcp.socket = TCPSocket.Socket.fromNamedPipe(named_pipe);

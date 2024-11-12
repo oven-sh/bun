@@ -964,6 +964,37 @@ pub fn loadNpmrc(
         }
     }
 
+    if (out.asProperty("omit")) |omit| {
+        switch (omit.expr.data) {
+            .e_string => |str| {
+                if (str.eqlComptime("dev")) {
+                    install.save_dev = false;
+                } else if (str.eqlComptime("peer")) {
+                    install.save_peer = false;
+                } else if (str.eqlComptime("optional")) {
+                    install.save_optional = false;
+                }
+            },
+            .e_array => |arr| {
+                for (arr.items.slice()) |item| {
+                    switch (item.data) {
+                        .e_string => |str| {
+                            if (str.eqlComptime("dev")) {
+                                install.save_dev = false;
+                            } else if (str.eqlComptime("peer")) {
+                                install.save_peer = false;
+                            } else if (str.eqlComptime("optional")) {
+                                install.save_optional = false;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+
     var registry_map = install.scoped orelse bun.Schema.Api.NpmRegistryMap{};
 
     // Process scopes

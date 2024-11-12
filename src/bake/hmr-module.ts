@@ -71,7 +71,7 @@ export class HotModule<E = any> {
 
 if (side === "server") {
   HotModule.prototype.importBuiltin = function (id: string) {
-    return import.meta.require(id);
+    return requireFunctionProvidedByBakeCodegen(id);
   };
 }
 
@@ -84,6 +84,7 @@ function initImportMeta(m: HotModule): ImportMeta {
  * present, or is something a user is able to dynamically specify.
  */
 export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T> {
+  console.log("loadModule", key, type === LoadModuleType.AssertPresent ? "AssertPresent" : "UserDynamic");
   let module = registry.get(key);
   if (module) {
     // Preserve failures until they are re-saved.
@@ -106,8 +107,11 @@ export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T>
   }
   try {
     registry.set(key, module);
+    console.log('about to load ');
     load(module);
   } catch (err) {
+    console.log('caught failure');
+    console.error(err);
     module._cached_failure = err;
     module._state = State.Error;
     throw err;

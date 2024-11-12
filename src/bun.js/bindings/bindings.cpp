@@ -2295,19 +2295,17 @@ extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object
     JSC::JSGlobalObject* globalObject = toJS(ctx);
     JSC::VM& vm = globalObject->vm();
 
-    // This is a redundant check, but we add it to make the error message clearer.
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
 
-    if (UNLIKELY(!object))
-        return JSC::JSValue::encode(JSC::JSValue());
-
     JSC::JSValue jsObject = JSValue::decode(object);
+    ASSERT(jsObject);
+
     JSC::JSValue jsThisObject = JSValue::decode(thisObject);
 
     JSValue restoreAsyncContext;
     InternalFieldTuple* asyncContextData = nullptr;
     if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(jsObject)) {
-        jsObject = jsCast<JSC::JSObject*>(wrapper->callback.get());
+        jsObject = jsCast<JSC::JSFunction*>(wrapper->callback.get());
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());
@@ -2317,10 +2315,13 @@ extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object
         jsThisObject = globalObject->globalThis();
 
     JSC::MarkedArgumentBuffer argList;
+    argList.ensureCapacity(argumentCount);
     for (size_t i = 0; i < argumentCount; i++)
         argList.append(toJS(globalObject, arguments[i]));
 
     auto callData = getCallData(jsObject);
+    ASSERT(jsObject.isCallable());
+    ASSERT(callData.type != JSC::CallData::Type::None);
     if (callData.type == JSC::CallData::Type::None)
         return JSC::JSValue::encode(JSC::JSValue());
 

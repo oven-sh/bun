@@ -65,6 +65,8 @@ async function run() {
         file !== "error" && "input_graph",
         file !== "error" && "config",
         file === "server" && "server_exports",
+        file === "server" && "requireFunctionProvidedByBakeCodegen",
+        file === "server" && "$separateSSRGraph",
       ].filter(Boolean);
       const combined_source =
         file === "error"
@@ -90,8 +92,10 @@ async function run() {
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");
       code = (await result.outputs[0].text()).replace(`// ${basename(generated_entrypoint)}`, "").trim();
+      if(side==='server')
+      writeFileSync( `um.js`, code);
 
-      rmSync(generated_entrypoint);
+      // rmSync(generated_entrypoint);
 
       if (file !== "error") {
         let names: string = "";
@@ -102,6 +106,12 @@ async function run() {
           })
           .trim();
         assert(names, "missing name");
+        const split_names = names.split(",").map(x => x.trim());
+        const out_names = Object.fromEntries(in_names.map((x, i) => [x, split_names[i]]));
+        function outName(name) {
+          if (!out_names[name]) throw new Error(`missing out name for ${name}`);
+          return out_names[name];
+        }
 
         if (debug) {
           code = "\n  " + code.replace(/\n/g, "\n  ") + "\n";
@@ -110,14 +120,16 @@ async function run() {
         if (code[code.length - 1] === ";") code = code.slice(0, -1);
 
         if (side === "server") {
-          const server_fetch_function = names.split(",")[2].trim();
-          code = debug ? `${code}  return ${server_fetch_function};\n` : `${code};return ${server_fetch_function};`;
-        }
+          code = debug 
+            ? `${code}  return ${outName('server_exports')};\n`
+            : `${code};return ${outName('server_exports')};`;
 
-        code = debug ? `((${names}) => {${code}})({\n` : `((${names})=>{${code}})({`;
+          const params = `${outName('$separateSSRGraph')},${outName('requireFunctionProvidedByBakeCodegen')}`;
+          code = `let ${outName('input_graph')}={},${outName('config')}={separateSSRGraph:${outName('$separateSSRGraph')}},${outName('server_exports')};${code}`;
 
-        if (side === "server") {
-          code = `export default await ${code}`;
+          code = debug ? `((${params}) => {${code}})\n` : `((${params})=>{${code}})\n`;
+        } else {
+          code = debug ? `((${names}) => {${code}})({\n` : `((${names})=>{${code}})({`;
         }
       }
 

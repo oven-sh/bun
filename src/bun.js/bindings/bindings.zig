@@ -4276,7 +4276,7 @@ pub const JSValue = enum(i64) {
         thisObject: JSValue,
         argumentCount: usize,
         arguments: [*]const JSValue,
-    ) JSValue;
+    ) JSValue.MaybeException;
 
     pub fn call(function: JSValue, global: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
@@ -4287,17 +4287,16 @@ pub const JSValue = enum(i64) {
                 loop.debug.last_fn_name.deref();
                 loop.debug.last_fn_name = function.getName(global);
             }
+            bun.assert(function.isCallable(global.vm()));
         }
 
-        const value = Bun__JSValue__call(
+        return Bun__JSValue__call(
             global,
             function,
             thisValue,
             args.len,
             args.ptr,
-        );
-        if (value == .zero) return error.JSError;
-        return value;
+        ).unwrap();
     }
 
     /// The value cannot be empty. Check `!this.isEmpty()` before calling this function

@@ -563,14 +563,16 @@ export fn Bun__getTemporaryDevServer(global: *JSC.JSGlobalObject) JSValue {
     return JSC.JSFunction.create(global, "wipDevServer", bun.JSC.toJSHostFunction(jsWipDevServer), 0, .{});
 }
 
-pub fn getHmrRuntime(side: Side) []const u8 {
+pub inline fn getHmrRuntime(side: Side) [:0]const u8 {
     return if (Environment.codegen_embed)
         switch (side) {
             .client => @embedFile("bake-codegen/bake.client.js"),
             .server => @embedFile("bake-codegen/bake.server.js"),
         }
     else switch (side) {
-        inline else => |m| bun.runtimeEmbedFile(.codegen_eager, "bake." ++ @tagName(m) ++ ".js"),
+        .client => bun.runtimeEmbedFile(.codegen_eager, "bake.client.js"),
+        // may not be live-reloaded
+        .server => bun.runtimeEmbedFile(.codegen, "bake.server.js"),
     };
 }
 

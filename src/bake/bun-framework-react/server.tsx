@@ -1,7 +1,4 @@
 import type { Bake } from "bun";
-// Bun uses `node.unbundled` from react to
-// - The `node` variant avoids ReadableStream, a slower streaming API
-// - The `unbundled` variant uses `import` instead of `__webpack_require__`
 import { renderToPipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
 import { renderToHtml, renderToStaticHtml } from "bun-framework-react/ssr.tsx" with { bunBakeGraph: "ssr" };
 import { serverManifest } from "bun:bake/server";
@@ -14,15 +11,16 @@ function assertReactComponent(Component: any) {
   }
 }
 
+// This function converts the route information into a React component tree.
 function getPage(meta: Bake.RouteMetadata) {
   const { styles } = meta;
 
   const Page = meta.pageModule.default;
-  assertReactComponent(Page);
+  if (import.meta.env.DEV) assertReactComponent(Page);
   let route = <Page />;
   for (const layout of meta.layouts) {
     const Layout = layout.default;
-    assertReactComponent(Layout);
+    if (import.meta.env.DEV) assertReactComponent(Layout);
     route = <Layout>{route}</Layout>;
   }
 

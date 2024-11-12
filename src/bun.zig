@@ -37,18 +37,8 @@ else
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
-const cmath = struct {
-    extern "c" fn powf(x: f32, y: f32) f32;
-    extern "c" fn pow(x: f64, y: f64) f64;
-};
-
-pub inline fn powf(x: f32, y: f32) f32 {
-    return cmath.powf(x, y);
-}
-
-pub inline fn pow(x: f64, y: f64) f64 {
-    return cmath.pow(x, y);
-}
+pub extern "c" fn powf(x: f32, y: f32) f32;
+pub extern "c" fn pow(x: f64, y: f64) f64;
 
 /// Restrict a value to a certain interval unless it is a float and NaN.
 pub inline fn clamp(self: anytype, min: @TypeOf(self), max: @TypeOf(self)) @TypeOf(self) {
@@ -3348,7 +3338,7 @@ const RuntimeEmbedRoot = enum {
 pub fn runtimeEmbedFile(
     comptime root: RuntimeEmbedRoot,
     comptime sub_path: []const u8,
-) []const u8 {
+) [:0]const u8 {
     comptime assert(Environment.isDebug);
     comptime assert(!Environment.codegen_embed);
 
@@ -3358,11 +3348,18 @@ pub fn runtimeEmbedFile(
     };
 
     const static = struct {
-        var storage: []const u8 = undefined;
+        var storage: [:0]const u8 = undefined;
         var once = std.once(load);
 
         fn load() void {
-            storage = std.fs.cwd().readFileAlloc(default_allocator, abs_path, std.math.maxInt(usize)) catch |e| {
+            storage = std.fs.cwd().readFileAllocOptions(
+                default_allocator,
+                abs_path,
+                std.math.maxInt(usize),
+                null,
+                @alignOf(u8),
+                '\x00',
+            ) catch |e| {
                 Output.panic(
                     \\Failed to load '{s}': {}
                     \\

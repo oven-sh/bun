@@ -388,6 +388,11 @@ declare module "bun" {
        *     }
        */
       getParams?: (paramsMetadata: ParamsMetadata) => Awaitable<ParamsResult>;
+      /**
+       * When a dynamic build uses static assets, Bun can map content types in the
+       * user's `Accept` header to the different static files.
+       */
+      contentTypeToStaticFile?: Record<string, string>;
     }
 
     type GetParamIterator = 

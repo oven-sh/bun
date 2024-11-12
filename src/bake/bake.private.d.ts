@@ -31,27 +31,15 @@ declare const config: Config;
 
 /**
  * The runtime is bundled for server and client, which influences
- * how hmr connection should be established, as well if there is
+ * how HMR connection should be established, as well if there is
  * a window to visually display errors with.
  */
 declare const side: "client" | "server";
 
 /*
- * This variable becomes the default export. Kit uses this
- * interface as opposed to a WebSocket connection.
- */
-declare var server_exports: {
-  handleRequest: (req: Request, routeModuleId: Id, clientEntryUrl: string, styles: string[]) => any;
-  registerUpdate: (
-    modules: any,
-    componentManifestAdd: null | string[],
-    componentManifestDelete: null | string[],
-  ) => void;
-};
-
-/*
  * If you are running a debug build of Bun. These debug builds should provide
- * helpful information to someone working on the bundler itself.
+ * helpful information to someone working on the bundler itself. Assertions
+ * aimed for the end user should always be enabled.
  */
 declare const IS_BUN_DEVELOPMENT: any;
 

@@ -323,6 +323,8 @@ pub fn init(options: Options) !*DevServer {
         assert(try dev.client_graph.insertStale(rfr.import_source, false) == IncrementalGraph(.client).react_refresh_index);
     }
 
+    try dev.initServerRuntime();
+
     // Initialize the router
     dev.router = router: {
         var types = try std.ArrayListUnmanaged(FrameworkRouter.Type).initCapacity(allocator, options.framework.file_system_router_types.len);
@@ -353,7 +355,7 @@ pub fn init(options: Options) !*DevServer {
 
     // TODO: move pre-bundling to be one tick after server startup.
     // this way the line saying the server is ready shows quicker
-    try dev.runInitialBundle();
+    try dev.scanInitialRoutes();
 
     if (bun.FeatureFlags.bake_debugging_features and options.dump_state_on_crash)
         try bun.crash_handler.appendPreCrashHandler(DevServer, dev, dumpStateDueToCrash);
@@ -361,8 +363,34 @@ pub fn init(options: Options) !*DevServer {
     return dev;
 }
 
-/// Deferred one tick so that the server can be up
-fn runInitialBundle(dev: *DevServer) !void {
+fn initServerRuntime(dev: *DevServer) !void {
+    const runtime = bun.String.static(bun.bake.getHmrRuntime(.server));
+
+    const interface = c.BakeLoadInitialServerCode(
+        @ptrCast(dev.vm.global),
+        runtime,
+        if (dev.framework.server_components) |sc| sc.separate_ssr_graph else false,
+    ) catch |err| {
+        dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
+        @panic("Server runtime failed to start. The above error is always a bug in Bun");
+    };
+
+    if (!interface.isObject())
+        @panic("Internal assertion failure: expected interface from HMR runtime to be an object");
+    const fetch_function: JSValue = interface.get(dev.vm.global, "handleRequest") orelse
+        @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
+    bun.assert(fetch_function.isCallable(dev.vm.jsc));
+    dev.server_fetch_function_callback = JSC.Strong.create(fetch_function, dev.vm.global);
+    const register_update = interface.get(dev.vm.global, "registerUpdate") orelse
+        @panic("Internal assertion failure: expected interface from HMR runtime to contain registerUpdate");
+    dev.server_register_update_callback = JSC.Strong.create(register_update, dev.vm.global);
+
+    fetch_function.ensureStillAlive();
+    register_update.ensureStillAlive();
+}
+
+/// Deferred one tick so that the server can be up faster
+fn scanInitialRoutes(dev: *DevServer) !void {
     try dev.router.scanAll(dev.allocator, &dev.server_bundler.resolver, dev);
 
     try dev.server_graph.ensureStaleBitCapacity(true);
@@ -798,73 +826,32 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
         );
         defer dev.allocator.free(server_bundle);
 
-        if (is_first_server_chunk) {
-            const server_code = c.BakeLoadInitialServerCode(@ptrCast(dev.vm.global), bun.String.createLatin1(server_bundle)) catch |err| {
-                dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
-                {
-                    // TODO: document the technical reasons this should not be allowed to fail
-                    bun.todoPanic(@src(), "First Server Load Fails. This should become a bundler bug.", .{});
-                }
-                _ = &err; // autofix
-                // fail.* = Failure.fromJSServerLoad(dev.vm.global.takeException(err), dev.vm.global);
-                return error.ServerLoadFailed;
-            };
-            dev.vm.waitForPromise(.{ .internal = server_code.promise });
-
-            switch (server_code.promise.unwrap(dev.vm.jsc, .mark_handled)) {
-                .pending => unreachable, // promise is settled
-                .rejected => |err| {
-                    dev.vm.printErrorLikeObjectToConsole(err);
-                    {
-                        bun.todoPanic(@src(), "First Server Load Fails. This should become a bundler bug.", .{});
-                    }
-                    _ = &err; // autofix
-                    // fail.* = Failure.fromJSServerLoad(err, dev.vm.global);
-                    return error.ServerLoadFailed;
-                },
-                .fulfilled => |v| bun.assert(v == .undefined),
-            }
-
-            const default_export = c.BakeGetDefaultExportFromModule(dev.vm.global, server_code.key.toJS());
-            if (!default_export.isObject())
-                @panic("Internal assertion failure: expected interface from HMR runtime to be an object");
-            const fetch_function: JSValue = default_export.get(dev.vm.global, "handleRequest") orelse
-                @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
-            bun.assert(fetch_function.isCallable(dev.vm.jsc));
-            dev.server_fetch_function_callback = JSC.Strong.create(fetch_function, dev.vm.global);
-            const register_update = default_export.get(dev.vm.global, "registerUpdate") orelse
-                @panic("Internal assertion failure: expected interface from HMR runtime to contain registerUpdate");
-            dev.server_register_update_callback = JSC.Strong.create(register_update, dev.vm.global);
-
-            fetch_function.ensureStillAlive();
-            register_update.ensureStillAlive();
-        } else {
-            const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.createLatin1(server_bundle)) catch |err| {
-                // No user code has been evaluated yet, since everything is to
-                // be wrapped in a function clousure. This means that the likely
-                // error is going to be a syntax error, or other mistake in the
-                // bundler.
-                dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
-                @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
-            };
-            const errors = dev.server_register_update_callback.get().?.call(
-                dev.vm.global,
-                dev.vm.global.toJSValue(),
-                &.{
-                    server_modules,
-                    dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_added.items),
-                    dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_removed.items),
-                },
-            ) catch |err| {
-                // One module replacement error should NOT prevent follow-up
-                // module replacements to fail. It is the HMR runtime's
-                // responsibility to collect all module load errors, and
-                // bubble them up.
-                dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
-                @panic("Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime.");
-            };
-            _ = errors; // TODO:
-        }
+        const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.createLatin1(server_bundle)) catch |err| {
+            // No user code has been evaluated yet, since everything is to
+            // be wrapped in a function clousure. This means that the likely
+            // error is going to be a syntax error, or other mistake in the
+            // bundler.
+            dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
+            @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
+        };
+        const errors = dev.server_register_update_callback.get().?.call(
+            dev.vm.global,
+            dev.vm.global.toJSValue(),
+            &.{
+                server_modules,
+                dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_added.items),
+                dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_removed.items),
+            },
+        ) catch |err| {
+            std.debug.print("fuck", .{});
+            // One module replacement error should NOT prevent follow-up
+            // module replacements to fail. It is the HMR runtime's
+            // responsibility to collect all module load errors, and
+            // bubble them up.
+            dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
+            @panic("Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime.");
+        };
+        _ = errors; // TODO:
     }
 
     const css_chunks = bundle_result.cssChunks();
@@ -3312,11 +3299,6 @@ const c = struct {
     // BakeSourceProvider.cpp
     extern fn BakeGetDefaultExportFromModule(global: *JSC.JSGlobalObject, module: JSValue) JSValue;
 
-    const LoadServerCodeResult = struct {
-        promise: *JSInternalPromise,
-        key: *JSC.JSString,
-    };
-
     fn BakeLoadServerHmrPatch(global: *JSC.JSGlobalObject, code: bun.String) !JSValue {
         const f = @extern(
             *const fn (*JSC.JSGlobalObject, bun.String) callconv(.C) JSValue.MaybeException,
@@ -3325,20 +3307,11 @@ const c = struct {
         return f(global, code).unwrap();
     }
 
-    fn BakeLoadInitialServerCode(global: *JSC.JSGlobalObject, code: bun.String) bun.JSError!LoadServerCodeResult {
-        const Return = extern struct {
-            promise: ?*JSInternalPromise,
-            key: *JSC.JSString,
-        };
-        const f = @extern(*const fn (*JSC.JSGlobalObject, bun.String) callconv(.C) Return, .{
+    fn BakeLoadInitialServerCode(global: *JSC.JSGlobalObject, code: bun.String, separate_ssr_graph: bool) bun.JSError!JSValue {
+        const f = @extern(*const fn (*JSC.JSGlobalObject, bun.String, bool) callconv(.C) JSValue.MaybeException, .{
             .name = "BakeLoadInitialServerCode",
         });
-        const result = f(global, code);
-        return .{
-            .promise = result.promise orelse
-                return global.jsErrorFromCPP(),
-            .key = result.key,
-        };
+        return f(global, code, separate_ssr_graph).unwrap();
     }
 };
 

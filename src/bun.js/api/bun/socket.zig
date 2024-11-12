@@ -459,22 +459,14 @@ fn isValidPipeName(pipe_name: []const u8) bool {
     }
     // check for valid pipe names
     // at minimum we need to have \\.\pipe\ or \\?\pipe\ + 1 char that is not a separator
-    if (pipe_name.len > 9) {
-        if (NodePath.isSepWindowsT(u8, pipe_name[0])) {
-            if (NodePath.isSepWindowsT(u8, pipe_name[1])) {
-                if (pipe_name[2] == '.' or pipe_name[2] == '?') {
-                    if (NodePath.isSepWindowsT(u8, pipe_name[3])) {
-                        if (strings.eql(pipe_name[4..8], "pipe")) {
-                            if (NodePath.isSepWindowsT(u8, pipe_name[8])) {
-                                return !NodePath.isSepWindowsT(u8, pipe_name[9]);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    return false;
+    return pipe_name.len > 9 and
+        NodePath.isSepWindowsT(u8, pipe_name[0]) and
+        NodePath.isSepWindowsT(u8, pipe_name[1]) and
+        (pipe_name[2] == '.' or pipe_name[2] == '?') and
+        NodePath.isSepWindowsT(u8, pipe_name[3]) and
+        strings.eql(pipe_name[4..8], "pipe") and
+        NodePath.isSepWindowsT(u8, pipe_name[8]) and
+        !NodePath.isSepWindowsT(u8, pipe_name[9]);
 }
 
 fn normalizePipeName(pipe_name: []const u8, buffer: []u8) ?[]const u8 {

@@ -81,6 +81,8 @@ typedef int mode_t;
 #include <unistd.h> // setuid, getuid
 #endif
 
+#include <cstring>
+
 namespace Bun {
 
 using namespace JSC;
@@ -278,7 +280,7 @@ static char* toFileURI(std::string_view path)
 {
     auto needs_escape = [](char ch) {
         return !(('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z') || ('0' <= ch && ch <= '9')
-            || ch == '_' || ch == '-' || ch == '.' || ch == '!' || ch == '~' || ch == '*' || ch == '\'' || ch == '(' || ch == ')' || ch == '/');
+            || ch == '_' || ch == '-' || ch == '.' || ch == '!' || ch == '~' || ch == '*' || ch == '\'' || ch == '(' || ch == ')' || ch == '/' || ch == ':');
     };
 
     auto to_hex = [](uint8_t nybble) -> char {
@@ -291,16 +293,32 @@ static char* toFileURI(std::string_view path)
 
     size_t escape_count = 0;
     for (char ch : path) {
+#if OS(WINDOWS)
+        if (needs_escape(ch) && ch != '\\') {
+#else
         if (needs_escape(ch)) {
+#endif
             ++escape_count;
         }
     }
 
-    const size_t string_size = sizeof("file://") + path.size() + 2 * escape_count; // null byte is included in the sizeof expression
+#if OS(WINDOWS)
+#define FILE_URI_START "file:///"
+#else
+#define FILE_URI_START "file://"
+#endif
+
+    const size_t string_size = sizeof(FILE_URI_START) + path.size() + 2 * escape_count; // null byte is included in the sizeof expression
     char* characters = new char[string_size];
-    strcat(characters, "file://");
-    size_t i = sizeof("file://") - 1;
+    strncpy(characters, FILE_URI_START, sizeof(FILE_URI_START));
+    size_t i = sizeof(FILE_URI_START) - 1;
     for (char ch : path) {
+#if OS(WINDOWS)
+        if (ch == '\\') {
+            characters[i++] = '/';
+            continue;
+        }
+#endif
         if (needs_escape(ch)) {
             characters[i++] = '%';
             characters[i++] = to_hex(static_cast<uint8_t>(ch) >> 4);

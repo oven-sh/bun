@@ -40,7 +40,10 @@ pub fn StringCaseConverter(comptime OutputType: type) type {
 
                     // Skip consecutive seperators
                     while (i + 1 < input.len and isSeperator(input[i + 1])) : (i += 1) {}
-                    start = i + 1;
+                    start = brk: {
+                        if (is_case_boundary) break :brk i;
+                        break :brk i + 1;
+                    };
                 }
 
                 i += 1;
@@ -110,7 +113,7 @@ pub fn StringCaseConverter(comptime OutputType: type) type {
 
                     pos += word.len;
 
-                    if (i < word.len - 1 and seperator.len > 0) {
+                    if (i < words.len - 1 and seperator.len > 0) {
                         @memcpy(result[pos..][0..seperator.len], seperator);
                         pos += seperator.len;
                     }

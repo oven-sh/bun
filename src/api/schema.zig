@@ -2816,7 +2816,7 @@ pub const Api = struct {
 
             fn expectString(this: *Parser, expr: js_ast.Expr) !void {
                 switch (expr.data) {
-                    .e_string, .e_utf8_string => {},
+                    .e_string => {},
                     else => {
                         this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected string but received {}", .{
                             @as(js_ast.Expr.Tag, expr.data),

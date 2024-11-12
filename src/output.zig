@@ -704,13 +704,25 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 /// To enable all logs, set the environment variable
 ///   BUN_DEBUG_ALL=1
 pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
+
 pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
-    const tagname = switch (@TypeOf(tag)) {
-        @Type(.EnumLiteral) => @tagName(tag),
-        else => tag,
+    const tagname = comptime brk: {
+        const input = switch (@TypeOf(tag)) {
+            @Type(.EnumLiteral) => @tagName(tag),
+            else => tag,
+        };
+        var ascii_slice: [input.len]u8 = undefined;
+        for (input, &ascii_slice) |in, *out| {
+            out.* = std.ascii.toLower(in);
+        }
+        break :brk ascii_slice;
     };
 
-    if (comptime !Environment.isDebug and !Environment.enable_logs) {
+    return ScopedLogger(&tagname, disabled);
+}
+
+fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
+    if (comptime !Environment.enable_logs) {
         return struct {
             pub inline fn isVisible() bool {
                 return false;
@@ -732,12 +744,22 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
         pub fn isVisible() bool {
             if (!evaluated_disable) {
                 evaluated_disable = true;
-                if (bun.getenvZ("BUN_DEBUG_" ++ tagname)) |val| {
+                if (bun.getenvZAnyCase("BUN_DEBUG_" ++ tagname)) |val| {
                     really_disable = strings.eqlComptime(val, "0");
-                } else if (bun.getenvZ("BUN_DEBUG_ALL")) |val| {
+                } else if (bun.getenvZAnyCase("BUN_DEBUG_ALL")) |val| {
                     really_disable = strings.eqlComptime(val, "0");
-                } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
+                } else if (bun.getenvZAnyCase("BUN_DEBUG_QUIET_LOGS")) |val| {
                     really_disable = really_disable or !strings.eqlComptime(val, "0");
+                } else {
+                    for (bun.argv) |arg| {
+                        if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-" ++ tagname, true)) {
+                            really_disable = false;
+                            break;
+                        } else if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-all", true)) {
+                            really_disable = false;
+                            break;
+                        }
+                    }
                 }
             }
             return !really_disable;
@@ -803,7 +825,10 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
 }
 
 pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
-    return Scoped(tag, disabled).log;
+    return Scoped(
+        tag,
+        disabled,
+    ).log;
 }
 
 // Valid "colors":

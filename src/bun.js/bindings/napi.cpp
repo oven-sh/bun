@@ -56,7 +56,6 @@
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/JSWeakMapInlines.h>
-#include <JavaScriptCore/JSMapInlines.h>
 #include "ScriptExecutionContext.h"
 #include "Strong.h"
 

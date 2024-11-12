@@ -267,24 +267,9 @@ pub fn loadFromCwd(
 ) LoadResult {
     if (comptime Environment.allow_assert) assert(FileSystem.instance_loaded);
 
-    test_text_lockfile: {
-        var timer = std.time.Timer.start() catch unreachable;
-        const source = File.toSource("bun.lock", allocator).unwrap() catch break :test_text_lockfile;
-        defer allocator.free(source.contents);
-        const lockfile = TextLockfile.load(allocator, &source, log) catch {
-            log.print(Output.errorWriter()) catch {};
-            Output.flush();
-            log.reset();
-            break :test_text_lockfile;
-        };
-        std.debug.print("{} - loaded text lockfile\n", .{bun.fmt.fmtDuration(timer.read())});
-        lockfile.dump();
-    }
-
-    // TODO(dylan-conway) format = .text and 'bun.lock'
-    var format: Format = .binary;
+    var format: Format = .text;
     var timer = std.time.Timer.start() catch unreachable;
-    const file = File.open("bun.lockb", bun.O.RDONLY, 0).unwrap() catch |err1| file: {
+    const file = File.open("bun.lock", bun.O.RDONLY, 0).unwrap() catch |err1| file: {
         if (err1 != error.ENOENT) {
             return .{ .err = .{
                 .step = .open_file,
@@ -337,7 +322,7 @@ pub fn loadFromCwd(
             error.OutOfMemory => bun.outOfMemory(),
         }
     };
-    std.debug.print("{} - loaded binary lockfile\n", .{bun.fmt.fmtDuration(timer.read())});
+    std.debug.print("{} - loaded {s} lockfile\n", .{ bun.fmt.fmtDuration(timer.read()), @tagName(format) });
     return loaded;
 }
 
@@ -450,8 +435,12 @@ pub const Tree = struct {
     pub const DepthBuf = [max_depth]Id;
 
     const IteratorPathStyle = enum {
+        /// `relative_path` will have the form `node_modules/jquery/node_modules/zod`.
+        /// Path separators are platform.
         node_modules,
-        path_spec,
+        /// `relative_path` will have the form `jquery/zod`. Path separators are always
+        /// posix separators.
+        pkg_path,
     };
 
     pub fn Iterator(comptime path_style: IteratorPathStyle) type {
@@ -549,7 +538,7 @@ pub const Tree = struct {
         var parent_id = tree.id;
         var path_written: usize = switch (comptime path_style) {
             .node_modules => "node_modules".len,
-            .path_spec => 0,
+            .pkg_path => 0,
         };
 
         depth_buf[0] = 0;
@@ -569,7 +558,7 @@ pub const Tree = struct {
 
             depth = depth_buf_len;
             while (depth_buf_len > 0) : (depth_buf_len -= 1) {
-                if (comptime path_style == .path_spec) {
+                if (comptime path_style == .pkg_path) {
                     if (depth_buf_len != depth) {
                         path_buf[path_written] = '/';
                         path_written += 1;

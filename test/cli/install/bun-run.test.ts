@@ -4,6 +4,7 @@ import { exists, mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, bunEnv as env, isWindows, tempDirWithFiles, tmpdirSync, stderrForInstall } from "harness";
 import { join } from "path";
 import { readdirSorted } from "./dummy.registry";
+import { chmodSync } from "fs";
 
 let run_dir: string;
 
@@ -539,5 +540,116 @@ it("should run with bun instead of npm even with leading spaces", async () => {
     expect(stderr.toString()).toBe("$    bun run other_script    \n$    echo hi    \n");
     expect(stdout.toString()).toEndWith("hi\n");
     expect(exitCode).toBe(0);
+  }
+});
+
+describe("'bun run' priority", async () => {
+  // priority:
+  // - 1: run script with matching name
+  // - 2: load module and run that module
+  // - 3: execute a node_modules/.bin/<X> command
+  // - 4: ('run' only): execute a system command, like 'ls'
+  const dir = tempDirWithFiles("test", {
+    "test": { "index.js": "console.log('test/index.js');" },
+    "build": { "script.js": "console.log('build/script.js');" },
+    "consume": { "index.js": "console.log('consume/index.js');" },
+    "index.js": "console.log('index.js')",
+    "main.js": "console.log('main.js')",
+    "typescript.ts": "console.log('typescript.ts')",
+    "sample.js": "console.log('sample.js')",
+    "noext": "console.log('noext')",
+    "folderandfile": { "index.js": "console.log('folderandfile/index.js')" },
+    "folderandfile.js": "console.log('folderandfile.js')",
+    "package.json": JSON.stringify({
+      scripts: {
+        "build": "echo scripts/build",
+        "test": "echo scripts/test",
+        "sample.js": "echo scripts/sample.js",
+      },
+      main: "main.js",
+    }),
+    "node_modules": { ".bin": { "confabulate": `#!${bunExe()}\nconsole.log("node_modules/.bin/confabulate")` } },
+  });
+  chmodSync(dir + "/node_modules/.bin/confabulate", 0o755);
+
+  const commands: { command: string[]; req_run?: boolean; stdout: string; stderr?: string; exitCode?: number }[] = [
+    { command: ["test"], stdout: "scripts/test", stderr: "$ echo scripts/test", req_run: true },
+    { command: ["build"], stdout: "scripts/build", stderr: "$ echo scripts/build", req_run: true },
+    { command: ["consume"], stdout: "consume/index.js", stderr: "" },
+
+    { command: ["test/index"], stdout: "test/index.js", stderr: "" },
+    { command: ["test/index.js"], stdout: "test/index.js", stderr: "" },
+    { command: ["build/script"], stdout: "build/script.js", stderr: "" },
+    { command: ["build/script.js"], stdout: "build/script.js", stderr: "" },
+    { command: ["consume/index"], stdout: "consume/index.js", stderr: "" },
+    { command: ["consume/index.js"], stdout: "consume/index.js", stderr: "" },
+
+    { command: ["./test"], stdout: "test/index.js", stderr: "" },
+    { command: ["./build"], stdout: "", exitCode: 1 },
+    { command: ["./consume"], stdout: "consume/index.js", stderr: "" },
+
+    { command: ["index.js"], stdout: "index.js", stderr: "" },
+    { command: ["./index.js"], stdout: "index.js", stderr: "" },
+    { command: ["index"], stdout: "index.js", stderr: "" },
+    { command: ["./index"], stdout: "index.js", stderr: "" },
+
+    { command: ["."], stdout: "main.js", stderr: "" },
+    { command: ["./"], stdout: "main.js", stderr: "" },
+
+    { command: ["typescript.ts"], stdout: "typescript.ts", stderr: "" },
+    { command: ["./typescript.ts"], stdout: "typescript.ts", stderr: "" },
+    { command: ["typescript.js"], stdout: "typescript.ts", stderr: "" },
+    { command: ["./typescript.js"], stdout: "typescript.ts", stderr: "" },
+    { command: ["typescript"], stdout: "typescript.ts", stderr: "" },
+    { command: ["./typescript"], stdout: "typescript.ts", stderr: "" },
+
+    { command: ["sample.js"], stdout: "scripts/sample.js", stderr: "$ echo scripts/sample.js" },
+    { command: ["./sample.js"], stdout: "sample.js", stderr: "" },
+    { command: ["sample"], stdout: "sample.js", stderr: "" },
+    { command: ["./sample"], stdout: "sample.js", stderr: "" },
+
+    { command: ["noext"], stdout: "noext", stderr: "" },
+    { command: ["./noext"], stdout: "noext", stderr: "" },
+
+    { command: ["folderandfile"], stdout: "folderandfile.js", stderr: "" },
+    { command: ["./folderandfile"], stdout: "folderandfile.js", stderr: "" },
+    { command: ["folderandfile.js"], stdout: "folderandfile.js", stderr: "" },
+    { command: ["./folderandfile.js"], stdout: "folderandfile.js", stderr: "" },
+    { command: ["folderandfile/index"], stdout: "folderandfile/index.js", stderr: "" },
+    { command: ["./folderandfile/index"], stdout: "folderandfile/index.js", stderr: "" },
+    { command: ["folderandfile/index.js"], stdout: "folderandfile/index.js", stderr: "" },
+    { command: ["./folderandfile/index.js"], stdout: "folderandfile/index.js", stderr: "" },
+
+    // node_modules command
+    { command: ["confabulate"], stdout: "node_modules/.bin/confabulate", stderr: "" },
+
+    // system command (mac/linux)
+    { command: ["echo", "abc"], stdout: "abc", stderr: "", req_run: true },
+    { command: ["echo", "abc"], stdout: "", exitCode: 1, req_run: false },
+  ];
+
+  for (const cmd of commands) {
+    for (const flag of [[], ["--bun"]]) {
+      for (const postflag of cmd.req_run === true ? [["run"]] : cmd.req_run === false ? [[]] : [[], ["run"]]) {
+        const full_command = [...flag, ...postflag, ...cmd.command];
+        it("bun " + full_command.join(" "), () => {
+          const { stdout, stderr, exitCode } = spawnSync({
+            cmd: [bunExe(), ...full_command],
+            cwd: dir,
+            env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+          });
+
+          expect({
+            ...(cmd.stderr != null ? { stderr: stderr.toString().trim() } : {}),
+            stdout: stdout.toString().trim(),
+            exitCode,
+          }).toStrictEqual({
+            ...(cmd.stderr != null ? { stderr: cmd.stderr } : {}),
+            stdout: cmd.stdout,
+            exitCode: cmd.exitCode ?? 0,
+          });
+        });
+      }
+    }
   }
 });

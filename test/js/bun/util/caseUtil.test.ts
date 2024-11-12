@@ -388,3 +388,68 @@ describe("snakeCase", () => {
     expect(Bun.snakeCase("Hello.World-NiceDay")).toBe("hello_world_nice_day");
   });
 });
+
+describe("trainCase", () => {
+  test("converts space separated words", () => {
+    expect(Bun.trainCase("hello world")).toBe("Hello-World");
+    expect(Bun.trainCase("hello wonderful world")).toBe("Hello-Wonderful-World");
+  });
+
+  test("converts kebab-case", () => {
+    expect(Bun.trainCase("hello-world")).toBe("Hello-World");
+    expect(Bun.trainCase("hello-wonderful-world")).toBe("Hello-Wonderful-World");
+  });
+
+  test("converts snake_case", () => {
+    expect(Bun.trainCase("hello_world")).toBe("Hello-World");
+    expect(Bun.trainCase("hello_wonderful_world")).toBe("Hello-Wonderful-World");
+  });
+
+  test("handles existing Train-Case", () => {
+    expect(Bun.trainCase("Hello-World")).toBe("Hello-World");
+    expect(Bun.trainCase("Hello-Wonderful-World")).toBe("Hello-Wonderful-World");
+  });
+
+  test("handles mixed separators", () => {
+    expect(Bun.trainCase("hello.world-nice_day")).toBe("Hello-World-Nice-Day");
+    expect(Bun.trainCase("hello_world-nice day")).toBe("Hello-World-Nice-Day");
+  });
+
+  test("handles consecutive separators", () => {
+    expect(Bun.trainCase("hello__world")).toBe("Hello-World");
+    expect(Bun.trainCase("hello--world")).toBe("Hello-World");
+    expect(Bun.trainCase("hello  world")).toBe("Hello-World");
+  });
+
+  test("handles edge cases", () => {
+    expect(Bun.trainCase("")).toBe("");
+    expect(Bun.trainCase(" ")).toBe("");
+    expect(Bun.trainCase("a")).toBe("A");
+    expect(Bun.trainCase("A")).toBe("A");
+  });
+
+  test("handles non-ASCII characters", () => {
+    expect(Bun.trainCase("héllo wörld")).toBe("Héllo-Wörld");
+    expect(Bun.trainCase("こんにちは-世界")).toBe("こんにちは-世界");
+  });
+
+  test("handles camelCase input", () => {
+    expect(Bun.trainCase("helloWorld")).toBe("Hello-World");
+    expect(Bun.trainCase("helloWonderfulWorld")).toBe("Hello-Wonderful-World");
+  });
+
+  test("handles PascalCase input", () => {
+    expect(Bun.trainCase("HelloWorld")).toBe("Hello-World");
+    expect(Bun.trainCase("HelloWonderfulWorld")).toBe("Hello-Wonderful-World");
+  });
+
+  test("handles dot.case input", () => {
+    expect(Bun.trainCase("hello.world")).toBe("Hello-World");
+    expect(Bun.trainCase("hello.wonderful.world")).toBe("Hello-Wonderful-World");
+  });
+
+  test("handles mixed case input", () => {
+    expect(Bun.trainCase("helloWorld.nice-day")).toBe("Hello-World-Nice-Day");
+    expect(Bun.trainCase("Hello.World-NiceDay")).toBe("Hello-World-Nice-Day");
+  });
+});

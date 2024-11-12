@@ -167,6 +167,23 @@ declare module "bun" {
   function snakeCase(str: string): string;
 
   /**
+   * Convert a string to Train-Case.
+   *
+   * @param str The string to convert to Train-Case
+   * @returns The Train-Cased string
+   *
+   * @example
+   * ```ts
+   * import { trainCase } from "bun";
+   *
+   * trainCase("foo-bar"); // "Foo-Bar"
+   * trainCase("foo_bar"); // "Foo-Bar"
+   * trainCase("fooBar"); // "Foo-Bar"
+   * ```
+   */
+  function trainCase(str: string): string;
+
+  /**
    * Get the column count of a string as it would be displayed in a terminal.
    * Supports ANSI escape codes, emoji, and wide characters.
    *

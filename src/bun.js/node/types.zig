@@ -1366,7 +1366,6 @@ pub const PathOrFileDescriptor = union(Tag) {
             .path = try PathLike.fromJSWithAllocator(ctx, arguments, allocator) orelse return null,
         };
     }
-
 };
 
 pub const FileSystemFlags = enum(Mode) {

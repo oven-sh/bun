@@ -2006,7 +2006,6 @@ pub const Fetch = struct {
         var is_error = false;
         var allocator = memory_reporter.wrap(bun.default_allocator);
         defer {
-
             memory_reporter.report(globalThis.vm());
 
             if (is_error) bun.default_allocator.destroy(memory_reporter);

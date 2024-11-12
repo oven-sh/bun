@@ -64,7 +64,7 @@ typedef enum {
 } napi_status;
 void* NapiHandleScope__open(void* jsGlobalObject, bool detached);
 void NapiHandleScope__close(void* jsGlobalObject, void* handleScope);
-extern void *napiEnv;
+extern void *Bun__thisFFIModuleNapiEnv;
 #endif
 
 

@@ -436,7 +436,7 @@ pub const FFI = struct {
 
             for (this.symbols.map.values()) |symbol| {
                 if (symbol.needsNapiEnv()) {
-                    _ = TCC.tcc_add_symbol(state, "napiEnv", globalThis.makeNapiEnvForFFI());
+                    _ = TCC.tcc_add_symbol(state, "Bun__thisFFIModuleNapiEnv", globalThis.makeNapiEnvForFFI());
                     break;
                 }
             }
@@ -1581,7 +1581,7 @@ pub const FFI = struct {
             _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
 
             if (napiEnv) |env| {
-                _ = TCC.tcc_add_symbol(state, "napiEnv", env);
+                _ = TCC.tcc_add_symbol(state, "Bun__thisFFIModuleNapiEnv", env);
             }
 
             CompilerRT.define(state);
@@ -1692,7 +1692,7 @@ pub const FFI = struct {
             _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
 
             if (this.needsNapiEnv()) {
-                _ = TCC.tcc_add_symbol(state, "napiEnv", js_context.makeNapiEnvForFFI());
+                _ = TCC.tcc_add_symbol(state, "Bun__thisFFIModuleNapiEnv", js_context.makeNapiEnvForFFI());
             }
 
             CompilerRT.define(state);
@@ -1822,7 +1822,7 @@ pub const FFI = struct {
 
             if (this.needsHandleScope()) {
                 try writer.writeAll(
-                    \\  void* handleScope = NapiHandleScope__open(&napiEnv, false);
+                    \\  void* handleScope = NapiHandleScope__open(&Bun__thisFFIModuleNapiEnv, false);
                     \\
                 );
             }
@@ -1835,7 +1835,7 @@ pub const FFI = struct {
                 for (this.arg_types.items, 0..) |arg, i| {
                     if (arg == .napi_env) {
                         try writer.print(
-                            \\  napi_env arg{d} = (napi_env)&napiEnv;
+                            \\  napi_env arg{d} = (napi_env)&Bun__thisFFIModuleNapiEnv;
                             \\  argsPtr++;
                             \\
                         ,
@@ -1935,7 +1935,7 @@ pub const FFI = struct {
 
             if (this.needsHandleScope()) {
                 try writer.writeAll(
-                    \\  NapiHandleScope__close(&napiEnv, handleScope);
+                    \\  NapiHandleScope__close(&Bun__thisFFIModuleNapiEnv, handleScope);
                     \\
                 );
             }
@@ -2261,7 +2261,7 @@ pub const FFI = struct {
                         try writer.writeAll("JSVALUE_TO_FLOAT(");
                     },
                     .napi_env => {
-                        try writer.writeAll("((napi_env)&napiEnv)");
+                        try writer.writeAll("((napi_env)&Bun__thisFFIModuleNapiEnv)");
                         return;
                     },
                     .napi_value => {
@@ -2322,7 +2322,7 @@ pub const FFI = struct {
                         try writer.print("FLOAT_TO_JSVALUE({s})", .{self.symbol});
                     },
                     .napi_env => {
-                        try writer.writeAll("((napi_env)&napiEnv)");
+                        try writer.writeAll("((napi_env)&Bun__thisFFIModuleNapiEnv)");
                     },
                     .napi_value => {
                         try writer.print("((EncodedJSValue) {{.asNapiValue = {s} }} )", .{self.symbol});

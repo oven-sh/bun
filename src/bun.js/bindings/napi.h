@@ -98,7 +98,7 @@ public:
     };
 
     void* instanceData = nullptr;
-    WTF::RefPtr<Bun::NapiFinalizer> instanceDataFinalizer;
+    Bun::NapiFinalizer instanceDataFinalizer;
     char* filename = nullptr;
 
 private:
@@ -291,7 +291,7 @@ public:
     void unref();
     void clear();
 
-    NapiRef(napi_env env, uint32_t count, WTF::RefPtr<Bun::NapiFinalizer> finalizer)
+    NapiRef(napi_env env, uint32_t count, Bun::NapiFinalizer finalizer)
         : env(env)
         , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
         , finalizer(WTFMove(finalizer))
@@ -337,15 +337,9 @@ public:
         }
     }
 
-    void handleFinalizer()
+    void callFinalizer()
     {
-        if (finalizer) {
-            if (defer) {
-                napi_internal_enqueue_finalizer(env, finalizer->callback(), data, finalizer->hint());
-            } else {
-                finalizer->call(env, data, true);
-            }
-        }
+        finalizer.call(env, data, !defer);
     }
 
     ~NapiRef()
@@ -360,7 +354,7 @@ public:
     JSC::Weak<JSC::JSGlobalObject> globalObject;
     NapiWeakValue weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;
-    WTF::RefPtr<Bun::NapiFinalizer> finalizer;
+    Bun::NapiFinalizer finalizer;
     void* data = nullptr;
     uint32_t refCount = 0;
     bool isOwnedByRuntime = false;

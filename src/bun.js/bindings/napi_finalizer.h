@@ -7,12 +7,15 @@ extern "C" void napi_internal_enqueue_finalizer(napi_env env, napi_finalize fina
 
 namespace Bun {
 
-class NapiFinalizer : public WTF::RefCounted<NapiFinalizer> {
+class NapiFinalizer {
 public:
-    static WTF::Ref<NapiFinalizer> create(napi_finalize callback, void* hint)
+    NapiFinalizer(napi_finalize callback, void* hint)
+        : m_callback(callback)
+        , m_hint(hint)
     {
-        return adoptRef(*new NapiFinalizer(callback, hint));
     }
+
+    NapiFinalizer() = default;
 
     void call(napi_env env, void* data, bool immediate = false);
     void clear();
@@ -21,20 +24,8 @@ public:
     inline void* hint() const { return m_hint; }
 
 private:
-    NapiFinalizer(napi_finalize callback, void* hint)
-        : m_callback(callback)
-        , m_hint(hint)
-    {
-    }
-
-    NapiFinalizer()
-        : m_callback(nullptr)
-        , m_hint(nullptr)
-    {
-    }
-
-    napi_finalize m_callback;
-    void* m_hint;
+    napi_finalize m_callback = nullptr;
+    void* m_hint = nullptr;
 };
 
 } // namespace Bun

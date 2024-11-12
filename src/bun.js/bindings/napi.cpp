@@ -239,13 +239,13 @@ JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSOb
 void NapiRefWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
     auto* weakValue = reinterpret_cast<NapiRef*>(context);
-    weakValue->handleFinalizer();
+    weakValue->callFinalizer();
 }
 
 void NapiRefSelfDeletingWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
     auto* weakValue = reinterpret_cast<NapiRef*>(context);
-    weakValue->handleFinalizer();
+    weakValue->callFinalizer();
     delete weakValue;
 }
 
@@ -279,9 +279,7 @@ void NapiRef::unref()
 
 void NapiRef::clear()
 {
-    if (finalizer) {
-        finalizer->call(env, data);
-    }
+    finalizer.call(env, data);
     globalObject.clear();
     weakValueRef.clear();
     strongRef.clear();
@@ -1012,7 +1010,7 @@ extern "C" napi_status napi_wrap(napi_env env,
     }
 
     // create a new weak reference (refcount 0)
-    auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer::create(finalize_cb, finalize_hint));
+    auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
     ref->data = native_object;
     if (result) {
         ref->weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), ref);
@@ -1050,8 +1048,8 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
 
     if (ref->isOwnedByRuntime) {
         delete ref;
-    } else if (ref->finalizer) {
-        ref->finalizer->clear();
+    } else {
+        ref->finalizer.clear();
     }
 
     external->m_value = nullptr;
@@ -1246,7 +1244,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
         can_be_weak = false;
     }
 
-    auto* ref = new NapiRef(env, initial_refcount, nullptr);
+    auto* ref = new NapiRef(env, initial_refcount, Bun::NapiFinalizer {});
     ref->setValueInitial(val, can_be_weak);
 
     *result = toNapi(ref);
@@ -1272,7 +1270,7 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
 
     if (result) {
         // If they're expecting a Ref, use the ref.
-        auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer::create(finalize_cb, finalize_hint));
+        auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
         // TODO(@heimskr): consider detecting whether the value can't be weak, as we do in napi_create_reference.
         ref->setValueInitial(object, true);
         ref->data = native_object;
@@ -2603,7 +2601,7 @@ extern "C" napi_status napi_set_instance_data(napi_env env,
     NAPI_PREAMBLE(env);
 
     env->instanceData = data;
-    env->instanceDataFinalizer = Bun::NapiFinalizer::create(finalize_cb, finalize_hint);
+    env->instanceDataFinalizer = Bun::NapiFinalizer { finalize_cb, finalize_hint };
 
     NAPI_RETURN_SUCCESS(env);
 }

@@ -81,7 +81,7 @@ public:
         Base::finishCreation(vm);
         m_value = value;
         m_env = env;
-        m_finalizer = NapiFinalizer::create(callback, finalizer_hint);
+        m_finalizer = NapiFinalizer { callback, finalizer_hint };
     }
 
     static void destroy(JSC::JSCell* cell);
@@ -89,7 +89,7 @@ public:
     void* value() const { return m_value; }
 
     void* m_value;
-    WTF::RefPtr<NapiFinalizer> m_finalizer;
+    NapiFinalizer m_finalizer;
     napi_env m_env;
 
 #if BUN_DEBUG

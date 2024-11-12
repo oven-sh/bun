@@ -1080,7 +1080,7 @@ pub const napi_async_work = struct {
     env: *NapiEnv,
     execute: napi_async_execute_callback = null,
     complete: napi_async_complete_callback = null,
-    ctx: ?*anyopaque = null,
+    data: ?*anyopaque = null,
     status: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     can_deinit: bool = false,
     wait_for_deinit: bool = false,
@@ -1093,7 +1093,7 @@ pub const napi_async_work = struct {
         cancelled = 3,
     };
 
-    pub fn create(env: *NapiEnv, execute: napi_async_execute_callback, complete: napi_async_complete_callback, ctx: ?*anyopaque) !*napi_async_work {
+    pub fn create(env: *NapiEnv, execute: napi_async_execute_callback, complete: napi_async_complete_callback, data: ?*anyopaque) !*napi_async_work {
         const work = try bun.default_allocator.create(napi_async_work);
         const global = env.toJS();
         work.* = .{
@@ -1102,7 +1102,7 @@ pub const napi_async_work = struct {
             .execute = execute,
             .event_loop = global.bunVM().eventLoop(),
             .complete = complete,
-            .ctx = ctx,
+            .data = data,
         };
         return work;
     }
@@ -1122,7 +1122,7 @@ pub const napi_async_work = struct {
             }
             return;
         }
-        this.execute.?(this.env, this.ctx);
+        this.execute.?(this.env, this.data);
         this.status.store(@intFromEnum(Status.completed), .seq_cst);
 
         this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
@@ -1159,7 +1159,7 @@ pub const napi_async_work = struct {
                 NapiStatus.cancelled
             else
                 NapiStatus.ok),
-            this.ctx.?,
+            this.data,
         );
         if (this.global.hasException()) {
             return error.JSError;

@@ -740,6 +740,10 @@ pub fn routePtr(fr: *FrameworkRouter, i: Route.Index) *Route {
     return &fr.routes.items[i.get()];
 }
 
+pub fn typePtr(fr: *FrameworkRouter, i: Type.Index) *const Type {
+    return &fr.types[i.get()];
+}
+
 fn newRoute(fr: *FrameworkRouter, alloc: Allocator, route_data: Route) !Route.Index {
     const i = fr.routes.items.len;
     try fr.routes.append(alloc, route_data);

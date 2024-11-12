@@ -1710,7 +1710,7 @@ pub noinline fn maybeHandlePanicDuringProcessReload() void {
     }
 
     // This shouldn't be reachable, but it can technically be because
-    // pthread_exit is a request and not guranteed.
+    // pthread_exit is a request and not guaranteed.
     if (isProcessReloadInProgressOnAnotherThread()) {
         while (true) {
             std.atomic.spinLoopHint();

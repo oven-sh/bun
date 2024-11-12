@@ -5347,7 +5347,7 @@ pub const JSValue = enum(i64) {
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
         if (bun.Environment.allow_assert)
             bun.assert(this.isObject());
-        const result = fastGet_(this, global, @intFromEnum(builtin_name));
+        const result = JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name)).legacyUnwrap();
         if (result == .zero or
             // JS APIs treat {}.a as mostly the same as though it was not defined
             result == .undefined)
@@ -5367,10 +5367,7 @@ pub const JSValue = enum(i64) {
         return result;
     }
 
-    pub fn fastGet_(this: JSValue, global: *JSGlobalObject, builtin_name: u8) JSValue {
-        return cppFn("fastGet_", .{ this, global, builtin_name });
-    }
-
+    extern fn JSC__JSValue__fastGet(value: JSValue, global: *JSGlobalObject, builtin_id: u8) GetResult;
     extern fn JSC__JSValue__fastGetOwn(value: JSValue, globalObject: *JSGlobalObject, property: BuiltinName) JSValue;
     pub fn fastGetOwn(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
         const result = JSC__JSValue__fastGetOwn(this, global, builtin_name);

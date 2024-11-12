@@ -197,6 +197,7 @@ declare module "bun" {
       //  * not referenced by the function body will be removed entirely.
       //  */
       // allowAnonymousClientComponents: boolean;
+      
     }
 
     /** Customize the React Fast Refresh transform. */

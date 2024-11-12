@@ -1455,6 +1455,7 @@ pub const ServerConfig = struct {
             if (global.hasException()) return;
 
             if (arg.getTruthyComptime(global, "error")) |onError| {
+                std.debug.print("{x}", .{onError});
                 if (!onError.isCallable(global.vm())) {
                     JSC.throwInvalidArguments("Expected error to be a function", .{}, global, exception);
                     return;
@@ -1473,10 +1474,12 @@ pub const ServerConfig = struct {
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
                 JSC.C.JSValueProtect(global, onRequest.asObjectRef());
                 args.onRequest = onRequest;
-            } else {
+            } else if (args.bake == null) {
                 if (global.hasException()) return;
                 JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global, exception);
                 return;
+            } else {
+                if (global.hasException()) return;
             }
 
             if (arg.getTruthy(global, "tls")) |tls| {
@@ -6972,6 +6975,60 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.toAsync(req, prepared.request_object);
         }
 
+        pub fn onRequestFromSaved(
+            this: *ThisServer,
+            req: SavedRequest.Union,
+            resp: *App.Response,
+            callback: JSValue,
+            comptime arg_count: comptime_int,
+            extra_args: [arg_count]JSValue,
+        ) void {
+            const prepared: PreparedRequest = switch (req) {
+                .stack => |r| this.prepareJsRequestContext(r, resp) orelse return,
+                .saved => |data| .{
+                    .js_request = data.js_request.get() orelse @panic("Request was unexpectedly freed"),
+                    .request_object = data.request,
+                    .ctx = data.ctx.tagged_pointer.as(RequestContext),
+                },
+            };
+            const ctx = prepared.ctx;
+
+            bun.assert(callback != .zero);
+            const args = .{prepared.js_request} ++ extra_args;
+            const response_value = callback.call(this.globalThis, this.thisObject, &args) catch |err|
+                this.globalThis.takeException(err);
+
+            defer if (req == .stack) {
+                // uWS request will not live longer than this function
+                prepared.request_object.request_context.detachRequest();
+            };
+            const original_state = ctx.defer_deinit_until_callback_completes;
+            var should_deinit_context = false;
+            ctx.defer_deinit_until_callback_completes = &should_deinit_context;
+            ctx.onResponse(this, prepared.js_request, response_value);
+            ctx.defer_deinit_until_callback_completes = original_state;
+
+            // Reference in the stack here in case it is not for whatever reason
+            prepared.js_request.ensureStillAlive();
+
+            if (should_deinit_context) {
+                ctx.deinit();
+                return;
+            }
+
+            if (ctx.shouldRenderMissing()) {
+                ctx.renderMissing();
+                return;
+            }
+
+            // The request is asynchronous, and all information from `req` must be copied
+            // since the provided uws.Request will be re-used for future requests (stack allocated).
+            switch (req) {
+                .stack => |r| ctx.toAsync(r, prepared.request_object),
+                .saved => {}, // info already copied
+            }
+        }
+
         pub const PreparedRequest = struct {
             js_request: JSValue,
             request_object: *Request,
@@ -7352,9 +7409,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
 pub const SavedRequest = struct {
     js_request: JSC.Strong,
-    response: *Response,
-    request: uws.AnyResponse,
+    request: *Request,
     ctx: AnyRequestContext,
+
+    pub const Union = union(enum) {
+        stack: *uws.Request,
+        saved: bun.JSC.API.SavedRequest,
+    };
 };
 
 pub const ServerAllConnectionsClosedTask = struct {
@@ -7433,16 +7494,16 @@ pub const AnyServer = union(enum) {
     }
 
     // TODO: support TLS
-    pub fn onRequestExtra(
+    pub fn onRequestFromSaved(
         this: AnyServer,
-        req: *uws.Request,
+        req: SavedRequest.Union,
         resp: *uws.NewApp(false).Response,
         callback: JSC.JSValue,
         comptime extra_arg_count: usize,
         extra_args: [extra_arg_count]JSValue,
     ) void {
         return switch (this) {
-            inline else => |server| server.onRequestExtra(req, resp, callback, extra_arg_count, extra_args),
+            inline else => |server| server.onRequestFromSaved(req, resp, callback, extra_arg_count, extra_args),
             .HTTPSServer => @panic("TODO: https"),
             .DebugHTTPSServer => @panic("TODO: https"),
         };

@@ -13,9 +13,6 @@ pub const jsx_runtime_is_cjs = true;
 
 pub const tracing = true;
 
-/// Disabled due to bugs
-pub const minify_javascript_string_length = false;
-
 // TODO: remove this flag, it should use bun.Output.scoped
 pub const verbose_watcher = false;
 

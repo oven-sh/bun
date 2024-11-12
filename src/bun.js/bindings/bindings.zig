@@ -4461,6 +4461,12 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__dateInstanceFromNullTerminatedString(globalObject, str);
     }
 
+    extern fn JSC__JSValue__dateInstanceFromNumber(*JSGlobalObject, f64) JSValue;
+    pub fn fromDateNumber(globalObject: *JSGlobalObject, value: f64) JSValue {
+        JSC.markBinding(@src());
+        return JSC__JSValue__dateInstanceFromNumber(globalObject, value);
+    }
+
     extern fn JSBuffer__isBuffer(*JSGlobalObject, JSValue) bool;
     pub fn isBuffer(value: JSValue, global: *JSGlobalObject) bool {
         JSC.markBinding(@src());
@@ -5501,6 +5507,13 @@ pub const JSValue = enum(i64) {
         return if (@intFromEnum(value) != 0) value else return null;
     }
 
+    extern fn JSC__JSValue__getOwnByValue(value: JSValue, globalObject: *JSGlobalObject, propertyValue: JSValue) JSValue;
+
+    pub fn getOwnByValue(this: JSValue, global: *JSGlobalObject, property_value: JSValue) ?JSValue {
+        const value = JSC__JSValue__getOwnByValue(this, global, property_value);
+        return if (@intFromEnum(value) != 0) value else return null;
+    }
+
     pub fn getOwnTruthy(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
         if (getOwn(this, global, property_name)) |prop| {
             if (prop == .undefined) return null;
@@ -5852,6 +5865,12 @@ pub const JSValue = enum(i64) {
         return cppFn("getUnixTimestamp", .{
             this,
         });
+    }
+
+    extern fn JSC__JSValue__getUTCTimestamp(globalObject: *JSC.JSGlobalObject, this: JSValue) f64;
+    /// Calls getTime() - getUTCT
+    pub fn getUTCTimestamp(this: JSValue, globalObject: *JSC.JSGlobalObject) f64 {
+        return JSC__JSValue__getUTCTimestamp(globalObject, this);
     }
 
     pub const StringFormatter = struct {

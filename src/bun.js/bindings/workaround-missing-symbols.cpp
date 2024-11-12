@@ -53,6 +53,8 @@ extern "C" int kill(int pid, int sig)
 
 // if linux
 #if defined(__linux__)
+#include <features.h>
+#ifdef __GNU_LIBRARY__
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -298,21 +300,24 @@ extern "C" int __wrap_fstatat64(int dirfd, const char* path, struct stat64* stat
     return __fxstatat64(_STAT_VER, dirfd, path, stat, flags);
 }
 
-extern "C" int __xmknod(int ver, const char* path, __mode_t mode, __dev_t dev);
-extern "C" int __wrap_mknod(const char* path, __mode_t mode, __dev_t dev)
+extern "C" int __xmknod(int ver, const char* path, mode_t mode, dev_t dev);
+extern "C" int __wrap_mknod(const char* path, mode_t mode, dev_t dev)
 {
     return __xmknod(_MKNOD_VER, path, mode, dev);
 }
 
-extern "C" int __xmknodat(int ver, int dirfd, const char* path, __mode_t mode, __dev_t dev);
-extern "C" int __wrap_mknodat(int dirfd, const char* path, __mode_t mode, __dev_t dev)
+extern "C" int __xmknodat(int ver, int dirfd, const char* path, mode_t mode, dev_t dev);
+extern "C" int __wrap_mknodat(int dirfd, const char* path, mode_t mode, dev_t dev)
 {
     return __xmknodat(_MKNOD_VER, dirfd, path, mode, dev);
 }
 
 #endif
 
-double __wrap_exp(double x) { return exp(x); }
+double __wrap_exp(double x)
+{
+    return exp(x);
+}
 double __wrap_fmod(double x, double y) { return fmod(x, y); }
 double __wrap_log(double x) { return log(x); }
 double __wrap_log2(double x) { return log2(x); }
@@ -340,7 +345,11 @@ extern "C" int __wrap_statx(int fd, const char* path, int flags,
     return -1;
 }
 
-#endif
+#endif // glibc
+
+// musl
+
+#endif // linux
 
 // macOS
 #if defined(__APPLE__)

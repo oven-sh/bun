@@ -8,15 +8,14 @@ namespace napitests {
 static napi_ref ref_to_wrapped_object = nullptr;
 static bool wrap_finalize_called = false;
 
-// static void delete_the_ref(napi_env env, void *_data, void *_hint) {
-//   printf("delete_the_ref\n");
-//   // not using NODE_API_ASSERT as this runs in a finalizer where allocating
-//   an
-//   // error might cause a harder-to-debug crash
-//   assert(ref_to_wrapped_object);
-//   napi_delete_reference(env, ref_to_wrapped_object);
-//   ref_to_wrapped_object = nullptr;
-// }
+static void delete_the_ref(napi_env env, void *_data, void *_hint) {
+  printf("delete_the_ref\n");
+  // not using NODE_API_ASSERT as this runs in a finalizer where allocating an
+  // error might cause a harder-to-debug crash
+  assert(ref_to_wrapped_object);
+  napi_delete_reference(env, ref_to_wrapped_object);
+  ref_to_wrapped_object = nullptr;
+}
 
 static void finalize_for_create_wrap(napi_env env, void *opaque_data,
                                      void *opaque_hint) {
@@ -26,8 +25,7 @@ static void finalize_for_create_wrap(napi_env env, void *opaque_data,
   delete data;
   delete hint;
   if (ref_to_wrapped_object) {
-    // TODO(@190n) implement this api in bun
-    // node_api_post_finalizer(env, delete_the_ref, nullptr, nullptr);
+    node_api_post_finalizer(env, delete_the_ref, nullptr, nullptr);
   }
   wrap_finalize_called = true;
 }

@@ -915,7 +915,7 @@ node_api_create_external_string_utf16(napi_env env,
 
     NAPI_RETURN_SUCCESS(env);
 }
-
+extern "C" size_t Bun__napi_module_register_count;
 extern "C" void napi_module_register(napi_module* mod)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject();
@@ -923,6 +923,7 @@ extern "C" void napi_module_register(napi_module* mod)
     JSC::VM& vm = globalObject->vm();
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
     globalObject->napiModuleRegisterCallCount++;
+    Bun__napi_module_register_count++;
     JSValue pendingNapiModule = globalObject->m_pendingNapiModuleAndExports[0].get();
     JSObject* object = (pendingNapiModule && pendingNapiModule.isObject()) ? pendingNapiModule.getObject()
                                                                            : nullptr;

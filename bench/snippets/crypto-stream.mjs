@@ -1,6 +1,6 @@
 // https://github.com/oven-sh/bun/issues/2190
-import { bench, run } from "mitata";
 import { createHash } from "node:crypto";
+import { bench, run } from "../runner.mjs";
 
 const data =
   "Delightful remarkably mr on announcing themselves entreaties favourable. About to in so terms voice at. Equal an would is found seems of. The particular friendship one sufficient terminated frequently themselves. It more shed went up is roof if loud case. Delay music in lived noise an. Beyond genius really enough passed is up.";

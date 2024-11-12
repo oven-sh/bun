@@ -23,13 +23,11 @@ const Properties = @import("../base.zig").Properties;
 const castObj = @import("../base.zig").castObj;
 const getAllocator = @import("../base.zig").getAllocator;
 
-const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
 const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
-const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 
 const VirtualMachine = JSC.VirtualMachine;
@@ -1257,6 +1255,71 @@ pub const Encoder = struct {
                 var to = allocator.alloc(u8, to_len) catch return ZigString.init("Out of memory").toErrorInstance(global);
                 const wrote = bun.base64.encode(to, input);
                 return ZigString.init(to[0..wrote]).toExternalValue(global);
+            },
+        }
+    }
+
+    /// Assumes `input` is not owned memory.
+    ///
+    /// Can be run on non-JavaScript threads.
+    ///
+    /// This is like toString(), but it returns a WTFString instead of a JSString*.
+    pub fn toWTFString(input: []const u8, encoding: JSC.Node.Encoding) bun.String {
+        if (input.len == 0)
+            return bun.String.empty;
+
+        switch (encoding) {
+            .ascii => {
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len);
+                strings.copyLatin1IntoASCII(chars, input);
+                return str;
+            },
+            .latin1 => {
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len);
+                @memcpy(chars, input);
+                return str;
+            },
+            .buffer, .utf8 => {
+                const converted = strings.toUTF16Alloc(bun.default_allocator, input, false, false) catch return bun.String.dead;
+                if (converted) |utf16| {
+                    return bun.String.createExternalGloballyAllocated(.utf16, utf16);
+                }
+
+                // If we get here, it means we can safely assume the string is 100% ASCII characters
+                // For this, we rely on WebKit to manage the memory.
+                return bun.String.createLatin1(input);
+            },
+            .ucs2, .utf16le => {
+                // Avoid incomplete characters
+                if (input.len / 2 == 0) return bun.String.empty;
+
+                const output, const chars = bun.String.createUninitialized(.utf16, input.len / 2);
+                var output_bytes = std.mem.sliceAsBytes(chars);
+                output_bytes[output_bytes.len - 1] = 0;
+
+                @memcpy(output_bytes, input[0..output_bytes.len]);
+                return output;
+            },
+
+            .hex => {
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len * 2);
+
+                const wrote = strings.encodeBytesToHex(chars, input);
+                bun.assert(wrote == chars.len);
+                return str;
+            },
+
+            .base64url => {
+                const out, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
+                _ = bun.base64.encodeURLSafe(chars, input);
+                return out;
+            },
+
+            .base64 => {
+                const to_len = bun.base64.encodeLen(input);
+                const to = bun.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
+                const wrote = bun.base64.encode(to, input);
+                return bun.String.createExternalGloballyAllocated(.latin1, to[0..wrote]);
             },
         }
     }

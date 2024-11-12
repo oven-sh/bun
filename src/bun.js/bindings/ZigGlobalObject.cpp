@@ -3440,6 +3440,42 @@ JSC_DEFINE_CUSTOM_SETTER(EventSource_setter,
     return true;
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    // Mimick the behavior of class Foo {} for a regular JSFunction.
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto target = callFrame->argument(0).toObject(globalObject);
+    auto name = callFrame->argument(1);
+    JSObject* base = callFrame->argument(2).getObject();
+    JSObject* prototypeBase = nullptr;
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    if (!base) {
+        base = globalObject->functionPrototype();
+    } else if (auto proto = base->getIfPropertyExists(globalObject, vm.propertyNames->prototype)) {
+        if (auto protoObject = proto.getObject()) {
+            prototypeBase = protoObject;
+        }
+    } else {
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        JSC::throwTypeError(globalObject, scope, "Base class must have a prototype property"_s);
+        return encodedJSValue();
+    }
+
+    JSObject* prototype = prototypeBase ? JSC::constructEmptyObject(globalObject, prototypeBase) : JSC::constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    prototype->structure()->setMayBePrototype(true);
+    prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
+
+    target->setPrototypeDirect(vm, base);
+    target->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | 0);
+    target->putDirect(vm, vm.propertyNames->name, name, PropertyAttribute::DontEnum | 0);
+
+    return JSValue::encode(jsUndefined());
+}
+
 EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
 {
     JSC::VM& vm = this->vm();
@@ -3541,6 +3577,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0),
         GlobalPropertyInfo(builtinNames.TextEncoderStreamEncoderPrivateName(), JSTextEncoderStreamEncoderConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0),
         GlobalPropertyInfo(builtinNames.makeErrorWithCodePrivateName(), JSFunction::create(vm, this, 2, String(), jsFunctionMakeErrorWithCode, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.toClassPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionToClass, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
     };
     addStaticGlobals(staticGlobals, std::size(staticGlobals));
 

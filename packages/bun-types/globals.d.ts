@@ -595,8 +595,16 @@ declare global {
        * @default true
        */
       // trackUnmanagedFds?: boolean;
-
       // resourceLimits?: import("worker_threads").ResourceLimits;
+
+      /**
+       * An array of module specifiers to preload in the worker.
+       *
+       * These modules load before the worker's entry point is executed.
+       *
+       * Equivalent to passing the `--preload` CLI argument, but only for this Worker.
+       */
+      preload?: string[] | string | undefined;
     }
 
     interface Worker extends EventTarget, AbstractWorker {

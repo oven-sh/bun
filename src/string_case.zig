@@ -126,12 +126,8 @@ pub fn StringCaseConverter(comptime OutputType: type) type {
                         result[pos] = std.ascii.toUpper(word[0]);
                         @memcpy(result[pos + 1 ..][0 .. word.len - 1], word[1..]);
                     } else {
-                        if (i == 0) {
-                            result[pos] = std.ascii.toLower(word[0]);
-                            @memcpy(result[pos + 1 ..][0 .. word.len - 1], word[1..]);
-                        } else {
-                            @memcpy(result[pos..][0..word.len], word);
-                        }
+                        result[pos] = std.ascii.toLower(word[0]);
+                        @memcpy(result[pos + 1 ..][0 .. word.len - 1], word[1..]);
                     }
 
                     pos += word.len;
@@ -225,10 +221,8 @@ pub fn StringCaseConverter(comptime OutputType: type) type {
                         result[pos] = brk: {
                             if (should_capitalize)
                                 break :brk std.ascii.toUpper(c)
-                            else if (word_index == 0)
-                                break :brk std.ascii.toLower(c)
                             else
-                                break :brk c;
+                                break :brk std.ascii.toLower(c);
                         };
                         pos += 1;
                     } else {

@@ -150,6 +150,23 @@ declare module "bun" {
   function pascalCase(str: string): string;
 
   /**
+   * Convert a string to snake_case.
+   *
+   * @param str The string to convert to snake_case
+   * @returns The snake_cased string
+   *
+   * @example
+   * ```ts
+   * import { snakeCase } from "bun";
+   *
+   * snakeCase("foo-bar"); // "foo_bar"
+   * snakeCase("foo_bar"); // "foo_bar"
+   * snakeCase("fooBar"); // "foo_bar"
+   * ```
+   */
+  function snakeCase(str: string): string;
+
+  /**
    * Get the column count of a string as it would be displayed in a terminal.
    * Supports ANSI escape codes, emoji, and wide characters.
    *

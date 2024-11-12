@@ -651,6 +651,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1
     sleep                                          functionBunSleep                                                    DontDelete|Function 1
     sleepSync                                      BunObject_callback_sleepSync                                        DontDelete|Function 1
+    snakeCase                                      BunObject_callback_snakeCase                                        DontDelete|Function 1
     spawn                                          BunObject_callback_spawn                                            DontDelete|Function 1
     spawnSync                                      BunObject_callback_spawnSync                                        DontDelete|Function 1
     stderr                                         BunObject_getter_wrap_stderr                                        DontDelete|PropertyCallback

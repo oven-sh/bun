@@ -31,7 +31,7 @@ public:
 
     ~napi_env__()
     {
-        delete[] m_filename;
+        delete[] filename;
     }
 
     void cleanup()
@@ -97,9 +97,9 @@ public:
         .error_code = napi_ok,
     };
 
-    void* m_instanceData = nullptr;
-    WTF::RefPtr<Bun::NapiFinalizer> m_instanceDataFinalizer;
-    char* m_filename = nullptr;
+    void* instanceData = nullptr;
+    WTF::RefPtr<Bun::NapiFinalizer> instanceDataFinalizer;
+    char* filename = nullptr;
 
 private:
     struct BoundFinalizer {
@@ -291,19 +291,19 @@ public:
     void unref();
     void clear();
 
-    NapiRef(napi_env env, uint32_t count, WTF::RefPtr<Bun::NapiFinalizer> finalizer, bool defer)
+    NapiRef(napi_env env, uint32_t count, WTF::RefPtr<Bun::NapiFinalizer> finalizer)
         : env(env)
         , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
-        , finalizer(std::move(finalizer))
+        , finalizer(WTFMove(finalizer))
         , refCount(count)
-        , defer(defer)
+        , defer(env->mustDeferFinalizers())
     {
     }
 
     JSC::JSValue value() const
     {
-        if (isEternal) {
-            return eternalGlobalSymbolRef.get();
+        if (m_isEternal) {
+            return m_eternalGlobalSymbolRef.get();
         }
 
         if (refCount == 0) {
@@ -331,8 +331,8 @@ public:
             if (symbol->uid().isRegistered()) {
                 // Global symbols must always be retrievable,
                 // even if garbage collection happens while the ref count is 0.
-                eternalGlobalSymbolRef.set(globalObject->vm(), symbol);
-                isEternal = true;
+                m_eternalGlobalSymbolRef.set(globalObject->vm(), symbol);
+                m_isEternal = true;
             }
         }
     }
@@ -368,8 +368,8 @@ public:
     bool releaseOnWeaken = false;
 
 private:
-    JSC::Strong<JSC::Symbol> eternalGlobalSymbolRef;
-    bool isEternal = false;
+    JSC::Strong<JSC::Symbol> m_eternalGlobalSymbolRef;
+    bool m_isEternal = false;
 };
 
 static inline napi_ref toNapi(NapiRef* val)

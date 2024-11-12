@@ -772,7 +772,7 @@ public:
 private:
     JSModuleConstructor(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure, jsFunctionNodeModuleModuleCall,
-            jsFunctionNodeModuleModuleConstructor)
+              jsFunctionNodeModuleModuleConstructor)
     {
     }
 

@@ -332,7 +332,7 @@ export function parseGitUrl(url) {
 export function getRepositoryUrl(cwd) {
   if (!cwd) {
     if (isBuildkite) {
-      const repository = getEnv("BUILDKITE_PULL_REQUEST_REPO", false) || getEnv("BUILDKITE_REPO", false);
+      const repository = getEnv("BUILDKITE_REPO", false);
       if (repository) {
         return parseGitUrl(repository);
       }

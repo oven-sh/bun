@@ -1564,6 +1564,7 @@ class Http2Stream extends Duplex {
     this.#id = streamId;
     this[bunHTTP2Session] = session;
     this[bunHTTP2Headers] = headers;
+    this.cork();
   }
 
   get scheme() {
@@ -1799,67 +1800,67 @@ class Http2Stream extends Duplex {
   }
 
   _writev(data, callback) {
+    if (this.pending) {
+      this.once("ready", this._writev.bind(this, data, callback));
+      return;
+    }
     const session = this[bunHTTP2Session];
-    if (session) {
-      const native = session[bunHTTP2Native];
-      if (native) {
-        const allBuffers = data.allBuffers;
-        let chunks;
-        chunks = data;
-        if (allBuffers) {
-          for (let i = 0; i < data.length; i++) {
-            data[i] = data[i].chunk;
-          }
-        } else {
-          for (let i = 0; i < data.length; i++) {
-            const { chunk, encoding } = data[i];
-            if (typeof chunk === "string") {
-              data[i] = Buffer.from(chunk, encoding);
-            } else {
-              data[i] = chunk;
-            }
+
+    if (!session) return;
+
+    const native = session[bunHTTP2Native];
+    if (native) {
+      const allBuffers = data.allBuffers;
+      let chunks;
+      chunks = data;
+      if (allBuffers) {
+        for (let i = 0; i < data.length; i++) {
+          data[i] = data[i].chunk;
+        }
+      } else {
+        for (let i = 0; i < data.length; i++) {
+          const { chunk, encoding } = data[i];
+          if (typeof chunk === "string") {
+            data[i] = Buffer.from(chunk, encoding);
+          } else {
+            data[i] = chunk;
           }
         }
-        const chunk = Buffer.concat(chunks || []);
-        native.writeStream(
-          this.#id,
-          chunk,
-          undefined,
-          (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
-          /* function () {
-            process.nextTick(this, ...arguments);
-          }.bind(callback), */
-          callback,
-        );
-        return;
       }
+      const chunk = Buffer.concat(chunks || []);
+      native.writeStream(
+        this.#id,
+        chunk,
+        undefined,
+        (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
+        callback,
+      );
+      return;
     }
+
     if (typeof callback == "function") {
-      // process.nextTick(callback);
       callback();
     }
   }
   _write(chunk, encoding, callback) {
-    const session = this[bunHTTP2Session];
-    if (session) {
-      const native = session[bunHTTP2Native];
-      if (native) {
-        native.writeStream(
-          this.#id,
-          chunk,
-          encoding,
-          (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
-          /* function () {
-            process.nextTick(this, ...arguments);
-          }.bind(callback), */
-          callback,
-        );
-        return;
-      }
+    if (this.pending) {
+      this.once("ready", this._write.bind(this, chunk, encoding, callback));
+      return;
     }
+    const session = this[bunHTTP2Session];
 
-    typeof callback === "function" && callback();
-    // process.nextTick(callback);
+    if (!session) return;
+
+    const native = session[bunHTTP2Native];
+    if (!native) return;
+
+    native.writeStream(
+      this.#id,
+      chunk,
+      encoding,
+      (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
+      callback,
+    );
   }
 }
 class ClientHttp2Stream extends Http2Stream {
@@ -2213,6 +2214,11 @@ function toHeaderObject(headers, sensitiveHeadersValue) {
   }
   return obj;
 }
+
+function emitReadyNT(stream) {
+  stream.uncork();
+  stream.emit("ready");
+}
 class ServerHttp2Session extends Http2Session {
   [kServer]: Http2Server = null;
   /// close indicates that we called closed
@@ -2248,6 +2254,8 @@ class ServerHttp2Session extends Http2Session {
       self.#connections++;
       const stream = new ServerHttp2Stream(stream_id, self, null);
       self.#parser?.setStreamContext(stream_id, stream);
+
+      process.nextTick(emitReadyNT, stream);
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
@@ -3156,7 +3164,7 @@ class ClientHttp2Session extends Http2Session {
     } else {
       this.#parser.request(stream_id, req, headers, sensitiveNames, options);
     }
-    req.emit("ready");
+    process.nextTick(emitReadyNT, req);
     return req;
   }
   static connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {

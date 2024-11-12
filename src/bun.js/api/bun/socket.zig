@@ -452,6 +452,12 @@ pub const SocketConfig = struct {
     }
 };
 
+fn isValidPipeName(pipe_name: []const u8) bool {
+    return strings.startsWith(pipe_name, "\\\\.\\pipe\\") or
+        strings.startsWith(pipe_name, "\\\\?\\pipe\\") or
+        strings.startsWith(pipe_name, "//./pipe/") or
+        strings.startsWith(pipe_name, "//?/pipe/");
+}
 pub const Listener = struct {
     pub const log = Output.scoped(.Listener, false);
 
@@ -607,7 +613,7 @@ pub const Listener = struct {
             if (port == null) {
                 // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
                 const pipe_name = hostname_or_unix.slice();
-                if (strings.startsWith(pipe_name, "\\\\.\\pipe\\") or strings.startsWith(pipe_name, "\\\\?\\pipe\\")) {
+                if (isValidPipeName(pipe_name)) {
                     const connection: Listener.UnixOrHost = .{ .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice() };
                     if (ssl_enabled) {
                         if (ssl.?.protos) |p| {
@@ -1101,7 +1107,7 @@ pub const Listener = struct {
         if (Environment.isWindows) {
             const isNamedPipe = switch (connection) {
                 // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
-                .unix => |pipe_name| strings.startsWith(pipe_name, "\\\\.\\pipe\\") or strings.startsWith(pipe_name, "\\\\?\\pipe\\"),
+                .unix => |pipe_name| isValidPipeName(pipe_name),
                 .fd => |fd| brk: {
                     const uvfd = bun.uvfdcast(fd);
                     const fd_type = uv.uv_guess_handle(uvfd);

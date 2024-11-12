@@ -600,6 +600,9 @@ it.if(isWindows)("should work with named pipes", async () => {
   for (let i = 0; i < 200; i++) {
     batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
     batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
+    batch.push(test(`//?/pipe/test/${randomUUID()}`));
+    batch.push(test(`//./pipe/test/${randomUUID()}`));
+
     if (i % 50 === 0) {
       await Promise.all(batch);
       batch.length = 0;

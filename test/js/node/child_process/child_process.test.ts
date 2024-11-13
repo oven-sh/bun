@@ -445,7 +445,7 @@ it("it accepts stdio passthrough", async () => {
   }
 }, 10000);
 
-it("spawnSync correctly reports signal codes", () => {
+it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
   const trapCode = `
     process.kill(process.pid, "SIGTRAP");
   `;

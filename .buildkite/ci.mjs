@@ -329,15 +329,6 @@ function getPipeline(options) {
     { os: "linux", arch: "x64" },
     { os: "linux", arch: "aarch64", abi: "musl" },
     { os: "linux", arch: "x64", abi: "musl" },
-    // { os: "darwin", arch: "aarch64" },
-    // { os: "darwin", arch: "x64" },
-    // { os: "linux", arch: "aarch64" },
-    // // { os: "linux", arch: "aarch64", abi: "musl" }, // TODO:
-    // { os: "linux", arch: "x64" },
-    // { os: "linux", arch: "x64", baseline: true },
-    // // { os: "linux", arch: "x64", abi: "musl" }, // TODO:
-    // { os: "windows", arch: "x64" },
-    // { os: "windows", arch: "x64", baseline: true },
   ];
 
   const testPlatforms = [
@@ -359,23 +350,6 @@ function getPipeline(options) {
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.17" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.17" },
-    // { os: "darwin", arch: "aarch64", distro: "sonoma", release: "14" },
-    // { os: "darwin", arch: "aarch64", distro: "ventura", release: "13" },
-    // { os: "darwin", arch: "x64", distro: "sonoma", release: "14" },
-    // { os: "darwin", arch: "x64", distro: "ventura", release: "13" },
-    // { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
-    // { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
-    // { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
-    // // { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "edge" }, // TODO:
-    // { os: "linux", arch: "x64", distro: "debian", release: "12" },
-    // { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
-    // { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
-    // { os: "linux", arch: "x64", distro: "debian", release: "12", baseline: true },
-    // { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04", baseline: true },
-    // { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04", baseline: true },
-    // // { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "edge" }, // TODO:
-    // { os: "windows", arch: "x64", distro: "server", release: "2019" },
-    // { os: "windows", arch: "x64", distro: "server", release: "2019", baseline: true },
   ];
 
   return {
@@ -521,11 +495,13 @@ async function main() {
     buildId: lastBuild && skipBuild && !forceBuild ? lastBuild.id : undefined,
     buildImages,
   });
+
   const content = toYaml(pipeline);
   const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
   writeFileSync(contentPath, content);
 
   console.log("Generated pipeline:");
+  console.log(" - Content:", content);
   console.log(" - Path:", contentPath);
   console.log(" - Size:", (content.length / 1024).toFixed(), "KB");
 

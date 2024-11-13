@@ -1163,10 +1163,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 
 GlobalObject::~GlobalObject()
 {
-    for (const auto& env : m_napiEnvs) {
-        env->instanceDataFinalizer.call(env.get(), env->instanceData);
-    }
-
     if (auto* ctx = scriptExecutionContext()) {
         ctx->removeFromContextsMap();
     }

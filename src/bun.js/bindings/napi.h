@@ -43,6 +43,9 @@ public:
         }
 
         m_finalizers.clear();
+        instanceDataFinalizer.call(this, instanceData);
+        instanceDataFinalizer.clear();
+
         m_inCleanup = false;
     }
 

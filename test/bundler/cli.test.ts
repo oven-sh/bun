@@ -134,7 +134,7 @@ describe("bun build", () => {
   });
 }, 10_000);
 
-it.skipIf(!isWindows)("should be able to handle pretty path on windows #13897", async () => {
+test.skipIf(!isWindows)("should be able to handle pretty path on windows #13897", async () => {
   // this test code follows the same structure as and
   // is based on the code for testing issue 4893
 

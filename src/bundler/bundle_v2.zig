@@ -349,7 +349,23 @@ pub const BakeEntryPoint = struct {
         return .{ .path = path, .graph = .client, .css = true };
     }
 };
+fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, top_level_dir: string, allocator: std.mem.Allocator) !Fs.Path {
+    // TODO: outbase
+    var buf: bun.PathBuffer = undefined;
+    const rel = bun.path.relativePlatform(top_level_dir, path.text, .loose, false);
+    var path_clone = path;
 
+    // stack-allocated temporary is not leaked because dupeAlloc on the path will
+    // move .pretty into the heap. that function also fixes some slash issues.
+    if (target == .bake_server_components_ssr) {
+        // the SSR graph needs different pretty names or else HMR mode will
+        // confuse the two modules.
+        path_clone.pretty = std.fmt.bufPrint(&buf, "ssr:{s}", .{rel}) catch buf[0..];
+    } else {
+        path_clone.pretty = rel;
+    }
+    return path_clone.dupeAllocFixPretty(allocator);
+}
 pub const BundleV2 = struct {
     bundler: *Bundler,
     /// When Server Component is enabled, this is used for the client bundles
@@ -2274,21 +2290,7 @@ pub const BundleV2 = struct {
     }
 
     fn pathWithPrettyInitialized(this: *BundleV2, path: Fs.Path, target: options.Target) !Fs.Path {
-        // TODO: outbase
-        var buf: bun.PathBuffer = undefined;
-        const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-        var path_clone = path;
-
-        // stack-allocated temporary is not leaked because dupeAlloc on the path will
-        // move .pretty into the heap. that function also fixes some slash issues.
-        if (target == .bake_server_components_ssr) {
-            // the SSR graph needs different pretty names or else HMR mode will
-            // confuse the two modules.
-            path_clone.pretty = std.fmt.bufPrint(&buf, "ssr:{s}", .{rel}) catch buf[0..];
-        } else {
-            path_clone.pretty = rel;
-        }
-        return path_clone.dupeAllocFixPretty(this.graph.allocator);
+        return genericPathWithPrettyInitialized(path, target, this.bundler.fs.top_level_dir, this.graph.allocator);
     }
 
     fn reserveSourceIndexesForBake(this: *BundleV2) !void {
@@ -5012,6 +5014,13 @@ pub const LinkerContext = struct {
     /// Used by Bake to extract []CompileResult before it is joined
     dev_server: ?*bun.bake.DevServer = null,
     framework: ?*const bake.Framework = null,
+
+    fn pathWithPrettyInitialized(this: *LinkerContext, path: Fs.Path) !Fs.Path {
+        if (path.text.ptr != path.pretty.ptr) {
+            return path;
+        }
+        return genericPathWithPrettyInitialized(path, this.options.target, this.resolver.fs.top_level_dir, this.graph.allocator);
+    }
 
     pub const LinkerOptions = struct {
         output_format: options.Format = .esm,
@@ -9583,10 +9592,7 @@ pub const LinkerContext = struct {
                     if (source.path.isFile()) {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
-                        if (source.path.pretty.ptr == source.path.text.ptr) {
-                            const rel = bun.path.relativePlatform(c.resolver.fs.top_level_dir, source.path.text, .loose, false);
-                            source.path.pretty = c.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
-                        }
+                        source.path.* = pathWithPrettyInitialized(source.path);
                         source.path.assertPrettyIsValid();
 
                         break :brk source.path.pretty;

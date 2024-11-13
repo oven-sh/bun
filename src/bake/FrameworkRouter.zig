@@ -627,8 +627,7 @@ pub fn insert(
         var route = fr.routePtr(root_route);
         outer: while (true) {
             var next = route.first_child.unwrap();
-            if (next != null) while (true) {
-                const current = next.?;
+            while (next) |current| {
                 const child = fr.routePtr(current);
                 if (current_part.eql(child.part)) {
                     current_part = input_it.next() orelse
@@ -640,7 +639,7 @@ pub fn insert(
                 }
                 next = fr.routePtr(next.?).next_sibling.unwrap() orelse
                     break;
-            };
+            }
 
             // Must add to this child
             var new_route_index = try fr.newRoute(alloc, .{

@@ -183,7 +183,7 @@ fn getDefaultArgs(globalThis: *JSGlobalObject) !ArgsSlice {
 }
 
 /// In strict mode, throw for possible usage errors like "--foo --bar" where foo was defined as a string-valued arg
-fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) !void {
+fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) bun.JSError!void {
     if (!token.inline_value and isOptionLikeValue(token.value.asBunString(globalThis))) {
         const raw_name = OptionToken.RawNameFormatter{ .token = token, .globalThis = globalThis };
 
@@ -211,7 +211,7 @@ fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) !void {
 }
 
 /// In strict mode, throw for usage errors.
-fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefinition, allow_positionals: bool, token: OptionToken) !void {
+fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefinition, allow_positionals: bool, token: OptionToken) bun.JSError!void {
     if (token.option_idx) |option_idx| {
         const option = options[option_idx];
         switch (option.type) {

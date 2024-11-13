@@ -209,7 +209,6 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         .allocator = allocator,
         .entry_points = .{},
         .route_files = .{},
-        .client_files = .{},
         .out_index_map = &.{},
         .out_module_keys = &.{},
     };
@@ -586,7 +585,6 @@ const ProductionPathMap = struct {
 
     entry_points: std.ArrayListUnmanaged(BakeEntryPoint),
     route_files: bun.StringArrayHashMapUnmanaged(void),
-    client_files: bun.StringArrayHashMapUnmanaged(void),
     /// OpaqueFileId -> index into output_files
     out_index_map: []u32,
     /// index into output_files -> key to load them in JavaScript
@@ -613,6 +611,7 @@ const ProductionPathMap = struct {
     }
 
     pub fn getClientFile(ctx: *ProductionPathMap, abs_path: []const u8) !FrameworkRouter.OpaqueFileId {
+        // Bug: if server and client reference the same file, it is impossible to know which side it was already queued for, leading to a missing output file.
         const gop = try ctx.route_files.getOrPut(ctx.allocator, abs_path);
         if (!gop.found_existing) {
             const dupe = try ctx.allocator.dupe(u8, abs_path);

@@ -226,6 +226,7 @@ pub const Framework = struct {
         }
 
         for (clone.file_system_router_types) |*fsr| {
+            // TODO: unonwned memory
             fsr.root = bun.path.joinAbs(server.fs.top_level_dir, .auto, fsr.root);
             if (fsr.entry_client) |*entry_client| f.resolveHelper(client, entry_client, &had_errors, "client side entrypoint");
             f.resolveHelper(client, &fsr.entry_server, &had_errors, "server side entrypoint");
@@ -250,7 +251,7 @@ pub const Framework = struct {
             had_errors.* = true;
             return;
         };
-        path.* = result.path().?.text; // TODO: what is the lifetime of this string
+        path.* = result.path().?.text;
     }
 
     fn fromJS(
@@ -414,6 +415,7 @@ pub const Framework = struct {
                         var i_2: usize = 0;
                         const extensions = try arena.alloc([]const u8, len);
                         while (it_2.next()) |array_item| : (i_2 += 1) {
+                            // TODO: remove/add the prefix `.`, throw error if specifying '*' as an array item instead of as root
                             extensions[i_2] = refs.track(try array_item.toSlice2(global, arena));
                         }
                         break :exts extensions;
@@ -433,7 +435,7 @@ pub const Framework = struct {
                         break :exts dirs;
                     }
 
-                    return global.throwInvalidArguments2("'extensions' must be an array of strings or \"*\" for all extensions", .{});
+                    return global.throwInvalidArguments2("'ignoreDirs' must be an array of strings or \"*\" for all extensions", .{});
                 } else &.{ ".git", "node_modules" };
 
                 file_system_router_types[i] = .{

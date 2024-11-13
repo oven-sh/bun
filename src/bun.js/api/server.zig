@@ -7508,7 +7508,7 @@ pub const AnyServer = union(enum) {
         };
     }
 
-    pub fn numSubscribers(this: AnyServer, topic: []const u8) usize {
+    pub fn numSubscribers(this: AnyServer, topic: []const u8) u32 {
         return switch (this) {
             inline else => |server| server.app.?.numSubscribers(topic),
         };

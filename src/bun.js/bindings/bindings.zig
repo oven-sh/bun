@@ -5728,7 +5728,7 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    fn coerceOptional(prop: JSValue, global: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) !?T {
+    fn coerceOptional(prop: JSValue, global: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
         switch (comptime T) {
             JSValue => return prop,
             bool => @compileError("ambiguous coercion: use getBooleanStrict (throw error if not boolean) or getBooleanLoose (truthy check, never throws)"),

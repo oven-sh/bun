@@ -3698,7 +3698,7 @@ pub fn publish(dev: *DevServer, topic: []const u8, message: []const u8, opcode: 
     if (dev.server) |s| _ = s.publish(topic, message, opcode, false);
 }
 
-pub fn numSubscribers(dev: *DevServer, topic: []const u8) usize {
+pub fn numSubscribers(dev: *DevServer, topic: []const u8) u32 {
     return if (dev.server) |s| s.numSubscribers(topic) else 0;
 }
 

@@ -995,7 +995,11 @@ async function main() {
     throw new Error(`Unsupported cloud: ${inspect(options)}`);
   }
 
-  let metadata;
+  let metadata = {
+    "robobun": true,
+    "robobun2": true,
+  };
+
   if (buildkiteToken) {
     metadata = {
       "buildkite:token": buildkiteToken,

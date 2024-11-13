@@ -8,6 +8,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  getBuildNumber,
   getCanaryRevision,
   getChangedFiles,
   getCommit,
@@ -154,6 +155,47 @@ function getPipeline(options) {
     return 0;
   };
 
+  const getAgentV2 = platform => {
+    const { os, arch, abi, distro, release } = platform;
+    return {
+      robobun: true,
+      robobun2: true,
+      os,
+      arch,
+      abi,
+      distro,
+      release,
+      "image-name": `${os}-${arch}-${distro}-${release}-build-${getBuildNumber()}`,
+    };
+  };
+
+  const getBuildAgent = platform => {
+    const { os, arch, abi } = platform;
+    if (buildImages && abi === "musl") {
+      return getAgentV2(platform);
+    }
+    return {
+      queue: abi ? `build-${os}-${abi}` : `build-${os}`,
+      os,
+      arch,
+      abi,
+    };
+  };
+
+  const getTestAgent = platform => {
+    const { os, arch, abi, distro, release } = platform;
+    if (buildImages && abi === "musl") {
+      return getAgentV2(platform);
+    }
+    if (os === "darwin") {
+      return { os, arch, abi, queue: `test-darwin` };
+    } else if (os === "windows") {
+      return { os, arch, abi, robobun: true };
+    } else {
+      return { os, arch, abi, distro, release, robobun: true };
+    }
+  };
+
   /**
    * Steps
    */
@@ -177,17 +219,18 @@ function getPipeline(options) {
   const getBuildVendorStep = platform => {
     const { os, arch, abi, baseline } = platform;
 
+    let depends;
+    if (buildImages) {
+      depends = [`${getKey(platform)}-build-image`];
+    }
+
     return {
       key: `${getKey(platform)}-build-vendor`,
       label: `${getLabel(platform)} - build-vendor`,
-      agents: {
-        os,
-        arch,
-        abi,
-        queue: abi ? `build-${os}-${abi}` : `build-${os}`,
-      },
+      agents: getBuildAgent(platform),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
+      depends_on: depends,
       env: {
         ENABLE_BASELINE: baseline ? "ON" : "OFF",
       },
@@ -198,17 +241,18 @@ function getPipeline(options) {
   const getBuildCppStep = platform => {
     const { os, arch, abi, baseline } = platform;
 
+    let depends;
+    if (buildImages) {
+      depends = [`${getKey(platform)}-build-image`];
+    }
+
     return {
       key: `${getKey(platform)}-build-cpp`,
       label: `${getLabel(platform)} - build-cpp`,
-      agents: {
-        os,
-        arch,
-        abi,
-        queue: abi ? `build-${os}-${abi}` : `build-${os}`,
-      },
+      agents: getBuildAgent(platform),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
+      depends_on: depends,
       env: {
         BUN_CPP_ONLY: "ON",
         ENABLE_BASELINE: baseline ? "ON" : "OFF",
@@ -221,14 +265,27 @@ function getPipeline(options) {
     const { os, arch, abi, baseline } = platform;
     const toolchain = getKey(platform);
 
+    let depends;
+    if (buildImages) {
+      depends = [`${getKey(platform)}-build-image`];
+    }
+
+    let agents;
+    if (buildImages) {
+      agents = getBuildAgent(platform);
+    } else {
+      agents = {
+        queue: "build-zig",
+      };
+    }
+
     return {
       key: `${getKey(platform)}-build-zig`,
       label: `${getLabel(platform)} - build-zig`,
-      agents: {
-        queue: "build-zig",
-      },
+      agents,
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
+      depends_on: depends,
       env: {
         ENABLE_BASELINE: baseline ? "ON" : "OFF",
       },
@@ -247,12 +304,7 @@ function getPipeline(options) {
         `${getKey(platform)}-build-cpp`,
         `${getKey(platform)}-build-zig`,
       ],
-      agents: {
-        os,
-        arch,
-        abi,
-        queue: `build-${os}`,
-      },
+      agents: getBuildAgent(platform),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
       env: {
@@ -271,15 +323,6 @@ function getPipeline(options) {
       name = getLabel({ ...platform, release });
     } else {
       name = getLabel({ ...platform, os: distro, release });
-    }
-
-    let agents;
-    if (os === "darwin") {
-      agents = { os, arch, abi, queue: `test-darwin` };
-    } else if (os === "windows") {
-      agents = { os, arch, abi, robobun: true };
-    } else {
-      agents = { os, arch, abi, distro, release, robobun: true };
     }
 
     let command;
@@ -317,7 +360,7 @@ function getPipeline(options) {
       key: `${getKey(platform)}-${distro}-${release.replace(/\./g, "")}-test-bun`,
       label: `${name} - test-bun`,
       depends_on: depends,
-      agents,
+      agents: getTestAgent(platform),
       retry,
       cancel_on_build_failing: isMergeQueue(),
       soft_fail: isMainBranch(),
@@ -366,20 +409,18 @@ function getPipeline(options) {
           steps.push(...images.map(platform => getBuildImageStep(platform)));
         }
 
-        // if (buildImages) {
-        //   steps.push(...builds.map(platform => getBuildImageStep(platform)));
-        // } else {
-        //   steps.push(...platforms.map(platform => getTestBunStep(platform)));
-        // }
+        if (!buildId) {
+          for (const platform of builds) {
+            steps.push(getBuildVendorStep(platform));
+            steps.push(getBuildCppStep(platform));
+            steps.push(getBuildZigStep(platform));
+            steps.push(getBuildBunStep(platform));
+          }
+        }
 
-        // if (!buildId && !buildImages) {
-        //   steps.unshift(
-        //     getBuildVendorStep(platform),
-        //     getBuildCppStep(platform),
-        //     getBuildZigStep(platform),
-        //     getBuildBunStep(platform),
-        //   );
-        // }
+        for (const platform of tests) {
+          steps.push(getTestBunStep(platform));
+        }
 
         return {
           key: getKey(target),

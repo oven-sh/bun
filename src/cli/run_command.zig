@@ -1387,7 +1387,6 @@ pub const RunCommand = struct {
         // TODO: run module resolution here - try the next condition if the module can't be found
 
         log("Try resolve `{s}` in `{s}`", .{ target_name, this_bundler.fs.top_level_dir });
-        // this doesn't work
         if (this_bundler.resolver.resolve(this_bundler.fs.top_level_dir, target_name, .entry_point)) |resolved| {
             var resolved_mutable = resolved;
             log("Resolved to: `{s}`", .{resolved_mutable.path().?.text});

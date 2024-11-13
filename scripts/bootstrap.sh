@@ -1,4 +1,5 @@
 #!/bin/sh
+# Version: 4
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -7,14 +8,10 @@
 # https://github.com/oven-sh/bun/issues
 
 # If you need to make a change to this script, such as upgrading a dependency,
-# increment the version number, `v`, to indicate that a new image should be built.
+# increment the version comment to indicate that a new image should be built.
 # Otherwise, the existing image will be retroactively updated.
 
-# curl -fsSL "https://raw.githubusercontent.com/oven-sh/bun/refs/heads/ci-automated-build-image/scripts/bootstrap.sh" | CI=true sh
-
-v="3"
 pid=$$
-script="$(realpath "$0")"
 
 print() {
 	echo "$@"

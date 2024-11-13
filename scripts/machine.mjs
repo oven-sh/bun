@@ -463,12 +463,12 @@ export const aws = {
       await spawnScp({ ...connectOptions, source, destination });
     };
 
-    const snapshot = async () => {
+    const snapshot = async name => {
       await aws.stopInstances(InstanceId);
       await aws.waitInstances("instance-stopped", InstanceId);
       const imageId = await aws.createImage({
         ["instance-id"]: InstanceId,
-        ["name"]: `${InstanceId}-snapshot-${Date.now()}`,
+        ["name"]: name || `${InstanceId}-snapshot-${Date.now()}`,
       });
       await aws.waitImage("image-available", imageId);
     };
@@ -1030,6 +1030,12 @@ async function main() {
     await spawnSafe($`${npx} esbuild ${templatePath} --bundle --platform=node --format=esm --outfile=${localPath}`);
     await machine.upload(localPath, remotePath);
     await machine.exec(["node", remotePath, action], { stdio: "inherit" });
+  };
+
+  const doSnapshot = async () => {
+    const { os, arch, distro, release } = options;
+    const name = `${os}-${arch}-${distro}-${release}`;
+    await machine.snapshot(name);
   };
 
   try {

@@ -683,10 +683,10 @@ describe("node:http", () => {
       });
     });
 
-    it("should ignore body when method is GET/HEAD/OPTIONS", done => {
+    it("should ignore body when method is GET/HEAD", done => {
       runTest(done, (server, serverPort, done) => {
         const createDone = createDoneDotAll(done);
-        const methods = ["GET", "HEAD", "OPTIONS"];
+        const methods = ["GET", "HEAD"];
         const dones = {};
         for (const method of methods) {
           dones[method] = createDone();

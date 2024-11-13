@@ -3782,7 +3782,7 @@ pub fn handleTemplateValue(
     jsobjref_buf: []u8,
 ) !bool {
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
-    if (template_value == .zero) {
+    if (template_value != .zero) {
         if (template_value.asArrayBuffer(globalThis)) |array_buffer| {
             _ = array_buffer;
             const idx = out_jsobjs.items.len;

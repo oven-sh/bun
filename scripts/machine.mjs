@@ -12,13 +12,16 @@ import {
   readFile,
   spawn,
   spawnSafe,
+  spawnSyncSafe,
   tmpdir,
   waitForPort,
   which,
+  writeFile,
 } from "./utils.mjs";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { homedir, userInfo } from "node:os";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
+import { generateKeyPairSync } from "node:crypto";
 
 const docker = {
   getPlatform(platform) {
@@ -729,25 +732,60 @@ function getDiskSize(options) {
 }
 
 /**
+ * @returns {string}
+ */
+function generateSshKey() {
+  const sshPath = join(homedir(), ".ssh");
+  if (!existsSync(sshPath)) {
+    mkdirSync(sshPath, { recursive: true });
+  }
+
+  const name = `id_rsa_${crypto.randomUUID()}`;
+  const privateKeyPath = join(sshPath, name);
+  const publicKeyPath = join(sshPath, `${name}.pub`);
+  spawnSyncSafe($`ssh-keygen -t rsa -b 4096 -f ${privateKeyPath} -N ""`, { stdio: "inherit" });
+
+  if (!existsSync(privateKeyPath) || !existsSync(publicKeyPath)) {
+    throw new Error(`Failed to generate SSH key: ${privateKeyPath} / ${publicKeyPath}`);
+  }
+
+  const configPath = join(sshPath, "config");
+  const config = `
+Host *
+  IdentityFile ${privateKeyPath}
+  AddKeysToAgent yes
+  UseKeychain yes
+`;
+  appendFileSync(configPath, config);
+
+  return readFile(publicKeyPath);
+}
+
+/**
  * @returns {string[]}
  */
-function getAuthorizedKeys() {
+function getSshKeys() {
   const homePath = homedir();
   const sshPath = join(homePath, ".ssh");
 
+  let sshKeys = [];
   if (existsSync(sshPath)) {
     const sshFiles = readdirSync(sshPath, { withFileTypes: true });
     const sshPaths = sshFiles
       .filter(entry => entry.isFile() && entry.name.endsWith(".pub"))
       .map(({ name }) => join(sshPath, name));
 
-    return sshPaths
+    sshKeys = sshPaths
       .map(path => readFile(path, { cache: true }))
       .map(key => key.split(" ").slice(0, 2).join(" "))
       .filter(key => key.length);
   }
 
-  return [];
+  if (!sshKeys.length) {
+    sshKeys.push(generateSshKey());
+  }
+
+  return sshKeys;
 }
 
 /**
@@ -939,8 +977,7 @@ function parseOptions(args) {
 
 async function main() {
   const { command, buildkiteToken, ...options } = parseOptions(process.argv.slice(2));
-  const owner = getRepository()?.split("/")?.[0];
-  const authorizedKeys = isCI && owner ? await getGithubAuthorizedKeys(owner) : getAuthorizedKeys();
+  const authorizedKeys = getSshKeys();
 
   let cloud;
   if (options["cloud"] === "docker") {

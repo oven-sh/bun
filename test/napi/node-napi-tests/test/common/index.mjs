@@ -1,7 +1,7 @@
-import { createRequire } from 'module';
+import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
-const common = require('./index.js');
+const common = require("./index.js");
 
 const {
   allowGlobals,
@@ -83,9 +83,9 @@ export {
   isIBMi,
   isLinux,
   isLinuxPPCBE,
+  isMacOS,
   isMainThread,
   isOpenBSD,
-  isMacOS,
   isSunOS,
   isWindows,
   localIPv6Hosts,

@@ -331,44 +331,55 @@ function getPipeline(options) {
    * Config
    */
 
-  const buildPlatforms = [
+  const targets = [
     { os: "linux", arch: "aarch64", abi: "musl" },
     { os: "linux", arch: "x64", abi: "musl" },
   ];
 
-  const testPlatforms = [
-    { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
+  const buildPlatforms = [
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.17" },
-    { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.17" },
+  ];
+
+  const testPlatforms = [
+    ...buildPlatforms,
+    { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
+    { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
   ];
 
   return {
     priority: getPriority(),
     steps: [
-      ...buildPlatforms.map(platform => {
-        const { os, arch, abi, baseline } = platform;
-        const platforms = testPlatforms.filter(
-          platform =>
-            platform.os === os && platform.arch === arch && abi === platform.abi && baseline === platform.baseline,
-        );
+      ...targets.map(target => {
+        const { os, arch, abi, baseline } = target;
+        const isTarget = entry =>
+          entry.os === os && entry.arch === arch && abi === entry.abi && baseline === entry.baseline;
+        const builds = buildPlatforms.filter(isTarget);
+        const tests = testPlatforms.filter(isTarget);
 
         let steps = [];
 
         if (buildImages) {
-          steps.push(...platforms.map(platform => getBuildImageStep(platform)));
-        } else {
-          steps.push(...platforms.map(platform => getTestBunStep(platform)));
+          const images = Array.from(
+            new Map([...builds, ...tests].map(platform => [JSON.stringify(platform), platform])).values(),
+          );
+          steps.push(...images.map(platform => getBuildImageStep(platform)));
         }
 
-        if (!buildId && !buildImages) {
-          steps.unshift(
-            getBuildVendorStep(platform),
-            getBuildCppStep(platform),
-            getBuildZigStep(platform),
-            getBuildBunStep(platform),
-          );
-        }
+        // if (buildImages) {
+        //   steps.push(...builds.map(platform => getBuildImageStep(platform)));
+        // } else {
+        //   steps.push(...platforms.map(platform => getTestBunStep(platform)));
+        // }
+
+        // if (!buildId && !buildImages) {
+        //   steps.unshift(
+        //     getBuildVendorStep(platform),
+        //     getBuildCppStep(platform),
+        //     getBuildZigStep(platform),
+        //     getBuildBunStep(platform),
+        //   );
+        // }
 
         return {
           key: getKey(platform),

@@ -65,6 +65,7 @@ extern "C" int kill(int pid, int sig)
 #include <stdarg.h>
 #include <errno.h>
 #include <math.h>
+#include <mutex>
 
 #ifndef _STAT_VER
 #if defined(__aarch64__)

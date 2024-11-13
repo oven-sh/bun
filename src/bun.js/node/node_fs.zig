@@ -1518,6 +1518,7 @@ pub const Arguments = struct {
                 ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
                 return error.JSError;
             };
+            errdefer path.deinit();
 
             const uid: uid_t = brk: {
                 const uid_value = arguments.next() orelse break :brk {
@@ -1617,6 +1618,7 @@ pub const Arguments = struct {
                 ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
                 return error.JSError;
             };
+            errdefer path.deinit();
 
             const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 ctx.throwInvalidArguments("atime is required", .{});
@@ -1663,6 +1665,7 @@ pub const Arguments = struct {
                 ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
                 return error.JSError;
             };
+            errdefer path.deinit();
 
             const mode: Mode = try JSC.Node.modeFromJS(ctx, arguments.next() orelse {
                 ctx.throwInvalidArguments("mode is required", .{});
@@ -2029,6 +2032,7 @@ pub const Arguments = struct {
                 ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
                 return error.JSError;
             };
+            errdefer path.deinit();
 
             return Unlink{
                 .path = path,

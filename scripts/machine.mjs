@@ -5,9 +5,10 @@ import {
   $,
   curlSafe,
   getArch,
-  getRepository,
+  getDistro,
   getSecret,
   isCI,
+  isLinux,
   isMacOS,
   readFile,
   spawn,
@@ -16,12 +17,10 @@ import {
   tmpdir,
   waitForPort,
   which,
-  writeFile,
 } from "./utils.mjs";
 import { join, resolve } from "node:path";
-import { homedir, userInfo } from "node:os";
+import { homedir } from "node:os";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
-import { generateKeyPairSync } from "node:crypto";
 
 const docker = {
   getPlatform(platform) {
@@ -121,6 +120,8 @@ export const aws = {
     if (!aws) {
       if (isMacOS) {
         await spawnSafe(["brew", "install", "awscli"]);
+      } else if (isLinux && getDistro() === "debian") {
+        await spawnSafe(["sudo", "apt-get", "install", "-y", "awscli"]);
       } else {
         throw new Error("AWS CLI is not installed, please install it");
       }

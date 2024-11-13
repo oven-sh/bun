@@ -365,10 +365,10 @@ pub const Part = union(enum(u3)) {
     fn toStringForInternalUse(part: Part, writer: anytype) !void {
         switch (part) {
             .text => |text| try writer.print("/{s}", .{text}),
-            .param => |param_name| try writer.print(":{s}", .{param_name}),
-            .group => |label| try writer.print("({s})", .{label}),
-            .catch_all => |param_name| try writer.print(":*{s}", .{param_name}),
-            .catch_all_optional => |param_name| try writer.print(":*?{s}", .{param_name}),
+            .param => |param_name| try writer.print("/:{s}", .{param_name}),
+            .group => |label| try writer.print("/({s})", .{label}),
+            .catch_all => |param_name| try writer.print("/:*{s}", .{param_name}),
+            .catch_all_optional => |param_name| try writer.print("/:*?{s}", .{param_name}),
         }
     }
 };
@@ -534,7 +534,6 @@ pub const Style = enum {
                     return log.fail("Catch-all parameter must be at the end of a route", .{}, start, len);
 
                 const between = route_segment[i..start];
-                bun.assert(between.len > 0);
                 var it = std.mem.tokenizeScalar(u8, between, '/');
                 while (it.next()) |part|
                     try parts.append(arena, .{ .text = part });
@@ -566,7 +565,6 @@ pub const Style = enum {
                 var it = std.mem.tokenizeScalar(u8, between, '/');
                 while (it.next()) |part|
                     try parts.append(arena, .{ .text = part });
-                try parts.append(arena, .{ .text = between });
                 try parts.append(arena, .{ .group = group_name });
 
                 i = end + 1;

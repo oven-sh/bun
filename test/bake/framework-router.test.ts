@@ -23,9 +23,9 @@ const testRoutePattern = (style: string) => {
 };
 
 describe("route pattern parser", () => {
-  const testPages = testRoutePattern('nextjs_pages');
-  testPages('/index.tsx', '/', 'page');
-  testPages('/_layout.tsx', '/', 'layout');
+  const testPages = testRoutePattern('nextjs-pages-ui');
+  testPages('/index.tsx', '', 'page');
+  testPages('/_layout.tsx', '', 'layout');
   testPages('/subdir/index.tsx', '/subdir', 'page');
   testPages('/subdir/_layout.tsx', '/subdir', 'layout');
   testPages('/subdir/[page].tsx', '/subdir/:page', 'page');
@@ -54,10 +54,10 @@ describe("route pattern parser", () => {
   testPages.fails('/subdir/[...hello]/bar.tsx', 'Catch-all parameter must be at the end of a route (8:10)');
   testPages.fails('/hello/[[optional_param]]/_layout.tsx', 'Optional parameters can only be catch-all (change to "[[...optional_param]]" or remove extra brackets) (7:18)');
 
-  const testApp = testRoutePattern('nextjs_app_ui');
-  testApp('/page.tsx', '/', 'page');
-  testApp('/layout.tsx', '/', 'layout');
+  const testApp = testRoutePattern('nextjs-app-ui');
+  testApp('/page.tsx', '', 'page');
+  testApp('/layout.tsx', '', 'layout');
   testApp('/route/[param]/page.tsx', '/route/:param', 'page');
-  testApp('/route/(param)/page.tsx', '/route/(group)', 'page');
+  testApp('/route/(group)/page.tsx', '/route/(group)', 'page');
   testApp('/route/[param]/not-found.tsx', '/route/:param', 'extra');
 });

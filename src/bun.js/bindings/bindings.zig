@@ -6706,6 +6706,20 @@ pub const CatchScope = extern struct {
     };
 };
 
+// TODO: callframe cleanup
+// - remove all references into sizegen.zig since it is no longer run and may become out of date
+// - remove all functions to retrieve arguments, replace with
+//   - arguments(*CallFrame) []const JSValue (when you want a full slice)
+//   - argumentsAsArray(*CallFrame, comptime len) [len]JSValue (common case due to destructuring)
+//   - argument(*CallFrame, i: usize) JSValue (return undefined if not present)
+//   - argumentCount(*CallFrame) usize
+//
+// argumentsPtr() -> arguments().ptr
+// arguments(n).ptr[k] -> argumentsAsArray(n)[k]
+// arguments(n).slice() -> arguments()
+// arguments(n).mut() -> `var args = argumentsAsArray(n); &args`
+// argumentsCount() -> argumentCount() (to match JSC)
+// argument(n) -> arguments().ptr[n]
 pub const CallFrame = opaque {
     /// The value is generated in `make sizegen`
     /// The value is 6.
@@ -6778,10 +6792,6 @@ pub const CallFrame = opaque {
 
             pub inline fn slice(self: *const @This()) []const JSValue {
                 return self.ptr[0..self.len];
-            }
-
-            pub inline fn all(self: *const @This()) []const JSValue {
-                return self.ptr[0..];
             }
 
             pub inline fn mut(self: *@This()) []JSValue {

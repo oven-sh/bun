@@ -3296,7 +3296,13 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSC.
     var config: JSC.API.ServerConfig = brk: {
         var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
         var config: JSC.API.ServerConfig = .{};
-        JSC.API.ServerConfig.fromJS(globalObject, &config, &args) catch return .zero;
+
+        try JSC.API.ServerConfig.fromJS(
+            globalObject,
+            &config,
+            &args,
+            callframe.isFromBunMain(globalObject.vm()),
+        );
 
         if (globalObject.hasException()) {
             config.deinit();
@@ -3355,7 +3361,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSC.
                         },
                     };
 
-                    var server = ServerType.init(config, globalObject);
+                    var server = try ServerType.init(config, globalObject);
                     if (globalObject.hasException()) {
                         return .zero;
                     }

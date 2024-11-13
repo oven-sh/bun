@@ -1462,7 +1462,6 @@ pub const ServerConfig = struct {
                 if (global.hasException()) return error.JSError;
                 global.throwInvalidArguments("Expected fetch() to be a function", .{});
                 return error.JSError;
-                return;
             } else {
                 if (global.hasException()) return error.JSError;
             }
@@ -7219,6 +7218,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
         }
 
+        // TODO: make this return JSError!void, and do not deinitialize on synchronous failure, to allow errdefer in caller scope
         pub fn listen(this: *ThisServer) void {
             httplog("listen", .{});
             var app: *App = undefined;

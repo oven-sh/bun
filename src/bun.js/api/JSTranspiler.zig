@@ -509,23 +509,23 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (try object.getBooleanLoose(globalThis, "autoImportJSX", bool)) |flag| {
+    if (try object.getBooleanLoose(globalThis, "autoImportJSX")) |flag| {
         transpiler.runtime.auto_import_jsx = flag;
     }
 
-    if (try object.getBooleanLoose(globalThis, "allowBunRuntime", bool)) |flag| {
+    if (try object.getBooleanLoose(globalThis, "allowBunRuntime")) |flag| {
         transpiler.runtime.allow_runtime = flag;
     }
 
-    if (try object.getBooleanLoose(globalThis, "inline", bool)) |flag| {
+    if (try object.getBooleanLoose(globalThis, "inline")) |flag| {
         transpiler.runtime.inlining = flag;
     }
 
-    if (try object.getBooleanLoose(globalThis, "minifyWhitespace", bool)) |flag| {
+    if (try object.getBooleanLoose(globalThis, "minifyWhitespace")) |flag| {
         transpiler.minify_whitespace = flag;
     }
 
-    if (try object.getBooleanLoose(globalThis, "deadCodeElimination", bool)) |flag| {
+    if (try object.getBooleanLoose(globalThis, "deadCodeElimination")) |flag| {
         transpiler.dead_code_elimination = flag;
     }
 
@@ -572,12 +572,12 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     }
 
     var tree_shaking: ?bool = null;
-    if (try object.getBooleanLoose(globalThis, "treeShaking", bool)) |treeShaking| {
+    if (try object.getBooleanLoose(globalThis, "treeShaking")) |treeShaking| {
         tree_shaking = treeShaking;
     }
 
     var trim_unused_imports: ?bool = null;
-    if (try object.getBooleanLoose(globalThis, "trimUnusedImports", bool)) |trimUnusedImports| {
+    if (try object.getBooleanLoose(globalThis, "trimUnusedImports")) |trimUnusedImports| {
         trim_unused_imports = trimUnusedImports;
     }
 

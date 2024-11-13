@@ -738,11 +738,7 @@ pub const Listener = struct {
                     defer bun.default_allocator.free(host);
                     break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8, &errno);
                 },
-                .fd => {
-                    // don't call listen() on an fd
-                    // TODO: why is there no throw here, is it unreachable or is this a bug
-                    return .zero;
-                },
+                .fd => unreachable,
             }
         } orelse {
             defer {

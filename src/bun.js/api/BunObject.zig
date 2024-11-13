@@ -938,27 +938,27 @@ pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue 
 fn doResolve(
     globalThis: *JSC.JSGlobalObject,
     arguments: []const JSValue,
-) ?JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const specifier = args.protectEatNext() orelse {
         globalThis.throwInvalidArguments("Expected a specifier and a from path", .{});
-        return null;
+        return error.JSError;
     };
 
     if (specifier.isUndefinedOrNull()) {
         globalThis.throwInvalidArguments("specifier must be a string", .{});
-        return null;
+        return error.JSError;
     }
 
     const from = args.protectEatNext() orelse {
         globalThis.throwInvalidArguments("Expected a from path", .{});
-        return null;
+        return error.JSError;
     };
 
     if (from.isUndefinedOrNull()) {
         globalThis.throwInvalidArguments("from must be a string", .{});
-        return null;
+        return error.JSError;
     }
 
     var is_esm = true;
@@ -967,7 +967,7 @@ fn doResolve(
             is_esm = next.toBoolean();
         } else {
             globalThis.throwInvalidArguments("esm must be a boolean", .{});
-            return null;
+            return error.JSError;
         }
     }
 
@@ -990,7 +990,7 @@ fn doResolveWithArgs(
     from: bun.String,
     is_esm: bool,
     comptime is_file_path: bool,
-) ?JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     var errorable: ErrorableString = undefined;
     var query_string = ZigString.Empty;
 
@@ -1022,7 +1022,7 @@ fn doResolveWithArgs(
 
     if (!errorable.success) {
         ctx.throwValue(bun.cast(JSC.JSValueRef, errorable.result.err.ptr.?).?.value());
-        return null;
+        return error.JSError;
     }
 
     if (query_string.len > 0) {
@@ -1035,7 +1035,7 @@ fn doResolveWithArgs(
             query_string,
         }) catch {
             ctx.throwOutOfMemory();
-            return null;
+            return error.JSError;
         };
 
         return ZigString.initUTF8(arraylist.items).toJS(ctx);
@@ -1047,13 +1047,12 @@ fn doResolveWithArgs(
 pub fn resolveSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     const arguments = callframe.arguments(3);
     const result = doResolve(globalObject, arguments.slice());
-
-    return result orelse .zero;
+    return result catch .zero;
 }
 
 pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     const arguments = callframe.arguments(3);
-    const value = doResolve(globalObject, arguments.slice()) orelse {
+    const value = doResolve(globalObject, arguments.slice()) catch {
         const err = globalObject.tryTakeException().?;
         return JSC.JSPromise.rejectedPromiseValue(globalObject, err);
     };
@@ -1072,7 +1071,7 @@ export fn Bun__resolve(
     const source_str = source.toBunString(global);
     defer source_str.deref();
 
-    const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true) orelse {
+    const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true) catch {
         const err = global.tryTakeException().?;
         return JSC.JSPromise.rejectedPromiseValue(global, err);
     };
@@ -1092,7 +1091,7 @@ export fn Bun__resolveSync(
     const source_str = source.toBunString(global);
     defer source_str.deref();
 
-    return doResolveWithArgs(global, specifier_str, source_str, is_esm, true) orelse return .zero;
+    return doResolveWithArgs(global, specifier_str, source_str, is_esm, true) catch return .zero;
 }
 
 export fn Bun__resolveSyncWithStrings(
@@ -1102,7 +1101,7 @@ export fn Bun__resolveSyncWithStrings(
     is_esm: bool,
 ) JSC.JSValue {
     Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
-    return doResolveWithArgs(global, specifier.*, source.*, is_esm, true) orelse return .zero;
+    return doResolveWithArgs(global, specifier.*, source.*, is_esm, true) catch return .zero;
 }
 
 export fn Bun__resolveSyncWithSource(
@@ -1113,8 +1112,7 @@ export fn Bun__resolveSyncWithSource(
 ) JSC.JSValue {
     const specifier_str = specifier.toBunString(global);
     defer specifier_str.deref();
-
-    return doResolveWithArgs(global, specifier_str, source.*, is_esm, true) orelse return .zero;
+    return doResolveWithArgs(global, specifier_str, source.*, is_esm, true) catch return .zero;
 }
 
 extern fn dump_zone_malloc_stats() void;

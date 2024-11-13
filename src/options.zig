@@ -398,7 +398,7 @@ pub const Target = enum {
     pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!?Target {
         if (!value.jsType().isStringLike()) {
             global.throwInvalidArguments("target must be a string", .{});
-            return null;
+            return error.JSError;
         }
         return Map.fromJS(global, value);
     }
@@ -611,17 +611,17 @@ pub const Format = enum {
         .{ "internal_bake_dev", .internal_bake_dev },
     });
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue) ?Format {
+    pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue) bun.JSError!?Format {
         if (format.isUndefinedOrNull()) return null;
 
         if (!format.jsType().isStringLike()) {
             global.throwInvalidArguments("format must be a string", .{});
-            return null;
+            return error.JSError;
         }
 
         return Map.fromJS(global, format) orelse {
             global.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{});
-            return null;
+            return error.JSError;
         };
     }
 

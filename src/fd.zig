@@ -320,7 +320,7 @@ pub const FDImpl = packed struct {
 
     // If a non-number is given, returns null.
     // If the given number is not an fd (negative), an error is thrown and error.JSException is returned.
-    pub fn fromJSValidated(value: JSValue, global: *JSC.JSGlobalObject) !?FDImpl {
+    pub fn fromJSValidated(value: JSValue, global: *JSC.JSGlobalObject) bun.JSError!?FDImpl {
         if (!value.isAnyInt()) return null;
         const fd64 = value.toInt64();
         try JSC.Node.Valid.fileDescriptor(fd64, global);

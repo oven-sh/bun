@@ -183,7 +183,7 @@ fn getDefaultArgs(globalThis: *JSGlobalObject) !ArgsSlice {
 }
 
 /// In strict mode, throw for possible usage errors like "--foo --bar" where foo was defined as a string-valued arg
-fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) !void {
+fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) bun.JSError!void {
     if (!token.inline_value and isOptionLikeValue(token.value.asBunString(globalThis))) {
         const raw_name = OptionToken.RawNameFormatter{ .token = token, .globalThis = globalThis };
 
@@ -211,7 +211,7 @@ fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) !void {
 }
 
 /// In strict mode, throw for usage errors.
-fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefinition, allow_positionals: bool, token: OptionToken) !void {
+fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefinition, allow_positionals: bool, token: OptionToken) bun.JSError!void {
     if (token.option_idx) |option_idx| {
         const option = options[option_idx];
         switch (option.type) {
@@ -301,7 +301,7 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
     }
 }
 
-fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, option_definitions: *std.ArrayList(OptionDefinition)) !void {
+fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, option_definitions: *std.ArrayList(OptionDefinition)) bun.JSError!void {
     try validateObject(globalThis, options_obj, "options", .{}, .{});
 
     var iter = JSC.JSPropertyIterator(.{
@@ -387,7 +387,7 @@ fn tokenizeArgs(
     options: []const OptionDefinition,
     ctx: *T,
     emitToken: fn (ctx: *T, token: Token) bun.JSError!void,
-) !void {
+) bun.JSError!void {
     const num_args: u32 = args.end - args.start;
     var index: u32 = 0;
     while (index < num_args) : (index += 1) {
@@ -579,7 +579,7 @@ const ParseArgsState = struct {
     /// To reuse JSValue for the "kind" field in the output tokens array ("positional", "option", "option-terminator")
     kinds_jsvalues: [TokenKind.COUNT]?JSValue = [_]?JSValue{null} ** TokenKind.COUNT,
 
-    pub fn handleToken(this: *ParseArgsState, token_generic: Token) !void {
+    pub fn handleToken(this: *ParseArgsState, token_generic: Token) bun.JSError!void {
         var globalThis = this.globalThis;
 
         switch (token_generic) {

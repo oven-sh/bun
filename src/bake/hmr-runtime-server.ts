@@ -9,7 +9,7 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
 
 interface Exports {
   handleRequest: (
-    req: Request, 
+    req: Request,
     routerTypeMain: Id,
     routeModules: Id[],
     clientEntryUrl: string,
@@ -27,7 +27,7 @@ declare let server_exports: Exports;
 server_exports = {
   async handleRequest(req, routerTypeMain, routeModules, clientEntryUrl, styles, params) {
     if (IS_BUN_DEVELOPMENT) {
-      console.log('handleRequest', {
+      console.log("handleRequest", {
         routeModules,
         clientEntryUrl,
         styles,
@@ -35,7 +35,8 @@ server_exports = {
       });
     }
 
-    const serverRenderer = loadModule<Bake.ServerEntryPoint>(routerTypeMain, LoadModuleType.AssertPresent).exports.render;
+    const serverRenderer = loadModule<Bake.ServerEntryPoint>(routerTypeMain, LoadModuleType.AssertPresent).exports
+      .render;
 
     if (!serverRenderer) {
       throw new Error('Framework server entrypoint is missing a "render" export.');
@@ -44,15 +45,15 @@ server_exports = {
       throw new Error('Framework server entrypoint\'s "render" export is not a function.');
     }
 
-    const [pageModule, ...layouts] = routeModules.map((id) => loadModule(id, LoadModuleType.AssertPresent).exports);
+    const [pageModule, ...layouts] = routeModules.map(id => loadModule(id, LoadModuleType.AssertPresent).exports);
 
     const response = await serverRenderer(req, {
       styles: styles,
       scripts: [clientEntryUrl],
       layouts,
-       pageModule,
-       modulepreload: [],
-       params,
+      pageModule,
+      modulepreload: [],
+      params,
     });
 
     if (!(response instanceof Response)) {
@@ -85,7 +86,7 @@ server_exports = {
           }
           clientManifest[uid] = client;
         } catch (err) {
-          console.log('caught error');
+          console.log("caught error");
           console.log(err);
         }
       }

@@ -72,12 +72,6 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
     return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, origin);
 }
 
-// JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
-//     JSC::JSModuleLoader* loader, JSC::JSValue key,
-//     JSC::JSValue parameters, JSC::JSValue script)
-// {
-// }
-
 #define INHERIT_HOOK_METHOD(name) \
     Zig::GlobalObject::s_globalObjectMethodTable.name
 

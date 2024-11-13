@@ -197,7 +197,6 @@ declare module "bun" {
       //  * not referenced by the function body will be removed entirely.
       //  */
       // allowAnonymousClientComponents: boolean;
-      
     }
 
     /** Customize the React Fast Refresh transform. */
@@ -352,8 +351,8 @@ declare module "bun" {
        * Prerendering does not use a request, and is allowed to generate
        * multiple responses. This is used for static site generation, but not
        * not named `staticRender` as it is invoked during a dynamic build to
-       * allow deterministic routes to be prerendered. 
-       * 
+       * allow deterministic routes to be prerendered.
+       *
        * Note that `import.meta.env.STATIC` will be inlined to true during
        * a static build.
        */
@@ -363,24 +362,24 @@ declare module "bun" {
        * For prerendering routes with dynamic parameters, such as `/blog/:slug`,
        * this will be called to get the list of parameters to prerender. This
        * allows static builds to render every page at build time.
-       * 
+       *
        * `getParams` may return an object with an array of pages. For example,
        * to generate two pages, `/blog/hello` and `/blog/world`:
-       * 
+       *
        *      return {
        *          pages: [{ slug: 'hello' }, { slug: 'world' }],
        *          exhaustive: true,
        *      }
-       * 
+       *
        * "exhaustive" tells Bun that the list is complete. If it is not, a
        * static site cannot be generated as it would otherwise be missing
        * routes. A non-exhaustive list can speed up build times by only
        * specifying a few important pages (such as 10 most recent), leaving
        * the rest to be generated on-demand at runtime.
-       * 
+       *
        * To stream results, `getParams` may return an async iterator, which
        * Bun will start rendering as more parameters are provided:
-       * 
+       *
        *     export async function* getParams(meta: Bake.ParamsMetadata) {
        *         yield { slug: await fetchSlug() };
        *         yield { slug: await fetchSlug() };
@@ -395,8 +394,8 @@ declare module "bun" {
       contentTypeToStaticFile?: Record<string, string>;
     }
 
-    type GetParamIterator = 
-      | AsyncIterable<Record<string, string>, GetParamsFinalOpts> 
+    type GetParamIterator =
+      | AsyncIterable<Record<string, string>, GetParamsFinalOpts>
       | Iterable<Record<string, string>, GetParamsFinalOpts>
       | ({ pages: Array<Record<String, String>> } & GetParamsFinalOpts);
 
@@ -479,7 +478,7 @@ declare module "bun" {
      */
     interface ParamsMetadata {
       readonly pageModule: any;
-      readonly layouts: ReadonlyArray<any>; 
+      readonly layouts: ReadonlyArray<any>;
     }
   }
 

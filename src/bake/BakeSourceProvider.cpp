@@ -39,8 +39,7 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(GlobalObject* global, B
 
   JSC::MarkedArgumentBuffer args;
   args.append(JSC::jsBoolean(separateSSRGraph)); // separateSSRGraph
-  // importMeta
-  args.append(Zig::ImportMetaObject::create(global, "bake://server-runtime.js"_s));
+  args.append(Zig::ImportMetaObject::create(global, "bake://server-runtime.js"_s)); // importMeta
 
   return JSC::JSValue::encode(JSC::call(global, fn, callData, JSC::jsUndefined(), args));
 }
@@ -117,7 +116,6 @@ extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* 
 
   String string = virtualPathName.toWTFString();
   JSC::JSString* key = JSC::jsString(vm, string);
-  printf("Registering production chunk: %s\n", string.utf8().data());
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(DevSourceProvider::create(
     source.toWTFString(),

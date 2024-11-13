@@ -112,6 +112,6 @@ export async function prerender(meta: Bake.RouteMetadata) {
 // When a dynamic build uses static assets, Bun can map content types in the
 // user's `Accept` header to the different static files.
 export const contentTypeToStaticFile = {
-  'text/html': 'index.html',
-  'text/x-component': 'index.rsc',
+  "text/html": "index.html",
+  "text/x-component": "index.rsc",
 };

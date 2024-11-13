@@ -566,9 +566,11 @@ describe("'bun run' priority", async () => {
         "build": "echo scripts/build",
         "test": "echo scripts/test",
         "sample.js": "echo scripts/sample.js",
+        "§'.js": 'echo "scripts/§\'.js"',
       },
       main: "main.js",
     }),
+    "§'.js": 'console.log("§\'.js")',
     "node_modules": { ".bin": { "confabulate": `#!${bunExe()}\nconsole.log("node_modules/.bin/confabulate")` } },
   });
   chmodSync(dir + "/node_modules/.bin/confabulate", 0o755);
@@ -608,6 +610,11 @@ describe("'bun run' priority", async () => {
     { command: ["./sample.js"], stdout: "sample.js", stderr: "" },
     { command: ["sample"], stdout: "sample.js", stderr: "" },
     { command: ["./sample"], stdout: "sample.js", stderr: "" },
+
+    { command: ["§'.js"], stdout: "scripts/§'.js", stderr: '$ echo "scripts/§\'.js"' },
+    { command: ["./§'.js"], stdout: "§'.js", stderr: "" },
+    { command: ["§'"], stdout: "§'.js", stderr: "" },
+    { command: ["./§'"], stdout: "§'.js", stderr: "" },
 
     { command: ["noext"], stdout: "noext", stderr: "" },
     { command: ["./noext"], stdout: "noext", stderr: "" },

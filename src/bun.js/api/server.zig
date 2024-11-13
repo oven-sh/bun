@@ -2000,7 +2000,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 if (class_name.eqlComptime("Response")) {
                     Output.errGeneric("Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.", .{});
-                } else if (!value.isEmpty() and !globalThis.hasException()) {
+                } else if (value != .zero and !globalThis.hasException()) {
                     var formatter = JSC.ConsoleObject.Formatter{
                         .globalThis = globalThis,
                         .quote_strings = true,
@@ -2500,7 +2500,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.flags.has_finalized = true;
             }
 
-            if (!this.response_jsvalue.isEmpty()) {
+            if (this.response_jsvalue != .zero) {
                 ctxLog("finalizeWithoutDeinit: response_jsvalue != .zero", .{});
                 if (this.flags.response_protected) {
                     this.response_jsvalue.unprotect();
@@ -3698,7 +3698,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         ) void {
             JSC.markBinding(@src());
             if (this.server) |server| {
-                if (!server.config.onError.isEmpty() and !this.flags.has_called_error_handler) {
+                if (server.config.onError != .zero and !this.flags.has_called_error_handler) {
                     this.flags.has_called_error_handler = true;
                     const result = server.config.onError.call(
                         server.globalThis,
@@ -4878,7 +4878,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
             globalThis.throw("publish expects compress to be a boolean", .{});
             return .zero;
         }
@@ -4960,7 +4960,7 @@ pub const ServerWebSocket = struct {
         var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
 
-        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
             globalThis.throw("publishText expects compress to be a boolean", .{});
             return .zero;
         }
@@ -5026,7 +5026,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
             globalThis.throw("publishBinary expects compress to be a boolean", .{});
             return .zero;
         }
@@ -5202,7 +5202,7 @@ pub const ServerWebSocket = struct {
         const message_value = args.ptr[0];
         const compress_value = args.ptr[1];
 
-        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
             globalThis.throw("send expects compress to be a boolean", .{});
             return .zero;
         }
@@ -5276,7 +5276,7 @@ pub const ServerWebSocket = struct {
         const message_value = args.ptr[0];
         const compress_value = args.ptr[1];
 
-        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
             globalThis.throw("sendText expects compress to be a boolean", .{});
             return .zero;
         }
@@ -5360,7 +5360,7 @@ pub const ServerWebSocket = struct {
         const message_value = args.ptr[0];
         const compress_value = args.ptr[1];
 
-        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
             globalThis.throw("sendBinary expects compress to be a boolean", .{});
             return .zero;
         }
@@ -5553,7 +5553,7 @@ pub const ServerWebSocket = struct {
         }
 
         const code = brk: {
-            if (args.ptr[0].isEmpty() or args.ptr[0].isUndefined()) {
+            if (args.ptr[0] == .zero or args.ptr[0].isUndefined()) {
                 // default exception code
                 break :brk 1000;
             }
@@ -5567,7 +5567,7 @@ pub const ServerWebSocket = struct {
         };
 
         var message_value: ZigString.Slice = brk: {
-            if (args.ptr[1].isEmpty() or args.ptr[1].isUndefined()) break :brk ZigString.Slice.empty;
+            if (args.ptr[1] == .zero or args.ptr[1].isUndefined()) break :brk ZigString.Slice.empty;
 
             if (args.ptr[1].toSliceOrNull(globalThis)) |slice| {
                 break :brk slice;

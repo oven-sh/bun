@@ -479,7 +479,7 @@ pub const ArrayBuffer = extern struct {
     const log = Output.scoped(.ArrayBuffer, false);
 
     pub fn toJS(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
-        if (!this.value.isEmpty()) {
+        if (this.value != .zero) {
             return this.value;
         }
 
@@ -519,7 +519,7 @@ pub const ArrayBuffer = extern struct {
         callback: JSC.C.JSTypedArrayBytesDeallocator,
         exception: JSC.C.ExceptionRef,
     ) JSC.JSValue {
-        if (!this.value.isEmpty()) {
+        if (this.value != .zero) {
             return this.value;
         }
 

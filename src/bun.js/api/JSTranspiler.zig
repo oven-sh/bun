@@ -667,7 +667,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 
                 while (iter.next()) |key_| {
                     const value = iter.value;
-                    if (value.isEmpty()) continue;
+                    if (value == .zero) continue;
 
                     const key = try key_.toOwnedSlice(bun.default_allocator);
 
@@ -1090,12 +1090,12 @@ pub fn transformSync(
             return .zero;
         }
     }
-    if (!js_ctx_value.isEmpty()) {
+    if (js_ctx_value != .zero) {
         js_ctx_value.ensureStillAlive();
     }
 
     defer {
-        if (!js_ctx_value.isEmpty()) {
+        if (js_ctx_value != .zero) {
             js_ctx_value.ensureStillAlive();
         }
     }

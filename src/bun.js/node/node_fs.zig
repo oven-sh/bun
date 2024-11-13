@@ -2764,7 +2764,7 @@ pub const Arguments = struct {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
                         if (exception.* != null) return null;
                     }
-                } else if (!val.isEmpty()) {
+                } else if (val != .zero) {
                     if (!val.isUndefinedOrNull()) {
                         // error is handled below
                         flags = FileSystemFlags.fromJS(ctx, val, exception) orelse flags;

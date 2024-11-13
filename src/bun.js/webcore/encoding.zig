@@ -195,7 +195,7 @@ pub const TextEncoder = struct {
             return .undefined;
         }
 
-        if (array.isEmpty()) {
+        if (array == .zero) {
             array = JSC.JSValue.createUninitializedUint8Array(globalThis, length);
             array.ensureStillAlive();
             @memcpy(array.asArrayBuffer(globalThis).?.ptr[0..length], buf_to_use[0..length]);

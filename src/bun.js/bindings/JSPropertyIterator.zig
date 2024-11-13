@@ -58,7 +58,7 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
             var name = bun.String.dead;
             if (comptime options.include_value) {
                 const current = Bun__JSPropertyIterator__getNameAndValue(this.impl, this.globalObject, this.object, &name, i);
-                if (current.isEmpty()) {
+                if (current == .zero) {
                     return this.next();
                 }
                 current.ensureStillAlive();

@@ -851,6 +851,7 @@ elseif(APPLE)
     -dead_strip_dylibs
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
+    -Wl,-map,${BUILD_PATH}/${bun}.linker-map
   )
 else()
   # Try to use lld-16 if available, otherwise fallback to lld
@@ -945,6 +946,9 @@ else()
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro
+    -Wl,-Map=${BUILD_PATH}/${bun}.linker-map
+    -Wl,--print-symbol-order=${BUILD_PATH}/${bun}.symbol-order
+    -Wl,--print-archive-stats
   )
 endif()
 
@@ -1182,6 +1186,17 @@ if(NOT BUN_CPP_ONLY)
     elseif(APPLE)
       list(APPEND bunFiles ${bun}.dSYM)
     endif()
+
+    # If ${bun}.linker-map exists, add it to bunFiles
+    if(EXISTS ${BUILD_PATH}/${bun}.linker-map)
+      list(APPEND bunFiles ${bun}.linker-map)
+    endif()
+
+    # If ${bun}.symbol-order exists, add it to bunFiles
+    if(EXISTS ${BUILD_PATH}/${bun}.symbol-order)
+      list(APPEND bunFiles ${bun}.symbol-order)
+    endif()
+
     register_command(
       TARGET
         ${bun}

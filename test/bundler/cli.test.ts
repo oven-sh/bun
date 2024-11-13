@@ -133,3 +133,41 @@ describe("bun build", () => {
     expect(exitCode).toBe(0);
   });
 }, 10_000);
+
+it.skipIf(!isWindows)("should be able to handle pretty path on windows #13897", async () => {
+  // this test code follows the same structure as and
+  // is based on the code for testing issue 4893
+
+  let testDir = tmpdirSync();
+
+  // Clean up from prior runs if necessary
+  rmSync(testDir, { recursive: true, force: true });
+
+  // Create a directory with our test file
+  mkdirSync(testDir, { recursive: true });
+
+  writeFileSync(
+    join(testDir, "index.ts"),
+    "import chalk from \"chalk\"; export function main() { console.log(chalk.red('Hello, World!')); }",
+  );
+
+  writeFileSync(join(testDir, "chalk.ts"), "function red(value){ consol.error(value); } export default { red };");
+  testDir = realpathSync(testDir);
+
+  // bun build --entrypoints ./index.ts --outdir ./dist --target node
+  const buildOut = await Bun.build({
+    entrypoints: [join(testDir, "index.ts")],
+    outdir: join(testDir, "dist"),
+    minify: true,
+    sourcemap: "linked",
+    plugins: [
+      {
+        name: "My windows plugin",
+        async setup(build) {
+          build.onResolve({ filter: /chalk/ }, () => ({ path: join(testDir, "chalk.ts").replaceAll("/", "\\") }));
+        },
+      },
+    ],
+  });
+  expect(buildOut?.success).toBe(true);
+});

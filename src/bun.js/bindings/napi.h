@@ -14,7 +14,6 @@
 #include "napi_handle_scope.h"
 #include "napi_finalizer.h"
 
-#include <iostream>
 #include <unordered_set>
 
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);

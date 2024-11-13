@@ -399,7 +399,7 @@ export const aws = {
       tagSpecification = ["instance", "volume"].map(resourceType => {
         return {
           ResourceType: resourceType,
-          Tags: Object.entries(metadata).map(([Key, Value]) => ({ Key, Value })),
+          Tags: Object.entries(metadata).map(([Key, Value]) => ({ Key, Value: String(Value) })),
         };
       });
     }

@@ -2553,7 +2553,7 @@ const CompilerRT = struct {
 
 pub const Bun__FFI__cc = FFI.Bun__FFI__cc;
 
-fn makeNapiEnvIfNeeded(functions: []FFI.Function, globalThis: *JSGlobalObject) ?*napi.NapiEnv {
+fn makeNapiEnvIfNeeded(functions: []const FFI.Function, globalThis: *JSGlobalObject) ?*napi.NapiEnv {
     for (functions) |function| {
         if (function.needsNapiEnv()) {
             return globalThis.makeNapiEnvForFFI();

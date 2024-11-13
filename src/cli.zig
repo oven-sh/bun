@@ -2024,7 +2024,7 @@ pub const Command = struct {
                 }
 
                 if (ctx.positionals.len > 0) {
-                    if (try RunCommand.exec(ctx, false, true)) {
+                    if (try RunCommand.exec(ctx, .{.bin_dirs_only = false, .log_errors = true})) {
                         return;
                     }
 
@@ -2104,7 +2104,7 @@ pub const Command = struct {
                     if (ctx.filters.len > 0) {
                         Output.prettyln("<r><yellow>warn<r>: Filters are ignored for auto command", .{});
                     }
-                    if (try RunCommand.exec(ctx, true, true)) {
+                    if (try RunCommand.exec(ctx, .{ .bin_dirs_only = true, .log_errors = !ctx.runtime_options.if_present })) {
                         return;
                     }
                     return;

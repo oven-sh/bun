@@ -1243,9 +1243,14 @@ pub const RunCommand = struct {
 
     pub fn exec(
         ctx: Command.Context,
-        comptime bin_dirs_only: bool,
-        comptime log_errors: bool,
+        cfg: struct {
+            bin_dirs_only: bool,
+            log_errors: bool,
+        },
     ) !bool {
+        const bin_dirs_only = cfg.bin_dirs_only;
+        const log_errors = cfg.log_errors;
+
         // find what to run
 
         var positionals = ctx.positionals;
@@ -1478,7 +1483,16 @@ pub const RunCommand = struct {
         }
 
         if (comptime log_errors) {
-            Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{target_name});
+            const ext = std.fs.path.extension(target_name);
+            const default_loader = options.defaultLoaders.get(ext);
+            if (default_loader != null and default_loader.?.isJavaScriptLikeOrJSON()) {
+                Output.prettyError("<r><red>error<r><d>:<r> <b>Module not found \"<b>{s}<r>\"\n", .{target_name});
+            } else if (ext.len > 0) {
+                Output.prettyError("<r><red>error<r><d>:<r> <b>File not found \"<b>{s}<r>\"\n", .{target_name});
+            } else {
+                Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{target_name});
+            }
+
             Global.exit(1);
         }
 

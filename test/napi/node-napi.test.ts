@@ -56,7 +56,6 @@ beforeAll(() => {
   const uniqueDirectories = Array.from(new Set(directories));
 
   for (const dir of uniqueDirectories) {
-    console.log(dir);
     const result = spawnSync({
       cmd: [bunExe(), "x", "node-gyp", "build", "--debug"],
       cwd: dir,

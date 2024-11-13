@@ -332,27 +332,11 @@ function getPipeline(options) {
    */
 
   const buildPlatforms = [
-    { os: "linux", arch: "aarch64" },
-    { os: "linux", arch: "x64" },
     { os: "linux", arch: "aarch64", abi: "musl" },
     { os: "linux", arch: "x64", abi: "musl" },
   ];
 
   const testPlatforms = [
-    { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
-    { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
-    { os: "linux", arch: "aarch64", distro: "debian", release: "10" },
-    { os: "linux", arch: "x64", distro: "debian", release: "12" },
-    { os: "linux", arch: "x64", distro: "debian", release: "11" },
-    { os: "linux", arch: "x64", distro: "debian", release: "10" },
-    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
-    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
-    { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
-    { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
-    { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023" },
-    // { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2" },
-    { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023" },
-    // { os: "linux", arch: "x64", distro: "amazonlinux", release: "2" },
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.17" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },

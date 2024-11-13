@@ -4,6 +4,7 @@ import { inspect, parseArgs } from "node:util";
 import {
   $,
   getArch,
+  getBuildNumber,
   getSecret,
   isCI,
   isMacOS,
@@ -11,6 +12,7 @@ import {
   spawn,
   spawnSafe,
   spawnSyncSafe,
+  startGroup,
   tmpdir,
   waitForPort,
   which,
@@ -115,11 +117,7 @@ export const aws = {
   async spawn(args) {
     const aws = which("aws");
     if (!aws) {
-      if (isMacOS) {
-        await spawnSafe(["brew", "install", "awscli"]);
-      } else {
-        throw new Error("AWS CLI is not installed, please install it");
-      }
+      throw new Error("AWS CLI is not installed, please install it");
     }
 
     let env;
@@ -471,6 +469,7 @@ export const aws = {
         ["name"]: name || `${InstanceId}-snapshot-${Date.now()}`,
       });
       await aws.waitImage("image-available", imageId);
+      return imageId;
     };
 
     const terminate = async () => {
@@ -926,7 +925,7 @@ async function spawnScp(options) {
  * @property {(command: string[]) => Promise<SpawnResult>} exec
  * @property {(source: string, destination: string) => Promise<void>} upload
  * @property {() => Promise<void>} attach
- * @property {() => Promise<void>} snapshot
+ * @property {() => Promise<string>} snapshot
  * @property {() => Promise<void>} close
  */
 
@@ -1003,56 +1002,47 @@ async function main() {
     };
   }
 
-  const machine = await cloud.createMachine({ ...options, sshKeys, metadata });
-  console.log("Created machine:", machine);
+  const machine = await startGroup("Creating machine", async () => {
+    const result = await cloud.createMachine({ ...options, sshKeys, metadata });
+    console.log("Created machine:", result);
+    return result;
+  });
 
   process.on("SIGINT", () => {
     machine.close().finally(() => process.exit(1));
   });
 
-  const doTest = async () => {
-    await machine.exec(["uname", "-a"], { stdio: "inherit" });
-  };
-
-  const doBootstrap = async (ci = true) => {
-    const localPath = resolve(import.meta.dirname, "bootstrap.sh");
-    const remotePath = "/tmp/bootstrap.sh";
-    await machine.upload(localPath, remotePath);
-    await machine.exec(["sh", remotePath, ci ? "--ci" : "--no-ci"], { stdio: "inherit" });
-  };
-
-  const doAgent = async (action = "install") => {
-    const templatePath = resolve(import.meta.dirname, "agent.mjs");
-    const tmpPath = mkdtempSync(join(tmpdir(), "agent-"));
-    const localPath = join(tmpPath, "agent.mjs");
-    const remotePath = "/tmp/agent.mjs";
-    const npx = which("bunx") || which("npx");
-    await spawnSafe($`${npx} esbuild ${templatePath} --bundle --platform=node --format=esm --outfile=${localPath}`);
-    await machine.upload(localPath, remotePath);
-    await machine.exec(["node", remotePath, action], { stdio: "inherit" });
-  };
-
-  const doSnapshot = async () => {
-    const { os, arch, distro, release } = options;
-    const name = `${os}-${arch}-${distro}-${release}`;
-    await machine.snapshot(name);
-  };
-
   try {
-    await doTest();
-    await doBootstrap();
-    await doAgent();
-  } catch (error) {
-    if (isCI) {
-      throw error;
-    } else {
-      console.error(error);
-      try {
-        await machine.attach();
-      } catch (error) {
-        console.error(error);
-      }
-    }
+    await startGroup("Connecting to machine", async () => {
+      await machine.exec(["uname", "-a"], { stdio: "inherit" });
+    });
+
+    await startGroup("Running bootstrap script", async () => {
+      const localPath = resolve(import.meta.dirname, "bootstrap.sh");
+      const remotePath = "/tmp/bootstrap.sh";
+      await machine.upload(localPath, remotePath);
+      await machine.exec(["sh", remotePath, "--ci"], { stdio: "inherit" });
+    });
+
+    await startGroup("Installing buildkite-agent", async () => {
+      const templatePath = resolve(import.meta.dirname, "agent.mjs");
+      const tmpPath = mkdtempSync(join(tmpdir(), "agent-"));
+      const localPath = join(tmpPath, "agent.mjs");
+      const remotePath = "/tmp/agent.mjs";
+      const npx = which("bunx") || which("npx");
+      await spawnSafe($`${npx} esbuild ${templatePath} --bundle --platform=node --format=esm --outfile=${localPath}`);
+      await machine.upload(localPath, remotePath);
+      await machine.exec(["node", remotePath, "install"], { stdio: "inherit" });
+    });
+
+    const imageId = await startGroup("Creating snapshot", async () => {
+      const { os, arch, distro, release } = options;
+      const suffix = isCI ? `build-${getBuildNumber()}` : `draft-${Date.now()}`;
+      const name = `${os}-${arch}-${distro}-${release}-${suffix}`;
+      const result = await machine.snapshot(name);
+      console.log("Created snapshot:", result);
+      return result;
+    });
   } finally {
     await machine.close();
   }

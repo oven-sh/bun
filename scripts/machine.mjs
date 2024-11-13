@@ -4,6 +4,7 @@ import { inspect, parseArgs } from "node:util";
 import {
   $,
   getArch,
+  getRepository,
   getSecret,
   isCI,
   isMacOS,
@@ -937,7 +938,8 @@ function parseOptions(args) {
 
 async function main() {
   const { command, buildkiteToken, ...options } = parseOptions(process.argv.slice(2));
-  const authorizedKeys = getAuthorizedKeys();
+  const owner = getRepository()?.split("/")?.[0];
+  const authorizedKeys = isCI && owner ? await getGithubAuthorizedKeys(owner) : getAuthorizedKeys();
 
   let cloud;
   if (options["cloud"] === "docker") {
@@ -990,8 +992,10 @@ async function main() {
     await doBootstrap();
     await doAgent();
   } catch (error) {
-    console.error(error);
-    if (!isCI) {
+    if (isCI) {
+      throw error;
+    } else {
+      console.error(error);
       try {
         await machine.attach();
       } catch (error) {

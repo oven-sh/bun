@@ -149,7 +149,7 @@ BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto str = value.toWTFString(globalObject);
     if (str.isEmpty()) {
-        return { BunStringTag::Empty };
+        return { BunStringTag::Dead };
     }
 
     StringImpl* impl = str.impl();

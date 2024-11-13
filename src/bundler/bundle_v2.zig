@@ -2274,15 +2274,11 @@ pub const BundleV2 = struct {
     }
 
     fn pathWithPrettyInitialized(this: *BundleV2, path: Fs.Path, target: options.Target) !Fs.Path {
-        if (path.pretty.ptr != path.text.ptr) {
-            // TODO(@paperdave): there is a high chance this dupe is no longer required
-            return path.dupeAlloc(this.graph.allocator);
-        }
-
         // TODO: outbase
         var buf: bun.PathBuffer = undefined;
         const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
         var path_clone = path;
+
         // stack-allocated temporary is not leaked because dupeAlloc on the path will
         // move .pretty into the heap. that function also fixes some slash issues.
         if (target == .bake_server_components_ssr) {
@@ -9581,13 +9577,19 @@ pub const LinkerContext = struct {
         if (chunk.content == .javascript) {
             const sources = c.parse_graph.input_files.items(.source);
             for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
-                const source: Logger.Source = sources[part_range.source_index.get()];
+                const source: *Logger.Source = &sources[part_range.source_index.get()];
 
                 const file_path = brk: {
                     if (source.path.isFile()) {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
+                        const path = source.path;
+                        if (path.pretty.ptr == path.text.ptr) {
+                            const rel = bun.path.relativePlatform(c.resolver.fs.top_level_dir, path.text, .loose, false);
+                            source.path.pretty = c.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
+                        }
                         source.path.assertPrettyIsValid();
+
                         break :brk source.path.pretty;
                     } else {
                         // If this isn't in the "file" namespace, just use the full path text

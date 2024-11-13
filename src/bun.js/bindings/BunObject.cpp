@@ -278,6 +278,15 @@ static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
     return pluginFunction;
 }
 
+static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(bunObject->globalObject());
+    JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
+    RETURN_IF_EXCEPTION(scope, {});
+    return sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword);
+}
+
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
 
 static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
@@ -630,6 +639,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     semver                                         BunObject_getter_wrap_semver                                        ReadOnly|DontDelete|PropertyCallback
+    sql                                            constructBunSQLObject                                               DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1

@@ -879,6 +879,7 @@ else()
     set(LLD_NAME lld-${LLVM_VERSION_MAJOR})
   endif()
 
+  if (NOT IS_MUSL)
   if (IS_ARM64)
     set(ARCH_WRAP_FLAGS
       -Wl,--wrap=fcntl64
@@ -899,6 +900,10 @@ else()
       -Wl,--wrap=stat
       -Wl,--wrap=stat64
       -Wl,--wrap=statx
+    )
+  endif()
+  else()
+    set(ARCH_WRAP_FLAGS
     )
   endif()
 

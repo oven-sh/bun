@@ -947,7 +947,6 @@ else()
     -Wl,-z,lazy
     -Wl,-z,norelro
     -Wl,-Map=${bun}.linker-map
-    -Wl,--print-symbol-order=${bun}.symbol-order
   )
 endif()
 
@@ -1190,9 +1189,6 @@ if(NOT BUN_CPP_ONLY)
       list(APPEND bunFiles ${bun}.linker-map)
     endif()
 
-    if(LINUX)
-      list(APPEND bunFiles ${bun}.symbol-order)
-    endif()
 
     register_command(
       TARGET

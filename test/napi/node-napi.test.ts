@@ -1,7 +1,9 @@
-import { spawnSync, Glob } from "bun";
+import { spawnSync, spawn, Glob } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join, dirname } from "path";
+import os from "node:os";
+import { proxyMarker } from "comlink";
 
 const jsNativeApiRoot = join(__dirname, "node-napi-tests/test/js-native-api");
 const nodeApiRoot = join(__dirname, "node-napi-tests/test/node-api");
@@ -48,26 +50,43 @@ const failingNodeApiTests = [
   "test_worker_terminate/test.js",
 ];
 
-beforeAll(() => {
+beforeAll(async () => {
   const directories = jsNativeApiTests
     .map(t => join(jsNativeApiRoot, t))
     .concat(nodeApiTests.map(t => join(nodeApiRoot, t)))
     .map(t => dirname(t));
   const uniqueDirectories = Array.from(new Set(directories));
 
-  for (const dir of uniqueDirectories) {
-    const result = spawnSync({
-      cmd: [bunExe(), "x", "node-gyp", "build", "--debug"],
+  async function buildOne(dir: string) {
+    const process = spawn({
+      cmd: [bunExe(), "x", "node-gyp", "rebuild", "--debug"],
       cwd: dir,
       stderr: "pipe",
       stdout: "ignore",
       stdin: "inherit",
       env: bunEnv,
     });
-    if (!result.success) {
-      throw new Error(`node-gyp build in ${dir} failed: ${result.stderr.toString()}`);
+    await process.exited;
+    if (process.exitCode !== 0) {
+      const stderr = await new Response(process.stderr).text();
+      throw new Error(`node-gyp rebuild in ${dir} failed:\n${stderr}`);
     }
   }
+
+  async function worker() {
+    while (uniqueDirectories.length > 0) {
+      const dir = uniqueDirectories.pop();
+      await buildOne(dir!);
+    }
+  }
+
+  const parallelism = Math.min(8, os.cpus().length);
+  const jobs = [];
+  for (let i = 0; i < parallelism; i++) {
+    jobs.push(worker());
+  }
+
+  await Promise.all(jobs);
 });
 
 describe.each([
@@ -75,17 +94,21 @@ describe.each([
   ["node-api", nodeApiTests, nodeApiRoot, failingNodeApiTests],
 ])("%s tests", (_name, tests, root, failing) => {
   describe.each(tests)("%s", test => {
-    it.skipIf(failing.includes(test))("passes", () => {
-      const result = spawnSync({
-        cmd: [bunExe(), "run", test],
-        cwd: root,
-        stderr: "inherit",
-        stdout: "ignore",
-        stdin: "inherit",
-        env: bunEnv,
-      });
-      expect(result.success).toBeTrue();
-      expect(result.exitCode).toBe(0);
-    });
+    it.skipIf(failing.includes(test))(
+      "passes",
+      () => {
+        const result = spawnSync({
+          cmd: [bunExe(), "run", test],
+          cwd: root,
+          stderr: "inherit",
+          stdout: "ignore",
+          stdin: "inherit",
+          env: bunEnv,
+        });
+        expect(result.success).toBeTrue();
+        expect(result.exitCode).toBe(0);
+      },
+      10000, // timeout
+    );
   });
 });

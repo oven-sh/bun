@@ -1,4 +1,4 @@
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 // bench("new URLSearchParams({})", () => {
 //   return new URLSearchParams({});

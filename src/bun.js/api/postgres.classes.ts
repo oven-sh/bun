@@ -59,7 +59,7 @@ export default [
         length: 0,
       },
     },
-    values: ["pendingValue", "binding"],
+    values: ["pendingValue", "columns", "binding"],
     estimatedSize: true,
   }),
 ];

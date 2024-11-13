@@ -1072,7 +1072,7 @@ pub const StandaloneModuleGraph = struct {
             if (item.data != .e_string)
                 return error.InvalidSourceMap;
 
-            const decoded = try item.data.e_string.stringDecodedUTF8(arena);
+            const decoded = try item.data.e_string.stringCloned(arena);
 
             const offset = string_payload.items.len;
             try string_payload.appendSlice(decoded);
@@ -1089,7 +1089,7 @@ pub const StandaloneModuleGraph = struct {
             if (item.data != .e_string)
                 return error.InvalidSourceMap;
 
-            const utf8 = try item.data.e_string.stringDecodedUTF8(arena);
+            const utf8 = try item.data.e_string.stringCloned(arena);
             defer arena.free(utf8);
 
             const offset = string_payload.items.len;

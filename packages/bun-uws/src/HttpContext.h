@@ -527,7 +527,8 @@ public:
 
     /* Listen to port using this HttpContext */
     us_listen_socket_t *listen(const char *host, int port, int options) {
-        auto socket = us_socket_context_listen(SSL, getSocketContext(), host, port, options, sizeof(HttpResponseData<SSL>));
+        int error = 0;
+        auto socket = us_socket_context_listen(SSL, getSocketContext(), host, port, options, sizeof(HttpResponseData<SSL>), &error);
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
           us_socket_unref(&socket->s);
@@ -537,7 +538,8 @@ public:
 
     /* Listen to unix domain socket using this HttpContext */
     us_listen_socket_t *listen_unix(const char *path, size_t pathlen, int options) {
-        auto* socket =  us_socket_context_listen_unix(SSL, getSocketContext(), path, pathlen, options, sizeof(HttpResponseData<SSL>));
+        int error = 0;
+        auto* socket =  us_socket_context_listen_unix(SSL, getSocketContext(), path, pathlen, options, sizeof(HttpResponseData<SSL>), &error);
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
             us_socket_unref(&socket->s);

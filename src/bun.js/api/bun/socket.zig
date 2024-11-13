@@ -20,6 +20,7 @@ const X509 = @import("./x509.zig");
 const Async = bun.Async;
 const uv = bun.windows.libuv;
 const H2FrameParser = @import("./h2_frame_parser.zig").H2FrameParser;
+const NodePath = @import("../../node/path.zig");
 noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []const u8) JSValue {
     var zig_str: ZigString = ZigString.init("");
     var output_buf: [4096]u8 = undefined;
@@ -313,6 +314,7 @@ pub const SocketConfig = struct {
     handlers: Handlers,
     default_data: JSC.JSValue = .zero,
     exclusive: bool = false,
+    allowHalfOpen: bool = false,
 
     pub fn fromJS(
         vm: *JSC.VirtualMachine,
@@ -323,6 +325,7 @@ pub const SocketConfig = struct {
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
         var port: ?u16 = null;
         var exclusive = false;
+        var allowHalfOpen = false;
 
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
@@ -368,6 +371,9 @@ pub const SocketConfig = struct {
 
             if (opts.getTruthy(globalObject, "exclusive")) |_| {
                 exclusive = true;
+            }
+            if (opts.getTruthy(globalObject, "allowHalfOpen")) |_| {
+                allowHalfOpen = true;
             }
 
             if (opts.getTruthy(globalObject, "hostname") orelse opts.getTruthy(globalObject, "host")) |hostname| {
@@ -442,10 +448,43 @@ pub const SocketConfig = struct {
             .handlers = handlers,
             .default_data = default_data,
             .exclusive = exclusive,
+            .allowHalfOpen = allowHalfOpen,
         };
     }
 };
 
+fn isValidPipeName(pipe_name: []const u8) bool {
+    if (!Environment.isWindows) {
+        return false;
+    }
+    // check for valid pipe names
+    // at minimum we need to have \\.\pipe\ or \\?\pipe\ + 1 char that is not a separator
+    return pipe_name.len > 9 and
+        NodePath.isSepWindowsT(u8, pipe_name[0]) and
+        NodePath.isSepWindowsT(u8, pipe_name[1]) and
+        (pipe_name[2] == '.' or pipe_name[2] == '?') and
+        NodePath.isSepWindowsT(u8, pipe_name[3]) and
+        strings.eql(pipe_name[4..8], "pipe") and
+        NodePath.isSepWindowsT(u8, pipe_name[8]) and
+        !NodePath.isSepWindowsT(u8, pipe_name[9]);
+}
+
+fn normalizePipeName(pipe_name: []const u8, buffer: []u8) ?[]const u8 {
+    if (Environment.isWindows) {
+        bun.assert(pipe_name.len < buffer.len);
+        if (!isValidPipeName(pipe_name)) {
+            return null;
+        }
+        // normalize pipe name with can have mixed slashes
+        // pipes are simple and this will be faster than using node:path.resolve()
+        // we dont wanna to normalize the pipe name it self only the pipe identifier (//./pipe/, //?/pipe/, etc)
+        @memcpy(buffer[0..9], "\\\\.\\pipe\\");
+        @memcpy(buffer[9..pipe_name.len], pipe_name[9..]);
+        return buffer[0..pipe_name.len];
+    } else {
+        return null;
+    }
+}
 pub const Listener = struct {
     pub const log = Output.scoped(.Listener, false);
 
@@ -591,14 +630,18 @@ pub const Listener = struct {
 
         const ssl_enabled = ssl != null;
 
-        const socket_flags: i32 = if (exclusive) 1 else 0;
+        var socket_flags: i32 = if (exclusive) uws.LIBUS_LISTEN_EXCLUSIVE_PORT else uws.LIBUS_LISTEN_DEFAULT;
+        if (socket_config.allowHalfOpen) {
+            socket_flags |= uws.LIBUS_SOCKET_ALLOW_HALF_OPEN;
+        }
         defer if (ssl != null) ssl.?.deinit();
 
         if (Environment.isWindows) {
             if (port == null) {
                 // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
-                const pipe_name = hostname_or_unix.slice();
-                if (strings.startsWith(pipe_name, "\\\\.\\pipe\\") or strings.startsWith(pipe_name, "\\\\?\\pipe\\")) {
+                const slice = hostname_or_unix.slice();
+                var buf: bun.PathBuffer = undefined;
+                if (normalizePipeName(slice, buf[0..])) |pipe_name| {
                     const connection: Listener.UnixOrHost = .{ .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice() };
                     if (ssl_enabled) {
                         if (ssl.?.protos) |p| {
@@ -721,7 +764,7 @@ pub const Listener = struct {
         } else .{
             .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
         };
-
+        var errno: c_int = 0;
         const listen_socket: *uws.ListenSocket = brk: {
             switch (connection) {
                 .host => |c| {
@@ -735,6 +778,7 @@ pub const Listener = struct {
                         c.port,
                         socket_flags,
                         8,
+                        &errno,
                     );
                     // should return the assigned port
                     if (socket) |s| {
@@ -745,7 +789,7 @@ pub const Listener = struct {
                 .unix => |u| {
                     const host = bun.default_allocator.dupeZ(u8, u) catch bun.outOfMemory();
                     defer bun.default_allocator.free(host);
-                    break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8);
+                    break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8, &errno);
                 },
                 .fd => {
                     // don't call listen() on an fd
@@ -764,7 +808,7 @@ pub const Listener = struct {
                     bun.span(hostname_or_unix.slice()),
                 },
             );
-            const errno = @intFromEnum(bun.C.getErrno(@as(c_int, -1)));
+            log("Failed to listen {d}", .{errno});
             if (errno != 0) {
                 err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
                 if (bun.C.SystemErrno.init(errno)) |str| {
@@ -1089,9 +1133,14 @@ pub const Listener = struct {
         };
 
         if (Environment.isWindows) {
+            var buf: bun.PathBuffer = undefined;
+            var pipe_name: ?[]const u8 = null;
             const isNamedPipe = switch (connection) {
                 // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
-                .unix => |pipe_name| strings.startsWith(pipe_name, "\\\\.\\pipe\\") or strings.startsWith(pipe_name, "\\\\?\\pipe\\"),
+                .unix => |slice| brk: {
+                    pipe_name = normalizePipeName(slice, buf[0..]);
+                    break :brk (pipe_name != null);
+                },
                 .fd => |fd| brk: {
                     const uvfd = bun.uvfdcast(fd);
                     const fd_type = uv.uv_guess_handle(uvfd);
@@ -1136,7 +1185,7 @@ pub const Listener = struct {
                     tls.poll_ref.ref(handlers.vm);
                     tls.ref();
                     if (connection == .unix) {
-                        const named_pipe = WindowsNamedPipeContext.connect(globalObject, connection.unix, ssl, .{ .tls = tls }) catch {
+                        const named_pipe = WindowsNamedPipeContext.connect(globalObject, pipe_name.?, ssl, .{ .tls = tls }) catch {
                             return promise_value;
                         };
                         tls.socket = TLSSocket.Socket.fromNamedPipe(named_pipe);
@@ -1162,7 +1211,7 @@ pub const Listener = struct {
                     tcp.poll_ref.ref(handlers.vm);
 
                     if (connection == .unix) {
-                        const named_pipe = WindowsNamedPipeContext.connect(globalObject, connection.unix, null, .{ .tcp = tcp }) catch {
+                        const named_pipe = WindowsNamedPipeContext.connect(globalObject, pipe_name.?, null, .{ .tcp = tcp }) catch {
                             return promise_value;
                         };
                         tcp.socket = TCPSocket.Socket.fromNamedPipe(named_pipe);
@@ -1260,7 +1309,7 @@ pub const Listener = struct {
                 });
 
                 SocketType.dataSetCached(socket.getThisValue(globalObject), globalObject, default_data);
-
+                socket.flags.allow_half_open = socket_config.allowHalfOpen;
                 socket.doConnect(connection) catch {
                     socket.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
                     return promise_value;
@@ -1306,6 +1355,7 @@ fn selectALPNCallback(
         return BoringSSL.SSL_TLSEXT_ERR_NOACK;
     }
 }
+
 fn NewSocket(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
@@ -1374,6 +1424,8 @@ fn NewSocket(comptime ssl: bool) type {
             finalizing: bool = false,
             authorized: bool = false,
             owned_protos: bool = true,
+            is_paused: bool = false,
+            allow_half_open: bool = false,
         };
         pub usingnamespace if (!ssl)
             JSC.Codegen.JSTCPSocket
@@ -1423,6 +1475,7 @@ fn NewSocket(comptime ssl: bool) type {
                         c.port,
                         this.socket_context.?,
                         this,
+                        this.flags.allow_half_open,
                     );
                 },
                 .unix => |u| {
@@ -1430,6 +1483,7 @@ fn NewSocket(comptime ssl: bool) type {
                         u,
                         this.socket_context.?,
                         this,
+                        this.flags.allow_half_open,
                     );
                 },
                 .fd => |f| {
@@ -1442,6 +1496,67 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*This {
             globalObject.throw("Cannot construct Socket", .{});
             return null;
+        }
+        pub fn resumeFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+            JSC.markBinding(@src());
+
+            log("resume", .{});
+            if (this.flags.is_paused) {
+                this.flags.is_paused = !this.socket.resumeStream();
+            }
+            return .undefined;
+        }
+        pub fn pauseFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+            JSC.markBinding(@src());
+
+            log("pause", .{});
+            if (!this.flags.is_paused) {
+                this.flags.is_paused = this.socket.pauseStream();
+            }
+            return .undefined;
+        }
+
+        pub fn setKeepAlive(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+            JSC.markBinding(@src());
+            const args = callframe.arguments(2);
+
+            const enabled: bool = brk: {
+                if (args.len >= 1) {
+                    break :brk args.ptr[0].coerce(bool, globalThis);
+                }
+                break :brk false;
+            };
+
+            const initialDelay: u32 = brk: {
+                if (args.len > 1) {
+                    if (globalThis.validateIntegerRange(args.ptr[1], i32, 0, .{
+                        .min = 0,
+                        .field_name = "initialDelay",
+                    })) |signedDelay| {
+                        break :brk @intCast(signedDelay);
+                    }
+                    return .zero;
+                }
+                break :brk 0;
+            };
+            log("setKeepAlive({}, {})", .{ enabled, initialDelay });
+
+            return JSValue.jsBoolean(this.socket.setKeepAlive(enabled, initialDelay));
+        }
+
+        pub fn setNoDelay(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+            JSC.markBinding(@src());
+
+            const args = callframe.arguments(1);
+            const enabled: bool = brk: {
+                if (args.len >= 1) {
+                    break :brk args.ptr[0].coerce(bool, globalThis);
+                }
+                break :brk true;
+            };
+            log("setNoDelay({})", .{enabled});
+
+            return JSValue.jsBoolean(this.socket.setNoDelay(enabled));
         }
 
         pub fn handleError(this: *This, err_value: JSC.JSValue) void {
@@ -1868,9 +1983,15 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
+            var js_error: JSValue = .undefined;
+            if (err != 0) {
+                // errors here are always a read error
+                js_error = bun.sys.Error.fromCodeInt(err, .read).toJSC(globalObject);
+            }
+
             _ = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
-                JSValue.jsNumber(@as(i32, err)),
+                js_error,
             }) catch |e| {
                 _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException(e) });
             };
@@ -2368,7 +2489,6 @@ fn NewSocket(comptime ssl: bool) type {
                 },
             };
         }
-
         fn internalFlush(this: *This) void {
             if (this.buffered_data_for_node_net.len > 0) {
                 const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice(), false), 0));
@@ -2387,7 +2507,6 @@ fn NewSocket(comptime ssl: bool) type {
 
             this.socket.flush();
         }
-
         pub fn flush(
             this: *This,
             _: *JSC.JSGlobalObject,
@@ -2395,7 +2514,6 @@ fn NewSocket(comptime ssl: bool) type {
         ) JSValue {
             JSC.markBinding(@src());
             this.internalFlush();
-
             return JSValue.jsUndefined();
         }
 

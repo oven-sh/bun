@@ -58,7 +58,10 @@ typedef int mode_t;
 #include "ProcessBindingNatives.h"
 
 #if OS(LINUX)
+#include <features.h>
+#ifdef __GNU_LIBRARY__
 #include <gnu/libc-version.h>
+#endif
 #endif
 
 #pragma mark - Node.js Process
@@ -271,6 +274,8 @@ extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
 
+extern "C" size_t Bun__process_dlopen_count;
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -349,6 +354,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     CString utf8 = filename.utf8();
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
 #endif
+
+    Bun__process_dlopen_count++;
 
     if (!handle) {
 #if OS(WINDOWS)
@@ -1573,8 +1580,11 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         }
 
 #if OS(LINUX)
+#ifdef __GNU_LIBRARY__
         header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionCompiler"_s), JSC::jsString(vm, makeString(__GLIBC__, '.', __GLIBC_MINOR__)), 0);
         header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionRuntime"_s), JSC::jsString(vm, String::fromUTF8(gnu_get_libc_version()), 0));
+#else
+#endif
 #endif
 
         header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);

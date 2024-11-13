@@ -521,3 +521,23 @@ it("should pass arguments correctly in scripts", async () => {
     expect(exitCode).toBe(0);
   }
 });
+
+it("should run with bun instead of npm even with leading spaces", async () => {
+  const dir = tempDirWithFiles("test", {
+    "package.json": JSON.stringify({
+      workspaces: ["a", "b"],
+      scripts: { "root_script": "   npm run other_script    ", "other_script": "   echo hi    " },
+    }),
+  });
+  {
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "run", "root_script"],
+      cwd: dir,
+      env: bunEnv,
+    });
+
+    expect(stderr.toString()).toBe("$    bun run other_script    \n$    echo hi    \n");
+    expect(stdout.toString()).toEndWith("hi\n");
+    expect(exitCode).toBe(0);
+  }
+});

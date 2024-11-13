@@ -484,6 +484,12 @@ pub const Task = TaggedPointerUnion(.{
     WriteFile,
     WriteFileTask,
     Writev,
+    bun.shell.Interpreter.Builtin.Yes.YesTask,
+    ProcessWaiterThreadTask,
+    RuntimeTranspilerStore,
+    ServerAllConnectionsClosedTask,
+    bun.bake.DevServer.HotReloadTask,
+    bun.bundle_v2.DeferredBatchTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -1251,6 +1257,10 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(ServerAllConnectionsClosedTask))) => {
                     var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
                     any.runFromJSThread(virtual_machine);
+                },
+                @field(Task.Tag, typeBaseName(@typeName(bun.bundle_v2.DeferredBatchTask))) => {
+                    var any: *bun.bundle_v2.DeferredBatchTask = task.get(bun.bundle_v2.DeferredBatchTask).?;
+                    any.runOnJSThread();
                 },
 
                 else => {

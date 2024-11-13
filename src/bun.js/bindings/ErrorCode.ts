@@ -61,7 +61,7 @@ export default [
 
   //NET
   ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION", Error, "Error"],
-
+  ["ERR_SOCKET_CLOSED", Error, "Error"],
   //HTTP2
   ["ERR_INVALID_HTTP_TOKEN", TypeError, "TypeError"],
   ["ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED", TypeError, "TypeError"],

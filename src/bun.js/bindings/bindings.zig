@@ -3759,7 +3759,6 @@ pub const JSValue = enum(JSValueReprInt) {
         MaxJS = 0b11111111,
         Event = 0b11101111,
         DOMWrapper = 0b11101110,
-        Blob = 0b11111100,
 
         /// This means that we don't have Zig bindings for the type yet, but it
         /// implements .toJSON()
@@ -4320,14 +4319,18 @@ pub const JSValue = enum(JSValueReprInt) {
 
             return ZigType.fromJS(value);
         }
-
-        return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
     }
 
     extern fn JSC__JSValue__dateInstanceFromNullTerminatedString(*JSGlobalObject, [*:0]const u8) JSValue;
     pub fn fromDateString(globalObject: *JSGlobalObject, str: [*:0]const u8) JSValue {
         JSC.markBinding(@src());
         return JSC__JSValue__dateInstanceFromNullTerminatedString(globalObject, str);
+    }
+
+    extern fn JSC__JSValue__dateInstanceFromNumber(*JSGlobalObject, f64) JSValue;
+    pub fn fromDateNumber(globalObject: *JSGlobalObject, value: f64) JSValue {
+        JSC.markBinding(@src());
+        return JSC__JSValue__dateInstanceFromNumber(globalObject, value);
     }
 
     extern fn JSBuffer__isBuffer(*JSGlobalObject, JSValue) bool;
@@ -4342,13 +4345,6 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn isDate(this: JSValue) bool {
         return this.jsType() == .JSDate;
-    }
-
-    pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {
-        if (!ZigType.Class.isLoaded() or value.isUndefinedOrNull())
-            return null;
-
-        return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
     }
 
     pub fn protect(this: JSValue) void {
@@ -5298,6 +5294,13 @@ pub const JSValue = enum(JSValueReprInt) {
         return if (@intFromEnum(value) != 0) value else return null;
     }
 
+    extern fn JSC__JSValue__getOwnByValue(value: JSValue, globalObject: *JSGlobalObject, propertyValue: JSValue) JSValue;
+
+    pub fn getOwnByValue(this: JSValue, global: *JSGlobalObject, property_value: JSValue) ?JSValue {
+        const value = JSC__JSValue__getOwnByValue(this, global, property_value);
+        return if (@intFromEnum(value) != 0) value else return null;
+    }
+
     pub fn getOwnTruthy(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
         if (getOwn(this, global, property_name)) |prop| {
             if (prop == .undefined) return null;
@@ -5635,6 +5638,12 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("getUnixTimestamp", .{
             this,
         });
+    }
+
+    extern fn JSC__JSValue__getUTCTimestamp(globalObject: *JSC.JSGlobalObject, this: JSValue) f64;
+    /// Calls getTime() - getUTCT
+    pub fn getUTCTimestamp(this: JSValue, globalObject: *JSC.JSGlobalObject) f64 {
+        return JSC__JSValue__getUTCTimestamp(globalObject, this);
     }
 
     pub const StringFormatter = struct {

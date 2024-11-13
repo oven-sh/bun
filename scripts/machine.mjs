@@ -1036,9 +1036,9 @@ async function main() {
     });
 
     const imageId = await startGroup("Creating snapshot", async () => {
-      const { os, arch, distro, release } = options;
+      const { os, arch, distro, distroVersion } = options;
       const suffix = isCI ? `build-${getBuildNumber()}` : `draft-${Date.now()}`;
-      const name = `${os}-${arch}-${distro}-${release}-${suffix}`;
+      const name = `${os}-${arch}-${distro}-${distroVersion}-${suffix}`;
       const result = await machine.snapshot(name);
       console.log("Created snapshot:", result);
       return result;

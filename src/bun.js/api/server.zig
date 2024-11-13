@@ -1350,33 +1350,37 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return;
 
-            if (arg.getTruthy(global, "hostname") orelse arg.getTruthy(global, "host")) |host| {
-                const host_str = host.toSlice(
-                    global,
-                    bun.default_allocator,
-                );
-                defer host_str.deinit();
+            if (arg.get(global, "hostname") orelse arg.get(global, "host")) |host| {
+                if (host.toBoolean()) {
+                    const host_str = host.toSlice(
+                        global,
+                        bun.default_allocator,
+                    );
+                    defer host_str.deinit();
 
-                if (host_str.len > 0) {
-                    args.address.tcp.hostname = bun.default_allocator.dupeZ(u8, host_str.slice()) catch unreachable;
-                    has_hostname = true;
+                    if (host_str.len > 0) {
+                        args.address.tcp.hostname = bun.default_allocator.dupeZ(u8, host_str.slice()) catch unreachable;
+                        has_hostname = true;
+                    }
                 }
             }
             if (global.hasException()) return;
 
-            if (arg.getTruthy(global, "unix")) |unix| {
-                const unix_str = unix.toSlice(
-                    global,
-                    bun.default_allocator,
-                );
-                defer unix_str.deinit();
-                if (unix_str.len > 0) {
-                    if (has_hostname) {
-                        JSC.throwInvalidArguments("Cannot specify both hostname and unix", .{}, global, exception);
-                        return;
-                    }
+            if (arg.get(global, "unix")) |unix| {
+                if (unix.toBoolean()) {
+                    const unix_str = unix.toSlice(
+                        global,
+                        bun.default_allocator,
+                    );
+                    defer unix_str.deinit();
+                    if (unix_str.len > 0) {
+                        if (has_hostname) {
+                            JSC.throwInvalidArguments("Cannot specify both hostname and unix", .{}, global, exception);
+                            return;
+                        }
 
-                    args.address = .{ .unix = bun.default_allocator.dupeZ(u8, unix_str.slice()) catch unreachable };
+                        args.address = .{ .unix = bun.default_allocator.dupeZ(u8, unix_str.slice()) catch unreachable };
+                    }
                 }
             }
             if (global.hasException()) return;

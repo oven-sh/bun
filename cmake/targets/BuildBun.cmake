@@ -948,7 +948,6 @@ else()
     -Wl,-z,norelro
     -Wl,-Map=${bun}.linker-map
     -Wl,--print-symbol-order=${bun}.symbol-order
-    -Wl,--print-icf-sections
   )
 endif()
 
@@ -1187,13 +1186,11 @@ if(NOT BUN_CPP_ONLY)
       list(APPEND bunFiles ${bun}.dSYM)
     endif()
 
-    # If ${bun}.linker-map exists, add it to bunFiles
-    if(EXISTS ${bun}.linker-map)
+    if(APPLE OR LINUX)
       list(APPEND bunFiles ${bun}.linker-map)
     endif()
 
-    # If ${bun}.symbol-order exists, add it to bunFiles
-    if(EXISTS ${bun}.symbol-order)
+    if(LINUX)
       list(APPEND bunFiles ${bun}.symbol-order)
     endif()
 

@@ -759,7 +759,7 @@ function createSshKey() {
 
   const sshAgent = which("ssh-agent");
   if (sshAgent) {
-    spawnSyncSafe(["eval", `$(${sshAgent} -s)`], { stdio: "inherit" });
+    spawnSyncSafe(["sh", "-c", `eval $(${sshAgent} -s)`], { stdio: "inherit" });
     const sshAdd = which("ssh-add");
     if (sshAdd) {
       spawnSyncSafe($`${sshAdd} ${privatePath}`, { stdio: "inherit" });

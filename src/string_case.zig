@@ -76,9 +76,33 @@ const Encoding = enum {
 };
 
 fn isSeperator(comptime kind: Encoding, c: kind.Byte()) bool {
-    return switch (c) {
-        ' ', '-', '_', '.', '\t', '\n', '\r' => true,
-        else => false,
+    return switch (kind) {
+        .utf16 => switch (c) {
+            // ASCII separators
+            0x0020, // space
+            0x002D, // hyphen-minus
+            0x005F, // underscore
+            0x002E, // dot
+            0x0009, // tab
+            0x000A, // line feed
+            0x000D, // carriage return
+
+            // Additional Unicode separators
+            0x00A0, // no-break space
+            0x00B6, // pilcrow sign
+            0x2000...0x200B, // various Unicode spaces and zero-width spaces
+            0x2010...0x2015, // various Unicode hyphens and dashes
+            0x2018...0x201F, // quotation marks
+            0x2026, // ellipsis
+            0x3000, // ideographic space
+            0xFEFF, // zero width no-break space
+            => true,
+            else => false,
+        },
+        else => switch (c) {
+            ' ', '-', '_', '.', '\t', '\n', '\r' => true,
+            else => false,
+        },
     };
 }
 

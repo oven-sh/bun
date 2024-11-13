@@ -600,9 +600,9 @@ pub const PackageJSON = struct {
         input_path: string,
         dirname_fd: StoredFileDescriptorType,
         package_id: ?Install.PackageID,
-        comptime include_scripts_: @Type(.EnumLiteral),
-        comptime include_dependencies: @Type(.EnumLiteral),
-        comptime generate_hash_: @Type(.EnumLiteral),
+        comptime include_scripts_: enum { ignore_scripts, include_scripts },
+        comptime include_dependencies: enum { main, local, none },
+        comptime generate_hash_: enum { generate_hash, no_hash },
     ) ?PackageJSON {
         const generate_hash = generate_hash_ == .generate_hash;
         const include_scripts = include_scripts_ == .include_scripts;

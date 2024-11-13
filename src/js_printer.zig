@@ -205,8 +205,19 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     return bytes;
 }
 
-pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
-    const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
+pub fn writePreQuotedString(
+    comptime encoding: strings.Encoding,
+    text: switch (encoding) {
+        .utf16 => []const u16,
+        else => []const u8,
+    },
+    comptime Writer: type,
+    writer: Writer,
+    comptime quote_char: u8,
+    comptime ascii_only: bool,
+    comptime json: bool,
+) !void {
+    if (comptime json and quote_char != '"') @compileError("for json, quote_char must be '\"'");
     var i: usize = 0;
     const n: usize = text.len;
     while (i < n) {
@@ -401,13 +412,13 @@ pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime asci
 
     try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
     try bytes.appendChar('"');
-    try writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, true, .utf8);
+    try writePreQuotedString(.utf8, text, @TypeOf(writer), writer, '"', ascii_only, true);
     bytes.appendChar('"') catch unreachable;
 }
 
 pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
     try writer.writeAll("\"");
-    try writePreQuotedString(input, Writer, writer, '"', false, true, encoding);
+    try writePreQuotedString(encoding, input, Writer, writer, '"', false, true);
     try writer.writeAll("\"");
 }
 
@@ -1594,20 +1605,18 @@ fn NewPrinter(
         pub fn printStringCharactersUTF8(e: *Printer, text: []const u8, quote: u8) void {
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', ascii_only, false, .utf8),
-                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, false, .utf8),
-                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', ascii_only, false, .utf8),
+                '\'' => writePreQuotedString(.utf8, text, @TypeOf(writer), writer, '\'', ascii_only, false),
+                '"' => writePreQuotedString(.utf8, text, @TypeOf(writer), writer, '"', ascii_only, false),
+                '`' => writePreQuotedString(.utf8, text, @TypeOf(writer), writer, '`', ascii_only, false),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
         pub fn printStringCharactersUTF16(e: *Printer, text: []const u16, quote: u8) void {
-            const slice = std.mem.sliceAsBytes(text);
-
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', ascii_only, false, .utf16),
-                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', ascii_only, false, .utf16),
-                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', ascii_only, false, .utf16),
+                '\'' => writePreQuotedString(.utf16, text, @TypeOf(writer), writer, '\'', ascii_only, false),
+                '"' => writePreQuotedString(.utf16, text, @TypeOf(writer), writer, '"', ascii_only, false),
+                '`' => writePreQuotedString(.utf16, text, @TypeOf(writer), writer, '`', ascii_only, false),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
@@ -1926,37 +1935,39 @@ fn NewPrinter(
             return printClauseItemAs(p, item, .@"export");
         }
 
-        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.EnumLiteral)) void {
+        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: enum { @"var", import, @"export" }) void {
             const name = p.renamer.nameForSymbol(item.name.ref.?);
 
-            if (comptime as == .import) {
-                if (strings.eql(name, item.alias)) {
-                    p.printIdentifier(name);
-                } else {
+            switch (comptime as) {
+                .import => {
+                    if (strings.eql(name, item.alias)) {
+                        p.printIdentifier(name);
+                    } else {
+                        p.printClauseAlias(item.alias);
+                        p.print(" as ");
+                        p.addSourceMapping(item.alias_loc);
+                        p.printIdentifier(name);
+                    }
+                },
+                .@"var" => {
                     p.printClauseAlias(item.alias);
-                    p.print(" as ");
-                    p.addSourceMapping(item.alias_loc);
+
+                    if (!strings.eql(name, item.alias)) {
+                        p.print(":");
+                        p.printSpace();
+
+                        p.printIdentifier(name);
+                    }
+                },
+                .@"export" => {
                     p.printIdentifier(name);
-                }
-            } else if (comptime as == .@"var") {
-                p.printClauseAlias(item.alias);
 
-                if (!strings.eql(name, item.alias)) {
-                    p.print(":");
-                    p.printSpace();
-
-                    p.printIdentifier(name);
-                }
-            } else if (comptime as == .@"export") {
-                p.printIdentifier(name);
-
-                if (!strings.eql(name, item.alias)) {
-                    p.print(" as ");
-                    p.addSourceMapping(item.alias_loc);
-                    p.printClauseAlias(item.alias);
-                }
-            } else {
-                @compileError("Unknown as");
+                    if (!strings.eql(name, item.alias)) {
+                        p.print(" as ");
+                        p.addSourceMapping(item.alias_loc);
+                        p.printClauseAlias(item.alias);
+                    }
+                },
             }
         }
 

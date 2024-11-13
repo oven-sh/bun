@@ -17,7 +17,7 @@ import {
 } from "./utils.mjs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
 
 const docker = {
   getPlatform(platform) {
@@ -376,7 +376,7 @@ export const aws = {
     if (imageId) {
       image = await aws.getAvailableImage(imageId);
     } else {
-      image = await aws.getBaseImage(options, true);
+      image = await aws.getBaseImage(options);
     }
 
     const { ImageId, Name, RootDeviceName, BlockDeviceMappings } = image;
@@ -756,14 +756,6 @@ function createSshKey() {
   if (!existsSync(privatePath) || !existsSync(publicPath)) {
     throw new Error(`Failed to generate SSH key: ${privatePath} / ${publicPath}`);
   }
-
-  const configPath = join(sshPath, "config");
-  const config = `
-Host *
-  IdentityFile ${privatePath}
-  AddKeysToAgent yes
-`;
-  appendFileSync(configPath, config);
 
   return {
     privatePath,

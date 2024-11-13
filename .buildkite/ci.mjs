@@ -325,6 +325,7 @@ function getPipeline(options) {
    */
 
   const buildPlatforms = [
+    { os: "linux", arch: "aarch64", abi: "musl" },
     { os: "linux", arch: "x64", abi: "musl" },
     // { os: "darwin", arch: "aarch64" },
     // { os: "darwin", arch: "x64" },
@@ -338,10 +339,10 @@ function getPipeline(options) {
   ];
 
   const testPlatforms = [
-    { os: "linux", arch: "aarch64", distro: "alpine", release: "3.20" },
-    { os: "linux", arch: "aarch64", distro: "alpine", release: "3.17" },
-    { os: "linux", arch: "x64", distro: "alpine", release: "3.20" },
-    { os: "linux", arch: "x64", distro: "alpine", release: "3.17" },
+    { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
+    { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.17" },
+    { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
+    { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.17" },
     // { os: "darwin", arch: "aarch64", distro: "sonoma", release: "14" },
     // { os: "darwin", arch: "aarch64", distro: "ventura", release: "13" },
     // { os: "darwin", arch: "x64", distro: "sonoma", release: "14" },

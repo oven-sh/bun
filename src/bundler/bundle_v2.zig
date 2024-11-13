@@ -324,10 +324,8 @@ const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 pub const BakeEntryPoint = struct {
     path: []const u8,
     graph: bake.Graph,
-
     css: bool = false,
     client_wrapped: bool = false,
-    route_index: bake.FrameworkRouter.Route.Index.Optional = .none,
 
     pub fn init(path: []const u8, graph: bake.Graph) BakeEntryPoint {
         return .{ .path = path, .graph = graph };
@@ -1008,10 +1006,6 @@ pub const BundleV2 = struct {
                         }) orelse continue;
 
                         try this.graph.entry_points.append(this.graph.allocator, Index.source(source_index));
-
-                        if (entry_point.route_index.unwrap()) |route_index| {
-                            _ = try this.bundler.options.dev_server.?.server_graph.insertStaleExtra(resolved.path_pair.primary.text, false, true, route_index);
-                        }
 
                         if (entry_point.css) {
                             try data.css_data.putNoClobber(this.graph.allocator, Index.init(source_index), .{ .imported_on_server = false });

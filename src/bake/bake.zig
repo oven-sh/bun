@@ -648,6 +648,42 @@ pub const client_virtual_source: bun.logger.Source = .{
     .index = bun.JSAst.Index.bake_client_data,
 };
 
+/// Stack-allocated structure that is written to from end to start.
+/// Used as a staging area for building pattern strings.
+pub const PatternBuffer = struct {
+    bytes: bun.PathBuffer,
+    i: std.math.IntFittingRange(0, @sizeOf(bun.PathBuffer)),
+
+    pub const empty: PatternBuffer = .{
+        .bytes = undefined,
+        .i = @sizeOf(bun.PathBuffer),
+    };
+
+    pub fn prepend(pb: *PatternBuffer, chunk: []const u8) void {
+        bun.assert(pb.i >= chunk.len);
+        pb.i -= @intCast(chunk.len);
+        @memcpy(pb.slice()[0..chunk.len], chunk);
+    }
+
+    pub fn prependPart(pb: *PatternBuffer, part: FrameworkRouter.Part) void {
+        switch (part) {
+            .text => |text| {
+                pb.prepend(text);
+                pb.prepend("/");
+            },
+            .param, .catch_all, .catch_all_optional => |name| {
+                pb.prepend(name);
+                pb.prepend("/:");
+            },
+            .group => {},
+        }
+    }
+
+    pub fn slice(pb: *PatternBuffer) []u8 {
+        return pb.bytes[pb.i..];
+    }
+};
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

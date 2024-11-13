@@ -95,9 +95,10 @@ generation: usize = 0,
 /// Displayed in the HMR success indicator
 bundles_since_last_error: usize = 0,
 
-/// Quickly retrieve a route's index from the entry point file.
-// TODO:
-route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, RouteBundle.Index),
+/// Quickly retrieve a route's index from the entry point file. These are
+/// populated as the routes are discovered. The route may not be bundled or
+/// navigatable, in the case a layout's index is looked up.
+route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, RouteIndexAndRecurseFlag),
 
 framework: bake.Framework,
 // Each logical graph gets its own bundler configuration
@@ -120,13 +121,17 @@ pub const client_prefix = internal_prefix ++ "/client";
 pub const asset_prefix = internal_prefix ++ "/asset";
 pub const css_prefix = internal_prefix ++ "/css";
 
-// TODO: rename this to not be confusing with `FrameworkRouter.Route`
 pub const RouteBundle = struct {
     pub const Index = bun.GenericIndex(u30, RouteBundle);
 
     route: Route.Index,
 
     server_state: State,
+
+    /// Used to communicate over WebSocket the pattern. The HMR client contains code
+    /// to match this against the URL bar to determine if a reloading route applies
+    /// or not.
+    full_pattern: []const u8,
     /// Generated lazily when the client JS is requested (HTTP GET /_bun/client/*.js),
     /// which is only needed when a hard-reload is performed.
     ///
@@ -136,6 +141,8 @@ pub const RouteBundle = struct {
     /// efficient lookup and removal of failing files.
     /// When state == .evaluation_failure, this is popualted with that error.
     evaluate_failure: ?SerializedFailure,
+
+    // TODO: micro-opt: use a singular strong
 
     /// Cached to avoid re-creating the array every request.
     /// Invalidated when a layout is added or removed from this route.
@@ -276,10 +283,13 @@ pub fn init(options: Options) !*DevServer {
     }
 
     dev.framework = dev.framework.resolve(&dev.server_bundler.resolver, &dev.client_bundler.resolver) catch {
-        // bun i react@experimental react-dom@experimental react-server-dom-webpack@experimental react-refresh@experimental
         Output.errGeneric("Failed to resolve all imports required by the framework", .{});
         return error.FrameworkInitialization;
     };
+
+    errdefer dev.route_lookup.clearAndFree(allocator);
+    // errdefer dev.client_graph.deinit(allocator);
+    // errdefer dev.server_graph.deinit(allocator);
 
     dev.vm.global = @ptrCast(dev.vm.global);
 
@@ -339,10 +349,12 @@ pub fn init(options: Options) !*DevServer {
         var types = try std.ArrayListUnmanaged(FrameworkRouter.Type).initCapacity(allocator, options.framework.file_system_router_types.len);
         errdefer types.deinit(allocator);
 
-        for (options.framework.file_system_router_types) |fsr| {
+        for (options.framework.file_system_router_types, 0..) |fsr, i| {
             const joined_root = bun.path.joinAbs(dev.root, .auto, fsr.root);
             const entry = dev.server_bundler.resolver.readDirInfoIgnoreError(joined_root) orelse
                 continue;
+
+            const server_file = try dev.server_graph.insertStaleExtra(fsr.entry_server, false, true);
 
             try types.append(allocator, .{
                 .abs_root = bun.strings.withoutTrailingSlash(entry.abs_path),
@@ -351,12 +363,17 @@ pub fn init(options: Options) !*DevServer {
                 .ignore_dirs = fsr.ignore_dirs,
                 .extensions = fsr.extensions,
                 .style = fsr.style,
-                .server_file = toOpaqueFileId(.server, try dev.server_graph.insertStale(fsr.entry_server, false)),
+                .server_file = toOpaqueFileId(.server, server_file),
                 .client_file = if (fsr.entry_client) |client|
                     toOpaqueFileId(.client, try dev.client_graph.insertStale(client, false)).toOptional()
                 else
                     .none,
                 .server_file_string = .{},
+            });
+
+            try dev.route_lookup.put(allocator, server_file, .{
+                .route_index = FrameworkRouter.Route.Index.init(@intCast(i)),
+                .should_recurse_when_visiting = true,
             });
         }
 
@@ -420,21 +437,6 @@ pub fn attachRoutes(dev: *DevServer, server: anytype) !void {
     if (@TypeOf(app) == *uws.NewApp(true)) {
         bun.todoPanic(@src(), "DevServer does not support SSL yet", .{});
     }
-
-    // for (dev.routes, 0..) |*route, i| {
-    //     app.any(route.pattern, *RouteBundle, route, onServerRequest);
-
-    //     route.dev = dev;
-    //     dev.allocator.free(route.client_bundled_url);
-    //     route.client_bundled_url = try std.fmt.allocPrint(
-    //         dev.allocator,
-    //         client_prefix ++ "/{d}.js",
-    //         .{i},
-    //     );
-
-    //     if (bun.strings.eqlComptime(route.pattern, "/*"))
-    //         has_fallback = true;
-    // }
 
     app.get(client_prefix ++ "/:route", *DevServer, dev, onJsRequest);
     app.get(asset_prefix ++ "/:asset", *DevServer, dev, onAssetRequest);
@@ -553,13 +555,13 @@ fn ensureRouteIsBundled(
             // Build a list of all files that have not yet been bundled.
             var route = dev.router.routePtr(route_index);
             const router_type = dev.router.typePtr(route.type);
-            try dev.appendOpaqueEntryPoint(server_file_names, &entry_points, .server, router_type.server_file, FrameworkRouter.Type.rootRouteIndex(route.type));
+            try dev.appendOpaqueEntryPoint(server_file_names, &entry_points, .server, router_type.server_file);
             try dev.appendOpaqueEntryPoint(client_file_names, &entry_points, .client, router_type.client_file);
-            try dev.appendOpaqueEntryPoint(server_file_names, &entry_points, .server, route.file_page, route_index);
-            try dev.appendOpaqueEntryPoint(server_file_names, &entry_points, .server, route.file_layout, route_index);
+            try dev.appendOpaqueEntryPoint(server_file_names, &entry_points, .server, route.file_page);
+            try dev.appendOpaqueEntryPoint(server_file_names, &entry_points, .server, route.file_layout);
             while (route.parent.unwrap()) |parent_index| {
                 route = dev.router.routePtr(parent_index);
-                try dev.appendOpaqueEntryPoint(server_file_names, &entry_points, .server, route.file_layout, parent_index);
+                try dev.appendOpaqueEntryPoint(server_file_names, &entry_points, .server, route.file_layout);
             }
 
             if (entry_points.items.len == 0) {
@@ -1287,7 +1289,6 @@ fn appendOpaqueEntryPoint(
     entry_points: *std.ArrayList(BakeEntryPoint),
     comptime side: bake.Side,
     optional_id: anytype,
-    route_bundle_index: ?RouteBundle.Index,
 ) !void {
     const file = switch (@TypeOf(optional_id)) {
         OpaqueFileId.Optional => optional_id.unwrap() orelse return,
@@ -1296,14 +1297,16 @@ fn appendOpaqueEntryPoint(
     };
 
     const file_index = fromOpaqueFileId(side, file);
-    if (dev.server_graph.stale_files.isSet(file_index.get())) {
+    if (switch (side) {
+        .server => dev.server_graph.stale_files.isSet(file_index.get()),
+        .client => dev.client_graph.stale_files.isSet(file_index.get()),
+    }) {
         try entry_points.append(.{
             .path = file_names[file_index.get()],
             .graph = switch (side) {
                 .server => .server,
                 .client => .client,
             },
-            .route = Route.Index.Optional.init(route_bundle_index),
         });
     }
 }
@@ -1323,17 +1326,30 @@ fn onRequest(dev: *DevServer, req: *Request, resp: *Response) void {
 }
 
 fn insertRouteBundle(dev: *DevServer, route: Route.Index) !RouteBundle.Index {
+    const full_pattern = full_pattern: {
+        var buf = bake.PatternBuffer.empty;
+        var current: *Route = dev.router.routePtr(route);
+        while (true) {
+            buf.prependPart(current.part);
+            current = dev.router.routePtr(current.parent.unwrap() orelse break);
+        }
+        break :full_pattern try dev.allocator.dupe(u8, buf.slice());
+    };
+    errdefer dev.allocator.free(full_pattern);
+
     try dev.route_bundles.append(dev.allocator, .{
         .route = route,
         .server_state = .unqueued,
-
+        .full_pattern = full_pattern,
         .client_bundle = null,
         .evaluate_failure = null,
         .cached_module_list = .{},
         .cached_client_bundle_url = .{},
         .cached_css_file_array = .{},
     });
-    return RouteBundle.Index.init(@intCast(dev.route_bundles.items.len - 1));
+    const bundle_index = RouteBundle.Index.init(@intCast(dev.route_bundles.items.len - 1));
+    dev.router.routePtr(route).bundle = bundle_index.toOptional();
+    return bundle_index;
 }
 
 fn sendTextFile(code: []const u8, content_type: []const u8, resp: *Response) void {
@@ -2100,7 +2116,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// Never takes ownership of `abs_path`
         /// Marks a chunk but without any content. Used to track dependencies to files that don't exist.
         pub fn insertStale(g: *@This(), abs_path: []const u8, is_ssr_graph: bool) bun.OOM!FileIndex {
-            return g.insertStaleExtra(abs_path, is_ssr_graph, false, {});
+            return g.insertStaleExtra(abs_path, is_ssr_graph, false);
         }
 
         pub fn insertStaleExtra(g: *@This(), abs_path: []const u8, is_ssr_graph: bool, is_route: bool) bun.OOM!FileIndex {
@@ -2438,7 +2454,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             // TODO: it is infeasible to do this since FrameworkRouter contains file indices
             // to the server graph
-            {}
+            {
+                return;
+            }
 
             g.bundled_files.swapRemoveAt(file_index.get());
 
@@ -2512,8 +2530,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
 const IncrementalResult = struct {
     /// When tracing a file's dependencies via `traceDependencies`, this is
-    /// populated with the hit routes. Tracing is used for many purposes.
-    routes_affected: ArrayListUnmanaged(RouteBundle.Index),
+    /// populated with the hit `Route.Index`s. To know what `RouteBundle`s
+    /// are affected, the route graph must be traced downwards.
+    /// Tracing is used for multiple purposes.
+    routes_affected: ArrayListUnmanaged(RouteIndexAndRecurseFlag),
 
     // Following three fields are populated during `receiveChunk`
 
@@ -2542,6 +2562,7 @@ const IncrementalResult = struct {
     failures_added: ArrayListUnmanaged(SerializedFailure),
 
     /// Removing files clobbers indices, so removing anything is deferred.
+    // TODO: remove
     delete_client_files_later: ArrayListUnmanaged(IncrementalGraph(.client).FileIndex),
 
     const empty: IncrementalResult = .{
@@ -3122,9 +3143,10 @@ fn writeVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !void {
             g.bundled_files.values(),
             0..,
         ) |k, v, i| {
-            try w.writeInt(u32, @intCast(k.len), .little);
+            const normalized_key = dev.relativePath(k);
+            try w.writeInt(u32, @intCast(normalized_key.len), .little);
             if (k.len == 0) continue;
-            try w.writeAll(k);
+            try w.writeAll(normalized_key);
             try w.writeByte(@intFromBool(g.stale_files.isSet(i) or switch (side) {
                 .server => v.failed,
                 .client => v.flags.failed,
@@ -3340,7 +3362,7 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
         @panic("timers unsupported");
 
     var sfb = std.heap.stackFallback(4096, bun.default_allocator);
-    const temp_alloc = sfb.get();
+    var temp_alloc = sfb.get();
 
     // pre-allocate a few files worth of strings. it is unlikely but supported
     // to change more than 8 files in the same bundling round.
@@ -3387,22 +3409,47 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
 
     // This list of routes affected excludes client code. This means changing
     // a client component wont count as a route to trigger a reload on.
+    //
+    // A second trace is required to determine what routes had changed bundles,
+    // since changing a layout affects all child routes. Additionally, routes
+    // that do not have a bundle will not be cleared (as there is nothing to
+    // clear for those)
     if (dev.incremental_result.routes_affected.items.len > 0) {
+        // re-use some earlier stack memory
+        files.clearAndFree();
+        sfb = std.heap.stackFallback(4096, bun.default_allocator);
+        temp_alloc = sfb.get();
+
+        // A bit-set is used to avoid duplicate entries. This is not a problem
+        // with `dev.incremental_result.routes_affected`
+        var second_trace_result = try DynamicBitSetUnmanaged.initEmpty(temp_alloc, dev.route_bundles.items.len);
+        for (dev.incremental_result.routes_affected.items) |request| {
+            const route = dev.router.routePtr(request.route_index);
+            if (route.bundle.unwrap()) |id| second_trace_result.set(id.get());
+            if (request.should_recurse_when_visiting) {
+                markAllRouteChildren(&dev.router, &second_trace_result, request.route_index);
+            }
+        }
+
         var sfb2 = std.heap.stackFallback(65536, bun.default_allocator);
         var payload = std.ArrayList(u8).initCapacity(sfb2.get(), 65536) catch
             unreachable; // enough space
         defer payload.deinit();
         payload.appendAssumeCapacity(MessageId.route_update.char());
         const w = payload.writer();
-        try w.writeInt(u32, @intCast(dev.incremental_result.routes_affected.items.len), .little);
+        const count = second_trace_result.count();
+        assert(count > 0);
+        try w.writeInt(u32, @intCast(count), .little);
 
-        for (dev.incremental_result.routes_affected.items) |route| {
-            try w.writeInt(u32, route.get(), .little);
-            const pattern = dev.routes[route.get()].pattern;
+        var it = second_trace_result.iterator(.{ .kind = .set });
+        while (it.next()) |bundled_route_index| {
+            try w.writeInt(u32, @intCast(bundled_route_index), .little);
+            const pattern = dev.route_bundles.items[bundled_route_index].full_pattern;
             try w.writeInt(u32, @intCast(pattern.len), .little);
             try w.writeAll(pattern);
         }
 
+        // Notify
         dev.publish(HmrSocket.global_topic, payload.items, .binary);
     }
 
@@ -3423,13 +3470,14 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
             try dev.server_graph.traceDependencies(index, .no_stop);
         }
 
-        for (dev.incremental_result.routes_affected.items) |route| {
-            // Free old bundles
-            if (dev.routes[route.get()].client_bundle) |old| {
-                dev.allocator.free(old);
-            }
-            dev.routes[route.get()].client_bundle = null;
-        }
+        // TODO:
+        // for (dev.incremental_result.routes_affected.items) |route| {
+        //     // Free old bundles
+        //     if (dev.routes[route.get()].client_bundle) |old| {
+        //         dev.allocator.free(old);
+        //     }
+        //     dev.routes[route.get()].client_bundle = null;
+        // }
     }
 
     // TODO: improve this visual feedback
@@ -3453,6 +3501,16 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
         Output.prettyError("\n", .{});
         Output.flush();
     } else {}
+}
+
+fn markAllRouteChildren(router: *FrameworkRouter, bits: *DynamicBitSetUnmanaged, route_index: Route.Index) void {
+    var next = router.routePtr(route_index).first_child.unwrap();
+    while (next) |child_index| {
+        const route = router.routePtr(child_index);
+        if (route.bundle.unwrap()) |index| bits.set(index.get());
+        markAllRouteChildren(router, bits, child_index);
+        next = route.next_sibling.unwrap();
+    }
 }
 
 pub const HotReloadTask = struct {
@@ -3652,9 +3710,12 @@ const SafeFileId = packed struct(u32) {
 };
 
 /// Interface function for FrameworkRouter
-pub fn getFileIdForRouter(dev: *DevServer, abs_path: []const u8, associated_route: Route.Index) !OpaqueFileId {
+pub fn getFileIdForRouter(dev: *DevServer, abs_path: []const u8, associated_route: Route.Index, file_kind: Route.FileKind) !OpaqueFileId {
     const index = try dev.server_graph.insertStaleExtra(abs_path, false, true);
-    try dev.route_lookup.put(dev.allocator, index, associated_route);
+    try dev.route_lookup.put(dev.allocator, index, .{
+        .route_index = associated_route,
+        .should_recurse_when_visiting = file_kind == .layout,
+    });
     return toOpaqueFileId(.server, index);
 }
 
@@ -3727,6 +3788,13 @@ fn dumpStateDueToCrash(dev: *DevServer) !void {
 
     Output.note("Dumped incremental bundler graph to {}", .{bun.fmt.quote(filepath)});
 }
+
+// const RouteIndexAndRecurseFlag = packed struct(u32) {
+const RouteIndexAndRecurseFlag = struct {
+    route_index: Route.Index,
+    /// Set true for layout
+    should_recurse_when_visiting: bool,
+};
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

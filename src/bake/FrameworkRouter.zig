@@ -26,6 +26,7 @@ static_routes: StaticRouteMap,
 ///
 /// Root files are not caught using this technique, since every route tree has a
 /// root. This check is special cased.
+// TODO: no code to sort this data structure
 dynamic_routes: DynamicRouteMap,
 
 /// The above structure is optimized for incremental updates, but
@@ -56,7 +57,7 @@ pub const Route = struct {
     file_layout: OpaqueFileId.Optional = .none,
     // file_not_found: OpaqueFileId.Optional = .none,
 
-    /// Only used by the dev server, if this route is navigatable
+    /// Only used by DevServer, if this route is 1. navigatable & 2. has been requested at least once
     bundle: bun.bake.DevServer.RouteBundle.Index.Optional = .none,
 
     inline fn filePtr(r: *Route, file_kind: FileKind) *OpaqueFileId.Optional {
@@ -71,7 +72,7 @@ pub const Route = struct {
         // not_found,
     };
 
-    pub const Index = bun.GenericIndex(u32, Route);
+    pub const Index = bun.GenericIndex(u31, Route);
 };
 
 /// Native code for `FrameworkFileSystemRouterType`
@@ -624,30 +625,30 @@ pub fn insert(
         var current_part = input_it.next() orelse
             break :brk root_route;
 
+        var route_index = root_route;
         var route = fr.routePtr(root_route);
         outer: while (true) {
             var next = route.first_child.unwrap();
-            if (next != null) {
-                while (true) {
-                    const child = fr.routePtr(next.?);
-                    if (current_part.eql(child.part)) {
-                        current_part = input_it.next() orelse
-                            break :brk next.?;
+            if (next != null) while (true) {
+                const current = next.?;
+                const child = fr.routePtr(current);
+                if (current_part.eql(child.part)) {
+                    current_part = input_it.next() orelse
+                        break :brk current; // found it!
 
-                        route = fr.routePtr(next.?);
-
-                        continue :outer;
-                    }
-                    next = fr.routePtr(next.?).next_sibling.unwrap() orelse
-                        break;
+                    route_index = current;
+                    route = fr.routePtr(current);
+                    continue :outer;
                 }
-            }
+                next = fr.routePtr(next.?).next_sibling.unwrap() orelse
+                    break;
+            };
 
             // Must add to this child
             var new_route_index = try fr.newRoute(alloc, .{
                 .part = current_part,
                 .type = ty,
-                .parent = root_route.toOptional(),
+                .parent = route_index.toOptional(),
                 .first_child = .none,
                 .prev_sibling = Route.Index.Optional.init(next),
                 .next_sibling = .none,
@@ -656,7 +657,7 @@ pub fn insert(
             if (next) |attach| {
                 fr.routePtr(attach).next_sibling = new_route_index.toOptional();
             } else {
-                fr.routePtr(root_route).first_child = new_route_index.toOptional();
+                fr.routePtr(route_index).first_child = new_route_index.toOptional();
             }
 
             // Build each part out as another node in the routing graph. This makes
@@ -678,7 +679,7 @@ pub fn insert(
         }
     };
 
-    const file_id = try ctx.vtable.getFileIdForRouter(ctx.opaque_ctx, file_path, new_route_index);
+    const file_id = try ctx.vtable.getFileIdForRouter(ctx.opaque_ctx, file_path, new_route_index, file_kind);
 
     const new_route = fr.routePtr(new_route_index);
     if (new_route.filePtr(file_kind).unwrap()) |existing| {
@@ -795,17 +796,17 @@ pub const InsertionContext = struct {
     opaque_ctx: *anyopaque,
     vtable: *const VTable,
     const VTable = struct {
-        getFileIdForRouter: *const fn (*anyopaque, abs_path: []const u8, associated_route: Route.Index) bun.OOM!OpaqueFileId,
+        getFileIdForRouter: *const fn (*anyopaque, abs_path: []const u8, associated_route: Route.Index, kind: Route.FileKind) bun.OOM!OpaqueFileId,
     };
     pub fn wrap(comptime T: type, ctx: *T) InsertionContext {
         const wrapper = struct {
-            fn getFileIdForRouter(opaque_ctx: *anyopaque, abs_path: []const u8, associated_route: Route.Index) !void {
+            fn getFileIdForRouter(opaque_ctx: *anyopaque, abs_path: []const u8, associated_route: Route.Index, kind: Route.FileKind) bun.OOM!OpaqueFileId {
                 const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
-                return try cast_ctx.getFileIdForRouter(abs_path, associated_route);
+                return try cast_ctx.getFileIdForRouter(abs_path, associated_route, kind);
             }
         };
         return .{
-            .ctx = ctx,
+            .opaque_ctx = ctx,
             .vtable = comptime &.{
                 .getFileIdForRouter = &wrapper.getFileIdForRouter,
             },
@@ -820,7 +821,6 @@ pub fn scan(
     r: *Resolver,
     ctx: InsertionContext,
 ) !void {
-    comptime bun.assert(!@typeInfo(@TypeOf(ctx)).Pointer.is_const);
     const t = &fw.types[ty.get()];
     bun.assert(!strings.hasSuffixComptime(t.abs_root, "/"));
     bun.assert(std.fs.path.isAbsolute(t.abs_root));
@@ -942,6 +942,7 @@ fn scanInner(
                                     .extra => @panic("TODO: extra files"),
                                 },
                                 fs.abs(&.{ file.dir, file.base() }),
+                                ctx,
                                 &out_colliding_file_id,
                             );
                         },
@@ -1164,7 +1165,7 @@ pub const JSFrameworkRouter = struct {
         return str.transferToJS(global);
     }
 
-    pub fn getFileIdForRouter(jsfr: *JSFrameworkRouter, abs_path: []const u8, _: Route.Index) !OpaqueFileId {
+    pub fn getFileIdForRouter(jsfr: *JSFrameworkRouter, abs_path: []const u8, _: Route.Index, _: Route.FileKind) !OpaqueFileId {
         try jsfr.files.append(bun.default_allocator, bun.String.createUTF8(abs_path));
         return OpaqueFileId.init(@intCast(jsfr.files.items.len - 1));
     }

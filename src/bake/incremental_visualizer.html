@@ -139,7 +139,8 @@
     }
 
     function basename(path) {
-      return path.slice(path.lastIndexOf("/") + 1);
+      const match = /node_modules\/(.*?)\//.exec(path);
+      return match ? match[1] : path;
     }
 
     // Parse the files from the buffer
@@ -198,10 +199,10 @@
     // Helper function to add or update nodes in the graph
     function updateNode(id, file, group) {
       const label = basename(file.name);
-      const color = file.name.includes("/node_modules/")
-        ? c.gray
-        : file.isStale
-          ? c.red
+      const color = file.isStale
+        ? c.red
+        : file.name.startsWith("node_modules/")
+          ? c.gray
           : file.isBoundary
             ? c.orange
             : group === "client"
@@ -220,7 +221,7 @@
         color: color,
         borderWidth: file.isRoute ? 3 : 1,
         group,
-        font: file.name.includes("/node_modules/") ? "10px sans-serif #cdd6f488" : "20px sans-serif #cdd6f4",
+        font: file.name.startsWith("node_modules/") ? "10px sans-serif #cdd6f488" : "20px sans-serif #cdd6f4",
       };
       if (nodes.get(id)) {
         nodes.update(props);

@@ -213,7 +213,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         .out_module_keys = &.{},
     };
 
-    for (options.framework.file_system_router_types) |fsr| {
+    for (options.framework.file_system_router_types, 0..) |fsr, i| {
         const joined_root = bun.path.joinAbs(cwd, .auto, fsr.root);
         const entry = server_bundler.resolver.readDirInfoIgnoreError(joined_root) orelse
             continue;
@@ -224,7 +224,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             .ignore_dirs = fsr.ignore_dirs,
             .extensions = fsr.extensions,
             .style = fsr.style,
-            .server_file = try path_map.getFileIdForRouter(fsr.entry_server),
+            .server_file = try path_map.getFileIdForRouter(fsr.entry_server, FrameworkRouter.Route.Index.init(@intCast(i)), .page),
             .client_file = if (fsr.entry_client) |client|
                 (try path_map.getClientFile(client)).toOptional()
             else
@@ -388,7 +388,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     for (navigatable_routes.items, 0..) |route_index, nav_index| {
         defer params_buf.clearRetainingCapacity();
 
-        var pattern = PatternBuffer.empty;
+        var pattern = bake.PatternBuffer.empty;
 
         const route = router.routePtr(route_index);
         const main_file_route_index = route.file_page.unwrap().?;
@@ -601,7 +601,7 @@ const ProductionPathMap = struct {
         return ppm.out_index_map[index.get()];
     }
 
-    pub fn getFileIdForRouter(ctx: *ProductionPathMap, abs_path: []const u8) !FrameworkRouter.OpaqueFileId {
+    pub fn getFileIdForRouter(ctx: *ProductionPathMap, abs_path: []const u8, _: FrameworkRouter.Route.Index, _: FrameworkRouter.Route.FileKind) !FrameworkRouter.OpaqueFileId {
         const gop = try ctx.route_files.getOrPut(ctx.allocator, abs_path);
         if (!gop.found_existing) {
             const dupe = try ctx.allocator.dupe(u8, abs_path);
@@ -627,41 +627,6 @@ const ProductionPathMap = struct {
 const TypeAndFlags = packed struct(i32) {
     type: u8,
     unused: u24 = 0,
-};
-
-// Stack-allocated structure that is written to from end to start
-const PatternBuffer = struct {
-    bytes: bun.PathBuffer,
-    i: std.math.IntFittingRange(0, @sizeOf(bun.PathBuffer)),
-
-    pub const empty: PatternBuffer = .{
-        .bytes = undefined,
-        .i = @sizeOf(bun.PathBuffer),
-    };
-
-    pub fn prepend(pb: *PatternBuffer, chunk: []const u8) void {
-        bun.assert(pb.i >= chunk.len);
-        pb.i -= @intCast(chunk.len);
-        @memcpy(pb.slice()[0..chunk.len], chunk);
-    }
-
-    pub fn prependPart(pb: *PatternBuffer, part: FrameworkRouter.Part) void {
-        switch (part) {
-            .text => |text| {
-                pb.prepend(text);
-                pb.prepend("/");
-            },
-            .param, .catch_all, .catch_all_optional => |name| {
-                pb.prepend(name);
-                pb.prepend("/:");
-            },
-            .group => {},
-        }
-    }
-
-    pub fn slice(pb: *PatternBuffer) []u8 {
-        return pb.bytes[pb.i..];
-    }
 };
 
 const std = @import("std");

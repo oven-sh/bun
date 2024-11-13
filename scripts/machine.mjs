@@ -756,6 +756,11 @@ Host *
 `;
   appendFileSync(configPath, config);
 
+  const sshAdd = which("ssh-add");
+  if (sshAdd) {
+    spawnSyncSafe([sshAdd, privateKeyPath], { stdio: "inherit" });
+  }
+
   return readFile(publicKeyPath);
 }
 

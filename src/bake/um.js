@@ -192,26 +192,25 @@ function initImportMeta(m) {
   throw new Error("TODO: import meta object");
 }
 function loadModule(key, type) {
-  console.log("loadModule", key, type === 0 ? "AssertPresent" : "UserDynamic");
-  let module = registry.get(key);
-  if (module) {
-    if (module._state == 2)
-      throw module._cached_failure;
-    return module;
+  let mod = registry.get(key);
+  if (mod) {
+    if (mod._state == 2)
+      throw mod._cached_failure;
+    return mod;
   }
-  module = new HotModule(key);
+  mod = new HotModule(key);
   let load = input_graph[key];
   if (!load)
     if (type == 0)
-      throw new Error(`Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun Kit's bundler.`);
+      throw new Error(`Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun's bundler.`);
     else
-      throw new Error(`Failed to resolve dynamic import '${key}'. In Bun Kit, all imports must be statically known at compile time so that the bundler can trace everything.`);
+      throw new Error(`Failed to resolve dynamic import '${key}'. In Bun Bake, all imports must be statically known at compile time so that the bundler can trace everything.`);
   try {
-    registry.set(key, module), console.log("about to load "), load(module);
+    registry.set(key, mod), load(mod);
   } catch (err) {
-    throw console.log("caught failure"), console.error(err), module._cached_failure = err, module._state = 2, err;
+    throw console.error(err), mod._cached_failure = err, mod._state = 2, err;
   }
-  return module;
+  return mod;
 }
 var getModule = registry.get.bind(registry);
 function replaceModule(key, load) {
@@ -246,8 +245,14 @@ __name(HotModule.prototype.importSync, "<HMR runtime> importSync");
 __name(HotModule.prototype.require, "<HMR runtime> require");
 __name(loadModule, "<HMR runtime> loadModule");
 server_exports = {
-  async handleRequest(req, routeModules, clientEntryUrl, styles, params) {
-    let serverRenderer = loadModule(config.main, 0).exports.render;
+  async handleRequest(req, routerTypeMain, routeModules, clientEntryUrl, styles, params) {
+    console.log("handleRequest", {
+      routeModules,
+      clientEntryUrl,
+      styles,
+      params
+    });
+    let serverRenderer = loadModule(routerTypeMain, 0).exports.render;
     if (!serverRenderer)
       throw new Error('Framework server entrypoint is missing a "render" export.');
     if (typeof serverRenderer !== "function")

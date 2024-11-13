@@ -11,6 +11,7 @@
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
+#include "ImportMetaObject.h"
 
 namespace Bake {
 
@@ -28,15 +29,18 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(GlobalObject* global, B
     JSC::SourceProviderSourceType::Program
   ));
 
-  JSC::JSValue fnValue = JSC::evaluate(global, sourceCode, JSC::jsUndefined());
+  JSC::JSValue fnValue = vm.interpreter.executeProgram(sourceCode, global, global);
   RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+
+  RELEASE_ASSERT(fnValue);
 
   JSC::JSFunction* fn = jsCast<JSC::JSFunction*>(fnValue);
   JSC::CallData callData = JSC::getCallData(fn);
 
   JSC::MarkedArgumentBuffer args;
   args.append(JSC::jsBoolean(separateSSRGraph)); // separateSSRGraph
-  args.append(WebCore::moduleRequireNativeModuleCodeGenerator(vm)); // requireFunctionProvidedByBakeCodegen
+  // importMeta
+  args.append(Zig::ImportMetaObject::create(global, "bake://server-runtime.js"_s));
 
   return JSC::JSValue::encode(JSC::call(global, fn, callData, JSC::jsUndefined(), args));
 }

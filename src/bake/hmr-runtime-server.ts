@@ -10,6 +10,7 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
 interface Exports {
   handleRequest: (
     req: Request, 
+    routerTypeMain: Id,
     routeModules: Id[],
     clientEntryUrl: string,
     styles: string[],
@@ -24,8 +25,17 @@ interface Exports {
 
 declare let server_exports: Exports;
 server_exports = {
-  async handleRequest(req, routeModules, clientEntryUrl, styles, params) {
-    const serverRenderer = loadModule<Bake.ServerEntryPoint>(config.main, LoadModuleType.AssertPresent).exports.render;
+  async handleRequest(req, routerTypeMain, routeModules, clientEntryUrl, styles, params) {
+    if (IS_BUN_DEVELOPMENT) {
+      console.log('handleRequest', {
+        routeModules,
+        clientEntryUrl,
+        styles,
+        params,
+      });
+    }
+
+    const serverRenderer = loadModule<Bake.ServerEntryPoint>(routerTypeMain, LoadModuleType.AssertPresent).exports.render;
 
     if (!serverRenderer) {
       throw new Error('Framework server entrypoint is missing a "render" export.');

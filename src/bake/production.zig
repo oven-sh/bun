@@ -217,7 +217,6 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         const joined_root = bun.path.joinAbs(cwd, .auto, fsr.root);
         const entry = server_bundler.resolver.readDirInfoIgnoreError(joined_root) orelse
             continue;
-
         try router_types.append(allocator, .{
             .abs_root = bun.strings.withoutTrailingSlash(entry.abs_path),
             .prefix = fsr.prefix,
@@ -230,11 +229,16 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 (try path_map.getClientFile(client)).toOptional()
             else
                 .none,
+            .server_file_string = .{},
         });
     }
 
     var router = try FrameworkRouter.initEmpty(router_types.items, allocator);
-    try router.scanAll(allocator, &server_bundler.resolver, &path_map);
+    try router.scanAll(
+        allocator,
+        &server_bundler.resolver,
+        FrameworkRouter.InsertionContext.wrap(ProductionPathMap, &path_map),
+    );
 
     const bundled_outputs_list = try bun.BundleV2.generateFromBakeProductionCLI(
         path_map.entry_points.items,

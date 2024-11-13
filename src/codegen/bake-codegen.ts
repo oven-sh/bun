@@ -65,8 +65,8 @@ async function run() {
         file !== "error" && "input_graph",
         file !== "error" && "config",
         file === "server" && "server_exports",
-        file === "server" && "requireFunctionProvidedByBakeCodegen",
         file === "server" && "$separateSSRGraph",
+        file === "server" && "$importMeta",
       ].filter(Boolean);
       const combined_source =
         file === "error"
@@ -92,10 +92,12 @@ async function run() {
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");
       code = (await result.outputs[0].text()).replace(`// ${basename(generated_entrypoint)}`, "").trim();
-      if(side==='server')
-      writeFileSync( `um.js`, code);
 
-      // rmSync(generated_entrypoint);
+      rmSync(generated_entrypoint);
+
+      if (code.includes('export default ')) {
+        throw new AggregateError([new Error('export default is not allowed in bake codegen. this became a commonjs module!')]);
+      }
 
       if (file !== "error") {
         let names: string = "";
@@ -124,7 +126,8 @@ async function run() {
             ? `${code}  return ${outName('server_exports')};\n`
             : `${code};return ${outName('server_exports')};`;
 
-          const params = `${outName('$separateSSRGraph')},${outName('requireFunctionProvidedByBakeCodegen')}`;
+          const params = `${outName('$separateSSRGraph')},${outName('$importMeta')}`;
+          code = code.replaceAll('import.meta', outName('$importMeta'));
           code = `let ${outName('input_graph')}={},${outName('config')}={separateSSRGraph:${outName('$separateSSRGraph')}},${outName('server_exports')};${code}`;
 
           code = debug ? `((${params}) => {${code}})\n` : `((${params})=>{${code}})\n`;

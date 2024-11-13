@@ -8,7 +8,7 @@ const FrameworkRouter = @This();
 /// where it is an entrypoint index.
 pub const OpaqueFileId = bun.GenericIndex(u32, opaque {});
 
-types: []const Type,
+types: []Type,
 routes: std.ArrayListUnmanaged(Route),
 /// Keys are full URL, with leading /, no trailing /
 /// Value is Route Index
@@ -32,52 +32,13 @@ dynamic_routes: DynamicRouteMap,
 /// production has a different set of requirements:
 /// - Trivially serializable to a binary file (no pointers)
 /// - As little memory indirection as possible.
-/// - Routes won't be updated afterwards.
+/// - Routes cannot be updated after serilaization.
 pub const Serialized = struct {
-    // const Node = struct {
-    //     here: Serialized.Route.Index,
-    // };
+    // TODO:
 };
 
 const StaticRouteMap = bun.StringArrayHashMapUnmanaged(Route.Index);
 const DynamicRouteMap = std.ArrayHashMapUnmanaged(EncodedPattern, Route.Index, EncodedPattern.EffectiveURLContext, true);
-
-pub fn initEmpty(types: []const Type, allocator: Allocator) !FrameworkRouter {
-    var routes = try std.ArrayListUnmanaged(Route).initCapacity(allocator, types.len);
-    errdefer routes.deinit(allocator);
-
-    for (0..types.len) |type_index| {
-        routes.appendAssumeCapacity(.{
-            .part = .{ .text = "" },
-            .type = Type.Index.init(@intCast(type_index)),
-            .parent = .none,
-            .prev_sibling = .none,
-            .next_sibling = .none,
-            .first_child = .none,
-            .file_page = .none,
-            .file_layout = .none,
-            // .file_not_found = .none,
-        });
-    }
-    return .{
-        .types = types,
-        .routes = routes,
-        .dynamic_routes = .{},
-        .static_routes = .{},
-    };
-}
-
-pub fn deinit(fr: *FrameworkRouter, allocator: Allocator) void {
-    fr.routes.deinit(allocator);
-    allocator.free(fr.types);
-}
-
-pub fn scanAll(fr: *FrameworkRouter, allocator: Allocator, r: *Resolver, ctx: anytype) !void {
-    for (fr.types, 0..) |ty, i| {
-        _ = ty;
-        try fr.scan(allocator, FrameworkRouter.Type.Index.init(@intCast(i)), r, ctx);
-    }
-}
 
 /// A logical route, for which layouts are looked up on after resolving a route.
 pub const Route = struct {
@@ -121,13 +82,56 @@ pub const Type = struct {
     ignore_dirs: []const []const u8 = &.{ ".git", "node_modules" },
     extensions: []const []const u8,
     style: Style,
-    /// `FrameworkRouter` does not use this value.
+    /// `FrameworkRouter` itself does not use this value.
     client_file: OpaqueFileId.Optional,
-    /// `FrameworkRouter` does not use this value.
+    /// `FrameworkRouter` itself does not use this value.
     server_file: OpaqueFileId,
+    /// `FrameworkRouter` itself does not use this value.
+    server_file_string: JSC.Strong,
+
+    pub fn rootRouteIndex(type_index: Index) Route.Index {
+        return Route.Index.init(type_index.get());
+    }
 
     pub const Index = bun.GenericIndex(u8, Type);
 };
+
+pub fn initEmpty(types: []Type, allocator: Allocator) !FrameworkRouter {
+    var routes = try std.ArrayListUnmanaged(Route).initCapacity(allocator, types.len);
+    errdefer routes.deinit(allocator);
+
+    for (0..types.len) |type_index| {
+        routes.appendAssumeCapacity(.{
+            .part = .{ .text = "" },
+            .type = Type.Index.init(@intCast(type_index)),
+            .parent = .none,
+            .prev_sibling = .none,
+            .next_sibling = .none,
+            .first_child = .none,
+            .file_page = .none,
+            .file_layout = .none,
+            // .file_not_found = .none,
+        });
+    }
+    return .{
+        .types = types,
+        .routes = routes,
+        .dynamic_routes = .{},
+        .static_routes = .{},
+    };
+}
+
+pub fn deinit(fr: *FrameworkRouter, allocator: Allocator) void {
+    fr.routes.deinit(allocator);
+    allocator.free(fr.types);
+}
+
+pub fn scanAll(fr: *FrameworkRouter, allocator: Allocator, r: *Resolver, ctx: anytype) !void {
+    for (fr.types, 0..) |ty, i| {
+        _ = ty;
+        try fr.scan(allocator, FrameworkRouter.Type.Index.init(@intCast(i)), r, ctx);
+    }
+}
 
 /// Route patterns are serialized in a stable byte format so it can be treated
 /// as a string, while easily decodable as []Part.
@@ -607,12 +611,13 @@ pub fn insert(
     comptime insertion_kind: InsertKind,
     pattern: insertion_kind.Pattern(),
     file_kind: Route.FileKind,
-    file_id: OpaqueFileId,
+    file_path: []const u8,
+    ctx: InsertionContext,
     /// When `error.RouteCollision` is returned, this is set to the existing file index.
     out_colliding_file_id: *OpaqueFileId,
 ) InsertError!void {
     // The root route is the index of the type
-    const root_route = Route.Index.init(ty.get());
+    const root_route = Type.rootRouteIndex(ty);
 
     const new_route_index = brk: {
         var input_it = pattern.iterate();
@@ -672,6 +677,8 @@ pub fn insert(
             break :brk new_route_index;
         }
     };
+
+    const file_id = try ctx.vtable.getFileIdForRouter(ctx.opaque_ctx, file_path, new_route_index);
 
     const new_route = fr.routePtr(new_route_index);
     if (new_route.filePtr(file_kind).unwrap()) |existing| {
@@ -740,7 +747,7 @@ pub fn routePtr(fr: *FrameworkRouter, i: Route.Index) *Route {
     return &fr.routes.items[i.get()];
 }
 
-pub fn typePtr(fr: *FrameworkRouter, i: Type.Index) *const Type {
+pub fn typePtr(fr: *FrameworkRouter, i: Type.Index) *Type {
     return &fr.types[i.get()];
 }
 
@@ -783,15 +790,35 @@ pub const TinyLog = struct {
     }
 };
 
-// `ctx` is a pointer to something which implements:
-// - "fn getFileIdForRouter(ctx, abs_path: []const u8) OpaqueFileId"
-// - "fn handleFileRouterError(ctx, ...) !void"
+/// Interface for connecting FrameworkRouter to another codebase
+pub const InsertionContext = struct {
+    opaque_ctx: *anyopaque,
+    vtable: *const VTable,
+    const VTable = struct {
+        getFileIdForRouter: *const fn (*anyopaque, abs_path: []const u8, associated_route: Route.Index) bun.OOM!OpaqueFileId,
+    };
+    pub fn wrap(comptime T: type, ctx: *T) InsertionContext {
+        const wrapper = struct {
+            fn getFileIdForRouter(opaque_ctx: *anyopaque, abs_path: []const u8, associated_route: Route.Index) !void {
+                const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
+                return try cast_ctx.getFileIdForRouter(abs_path, associated_route);
+            }
+        };
+        return .{
+            .ctx = ctx,
+            .vtable = comptime &.{
+                .getFileIdForRouter = &wrapper.getFileIdForRouter,
+            },
+        };
+    }
+};
+
 pub fn scan(
     fw: *FrameworkRouter,
     alloc: Allocator,
     ty: Type.Index,
     r: *Resolver,
-    ctx: anytype,
+    ctx: InsertionContext,
 ) !void {
     comptime bun.assert(!@typeInfo(@TypeOf(ctx)).Pointer.is_const);
     const t = &fw.types[ty.get()];
@@ -812,7 +839,7 @@ fn scanInner(
     r: *Resolver,
     dir_info: *const DirInfo,
     arena_state: *std.heap.ArenaAllocator,
-    ctx: anytype,
+    ctx: InsertionContext,
 ) !void {
     const fs = r.fs;
     const fs_impl = &fs.fs;
@@ -914,7 +941,7 @@ fn scanInner(
                                     .layout => .layout,
                                     .extra => @panic("TODO: extra files"),
                                 },
-                                try ctx.getFileIdForRouter(fs.abs(&.{ file.dir, file.base() })),
+                                fs.abs(&.{ file.dir, file.base() }),
                                 &out_colliding_file_id,
                             );
                         },
@@ -978,6 +1005,7 @@ pub const JSFrameworkRouter = struct {
             // Unused by JSFrameworkRouter
             .client_file = undefined,
             .server_file = undefined,
+            .server_file_string = undefined,
         }});
         errdefer bun.default_allocator.free(types);
 
@@ -990,7 +1018,7 @@ pub const JSFrameworkRouter = struct {
             bun.default_allocator,
             Type.Index.init(0),
             &global.bunVM().bundler.resolver,
-            jsfr,
+            InsertionContext.wrap(JSFrameworkRouter, jsfr),
         ) catch |err| {
             global.throwError(err, "while scanning route list");
             return global.jsErrorFromCPP();
@@ -1136,7 +1164,7 @@ pub const JSFrameworkRouter = struct {
         return str.transferToJS(global);
     }
 
-    pub fn getFileIdForRouter(jsfr: *JSFrameworkRouter, abs_path: []const u8) !OpaqueFileId {
+    pub fn getFileIdForRouter(jsfr: *JSFrameworkRouter, abs_path: []const u8, _: Route.Index) !OpaqueFileId {
         try jsfr.files.append(bun.default_allocator, bun.String.createUTF8(abs_path));
         return OpaqueFileId.init(@intCast(jsfr.files.items.len - 1));
     }

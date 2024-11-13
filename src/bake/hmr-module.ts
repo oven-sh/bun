@@ -71,7 +71,7 @@ export class HotModule<E = any> {
 
 if (side === "server") {
   HotModule.prototype.importBuiltin = function (id: string) {
-    return requireFunctionProvidedByBakeCodegen(id);
+    return import.meta.require(id);
   };
 }
 
@@ -84,39 +84,36 @@ function initImportMeta(m: HotModule): ImportMeta {
  * present, or is something a user is able to dynamically specify.
  */
 export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T> {
-  console.log("loadModule", key, type === LoadModuleType.AssertPresent ? "AssertPresent" : "UserDynamic");
-  let module = registry.get(key);
-  if (module) {
+  let mod = registry.get(key);
+  if (mod) {
     // Preserve failures until they are re-saved.
-    if (module._state == State.Error) throw module._cached_failure;
+    if (mod._state == State.Error) throw mod._cached_failure;
 
-    return module;
+    return mod;
   }
-  module = new HotModule(key);
+  mod = new HotModule(key);
   const load = input_graph[key];
   if (!load) {
     if (type == LoadModuleType.AssertPresent) {
       throw new Error(
-        `Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun Kit's bundler.`,
+        `Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun's bundler.`,
       );
     } else {
       throw new Error(
-        `Failed to resolve dynamic import '${key}'. In Bun Kit, all imports must be statically known at compile time so that the bundler can trace everything.`,
+        `Failed to resolve dynamic import '${key}'. In Bun Bake, all imports must be statically known at compile time so that the bundler can trace everything.`,
       );
     }
   }
   try {
-    registry.set(key, module);
-    console.log('about to load ');
-    load(module);
+    registry.set(key, mod);
+    load(mod);
   } catch (err) {
-    console.log('caught failure');
     console.error(err);
-    module._cached_failure = err;
-    module._state = State.Error;
+    mod._cached_failure = err;
+    mod._state = State.Error;
     throw err;
   }
-  return module;
+  return mod;
 }
 
 export const getModule = registry.get.bind(registry);

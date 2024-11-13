@@ -382,8 +382,8 @@ function getPipeline(options) {
         // }
 
         return {
-          key: getKey(platform),
-          group: getLabel(platform),
+          key: getKey(target),
+          group: getLabel(target),
           steps,
         };
       }),

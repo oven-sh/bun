@@ -731,7 +731,7 @@ pub const String = extern struct {
         if (BunString__fromJS(globalObject, value, &out)) {
             return out;
         } else {
-            return null;
+            return null; //TODO: return error.JSError
         }
     }
 

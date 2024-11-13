@@ -56,7 +56,7 @@ pub fn throwRangeError(
     return error.JSError;
 }
 
-pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i64, max_value: ?i64) !i64 {
+pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i64, max_value: ?i64) bun.JSError!i64 {
     const min = min_value orelse JSC.MIN_SAFE_INTEGER;
     const max = max_value orelse JSC.MAX_SAFE_INTEGER;
 
@@ -73,7 +73,7 @@ pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime nam
     return num;
 }
 
-pub fn validateInt32(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i32, max_value: ?i32) !i32 {
+pub fn validateInt32(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i32, max_value: ?i32) bun.JSError!i32 {
     const min = min_value orelse std.math.minInt(i32);
     const max = max_value orelse std.math.maxInt(i32);
     // The defaults for min and max correspond to the limits of 32-bit integers.
@@ -92,7 +92,7 @@ pub fn validateInt32(globalThis: *JSGlobalObject, value: JSValue, comptime name_
     return num;
 }
 
-pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, greater_than_zero: bool) !u32 {
+pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, greater_than_zero: bool) bun.JSError!u32 {
     if (!value.isNumber()) {
         return throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
     }
@@ -110,12 +110,12 @@ pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name
     return @truncate(@as(u63, @intCast(num)));
 }
 
-pub fn validateString(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !void {
+pub fn validateString(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!void {
     if (!value.isString())
         return throwErrInvalidArgType(globalThis, name_fmt, name_args, "string", value);
 }
 
-pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min: ?f64, max: ?f64) !f64 {
+pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min: ?f64, max: ?f64) bun.JSError!f64 {
     if (!value.isNumber())
         return throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
 
@@ -142,7 +142,7 @@ pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name
     return num;
 }
 
-pub fn validateBoolean(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !bool {
+pub fn validateBoolean(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!bool {
     if (!value.isBoolean())
         return throwErrInvalidArgType(globalThis, name_fmt, name_args, "boolean", value);
     return value.asBoolean();
@@ -154,7 +154,7 @@ pub const ValidateObjectOptions = packed struct {
     allow_function: bool = false,
 };
 
-pub fn validateObject(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, comptime options: ValidateObjectOptions) !void {
+pub fn validateObject(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, comptime options: ValidateObjectOptions) bun.JSError!void {
     if (comptime !options.allow_nullable and !options.allow_array and !options.allow_function) {
         if (value.isNull() or value.jsType().isArray()) {
             return throwErrInvalidArgType(globalThis, name_fmt, name_args, "object", value);
@@ -178,7 +178,7 @@ pub fn validateObject(globalThis: *JSGlobalObject, value: JSValue, comptime name
     }
 }
 
-pub fn validateArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, comptime min_length: ?i32) !void {
+pub fn validateArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, comptime min_length: ?i32) bun.JSError!void {
     if (!value.jsType().isArray()) {
         const actual_type = getTypeName(globalThis, value);
         return throwErrInvalidArgTypeWithMessage(globalThis, "The \"" ++ name_fmt ++ "\" property must be an instance of Array, got {s}", name_args ++ .{actual_type});
@@ -190,7 +190,7 @@ pub fn validateArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_
     }
 }
 
-pub fn validateStringArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !usize {
+pub fn validateStringArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!usize {
     try validateArray(globalThis, value, name_fmt, name_args, null);
     var i: usize = 0;
     var iter = value.arrayIterator(globalThis);
@@ -203,7 +203,7 @@ pub fn validateStringArray(globalThis: *JSGlobalObject, value: JSValue, comptime
     return i;
 }
 
-pub fn validateBooleanArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !usize {
+pub fn validateBooleanArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!usize {
     try validateArray(globalThis, value, name_fmt, name_args, null);
     var i: usize = 0;
     var iter = value.arrayIterator(globalThis);
@@ -216,18 +216,18 @@ pub fn validateBooleanArray(globalThis: *JSGlobalObject, value: JSValue, comptim
     return i;
 }
 
-pub fn validateFunction(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !JSValue {
+pub fn validateFunction(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!JSValue {
     if (!value.jsType().isFunction())
         return throwErrInvalidArgType(globalThis, name_fmt, name_args, "function", value);
     return value;
 }
 
-pub fn validateUndefined(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !void {
+pub fn validateUndefined(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!void {
     if (!value.isUndefined())
         return throwErrInvalidArgType(globalThis, name_fmt, name_args, "undefined", value);
 }
 
-pub fn validateStringEnum(comptime T: type, globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !T {
+pub fn validateStringEnum(comptime T: type, globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!T {
     const str = try value.toBunString2(globalThis);
     defer str.deref();
     inline for (@typeInfo(T).Enum.fields) |enum_field| {

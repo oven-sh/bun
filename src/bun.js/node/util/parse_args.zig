@@ -301,7 +301,7 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
     }
 }
 
-fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, option_definitions: *std.ArrayList(OptionDefinition)) !void {
+fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, option_definitions: *std.ArrayList(OptionDefinition)) bun.JSError!void {
     try validateObject(globalThis, options_obj, "options", .{}, .{});
 
     var iter = JSC.JSPropertyIterator(.{
@@ -369,7 +369,10 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
             option.default_value,
         });
 
-        try option_definitions.append(option);
+        option_definitions.append(option) catch {
+            globalThis.throwOutOfMemory();
+            return error.JSError;
+        };
     }
 }
 
@@ -648,9 +651,8 @@ const ParseArgsState = struct {
 };
 
 pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
-    const arguments = callframe.arguments(1).slice();
-    const config = if (arguments.len > 0) arguments[0] else JSValue.undefined;
-    return parseArgsImpl(globalThis, config);
+    const arguments = callframe.argumentsAsArray(1);
+    return parseArgsImpl(globalThis, arguments[0]);
 }
 
 comptime {
@@ -658,7 +660,7 @@ comptime {
     @export(parseArgsFn, .{ .name = "Bun__NodeUtil__jsParseArgs" });
 }
 
-pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue {
+pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) bun.JSError!JSValue {
     //
     // Phase 0: parse the config object
     //

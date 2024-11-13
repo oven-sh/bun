@@ -380,6 +380,20 @@ export function getRepository(cwd) {
  * @param {string} [cwd]
  * @returns {string | undefined}
  */
+export function getRepositoryOwner(cwd) {
+  const repository = getRepository(cwd);
+  if (repository) {
+    const [owner] = repository.split("/");
+    if (owner) {
+      return owner;
+    }
+  }
+}
+
+/**
+ * @param {string} [cwd]
+ * @returns {string | undefined}
+ */
 export function getCommit(cwd) {
   if (!cwd) {
     if (isBuildkite) {
@@ -490,7 +504,7 @@ export function isMainBranch(cwd) {
  */
 export function isPullRequest() {
   if (isBuildkite) {
-    return getEnv("BUILDKITE_PULL_REQUEST", false) === "true";
+    return !isNaN(parseInt(getEnv("BUILDKITE_PULL_REQUEST", false)));
   }
 
   if (isGithubAction) {

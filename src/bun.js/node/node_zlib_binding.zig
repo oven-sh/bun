@@ -12,7 +12,6 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSV
 
     const data: ZigString.Slice = blk: {
         const data: JSC.JSValue = arguments[0];
-        var exceptionref: JSC.C.JSValueRef = null;
 
         if (data == .zero) {
             return globalThis.throwInvalidArgumentTypeValue("data", "string or an instance of Buffer, TypedArray, or DataView", .undefined);
@@ -20,16 +19,12 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSV
         if (data.isString()) {
             break :blk data.asString().toSlice(globalThis, bun.default_allocator);
         }
-        const buffer: JSC.Buffer = JSC.Buffer.fromJS(globalThis, data, &exceptionref) orelse {
+        const buffer: JSC.Buffer = JSC.Buffer.fromJS(globalThis, data) orelse {
             const ty_str = data.jsTypeString(globalThis).toSlice(globalThis, bun.default_allocator);
             defer ty_str.deinit();
             globalThis.ERR_INVALID_ARG_TYPE("The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {s}", .{ty_str.slice()}).throw();
             return .zero;
         };
-        if (exceptionref) |ptr| {
-            globalThis.throwValue(JSC.JSValue.c(ptr));
-            return .zero;
-        }
         break :blk ZigString.Slice.fromUTF8NeverFree(buffer.slice());
     };
     defer data.deinit();

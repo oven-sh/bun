@@ -1542,7 +1542,7 @@ pub const E = struct {
 
     pub const Boolean = struct {
         value: bool,
-        pub fn toJS(this: @This(), ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        pub fn toJS(this: @This(), ctx: JSC.C.JSContextRef) JSC.C.JSValueRef {
             return JSC.C.JSValueMakeBoolean(ctx, this.value);
         }
     };
@@ -1912,32 +1912,6 @@ pub const E = struct {
                 return rope;
             }
         };
-
-        // pub fn toJS(this: Object, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        //     const Creator = struct {
-        //         object: Object,
-        //         pub fn create(this: *@This(), obj: *JSObject, global: *JSGlobalObject) void {
-        //             var iter = this.query.iter();
-        //             var str: ZigString = undefined;
-        //             while (iter.next(&query_string_values_buf)) |entry| {
-        //                 str = ZigString.init(entry.name);
-
-        //                 bun.assert(entry.values.len > 0);
-        //                 if (entry.values.len > 1) {
-        //                     var values = query_string_value_refs_buf[0..entry.values.len];
-        //                     for (entry.values) |value, i| {
-        //                         values[i] = ZigString.init(value);
-        //                     }
-        //                     obj.putRecord(global, &str, values.ptr, values.len);
-        //                 } else {
-        //                     query_string_value_refs_buf[0] = ZigString.init(entry.values[0]);
-
-        //                     obj.putRecord(global, &str, &query_string_value_refs_buf, 1);
-        //                 }
-        //             }
-        //         }
-        //     };
-        // }
 
         pub fn get(self: *const Object, key: string) ?Expr {
             return if (asProperty(self, key)) |query| query.expr else @as(?Expr, null);

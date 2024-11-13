@@ -354,9 +354,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             }
         }
 
-        auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName),
-            JSValue::encode(fromValue), false);
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false);
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (!JSC::JSValue::decode(result).isString()) {
             JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));

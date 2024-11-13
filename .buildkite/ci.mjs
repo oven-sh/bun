@@ -356,9 +356,10 @@ function getPipeline(options) {
     priority: getPriority(),
     steps: [
       ...buildPlatforms.map(platform => {
-        const { os, arch, baseline } = platform;
+        const { os, arch, abi, baseline } = platform;
         const platforms = testPlatforms.filter(
-          platform => platform.os === os && platform.arch === arch && baseline === platform.baseline,
+          platform =>
+            platform.os === os && platform.arch === arch && abi === platform.abi && baseline === platform.baseline,
         );
 
         let steps = [];

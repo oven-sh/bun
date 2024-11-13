@@ -1030,7 +1030,6 @@ pub const BundleV2 = struct {
                                 .server => this.bundler.options.target,
                                 .ssr => .bake_server_components_ssr,
                             }) orelse continue;
-                            std.debug.print("{d}: {s} {s}\n", .{ source_index, resolved.pathConst().?.text, @tagName(entry_point.graph) });
                             try this.graph.entry_points.append(this.graph.allocator, Index.source(source_index));
                         }
                     },

@@ -1,6 +1,6 @@
 /// Handwritten utility functions for ZigGeneratedClasses.zig
 const bun = @import("root").bun;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 

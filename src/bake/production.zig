@@ -1,4 +1,5 @@
 //! Implements building a Bake application to production
+const log = bun.Output.scoped(.production, false);
 
 pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     Output.warn(
@@ -268,13 +269,12 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     const all_server_files = JSValue.createEmptyArray(global, bundled_outputs.len);
 
     for (bundled_outputs, 0..) |file, i| {
-        std.debug.print("{s} - {s} : {s} - {?d}\n", .{
+        log("{s} - {s} : {s} - {?d}\n", .{
             if (file.side) |s| @tagName(s) else "null",
             file.src_path.text,
             file.dest_path,
             file.entry_point_index,
         });
-        std.debug.print("css: {d}\n", .{bun.fmt.fmtSlice(file.referenced_css_files, ", ")});
         if (file.loader == .css) {
             if (css_chunks_count == 0) css_chunks_first = i;
             css_chunks_count += 1;

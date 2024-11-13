@@ -1455,7 +1455,6 @@ pub const ServerConfig = struct {
             if (global.hasException()) return;
 
             if (arg.getTruthyComptime(global, "error")) |onError| {
-                std.debug.print("{x}", .{onError});
                 if (!onError.isCallable(global.vm())) {
                     JSC.throwInvalidArguments("Expected error to be a function", .{}, global, exception);
                     return;

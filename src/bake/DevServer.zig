@@ -857,7 +857,6 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
                 dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_removed.items),
             },
         ) catch |err| {
-            std.debug.print("fuck", .{});
             // One module replacement error should NOT prevent follow-up
             // module replacements to fail. It is the HMR runtime's
             // responsibility to collect all module load errors, and

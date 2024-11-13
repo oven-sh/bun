@@ -62,8 +62,9 @@ export function getSecret(name, options = { required: true, redact: true }) {
       command.push("--skip-redaction");
     }
 
-    const { error, stdout: secret } = spawnSync(command);
-    if (error || !secret.trim()) {
+    const { error, stdout } = spawnSync(command);
+    const secret = stdout.trim();
+    if (error || !secret) {
       const orgId = getEnv("BUILDKITE_ORGANIZATION_SLUG", false);
       const clusterId = getEnv("BUILDKITE_CLUSTER_ID", false);
 

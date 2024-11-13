@@ -80,7 +80,7 @@ describe("bun build", () => {
     expect(stdout.toString()).toContain(path.join(baseDir, "我", "我.ts") + "\n");
   });
 
-  test.skipIf(!isWindows)("should be able to handle pretty path when using pnpm + build", async () => {
+  test.skipIf(!isWindows)("should be able to handle pretty path when using pnpm +  #14685", async () => {
     // this test code follows the same structure as and
     // is based on the code for testing issue 4893
 
@@ -108,7 +108,7 @@ describe("bun build", () => {
     testDir = realpathSync(testDir);
 
     Bun.spawnSync({
-      cmd: ["pnpm", "i"],
+      cmd: [bunExe(), "x", "pnpm@9", "i"],
       env: bunEnv,
       stderr: "pipe",
       cwd: testDir,
@@ -132,4 +132,4 @@ describe("bun build", () => {
     expect(stderr.toString()).toBe("");
     expect(exitCode).toBe(0);
   });
-});
+}, 10_000);

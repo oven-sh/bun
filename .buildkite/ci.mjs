@@ -89,23 +89,27 @@ function getPipeline(options) {
    */
 
   const getKey = platform => {
-    const { os, arch, abi, baseline } = platform;
+    const { os, arch, abi, baseline, distro, release } = platform;
 
+    let key = `${os}-${arch}`;
     if (abi) {
-      if (baseline) {
-        return `${os}-${arch}-${abi}-baseline`;
-      }
-      return `${os}-${arch}-${abi}`;
+      key += `-${abi}`;
     }
     if (baseline) {
-      return `${os}-${arch}-baseline`;
+      key += "-baseline";
+    }
+    if (distro) {
+      key += `-${distro}`;
+    }
+    if (release) {
+      key += `-${release}`;
     }
 
-    return `${os}-${arch}`;
+    return key;
   };
 
   const getLabel = platform => {
-    const { os, arch, abi, baseline, distro, release } = platform;
+    const { os, distro, arch, abi, baseline, release } = platform;
     const emoji = distro || os;
     let label = release ? `:${emoji}: ${release} ${arch}` : `:${emoji}: ${arch}`;
     if (abi) {

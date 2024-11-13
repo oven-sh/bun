@@ -3,12 +3,9 @@
 import { inspect, parseArgs } from "node:util";
 import {
   $,
-  curlSafe,
   getArch,
-  getDistro,
   getSecret,
   isCI,
-  isLinux,
   isMacOS,
   readFile,
   spawn,
@@ -635,7 +632,7 @@ const google = {
 /**
  * @typedef CloudInit
  * @property {string} [distro]
- * @property {string[]} [authorizedKeys]
+ * @property {SshKey[]} [sshKeys]
  * @property {string} [username]
  * @property {string} [password]
  */
@@ -647,7 +644,7 @@ const google = {
 function getCloudInit(cloudInit) {
   const username = cloudInit["username"] || "root";
   const password = cloudInit["password"] || crypto.randomUUID();
-  const authorizedKeys = JSON.stringify(cloudInit["authorizedKeys"] || []);
+  const authorizedKeys = JSON.stringify(cloudInit["sshKeys"]?.map(({ publicKey }) => publicKey) || []);
 
   let sftpPath = "/usr/lib/openssh/sftp-server";
   switch (cloudInit["distro"]) {
@@ -731,83 +728,78 @@ function getDiskSize(options) {
 }
 
 /**
- * @returns {string}
+ * @typedef SshKey
+ * @property {string} privatePath
+ * @property {string} publicPath
+ * @property {string} publicKey
  */
-function generateSshKey() {
+
+/**
+ * @returns {SshKey}
+ */
+function createSshKey() {
   const sshPath = join(homedir(), ".ssh");
   if (!existsSync(sshPath)) {
     mkdirSync(sshPath, { recursive: true });
   }
 
   const name = `id_rsa_${crypto.randomUUID()}`;
-  const privateKeyPath = join(sshPath, name);
-  const publicKeyPath = join(sshPath, `${name}.pub`);
-  spawnSyncSafe($`ssh-keygen -t rsa -b 4096 -f ${privateKeyPath} -N ""`, { stdio: "inherit" });
+  const privatePath = join(sshPath, name);
+  const publicPath = join(sshPath, `${name}.pub`);
+  spawnSyncSafe($`ssh-keygen -t rsa -b 4096 -f ${privatePath} -N ""`, { stdio: "inherit" });
 
-  if (!existsSync(privateKeyPath) || !existsSync(publicKeyPath)) {
-    throw new Error(`Failed to generate SSH key: ${privateKeyPath} / ${publicKeyPath}`);
+  if (!existsSync(privatePath) || !existsSync(publicPath)) {
+    throw new Error(`Failed to generate SSH key: ${privatePath} / ${publicPath}`);
   }
 
   const configPath = join(sshPath, "config");
   const config = `
 Host *
-  IdentityFile ${privateKeyPath}
+  IdentityFile ${privatePath}
   AddKeysToAgent yes
 `;
   appendFileSync(configPath, config);
 
-  const sshAdd = which("ssh-add");
-  if (sshAdd) {
-    spawnSyncSafe([sshAdd, privateKeyPath], { stdio: "inherit" });
-  }
-
-  return readFile(publicKeyPath);
+  return {
+    privatePath,
+    publicPath,
+    get publicKey() {
+      return readFile(publicPath, { cache: true });
+    },
+  };
 }
 
 /**
- * @returns {string[]}
+ * @returns {SshKey[]}
  */
 function getSshKeys() {
   const homePath = homedir();
   const sshPath = join(homePath, ".ssh");
 
+  /** @type {SshKey[]} */
   let sshKeys = [];
   if (existsSync(sshPath)) {
     const sshFiles = readdirSync(sshPath, { withFileTypes: true });
-    const sshPaths = sshFiles
+    const publicPaths = sshFiles
       .filter(entry => entry.isFile() && entry.name.endsWith(".pub"))
       .map(({ name }) => join(sshPath, name));
 
-    sshKeys = sshPaths
-      .map(path => readFile(path, { cache: true }))
-      .map(key => key.split(" ").slice(0, 2).join(" "))
-      .filter(key => key.length);
+    sshKeys.push(
+      ...publicPaths.map(publicPath => ({
+        publicPath,
+        privatePath: publicPath.replace(/\.pub$/, ""),
+        get publicKey() {
+          return readFile(publicPath, { cache: true });
+        },
+      })),
+    );
   }
 
   if (!sshKeys.length) {
-    sshKeys.push(generateSshKey());
+    sshKeys.push(createSshKey());
   }
 
   return sshKeys;
-}
-
-/**
- * @param {string} organization
- * @returns {Promise<string[]>}
- */
-async function getGithubAuthorizedKeys(organization) {
-  const members = await curlSafe(`https://api.github.com/orgs/${organization}/members`, { json: true });
-  const sshKeys = await Promise.all(
-    members.map(async ({ login }) => {
-      const publicKeys = await curlSafe(`https://github.com/${login}.keys`);
-      return publicKeys
-        .split("\n")
-        .map(key => key.trim())
-        .filter(key => key.length);
-    }),
-  );
-
-  return sshKeys.flat();
 }
 
 /**
@@ -816,6 +808,7 @@ async function getGithubAuthorizedKeys(organization) {
  * @property {number} [port]
  * @property {string} [username]
  * @property {string[]} [command]
+ * @property {string[]} [identityPaths]
  * @property {number} [retries]
  */
 
@@ -825,7 +818,7 @@ async function getGithubAuthorizedKeys(organization) {
  * @returns {Promise<void>}
  */
 async function spawnSsh(options, spawnOptions = {}) {
-  const { hostname, port, username, command, retries = 1 } = options;
+  const { hostname, port, username, identityPaths, command, retries = 1 } = options;
   await waitForPort({ hostname, port: port || 22 });
 
   const ssh = ["ssh", hostname, "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"];
@@ -834,6 +827,9 @@ async function spawnSsh(options, spawnOptions = {}) {
   }
   if (username) {
     ssh.push("-l", username);
+  }
+  if (identityPaths) {
+    ssh.push(...identityPaths.flatMap(path => ["-i", path]));
   }
   const stdio = command ? "pipe" : "inherit";
   if (command) {
@@ -863,6 +859,7 @@ async function spawnSsh(options, spawnOptions = {}) {
  * @property {string} hostname
  * @property {string} source
  * @property {string} destination
+ * @property {string[]} [identityPaths]
  * @property {string} [port]
  * @property {string} [username]
  * @property {number} [retries]
@@ -873,12 +870,15 @@ async function spawnSsh(options, spawnOptions = {}) {
  * @returns {Promise<void>}
  */
 async function spawnScp(options) {
-  const { hostname, port, username, source, destination, retries = 10 } = options;
+  const { hostname, port, username, identityPaths, source, destination, retries = 10 } = options;
   await waitForPort({ hostname, port: port || 22 });
 
   const command = ["scp", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"];
   if (port) {
     command.push("-P", port);
+  }
+  if (identityPaths) {
+    command.push(...identityPaths.flatMap(path => ["-i", path]));
   }
   command.push(resolve(source));
   if (username) {
@@ -980,7 +980,7 @@ function parseOptions(args) {
 
 async function main() {
   const { command, buildkiteToken, ...options } = parseOptions(process.argv.slice(2));
-  const authorizedKeys = getSshKeys();
+  const sshKeys = getSshKeys();
 
   let cloud;
   if (options["cloud"] === "docker") {
@@ -1000,7 +1000,7 @@ async function main() {
     };
   }
 
-  const machine = await cloud.createMachine({ ...options, authorizedKeys, metadata });
+  const machine = await cloud.createMachine({ ...options, sshKeys, metadata });
   console.log("Created machine:", machine);
 
   process.on("SIGINT", () => {

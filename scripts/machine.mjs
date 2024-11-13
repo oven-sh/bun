@@ -112,7 +112,8 @@ export const aws = {
    * @returns {Promise<any>}
    */
   async spawn(args) {
-    if (!which("aws")) {
+    const aws = which("aws");
+    if (!aws) {
       if (isMacOS) {
         await spawnSafe(["brew", "install", "awscli"]);
       } else {
@@ -129,7 +130,7 @@ export const aws = {
       };
     }
 
-    const { stdout } = await spawnSafe($`aws ${args} --output json`, { env });
+    const { stdout } = await spawnSafe($`${aws} ${args} --output json`, { env });
     try {
       return JSON.parse(stdout);
     } catch {

@@ -105,8 +105,9 @@ function getPipeline(options) {
   };
 
   const getLabel = platform => {
-    const { os, arch, abi, baseline, release } = platform;
-    let label = release ? `:${os}: ${release} ${arch}` : `:${os}: ${arch}`;
+    const { os, arch, abi, baseline, distro, release } = platform;
+    const emoji = distro || os;
+    let label = release ? `:${emoji}: ${release} ${arch}` : `:${emoji}: ${arch}`;
     if (abi) {
       label += `-${abi}`;
     }

@@ -154,7 +154,7 @@ function getPipeline(options) {
       key: `${getKey(platform)}-build-image`,
       label: `${getLabel(platform)} - build-image`,
       agents: {
-        queue: "build-darwin",
+        queue: "build-image",
       },
       env: {
         DEBUG: "1",

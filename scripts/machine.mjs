@@ -120,8 +120,6 @@ export const aws = {
     if (!aws) {
       if (isMacOS) {
         await spawnSafe(["brew", "install", "awscli"]);
-      } else if (isLinux && getDistro() === "debian") {
-        await spawnSafe(["sudo", "apt-get", "install", "-y", "awscli"]);
       } else {
         throw new Error("AWS CLI is not installed, please install it");
       }

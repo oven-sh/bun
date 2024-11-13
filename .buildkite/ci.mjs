@@ -14,6 +14,7 @@ import {
   getCommitMessage,
   getLastSuccessfulBuild,
   getMainBranch,
+  getRepositoryOwner,
   getTargetBranch,
   isBuildkite,
   isFork,
@@ -21,7 +22,6 @@ import {
   isMergeQueue,
   printEnvironment,
   spawnSafe,
-  startGroup,
 } from "../scripts/utils.mjs";
 
 function toYaml(obj, indent = 0) {
@@ -370,7 +370,7 @@ async function main() {
   }
 
   console.log("Checking changed files...");
-  const baseRef = getCommit();
+  const baseRef = isFork() ? `${getRepositoryOwner()}:${getCommit()}` : getCommit();
   console.log(" - Base Ref:", baseRef);
   const headRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
   console.log(" - Head Ref:", headRef);

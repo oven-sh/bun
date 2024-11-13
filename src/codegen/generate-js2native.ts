@@ -135,7 +135,7 @@ export function getJS2NativeCPP() {
       call => (
         externs.push(`extern "C" SYSV_ABI JSC::EncodedJSValue ${symbol(call)}_workaround(Zig::GlobalObject*);` + "\n"),
         [
-          `JSC::JSValue ${symbol(call)}(Zig::GlobalObject* global) {`,
+          `static ALWAYS_INLINE JSC::JSValue ${symbol(call)}(Zig::GlobalObject* global) {`,
           `  return JSValue::decode(${symbol(call)}_workaround(global));`,
           `}` + "\n\n",
         ]
@@ -153,7 +153,7 @@ export function getJS2NativeCPP() {
             })});`,
           ),
         "") || "",
-        `JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
+        `static ALWAYS_INLINE JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
         `  return JSC::JSFunction::create(globalObject->vm(), globalObject, ${x.call_length}, ${JSON.stringify(
           x.display_name,
         )}_s, ${symbol({ type: x.type, symbol: x.symbol_taget })}, JSC::ImplementationVisibility::Public);`,
@@ -175,11 +175,15 @@ export function getJS2NativeCPP() {
     ...nativeCallStrings,
     ...wrapperCallStrings,
     `typedef JSC::JSValue (*JS2NativeFunction)(Zig::GlobalObject*);`,
-    `static JS2NativeFunction js2nativePointers[] = {`,
-    ...nativeCalls.map(x => `  ${cppPointer(x)},`),
-    `};`,
-    `};`,
+    `static ALWAYS_INLINE JSC::JSValue callJS2Native(int32_t index, Zig::GlobalObject* global) {`,
+    ` switch(index) {`,
+    ...nativeCalls.map(x => `    case ${x.id}: return ${symbol(x)}(global);`),
+    `    default:`,
+    `      __builtin_unreachable();`,
+    `  }`,
+    `}`,
     `#define JS2NATIVE_COUNT ${nativeCalls.length}`,
+    "}",
   ].join("\n");
 }
 

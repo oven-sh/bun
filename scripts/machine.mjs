@@ -751,7 +751,7 @@ function createSshKey() {
   const name = `id_rsa_${crypto.randomUUID()}`;
   const privatePath = join(sshPath, name);
   const publicPath = join(sshPath, `${name}.pub`);
-  spawnSyncSafe($`ssh-keygen -t rsa -b 4096 -f ${privatePath} -N ""`, { stdio: "inherit" });
+  spawnSyncSafe(["ssh-keygen", "-t", "rsa", "-b", "4096", "-f", privatePath, "-N", ""], { stdio: "inherit" });
 
   if (!existsSync(privatePath) || !existsSync(publicPath)) {
     throw new Error(`Failed to generate SSH key: ${privatePath} / ${publicPath}`);

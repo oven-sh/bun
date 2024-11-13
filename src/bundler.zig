@@ -402,7 +402,7 @@ pub const Bundler = struct {
     }
 
     fn _resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
-        return bundler.resolver.resolveWithFramework(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
+        return bundler.resolver.resolveWithFramework(bundler.fs.top_level_dir, entry_point, .entry_point_build) catch |err| {
             // Relative entry points that were not resolved to a node_modules package are
             // interpreted as relative to the current working directory.
             if (!std.fs.path.isAbsolute(entry_point) and
@@ -412,7 +412,7 @@ pub const Bundler = struct {
                     return bundler.resolver.resolve(
                         bundler.fs.top_level_dir,
                         try strings.append(bundler.allocator, "./", entry_point),
-                        .entry_point,
+                        .entry_point_build,
                     ) catch {
                         // return the original error
                         break :brk;
@@ -1793,7 +1793,7 @@ pub const Bundler = struct {
                 js_ast.Stmt.Data.Store.reset();
             }
 
-            const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch |err| {
+            const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point_build) catch |err| {
                 Output.prettyError("Error resolving \"{s}\": {s}\n", .{ entry, @errorName(err) });
                 continue;
             };

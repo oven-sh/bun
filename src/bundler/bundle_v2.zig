@@ -1875,7 +1875,7 @@ pub const BundleV2 = struct {
                 // When it's not a file, this is an error and we should report it.
                 //
                 // We have no way of loading non-files.
-                if (resolve.import_record.kind == .entry_point or resolve.import_record.importer_source_index == null) {
+                if (resolve.import_record.kind == .entry_point_build or resolve.import_record.importer_source_index == null) {
                     log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Module not found {} in namespace {}", .{
                         bun.fmt.quote(resolve.import_record.specifier),
                         bun.fmt.quote(resolve.import_record.namespace),

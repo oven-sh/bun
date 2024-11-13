@@ -7,8 +7,10 @@ const Index = @import("ast/base.zig").Index;
 const Api = @import("./api/schema.zig").Api;
 
 pub const ImportKind = enum(u8) {
-    /// An entry point provided by the user
-    entry_point,
+    /// An entry point provided to `bun run` or `bun`
+    entry_point_run,
+    /// An entry point provided to `bun build` or `Bun.build`
+    entry_point_build,
     /// An ES6 import or re-export statement
     stmt,
     /// A call to "require()"
@@ -32,7 +34,8 @@ pub const ImportKind = enum(u8) {
         // - src/js/builtins/codegen/replacements.ts
         // - packages/bun-types/bun.d.ts
         var labels = Label.initFill("");
-        labels.set(ImportKind.entry_point, "entry-point");
+        labels.set(ImportKind.entry_point_run, "entry-point-run");
+        labels.set(ImportKind.entry_point_build, "entry-point-build");
         labels.set(ImportKind.stmt, "import-statement");
         labels.set(ImportKind.require, "require-call");
         labels.set(ImportKind.dynamic, "dynamic-import");
@@ -45,7 +48,8 @@ pub const ImportKind = enum(u8) {
 
     pub const error_labels: Label = brk: {
         var labels = Label.initFill("");
-        labels.set(ImportKind.entry_point, "entry point");
+        labels.set(ImportKind.entry_point_run, "entry point (run)");
+        labels.set(ImportKind.entry_point_build, "entry point (build)");
         labels.set(ImportKind.stmt, "import");
         labels.set(ImportKind.require, "require()");
         labels.set(ImportKind.dynamic, "import()");

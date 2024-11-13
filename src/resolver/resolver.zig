@@ -687,7 +687,7 @@ pub const Resolver = struct {
         defer r.extension_order = original_order;
         r.extension_order = switch (kind) {
             .url, .at_conditional, .at => options.BundleOptions.Defaults.CSSExtensionOrder[0..],
-            .entry_point, .stmt, .dynamic => r.opts.extension_order.default.esm,
+            .entry_point_build, .entry_point_run, .stmt, .dynamic => r.opts.extension_order.default.esm,
             else => r.opts.extension_order.default.default,
         };
 
@@ -731,7 +731,7 @@ pub const Resolver = struct {
 
         // Certain types of URLs default to being external for convenience,
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
-        if (kind != .entry_point and
+        if (kind != .entry_point_build and kind != .entry_point_run and
             (r.isExternalPattern(import_path) or
             // "fill: url(#filter);"
             (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
@@ -926,7 +926,7 @@ pub const Resolver = struct {
                             .primary_side_effects_data = .no_side_effects__pure_data,
                         };
                     },
-                    .import => |path| return r.resolve(r.fs.top_level_dir, path, .entry_point),
+                    .import => |path| return r.resolve(r.fs.top_level_dir, path, .entry_point_build),
                 }
                 return .{};
             }
@@ -1155,7 +1155,7 @@ pub const Resolver = struct {
 
         // Check both relative and package paths for CSS URL tokens, with relative
         // paths taking precedence over package paths to match Webpack behavior.
-        const is_package_path = kind != .entry_point and isPackagePathNotAbsolute(import_path);
+        const is_package_path = kind != .entry_point_run and isPackagePathNotAbsolute(import_path);
         var check_relative = !is_package_path or kind == .url;
         var check_package = is_package_path;
 

@@ -1315,7 +1315,7 @@ pub const ResolveFileExtensions = struct {
 
     pub fn kind(this: *const ResolveFileExtensions, kind_: bun.ImportKind, is_node_modules: bool) []const string {
         return switch (kind_) {
-            .stmt, .entry_point, .dynamic => this.group(is_node_modules).esm,
+            .stmt, .entry_point_build, .entry_point_run, .dynamic => this.group(is_node_modules).esm,
             else => this.group(is_node_modules).default,
         };
     }

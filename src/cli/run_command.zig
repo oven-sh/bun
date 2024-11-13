@@ -1387,7 +1387,7 @@ pub const RunCommand = struct {
         // TODO: run module resolution here - try the next condition if the module can't be found
 
         log("Try resolve `{s}` in `{s}`", .{ target_name, this_bundler.fs.top_level_dir });
-        if (this_bundler.resolver.resolve(this_bundler.fs.top_level_dir, target_name, .entry_point)) |resolved| {
+        if (this_bundler.resolver.resolve(this_bundler.fs.top_level_dir, target_name, .entry_point_run)) |resolved| {
             var resolved_mutable = resolved;
             log("Resolved to: `{s}`", .{resolved_mutable.path().?.text});
             Run.boot(ctx, ctx.allocator.dupe(u8, resolved_mutable.path().?.text) catch bun.outOfMemory()) catch |err| {
@@ -1402,7 +1402,7 @@ pub const RunCommand = struct {
                 Global.exit(1);
             };
             return true;
-        } else |_| if (this_bundler.resolver.resolve(this_bundler.fs.top_level_dir, try std.mem.join(ctx.allocator, "", &.{ "./", target_name }), .entry_point)) |resolved| {
+        } else |_| if (this_bundler.resolver.resolve(this_bundler.fs.top_level_dir, try std.mem.join(ctx.allocator, "", &.{ "./", target_name }), .entry_point_run)) |resolved| {
             var resolved_mutable = resolved;
             log("Resolved with `./` to: `{s}`", .{resolved_mutable.path().?.text});
             Run.boot(ctx, ctx.allocator.dupe(u8, resolved_mutable.path().?.text) catch bun.outOfMemory()) catch |err| {

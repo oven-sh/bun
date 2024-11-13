@@ -89,7 +89,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     Output.flush();
     const unresolved_config_entry_point = if (ctx.args.entry_points.len > 0) ctx.args.entry_points[0] else "./bun.app";
 
-    const config_entry_point = b.resolver.resolve(cwd, unresolved_config_entry_point, .entry_point) catch |err| {
+    const config_entry_point = b.resolver.resolve(cwd, unresolved_config_entry_point, .entry_point_build) catch |err| {
         if (err == error.ModuleNotFound) {
             if (ctx.args.entry_points.len == 0) {
                 // Onboarding message

@@ -234,21 +234,12 @@ pub const StatWatcher = struct {
 
         global_this: JSC.C.JSContextRef,
 
-        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Arguments {
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Arguments {
             const vm = ctx.vm();
-            const path = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
-                if (exception.* == null) {
-                    JSC.throwInvalidArguments(
-                        "filename must be a string or TypedArray",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                }
-                return null;
+            const path = try PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator) orelse {
+                ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
+                return error.JSError;
             };
-
-            if (exception.* != null) return null;
 
             var listener: JSC.JSValue = .zero;
             var persistent: bool = true;
@@ -259,20 +250,15 @@ pub const StatWatcher = struct {
                 // options
                 if (options_or_callable.isObject()) {
                     // default true
-                    persistent = (options_or_callable.getOptional(ctx, "persistent", bool) catch return null) orelse true;
+                    persistent = (try options_or_callable.getOptional(ctx, "persistent", bool)) orelse true;
 
                     // default false
-                    bigint = (options_or_callable.getOptional(ctx, "bigint", bool) catch return null) orelse false;
+                    bigint = (try options_or_callable.getOptional(ctx, "bigint", bool)) orelse false;
 
                     if (options_or_callable.get(ctx, "interval")) |interval_| {
                         if (!interval_.isNumber() and !interval_.isAnyInt()) {
-                            JSC.throwInvalidArguments(
-                                "interval must be a number.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
+                            ctx.throwInvalidArguments("interval must be a number", .{});
+                            return error.JSError;
                         }
                         interval = interval_.coerce(i32, ctx);
                     }
@@ -286,8 +272,8 @@ pub const StatWatcher = struct {
             }
 
             if (listener == .zero) {
-                exception.* = JSC.toInvalidArguments("Expected \"listener\" callback", .{}, ctx).asObjectRef();
-                return null;
+                ctx.throwInvalidArguments("Expected \"listener\" callback", .{});
+                return error.JSError;
             }
 
             return Arguments{

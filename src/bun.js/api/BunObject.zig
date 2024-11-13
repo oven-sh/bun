@@ -939,28 +939,27 @@ pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!
 fn doResolve(
     globalThis: *JSC.JSGlobalObject,
     arguments: []const JSValue,
-    exception: js.ExceptionRef,
-) ?JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const specifier = args.protectEatNext() orelse {
-        JSC.throwInvalidArguments("Expected a specifier and a from path", .{}, globalThis, exception);
-        return null;
+        globalThis.throwInvalidArguments("Expected a specifier and a from path", .{});
+        return error.JSError;
     };
 
     if (specifier.isUndefinedOrNull()) {
-        JSC.throwInvalidArguments("specifier must be a string", .{}, globalThis, exception);
-        return null;
+        globalThis.throwInvalidArguments("specifier must be a string", .{});
+        return error.JSError;
     }
 
     const from = args.protectEatNext() orelse {
-        JSC.throwInvalidArguments("Expected a from path", .{}, globalThis, exception);
-        return null;
+        globalThis.throwInvalidArguments("Expected a from path", .{});
+        return error.JSError;
     };
 
     if (from.isUndefinedOrNull()) {
-        JSC.throwInvalidArguments("from must be a string", .{}, globalThis, exception);
-        return null;
+        globalThis.throwInvalidArguments("from must be a string", .{});
+        return error.JSError;
     }
 
     var is_esm = true;
@@ -968,8 +967,8 @@ fn doResolve(
         if (next.isBoolean()) {
             is_esm = next.toBoolean();
         } else {
-            JSC.throwInvalidArguments("esm must be a boolean", .{}, globalThis, exception);
-            return null;
+            globalThis.throwInvalidArguments("esm must be a boolean", .{});
+            return error.JSError;
         }
     }
 
@@ -981,7 +980,6 @@ fn doResolve(
         globalThis,
         specifier_str,
         from_str,
-        exception,
         is_esm,
         false,
     );
@@ -991,10 +989,9 @@ fn doResolveWithArgs(
     ctx: js.JSContextRef,
     specifier: bun.String,
     from: bun.String,
-    exception: js.ExceptionRef,
     is_esm: bool,
     comptime is_file_path: bool,
-) ?JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     var errorable: ErrorableString = undefined;
     var query_string = ZigString.Empty;
 
@@ -1025,8 +1022,8 @@ fn doResolveWithArgs(
     }
 
     if (!errorable.success) {
-        exception.* = bun.cast(JSC.JSValueRef, errorable.result.err.ptr.?);
-        return null;
+        ctx.throwValue(bun.cast(JSC.JSValueRef, errorable.result.err.ptr.?).?.value());
+        return error.JSError;
     }
 
     if (query_string.len > 0) {
@@ -1038,9 +1035,8 @@ fn doResolveWithArgs(
             errorable.result.value,
             query_string,
         }) catch {
-            // TODO: binding for createOutOfMemoryError
-            exception.* = JSC.createError(ctx, "Out of memory", .{}).asObjectRef();
-            return null;
+            ctx.throwOutOfMemory();
+            return error.JSError;
         };
 
         return ZigString.initUTF8(arraylist.items).toJS(ctx);
@@ -1050,24 +1046,16 @@ fn doResolveWithArgs(
 }
 
 pub fn resolveSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    var exception_ = [1]JSC.JSValueRef{null};
-    const exception = &exception_;
     const arguments = callframe.arguments(3);
-    const result = doResolve(globalObject, arguments.slice(), exception);
-
-    if (exception_[0] != null) {
-        globalObject.throwValue(exception_[0].?.value());
-    }
-
-    return result orelse .zero;
+    const result = doResolve(globalObject, arguments.slice());
+    return result catch .zero;
 }
 
 pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    var exception_ = [1]JSC.JSValueRef{null};
-    const exception = &exception_;
     const arguments = callframe.arguments(3);
-    const value = doResolve(globalObject, arguments.slice(), exception) orelse {
-        return JSC.JSPromise.rejectedPromiseValue(globalObject, exception_[0].?.value());
+    const value = doResolve(globalObject, arguments.slice()) catch {
+        const err = globalObject.tryTakeException().?;
+        return JSC.JSPromise.rejectedPromiseValue(globalObject, err);
     };
     return JSC.JSPromise.resolvedPromiseValue(globalObject, value);
 }
@@ -1078,16 +1066,15 @@ export fn Bun__resolve(
     source: JSValue,
     is_esm: bool,
 ) JSC.JSValue {
-    var exception_ = [1]JSC.JSValueRef{null};
-    const exception = &exception_;
     const specifier_str = specifier.toBunString(global);
     defer specifier_str.deref();
 
     const source_str = source.toBunString(global);
     defer source_str.deref();
 
-    const value = doResolveWithArgs(global, specifier_str, source_str, exception, is_esm, true) orelse {
-        return JSC.JSPromise.rejectedPromiseValue(global, exception_[0].?.value());
+    const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true) catch {
+        const err = global.tryTakeException().?;
+        return JSC.JSPromise.rejectedPromiseValue(global, err);
     };
 
     return JSC.JSPromise.resolvedPromiseValue(global, value);
@@ -1099,18 +1086,13 @@ export fn Bun__resolveSync(
     source: JSValue,
     is_esm: bool,
 ) JSC.JSValue {
-    var exception_ = [1]JSC.JSValueRef{null};
-    const exception = &exception_;
-
     const specifier_str = specifier.toBunString(global);
     defer specifier_str.deref();
 
     const source_str = source.toBunString(global);
     defer source_str.deref();
 
-    return doResolveWithArgs(global, specifier_str, source_str, exception, is_esm, true) orelse {
-        return JSC.JSValue.fromRef(exception[0]);
-    };
+    return doResolveWithArgs(global, specifier_str, source_str, is_esm, true) catch return .zero;
 }
 
 export fn Bun__resolveSyncWithStrings(
@@ -1120,10 +1102,7 @@ export fn Bun__resolveSyncWithStrings(
     is_esm: bool,
 ) JSC.JSValue {
     Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
-    var exception = [1]JSC.JSValueRef{null};
-    return doResolveWithArgs(global, specifier.*, source.*, &exception, is_esm, true) orelse {
-        return JSC.JSValue.fromRef(exception[0]);
-    };
+    return doResolveWithArgs(global, specifier.*, source.*, is_esm, true) catch return .zero;
 }
 
 export fn Bun__resolveSyncWithSource(
@@ -1132,14 +1111,9 @@ export fn Bun__resolveSyncWithSource(
     source: *bun.String,
     is_esm: bool,
 ) JSC.JSValue {
-    var exception_ = [1]JSC.JSValueRef{null};
     const specifier_str = specifier.toBunString(global);
     defer specifier_str.deref();
-
-    const exception = &exception_;
-    return doResolveWithArgs(global, specifier_str, source.*, exception, is_esm, true) orelse {
-        return JSC.JSValue.fromRef(exception[0]);
-    };
+    return doResolveWithArgs(global, specifier_str, source.*, is_esm, true) catch return .zero;
 }
 
 extern fn dump_zone_malloc_stats() void;
@@ -3327,22 +3301,12 @@ pub fn serve(
 ) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(2).slice();
     var config: JSC.API.ServerConfig = brk: {
-        var exception_ = [1]JSC.JSValueRef{null};
-        const exception = &exception_;
-
         var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
         var config: JSC.API.ServerConfig = .{};
-        JSC.API.ServerConfig.fromJS(globalObject, &config, &args, exception);
-        if (exception[0] != null) {
-            config.deinit();
-
-            globalObject.throwValue(exception_[0].?.value());
-            return .zero;
-        }
+        JSC.API.ServerConfig.fromJS(globalObject, &config, &args) catch return .zero;
 
         if (globalObject.hasException()) {
             config.deinit();
-
             return .zero;
         }
 

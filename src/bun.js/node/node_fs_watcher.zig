@@ -340,23 +340,16 @@ pub const FSWatcher = struct {
         recursive: bool,
         encoding: JSC.Node.Encoding,
         verbose: bool,
-        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Arguments {
+
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Arguments {
             const vm = ctx.vm();
-            const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
-                    JSC.throwInvalidArguments(
-                        "filename must be a string or TypedArray",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                }
-                return null;
+            const path = try PathLike.fromJS(ctx, arguments) orelse {
+                ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
+                return error.JSError;
             };
             var should_deinit_path = true;
             defer if (should_deinit_path) path.deinit();
 
-            if (exception.* != null) return null;
             var listener: JSC.JSValue = .zero;
             var signal: ?*JSC.AbortSignal = null;
             var persistent: bool = true;
@@ -369,43 +362,28 @@ pub const FSWatcher = struct {
                 if (options_or_callable.isObject()) {
                     if (options_or_callable.getTruthy(ctx, "persistent")) |persistent_| {
                         if (!persistent_.isBoolean()) {
-                            JSC.throwInvalidArguments(
-                                "persistent must be a boolean.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
+                            ctx.throwInvalidArguments("persistent must be a boolean", .{});
+                            return error.JSError;
                         }
                         persistent = persistent_.toBoolean();
                     }
 
                     if (options_or_callable.getTruthy(ctx, "verbose")) |verbose_| {
                         if (!verbose_.isBoolean()) {
-                            JSC.throwInvalidArguments(
-                                "verbose must be a boolean.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
+                            ctx.throwInvalidArguments("verbose must be a boolean", .{});
+                            return error.JSError;
                         }
                         verbose = verbose_.toBoolean();
                     }
 
                     if (options_or_callable.fastGet(ctx, .encoding)) |encoding_| {
-                        encoding = JSC.Node.Encoding.assert(encoding_, ctx, encoding) catch return null;
+                        encoding = try JSC.Node.Encoding.assert(encoding_, ctx, encoding);
                     }
 
                     if (options_or_callable.getTruthy(ctx, "recursive")) |recursive_| {
                         if (!recursive_.isBoolean()) {
-                            JSC.throwInvalidArguments(
-                                "recursive must be a boolean.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
+                            ctx.throwInvalidArguments("recursive must be a boolean", .{});
+                            return error.JSError;
                         }
                         recursive = recursive_.toBoolean();
                     }
@@ -417,36 +395,30 @@ pub const FSWatcher = struct {
                             signal_.ensureStillAlive();
                             signal = signal_obj;
                         } else {
-                            JSC.throwInvalidArguments(
-                                "signal is not of type AbortSignal.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-
-                            return null;
+                            ctx.throwInvalidArguments("signal is not of type AbortSignal", .{});
+                            return error.JSError;
                         }
                     }
 
                     // listener
                     if (arguments.nextEat()) |callable| {
                         if (!callable.isCell() or !callable.isCallable(vm)) {
-                            exception.* = JSC.toInvalidArguments("Expected \"listener\" callback to be a function", .{}, ctx).asObjectRef();
-                            return null;
+                            ctx.throwInvalidArguments("Expected \"listener\" callback to be a function", .{});
+                            return error.JSError;
                         }
                         listener = callable;
                     }
                 } else {
                     if (!options_or_callable.isCell() or !options_or_callable.isCallable(vm)) {
-                        exception.* = JSC.toInvalidArguments("Expected \"listener\" callback to be a function", .{}, ctx).asObjectRef();
-                        return null;
+                        ctx.throwInvalidArguments("Expected \"listener\" callback to be a function", .{});
+                        return error.JSError;
                     }
                     listener = options_or_callable;
                 }
             }
             if (listener == .zero) {
-                exception.* = JSC.toInvalidArguments("Expected \"listener\" callback", .{}, ctx).asObjectRef();
-                return null;
+                ctx.throwInvalidArguments("Expected \"listener\" callback", .{});
+                return error.JSError;
             }
 
             should_deinit_path = false;

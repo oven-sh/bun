@@ -586,15 +586,15 @@ const Handlers = struct {
         return this.vm.eventLoop().runCallbackWithResult(callback, this.globalObject, thisValue, data);
     }
 
-    pub fn fromJS(globalObject: *JSC.JSGlobalObject, opts: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Handlers {
+    pub fn fromJS(globalObject: *JSC.JSGlobalObject, opts: JSC.JSValue) bun.JSError!Handlers {
         var handlers = Handlers{
             .vm = globalObject.bunVM(),
             .globalObject = globalObject,
         };
 
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-            exception.* = JSC.toInvalidArguments("Expected \"handlers\" to be an object", .{}, globalObject).asObjectRef();
-            return null;
+            globalObject.throwInvalidArguments("Expected \"handlers\" to be an object", .{});
+            return error.JSError;
         }
 
         const pairs = .{
@@ -617,8 +617,8 @@ const Handlers = struct {
         inline for (pairs) |pair| {
             if (opts.getTruthy(globalObject, pair.@"1")) |callback_value| {
                 if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
-                    exception.* = JSC.toInvalidArguments(comptime std.fmt.comptimePrint("Expected \"{s}\" callback to be a function", .{pair.@"1"}), .{}, globalObject).asObjectRef();
-                    return null;
+                    globalObject.throwInvalidArguments("Expected \"{s}\" callback to be a function", .{pair[1]});
+                    return error.JSError;
                 }
 
                 @field(handlers, pair.@"0") = callback_value;
@@ -627,8 +627,8 @@ const Handlers = struct {
 
         if (opts.fastGet(globalObject, .@"error")) |callback_value| {
             if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
-                exception.* = JSC.toInvalidArguments("Expected \"error\" callback to be a function", .{}, globalObject).asObjectRef();
-                return null;
+                globalObject.throwInvalidArguments("Expected \"error\" callback to be a function", .{});
+                return error.JSError;
             }
 
             handlers.onError = callback_value;
@@ -636,19 +636,19 @@ const Handlers = struct {
 
         // onWrite is required for duplex support or if more than 1 parser is attached to the same socket (unliked)
         if (handlers.onWrite == .zero) {
-            exception.* = JSC.toInvalidArguments("Expected at least \"write\" callback", .{}, globalObject).asObjectRef();
-            return null;
+            globalObject.throwInvalidArguments("Expected at least \"write\" callback", .{});
+            return error.JSError;
         }
 
         if (opts.getTruthy(globalObject, "binaryType")) |binary_type_value| {
             if (!binary_type_value.isString()) {
-                exception.* = JSC.toInvalidArguments("Expected \"binaryType\" to be a string", .{}, globalObject).asObjectRef();
-                return null;
+                globalObject.throwInvalidArguments("Expected \"binaryType\" to be a string", .{});
+                return error.JSError;
             }
 
             handlers.binary_type = BinaryType.fromJSValue(globalObject, binary_type_value) orelse {
-                exception.* = JSC.toInvalidArguments("Expected 'binaryType' to be 'arraybuffer', 'uint8array', 'buffer'", .{}, globalObject).asObjectRef();
-                return null;
+                globalObject.throwInvalidArguments("Expected 'binaryType' to be 'ArrayBuffer', 'Uint8Array', or 'Buffer'", .{});
+                return error.JSError;
             };
         }
 
@@ -3765,7 +3765,6 @@ pub const H2FrameParser = struct {
             return null;
         }
 
-        var exception: JSC.C.JSValueRef = null;
         const context_obj = options.get(globalObject, "context") orelse {
             globalObject.throw("Expected \"context\" option", .{});
             return null;
@@ -3774,10 +3773,7 @@ pub const H2FrameParser = struct {
         if (options.get(globalObject, "handlers")) |handlers_| {
             handler_js = handlers_;
         }
-        var handlers = Handlers.fromJS(globalObject, handler_js, &exception) orelse {
-            globalObject.throwValue(exception.?.value());
-            return null;
-        };
+        var handlers = Handlers.fromJS(globalObject, handler_js) catch return null;
 
         var this = brk: {
             if (ENABLE_ALLOCATOR_POOL) {

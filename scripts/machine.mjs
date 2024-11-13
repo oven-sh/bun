@@ -425,10 +425,10 @@ export const aws = {
 
   /**
    * @param {AwsInstance} instance
-   * @param {string} [username]
+   * @param {MachineOptions} [options]
    * @returns {Machine}
    */
-  toMachine(instance, username) {
+  toMachine(instance, options = {}) {
     let { InstanceId, ImageId, InstanceType, Placement, PublicIpAddress } = instance;
 
     const connect = async () => {
@@ -440,7 +440,12 @@ export const aws = {
         PublicIpAddress = IpAddress;
       }
 
-      return { hostname: PublicIpAddress, username };
+      const { username, sshKeys } = options;
+      const identityPaths = sshKeys
+        ?.filter(({ privatePath }) => existsSync(privatePath))
+        ?.map(({ privatePath }) => privatePath);
+
+      return { hostname: PublicIpAddress, username, identityPaths };
     };
 
     const exec = async (command, options) => {

@@ -1026,7 +1026,8 @@ async function main() {
     const tmpPath = mkdtempSync(join(tmpdir(), "agent-"));
     const localPath = join(tmpPath, "agent.mjs");
     const remotePath = "/tmp/agent.mjs";
-    await spawnSafe($`bunx esbuild ${templatePath} --bundle --platform=node --format=esm --outfile=${localPath}`);
+    const npx = which("bunx") || which("npx");
+    await spawnSafe($`${npx} esbuild ${templatePath} --bundle --platform=node --format=esm --outfile=${localPath}`);
     await machine.upload(localPath, remotePath);
     await machine.exec(["node", remotePath, action], { stdio: "inherit" });
   };

@@ -469,6 +469,7 @@ pub const WebWorker = struct {
     /// Request a terminate (Called from main thread from worker.terminate(), or inside worker in process.exit())
     /// The termination will actually happen after the next tick of the worker's loop.
     pub fn requestTerminate(this: *WebWorker) callconv(.C) void {
+        // TODO(@heimskr): make WebWorker termination more immediate. Currently, console.log after process.exit will go through if in a WebWorker.
         if (this.status.load(.acquire) == .terminated) {
             return;
         }

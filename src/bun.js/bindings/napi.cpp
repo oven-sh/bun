@@ -119,13 +119,8 @@ using namespace Zig;
         }                                                 \
     } while (0)
 
-// Return an error code if an exception was thrown after NAPI_PREAMBLE or if there's a pending termination exception
-#define NAPI_RETURN_IF_EXCEPTION(_env)                                                                       \
-    do {                                                                                                     \
-        RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(_env, napi_pending_exception)); \
-        SUPPRESS_UNCOUNTED_LOCAL JSC::VM& vm = napi_preamble_throw_scope__.vm();                             \
-        NAPI_RETURN_EARLY_IF_FALSE((_env), !vm.hasPendingTerminationException(), napi_pending_exception);    \
-    } while (0);
+// Return an error code if an exception was thrown after NAPI_PREAMBLE
+#define NAPI_RETURN_IF_EXCEPTION(_env) RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(_env, napi_pending_exception))
 
 // Return indicating that no error occurred in a NAPI function, and an exception is not expected
 #define NAPI_RETURN_SUCCESS(_env)                        \
@@ -2747,15 +2742,6 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
         thisValue = JSC::jsUndefined();
     }
     JSValue result = call(globalObject, funcValue, callData, thisValue, args);
-
-    auto* process = jsCast<Bun::Process*>(globalObject->processObject());
-    if (process->m_isExitCodeObservable) {
-        // Chances are the JS function called process.exit in a Worker.
-        // TODO(@heimskr): potentially make process.exit() inside a Worker actually throw an exception instead of doing it here?
-        vm.setHasTerminationRequest();
-        vm.throwTerminationException();
-        return napi_set_last_error(env, napi_pending_exception);
-    }
 
     if (result_ptr) {
         if (result.isEmpty()) {

@@ -753,7 +753,6 @@ function generateSshKey() {
 Host *
   IdentityFile ${privateKeyPath}
   AddKeysToAgent yes
-  UseKeychain yes
 `;
   appendFileSync(configPath, config);
 

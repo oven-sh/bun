@@ -711,7 +711,7 @@ function getUsername(distro) {
     return "ubuntu";
   }
 
-  if (/amazon|amzn/i.test(distro)) {
+  if (/amazon|amzn|al\d+/i.test(distro)) {
     return "ec2-user";
   }
 

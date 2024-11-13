@@ -60,12 +60,7 @@ grant_to_user() {
 }
 
 which() {
-	path="$(command -v "$1")"
-	if [ -f "$path" ]; then
-		echo "$path"
-	elif [ "$can_sudo" = "1" ]; then
-		execute_sudo which "$1"
-	fi
+	command -v "$1"
 }
 
 require() {
@@ -501,13 +496,11 @@ install_common_software() {
 		bash \
 		ca-certificates \
 		curl \
-		jq \
 		htop \
 		gnupg \
 		git \
 		unzip \
-		wget \
-		zip
+		wget
 
 	install_rosetta
 	install_nodejs
@@ -811,18 +804,15 @@ create_buildkite_user() {
 		;;
 	esac
 
-	getent="$(require getent)"
-	if [ -z "$("$getent" passwd "$user")" ]; then
-		useradd="$(require useradd)"
-		execute_sudo "$useradd" "$user" \
+	if [ -z "$(getent passwd "$user")" ]; then
+		execute_sudo useradd "$user" \
 			--system \
 			--no-create-home \
 			--home-dir "$home"
 	fi
 
-	if [ -n "$("$getent" group docker)" ]; then
-		usermod="$(require usermod)"
-		execute_sudo "$usermod" -aG docker "$user"
+	if [ -n "$(getent group docker)" ]; then
+		execute_sudo usermod -aG docker "$user"
 	fi
 
 	paths="$home /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent/buildkite-agent.sock"

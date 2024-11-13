@@ -2024,7 +2024,7 @@ pub const Command = struct {
                 }
 
                 if (ctx.positionals.len > 0) {
-                    if (try RunCommand.exec(ctx, .{.bin_dirs_only = false, .log_errors = true})) {
+                    if (try RunCommand.exec(ctx, .{ .bin_dirs_only = false, .log_errors = true })) {
                         return;
                     }
 

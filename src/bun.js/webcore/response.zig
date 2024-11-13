@@ -2001,18 +2001,11 @@ pub const Fetch = struct {
         bun.Analytics.Features.fetch += 1;
         const vm = JSC.VirtualMachine.get();
 
-        var exception_val = [_]JSC.C.JSValueRef{null};
-        const exception: JSC.C.ExceptionRef = &exception_val;
         var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch bun.outOfMemory();
         // used to clean up dynamically allocated memory on error (a poor man's errdefer)
         var is_error = false;
         var allocator = memory_reporter.wrap(bun.default_allocator);
         defer {
-            if (exception.* != null) {
-                is_error = true;
-                ctx.throwValue(JSC.JSValue.c(exception.*));
-            }
-
             memory_reporter.report(globalThis.vm());
 
             if (is_error) bun.default_allocator.destroy(memory_reporter);
@@ -2317,20 +2310,13 @@ pub const Fetch = struct {
                                 return .zero;
                             }
 
-                            if (SSLConfig.inJS(vm, globalThis, tls, exception)) |config| {
-                                if (exception.* != null) {
-                                    is_error = true;
-                                    return .zero;
-                                }
-
+                            if (SSLConfig.fromJS(vm, globalThis, tls) catch {
+                                is_error = true;
+                                return .zero;
+                            }) |config| {
                                 const ssl_config_object = bun.default_allocator.create(SSLConfig) catch bun.outOfMemory();
                                 ssl_config_object.* = config;
                                 break :extract_ssl_config ssl_config_object;
-                            }
-
-                            if (exception.* != null) {
-                                is_error = true;
-                                return .zero;
                             }
                         }
                     }

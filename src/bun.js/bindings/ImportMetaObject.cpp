@@ -80,6 +80,7 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
 
             BunString from = Bun::toString(fromStr);
             auto result = Bun__resolveSyncWithSource(globalObject, JSC::JSValue::encode(moduleName), &from, false);
+            RETURN_IF_EXCEPTION(scope, {});
 
             if (!JSC::JSValue::decode(result).isString()) {
                 JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
@@ -260,6 +261,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     }
 
     auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from, isESM);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!JSC::JSValue::decode(result).isString()) {
         JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
@@ -330,6 +332,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     }
 
     auto result = Bun__resolveSync(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!JSC::JSValue::decode(result).isString()) {
         JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
@@ -426,6 +429,8 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     auto a = Bun::toString(specifier);
     auto b = Bun::toString(fromWTFString);
     auto result = JSValue::decode(Bun__resolveSyncWithStrings(globalObject, &a, &b, true));
+    RETURN_IF_EXCEPTION(scope, {});
+
     if (!result.isString()) {
         JSC::throwException(globalObject, scope, result);
         return {};

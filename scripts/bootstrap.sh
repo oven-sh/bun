@@ -328,6 +328,12 @@ check_package_manager() {
 	print "Updating package manager..."
 	case "$pm" in
 	apt)
+		lock_paths="/var/lib/apt/lists/lock /var/cache/apt/archives/lock"
+		for lock_path in $lock_paths; do
+			if [ -f "$lock_path" ]; then
+				execute_sudo rm -f "$lock_path"
+			fi
+		done
 		package_manager update -y
 		;;
 	apk)

@@ -155,6 +155,9 @@ function getPipeline(options) {
       agents: {
         queue: "build-darwin",
       },
+      env: {
+        DEBUG: "1",
+      },
       command: `node ./scripts/machine.mjs --cloud=aws --os=${os} --arch=${arch} --distro=${distro} --distro-version=${release}`,
     };
   };
@@ -355,17 +358,16 @@ function getPipeline(options) {
     steps: [
       ...buildPlatforms.map(platform => {
         const { os, arch, baseline } = platform;
+        const platforms = testPlatforms.filter(
+          platform => platform.os === os && platform.arch === arch && baseline === platform.baseline,
+        );
 
         let steps = [];
 
         if (buildImages) {
-          steps.push(getBuildImageStep(platform));
+          steps.push(...platforms.map(platform => getBuildImageStep(platform)));
         } else {
-          steps.push(
-            ...testPlatforms
-              .filter(platform => platform.os === os && platform.arch === arch && baseline === platform.baseline)
-              .map(platform => getTestBunStep(platform)),
-          );
+          steps.push(...platforms.map(platform => getTestBunStep(platform)));
         }
 
         if (!buildId && !buildImages) {

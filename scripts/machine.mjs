@@ -757,6 +757,15 @@ function createSshKey() {
     throw new Error(`Failed to generate SSH key: ${privatePath} / ${publicPath}`);
   }
 
+  const sshAgent = which("ssh-agent");
+  if (sshAgent) {
+    spawnSyncSafe($`${sshAgent} -s`, { stdio: "inherit", detached: true });
+    const sshAdd = which("ssh-add");
+    if (sshAdd) {
+      spawnSyncSafe($`${sshAdd} ${privatePath}`, { stdio: "inherit" });
+    }
+  }
+
   return {
     privatePath,
     publicPath,

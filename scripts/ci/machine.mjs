@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
 
 import { inspect, parseArgs } from "node:util";
-import { getUserData } from "./user-data.mjs";
-import { getArch, spawn, spawnSafe } from "../utils.mjs";
+import { $, getArch, readFile, spawn, spawnSafe, tmpdir, waitForPort } from "../utils.mjs";
+import { join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 
 const docker = {
   getPlatform(platform) {
@@ -89,66 +91,278 @@ const docker = {
 };
 
 const aws = {
-  async createMachine(platform) {
-    const image = await aws.getImage(platform);
-    const userData = await getUserData({ ...platform, username: image["username"] });
-    const { id, username, RootDeviceName, BlockDeviceMappings } = image;
-    const { os, arch, ["instance-type"]: type } = platform;
+  /**
+   * @param {Record<string, string | undefined>} [options]
+   * @returns {string[]}
+   */
+  getFilters(options = {}) {
+    return Object.entries(options)
+      .filter(([_, value]) => typeof value !== "undefined")
+      .map(([key, value]) => `Name=${key},Values=${value}`);
+  },
 
+  /**
+   * @param {Record<string, string | undefined>} [options]
+   * @returns {string[]}
+   */
+  getFlags(options = {}) {
+    return Object.entries(options)
+      .filter(([_, value]) => typeof value !== "undefined")
+      .map(([key, value]) => `--${key}=${value}`);
+  },
+
+  /**
+   * @typedef AwsInstance
+   * @property {string} InstanceId
+   * @property {string} ImageId
+   * @property {string} InstanceType
+   * @property {string} [PublicIpAddress]
+   * @property {string} [PlatformDetails]
+   * @property {string} [Architecture]
+   * @property {object} [Placement]
+   * @property {string} [Placement.AvailabilityZone]
+   * @property {string} LaunchTime
+   */
+
+  /**
+   * @param {Record<string, string | undefined>} [options]
+   * @returns {Promise<AwsInstance[]>}
+   * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/describe-instances.html
+   */
+  async describeInstances(options) {
+    const filters = aws.getFilters(options);
+    const { stdout } = await spawnSafe($`aws ec2 describe-instances --no-paginate --filters ${filters} --output json`);
+    const { Reservations } = JSON.parse(stdout);
+    return Reservations.flatMap(({ Instances }) => Instances).sort((a, b) => (a.LaunchTime < b.LaunchTime ? 1 : -1));
+  },
+
+  /**
+   * @param {Record<string, string | undefined>} [options]
+   * @returns {Promise<AwsInstance[]>}
+   * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/run-instances.html
+   */
+  async runInstances(options) {
+    const flags = aws.getFlags(options);
+    const { stdout } = await spawnSafe($`aws ec2 run-instances ${flags} --output json`);
+    const { Instances } = JSON.parse(stdout);
+    return Instances.sort((a, b) => (a.LaunchTime < b.LaunchTime ? 1 : -1));
+  },
+
+  /**
+   * @param {...string} instanceIds
+   * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/stop-instances.html
+   */
+  async stopInstances(...instanceIds) {
+    await spawnSafe($`aws ec2 stop-instances --no-hibernate --force --instance-ids ${instanceIds} --output json`);
+  },
+
+  /**
+   * @param {...string} instanceIds
+   * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/terminate-instances.html
+   */
+  async terminateInstances(...instanceIds) {
+    await spawnSafe($`aws ec2 terminate-instances --instance-ids ${instanceIds} --output json`);
+  },
+
+  /**
+   * @param {"instance-running" | "instance-stopped" | "instance-terminated"} action
+   * @param {...string} instanceIds
+   * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/wait.html
+   */
+  async waitInstances(action, ...instanceIds) {
+    await spawnSafe($`aws ec2 wait ${action} --instance-ids ${instanceIds} --output json`);
+  },
+
+  /**
+   * @typedef AwsImage
+   * @property {string} ImageId
+   * @property {string} Name
+   * @property {string} CreationDate
+   */
+
+  /**
+   * @param {Record<string, string | undefined>} [options]
+   * @returns {Promise<AwsImage[]>}
+   * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/describe-images.html
+   */
+  async describeImages(options = {}) {
+    const filters = aws.getFilters(options);
+    const { stdout } = await spawnSafe($`aws ec2 describe-images --no-paginate --filters ${filters} --output json`);
+    const { Images } = JSON.parse(stdout);
+    return Images.sort((a, b) => (a.CreationDate < b.CreationDate ? 1 : -1));
+  },
+
+  /**
+   * @param {Record<string, string | undefined>} [options]
+   * @returns {Promise<string>}
+   * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/create-image.html
+   */
+  async createImage(options) {
+    const flags = aws.getFlags(options);
+    const { stdout } = await spawnSafe($`aws ec2 create-image ${flags} --output json`);
+    const { ImageId } = JSON.parse(stdout);
+    return ImageId;
+  },
+
+  /**
+   * @param {"image-available"} action
+   * @param {...string} imageIds
+   * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/wait/image-available.html
+   */
+  async waitImage(action, ...imageIds) {
+    await spawnSafe($`aws ec2 wait ${action} --image-ids ${imageIds} --output json`);
+  },
+
+  /**
+   * @param {MachineOptions} options
+   * @returns {Promise<AwsImage>}
+   */
+  async getMachineImage(options) {
+    const { os, arch, distro, distroVersion = "*" } = options;
+
+    let name, owner;
+    if (os === "linux") {
+      if (!distro || distro === "debian") {
+        owner = "amazon";
+        name = `debian-${distroVersion}-${arch === "aarch64" ? "arm64" : "amd64"}-*`;
+      } else if (distro === "ubuntu") {
+        owner = "amazon";
+        name = `ubuntu/images/hvm-ssd/ubuntu-*-${distroVersion}-${arch === "aarch64" ? "arm64" : "amd64"}-server-*`;
+      } else if (distro === "amazonlinux") {
+        owner = "amazon";
+        if (distroVersion === "1") {
+          // EOL
+        } else if (distroVersion === "2") {
+          name = `amzn2-ami-hvm-*-${arch === "aarch64" ? "arm64" : "x86_64"}-gp2`;
+        } else {
+          name = `al${distroVersion}-ami-*-${arch === "aarch64" ? "arm64" : "x86_64"}`;
+        }
+      } else if (distro === "alpine") {
+        name = `alpine-${distroVersion}.*-${arch === "aarch64" ? "aarch64" : "x86_64"}-uefi-cloudinit-*`;
+      }
+    } else if (os === "windows") {
+      if (!distro || distro === "server") {
+        owner = "amazon";
+        name = `Windows_Server-${distroVersion}-English-Full-Base-*`;
+      }
+    }
+
+    if (!name) {
+      throw new Error(`Unsupported platform: ${inspect(options)}`);
+    }
+
+    const images = await aws.describeImages({ state: "available", "owner-alias": owner, name });
+    if (!images.length) {
+      throw new Error(`No image found: ${inspect(options)}`);
+    }
+
+    const [image] = images;
+    return image;
+  },
+
+  /**
+   * @param {MachineOptions} options
+   * @returns {Promise<Machine>}
+   */
+  async createMachine(options) {
+    const { arch, imageId, instanceType, metadata } = options;
+
+    /** @type {AwsImage} */
+    let image;
+    if (imageId) {
+      const [customImage] = await aws.describeImages({ "image-id": imageId });
+      image = customImage;
+    } else {
+      image = await aws.getMachineImage(options);
+    }
+
+    const { ImageId, Name, RootDeviceName, BlockDeviceMappings } = image;
     const blockDeviceMappings = BlockDeviceMappings.map(device => {
       const { DeviceName } = device;
       if (DeviceName === RootDeviceName) {
         return {
           ...device,
           Ebs: {
-            VolumeSize: os === "windows" ? 50 : 30,
+            VolumeSize: getDiskSize(options),
           },
         };
       }
       return device;
     });
 
-    const instanceType = type || (arch === "aarch64" ? "t4g.large" : "t3.large");
-    const [instance] = await aws.runInstances(
-      {
-        ["image-id"]: platform["imageId"] || id,
-        ["instance-type"]: instanceType,
-        ["user-data"]: platform["imageId"] ? undefined : userData,
-        ["block-device-mappings"]: JSON.stringify(blockDeviceMappings),
-        ["metadata-options"]: JSON.stringify({
-          "HttpTokens": "optional",
-          "HttpEndpoint": "enabled",
-          "HttpProtocolIpv6": "enabled",
-          "InstanceMetadataTags": "enabled",
-        }),
-      },
-      {
-        wait: true,
-      },
-    );
+    const username = getUsername(Name);
+    const userData = getCloudInit({ ...options, username });
 
-    const { InstanceId, PublicIpAddress } = instance;
-    const options = { hostname: PublicIpAddress, username };
+    let tagSpecification = [];
+    if (metadata) {
+      tagSpecification = ["instance", "volume"].map(resourceType => {
+        return {
+          ResourceType: resourceType,
+          Tags: Object.entries(metadata).map(([Key, Value]) => ({ Key, Value })),
+        };
+      });
+    }
 
-    const exec = command => {
-      return spawnSsh({ ...options, command });
+    const [instance] = await aws.runInstances({
+      ["image-id"]: ImageId,
+      ["instance-type"]: instanceType || (arch === "aarch64" ? "t4g.large" : "t3.large"),
+      ["user-data"]: userData,
+      ["block-device-mappings"]: JSON.stringify(blockDeviceMappings),
+      ["metadata-options"]: JSON.stringify({
+        "HttpTokens": "optional",
+        "HttpEndpoint": "enabled",
+        "HttpProtocolIpv6": "enabled",
+        "InstanceMetadataTags": "enabled",
+      }),
+      ["tag-specifications"]: JSON.stringify(tagSpecification),
+    });
+
+    return aws.toMachine(instance, username);
+  },
+
+  /**
+   * @param {AwsInstance} instance
+   * @param {string} [username]
+   * @returns {Machine}
+   */
+  toMachine(instance, username) {
+    let { InstanceId, ImageId, InstanceType, Placement, PublicIpAddress } = instance;
+
+    const connect = async () => {
+      if (!PublicIpAddress) {
+        await aws.waitInstances("instance-running", InstanceId);
+        const [{ PublicIpAddress: IpAddress }] = await aws.describeInstances({
+          ["instance-id"]: InstanceId,
+        });
+        PublicIpAddress = IpAddress;
+      }
+
+      return { hostname: PublicIpAddress, username };
+    };
+
+    const exec = async (command, options) => {
+      const connectOptions = await connect();
+      return spawnSsh({ ...connectOptions, command }, options);
     };
 
     const attach = async () => {
-      await spawnSsh({ ...options });
+      const connectOptions = await connect();
+      await spawnSsh({ ...connectOptions });
+    };
+
+    const upload = async (source, destination) => {
+      const connectOptions = await connect();
+      await spawnScp({ ...connectOptions, source, destination });
     };
 
     const snapshot = async () => {
-      await aws.stopInstance(InstanceId, { wait: true });
-      await aws.createImage(
-        {
-          ["instance-id"]: InstanceId,
-          ["name"]: `${InstanceId}-snapshot-${Date.now()}`,
-        },
-        {
-          wait: true,
-        },
-      );
+      await aws.stopInstances(InstanceId);
+      await aws.waitInstances("instance-stopped", InstanceId);
+      const imageId = await aws.createImage({
+        ["instance-id"]: InstanceId,
+        ["name"]: `${InstanceId}-snapshot-${Date.now()}`,
+      });
+      await aws.waitImage("image-available", imageId);
     };
 
     const terminate = async () => {
@@ -156,160 +370,21 @@ const aws = {
     };
 
     return {
+      cloud: "aws",
+      id: InstanceId,
+      imageId: ImageId,
+      instanceType: InstanceType,
+      region: Placement?.AvailabilityZone,
+      get publicIp() {
+        return PublicIpAddress;
+      },
       exec,
+      upload,
       attach,
       snapshot,
       close: terminate,
       [Symbol.asyncDispose]: terminate,
     };
-  },
-
-  async getImage(platform) {
-    const os = platform["os"];
-    const distro = platform["distro"];
-    const release = platform["release"] || "*";
-
-    const arch = platform["arch"];
-    const armOrAmd = arch === "aarch64" ? "arm64" : "amd64";
-    const armOr64 = arch === "aarch64" ? "arm64" : "x86_64";
-    const aarchOr64 = arch === "aarch64" ? "aarch64" : "x86_64";
-
-    let name;
-    let username;
-    let owner = "amazon";
-    if (!os || os === "linux") {
-      if (!distro || distro === "debian") {
-        name = `debian-${release}-${armOrAmd}-*`;
-        username = "admin";
-      } else if (distro === "ubuntu") {
-        name = `ubuntu/images/hvm-ssd/ubuntu-*-${release}-${armOrAmd}-server-*`;
-        username = "ubuntu";
-      } else if (distro === "amazonlinux") {
-        username = "ec2-user";
-        if (release === "1") {
-          // EOL
-        } else if (release === "2") {
-          name = `amzn2-ami-hvm-*-${armOr64}-gp2`;
-        } else {
-          name = `al${release}-ami-*-${armOr64}`;
-        }
-      } else if (distro === "alpine") {
-        owner = undefined;
-        name = `alpine-${release}.*-${aarchOr64}-uefi-cloudinit-*`;
-        username = "root";
-      }
-    } else if (os === "windows") {
-      if (distro === "server") {
-        name = `Windows_Server-${release}-English-Full-Base-*`;
-        username = "Administrator";
-      }
-    }
-
-    if (name && username) {
-      const images = await aws.describeImages({ state: "available", "owner-alias": owner, name });
-      if (images.length) {
-        const [image] = images;
-        const { Name, ImageId, RootDeviceName, BlockDeviceMappings } = image;
-        return {
-          id: ImageId,
-          name: Name,
-          username,
-          RootDeviceName,
-          BlockDeviceMappings,
-        };
-      }
-    }
-
-    throw new Error(`Unsupported image: ${inspect(platform)}`);
-  },
-
-  async describeImages(options = {}) {
-    const filters = Object.entries(options)
-      .filter(([_, value]) => value)
-      .map(([key, value]) => `Name=${key},Values=${value}`);
-    const { stdout } = await spawnSafe(["aws", "ec2", "describe-images", "--filters", ...filters, "--output", "json"]);
-    const { Images } = JSON.parse(stdout);
-
-    return Images.sort((a, b) => (a.CreationDate < b.CreationDate ? 1 : -1));
-  },
-
-  async describeInstances(options = {}) {
-    const filters = Object.entries(options).map(([key, value]) => `Name=${key},Values=${value}`);
-    const { stdout } = await spawnSafe([
-      "aws",
-      "ec2",
-      "describe-instances",
-      "--filters",
-      ...filters,
-      "--output",
-      "json",
-    ]);
-    const { Reservations } = JSON.parse(stdout);
-    const instances = Reservations.flatMap(({ Instances }) => Instances);
-
-    return instances.sort((a, b) => (a.LaunchTime < b.LaunchTime ? 1 : -1));
-  },
-
-  async runInstances(options = {}, runOptions = {}) {
-    const flags = Object.entries(options).map(([key, value]) => `--${key}=${value}`);
-    const { stdout } = await spawnSafe(["aws", "ec2", "run-instances", ...flags, "--output", "json"]);
-    const { Instances } = JSON.parse(stdout);
-
-    if (runOptions["wait"]) {
-      const instanceIds = Instances.map(({ InstanceId }) => InstanceId);
-      await spawnSafe(["aws", "ec2", "wait", "instance-running", "--instance-ids", ...instanceIds]);
-      return aws.describeInstances({ "instance-id": instanceIds[0] });
-    }
-
-    return Instances.sort((a, b) => (a.LaunchTime < b.LaunchTime ? 1 : -1));
-  },
-
-  /**
-   * @param {string} instanceId
-   * @param {object} stopOptions
-   * @param {boolean} [stopOptions.wait]
-   */
-  async stopInstance(instanceId, stopOptions = {}) {
-    await spawnSafe([
-      "aws",
-      "ec2",
-      "stop-instances",
-      "--no-hibernate",
-      "--force",
-      "--instance-ids",
-      instanceId,
-      "--output",
-      "json",
-    ]);
-
-    if (stopOptions["wait"]) {
-      await spawnSafe(["aws", "ec2", "wait", "instance-stopped", "--instance-ids", instanceId, "--output", "json"]);
-    }
-  },
-
-  /**
-   * @param {...string} instanceIds
-   */
-  async terminateInstances(...instanceIds) {
-    await spawnSafe(["aws", "ec2", "terminate-instances", "--instance-ids", ...instanceIds]);
-  },
-
-  /**
-   * @param {Record<string, string>} options
-   * @param {object} createOptions
-   * @param {boolean} [createOptions.wait]
-   * @returns {Promise<string>}
-   */
-  async createImage(options, createOptions = {}) {
-    const flags = Object.entries(options).map(([key, value]) => `--${key}=${value}`);
-    const { stdout } = await spawnSafe(["aws", "ec2", "create-image", ...flags, "--output", "json"]);
-    const { ImageId } = JSON.parse(stdout);
-
-    if (createOptions["wait"]) {
-      await spawnSafe(["aws", "ec2", "wait", "image-available", "--image-ids", ImageId, "--output", "json"]);
-    }
-
-    return ImageId;
   },
 };
 
@@ -451,8 +526,152 @@ const google = {
   },
 };
 
-async function spawnSsh(options) {
+/**
+ * @typedef CloudInit
+ * @property {string[]} authorizedKeys
+ * @property {string} username
+ * @property {string} [password]
+ */
+
+/**
+ * @param {CloudInit} cloudInit
+ * @returns {string}
+ */
+function getCloudInit(cloudInit) {
+  const username = cloudInit["username"] || "root";
+  const password = cloudInit["password"] || crypto.randomUUID();
+  const authorizedKeys = JSON.stringify(cloudInit["authorizedKeys"] || []);
+
+  // https://cloudinit.readthedocs.io/en/stable/
+  return `#cloud-config
+
+    package_update: true
+    packages:
+      - curl
+      - ca-certificates
+      - openssh-server
+    
+    write_files:
+      - path: /etc/ssh/sshd_config
+        content: |
+          PermitRootLogin yes
+          PasswordAuthentication yes
+          Subsystem sftp /usr/lib/ssh/sftp-server
+
+    chpasswd:
+      expire: false
+      list: |
+        root:${password}
+        ${username}:${password}
+
+    disable_root: false
+
+    ssh_pwauth: true
+    ssh_authorized_keys: ${authorizedKeys}
+  `;
+}
+
+/**
+ * @param {string} distro
+ * @returns {string}
+ */
+function getUsername(distro) {
+  if (/windows/i.test(distro)) {
+    return "administrator";
+  }
+
+  if (/alpine/i.test(distro)) {
+    return "root";
+  }
+
+  if (/debian/i.test(distro)) {
+    return "admin";
+  }
+
+  if (/ubuntu/i.test(distro)) {
+    return "ubuntu";
+  }
+
+  if (/amazon|amzn/i.test(distro)) {
+    return "ec2-user";
+  }
+
+  throw new Error(`Unsupported distro: ${distro}`);
+}
+
+/**
+ * @param {MachineOptions} options
+ * @returns {number}
+ */
+function getDiskSize(options) {
+  const { os, diskSize } = options;
+
+  if (diskSize) {
+    return diskSize;
+  }
+
+  return os === "windows" ? 50 : 30;
+}
+
+/**
+ * @returns {string[]}
+ */
+function getAuthorizedKeys() {
+  const homePath = homedir();
+  const sshPath = join(homePath, ".ssh");
+
+  if (existsSync(sshPath)) {
+    const sshFiles = readdirSync(sshPath, { withFileTypes: true });
+    const sshPaths = sshFiles
+      .filter(entry => entry.isFile() && entry.name.endsWith(".pub"))
+      .map(({ name }) => join(sshPath, name));
+
+    return sshPaths
+      .map(path => readFile(path, { cache: true }))
+      .map(key => key.split(" ").slice(0, 2).join(" "))
+      .filter(key => key.length);
+  }
+
+  return [];
+}
+
+/**
+ * @param {string} organization
+ * @returns {Promise<string[]>}
+ */
+async function getGithubAuthorizedKeys(organization) {
+  const members = await curlSafe(`https://api.github.com/orgs/${organization}/members`, { json: true });
+  const sshKeys = await Promise.all(
+    members.map(async ({ login }) => {
+      const publicKeys = await curlSafe(`https://github.com/${login}.keys`);
+      return publicKeys
+        .split("\n")
+        .map(key => key.trim())
+        .filter(key => key.length);
+    }),
+  );
+
+  return sshKeys.flat();
+}
+
+/**
+ * @typedef SshOptions
+ * @property {string} hostname
+ * @property {number} [port]
+ * @property {string} [username]
+ * @property {string[]} [command]
+ * @property {number} [retries]
+ */
+
+/**
+ * @param {SshOptions} options
+ * @param {object} [spawnOptions]
+ * @returns {Promise<void>}
+ */
+async function spawnSsh(options, spawnOptions = {}) {
   const { hostname, port, username, command, retries = 10 } = options;
+  await waitForPort({ hostname, port: port || 22 });
+
   const ssh = ["ssh", hostname, "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"];
   if (port) {
     ssh.push("-p", port);
@@ -467,10 +686,10 @@ async function spawnSsh(options) {
 
   let cause;
   for (let i = 0; i < retries; i++) {
-    const result = await spawn(ssh, { stdio });
+    const result = await spawn(ssh, { stdio, ...spawnOptions });
     const { exitCode, stderr } = result;
     if (exitCode === 0) {
-      return result;
+      return;
     }
 
     cause = stderr.trim() || undefined;
@@ -483,59 +702,178 @@ async function spawnSsh(options) {
   throw new Error(`SSH failed: ${username}@${hostname}`, { cause });
 }
 
-async function main() {
-  const { values: args, positionals } = parseArgs({
+/**
+ * @typedef ScpOptions
+ * @property {string} hostname
+ * @property {string} source
+ * @property {string} destination
+ * @property {string} [port]
+ * @property {string} [username]
+ * @property {number} [retries]
+ */
+
+/**
+ * @param {ScpOptions} options
+ * @returns {Promise<void>}
+ */
+async function spawnScp(options) {
+  const { hostname, port, username, source, destination, retries = 10 } = options;
+  await waitForPort({ hostname, port: port || 22 });
+
+  const command = ["scp", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"];
+  if (port) {
+    command.push("-P", port);
+  }
+  command.push(resolve(source));
+  if (username) {
+    command.push(`${username}@${hostname}:${destination}`);
+  } else {
+    command.push(`${hostname}:${destination}`);
+  }
+
+  let cause;
+  for (let i = 0; i < retries; i++) {
+    const result = await spawn(command);
+    const { exitCode, stderr } = result;
+    if (exitCode === 0) {
+      return;
+    }
+
+    cause = stderr.trim() || undefined;
+    if (/(bad configuration option)|(no such file or directory)/i.test(stderr)) {
+      break;
+    }
+    await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+  }
+
+  throw new Error(`SCP failed: ${source} -> ${username}@${hostname}:${destination}`, { cause });
+}
+
+/**
+ * @typedef Cloud
+ * @property {string} name
+ * @property {(options: MachineOptions) => Promise<Machine>} createMachine
+ */
+
+/**
+ * @typedef Machine
+ * @property {string} cloud
+ * @property {string} [name]
+ * @property {string} id
+ * @property {string} imageId
+ * @property {string} instanceType
+ * @property {string} region
+ * @property {string} [publicIp]
+ * @property {(command: string[]) => Promise<SpawnResult>} exec
+ * @property {(source: string, destination: string) => Promise<void>} upload
+ * @property {() => Promise<void>} attach
+ * @property {() => Promise<void>} snapshot
+ * @property {() => Promise<void>} close
+ */
+
+/**
+ * @typedef {"aws" | "docker" | "google"} Cloud
+ * @typedef {"linux" | "darwin" | "windows"} Os
+ * @typedef {"aarch64" | "x64"} Arch
+ */
+
+/**
+ * @typedef MachineOptions
+ * @property {Cloud} cloud
+ * @property {Os} os
+ * @property {Arch} arch
+ * @property {string} distro
+ * @property {Record<string, string | undefined>} [metadata]
+ * @property {string} [distroVersion]
+ * @property {string} [instanceType]
+ * @property {string} [imageId]
+ * @property {number} [diskSize]
+ */
+
+/**
+ * @param {string[]} args
+ * @returns {MachineOptions}
+ */
+function parseOptions(args) {
+  const { values: options, positionals } = parseArgs({
+    args,
     allowPositionals: true,
     options: {
       "cloud": { type: "string", default: "docker" },
       "os": { type: "string", default: "linux" },
       "arch": { type: "string", default: getArch() },
       "distro": { type: "string", default: "debian" },
-      "release": { type: "string" },
+      "distro-version": { type: "string" },
       "instance-type": { type: "string" },
       "image-id": { type: "string" },
-      "no-bootstrap": { type: "boolean" },
+      "disk-size": { type: "string" },
       "buildkite-token": { type: "string" },
-      "tailscale-authkey": { type: "string" },
-      "snapshot": { type: "boolean" },
     },
   });
 
-  const options = {
-    ...args,
-    instanceType: args["instance-type"],
-    imageId: args["image-id"],
-    bootstrap: args["no-bootstrap"] === false,
-    buildkiteToken: args["buildkite-token"],
-    tailscaleAuthkey: args["tailscale-authkey"],
+  return {
+    ...options,
+    instanceType: options["instance-type"],
+    imageId: options["image-id"],
+    diskSize: parseInt(options["disk-size"]) || undefined,
+    buildkiteToken: options["buildkite-token"],
+    command: positionals.length ? positionals : undefined,
   };
+}
 
-  let provider;
+async function main() {
+  const { command, buildkiteToken, ...options } = parseOptions(process.argv.slice(2));
+  const authorizedKeys = getAuthorizedKeys();
+
+  let cloud;
   if (options["cloud"] === "docker") {
-    provider = docker;
+    cloud = docker;
   } else if (options["cloud"] === "aws") {
-    provider = aws;
+    cloud = aws;
   } else if (options["cloud"] === "google") {
-    provider = google;
+    cloud = google;
   } else {
     throw new Error(`Unsupported cloud: ${inspect(options)}`);
   }
 
-  const machine = await provider.createMachine(options);
+  let metadata;
+  if (buildkiteToken) {
+    metadata = {
+      "buildkite:token": buildkiteToken,
+    };
+  }
+
+  const machine = await cloud.createMachine({ ...options, authorizedKeys, metadata });
+  console.log("Created machine:", machine);
+
   process.on("SIGINT", () => {
     machine.close().finally(() => process.exit(1));
   });
 
-  try {
-    if (positionals.length) {
-      await machine.exec(positionals);
-    } else {
-      await machine.attach();
-    }
+  const doBootstrap = async (ci = true) => {
+    const localPath = resolve(import.meta.dirname, "..", "..", "scripts", "bootstrap.sh");
+    const remotePath = "/tmp/bootstrap.sh";
+    await machine.upload(localPath, remotePath);
+    await machine.exec(["sh", remotePath, ci ? "--ci" : "--no-ci"], { stdio: "inherit" });
+  };
 
-    if (options["snapshot"]) {
-      await machine.snapshot();
-    }
+  const doAgent = async (action = "install") => {
+    const templatePath = resolve(import.meta.dirname, "..", "..", "scripts", "ci", "agent.mjs");
+    const tmpPath = mkdtempSync(join(tmpdir(), "agent-"));
+    const localPath = join(tmpPath, "agent.mjs");
+    const remotePath = "/tmp/agent.mjs";
+    await spawnSafe($`bunx esbuild ${templatePath} --bundle --platform=node --format=esm --outfile=${localPath}`);
+    await machine.upload(localPath, remotePath);
+    await machine.exec(["node", remotePath, action], { stdio: "inherit" });
+  };
+
+  try {
+    await doBootstrap();
+    await doAgent();
+    await machine.exec(["reboot"]);
+    await new Promise(resolve => setTimeout(resolve, 10000));
+    console.log("Machine booted:", await machine.exec(["uptime"]));
+    await machine.attach();
   } finally {
     await machine.close();
   }

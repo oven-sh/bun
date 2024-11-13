@@ -13,6 +13,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
+import { connect } from "node:net";
 import { hostname, tmpdir as nodeTmpdir, userInfo, release } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
@@ -114,8 +115,7 @@ export function setEnv(name, value) {
  * @property {string} [cwd]
  * @property {number} [timeout]
  * @property {Record<string, string | undefined>} [env]
- * @property {string} [stdout]
- * @property {string} [stderr]
+ * @property {string} [stdin]
  */
 
 /**
@@ -128,6 +128,31 @@ export function setEnv(name, value) {
  */
 
 /**
+ * @param {TemplateStringsArray} strings
+ * @param {...any} values
+ * @returns {string[]}
+ */
+export function $(strings, ...values) {
+  const result = [];
+  for (let i = 0; i < strings.length; i++) {
+    result.push(...strings[i].trim().split(/\s+/).filter(Boolean));
+    if (i < values.length) {
+      const value = values[i];
+      if (Array.isArray(value)) {
+        result.push(...value);
+      } else if (typeof value === "string") {
+        if (result.at(-1)?.endsWith("=")) {
+          result[result.length - 1] += value;
+        } else {
+          result.push(value);
+        }
+      }
+    }
+  }
+  return result;
+}
+
+/**
  * @param {string[]} command
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
@@ -136,11 +161,12 @@ export async function spawn(command, options = {}) {
   debugLog("$", ...command);
 
   const [cmd, ...args] = command;
+  const stdin = options["stdin"];
   const spawnOptions = {
     cwd: options["cwd"] ?? process.cwd(),
     timeout: options["timeout"] ?? undefined,
     env: options["env"] ?? undefined,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [stdin ? "pipe" : "ignore", "pipe", "pipe"],
     ...options,
   };
 
@@ -152,6 +178,16 @@ export async function spawn(command, options = {}) {
 
   const result = new Promise((resolve, reject) => {
     const subprocess = nodeSpawn(cmd, args, spawnOptions);
+
+    if (typeof stdin !== "undefined") {
+      subprocess.stdin?.on("error", error => {
+        if (error.code !== "EPIPE") {
+          reject(error);
+        }
+      });
+      subprocess.stdin?.write(stdin);
+      subprocess.stdin?.end();
+    }
 
     subprocess.stdout?.on("data", chunk => {
       stdout += chunk;
@@ -743,7 +779,7 @@ export function readFile(filename, options = {}) {
   }
 
   const relativePath = relative(process.cwd(), absolutePath);
-  debugLog("cat", relativePath);
+  debugLog("$", "cat", relativePath);
 
   let content;
   try {
@@ -1759,7 +1795,6 @@ export async function getCloud() {
     return "google";
   }
 }
-
 /**
  * @param {string | Record<Cloud, string>} name
  * @param {Cloud} [cloud]
@@ -1807,6 +1842,47 @@ export function getCloudMetadataTag(tag, cloud) {
   return getCloudMetadata(metadata, cloud);
 }
 
+/**
+ * @typedef ConnectOptions
+ * @property {string} hostname
+ * @property {number} port
+ * @property {number} [retries]
+ */
+
+/**
+ * @param {ConnectOptions} options
+ * @returns {Promise<Error | undefined>}
+ */
+export async function waitForPort(options) {
+  const { hostname, port, retries = 10 } = options;
+
+  let cause;
+  for (let i = 0; i < retries; i++) {
+    if (cause) {
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+    }
+
+    const connected = new Promise((resolve, reject) => {
+      const socket = connect({ host: hostname, port });
+      socket.on("connect", () => {
+        socket.destroy();
+        resolve();
+      });
+      socket.on("error", error => {
+        socket.destroy();
+        reject(error);
+      });
+    });
+
+    try {
+      return await connected;
+    } catch (error) {
+      cause = error;
+    }
+  }
+
+  return cause;
+}
 /**
  * @returns {Promise<number | undefined>}
  */

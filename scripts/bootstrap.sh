@@ -45,6 +45,8 @@ execute_as_user() {
 	if [ "$sudo" = "1" ] && [ -n "$user" ]; then
 		if [ -f "$(which sudo)" ]; then
 			execute sudo -u "$user" /bin/sh -c "$*"
+		elif [ -f "$(which doas)" ]; then
+			execute doas -u "$user" /bin/sh -c "$*"
 		elif [ -f "$(which su)" ]; then
 			execute su -s /bin/sh "$user" -c "$*"
 		else
@@ -156,6 +158,13 @@ check_features() {
 
 	case "$CI" in
 	true | 1)
+		ci=1
+		print "CI: enabled"
+		;;
+	esac
+
+	case "$@" in
+	*--ci*)
 		ci=1
 		print "CI: enabled"
 		;;
@@ -316,10 +325,6 @@ check_package_manager() {
 		package_manager update -y
 		;;
 	apk)
-		if [ -f "/etc/apk/repositories" ] && ! [ "$release" ~ "edge" ]; then
-			append_to_file "/etc/apk/repositories" "https://dl-cdn.alpinelinux.org/alpine/edge/main"
-			append_to_file "/etc/apk/repositories" "https://dl-cdn.alpinelinux.org/alpine/edge/community"
-		fi
 		package_manager update
 		;;
 	esac
@@ -407,7 +412,11 @@ install_packages() {
 		package_manager link --force --overwrite "$@"
 		;;
 	apk)
-		package_manager add --no-cache --no-interactive --no-progress "$@"
+		package_manager add \
+			--no-cache \
+			--no-interactive \
+			--no-progress \
+			"$@"
 		;;
 	*)
 		error "Unsupported package manager: $pm"
@@ -475,7 +484,7 @@ install_common_software() {
 	install_rosetta
 	install_nodejs
 	install_bun
-	install_tailscale
+	# install_tailscale
 	install_buildkite
 }
 
@@ -606,7 +615,7 @@ install_build_essentials() {
 		;;
 	apk)
 		install_packages \
-			musl-dev \
+			build-base \
 			ninja \
 			go \
 			xz
@@ -660,9 +669,13 @@ install_llvm() {
 		;;
 	apk)
 		install_packages \
-			"llvm$(llvm_version)-dev" \
-			"clang$(llvm_version)-dev" \
-			"lld$(llvm_version)-dev"
+			"llvm$(llvm_version)" \
+			"clang$(llvm_version)" \
+			"scudo-malloc" \
+			--repository "http://dl-cdn.alpinelinux.org/alpine/edge/main"
+		install_packages \
+			"lld$(llvm_version)" \
+			--repository "http://dl-cdn.alpinelinux.org/alpine/edge/community"
 		;;
 	esac
 }
@@ -753,6 +766,8 @@ install_tailscale() {
 }
 
 create_buildkite_user() {
+	print "Creating Buildkite user..."
+
 	user="buildkite-agent"
 	home="/var/lib/buildkite-agent"
 
@@ -769,8 +784,9 @@ create_buildkite_user() {
 		useradd="$(require useradd)"
 		execute "$useradd" "$user" \
 			--system \
-			--create-home \
+			--no-create-home \
 			--home-dir "$home"
+		execute mkdir -p "$home"
 		execute chown -R "$user:$user" "$home"
 	fi
 
@@ -868,7 +884,7 @@ install_chrome_dependencies() {
 }
 
 main() {
-	check_features
+	check_features "$@"
 	check_operating_system
 	check_inside_docker
 	check_user
@@ -878,4 +894,4 @@ main() {
 	install_chrome_dependencies
 }
 
-main
+main "$@"

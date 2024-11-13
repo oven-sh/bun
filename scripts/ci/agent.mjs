@@ -3,7 +3,7 @@
 // An agent that starts buildkite-agent and runs others services.
 
 import { join } from "node:path";
-import { appendFileSync, existsSync, mkdirSync, realpathSync } from "node:fs";
+import { appendFileSync, mkdirSync, realpathSync } from "node:fs";
 import {
   isWindows,
   getOs,
@@ -29,7 +29,7 @@ import { parseArgs } from "node:util";
  */
 export async function doAgent(action) {
   const username = "buildkite-agent";
-  const command = which("buildkite-agent", { required: true });
+  const command = which("buildkite-agent") || "buildkite-agent";
 
   /**
    * @param {...string} args
@@ -53,7 +53,7 @@ export async function doAgent(action) {
     return path;
   }
 
-  let homePath, cachePath, logsPath, agentLogPath, socketPath, pidPath;
+  let homePath, cachePath, logsPath, agentLogPath, pidPath;
   if (isWindows) {
     throw new Error("TODO: Windows");
   } else {
@@ -62,7 +62,6 @@ export async function doAgent(action) {
     cachePath = getPath(varPath, "cache", "buildkite-agent", { mkdir: true });
     logsPath = getPath(varPath, "log", "buildkite-agent", { mkdir: true });
     agentLogPath = getPath(logsPath, "buildkite-agent.log", { touch: true });
-    socketPath = getPath(varPath, "run", "buildkite-agent.sock", { mkdir: true });
     pidPath = getPath(varPath, "run", "buildkite-agent.pid", { touch: true });
   }
 
@@ -75,7 +74,7 @@ export async function doAgent(action) {
     const args = [realpathSync(process.argv[1]), "start"];
 
     if (isOpenRc()) {
-      const servicePath = join("etc", "init.d", "buildkite-agent");
+      const servicePath = join("/", "etc", "init.d", "buildkite-agent");
       const service = `#!/sbin/openrc-run
         name="buildkite-agent"
         description="Buildkite Agent"
@@ -100,7 +99,7 @@ export async function doAgent(action) {
     }
 
     if (isSystemd()) {
-      const servicePath = join("etc", "systemd", "system", "buildkite-agent.service");
+      const servicePath = join("/", "etc", "systemd", "system", "buildkite-agent.service");
       const service = `
         [Unit]
         Description=Buildkite Agent
@@ -150,7 +149,6 @@ export async function doAgent(action) {
       "name": getHostname(),
       "token": token || "xxx",
       "shell": shell,
-      "sockets-path": socketPath,
       "job-log-path": logsPath,
       "git-mirrors-path": join(cachePath, "git"),
       "build-path": join(homePath, "builds"),
@@ -214,29 +212,14 @@ export async function doAgent(action) {
  * @returns {boolean}
  */
 export function isSystemd() {
-  const systemctl = which("systemctl");
-  if (!systemctl) {
-    return false;
-  }
-
-  const systemdPath = join("etc", "systemd", "system");
-  if (!existsSync(systemdPath)) {
-    return false;
-  }
-
-  return true;
+  return !!which("systemctl");
 }
 
 /**
  * @returns {boolean}
  */
 export function isOpenRc() {
-  const openRcPath = join("etc", "init.d");
-  if (!existsSync(openRcPath)) {
-    return false;
-  }
-
-  return true;
+  return !!which("rc-service");
 }
 
 export async function main() {
@@ -247,11 +230,13 @@ export async function main() {
   if (!args.length || args.includes("install")) {
     console.log("Installing agent...");
     await doAgent("install");
+    console.log("Agent installed.");
   }
 
   if (args.includes("start")) {
     console.log("Starting agent...");
     await doAgent("start");
+    console.log("Agent started.");
   }
 }
 

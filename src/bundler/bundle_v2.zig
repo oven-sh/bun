@@ -9583,9 +9583,8 @@ pub const LinkerContext = struct {
                     if (source.path.isFile()) {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
-                        const path = source.path;
-                        if (path.pretty.ptr == path.text.ptr) {
-                            const rel = bun.path.relativePlatform(c.resolver.fs.top_level_dir, path.text, .loose, false);
+                        if (source.path.pretty.ptr == source.path.text.ptr) {
+                            const rel = bun.path.relativePlatform(c.resolver.fs.top_level_dir, source.path.text, .loose, false);
                             source.path.pretty = c.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
                         }
                         source.path.assertPrettyIsValid();

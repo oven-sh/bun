@@ -149,6 +149,20 @@ pub fn convert(
     }
 }
 
+pub fn convertAlloc(
+    comptime kind: Encoding,
+    input: []const kind.Byte(),
+    allocator: std.mem.Allocator,
+    case: CaseRules,
+) ![]kind.Byte() {
+    const size = convertLen(kind, input, case);
+
+    var result = try allocator.alloc(kind.Byte(), size);
+    convert(kind, input, &result, case);
+
+    return result;
+}
+
 pub fn convertLen(
     comptime kind: Encoding,
     input: []const kind.Byte(),

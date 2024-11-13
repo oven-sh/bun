@@ -574,7 +574,7 @@ function spawnSync(file, args, options) {
   });
 
   const result = {
-    signal: signalCode,
+    signal: signalCode ?? null,
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     output: [null, stdout, stderr],

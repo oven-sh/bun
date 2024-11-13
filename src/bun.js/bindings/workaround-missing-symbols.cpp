@@ -150,10 +150,10 @@ int __wrap_fcntl(int fd, int cmd, ...)
 }
 
 typedef int (*fcntl64_func)(int fd, int cmd, ...);
-static fcntl64_func real_fcntl64 = NULL;
 
 static void init_real_fcntl64()
 {
+    static fcntl64_func real_fcntl64 = NULL;
     if (!real_fcntl64) {
         real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl64");
 

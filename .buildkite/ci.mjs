@@ -72,7 +72,18 @@ function toYaml(obj, indent = 0) {
   return result;
 }
 
-function getPipeline(buildId) {
+/**
+ * @typedef PipelineOptions
+ * @property {string} [buildId]
+ * @property {boolean} [buildImages]
+ */
+
+/**
+ * @param {PipelineOptions} options
+ */
+function getPipeline(options) {
+  const { buildId, buildImages } = options;
+
   /**
    * Helpers
    */
@@ -135,12 +146,25 @@ function getPipeline(buildId) {
    * Steps
    */
 
+  const getBuildImageStep = platform => {
+    const { os, arch, distro, release } = platform;
+
+    return {
+      key: `${getKey(platform)}-build-image`,
+      label: `${getLabel(platform)} - build-image`,
+      agents: {
+        queue: "build-darwin",
+      },
+      command: `node ./scripts/machine.mjs --cloud=aws --os=${os} --arch=${arch} --distro=${distro} --distro-version=${release}`,
+    };
+  };
+
   const getBuildVendorStep = platform => {
     const { os, arch, abi, baseline } = platform;
 
     return {
       key: `${getKey(platform)}-build-vendor`,
-      label: `build-vendor`,
+      label: `${getLabel(platform)} - build-vendor`,
       agents: {
         os,
         arch,
@@ -161,7 +185,7 @@ function getPipeline(buildId) {
 
     return {
       key: `${getKey(platform)}-build-cpp`,
-      label: `build-cpp`,
+      label: `${getLabel(platform)} - build-cpp`,
       agents: {
         os,
         arch,
@@ -184,7 +208,7 @@ function getPipeline(buildId) {
 
     return {
       key: `${getKey(platform)}-build-zig`,
-      label: `build-zig`,
+      label: `${getLabel(platform)} - build-zig`,
       agents: {
         queue: "build-zig",
       },
@@ -202,7 +226,7 @@ function getPipeline(buildId) {
 
     return {
       key: `${getKey(platform)}-build-bun`,
-      label: `build-bun`,
+      label: `build-bun ${getLabel(platform)}`,
       depends_on: [
         `${getKey(platform)}-build-vendor`,
         `${getKey(platform)}-build-cpp`,
@@ -293,35 +317,37 @@ function getPipeline(buildId) {
    */
 
   const buildPlatforms = [
-    { os: "darwin", arch: "aarch64" },
-    { os: "darwin", arch: "x64" },
-    { os: "linux", arch: "aarch64" },
-    // { os: "linux", arch: "aarch64", abi: "musl" }, // TODO:
-    { os: "linux", arch: "x64" },
-    { os: "linux", arch: "x64", baseline: true },
-    // { os: "linux", arch: "x64", abi: "musl" }, // TODO:
-    { os: "windows", arch: "x64" },
-    { os: "windows", arch: "x64", baseline: true },
+    { os: "linux", arch: "x64", abi: "musl" },
+    // { os: "darwin", arch: "aarch64" },
+    // { os: "darwin", arch: "x64" },
+    // { os: "linux", arch: "aarch64" },
+    // // { os: "linux", arch: "aarch64", abi: "musl" }, // TODO:
+    // { os: "linux", arch: "x64" },
+    // { os: "linux", arch: "x64", baseline: true },
+    // // { os: "linux", arch: "x64", abi: "musl" }, // TODO:
+    // { os: "windows", arch: "x64" },
+    // { os: "windows", arch: "x64", baseline: true },
   ];
 
   const testPlatforms = [
-    { os: "darwin", arch: "aarch64", distro: "sonoma", release: "14" },
-    { os: "darwin", arch: "aarch64", distro: "ventura", release: "13" },
-    { os: "darwin", arch: "x64", distro: "sonoma", release: "14" },
-    { os: "darwin", arch: "x64", distro: "ventura", release: "13" },
-    { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
-    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
-    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
-    // { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "edge" }, // TODO:
-    { os: "linux", arch: "x64", distro: "debian", release: "12" },
-    { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
-    { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
-    { os: "linux", arch: "x64", distro: "debian", release: "12", baseline: true },
-    { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04", baseline: true },
-    { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04", baseline: true },
-    // { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "edge" }, // TODO:
-    { os: "windows", arch: "x64", distro: "server", release: "2019" },
-    { os: "windows", arch: "x64", distro: "server", release: "2019", baseline: true },
+    { os: "linux", arch: "x64", distro: "alpine", release: "3.17" },
+    // { os: "darwin", arch: "aarch64", distro: "sonoma", release: "14" },
+    // { os: "darwin", arch: "aarch64", distro: "ventura", release: "13" },
+    // { os: "darwin", arch: "x64", distro: "sonoma", release: "14" },
+    // { os: "darwin", arch: "x64", distro: "ventura", release: "13" },
+    // { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
+    // { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
+    // { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
+    // // { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "edge" }, // TODO:
+    // { os: "linux", arch: "x64", distro: "debian", release: "12" },
+    // { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
+    // { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
+    // { os: "linux", arch: "x64", distro: "debian", release: "12", baseline: true },
+    // { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04", baseline: true },
+    // { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04", baseline: true },
+    // // { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "edge" }, // TODO:
+    // { os: "windows", arch: "x64", distro: "server", release: "2019" },
+    // { os: "windows", arch: "x64", distro: "server", release: "2019", baseline: true },
   ];
 
   return {
@@ -330,13 +356,19 @@ function getPipeline(buildId) {
       ...buildPlatforms.map(platform => {
         const { os, arch, baseline } = platform;
 
-        let steps = [
-          ...testPlatforms
-            .filter(platform => platform.os === os && platform.arch === arch && baseline === platform.baseline)
-            .map(platform => getTestBunStep(platform)),
-        ];
+        let steps = [];
 
-        if (!buildId) {
+        if (buildImages) {
+          steps.push(getBuildImageStep(platform));
+        } else {
+          steps.push(
+            ...testPlatforms
+              .filter(platform => platform.os === os && platform.arch === arch && baseline === platform.baseline)
+              .map(platform => getTestBunStep(platform)),
+          );
+        }
+
+        if (!buildId && !buildImages) {
           steps.unshift(
             getBuildVendorStep(platform),
             getBuildCppStep(platform),
@@ -369,7 +401,6 @@ async function main() {
     console.log(" - No build found");
   }
 
-  
   let changedFiles;
   if (!isFork()) {
     console.log("Checking changed files...");
@@ -377,7 +408,7 @@ async function main() {
     console.log(" - Base Ref:", baseRef);
     const headRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
     console.log(" - Head Ref:", headRef);
-  
+
     changedFiles = await getChangedFiles(undefined, baseRef, headRef);
     if (changedFiles) {
       if (changedFiles.length) {
@@ -418,6 +449,18 @@ async function main() {
     }
   }
 
+  console.log("Checking if CI should re-build images...");
+  let buildImages;
+  {
+    const message = getCommitMessage();
+    const match = /\[(build images?|images? build)\]/i.exec(message);
+    if (match) {
+      const [, reason] = match;
+      console.log(" - Yes, because commit message contains:", reason);
+      buildImages = true;
+    }
+  }
+
   console.log("Checking if build should be skipped...");
   let skipBuild;
   if (!forceBuild) {
@@ -447,7 +490,10 @@ async function main() {
   }
 
   console.log("Generating pipeline...");
-  const pipeline = getPipeline(lastBuild && skipBuild && !forceBuild ? lastBuild.id : undefined);
+  const pipeline = getPipeline({
+    buildId: lastBuild && skipBuild && !forceBuild ? lastBuild.id : undefined,
+    buildImages,
+  });
   const content = toYaml(pipeline);
   const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
   writeFileSync(contentPath, content);

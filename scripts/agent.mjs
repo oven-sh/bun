@@ -3,7 +3,7 @@
 // An agent that starts buildkite-agent and runs others services.
 
 import { join } from "node:path";
-import { appendFileSync, mkdirSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import {
   isWindows,
   getOs,
@@ -18,10 +18,9 @@ import {
   getCloudMetadataTag,
   which,
   getEnv,
-  spawnSyncSafe,
   writeFile,
   spawnSafe,
-} from "../utils.mjs";
+} from "./utils.mjs";
 import { parseArgs } from "node:util";
 
 /**
@@ -41,19 +40,22 @@ export async function doAgent(action) {
     const paths = options ? args.slice(0, -1) : args;
     const path = join(...paths);
 
-    if (action === "install") {
-      if (options?.["mkdir"]) {
-        mkdirSync(path, { recursive: true });
-      } else if (options?.["touch"]) {
-        appendFileSync(path, "");
-      }
-      spawnSyncSafe(["chown", "-R", `${username}:${username}`, path]);
-    }
+    // if (action === "install") {
+    //   if (options?.["mkdir"]) {
+    //     mkdirSync(path, { recursive: true });
+    //   } else if (options?.["touch"]) {
+    //     appendFileSync(path, "");
+    //   }
+    //   const { error } = spawnSync(["sudo", "chown", "-R", `${username}:${username}`, path], { stdio: "ignore" });
+    //   if (error) {
+    //     spawnSync(["chown", "-R", `${username}:${username}`, path]);
+    //   }
+    // }
 
     return path;
   }
 
-  let homePath, cachePath, logsPath, agentLogPath, pidPath;
+  let homePath, cachePath, logsPath, agentLogPath, socketPath, pidPath;
   if (isWindows) {
     throw new Error("TODO: Windows");
   } else {
@@ -62,7 +64,8 @@ export async function doAgent(action) {
     cachePath = getPath(varPath, "cache", "buildkite-agent", { mkdir: true });
     logsPath = getPath(varPath, "log", "buildkite-agent", { mkdir: true });
     agentLogPath = getPath(logsPath, "buildkite-agent.log", { touch: true });
-    pidPath = getPath(varPath, "run", "buildkite-agent.pid", { touch: true });
+    socketPath = getPath(varPath, "run", "buildkite-agent", "buildkite-agent.sock", { mkdir: true });
+    pidPath = getPath(varPath, "run", "buildkite-agent", "buildkite-agent.pid", { touch: true });
   }
 
   function escape(string) {

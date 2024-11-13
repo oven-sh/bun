@@ -34,7 +34,7 @@ execute() {
 }
 
 execute_sudo() {
-	if [ "$sudo" = "1" ]; then
+	if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then
 		execute "$@"
 	else
 		execute sudo "$@"
@@ -42,7 +42,7 @@ execute_sudo() {
 }
 
 execute_as_user() {
-	if [ "$sudo" = "1" ] && [ -n "$user" ]; then
+	if [ "$sudo" = "1" ] || [ "$can_sudo" = "1" ]; then
 		if [ -f "$(which sudo)" ]; then
 			execute sudo -u "$user" /bin/sh -c "$*"
 		elif [ -f "$(which doas)" ]; then
@@ -53,12 +53,22 @@ execute_as_user() {
 			execute /bin/sh -c "$*"
 		fi
 	else
-		execute "$@"
+		execute /bin/sh -c "$*"
 	fi
 }
 
+grant_to_user() {
+	path="$1"
+	execute_sudo chown -R "$user:$group" "$path"
+}
+
 which() {
-	command -v "$1"
+	path="$(command -v "$1")"
+	if [ -f "$path" ]; then
+		echo "$path"
+	elif [ "$can_sudo" = "1" ]; then
+		execute_sudo which "$1"
+	fi
 }
 
 require() {
@@ -86,10 +96,13 @@ fetch() {
 download_file() {
 	url="$1"
 	filename="${2:-$(basename "$url")}"
-	tmp="$(execute_as_user mktemp -d)"
-	path="$tmp/$filename"
+	tmp="$(execute mktemp -d)"
+	execute chmod 755 "$tmp"
 
-	fetch "$url" >"$path"
+	path="$tmp/$filename"
+	fetch "$url" > "$path"
+	execute chmod 644 "$path"
+
 	print "$path"
 }
 
@@ -148,6 +161,7 @@ link_to_bin() {
 
 	for file in "$path"/*; do
 		if [ -f "$file" ]; then
+			grant_to_user "$file"
 			execute_sudo ln -sf "$file" "/usr/bin/$(basename "$file")"
 		fi
 	done
@@ -333,45 +347,48 @@ check_package_manager() {
 check_user() {
 	print "Checking user..."
 
-	if [ "$ci" = "1" ] && [ "$os" = "linux" ] && [ -z "$docker" ]; then
-		create_buildkite_user
-	elif [ -n "$SUDO_USER" ]; then
+	if [ -n "$SUDO_USER" ]; then
 		user="$SUDO_USER"
 	else
-		whoami="$(require whoami)"
-		user="$($whoami)"
+		id="$(require id)"
+		user="$("$id" -un)"
+		group="$("$id" -gn)"
 	fi
 	if [ -z "$user" ]; then
 		error "Could not determine user"
 	fi
 	print "User: $user"
-
-	id="$(which id)"
-	if [ -f "$id" ] && [ "$($id -u)" = "0" ]; then
-		sudo=1
-		print "Sudo: enabled"
-	fi
+	print "Group: $group"
 
 	home="$(execute_as_user echo '~')"
 	if [ -z "$home" ] || [ "$home" = "~" ]; then
 		error "Could not determine home directory for user: $user"
 	fi
 	print "Home: $home"
+
+	id="$(which id)"
+	if [ -f "$id" ] && [ "$($id -u)" = "0" ]; then
+		sudo=1
+		print "Sudo: enabled"
+	elif [ -f "$(which sudo)" ] && [ "$(sudo echo 1 2>/dev/null)" = "1" ]; then
+		can_sudo=1
+		print "Sudo: can be used"
+	fi
 }
 
 package_manager() {
 	case "$pm" in
 	apt)
-		DEBIAN_FRONTEND=noninteractive execute apt-get "$@"
+		DEBIAN_FRONTEND=noninteractive execute_sudo apt-get "$@"
 		;;
 	dnf)
-		execute dnf "$@"
+		execute_sudo dnf "$@"
 		;;
 	yum)
-		execute yum "$@"
+		execute_sudo yum "$@"
 		;;
 	apk)
-		execute apk "$@"
+		execute_sudo apk "$@"
 		;;
 	brew)
 		execute_as_user brew "$@"
@@ -399,17 +416,31 @@ check_package() {
 install_packages() {
 	case "$pm" in
 	apt)
-		package_manager install --yes --no-install-recommends "$@"
+		package_manager install \
+			--yes \
+			--no-install-recommends \
+			"$@"
 		;;
 	dnf)
-		package_manager install --assumeyes --nodocs --noautoremove --allowerasing "$@"
+		package_manager install \
+			--assumeyes \
+			--nodocs \
+			--noautoremove \
+			--allowerasing \
+			"$@"
 		;;
 	yum)
 		package_manager install -y "$@"
 		;;
 	brew)
-		package_manager install --force --formula "$@"
-		package_manager link --force --overwrite "$@"
+		package_manager install \
+			--force \
+			--formula \
+			"$@"
+		package_manager link \
+			--force \
+			--overwrite \
+			"$@"
 		;;
 	apk)
 		package_manager add \
@@ -484,7 +515,7 @@ install_common_software() {
 	install_rosetta
 	install_nodejs
 	install_bun
-	# install_tailscale
+	install_tailscale
 	install_buildkite
 }
 
@@ -499,12 +530,12 @@ install_nodejs() {
 	dnf | yum)
 		bash="$(require bash)"
 		script=$(download_file "https://rpm.nodesource.com/setup_$version.x")
-		execute "$bash" "$script"
+		execute_sudo "$bash" "$script"
 		;;
 	apt)
 		bash="$(require bash)"
 		script="$(download_file "https://deb.nodesource.com/setup_$version.x")"
-		execute "$bash" "$script"
+		execute_sudo "$bash" "$script"
 		;;
 	esac
 
@@ -570,7 +601,7 @@ install_cmake() {
 			;;
 		esac
 		script=$(download_file "$url")
-		execute "$sh" "$script" \
+		execute_sudo "$sh" "$script" \
 			--skip-license \
 			--prefix=/usr
 		;;
@@ -662,7 +693,7 @@ install_llvm() {
 	apt)
 		bash="$(require bash)"
 		script="$(download_file "https://apt.llvm.org/llvm.sh")"
-		execute "$bash" "$script" "$(llvm_version)" all
+		execute_sudo "$bash" "$script" "$(llvm_version)" all
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"
@@ -734,14 +765,14 @@ install_docker() {
 
 	systemctl="$(which systemctl)"
 	if [ -f "$systemctl" ]; then
-		execute "$systemctl" enable docker
+		execute_sudo "$systemctl" enable docker
 	fi
 
 	getent="$(which getent)"
 	if [ -n "$("$getent" group docker)" ]; then
 		usermod="$(which usermod)"
 		if [ -f "$usermod" ]; then
-			execute "$usermod" -aG docker "$user"
+			execute_sudo "$usermod" -aG docker "$user"
 		fi
 	fi
 }
@@ -766,14 +797,18 @@ install_tailscale() {
 }
 
 create_buildkite_user() {
-	print "Creating Buildkite user..."
+	if ! [ "$ci" = "1" ] || ! [ "$os" = "linux" ]; then
+		return
+	fi
 
+	print "Creating Buildkite user..."
 	user="buildkite-agent"
+	group="$user"
 	home="/var/lib/buildkite-agent"
 
 	case "$distro" in
 	amzn)
-		execute dnf install -y \
+		install_packages \
 			shadow-utils \
 			util-linux
 		;;
@@ -782,18 +817,22 @@ create_buildkite_user() {
 	getent="$(require getent)"
 	if [ -z "$("$getent" passwd "$user")" ]; then
 		useradd="$(require useradd)"
-		execute "$useradd" "$user" \
+		execute_sudo "$useradd" "$user" \
 			--system \
 			--no-create-home \
 			--home-dir "$home"
-		execute mkdir -p "$home"
-		execute chown -R "$user:$user" "$home"
 	fi
 
 	if [ -n "$("$getent" group docker)" ]; then
 		usermod="$(require usermod)"
-		execute "$usermod" -aG docker "$user"
+		execute_sudo "$usermod" -aG docker "$user"
 	fi
+
+	paths="$home /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent/buildkite-agent.sock"
+	for path in $paths; do
+		execute_sudo mkdir -p "$path"
+		execute_sudo chown -R "$user:$group" "$path"
+	done
 }
 
 install_buildkite() {
@@ -803,11 +842,11 @@ install_buildkite() {
 
 	bash="$(require bash)"
 	script="$(download_file "https://raw.githubusercontent.com/buildkite/agent/main/install.sh")"
-	HOME="$home" execute "$bash" "$script"
+	tmp_dir="$(execute dirname "$script")"
+	HOME="$tmp_dir" execute "$bash" "$script"
 
-	out_dir="$home/.buildkite-agent"
+	out_dir="$tmp_dir/.buildkite-agent"
 	execute_sudo mv -f "$out_dir/bin/buildkite-agent" "/usr/bin/buildkite-agent"
-	execute rm -rf "$out_dir"
 }
 
 install_chrome_dependencies() {
@@ -889,6 +928,7 @@ main() {
 	check_inside_docker
 	check_user
 	check_package_manager
+	create_buildkite_user
 	install_common_software
 	install_build_essentials
 	install_chrome_dependencies

@@ -289,8 +289,8 @@ export function spawnSync(command, options = {}) {
   } else {
     exitCode = status ?? 1;
     signalCode = signal || undefined;
-    stdout = stdoutBuffer.toString();
-    stderr = stderrBuffer.toString();
+    stdout = stdoutBuffer?.toString();
+    stderr = stderrBuffer?.toString();
   }
 
   if (exitCode !== 0 && isWindows) {
@@ -302,7 +302,7 @@ export function spawnSync(command, options = {}) {
 
   if (error || signalCode || exitCode !== 0) {
     const description = command.map(arg => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg)).join(" ");
-    const cause = error || stderr.trim() || stdout.trim() || undefined;
+    const cause = error || stderr?.trim() || stdout?.trim() || undefined;
 
     if (signalCode) {
       error = new Error(`Command killed with ${signalCode}: ${description}`, { cause });

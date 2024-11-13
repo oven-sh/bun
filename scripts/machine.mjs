@@ -1,7 +1,19 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
 import { inspect, parseArgs } from "node:util";
-import { $, getArch, readFile, spawn, spawnSafe, tmpdir, waitForPort } from "../utils.mjs";
+import {
+  $,
+  getArch,
+  getSecret,
+  isCI,
+  isMacOS,
+  readFile,
+  spawn,
+  spawnSafe,
+  tmpdir,
+  waitForPort,
+  which,
+} from "./utils.mjs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, mkdtempSync, readdirSync } from "node:fs";
@@ -90,7 +102,41 @@ const docker = {
   },
 };
 
-const aws = {
+export const aws = {
+  get name() {
+    return "aws";
+  },
+
+  /**
+   * @param {string[]} args
+   * @returns {Promise<any>}
+   */
+  async spawn(args) {
+    if (!which("aws")) {
+      if (isMacOS) {
+        await spawnSafe(["brew", "install", "awscli"]);
+      } else {
+        throw new Error("AWS CLI is not installed, please install it");
+      }
+    }
+
+    let env;
+    if (isCI) {
+      env = {
+        AWS_ACCESS_KEY_ID: getSecret("EC2_ACCESS_KEY_ID", { required: true }),
+        AWS_SECRET_ACCESS_KEY: getSecret("EC2_SECRET_ACCESS_KEY", { required: true }),
+        AWS_REGION: getSecret("EC2_REGION", { required: false }) || "us-east-1",
+      };
+    }
+
+    const { stdout } = await spawnSafe($`aws ${args} --output json`, { env });
+    try {
+      return JSON.parse(stdout);
+    } catch {
+      return;
+    }
+  },
+
   /**
    * @param {Record<string, string | undefined>} [options]
    * @returns {string[]}
@@ -131,8 +177,7 @@ const aws = {
    */
   async describeInstances(options) {
     const filters = aws.getFilters(options);
-    const { stdout } = await spawnSafe($`aws ec2 describe-instances --no-paginate --filters ${filters} --output json`);
-    const { Reservations } = JSON.parse(stdout);
+    const { Reservations } = await aws.spawn($`ec2 describe-instances --filters ${filters}`);
     return Reservations.flatMap(({ Instances }) => Instances).sort((a, b) => (a.LaunchTime < b.LaunchTime ? 1 : -1));
   },
 
@@ -143,8 +188,7 @@ const aws = {
    */
   async runInstances(options) {
     const flags = aws.getFlags(options);
-    const { stdout } = await spawnSafe($`aws ec2 run-instances ${flags} --output json`);
-    const { Instances } = JSON.parse(stdout);
+    const { Instances } = await aws.spawn($`ec2 run-instances ${flags}`);
     return Instances.sort((a, b) => (a.LaunchTime < b.LaunchTime ? 1 : -1));
   },
 
@@ -153,7 +197,7 @@ const aws = {
    * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/stop-instances.html
    */
   async stopInstances(...instanceIds) {
-    await spawnSafe($`aws ec2 stop-instances --no-hibernate --force --instance-ids ${instanceIds} --output json`);
+    await aws.spawn($`ec2 stop-instances --no-hibernate --force --instance-ids ${instanceIds}`);
   },
 
   /**
@@ -161,7 +205,7 @@ const aws = {
    * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/terminate-instances.html
    */
   async terminateInstances(...instanceIds) {
-    await spawnSafe($`aws ec2 terminate-instances --instance-ids ${instanceIds} --output json`);
+    await aws.spawn($`ec2 terminate-instances --instance-ids ${instanceIds}`);
   },
 
   /**
@@ -170,13 +214,14 @@ const aws = {
    * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/wait.html
    */
   async waitInstances(action, ...instanceIds) {
-    await spawnSafe($`aws ec2 wait ${action} --instance-ids ${instanceIds} --output json`);
+    await aws.spawn($`ec2 wait ${action} --instance-ids ${instanceIds}`);
   },
 
   /**
    * @typedef AwsImage
    * @property {string} ImageId
    * @property {string} Name
+   * @property {string} State
    * @property {string} CreationDate
    */
 
@@ -186,9 +231,12 @@ const aws = {
    * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/describe-images.html
    */
   async describeImages(options = {}) {
-    const filters = aws.getFilters(options);
-    const { stdout } = await spawnSafe($`aws ec2 describe-images --no-paginate --filters ${filters} --output json`);
-    const { Images } = JSON.parse(stdout);
+    const { ["owner-alias"]: owners, ...filterOptions } = options;
+    const filters = aws.getFilters(filterOptions);
+    if (owners) {
+      filters.push(`--owners=${owners}`);
+    }
+    const { Images } = await aws.spawn($`ec2 describe-images --filters ${filters}`);
     return Images.sort((a, b) => (a.CreationDate < b.CreationDate ? 1 : -1));
   },
 
@@ -199,8 +247,18 @@ const aws = {
    */
   async createImage(options) {
     const flags = aws.getFlags(options);
-    const { stdout } = await spawnSafe($`aws ec2 create-image ${flags} --output json`);
-    const { ImageId } = JSON.parse(stdout);
+    const { ImageId } = await aws.spawn($`ec2 create-image ${flags}`);
+    return ImageId;
+  },
+
+  /**
+   * @param {Record<string, string | undefined>} options
+   * @returns {Promise<string>}
+   * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/copy-image.html
+   */
+  async copyImage(options) {
+    const flags = aws.getFlags(options);
+    const { ImageId } = await aws.spawn($`ec2 copy-image ${flags}`);
     return ImageId;
   },
 
@@ -210,24 +268,62 @@ const aws = {
    * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/wait/image-available.html
    */
   async waitImage(action, ...imageIds) {
-    await spawnSafe($`aws ec2 wait ${action} --image-ids ${imageIds} --output json`);
+    await aws.spawn($`ec2 wait ${action} --image-ids ${imageIds}`);
+  },
+
+  /**
+   * @param {AwsImage | string} imageOrImageId
+   * @returns {Promise<AwsImage>}
+   */
+  async getAvailableImage(imageOrImageId) {
+    let imageId = imageOrImageId;
+    if (typeof imageOrImageId === "object") {
+      const { ImageId, State } = imageOrImageId;
+      if (State === "available") {
+        return imageOrImageId;
+      }
+      imageId = ImageId;
+    }
+
+    await aws.waitImage("image-available", imageId);
+    const [availableImage] = await aws.describeImages({
+      "state": "available",
+      "image-id": imageId,
+    });
+
+    if (!availableImage) {
+      throw new Error(`Failed to find available image: ${imageId}`);
+    }
+
+    return availableImage;
   },
 
   /**
    * @param {MachineOptions} options
    * @returns {Promise<AwsImage>}
    */
-  async getMachineImage(options) {
-    const { os, arch, distro, distroVersion = "*" } = options;
+  async getBaseImage(options) {
+    const { os, arch, distro, distroVersion } = options;
+
+    const label = `${os}-${arch}-${distro}-${distroVersion || "*"}`;
+    const ownedImages = await aws.describeImages({
+      "owner-alias": "self",
+      "name": label,
+    });
+
+    if (ownedImages.length) {
+      const [image] = ownedImages;
+      return aws.getAvailableImage(image);
+    }
 
     let name, owner;
     if (os === "linux") {
       if (!distro || distro === "debian") {
         owner = "amazon";
-        name = `debian-${distroVersion}-${arch === "aarch64" ? "arm64" : "amd64"}-*`;
+        name = `debian-${distroVersion || "*"}-${arch === "aarch64" ? "arm64" : "amd64"}-*`;
       } else if (distro === "ubuntu") {
         owner = "amazon";
-        name = `ubuntu/images/hvm-ssd/ubuntu-*-${distroVersion}-${arch === "aarch64" ? "arm64" : "amd64"}-server-*`;
+        name = `ubuntu/images/hvm-ssd/ubuntu-*-${distroVersion || "*"}-${arch === "aarch64" ? "arm64" : "amd64"}-server-*`;
       } else if (distro === "amazonlinux") {
         owner = "amazon";
         if (distroVersion === "1") {
@@ -235,15 +331,16 @@ const aws = {
         } else if (distroVersion === "2") {
           name = `amzn2-ami-hvm-*-${arch === "aarch64" ? "arm64" : "x86_64"}-gp2`;
         } else {
-          name = `al${distroVersion}-ami-*-${arch === "aarch64" ? "arm64" : "x86_64"}`;
+          name = `al${distroVersion || "*"}-ami-*-${arch === "aarch64" ? "arm64" : "x86_64"}`;
         }
       } else if (distro === "alpine") {
-        name = `alpine-${distroVersion}.*-${arch === "aarch64" ? "aarch64" : "x86_64"}-uefi-cloudinit-*`;
+        owner = "538276064493";
+        name = `alpine-${distroVersion || "*"}.*-${arch === "aarch64" ? "aarch64" : "x86_64"}-uefi-cloudinit-*`;
       }
     } else if (os === "windows") {
       if (!distro || distro === "server") {
         owner = "amazon";
-        name = `Windows_Server-${distroVersion}-English-Full-Base-*`;
+        name = `Windows_Server-${distroVersion || "*"}-English-Full-Base-*`;
       }
     }
 
@@ -251,13 +348,18 @@ const aws = {
       throw new Error(`Unsupported platform: ${inspect(options)}`);
     }
 
-    const images = await aws.describeImages({ state: "available", "owner-alias": owner, name });
-    if (!images.length) {
-      throw new Error(`No image found: ${inspect(options)}`);
+    const baseImages = await aws.describeImages({
+      "state": "available",
+      "owner-alias": owner,
+      "name": name,
+    });
+
+    if (!baseImages.length) {
+      throw new Error(`No base image found: ${inspect(options)}`);
     }
 
-    const [image] = images;
-    return image;
+    const [baseImage] = baseImages;
+    return aws.getAvailableImage(baseImage);
   },
 
   /**
@@ -270,10 +372,9 @@ const aws = {
     /** @type {AwsImage} */
     let image;
     if (imageId) {
-      const [customImage] = await aws.describeImages({ "image-id": imageId });
-      image = customImage;
+      image = await aws.getAvailableImage(imageId);
     } else {
-      image = await aws.getMachineImage(options);
+      image = await aws.getBaseImage(options, true);
     }
 
     const { ImageId, Name, RootDeviceName, BlockDeviceMappings } = image;
@@ -528,8 +629,9 @@ const google = {
 
 /**
  * @typedef CloudInit
- * @property {string[]} authorizedKeys
- * @property {string} username
+ * @property {string} [distro]
+ * @property {string[]} [authorizedKeys]
+ * @property {string} [username]
  * @property {string} [password]
  */
 
@@ -541,6 +643,16 @@ function getCloudInit(cloudInit) {
   const username = cloudInit["username"] || "root";
   const password = cloudInit["password"] || crypto.randomUUID();
   const authorizedKeys = JSON.stringify(cloudInit["authorizedKeys"] || []);
+
+  let sftpPath = "/usr/lib/openssh/sftp-server";
+  switch (cloudInit["distro"]) {
+    case "alpine":
+      sftpPath = "/usr/lib/ssh/sftp-server";
+      break;
+    case "amazon":
+      sftpPath = "/usr/libexec/openssh/sftp-server";
+      break;
+  }
 
   // https://cloudinit.readthedocs.io/en/stable/
   return `#cloud-config
@@ -556,7 +668,7 @@ function getCloudInit(cloudInit) {
         content: |
           PermitRootLogin yes
           PasswordAuthentication yes
-          Subsystem sftp /usr/lib/ssh/sftp-server
+          Subsystem sftp ${sftpPath}
 
     chpasswd:
       expire: false
@@ -669,7 +781,7 @@ async function getGithubAuthorizedKeys(organization) {
  * @returns {Promise<void>}
  */
 async function spawnSsh(options, spawnOptions = {}) {
-  const { hostname, port, username, command, retries = 10 } = options;
+  const { hostname, port, username, command, retries = 1 } = options;
   await waitForPort({ hostname, port: port || 22 });
 
   const ssh = ["ssh", hostname, "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"];
@@ -733,7 +845,7 @@ async function spawnScp(options) {
 
   let cause;
   for (let i = 0; i < retries; i++) {
-    const result = await spawn(command);
+    const result = await spawn(command, { stdio: "inherit" });
     const { exitCode, stderr } = result;
     if (exitCode === 0) {
       return;
@@ -813,6 +925,7 @@ function parseOptions(args) {
 
   return {
     ...options,
+    distroVersion: options["distro-version"],
     instanceType: options["instance-type"],
     imageId: options["image-id"],
     diskSize: parseInt(options["disk-size"]) || undefined,
@@ -850,15 +963,19 @@ async function main() {
     machine.close().finally(() => process.exit(1));
   });
 
+  const doTest = async () => {
+    await machine.exec(["uname", "-a"], { stdio: "inherit" });
+  };
+
   const doBootstrap = async (ci = true) => {
-    const localPath = resolve(import.meta.dirname, "..", "..", "scripts", "bootstrap.sh");
+    const localPath = resolve(import.meta.dirname, "bootstrap.sh");
     const remotePath = "/tmp/bootstrap.sh";
     await machine.upload(localPath, remotePath);
     await machine.exec(["sh", remotePath, ci ? "--ci" : "--no-ci"], { stdio: "inherit" });
   };
 
   const doAgent = async (action = "install") => {
-    const templatePath = resolve(import.meta.dirname, "..", "..", "scripts", "ci", "agent.mjs");
+    const templatePath = resolve(import.meta.dirname, "agent.mjs");
     const tmpPath = mkdtempSync(join(tmpdir(), "agent-"));
     const localPath = join(tmpPath, "agent.mjs");
     const remotePath = "/tmp/agent.mjs";
@@ -868,12 +985,18 @@ async function main() {
   };
 
   try {
+    await doTest();
     await doBootstrap();
     await doAgent();
-    await machine.exec(["reboot"]);
-    await new Promise(resolve => setTimeout(resolve, 10000));
-    console.log("Machine booted:", await machine.exec(["uptime"]));
-    await machine.attach();
+  } catch (error) {
+    console.error(error);
+    if (!isCI) {
+      try {
+        await machine.attach();
+      } catch (error) {
+        console.error(error);
+      }
+    }
   } finally {
     await machine.close();
   }

@@ -88,6 +88,13 @@ function getPipeline(options) {
    * Helpers
    */
 
+  const getEmoji = text => {
+    if (text === "amazonlinux") {
+      return ":aws:";
+    }
+    return `:${text}:`;
+  };
+
   const getKey = platform => {
     const { os, arch, abi, baseline, distro, release } = platform;
 
@@ -110,8 +117,8 @@ function getPipeline(options) {
 
   const getLabel = platform => {
     const { os, distro, arch, abi, baseline, release } = platform;
-    const emoji = distro || os;
-    let label = release ? `:${emoji}: ${release} ${arch}` : `:${emoji}: ${arch}`;
+    const emoji = getEmoji(distro || os);
+    let label = release ? `${emoji} ${release} ${arch}` : `${emoji} ${arch}`;
     if (abi) {
       label += `-${abi}`;
     }
@@ -342,10 +349,10 @@ function getPipeline(options) {
     { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
-    { os: "linux", arch: "aarch64", distro: "amazon", release: "2023" },
-    { os: "linux", arch: "aarch64", distro: "amazon", release: "2" },
-    { os: "linux", arch: "x64", distro: "amazon", release: "2023" },
-    { os: "linux", arch: "x64", distro: "amazon", release: "2" },
+    { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023" },
+    { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2" },
+    { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023" },
+    { os: "linux", arch: "x64", distro: "amazonlinux", release: "2" },
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.17" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },

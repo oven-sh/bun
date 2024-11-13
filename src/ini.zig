@@ -512,7 +512,7 @@ pub const IniTestingAPIs = struct {
     pub fn loadNpmrcFromJS(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arg = callframe.argument(0);
         const npmrc_contents = arg.toBunString(globalThis);
         defer npmrc_contents.deref();
@@ -617,7 +617,7 @@ pub const IniTestingAPIs = struct {
     pub fn parse(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments_ = callframe.arguments(1);
         const arguments = arguments_.slice();
 

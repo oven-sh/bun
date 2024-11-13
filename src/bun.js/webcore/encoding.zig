@@ -420,7 +420,7 @@ pub const TextEncoderStreamEncoder = struct {
         return TextEncoderStreamEncoder.new(.{});
     }
 
-    pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
+    pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callFrame.arguments(1).slice();
         if (arguments.len == 0) {
             globalObject.throwNotEnoughArguments("TextEncoderStreamEncoder.encode", 1, arguments.len);
@@ -590,7 +590,7 @@ pub const TextEncoderStreamEncoder = struct {
         }
     }
 
-    pub fn flush(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn flush(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         return flushBody(this, globalObject);
     }
 
@@ -778,7 +778,7 @@ pub const TextDecoder = struct {
         return .{ output, saw_error };
     }
 
-    pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments(2).slice();
 
         const input_slice = input_slice: {

@@ -979,16 +979,13 @@ pub fn DOMCall(
             if (!JSC.is_bindgen) {
                 @export(slowpath, .{ .name = shim.symbolName("slowpath") });
                 @export(fastpath, .{ .name = shim.symbolName("fastpath") });
-            } else {
-                _ = slowpath;
-                _ = fastpath;
             }
         }
     };
 }
 
 pub fn InstanceMethodType(comptime Container: type) type {
-    return fn (instance: *Container, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue;
+    return fn (instance: *Container, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue;
 }
 
 pub fn wrapInstanceMethod(
@@ -1006,7 +1003,7 @@ pub fn wrapInstanceMethod(
             this: *Container,
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(JSC.conv) JSC.JSValue {
+        ) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments(FunctionTypeInfo.params.len);
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
@@ -1169,7 +1166,7 @@ pub fn wrapStaticMethod(
     comptime Container: type,
     comptime name: string,
     comptime auto_protect: bool,
-) JSC.Codegen.StaticCallbackType {
+) JSC.JSHostZigFunction {
     return struct {
         const FunctionType = @TypeOf(@field(Container, name));
         const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).Fn;
@@ -1179,7 +1176,7 @@ pub fn wrapStaticMethod(
         pub fn method(
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(JSC.conv) JSC.JSValue {
+        ) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments(FunctionTypeInfo.params.len);
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;

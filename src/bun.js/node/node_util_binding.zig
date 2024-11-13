@@ -7,7 +7,7 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const uv = bun.windows.libuv;
 
-pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("internalErrorName", 1, arguments.len);

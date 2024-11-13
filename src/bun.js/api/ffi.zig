@@ -610,7 +610,7 @@ pub const FFI = struct {
         }
     };
 
-    pub fn Bun__FFI__cc(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    pub fn Bun__FFI__cc(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(1).slice();
         if (arguments.len == 0 or !arguments[0].isObject()) {
             return JSC.toInvalidArguments("Expected object", .{}, globalThis);
@@ -903,7 +903,7 @@ pub const FFI = struct {
         this: *FFI,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) bun.JSError!JSValue {
         JSC.markBinding(@src());
         if (this.closed) {
             return .undefined;

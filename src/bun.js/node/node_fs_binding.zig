@@ -14,7 +14,7 @@ const NodeFSFunction = fn (
     this: *JSC.Node.NodeJSFS,
     globalObject: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue;
+) bun.JSError!JSC.JSValue;
 
 const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
 
@@ -34,7 +34,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             this: *JSC.Node.NodeJSFS,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSC.JSValue {
+        ) bun.JSError!JSC.JSValue {
             var exceptionref: JSC.C.JSValueRef = null;
 
             var arguments = callframe.arguments(8);
@@ -91,7 +91,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     comptime if (function.params.len != 3) @compileError("Expected 3 arguments");
     const Arguments = comptime function.params[1].type.?;
     const NodeBindingClosure = struct {
-        pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+        pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             var arguments = callframe.arguments(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
@@ -266,7 +266,7 @@ pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     return module.toJS(globalObject);
 }
 
-pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callFrame.arguments(1);
 
     if (arguments.len < 1) {

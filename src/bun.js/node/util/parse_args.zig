@@ -652,7 +652,7 @@ const ParseArgsState = struct {
 pub fn parseArgs(
     globalThis: *JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSValue {
+) bun.JSError!JSValue {
     JSC.markBinding(@src());
     const arguments = callframe.arguments(1).slice();
     const config = if (arguments.len > 0) arguments[0] else JSValue.undefined;

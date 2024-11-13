@@ -2938,7 +2938,7 @@ pub const JSFunction = extern struct {
     pub fn create(
         global: *JSGlobalObject,
         fn_name: anytype,
-        comptime implementation: JSHostFunctionType,
+        comptime implementation: JSHostZigFunction,
         function_length: u32,
         options: CreateJSFunctionOptions,
     ) JSValue {
@@ -2948,7 +2948,7 @@ pub const JSFunction = extern struct {
                 bun.String => fn_name,
                 else => bun.String.init(fn_name),
             },
-            implementation,
+            toJSHostFunction(implementation),
             function_length,
             options.implementation_visibility,
             options.intrinsic,
@@ -3569,7 +3569,7 @@ pub const JSGlobalObject = opaque {
     extern fn JSGlobalObject__throwTerminationException(this: *JSGlobalObject) void;
 };
 
-pub const JSNativeFn = JSHostFunctionPtr;
+pub const JSNativeFn = JSHostZigFunction;
 
 pub const JSArrayIterator = struct {
     i: u32 = 0,
@@ -5257,6 +5257,10 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn _then(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: JSNativeFn, reject: JSNativeFn) void {
+        return cppFn("_then", .{ this, global, ctx, toJSHostFunction(resolve), toJSHostFunction(reject) });
+    }
+
+    pub fn _then2(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: JSHostFunctionType, reject: JSHostFunctionType) void {
         return cppFn("_then", .{ this, global, ctx, resolve, reject });
     }
 
@@ -6612,37 +6616,17 @@ pub const EncodedJSValue = extern union {
 pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(JSC.conv) JSValue;
 pub const JSHostFunctionTypeWithCCallConvForAssertions = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
 pub const JSHostFunctionPtr = *const JSHostFunctionType;
-pub fn toJSHostFunction(comptime Function: anytype) JSC.JSHostFunctionType {
-    if (comptime @TypeOf(Function) == JSHostFunctionType) {
-        return Function;
-    }
+pub const JSHostZigFunction = fn (*JSGlobalObject, *CallFrame) bun.JSError!JSValue;
 
-    if (@TypeOf(Function) == fn (*JSGlobalObject, *CallFrame) JSValue) {
-        // These may coerce to both, but we want to force it to be this kind.
-    } else if (@TypeOf(Function) == *const fn (*JSGlobalObject, *CallFrame) JSValue) {
-        @compileLog(Function, "use JSC.toJSHostFunction(Function) instead of JSC.toJSHostFunction(&Function)");
-    }
-
+pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunctionType {
     return struct {
         pub fn function(
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) callconv(JSC.conv) JSC.JSValue {
-            comptime {
-                const Fn = @TypeOf(Function);
-                var FnTypeInfo = @typeInfo(Fn);
-                if (FnTypeInfo == .Pointer) {
-                    FnTypeInfo = @typeInfo(std.meta.Child(Fn));
-                }
-
-                if (bun.Environment.isWindows) {
-                    if (FnTypeInfo.Fn.calling_convention == .C) {
-                        @compileLog(Function, "use callconv(JSC.conv) instead of callconv(.C), or don't set a callconv on the function.");
-                    }
-                }
-            }
-
-            return @call(.always_inline, Function, .{ globalThis, callframe });
+            return @call(.always_inline, Function, .{ globalThis, callframe }) catch |err| switch (err) {
+                error.JSError => .zero,
+            };
         }
     }.function;
 }
@@ -6710,6 +6694,9 @@ pub fn NewFunction(
     comptime functionPointer: anytype,
     strong: bool,
 ) JSValue {
+    if (@TypeOf(functionPointer) == JSC.JSHostFunctionType) {
+        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, strong, false);
+    }
     return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false);
 }
 
@@ -6719,6 +6706,9 @@ pub fn createCallback(
     argCount: u32,
     comptime functionPointer: anytype,
 ) JSValue {
+    if (@TypeOf(functionPointer) == JSC.JSHostFunctionType) {
+        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, false, false);
+    }
     return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false);
 }
 
@@ -6748,7 +6738,7 @@ pub fn NewFunctionWithData(
     globalObject: *JSGlobalObject,
     symbolName: ?*const ZigString,
     argCount: u32,
-    comptime functionPointer: anytype,
+    comptime functionPointer: JSC.JSHostZigFunction,
     strong: bool,
     data: *anyopaque,
 ) JSValue {

@@ -111,7 +111,7 @@ pub const HTMLRewriter = struct {
         global: *JSGlobalObject,
         listener: JSValue,
         callFrame: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const handler_ = DocumentHandler.init(global, listener) catch return .zero;
 
         const handler = getAllocator(global).create(DocumentHandler) catch bun.outOfMemory();
@@ -1096,7 +1096,7 @@ pub const TextChunk = struct {
         this: *TextChunk,
         _: *JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         if (this.text_chunk == null)
             return JSValue.jsUndefined();
         this.text_chunk.?.remove();
@@ -1278,7 +1278,7 @@ pub const Comment = struct {
         this: *Comment,
         _: *JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         if (this.comment == null)
             return JSValue.jsNull();
         this.comment.?.remove();
@@ -1400,7 +1400,7 @@ pub const EndTag = struct {
         this: *EndTag,
         _: *JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         if (this.end_tag == null)
             return JSValue.jsUndefined();
 
@@ -1449,7 +1449,7 @@ pub const AttributeIterator = struct {
 
     pub usingnamespace JSC.Codegen.JSAttributeIterator;
 
-    pub fn next(this: *AttributeIterator, globalObject: *JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn next(this: *AttributeIterator, globalObject: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         const done_label = JSC.ZigString.static("done");
         const value_label = JSC.ZigString.static("value");
 
@@ -1475,7 +1475,7 @@ pub const AttributeIterator = struct {
         ));
     }
 
-    pub fn getThis(_: *AttributeIterator, _: *JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
+    pub fn getThis(_: *AttributeIterator, _: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
         return callFrame.this();
     }
 };
@@ -1494,7 +1494,7 @@ pub const Element = struct {
         globalObject: *JSGlobalObject,
         function: JSValue,
         callFrame: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         if (this.element == null)
             return JSValue.jsNull();
         if (function.isUndefinedOrNull() or !function.isCallable(globalObject.vm())) {
@@ -1674,7 +1674,7 @@ pub const Element = struct {
         this: *Element,
         _: *JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
 
@@ -1687,7 +1687,7 @@ pub const Element = struct {
         this: *Element,
         _: *JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
 

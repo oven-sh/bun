@@ -1015,7 +1015,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]c
 }
 
 fn generateCssList(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM!JSC.JSValue {
-    if (!Environment.allow_assert) assert(!route_bundle.css_file_array.has());
+    if (Environment.allow_assert) assert(!route_bundle.cached_css_file_array.has());
     assert(route_bundle.server_state == .loaded); // page is unfit to load
 
     dev.graph_safety_lock.lock();

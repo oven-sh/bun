@@ -53,6 +53,7 @@ async function run() {
         minify: {
           syntax: true,
         },
+        target: side === 'server' ? 'bun' : 'browser',
       });
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");

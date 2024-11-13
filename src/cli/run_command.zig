@@ -1246,39 +1246,6 @@ pub const RunCommand = struct {
         comptime bin_dirs_only: bool,
         comptime log_errors: bool,
     ) !bool {
-
-        // notes:
-        // const default_loader = options.defaultLoaders.get(extension) orelse brk: {
-        //     if (extension.len == 0 and ctx.args.entry_points.len > 0 and ctx.args.entry_points[0].len > 0 and std.fs.path.isAbsolute(ctx.args.entry_points[0])) {
-        //         break :brk options.Loader.js;
-        //     }
-        //     if (extension.len > 0) {
-        //         if (strings.endsWithComptime(ctx.args.entry_points[0], ".sh")) {
-        //             break :brk options.Loader.bunsh;
-        //         }
-        //         if (!ctx.debug.loaded_bunfig) {
-        //             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
-        //         }
-        //         if (ctx.preloads.len > 0)
-        //             break :brk options.Loader.js;
-        //     }
-        //     break :brk null;
-        // };
-        // if (default_loader) |loader| {
-        //     if (loader.canBeRunByBun()) {
-        //         was_js_like = true;
-        //         if (maybeOpenWithBunJS(ctx)) {
-        //             return;
-        //         }
-        //         did_check = true;
-        //     }
-        // }
-        // if (force_using_bun and !did_check) {
-        //     if (maybeOpenWithBunJS(ctx)) {
-        //         return;
-        //     }
-        // }
-
         // find what to run
 
         var positionals = ctx.positionals;

@@ -2014,6 +2014,7 @@ pub const Command = struct {
             .RunCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .RunCommand);
+                ctx.args.target = .bun;
 
                 if (ctx.filters.len > 0) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
@@ -2056,6 +2057,7 @@ pub const Command = struct {
                         },
                     }
                 };
+                ctx.args.target = .bun;
 
                 if (ctx.filters.len > 0) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {

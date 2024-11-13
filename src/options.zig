@@ -956,9 +956,9 @@ pub const ESMConditions = struct {
         try self.require.ensureUnusedCapacity(conditions.len);
 
         for (conditions) |condition| {
-            self.default.putAssumeCapacityNoClobber(condition, {});
-            self.import.putAssumeCapacityNoClobber(condition, {});
-            self.require.putAssumeCapacityNoClobber(condition, {});
+            self.default.putAssumeCapacity(condition, {});
+            self.import.putAssumeCapacity(condition, {});
+            self.require.putAssumeCapacity(condition, {});
         }
     }
 };

@@ -334,6 +334,9 @@ function getPipeline(options) {
   ];
 
   const testPlatforms = [
+    { os: "linux", arch: "aarch64", distro: "alpine", release: "3.20" },
+    { os: "linux", arch: "aarch64", distro: "alpine", release: "3.17" },
+    { os: "linux", arch: "x64", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", distro: "alpine", release: "3.17" },
     // { os: "darwin", arch: "aarch64", distro: "sonoma", release: "14" },
     // { os: "darwin", arch: "aarch64", distro: "ventura", release: "13" },

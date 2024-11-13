@@ -5016,9 +5016,6 @@ pub const LinkerContext = struct {
     framework: ?*const bake.Framework = null,
 
     fn pathWithPrettyInitialized(this: *LinkerContext, path: Fs.Path) !Fs.Path {
-        if (path.text.ptr != path.pretty.ptr) {
-            return path;
-        }
         return genericPathWithPrettyInitialized(path, this.options.target, this.resolver.fs.top_level_dir, this.graph.allocator);
     }
 
@@ -9592,7 +9589,9 @@ pub const LinkerContext = struct {
                     if (source.path.isFile()) {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
-                        source.path.* = pathWithPrettyInitialized(source.path);
+                        if (source.path.text.ptr != source.path.pretty.ptr) {
+                            source.path = pathWithPrettyInitialized(source.path);
+                        }
                         source.path.assertPrettyIsValid();
 
                         break :brk source.path.pretty;

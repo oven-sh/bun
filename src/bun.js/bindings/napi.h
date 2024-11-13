@@ -56,6 +56,11 @@ public:
         m_finalizers.emplace(callback, hint, data);
     }
 
+    bool hasFinalizers() const
+    {
+        return !m_finalizers.empty();
+    }
+
     void checkGC()
     {
         if (UNLIKELY(m_globalObject->vm().heap.mutatorState() == JSC::MutatorState::Sweeping)) {

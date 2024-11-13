@@ -4339,6 +4339,23 @@ void GlobalObject::finishNapiFinalizers()
     }
 }
 
+extern "C" bool Bun__isNapiFinalizerQueueEmpty(const JSGlobalObject*);
+
+bool GlobalObject::hasNapiFinalizers() const
+{
+    if (!Bun__isNapiFinalizerQueueEmpty(this)) {
+        return true;
+    }
+
+    for (const auto& env : m_napiEnvs) {
+        if (env->hasFinalizers()) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 #include "ZigGeneratedClasses+lazyStructureImpl.h"
 #include "ZigGlobalObject.lut.h"
 

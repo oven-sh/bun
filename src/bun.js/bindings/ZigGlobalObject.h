@@ -601,6 +601,7 @@ public:
     napi_env makeNapiEnv(const napi_module&);
     napi_env makeNapiEnvForFFI();
     void finishNapiFinalizers();
+    bool hasNapiFinalizers() const;
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

@@ -6,7 +6,7 @@ namespace Bun {
 NapiExternal::~NapiExternal()
 {
     ASSERT(m_env);
-    m_finalizer.call(m_env, m_value);
+    m_finalizer.call(m_env, m_value, !m_env->mustDeferFinalizers());
 }
 
 void NapiExternal::destroy(JSC::JSCell* cell)

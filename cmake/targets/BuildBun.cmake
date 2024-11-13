@@ -851,7 +851,7 @@ elseif(APPLE)
     -dead_strip_dylibs
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
-    -Wl,-map${bun}.linker-map
+    -Wl,-map=${bun}.linker-map
   )
 else()
   # Try to use lld-16 if available, otherwise fallback to lld
@@ -946,7 +946,7 @@ else()
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro
-    -Wl,-Map${bun}.linker-map
+    -Wl,-Map=${bun}.linker-map
     -Wl,--print-symbol-order=${bun}.symbol-order
     -Wl,--print-icf-sections
   )

@@ -280,7 +280,7 @@ void NapiRef::unref()
 
 void NapiRef::clear()
 {
-    finalizer.call(env, data);
+    finalizer.call(env, nativeObject);
     globalObject.clear();
     weakValueRef.clear();
     strongRef.clear();
@@ -984,6 +984,15 @@ extern "C" void napi_module_register(napi_module* mod)
     globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
 }
 
+static void wrap_cleanup(napi_env env, void* data, void* hint)
+{
+    auto* ref = reinterpret_cast<NapiRef*>(data);
+    ASSERT(ref->boundCleanup != nullptr);
+    ref->boundCleanup->deactivate(env);
+    ref->boundCleanup = nullptr;
+    ref->callFinalizer();
+}
+
 extern "C" napi_status napi_wrap(napi_env env,
     napi_value js_object,
     void* native_object,
@@ -1013,7 +1022,11 @@ extern "C" napi_status napi_wrap(napi_env env,
 
     // create a new weak reference (refcount 0)
     auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
-    ref->data = native_object;
+    // In case the ref's finalizer is never called, we'll add a finalizer to execute on exit.
+    const auto& bound_cleanup = env->addFinalizer(wrap_cleanup, native_object, ref);
+    ref->boundCleanup = &bound_cleanup;
+    ref->nativeObject = native_object;
+
     if (result) {
         ref->weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), ref);
     } else {
@@ -1045,7 +1058,7 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
 
     auto* ref = reinterpret_cast<NapiRef*>(external->m_value);
     if (result) {
-        *result = ref->data;
+        *result = ref->nativeObject;
     }
 
     ref->finalizer.clear();
@@ -1078,7 +1091,7 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
     }
 
     if (ref) {
-        *result = ref->data;
+        *result = ref->nativeObject;
     }
 
     NAPI_RETURN_SUCCESS(env);
@@ -1270,7 +1283,7 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
         auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
         // TODO(@heimskr): consider detecting whether the value can't be weak, as we do in napi_create_reference.
         ref->setValueInitial(object, true);
-        ref->data = native_object;
+        ref->nativeObject = native_object;
         *result = toNapi(ref);
     } else {
         // Otherwise, it's cheaper to just call .addFinalizer.

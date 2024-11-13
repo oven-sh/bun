@@ -14,6 +14,7 @@
 #include "napi_handle_scope.h"
 #include "napi_finalizer.h"
 
+#include <iostream>
 #include <unordered_set>
 
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
@@ -36,14 +37,14 @@ public:
 
     void cleanup()
     {
+        m_inCleanup = true;
         for (const BoundFinalizer& boundFinalizer : m_finalizers) {
             Bun::NapiHandleScope handle_scope(m_globalObject);
-            if (boundFinalizer.callback) {
-                boundFinalizer.callback(this, boundFinalizer.hint, boundFinalizer.data);
-            }
+            boundFinalizer.call(this);
         }
 
         m_finalizers.clear();
+        m_inCleanup = false;
     }
 
     void removeFinalizer(napi_finalize callback, void* hint, void* data)
@@ -51,9 +52,16 @@ public:
         m_finalizers.erase({ callback, hint, data });
     }
 
-    void addFinalizer(napi_finalize callback, void* hint, void* data)
+    struct BoundFinalizer;
+
+    void removeFinalizer(const BoundFinalizer& finalizer)
     {
-        m_finalizers.emplace(callback, hint, data);
+        m_finalizers.erase(finalizer);
+    }
+
+    const auto& addFinalizer(napi_finalize callback, void* hint, void* data)
+    {
+        return *m_finalizers.emplace(callback, hint, data).first;
     }
 
     bool hasFinalizers() const
@@ -91,6 +99,8 @@ public:
     // Returns true if finalizers from this module need to be scheduled for the next tick after garbage collection, instead of running during garbage collection
     inline bool mustDeferFinalizers() const { return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL; }
 
+    inline bool inCleanup() const { return m_inCleanup; }
+
     // Almost all NAPI functions should set error_code to the status they're returning right before
     // they return it
     napi_extended_error_info m_lastNapiErrorInfo = {
@@ -106,11 +116,13 @@ public:
     Bun::NapiFinalizer instanceDataFinalizer;
     char* filename = nullptr;
 
-private:
     struct BoundFinalizer {
         napi_finalize callback = nullptr;
         void* hint = nullptr;
         void* data = nullptr;
+        // Allows bound finalizers to effectively remove themselves during cleanup without breaking iteration.
+        // Safe to be mutable because it's not included in the hash.
+        mutable bool active = true;
 
         BoundFinalizer() = default;
 
@@ -128,6 +140,24 @@ private:
         {
         }
 
+        void call(napi_env env) const
+        {
+            if (callback && active) {
+                callback(env, data, hint);
+            }
+        }
+
+        void deactivate(napi_env env) const
+        {
+            if (env->inCleanup()) {
+                active = false;
+            } else {
+                env->removeFinalizer(*this);
+                // At this point the BoundFinalizer has been destroyed, but because we're not doing anything else here it's safe.
+                // https://isocpp.org/wiki/faq/freestore-mgmt#delete-this
+            }
+        }
+
         bool operator==(const BoundFinalizer& other) const
         {
             return this == &other || (callback == other.callback && hint == other.hint && data == other.data);
@@ -143,10 +173,12 @@ private:
         };
     };
 
+private:
     Zig::GlobalObject* m_globalObject = nullptr;
     napi_module m_napiModule;
     // TODO(@heimskr): Use WTF::HashSet
     std::unordered_set<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
+    bool m_inCleanup = false;
 };
 
 extern "C" void napi_internal_cleanup_env_cpp(napi_env);
@@ -344,11 +376,17 @@ public:
 
     void callFinalizer()
     {
-        finalizer.call(env, data, !defer);
+        finalizer.call(env, nativeObject, !defer);
+        finalizer.clear();
     }
 
     ~NapiRef()
     {
+        if (boundCleanup) {
+            boundCleanup->deactivate(env);
+            boundCleanup = nullptr;
+        }
+
         strongRef.clear();
         // The weak ref can lead to calling the destructor
         // so we must first clear the weak ref before we call the finalizer
@@ -360,7 +398,8 @@ public:
     NapiWeakValue weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;
     Bun::NapiFinalizer finalizer;
-    void* data = nullptr;
+    const napi_env__::BoundFinalizer* boundCleanup = nullptr;
+    void* nativeObject = nullptr;
     uint32_t refCount = 0;
     bool defer = false;
     bool releaseOnWeaken = false;

@@ -3,6 +3,7 @@
 import { inspect, parseArgs } from "node:util";
 import {
   $,
+  curlSafe,
   getArch,
   getRepository,
   getSecret,

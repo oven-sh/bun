@@ -1393,10 +1393,8 @@ pub const EventLoop = struct {
                 log("tick {}, timeout: {}", .{ bun.fmt.fmtDuration(event_loop_sleep_timer.read()), bun.fmt.fmtDuration(timespec.ns()) });
             }
         } else {
-            if (this.tick_without_idle_count > 1024) {
-                std.time.sleep(10 * std.time.ns_per_ms);
-            } else if (this.tick_without_idle_count > 32) {
-                std.time.sleep(1 * std.time.ns_per_ms);
+            if (this.tick_without_idle_count > 2) {
+                @panic("Suspected tickWithoutIdle loop");
             }
             loop.tickWithoutIdle();
             this.tick_without_idle_count += 1;

@@ -9590,7 +9590,7 @@ pub const LinkerContext = struct {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
                         if (source.path.text.ptr == source.path.pretty.ptr) {
-                            source.path = c.pathWithPrettyInitialized(source.path);
+                            source.path = c.pathWithPrettyInitialized(source.path) catch bun.outOfMemory();
                         }
                         source.path.assertPrettyIsValid();
 

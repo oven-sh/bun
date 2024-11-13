@@ -1750,6 +1750,7 @@ const JavaScriptCoreBindings = struct {
           if (comptime Environment.enable_logs) zig("${typeName}<d>({})<r>", .{callFrame});
           return @call(.always_inline, ${typeName}.call, .{globalObject, callFrame}) catch |err| switch (err) {
             error.JSError => .zero,
+            error.OutOfMemory => globalObject.throwOutOfMemoryValue(),
           };
         }
       `;
@@ -1805,6 +1806,7 @@ const JavaScriptCoreBindings = struct {
           if (comptime Environment.enable_logs) zig("<d>${typeName}.<r>${name}<d>({})<r>", .{callFrame});
           return @call(.always_inline, ${typeName}.${fn}, .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}}) catch |err| switch (err) {
             error.JSError => .zero,
+            error.OutOfMemory => globalObject.throwOutOfMemoryValue(),
           };
         }
         `;
@@ -1854,6 +1856,7 @@ const JavaScriptCoreBindings = struct {
           if (comptime Environment.enable_logs) JSC.markBinding(@src());
           return @call(.always_inline, ${typeName}.${fn}, .{globalObject, callFrame}) catch |err| switch (err) {
             error.JSError => .zero,
+            error.OutOfMemory => globalObject.throwOutOfMemoryValue(),
           };
         }
         `;

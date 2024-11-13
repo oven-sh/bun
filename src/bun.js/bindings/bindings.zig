@@ -3357,6 +3357,7 @@ pub const JSGlobalObject = opaque {
     pub fn takeException(this: *JSGlobalObject, proof: bun.JSError) JSValue {
         switch (proof) {
             error.JSError => {},
+            error.OutOfMemory => this.throwOutOfMemory(),
         }
 
         if (bun.Environment.allow_assert)
@@ -6626,6 +6627,7 @@ pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunction
         ) callconv(JSC.conv) JSC.JSValue {
             return @call(.always_inline, Function, .{ globalThis, callframe }) catch |err| switch (err) {
                 error.JSError => .zero,
+                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
             };
         }
     }.function;

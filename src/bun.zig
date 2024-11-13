@@ -107,6 +107,8 @@ pub const JSError = error{
     /// - Call `global.takeException(err)` to get the JSValue of the exception,
     /// - Call `global.reportActiveExceptionAsUnhandled(err)` to make it unhandled.
     JSError,
+    // XXX: This is temporary! meghan will remove this soon
+    OutOfMemory,
 };
 
 pub const detectCI = @import("./ci_info.zig").detectCI;

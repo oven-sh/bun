@@ -97,7 +97,12 @@ public:
     inline const napi_module& napiModule() const { return m_napiModule; }
 
     // Returns true if finalizers from this module need to be scheduled for the next tick after garbage collection, instead of running during garbage collection
-    inline bool mustDeferFinalizers() const { return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL; }
+    inline bool mustDeferFinalizers() const
+    {
+        // Even when we'd normally have to defer the finalizer, if this is happening during the VM's last chance to finalize,
+        // we can't defer the finalizer and have to call it now.
+        return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL && !m_globalObject->vm().hasTerminationRequest();
+    }
 
     inline bool inCleanup() const { return m_inCleanup; }
 

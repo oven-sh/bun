@@ -102,7 +102,7 @@ function getPipeline(options) {
       key += `-${distro}`;
     }
     if (release) {
-      key += `-${release}`;
+      key += `-${release.replace(/\./g, "")}`;
     }
 
     return key;

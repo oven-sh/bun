@@ -420,7 +420,7 @@ export const aws = {
       ["tag-specifications"]: JSON.stringify(tagSpecification),
     });
 
-    return aws.toMachine(instance, options);
+    return aws.toMachine(instance, { ...options, username });
   },
 
   /**

@@ -405,6 +405,11 @@ pub fn camelCase(
         return JSC.JSValue.jsUndefined();
     }
 
+    if (!arguments.ptr[0].isString()) {
+        globalThis.throwInvalidArgumentType("camelCase", "str", "string");
+        return JSC.JSValue.jsUndefined();
+    }
+
     const input = arguments.ptr[0].toBunString(globalThis);
     defer input.deref();
 
@@ -421,6 +426,11 @@ pub fn capitalCase(
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("capitalCase()", 1, 0);
+        return JSC.JSValue.jsUndefined();
+    }
+
+    if (!arguments.ptr[0].isString()) {
+        globalThis.throwInvalidArgumentType("capitalCase", "str", "string");
         return JSC.JSValue.jsUndefined();
     }
 
@@ -443,6 +453,11 @@ pub fn constantCase(
         return JSC.JSValue.jsUndefined();
     }
 
+    if (!arguments.ptr[0].isString()) {
+        globalThis.throwInvalidArgumentType("constantCase", "str", "string");
+        return JSC.JSValue.jsUndefined();
+    }
+
     const input = arguments.ptr[0].toBunString(globalThis);
     defer input.deref();
 
@@ -459,6 +474,11 @@ pub fn dotCase(
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("dotCase()", 1, 0);
+        return JSC.JSValue.jsUndefined();
+    }
+
+    if (!arguments.ptr[0].isString()) {
+        globalThis.throwInvalidArgumentType("dotCase", "str", "string");
         return JSC.JSValue.jsUndefined();
     }
 
@@ -481,6 +501,11 @@ pub fn kebabCase(
         return JSC.JSValue.jsUndefined();
     }
 
+    if (!arguments.ptr[0].isString()) {
+        globalThis.throwInvalidArgumentType("kebabCase", "str", "string");
+        return JSC.JSValue.jsUndefined();
+    }
+
     const input = arguments.ptr[0].toBunString(globalThis);
     defer input.deref();
 
@@ -497,6 +522,11 @@ pub fn pascalCase(
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("pascalCase()", 1, 0);
+        return JSC.JSValue.jsUndefined();
+    }
+
+    if (!arguments.ptr[0].isString()) {
+        globalThis.throwInvalidArgumentType("pascalCase", "str", "string");
         return JSC.JSValue.jsUndefined();
     }
 
@@ -519,6 +549,11 @@ pub fn snakeCase(
         return JSC.JSValue.jsUndefined();
     }
 
+    if (!arguments.ptr[0].isString()) {
+        globalThis.throwInvalidArgumentType("snakeCase", "str", "string");
+        return JSC.JSValue.jsUndefined();
+    }
+
     const input = arguments.ptr[0].toBunString(globalThis);
     defer input.deref();
 
@@ -535,6 +570,11 @@ pub fn trainCase(
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("trainCase()", 1, 0);
+        return JSC.JSValue.jsUndefined();
+    }
+
+    if (!arguments.ptr[0].isString()) {
+        globalThis.throwInvalidArgumentType("trainCase", "str", "string");
         return JSC.JSValue.jsUndefined();
     }
 

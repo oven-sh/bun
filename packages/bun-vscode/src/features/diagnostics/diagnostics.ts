@@ -1,31 +1,47 @@
 import * as vscode from "vscode";
-import WebSocket from "ws";
+import { MessageId } from "../../../../../src/bake/generated";
+import { ReconnectingWebSocket } from "./ws";
 
 let diagnosticCollection: vscode.DiagnosticCollection;
+let socket: ReconnectingWebSocket;
 
 export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
   diagnosticCollection = vscode.languages.createDiagnosticCollection("bunDiagnostics");
   context.subscriptions.push(diagnosticCollection);
 
-  const ws = new WebSocket("", {
-    perMessageDeflate: false,
+  const handlers: Record<number, (view: DataView) => void> = {
+    [MessageId.version]: view => {
+      console.log("HMR Version:", Buffer.from(view.buffer.slice(1)).toString("ascii"));
+    },
+    [MessageId.errors]: view => {
+      console.log("HMR Errors:", Buffer.from(view.buffer.slice(1)).toString("hex"));
+    },
+  };
+
+  socket = new ReconnectingWebSocket("ws://localhost:3000/_bun/hmr", {
+    onMessage: event => {
+      const { data } = event;
+      const view = new DataView(data as ArrayBufferLike);
+
+      console.log(Buffer.from(view.buffer.slice(0, 1)).toString("ascii"));
+
+      handlers[view.getUint8(0)]?.(view);
+    },
+
+    onError: error => console.error(error),
+
+    onOpen: () => console.log("Connected to HMR"),
+    onClose: () => console.log("Disconnected from HMR"),
+    onReconnect: () => console.log("Reconnected to HMR"),
+
+    // Reasonable to keep checking if the server is up every 3s while vsc is open.
+    // Post-poc this can be done by some messaging from Bun to the extension, but for now this is fine.
+    timeout: 3000,
+  }).open(ws => {
+    ws.binaryType = "arraybuffer";
   });
 
-  ws.onmessage = event => {
-    const diagnostics = parseDiagnostics(event.data.toString());
-
-    if (diagnostics.length !== 0) {
-      diagnosticCollection.set(vscode.window.activeTextEditor.document.uri, diagnostics);
-    }
-  };
-
-  // ws.onclose = () => {
-  //   vscode.window.showInformationMessage("Bun Diagnostics WebSocket closed");
-  // };
-
-  ws.onerror = error => {
-    vscode.window.showErrorMessage(`Bun Diagnostics WebSocket error: ${error.message}`);
-  };
+  console.log({ socket }, "hi");
 }
 
 function parseDiagnostics(data: string): vscode.Diagnostic[] {
@@ -49,5 +65,9 @@ function parseDiagnostics(data: string): vscode.Diagnostic[] {
 export function deactivateDiagnosticsSocket() {
   if (diagnosticCollection) {
     diagnosticCollection.dispose();
+  }
+
+  if (socket) {
+    socket.close();
   }
 }

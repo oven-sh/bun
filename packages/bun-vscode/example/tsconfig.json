@@ -14,9 +14,6 @@
     "jsx": "preserve",
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
-    "allowJs": true,
-    "types": [
-      "@types/bun" // add Bun global
-    ]
+    "allowJs": true
   }
 }

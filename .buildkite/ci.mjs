@@ -259,18 +259,12 @@ function getPipeline(options) {
 
   /**
    * @param {Target} target
-   * @param {boolean} [singleCore]
    * @returns {Agent}
    */
-  const getBuildAgent = (target, singleCore = false) => {
+  const getBuildAgent = target => {
     const { os, arch, abi } = target;
     if (abi === "musl") {
-      let instanceType;
-      if (singleCore) {
-        instanceType = arch === "aarch64" ? "c8g.xlarge" : "x2iezn.2xlarge";
-      } else {
-        instanceType = arch === "aarch64" ? "c8g.8xlarge" : "c7i.8xlarge";
-      }
+      const instanceType = arch === "aarch64" ? "c8g.8xlarge" : "c7i.8xlarge";
       return getEmphemeralAgent("v2", target, instanceType);
     }
     return {
@@ -424,7 +418,7 @@ function getPipeline(options) {
         `${getTargetKey(target)}-build-cpp`,
         `${getTargetKey(target)}-build-zig`,
       ],
-      agents: getBuildAgent(target, true),
+      agents: getBuildAgent(target),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
       env: {
@@ -572,10 +566,15 @@ function getPipeline(options) {
           const buildSteps = [getBuildVendorStep(platform), getBuildCppStep(platform), getBuildZigStep(platform)];
           if (buildImages) {
             steps.push(
-              ...buildSteps.map(step => ({
-                ...step,
-                depends_on: [`${getImageKey(platform)}-build-image`],
-              })),
+              ...buildSteps.map(step => {
+                if (step.agents?.["image-name"]) {
+                  return {
+                    ...step,
+                    depends_on: [`${getImageKey(platform)}-build-image`],
+                  };
+                }
+                return step;
+              }),
             );
           } else {
             steps.push(...buildSteps);

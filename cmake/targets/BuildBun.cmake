@@ -1152,7 +1152,7 @@ if(NOT BUN_CPP_ONLY)
   endif()
 
   if(CI)
-    set(bunTriplet ${bun}-${OS}-${ARCH})
+    set(bunTriplet bun-${OS}-${ARCH})
     if(ABI STREQUAL "musl")
       set(bunTriplet ${bunTriplet}-musl)
     endif()

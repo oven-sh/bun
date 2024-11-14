@@ -655,9 +655,8 @@ pub fn parseArgs(
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSValue {
     JSC.markBinding(@src());
-    const arguments = callframe.arguments(1).slice();
-    const config = if (arguments.len > 0) arguments[0] else JSValue.undefined;
-    return parseArgsImpl(globalThis, config) catch return .zero;
+    const arguments = callframe.argumentsAsArray(1);
+    return parseArgsImpl(globalThis, arguments[0]);
 }
 
 comptime {

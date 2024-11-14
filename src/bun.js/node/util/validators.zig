@@ -43,7 +43,7 @@ pub fn throwErrInvalidArgType(
 ) bun.JSError {
     @setCold(true);
     const actual_type = getTypeName(globalThis, value);
-    return throwErrInvalidArgTypeWithMessage(globalThis, "\"" ++ name_fmt ++ "\" property must be of type {s}, got {s}", name_args ++ .{ expected_type, actual_type });
+    return throwErrInvalidArgTypeWithMessage(globalThis, "The \"" ++ name_fmt ++ "\" property must be of type {s}, got {s}", name_args ++ .{ expected_type, actual_type });
 }
 
 pub fn throwRangeError(
@@ -181,7 +181,7 @@ pub fn validateObject(globalThis: *JSGlobalObject, value: JSValue, comptime name
 pub fn validateArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, comptime min_length: ?i32) bun.JSError!void {
     if (!value.jsType().isArray()) {
         const actual_type = getTypeName(globalThis, value);
-        return throwErrInvalidArgTypeWithMessage(globalThis, "\"" ++ name_fmt ++ "\" property must be an instance of Array, got {s}", name_args ++ .{actual_type});
+        return throwErrInvalidArgTypeWithMessage(globalThis, "The \"" ++ name_fmt ++ "\" property must be an instance of Array, got {s}", name_args ++ .{actual_type});
     }
     if (comptime min_length != null) {
         if (value.getLength(globalThis) < min_length) {
@@ -228,7 +228,7 @@ pub fn validateUndefined(globalThis: *JSGlobalObject, value: JSValue, comptime n
 }
 
 pub fn validateStringEnum(comptime T: type, globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!T {
-    const str = value.toBunString(globalThis);
+    const str = try value.toBunString2(globalThis);
     defer str.deref();
     inline for (@typeInfo(T).Enum.fields) |enum_field| {
         if (str.eqlComptime(enum_field.name))

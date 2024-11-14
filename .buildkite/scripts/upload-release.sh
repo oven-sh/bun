@@ -164,7 +164,9 @@ function upload_s3_file() {
 
 function send_bench_webhook() {
   if [ -z "$BENCHMARK_URL" ]; then
-    return 1
+    echo "error: \$BENCHMARK_URL is not set"
+    # exit 1 # TODO: this isn't live yet
+    return
   fi
 
   local tag="$1"

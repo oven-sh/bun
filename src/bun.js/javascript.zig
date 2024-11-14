@@ -1961,7 +1961,7 @@ pub const VirtualMachine = struct {
         return vm;
     }
 
-    pub fn initKit(opts: Options) anyerror!*VirtualMachine {
+    pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         JSC.markBinding(@src());
         const allocator = opts.allocator;
         var log: *logger.Log = undefined;
@@ -4370,9 +4370,6 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 // if we use .extname we might run into an issue with whether or not the "." is included.
                 // const path = Fs.PathName.init(file_path);
                 const current_hash = hashes[event.index];
-
-                // if (this.verbose)
-                //     std.debug.print("onFileUpdate {s} ({s}, {})\n", .{ file_path, @tagName(kind), event.op });
 
                 switch (kind) {
                     .file => {

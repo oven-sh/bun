@@ -1726,9 +1726,9 @@ const JavaScriptCoreBindings = struct {
     if (construct && !noConstructor) {
       exports.set("construct", classSymbolName(typeName, "construct"));
       output += `
-        pub fn ${classSymbolName(typeName, "construct")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) ?*${typeName} {
+        pub fn ${classSymbolName(typeName, "construct")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) ?*anyopaque {
           if (comptime Environment.enable_logs) zig("<r><blue>new<r> ${typeName}<d>({})<r>", .{callFrame});
-          return @call(.always_inline, ${typeName}.constructor, .{globalObject, callFrame});
+          return @call(.always_inline, wrapConstructor(${typeName}, ${typeName}.constructor), .{globalObject, callFrame});
         }
       `;
     }
@@ -2146,6 +2146,13 @@ const Classes = JSC.GeneratedClassesList;
 const Environment = bun.Environment;
 const std = @import("std");
 const zig = bun.Output.scoped(.zig, true);
+
+const wrapHostFunction = bun.gen_classes_lib.wrapHostFunction;
+const wrapMethod = bun.gen_classes_lib.wrapMethod;
+const wrapMethodWithThis = bun.gen_classes_lib.wrapMethodWithThis;
+const wrapConstructor = bun.gen_classes_lib.wrapConstructor;
+const wrapGetterCallback = bun.gen_classes_lib.wrapGetterCallback;
+const wrapGetterWithValueCallback = bun.gen_classes_lib.wrapGetterWithValueCallback;
 
 pub const StaticGetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) callconv(JSC.conv) JSC.JSValue;
 pub const StaticSetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, JSC.JSValue) callconv(JSC.conv) bool;

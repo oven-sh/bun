@@ -212,9 +212,10 @@ function getPipeline(options) {
   /**
    * @param {"v1" | "v2"} version
    * @param {Platform} platform
+   * @param {string} [instanceType]
    * @returns {Agent}
    */
-  const getEmphemeralAgent = (version, platform) => {
+  const getEmphemeralAgent = (version, platform, instanceType) => {
     const { os, arch, abi, distro, release } = platform;
     if (version === "v1") {
       return {
@@ -238,6 +239,7 @@ function getPipeline(options) {
       distro,
       release,
       "image-name": image,
+      "instance-type": instanceType,
     };
   };
 
@@ -248,7 +250,8 @@ function getPipeline(options) {
   const getBuildAgent = target => {
     const { os, arch, abi } = target;
     if (abi === "musl") {
-      return getEmphemeralAgent("v2", target);
+      const instanceType = arch === "aarch64" ? "c8g.8xlarge" : "c7i.8xlarge";
+      return getEmphemeralAgent("v2", target, instanceType);
     }
     return {
       queue: `build-${os}`,
@@ -263,9 +266,10 @@ function getPipeline(options) {
    * @returns {Agent}
    */
   const getZigAgent = target => {
-    const { abi } = target;
+    const { abi, arch } = target;
     if (abi === "musl") {
-      return getEmphemeralAgent("v2", target);
+      const instanceType = arch === "aarch64" ? "c8g.large" : "c7i.large";
+      return getEmphemeralAgent("v2", target, instanceType);
     }
     return {
       queue: "build-zig",
@@ -279,7 +283,8 @@ function getPipeline(options) {
   const getTestAgent = platform => {
     const { os, arch, release, abi } = platform;
     if (abi === "musl") {
-      return getEmphemeralAgent("v2", platform);
+      const instanceType = arch === "aarch64" ? "t4g.large" : "t3.large";
+      return getEmphemeralAgent("v2", platform, instanceType);
     }
     if (os === "darwin") {
       return {

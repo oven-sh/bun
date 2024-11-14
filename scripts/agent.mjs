@@ -151,19 +151,27 @@ export async function doAgent(action) {
       "token": token || "xxx",
       "shell": shell,
       "job-log-path": logsPath,
-      "git-mirrors-path": join(cachePath, "git"),
       "build-path": join(homePath, "builds"),
       "hooks-path": join(homePath, "hooks"),
       "plugins-path": join(homePath, "plugins"),
       "experiment": "normalised-upload-paths,resolve-commit-after-checkout,agent-api",
     };
 
+    let ephemeral;
     if (cloud) {
       const jobId = await getCloudMetadataTag("buildkite:job-uuid");
       if (jobId) {
         options["acquire-job"] = jobId;
         flags.push("disconnect-after-job");
+        ephemeral = true;
       }
+    }
+
+    if (ephemeral) {
+      options["git-clone-flags"] = "-v --depth=1";
+      options["git-fetch-flags"] = "-v --prune --depth=1";
+    } else {
+      options["git-mirrors-path"] = join(cachePath, "git");
     }
 
     const tags = {

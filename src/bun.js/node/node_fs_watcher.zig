@@ -563,7 +563,7 @@ pub const FSWatcher = struct {
         ) catch |err| globalObject.reportActiveExceptionAsUnhandled(err);
     }
 
-    pub fn doRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (!this.closed and !this.persistent) {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
@@ -571,7 +571,7 @@ pub const FSWatcher = struct {
         return .undefined;
     }
 
-    pub fn doUnref(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doUnref(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (this.persistent) {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
@@ -579,7 +579,7 @@ pub const FSWatcher = struct {
         return .undefined;
     }
 
-    pub fn hasRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn hasRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.persistent);
     }
 
@@ -649,7 +649,7 @@ pub const FSWatcher = struct {
         this.js_this = .zero;
     }
 
-    pub fn doClose(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doClose(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         this.close();
         return .undefined;
     }

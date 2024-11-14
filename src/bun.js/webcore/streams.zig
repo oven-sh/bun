@@ -1673,7 +1673,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             return shim.cppFn("setDestroyCallback", .{ value, callback });
         }
 
-        pub fn construct(globalThis: *JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        pub fn construct(globalThis: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
 
             if (comptime !@hasDecl(SinkType, "construct")) {
@@ -1745,7 +1745,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
         }
 
-        pub fn write(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        pub fn write(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
 
@@ -1814,7 +1814,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             return this.sink.writeLatin1(.{ .temporary = bun.ByteList.initConst(str.slice()) }).toJS(globalThis);
         }
 
-        pub fn writeUTF8(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        pub fn writeUTF8(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
 
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
@@ -1867,7 +1867,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             return this.sink.end(null).toJS(globalThis);
         }
 
-        pub fn flush(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        pub fn flush(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
 
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
@@ -1902,7 +1902,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             return this.sink.flush().toJS(globalThis);
         }
 
-        pub fn start(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        pub fn start(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
 
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
@@ -1935,7 +1935,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             ).toJS(globalThis);
         }
 
-        pub fn end(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        pub fn end(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
 
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
@@ -1984,14 +1984,20 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 this.sink.updateRef(value);
         }
 
+        const jsWrite = JSC.toJSHostFunction(write);
+        const jsFlush = JSC.toJSHostFunction(flush);
+        const jsStart = JSC.toJSHostFunction(start);
+        const jsEnd = JSC.toJSHostFunction(end);
+        const jsConstruct = JSC.toJSHostFunction(construct);
+
         comptime {
             @export(finalize, .{ .name = shim.symbolName("finalize") });
-            @export(write, .{ .name = shim.symbolName("write") });
+            @export(jsWrite, .{ .name = shim.symbolName("write") });
             @export(close, .{ .name = shim.symbolName("close") });
-            @export(flush, .{ .name = shim.symbolName("flush") });
-            @export(start, .{ .name = shim.symbolName("start") });
-            @export(end, .{ .name = shim.symbolName("end") });
-            @export(construct, .{ .name = shim.symbolName("construct") });
+            @export(jsFlush, .{ .name = shim.symbolName("flush") });
+            @export(jsStart, .{ .name = shim.symbolName("start") });
+            @export(jsEnd, .{ .name = shim.symbolName("end") });
+            @export(jsConstruct, .{ .name = shim.symbolName("construct") });
             @export(endWithSink, .{ .name = shim.symbolName("endWithSink") });
             @export(updateRef, .{ .name = shim.symbolName("updateRef") });
 
@@ -2015,7 +2021,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
 //         socket: Socket,
 
-//         pub fn connect(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+//         pub fn connect(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
 //             JSC.markBinding(@src());
 
 //             var this = @ptrCast(*ThisSocket, @alignCast( fromJS(globalThis, callframe.this()) orelse {
@@ -2783,7 +2789,7 @@ pub fn ReadableStreamSource(
             return ReadableStream.fromNative(globalThis, out_value);
         }
 
-        pub fn setRawModeFromJS(this: *ReadableStreamSourceType, global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) JSValue {
+        pub fn setRawModeFromJS(this: *ReadableStreamSourceType, global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) bun.JSError!JSValue {
             if (@hasDecl(Context, "setRawMode")) {
                 const flag = call_frame.argument(0);
                 if (Environment.allow_assert) {
@@ -2825,7 +2831,7 @@ pub fn ReadableStreamSource(
                 return null;
             }
 
-            pub fn pull(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+            pub fn pull(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 JSC.markBinding(@src());
                 const this_jsvalue = callFrame.this();
                 const arguments = callFrame.arguments(2);
@@ -2841,7 +2847,7 @@ pub fn ReadableStreamSource(
                 );
             }
 
-            pub fn start(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+            pub fn start(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 JSC.markBinding(@src());
                 this.globalThis = globalThis;
                 this.this_jsvalue = callFrame.this();
@@ -2890,7 +2896,7 @@ pub fn ReadableStreamSource(
                 }
             }
 
-            pub fn cancel(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+            pub fn cancel(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 _ = globalObject; // autofix
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
@@ -2955,7 +2961,7 @@ pub fn ReadableStreamSource(
                 return .undefined;
             }
 
-            pub fn updateRef(this: *ReadableStreamSourceType, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+            pub fn updateRef(this: *ReadableStreamSourceType, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 _ = globalObject; // autofix
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
@@ -2981,7 +2987,7 @@ pub fn ReadableStreamSource(
                 _ = this.decrementCount();
             }
 
-            pub fn drain(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+            pub fn drain(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
                 var list = this.drain();
@@ -2991,7 +2997,7 @@ pub fn ReadableStreamSource(
                 return JSValue.jsUndefined();
             }
 
-            pub fn text(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+            pub fn text(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
 
@@ -3003,7 +3009,7 @@ pub fn ReadableStreamSource(
                 return .zero;
             }
 
-            pub fn arrayBuffer(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+            pub fn arrayBuffer(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
 
@@ -3015,7 +3021,7 @@ pub fn ReadableStreamSource(
                 return .zero;
             }
 
-            pub fn blob(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+            pub fn blob(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
 
@@ -3027,7 +3033,7 @@ pub fn ReadableStreamSource(
                 return .zero;
             }
 
-            pub fn bytes(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+            pub fn bytes(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
 
@@ -3039,7 +3045,7 @@ pub fn ReadableStreamSource(
                 return .zero;
             }
 
-            pub fn json(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+            pub fn json(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
 

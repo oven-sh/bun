@@ -12,7 +12,7 @@ extern fn Process__emitErrorEvent(global: *JSC.JSGlobalObject, value: JSC.JSValu
 
 pub var child_singleton: InternalMsgHolder = .{};
 
-pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     log("sendHelperChild", .{});
 
     const arguments = callframe.arguments(3).ptr;
@@ -50,7 +50,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     const ipc_instance = vm.getIPCInstance().?;
 
     const S = struct {
-        fn impl(globalThis_: *JSC.JSGlobalObject, callframe_: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        fn impl(globalThis_: *JSC.JSGlobalObject, callframe_: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments_ = callframe_.arguments(1).slice();
             const ex = arguments_[0];
             Process__emitErrorEvent(globalThis_, ex);
@@ -71,7 +71,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     return .true;
 }
 
-pub fn onInternalMessageChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn onInternalMessageChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     log("onInternalMessageChild", .{});
     const arguments = callframe.arguments(2).ptr;
     child_singleton.worker = JSC.Strong.create(arguments[0], globalThis);
@@ -172,7 +172,7 @@ pub const InternalMsgHolder = struct {
     }
 };
 
-pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     log("sendHelperPrimary", .{});
 
     const arguments = callframe.arguments(4).ptr;
@@ -208,7 +208,7 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     return .true;
 }
 
-pub fn onInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn onInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(3).ptr;
     const subprocess = arguments[0].as(bun.JSC.Subprocess).?;
     const ipc_data = subprocess.ipc() orelse return .undefined;
@@ -252,7 +252,7 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
 
 extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
 
-pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1).ptr;
 
     if (arguments.len == 0) {

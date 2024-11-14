@@ -878,7 +878,7 @@ pub fn scan(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
     const arguments = callframe.arguments(3);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
@@ -899,7 +899,7 @@ pub fn scan(
     const loader: ?Loader = brk: {
         if (args.next()) |arg| {
             args.eat();
-            break :brk Loader.fromJS(globalThis, arg) catch return .zero;
+            break :brk try Loader.fromJS(globalThis, arg);
         }
 
         break :brk null;
@@ -959,7 +959,7 @@ pub fn transform(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
     const arguments = callframe.arguments(3);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
@@ -979,7 +979,7 @@ pub fn transform(
     const loader: ?Loader = brk: {
         if (args.next()) |arg| {
             args.eat();
-            break :brk Loader.fromJS(globalThis, arg) catch return .zero;
+            break :brk try Loader.fromJS(globalThis, arg);
         }
 
         break :brk null;
@@ -1008,7 +1008,7 @@ pub fn transformSync(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
     const arguments = callframe.arguments(3);
 
@@ -1036,7 +1036,7 @@ pub fn transformSync(
         if (args.next()) |arg| {
             args.eat();
             if (arg.isNumber() or arg.isString()) {
-                break :brk Loader.fromJS(globalThis, arg) catch return .zero;
+                break :brk try Loader.fromJS(globalThis, arg);
             }
 
             if (arg.isObject()) {
@@ -1185,7 +1185,7 @@ pub fn scanImports(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(2);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.deinit();
@@ -1207,7 +1207,7 @@ pub fn scanImports(
 
     var loader: Loader = this.transpiler_options.default_loader;
     if (args.next()) |arg| {
-        if (Loader.fromJS(globalThis, arg) catch return .zero) |_loader| {
+        if (try Loader.fromJS(globalThis, arg)) |_loader| {
             loader = _loader;
         }
         args.eat();

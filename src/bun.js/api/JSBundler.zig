@@ -607,7 +607,7 @@ pub const JSBundler = struct {
     pub fn buildFn(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(1);
         return build(globalThis, arguments.slice());
     }
@@ -1166,7 +1166,7 @@ pub const BuildArtifact = struct {
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return @call(bun.callmod_inline, Blob.getText, .{ &this.blob, globalThis, callframe });
     }
 
@@ -1174,21 +1174,21 @@ pub const BuildArtifact = struct {
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return @call(bun.callmod_inline, Blob.getJSON, .{ &this.blob, globalThis, callframe });
     }
     pub fn getArrayBuffer(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return @call(bun.callmod_inline, Blob.getArrayBuffer, .{ &this.blob, globalThis, callframe });
     }
     pub fn getSlice(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return @call(bun.callmod_inline, Blob.getSlice, .{ &this.blob, globalThis, callframe });
     }
     pub fn getType(
@@ -1202,7 +1202,7 @@ pub const BuildArtifact = struct {
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return @call(bun.callmod_inline, Blob.getStream, .{
             &this.blob,
             globalThis,

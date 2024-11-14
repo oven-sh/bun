@@ -17,15 +17,15 @@ const TestKind = enum {
     prefix,
 };
 
-pub fn minifyTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn minifyTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     return testingImpl(globalThis, callframe, .minify);
 }
 
-pub fn prefixTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn prefixTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     return testingImpl(globalThis, callframe, .prefix);
 }
 
-pub fn testWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn testWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     return testingImpl(globalThis, callframe, .normal);
 }
 
@@ -195,7 +195,7 @@ fn targetsFromJS(globalThis: *JSC.JSGlobalObject, jsobj: JSValue) bun.css.target
     return targets;
 }
 
-pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     var arena = arena_ orelse brk: {
         break :brk Arena.init() catch @panic("oopsie arena no good");
     };

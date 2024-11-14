@@ -219,7 +219,7 @@ pub const UpgradedDuplex = struct {
     fn onReceivedData(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         log("onReceivedData", .{});
 
         const function = callframe.callee();
@@ -269,7 +269,7 @@ pub const UpgradedDuplex = struct {
     fn onWritable(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         log("onWritable", .{});
 
         _ = globalObject;
@@ -291,7 +291,7 @@ pub const UpgradedDuplex = struct {
     fn onCloseJS(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         log("onCloseJS", .{});
 
         _ = globalObject;

@@ -52,11 +52,11 @@ pub const UserOptions = struct {
             bun.getcwdAlloc(alloc) catch |err| switch (err) {
                 error.OutOfMemory => {
                     global.throwOutOfMemory();
-                    return global.jsErrorFromCPP();
+                    return error.JSError;
                 },
                 else => {
                     global.throwError(err, "while querying current working directory");
-                    return global.jsErrorFromCPP();
+                    return error.JSError;
                 },
             };
 
@@ -104,9 +104,10 @@ const BuildConfigSubset = struct {
 
 /// Temporary function to invoke dev server via JavaScript. Will be
 /// replaced with a user-facing API. Refs the event loop forever.
-pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
+pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     _ = global;
     _ = callframe;
+
     if (!bun.FeatureFlags.bake) return .undefined;
 
     bun.Output.errGeneric(
@@ -562,7 +563,7 @@ fn getOptionalString(
 
 export fn Bun__getTemporaryDevServer(global: *JSC.JSGlobalObject) JSValue {
     if (!bun.FeatureFlags.bake) return .undefined;
-    return JSC.JSFunction.create(global, "wipDevServer", bun.JSC.toJSHostFunction(jsWipDevServer), 0, .{});
+    return JSC.JSFunction.create(global, "wipDevServer", jsWipDevServer, 0, .{});
 }
 
 pub inline fn getHmrRuntime(side: Side) [:0]const u8 {

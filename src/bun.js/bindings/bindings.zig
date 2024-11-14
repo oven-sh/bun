@@ -2911,7 +2911,7 @@ pub const JSFunction = extern struct {
     pub fn create(
         global: *JSGlobalObject,
         fn_name: anytype,
-        comptime implementation: JSHostFunctionType,
+        comptime implementation: JSHostZigFunction,
         function_length: u32,
         options: CreateJSFunctionOptions,
     ) JSValue {
@@ -2921,7 +2921,7 @@ pub const JSFunction = extern struct {
                 bun.String => fn_name,
                 else => bun.String.init(fn_name),
             },
-            implementation,
+            toJSHostFunction(implementation),
             function_length,
             options.implementation_visibility,
             options.intrinsic,
@@ -3010,19 +3010,6 @@ pub const JSGlobalObject = opaque {
             else => @compileError("implement this message"),
         }
         return .zero;
-    }
-
-    /// This is a wrapper around just returning JSError
-    ///
-    /// The intent is for writing C++ bindings where null or some other value is
-    /// returned in the exception case. In a debug build, this asserts that such
-    /// exception is actually present, or else this will leak a .zero into
-    /// JS-land.
-    pub fn jsErrorFromCPP(global: *JSGlobalObject) JSError {
-        if (bun.Environment.isDebug) {
-            bun.assert(global.hasException());
-        }
-        return JSError.JSError;
     }
 
     /// Pass a JSOrMemoryError!JSValue and variants through the C ABI boundary
@@ -3456,6 +3443,7 @@ pub const JSGlobalObject = opaque {
     pub fn takeException(this: *JSGlobalObject, proof: bun.JSError) JSValue {
         switch (proof) {
             error.JSError => {},
+            error.OutOfMemory => this.throwOutOfMemory(),
         }
 
         return this.tryTakeException() orelse {
@@ -3685,7 +3673,7 @@ pub const JSGlobalObject = opaque {
     extern fn JSGlobalObject__throwTerminationException(this: *JSGlobalObject) void;
 };
 
-pub const JSNativeFn = JSHostFunctionPtr;
+pub const JSNativeFn = JSHostZigFunction;
 
 pub const JSArrayIterator = struct {
     i: u32 = 0,
@@ -5404,7 +5392,10 @@ pub const JSValue = enum(i64) {
 
         fn unwrap(value: GetResult, global: *JSGlobalObject) JSError!?JSValue {
             return switch (value) {
-                .thrown_exception => global.jsErrorFromCPP(),
+                .thrown_exception => {
+                    bun.assert(global.hasException());
+                    return error.JSError;
+                },
                 .does_not_exist => null,
                 else => @enumFromInt(@intFromEnum(value)),
             };
@@ -5429,6 +5420,10 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn _then(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: JSNativeFn, reject: JSNativeFn) void {
+        return cppFn("_then", .{ this, global, ctx, toJSHostFunction(resolve), toJSHostFunction(reject) });
+    }
+
+    pub fn _then2(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: JSHostFunctionType, reject: JSHostFunctionType) void {
         return cppFn("_then", .{ this, global, ctx, resolve, reject });
     }
 
@@ -6849,28 +6844,28 @@ pub const EncodedJSValue = extern union {
 pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(JSC.conv) JSValue;
 pub const JSHostFunctionTypeWithCCallConvForAssertions = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
 pub const JSHostFunctionPtr = *const JSHostFunctionType;
+pub const JSHostZigFunction = fn (*JSGlobalObject, *CallFrame) bun.JSError!JSValue;
 
-/// Wraps a Zig `fn (*JSGlobalObject, *CallFrame) !JSValue` into the proper JSC
-/// host function type, adding handling for Zig error types and setting the
-/// correct calling convention on Windows.
-pub fn toJSHostFunction(comptime function_ptr: anytype) JSC.JSHostFunctionType {
-    const function = if (@typeInfo(@TypeOf(function_ptr)) == .Pointer) function_ptr.* else function_ptr;
-
-    // Do not wrap twice
-    if (@TypeOf(function) == JSHostFunctionType) {
-        return function;
-    }
-
-    // only operate on unspecified calling conventions. the code is going to be
-    // inlined anyways
-    const fn_type = @typeInfo(@TypeOf(function)).Fn;
-    bun.assert(fn_type.calling_convention == .Unspecified);
-
+pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunctionType {
     return struct {
-        pub fn wrapper(global: *JSGlobalObject, callframe: *CallFrame) callconv(JSC.conv) JSValue {
-            return global.errorUnionToCPP(@call(.always_inline, function_ptr, .{ global, callframe }));
+        pub fn function(
+            globalThis: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(JSC.conv) JSC.JSValue {
+            return @call(.always_inline, Function, .{ globalThis, callframe }) catch |err| switch (err) {
+                error.JSError => .zero,
+                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+            };
         }
-    }.wrapper;
+    }.function;
+}
+
+// XXX: temporary
+pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!JSValue) JSValue {
+    return value catch |err| switch (err) {
+        error.JSError => .zero,
+        error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+    };
 }
 
 const ParsedHostFunctionErrorSet = struct {
@@ -6954,6 +6949,9 @@ pub fn NewFunction(
     comptime functionPointer: anytype,
     strong: bool,
 ) JSValue {
+    if (@TypeOf(functionPointer) == JSC.JSHostFunctionType) {
+        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, strong, false);
+    }
     return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false);
 }
 
@@ -6963,6 +6961,9 @@ pub fn createCallback(
     argCount: u32,
     comptime functionPointer: anytype,
 ) JSValue {
+    if (@TypeOf(functionPointer) == JSC.JSHostFunctionType) {
+        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, false, false);
+    }
     return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false);
 }
 
@@ -6992,7 +6993,7 @@ pub fn NewFunctionWithData(
     globalObject: *JSGlobalObject,
     symbolName: ?*const ZigString,
     argCount: u32,
-    comptime functionPointer: anytype,
+    comptime functionPointer: JSC.JSHostZigFunction,
     strong: bool,
     data: *anyopaque,
 ) JSValue {

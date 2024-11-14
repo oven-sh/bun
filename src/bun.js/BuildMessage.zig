@@ -81,7 +81,7 @@ pub const BuildMessage = struct {
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return this.toStringFn(globalThis);
     }
 
@@ -89,7 +89,7 @@ pub const BuildMessage = struct {
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const args_ = callframe.arguments(1);
         const args = args_.ptr[0..args_.len];
         if (args.len > 0) {
@@ -110,7 +110,7 @@ pub const BuildMessage = struct {
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         var object = JSC.JSValue.createEmptyObject(globalThis, 4);
         object.put(globalThis, ZigString.static("name"), bun.String.static("BuildMessage").toJS(globalThis));
         object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));

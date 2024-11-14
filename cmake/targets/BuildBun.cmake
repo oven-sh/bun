@@ -760,7 +760,7 @@ if(NOT WIN32)
   if(DEBUG)
     # TODO: this shouldn't be necessary long term
     if (NOT ABI STREQUAL "musl")
-      set(ABI_PUBLIC_FLAGS
+      target_compile_options(${bun} PUBLIC
         -fsanitize=null
         -fsanitize-recover=all
         -fsanitize=bounds
@@ -771,13 +771,8 @@ if(NOT WIN32)
         -fsanitize=returns-nonnull-attribute
         -fsanitize=unreachable
       )
-      set(ABI_PRIVATE_FLAGS
+      target_link_libraries(${bun} PRIVATE
         -fsanitize=null
-      )
-    else()
-      set(ABI_PUBLIC_FLAGS
-      )
-      set(ABI_PRIVATE_FLAGS
       )
     endif()
 
@@ -796,10 +791,6 @@ if(NOT WIN32)
       -Wno-unused-function
       -Wno-nullability-completeness
       -Werror
-      ${ABI_PUBLIC_FLAGS}
-    )
-    target_link_libraries(${bun} PRIVATE
-      ${ABI_PRIVATE_FLAGS}
     )
   else()
     # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
@@ -855,13 +846,13 @@ elseif(APPLE)
     -Wl,-map,${bun}.linker-map
   )
 else()
-  if (ARCH STREQUAL "aarch64")
-    set(ARCH_WRAP_FLAGS
+  if(ARCH STREQUAL "aarch64")
+    target_link_options(${bun} PUBLIC
       -Wl,--wrap=fcntl64
       -Wl,--wrap=statx
     )
   elseif(ARCH STREQUAL "x64")
-    set(ARCH_WRAP_FLAGS
+    target_link_options(${bun} PUBLIC
       -Wl,--wrap=fcntl
       -Wl,--wrap=fcntl64
       -Wl,--wrap=fstat
@@ -877,13 +868,9 @@ else()
       -Wl,--wrap=statx
     )
   endif()
-  else()
-    set(ARCH_WRAP_FLAGS
-    )
-  endif()
 
-  if (NOT ABI STREQUAL "musl")
-    set(ABI_WRAP_FLAGS
+  if(NOT ABI STREQUAL "musl")
+    target_link_options(${bun} PUBLIC
       -Wl,--wrap=cosf
       -Wl,--wrap=exp
       -Wl,--wrap=expf
@@ -900,9 +887,6 @@ else()
       -Wl,--wrap=sinf
       -Wl,--wrap=tanf
     )
-  else()
-    set(ABI_WRAP_FLAGS
-    )
   endif()
 
   target_link_options(${bun} PUBLIC
@@ -915,8 +899,6 @@ else()
     -Wl,--as-needed
     -Wl,--gc-sections
     -Wl,-z,stack-size=12800000
-    ${ARCH_WRAP_FLAGS}
-    ${ABI_WRAP_FLAGS}
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro

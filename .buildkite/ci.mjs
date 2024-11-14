@@ -378,7 +378,6 @@ function getPipeline(options) {
     return {
       key: `${getTargetKey(target)}-build-zig`,
       label: `${getTargetLabel(target)} - build-zig`,
-      depends_on,
       agents: getZigAgent(target),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),

@@ -1134,11 +1134,33 @@ export async function getLastSuccessfulBuild() {
 }
 
 /**
+ * @param {string} filename
+ * @param {string} [cwd]
+ */
+export async function uploadArtifact(filename, cwd) {
+  if (isBuildkite) {
+    const relativePath = relative(cwd ?? process.cwd(), filename);
+    await spawnSafe(["buildkite-agent", "artifact", "upload", relativePath], { cwd, stdio: "inherit" });
+  }
+}
+
+/**
  * @param {string} string
  * @returns {string}
  */
 export function stripAnsi(string) {
   return string.replace(/\u001b\[\d+m/g, "");
+}
+
+/**
+ * @param {string} string
+ * @returns {string}
+ */
+export function escapeYaml(string) {
+  if (/[:"{}[\],&*#?|\-<>=!%@`]/.test(string)) {
+    return `"${string.replace(/"/g, '\\"')}"`;
+  }
+  return string;
 }
 
 /**
@@ -1943,6 +1965,59 @@ export function getGithubApiUrl() {
  */
 export function getGithubUrl() {
   return new URL(getEnv("GITHUB_SERVER_URL", false) || "https://github.com");
+}
+
+/**
+ * @param {unknown} object
+ * @param {number} [depth]
+ * @returns {string}
+ */
+export function toYaml(object, depth = 0) {
+  const indent = (value, d = depth) => {
+    return " ".repeat(d * 2) + `${value}`;
+  };
+
+  if (typeof object === "number" || typeof object === "boolean" || object === null) {
+    return indent(object);
+  }
+
+  if (typeof object === "string") {
+    if (/[\n\r]/.test(object)) {
+      const prefix = indent("|\n");
+      const block = object
+        .split(/[\n\r]/)
+        .map(line => indent(line, depth + 1))
+        .join("\n");
+      return prefix + block;
+    }
+
+    return escapeYaml(object);
+  }
+
+  if (Array.isArray(object)) {
+    if (object.length === 0) {
+      return indent("[]");
+    }
+    return object.map(item => indent("- ") + toYaml(item, depth + 1).substring((depth + 1) * 2)).join("\n");
+  }
+
+  if (typeof object === "object") {
+    if (Object.keys(object).length === 0) {
+      return indent("{}");
+    }
+    return Object.entries(object)
+      .map(([key, value]) => {
+        const string = toYaml(value, depth + 1);
+        return (
+          indent(`${escapeYaml(key)}:`) +
+          (string.startsWith(" ".repeat((depth + 1) * 2)) ? "" : " ") +
+          string.substring(depth * 2)
+        );
+      })
+      .join("\n");
+  }
+
+  return "";
 }
 
 /**

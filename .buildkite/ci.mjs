@@ -24,6 +24,8 @@ import {
   isMergeQueue,
   printEnvironment,
   spawnSafe,
+  toYaml,
+  uploadArtifact,
 } from "../scripts/utils.mjs";
 
 /**
@@ -270,10 +272,10 @@ function getPipeline(options) {
    */
   const getZigAgent = target => {
     const { abi, arch } = target;
-    if (abi === "musl") {
-      const instanceType = arch === "aarch64" ? "c8g.large" : "c7i.large";
-      return getEmphemeralAgent("v2", target, instanceType);
-    }
+    // if (abi === "musl") {
+    //   const instanceType = arch === "aarch64" ? "c8g.large" : "c7i.large";
+    //   return getEmphemeralAgent("v2", target, instanceType);
+    // }
     return {
       queue: "build-zig",
     };
@@ -572,59 +574,6 @@ function getPipeline(options) {
   };
 }
 
-/**
- * @param {object} obj
- * @param {number} indent
- * @returns {string}
- */
-function toYaml(obj, indent = 0) {
-  const spaces = " ".repeat(indent);
-  let result = "";
-
-  for (const [key, value] of Object.entries(obj)) {
-    if (value === undefined) {
-      continue;
-    }
-
-    if (value === null) {
-      result += `${spaces}${key}: null\n`;
-      continue;
-    }
-
-    if (Array.isArray(value)) {
-      result += `${spaces}${key}:\n`;
-      value.forEach(item => {
-        if (typeof item === "object" && item !== null) {
-          result += `${spaces}- \n${toYaml(item, indent + 2)
-            .split("\n")
-            .map(line => `${spaces}  ${line}`)
-            .join("\n")}\n`;
-        } else {
-          result += `${spaces}- ${item}\n`;
-        }
-      });
-      continue;
-    }
-
-    if (typeof value === "object") {
-      result += `${spaces}${key}:\n${toYaml(value, indent + 2)}`;
-      continue;
-    }
-
-    if (
-      typeof value === "string" &&
-      (value.includes(":") || value.includes("#") || value.includes("'") || value.includes('"') || value.includes("\n"))
-    ) {
-      result += `${spaces}${key}: "${value.replace(/"/g, '\\"')}"\n`;
-      continue;
-    }
-
-    result += `${spaces}${key}: ${value}\n`;
-  }
-
-  return result;
-}
-
 async function main() {
   printEnvironment();
 
@@ -738,9 +687,11 @@ async function main() {
   writeFileSync(contentPath, content);
 
   console.log("Generated pipeline:");
-  console.log(" - Content:", content);
   console.log(" - Path:", contentPath);
   console.log(" - Size:", (content.length / 1024).toFixed(), "KB");
+  if (isBuildkite) {
+    await uploadArtifact(contentPath);
+  }
 
   if (isBuildkite) {
     console.log("Setting canary revision...");

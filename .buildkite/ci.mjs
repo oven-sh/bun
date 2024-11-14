@@ -542,6 +542,11 @@ function getPipeline(options) {
     { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
   ];
 
+  /**
+   * @type {Map<string, Platform>}
+   */
+  const imagePlatforms = new Map();
+
   return {
     priority: getPriority(),
     steps: [
@@ -558,8 +563,9 @@ function getPipeline(options) {
         /** @type {Step[]} */
         const steps = [];
 
-        if (buildImages && !steps.some(({ key }) => key === `${getImageKey(platform)}-build-image`)) {
+        if (buildImages && !imagePlatforms.has(getImageKey(platform))) {
           steps.push(getBuildImageStep(platform));
+          imagePlatforms.set(getImageKey(platform), platform);
         }
 
         if (buildImages || !buildId) {

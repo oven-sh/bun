@@ -17493,6 +17493,31 @@ fn NewParser_(
                         p.handleReactRefreshHookCall(e_, original_name);
                     }
 
+                    // Implement constant folding for 'string'.charCodeAt(n)
+                    if (e_.args.len == 1) if (e_.target.data.as(.e_dot)) |dot| {
+                        if (dot.target.data == .e_string and
+                            dot.target.data.e_string.isUTF8() and
+                            bun.strings.eqlComptime(dot.name, "charCodeAt"))
+                        {
+                            const str = dot.target.data.e_string.data;
+                            const arg1 = e_.args.at(0).unwrapInlined();
+                            if (arg1.data == .e_number) {
+                                const float = arg1.data.e_number.value;
+                                if (@mod(float, 1) == 0 and
+                                    float < @as(f64, @floatFromInt(str.len)) and
+                                    float >= 0)
+                                {
+                                    const char = str[@intFromFloat(float)];
+                                    if (char < 0x80) {
+                                        return p.newExpr(E.Number{
+                                            .value = @floatFromInt(char),
+                                        }, expr.loc);
+                                    }
+                                }
+                            }
+                        }
+                    };
+
                     return expr;
                 },
                 .e_new => |e_| {

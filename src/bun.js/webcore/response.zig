@@ -260,7 +260,7 @@ pub const Response = struct {
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const this_value = callframe.this();
         const cloned = this.clone(globalThis);
         if (globalThis.hasException()) {
@@ -363,7 +363,7 @@ pub const Response = struct {
     pub fn constructJSON(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args_list = callframe.arguments(2);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
@@ -431,7 +431,7 @@ pub const Response = struct {
     pub fn constructRedirect(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         var args_list = callframe.arguments(4);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
@@ -493,7 +493,7 @@ pub const Response = struct {
     pub fn constructError(
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const response = bun.new(
             Response,
             Response{
@@ -797,13 +797,6 @@ pub const Fetch = struct {
         );
         break :brk errors;
     };
-
-    comptime {
-        if (!JSC.is_bindgen) {
-            _ = Bun__fetch;
-            _ = Bun__fetchPreconnect;
-        }
-    }
 
     pub const FetchTasklet = struct {
         const log = Output.scoped(.FetchTasklet, false);
@@ -1926,10 +1919,14 @@ pub const Fetch = struct {
         return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
     }
 
-    pub export fn Bun__fetchPreconnect(
+    comptime {
+        const Bun__fetchPreconnect = JSC.toJSHostFunction(Bun__fetchPreconnect_);
+        @export(Bun__fetchPreconnect, .{ .name = "Bun__fetchPreconnect" });
+    }
+    pub fn Bun__fetchPreconnect_(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(1).slice();
 
         if (arguments.len < 1) {
@@ -1991,10 +1988,14 @@ pub const Fetch = struct {
         }
     };
 
-    pub export fn Bun__fetch(
+    comptime {
+        const Bun__fetch = JSC.toJSHostFunction(Bun__fetch_);
+        @export(Bun__fetch, .{ .name = "Bun__fetch" });
+    }
+    pub fn Bun__fetch_(
         ctx: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
         const globalThis = ctx.ptr();
         const arguments = callframe.arguments(2);

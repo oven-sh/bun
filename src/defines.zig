@@ -66,6 +66,13 @@ pub const DefineData = struct {
         };
     }
 
+    pub fn initStaticString(str: *const js_ast.E.String) DefineData {
+        return .{
+            .value = .{ .e_string = @constCast(str) },
+            .can_be_removed_if_unused = true,
+        };
+    }
+
     pub fn merge(a: DefineData, b: DefineData) DefineData {
         return DefineData{
             .value = b.value,

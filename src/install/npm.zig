@@ -652,7 +652,7 @@ pub const OperatingSystem = enum(u16) {
     }
 
     const JSC = bun.JSC;
-    pub fn jsFunctionOperatingSystemIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    pub fn jsFunctionOperatingSystemIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callframe.arguments(1);
         var operating_system = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
@@ -694,7 +694,7 @@ pub const Libc = enum(u8) {
     pub const current: Libc = @intFromEnum(glibc);
 
     const JSC = bun.JSC;
-    pub fn jsFunctionLibcIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    pub fn jsFunctionLibcIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callframe.arguments(1);
         var libc = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
@@ -769,7 +769,7 @@ pub const Architecture = enum(u16) {
     }
 
     const JSC = bun.JSC;
-    pub fn jsFunctionArchitectureIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    pub fn jsFunctionArchitectureIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callframe.arguments(1);
         var architecture = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
@@ -1283,7 +1283,7 @@ pub const PackageManifest = struct {
             return obj;
         }
 
-        pub fn jsParseManifest(global: *JSGlobalObject, callFrame: *CallFrame) JSValue {
+        pub fn jsParseManifest(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
             const args = callFrame.arguments(2).slice();
             if (args.len < 2 or !args[0].isString() or !args[1].isString()) {
                 global.throw("expected manifest filename and registry string arguments", .{});

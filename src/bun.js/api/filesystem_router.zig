@@ -211,7 +211,7 @@ pub const FileSystemRouter = struct {
         return fs_router;
     }
 
-    pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
 
         var arena = globalThis.allocator().create(bun.ArenaAllocator) catch unreachable;
@@ -259,7 +259,7 @@ pub const FileSystemRouter = struct {
         return this_value;
     }
 
-    pub fn match(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn match(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const argument_ = callframe.arguments(2);
         if (argument_.len == 0) {
             globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
@@ -531,11 +531,10 @@ pub const MatchedRoute = struct {
                         for (entry.values, 0..) |value, i| {
                             values[i] = ZigString.init(value).withEncoding();
                         }
-                        obj.putRecord(global, &str, values.ptr, values.len);
+                        obj.putRecord(global, &str, values);
                     } else {
                         query_string_value_refs_buf[0] = ZigString.init(entry.values[0]).withEncoding();
-
-                        obj.putRecord(global, &str, &query_string_value_refs_buf, 1);
+                        obj.putRecord(global, &str, query_string_value_refs_buf[0..1]);
                     }
                 }
             }

@@ -3090,9 +3090,7 @@ fn NewPrinter(
             }
         }
 
-        pub inline fn printDotThenSuffix(
-            p: *Printer,
-        ) void {
+        pub inline fn printDotThenSuffix(p: *Printer) void {
             p.print(")");
         }
 

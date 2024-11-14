@@ -763,7 +763,7 @@ pub const Version = struct {
             return .npm;
         }
 
-        pub fn inferFromJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+        pub fn inferFromJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments(1).slice();
             if (arguments.len == 0 or !arguments[0].isString()) {
                 return .undefined;
@@ -1234,7 +1234,7 @@ pub fn parseWithTag(
     }
 }
 
-pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(2).slice();
     if (arguments.len == 1) {
         return bun.install.PackageManager.UpdateRequest.fromJS(globalThis, arguments[0]);

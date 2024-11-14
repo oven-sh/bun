@@ -1748,11 +1748,11 @@ pub const Arguments = struct {
                         if (next_val.isCallable(ctx.vm())) break :brk false;
                         arguments.eat();
 
-                        if (try next_val.getOptional(ctx, "throwIfNoEntry", bool)) |throw_if_no_entry_val| {
+                        if (try next_val.getBooleanStrict(ctx, "throwIfNoEntry")) |throw_if_no_entry_val| {
                             throw_if_no_entry = throw_if_no_entry_val;
                         }
 
-                        if (try next_val.getOptional(ctx, "bigint", bool)) |big_int| {
+                        if (try next_val.getBooleanStrict(ctx, "bigint")) |big_int| {
                             break :brk big_int;
                         }
                     }
@@ -1787,7 +1787,7 @@ pub const Arguments = struct {
                         if (next_val.isCallable(ctx.vm())) break :brk false;
                         arguments.eat();
 
-                        if (try next_val.getOptional(ctx, "bigint", bool)) |big_int| {
+                        if (try next_val.getBooleanStrict(ctx, "bigint")) |big_int| {
                             break :brk big_int;
                         }
                     }
@@ -2076,11 +2076,11 @@ pub const Arguments = struct {
                 arguments.eat();
 
                 if (val.isObject()) {
-                    if (try val.getOptional(ctx, "recursive", bool)) |boolean| {
+                    if (try val.getBooleanStrict(ctx, "recursive")) |boolean| {
                         recursive = boolean;
                     }
 
-                    if (try val.getOptional(ctx, "force", bool)) |boolean| {
+                    if (try val.getBooleanStrict(ctx, "force")) |boolean| {
                         force = boolean;
                     }
                 }
@@ -2134,7 +2134,7 @@ pub const Arguments = struct {
                 arguments.eat();
 
                 if (val.isObject()) {
-                    if (try val.getOptional(ctx, "recursive", bool)) |boolean| {
+                    if (try val.getBooleanStrict(ctx, "recursive")) |boolean| {
                         recursive = boolean;
                     }
 
@@ -2256,11 +2256,11 @@ pub const Arguments = struct {
                         if (val.isObject()) {
                             encoding = try getEncoding(val, ctx, encoding);
 
-                            if (try val.getOptional(ctx, "recursive", bool)) |recursive_| {
+                            if (try val.getBooleanStrict(ctx, "recursive")) |recursive_| {
                                 recursive = recursive_;
                             }
 
-                            if (try val.getOptional(ctx, "withFileTypes", bool)) |with_file_types_| {
+                            if (try val.getBooleanStrict(ctx, "withFileTypes")) |with_file_types_| {
                                 with_file_types = with_file_types_;
                             }
                         }

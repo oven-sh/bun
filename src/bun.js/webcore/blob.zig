@@ -364,7 +364,7 @@ pub const Blob = struct {
             },
         };
 
-        _onStructuredCloneSerialize(this, Writer, writer) catch return .zero;
+        try _onStructuredCloneSerialize(this, Writer, writer);
     }
 
     pub fn onStructuredCloneTransfer(
@@ -520,7 +520,16 @@ pub const Blob = struct {
         var buffer_stream = std.io.fixedBufferStream(ptr[0..total_length]);
         const reader = buffer_stream.reader();
 
-        return _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch return .zero;
+        return _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch |err| switch (err) {
+            error.EndOfStream, error.TooSmall, error.InvalidValue => {
+                globalThis.throw("Blob.onStructuredCloneDeserialize failed", .{});
+                return .zero;
+            },
+            error.OutOfMemory => {
+                globalThis.throwOutOfMemory();
+                return .zero;
+            },
+        };
     }
 
     const URLSearchParamsConverter = struct {
@@ -946,8 +955,7 @@ pub const Blob = struct {
         } else if (destination_type == .bytes and source_type == .file) {
             var fake_call_frame: [8]JSC.JSValue = undefined;
             @memset(@as([*]u8, @ptrCast(&fake_call_frame))[0..@sizeOf(@TypeOf(fake_call_frame))], 0);
-            const blob_value =
-                source_blob.getSlice(ctx, @as(*JSC.CallFrame, @ptrCast(&fake_call_frame)));
+            const blob_value = source_blob.getSlice(ctx, @as(*JSC.CallFrame, @ptrCast(&fake_call_frame))) catch .zero; // TODO:
 
             return JSPromise.resolvedPromiseValue(
                 ctx.ptr(),
@@ -961,13 +969,13 @@ pub const Blob = struct {
     pub fn writeFile(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(3).slice();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
 
         // accept a path or a blob
-        var path_or_blob = (PathOrBlob.fromJSNoCopy(globalThis, &args) catch return .zero) orelse {
+        var path_or_blob = (try PathOrBlob.fromJSNoCopy(globalThis, &args)) orelse {
             globalThis.throwInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{});
             return .zero;
         };
@@ -1552,13 +1560,13 @@ pub const Blob = struct {
     pub fn constructBunFile(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         var vm = globalObject.bunVM();
         const arguments = callframe.arguments(2).slice();
         var args = JSC.Node.ArgumentsSlice.init(vm, arguments);
         defer args.deinit();
 
-        var path = (JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator) catch return .zero) orelse {
+        var path = (try JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator)) orelse {
             globalObject.throwInvalidArguments("Expected file path string or file descriptor", .{});
             return .zero;
         };
@@ -3246,7 +3254,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const thisValue = callframe.this();
         if (Blob.streamGetCached(thisValue)) |cached| {
             return cached;
@@ -3289,7 +3297,7 @@ pub const Blob = struct {
     pub fn toStreamWithOffset(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const this = callframe.this().as(Blob) orelse @panic("this is not a Blob");
         const args = callframe.arguments(1).slice();
 
@@ -3313,7 +3321,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return this.getTextClone(globalThis);
     }
 
@@ -3341,7 +3349,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return this.getJSONShare(globalThis);
     }
 
@@ -3379,7 +3387,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return this.getArrayBufferClone(globalThis);
     }
 
@@ -3397,7 +3405,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return this.getBytesClone(globalThis);
     }
 
@@ -3415,7 +3423,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
@@ -3447,7 +3455,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return JSC.JSPromise.resolvedPromiseValue(globalThis, this.getExistsSync());
     }
 
@@ -3455,7 +3463,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         var arguments_ = callframe.arguments(1);
         var arguments = arguments_.ptr[0..arguments_.len];
 
@@ -3594,7 +3602,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const allocator = bun.default_allocator;
         var arguments_ = callframe.arguments(3);
         var args = arguments_.ptr[0..arguments_.len];

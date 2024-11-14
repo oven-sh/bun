@@ -62,7 +62,6 @@ pub const JSBundler = struct {
         jsx: options.JSX.Pragma = .{},
         code_splitting: bool = false,
         minify: Minify = .{},
-        server_components: ServerComponents = ServerComponents{},
         no_macros: bool = false,
         ignore_dce_annotations: bool = false,
         emit_dce_annotations: ?bool = null,
@@ -184,13 +183,11 @@ pub const JSBundler = struct {
                 }
             }
 
-            if (config.getTruthy(globalThis, "macros")) |macros_flag| {
-                if (!macros_flag.coerce(bool, globalThis)) {
-                    this.no_macros = true;
-                }
+            if (try config.getBooleanLoose(globalThis, "macros")) |macros_flag| {
+                this.no_macros = !macros_flag;
             }
 
-            if (try config.getOptional(globalThis, "bytecode", bool)) |bytecode| {
+            if (try config.getBooleanLoose(globalThis, "bytecode")) |bytecode| {
                 this.bytecode = bytecode;
 
                 if (bytecode) {
@@ -256,28 +253,24 @@ pub const JSBundler = struct {
                 }
             }
 
-            // if (try config.getOptional(globalThis, "hot", bool)) |hot| {
-            //     this.hot = hot;
-            // }
-
-            if (try config.getOptional(globalThis, "splitting", bool)) |hot| {
+            if (try config.getBooleanLoose(globalThis, "splitting")) |hot| {
                 this.code_splitting = hot;
             }
 
-            if (config.getTruthy(globalThis, "minify")) |hot| {
-                if (hot.isBoolean()) {
-                    const value = hot.coerce(bool, globalThis);
+            if (config.getTruthy(globalThis, "minify")) |minify| {
+                if (minify.isBoolean()) {
+                    const value = minify.toBoolean();
                     this.minify.whitespace = value;
                     this.minify.syntax = value;
                     this.minify.identifiers = value;
-                } else if (hot.isObject()) {
-                    if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
+                } else if (minify.isObject()) {
+                    if (try minify.getBooleanLoose(globalThis, "whitespace")) |whitespace| {
                         this.minify.whitespace = whitespace;
                     }
-                    if (try hot.getOptional(globalThis, "syntax", bool)) |syntax| {
+                    if (try minify.getBooleanLoose(globalThis, "syntax")) |syntax| {
                         this.minify.syntax = syntax;
                     }
-                    if (try hot.getOptional(globalThis, "identifiers", bool)) |syntax| {
+                    if (try minify.getBooleanLoose(globalThis, "identifiers")) |syntax| {
                         this.minify.identifiers = syntax;
                     }
                 } else {
@@ -301,23 +294,18 @@ pub const JSBundler = struct {
                 return error.JSError;
             }
 
-            if (config.getTruthy(globalThis, "emitDCEAnnotations")) |flag| {
-                if (flag.coerce(bool, globalThis)) {
-                    this.emit_dce_annotations = true;
-                }
+            if (try config.getBooleanLoose(globalThis, "emitDCEAnnotations")) |flag| {
+                this.emit_dce_annotations = flag;
             }
 
-            if (config.getTruthy(globalThis, "ignoreDCEAnnotations")) |flag| {
-                if (flag.coerce(bool, globalThis)) {
-                    this.ignore_dce_annotations = true;
-                }
+            if (try config.getBooleanLoose(globalThis, "ignoreDCEAnnotations")) |flag| {
+                this.ignore_dce_annotations = flag;
             }
 
             if (config.getTruthy(globalThis, "conditions")) |conditions_value| {
                 if (conditions_value.isString()) {
                     var slice = conditions_value.toSliceOrNull(globalThis) orelse {
-                        globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
                     };
                     defer slice.deinit();
                     try this.conditions.insert(slice.slice());
@@ -537,18 +525,6 @@ pub const JSBundler = struct {
             }
         };
 
-        pub const ServerComponents = struct {
-            router: JSC.Strong = .{},
-            client: std.ArrayListUnmanaged(OwnedString) = .{},
-            server: std.ArrayListUnmanaged(OwnedString) = .{},
-
-            pub fn deinit(self: *ServerComponents, allocator: std.mem.Allocator) void {
-                self.router.deinit();
-                self.client.clearAndFree(allocator);
-                self.server.clearAndFree(allocator);
-            }
-        };
-
         pub const Minify = struct {
             whitespace: bool = false,
             identifiers: bool = false,
@@ -572,7 +548,6 @@ pub const JSBundler = struct {
             self.define.deinit();
             self.dir.deinit();
             self.serve.deinit(allocator);
-            self.server_components.deinit(allocator);
             if (self.loaders) |loaders| {
                 for (loaders.extensions) |ext| {
                     bun.default_allocator.free(ext);
@@ -632,7 +607,7 @@ pub const JSBundler = struct {
     pub fn buildFn(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(1);
         return build(globalThis, arguments.slice());
     }
@@ -1191,7 +1166,7 @@ pub const BuildArtifact = struct {
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return @call(bun.callmod_inline, Blob.getText, .{ &this.blob, globalThis, callframe });
     }
 
@@ -1199,21 +1174,21 @@ pub const BuildArtifact = struct {
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return @call(bun.callmod_inline, Blob.getJSON, .{ &this.blob, globalThis, callframe });
     }
     pub fn getArrayBuffer(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return @call(bun.callmod_inline, Blob.getArrayBuffer, .{ &this.blob, globalThis, callframe });
     }
     pub fn getSlice(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return @call(bun.callmod_inline, Blob.getSlice, .{ &this.blob, globalThis, callframe });
     }
     pub fn getType(
@@ -1227,7 +1202,7 @@ pub const BuildArtifact = struct {
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return @call(bun.callmod_inline, Blob.getStream, .{
             &this.blob,
             globalThis,

@@ -2509,8 +2509,8 @@ const TaskCallbackContext = union(enum) {
 const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
 const TaskDependencyQueue = std.HashMapUnmanaged(u64, TaskCallbackList, IdentityContext(u64), 80);
 
-const PreallocatedTaskStore = bun.HiveArray(Task, 512).Fallback;
-const PreallocatedNetworkTasks = bun.HiveArray(NetworkTask, 1024).Fallback;
+const PreallocatedTaskStore = bun.HiveArray(Task, 64).Fallback;
+const PreallocatedNetworkTasks = bun.HiveArray(NetworkTask, 128).Fallback;
 const ResolveTaskQueue = bun.UnboundedQueue(Task, .next);
 
 const ThreadPool = bun.ThreadPool;
@@ -3654,11 +3654,13 @@ pub const PackageManager = struct {
         try this.env.map.putAllocKeyAndValue(this.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
     }
 
+    const Holder = struct {
+        pub var ptr: *PackageManager = undefined;
+    };
+    fn setPackageManagerPointer(ptr: *PackageManager) void {
+        Holder.ptr = ptr;
+    }
     pub fn get() *PackageManager {
-        const Holder = struct {
-            pub var data: PackageManager = undefined;
-            pub const ptr: *PackageManager = &data;
-        };
         return Holder.ptr;
     }
 
@@ -8671,6 +8673,7 @@ pub const PackageManager = struct {
 
         workspace_names.map.deinit();
 
+        setPackageManagerPointer(bun.default_allocator.create(PackageManager) catch bun.outOfMemory());
         const manager = PackageManager.get();
         // var progress = Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
@@ -8800,7 +8803,7 @@ pub const PackageManager = struct {
         }
 
         const cpu_count = bun.getThreadCount();
-
+        setPackageManagerPointer(bun.default_allocator.create(PackageManager) catch bun.outOfMemory());
         const manager = PackageManager.get();
         var root_dir = try Fs.FileSystem.instance.fs.readDirectory(
             Fs.FileSystem.instance.top_level_dir,

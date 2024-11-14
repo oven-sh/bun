@@ -6,7 +6,7 @@ const Command = bun.CLI.Command;
 const Install = bun.install;
 const Bin = Install.Bin;
 const PackageManager = Install.PackageManager;
-const Lockfile = Install.Lockfile;
+const BinaryLockfile = Install.BinaryLockfile;
 const PackageID = Install.PackageID;
 const DependencyID = Install.DependencyID;
 const Behavior = Install.Dependency.Behavior;
@@ -47,7 +47,7 @@ pub const PackCommand = struct {
         // it's possible we will need it for finding
         // workspace versions. This is the only valid lockfile
         // pointer in this file.
-        lockfile: ?*Lockfile,
+        lockfile: ?*BinaryLockfile,
 
         bundled_deps: std.ArrayListUnmanaged(BundledDep) = .{},
 
@@ -101,7 +101,7 @@ pub const PackCommand = struct {
         Output.prettyln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
-        const load_from_disk_result = Lockfile.loadFromCwd(
+        const load_from_disk_result = BinaryLockfile.loadFromCwd(
             manager.allocator,
             manager.log,
             false,
@@ -1896,7 +1896,7 @@ pub const PackCommand = struct {
     /// returns the printed json
     fn editRootPackageJSON(
         allocator: std.mem.Allocator,
-        maybe_lockfile: ?*Lockfile,
+        maybe_lockfile: ?*BinaryLockfile,
         json: *PackageManager.WorkspacePackageJSONCache.MapEntry,
     ) OOM!string {
         for ([_]string{

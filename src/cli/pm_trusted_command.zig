@@ -10,7 +10,7 @@ const PackageID = Install.PackageID;
 const String = @import("../install/semver.zig").String;
 const PackageManager = Install.PackageManager;
 const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
-const Lockfile = Install.Lockfile;
+const BinaryLockfile = Install.BinaryLockfile;
 const Fs = @import("../fs.zig");
 const Global = bun.Global;
 const DependencyID = Install.DependencyID;
@@ -22,8 +22,8 @@ const Output = bun.Output;
 
 pub const DefaultTrustedCommand = struct {
     pub fn exec() !void {
-        Output.print("Default trusted dependencies ({d}):\n", .{Lockfile.default_trusted_dependencies_list.len});
-        for (Lockfile.default_trusted_dependencies_list) |name| {
+        Output.print("Default trusted dependencies ({d}):\n", .{BinaryLockfile.default_trusted_dependencies_list.len});
+        for (BinaryLockfile.default_trusted_dependencies_list) |name| {
             Output.pretty(" <d>-<r> {s}\n", .{name});
         }
 
@@ -37,13 +37,13 @@ pub const UntrustedCommand = struct {
         Output.prettyError("<r><b>bun pm untrusted <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n\n", .{});
         Output.flush();
 
-        const load_lockfile = Lockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+        const load_lockfile = BinaryLockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
         var lockfile = PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, &pm.options);
         lockfile.updateLockfileIfNeeded(load_lockfile);
 
         const packages = lockfile.packages.slice();
-        const metas: []Lockfile.Package.Meta = packages.items(.meta);
-        const scripts: []Lockfile.Package.Scripts = packages.items(.scripts);
+        const metas: []BinaryLockfile.Package.Meta = packages.items(.meta);
+        const scripts: []BinaryLockfile.Package.Scripts = packages.items(.scripts);
         const resolutions: []Install.Resolution = packages.items(.resolution);
         const buf = lockfile.buffers.string_bytes.items;
 
@@ -71,10 +71,10 @@ pub const UntrustedCommand = struct {
             return;
         }
 
-        var untrusted_deps: std.AutoArrayHashMapUnmanaged(DependencyID, Lockfile.Package.Scripts.List) = .{};
+        var untrusted_deps: std.AutoArrayHashMapUnmanaged(DependencyID, BinaryLockfile.Package.Scripts.List) = .{};
         defer untrusted_deps.deinit(ctx.allocator);
 
-        var tree_iterator = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
+        var tree_iterator = BinaryLockfile.Tree.Iterator(.node_modules).init(lockfile);
 
         const top_level_without_trailing_slash = strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir);
         var abs_node_modules_path: std.ArrayListUnmanaged(u8) = .{};
@@ -187,7 +187,7 @@ pub const TrustCommand = struct {
 
         if (args.len == 2) errorExpectedArgs();
 
-        const load_lockfile = Lockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+        const load_lockfile = BinaryLockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
         var lockfile = PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, &pm.options);
         lockfile.updateLockfileIfNeeded(load_lockfile);
 
@@ -203,9 +203,9 @@ pub const TrustCommand = struct {
 
         const buf = lockfile.buffers.string_bytes.items;
         const packages = lockfile.packages.slice();
-        const metas: []Lockfile.Package.Meta = packages.items(.meta);
+        const metas: []BinaryLockfile.Package.Meta = packages.items(.meta);
         const resolutions: []Install.Resolution = packages.items(.resolution);
-        const scripts: []Lockfile.Package.Scripts = packages.items(.scripts);
+        const scripts: []BinaryLockfile.Package.Scripts = packages.items(.scripts);
 
         var untrusted_dep_ids: DepIdSet = .{};
         defer untrusted_dep_ids.deinit(ctx.allocator);
@@ -231,7 +231,7 @@ pub const TrustCommand = struct {
         // Instead of running them right away, we group scripts by depth in the node_modules
         // file structure, then run them starting at max depth. This ensures lifecycle scripts are run
         // in the correct order as they would during a normal install
-        var tree_iter = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
+        var tree_iter = BinaryLockfile.Tree.Iterator(.node_modules).init(lockfile);
 
         const top_level_without_trailing_slash = strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir);
         var abs_node_modules_path: std.ArrayListUnmanaged(u8) = .{};
@@ -242,7 +242,7 @@ pub const TrustCommand = struct {
         var package_names_to_add: bun.StringArrayHashMapUnmanaged(void) = .{};
         var scripts_at_depth: std.AutoArrayHashMapUnmanaged(usize, std.ArrayListUnmanaged(struct {
             package_id: PackageID,
-            scripts_list: Lockfile.Package.Scripts.List,
+            scripts_list: BinaryLockfile.Package.Scripts.List,
             skip: bool,
         })) = .{};
 
@@ -423,7 +423,7 @@ pub const TrustCommand = struct {
             try lockfile.trusted_dependencies.?.put(ctx.allocator, @truncate(String.Builder.stringHash(name)), {});
         }
 
-        const save_format: Lockfile.Format = if (pm.options.save_text_lockfile) .text else .binary;
+        const save_format: BinaryLockfile.Format = if (pm.options.save_text_lockfile) .text else .binary;
         lockfile.saveToDisk(save_format);
 
         var buffer_writer = try bun.js_printer.BufferWriter.init(ctx.allocator);

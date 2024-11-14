@@ -25,8 +25,8 @@ const String = Semver.String;
 const ExternalString = Semver.ExternalString;
 const stringHash = String.Builder.stringHash;
 
-const Lockfile = @import("./lockfile.zig");
-const LoadResult = Lockfile.LoadResult;
+const BinaryLockfile = @import("./lockfile.zig");
+const LoadResult = BinaryLockfile.LoadResult;
 
 const JSAst = bun.JSAst;
 const Expr = JSAst.Expr;
@@ -125,7 +125,7 @@ const dependency_keys = .{
 };
 
 pub fn migrateNPMLockfile(
-    // this: *Lockfile,
+    // this: *BinaryLockfile,
     allocator: Allocator,
     log: *logger.Log,
     data: string,
@@ -135,7 +135,7 @@ pub fn migrateNPMLockfile(
 ) !LoadResult {
     debug("begin lockfile migration", .{});
 
-    const this = try allocator.create(Lockfile);
+    const this = try allocator.create(BinaryLockfile);
 
     this.initEmpty(allocator);
     Install.initializeStore();
@@ -183,9 +183,9 @@ pub fn migrateNPMLockfile(
 
     var num_deps: u32 = 0;
 
-    const workspace_map: ?Lockfile.Package.WorkspaceMap = workspace_map: {
+    const workspace_map: ?BinaryLockfile.Package.WorkspaceMap = workspace_map: {
         if (root_package.get("workspaces")) |wksp| {
-            var workspaces = Lockfile.Package.WorkspaceMap.init(allocator);
+            var workspaces = BinaryLockfile.Package.WorkspaceMap.init(allocator);
 
             const json_array = switch (wksp.data) {
                 .e_array => |arr| arr,
@@ -199,7 +199,7 @@ pub fn migrateNPMLockfile(
             // due to package paths and resolved properties for links and workspaces always having
             // forward slashes, we depend on `processWorkspaceNamesArray` to always return workspace
             // paths with forward slashes on windows
-            const workspace_packages_count = try Lockfile.Package.processWorkspaceNamesArray(
+            const workspace_packages_count = try BinaryLockfile.Package.processWorkspaceNamesArray(
                 &workspaces,
                 allocator,
                 workspace_json_cache,
@@ -497,7 +497,7 @@ pub fn migrateNPMLockfile(
 
         // Instead of calling this.appendPackage, manually append
         // the other function has some checks that will fail since we have not set resolution+dependencies yet.
-        this.packages.appendAssumeCapacity(Lockfile.Package{
+        this.packages.appendAssumeCapacity(BinaryLockfile.Package{
             .name = builder.appendWithHash(String, pkg_name, name_hash),
             .name_hash = name_hash,
 

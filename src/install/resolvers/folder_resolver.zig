@@ -1,6 +1,6 @@
 const std = @import("std");
 const PackageID = @import("../install.zig").PackageID;
-const Lockfile = @import("../install.zig").Lockfile;
+const BinaryLockfile = @import("../install.zig").BinaryLockfile;
 const initializeStore = @import("../install.zig").initializeStore;
 const json_parser = bun.JSON;
 const PackageManager = @import("../install.zig").PackageManager;
@@ -26,7 +26,7 @@ pub const FolderResolution = union(Tag) {
     pub const Tag = enum { package_id, err, new_package_id };
 
     pub const PackageWorkspaceSearchPathFormatter = struct {
-        lockfile: *Lockfile,
+        lockfile: *BinaryLockfile,
         version: Dependency.Version,
         quoted: bool = true,
 
@@ -161,17 +161,17 @@ pub const FolderResolution = union(Tag) {
 
     fn readPackageJSONFromDisk(
         manager: *PackageManager,
-        lockfile: *Lockfile,
+        lockfile: *BinaryLockfile,
         abs: stringZ,
         version: Dependency.Version,
         comptime features: Features,
         comptime ResolverType: type,
         resolver: ResolverType,
-    ) !Lockfile.Package {
+    ) !BinaryLockfile.Package {
         var body = Npm.Registry.BodyPool.get(manager.allocator);
         defer Npm.Registry.BodyPool.release(body);
 
-        var package = Lockfile.Package{};
+        var package = BinaryLockfile.Package{};
 
         if (comptime ResolverType == WorkspaceResolver) {
             const json = try manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs, .{}).unwrap();
@@ -249,7 +249,7 @@ pub const FolderResolution = union(Tag) {
         version: Dependency.Version,
         non_normalized_path: string,
         manager: *PackageManager,
-        lockfile: *Lockfile,
+        lockfile: *BinaryLockfile,
     ) FolderResolution {
         var joined: bun.PathBuffer = undefined;
         const paths = normalizePackageJSONPath(global_or_relative, &joined, non_normalized_path);
@@ -266,7 +266,7 @@ pub const FolderResolution = union(Tag) {
         const entry = manager.folders.getOrPut(manager.allocator, abs_hash) catch unreachable;
         if (entry.found_existing) return entry.value_ptr.*;
 
-        const package: Lockfile.Package = switch (global_or_relative) {
+        const package: BinaryLockfile.Package = switch (global_or_relative) {
             .global => brk: {
                 var path: bun.PathBuffer = undefined;
                 std.mem.copyForwards(u8, &path, non_normalized_path);

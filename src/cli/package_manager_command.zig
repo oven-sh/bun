@@ -14,8 +14,8 @@ const Install = @import("../install/install.zig");
 const PackageID = Install.PackageID;
 const DependencyID = Install.DependencyID;
 const PackageManager = Install.PackageManager;
-const Lockfile = @import("../install/lockfile.zig");
-const TreeIterator = Lockfile.Tree.Iterator(.node_modules);
+const BinaryLockfile = @import("../install/lockfile.zig");
+const TreeIterator = BinaryLockfile.Tree.Iterator(.node_modules);
 const Path = @import("../resolver/resolve_path.zig");
 const String = @import("../install/semver.zig").String;
 const ArrayIdentityContext = bun.ArrayIdentityContext;
@@ -42,10 +42,10 @@ const ByName = struct {
 };
 
 pub const PackageManagerCommand = struct {
-    pub fn handleLoadLockfileErrors(load_lockfile: Lockfile.LoadResult, options: *const PackageManager.Options) *Lockfile {
+    pub fn handleLoadLockfileErrors(load_lockfile: BinaryLockfile.LoadResult, options: *const PackageManager.Options) *BinaryLockfile {
         if (load_lockfile == .not_found) {
             if (options.log_level != .silent) {
-                Output.errGeneric("Lockfile not found", .{});
+                Output.errGeneric("BinaryLockfile not found", .{});
             }
             Global.exit(1);
         }
@@ -76,7 +76,7 @@ pub const PackageManagerCommand = struct {
             Global.crash();
         };
 
-        const load_result = Lockfile.load(&lockfile_source, ctx.allocator, ctx.log, .binary) catch bun.outOfMemory();
+        const load_result = BinaryLockfile.load(&lockfile_source, ctx.allocator, ctx.log, .binary) catch bun.outOfMemory();
 
         const lockfile = handleLoadLockfileErrors(load_result, &pm.options);
 
@@ -208,7 +208,7 @@ pub const PackageManagerCommand = struct {
             Output.flush();
             return;
         } else if (strings.eqlComptime(subcommand, "hash")) {
-            const load_lockfile = Lockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+            const load_lockfile = BinaryLockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
             const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
 
             _ = try lockfile.hasMetaHashChanged(false, lockfile.packages.len);
@@ -219,7 +219,7 @@ pub const PackageManagerCommand = struct {
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-print")) {
-            const load_lockfile = Lockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+            const load_lockfile = BinaryLockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
             const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
 
             Output.flush();
@@ -228,7 +228,7 @@ pub const PackageManagerCommand = struct {
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-string")) {
-            const load_lockfile = Lockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+            const load_lockfile = BinaryLockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
             const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
 
             _ = try lockfile.hasMetaHashChanged(true, lockfile.packages.len);
@@ -301,7 +301,7 @@ pub const PackageManagerCommand = struct {
             try TrustCommand.exec(ctx, pm, args);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "ls")) {
-            const load_lockfile = Lockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+            const load_lockfile = BinaryLockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
             const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
 
             Output.flush();
@@ -400,7 +400,7 @@ pub const PackageManagerCommand = struct {
                 Global.exit(1);
             }
             const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
-            const save_format: Lockfile.Format = if (pm.options.save_text_lockfile) .text else .binary;
+            const save_format: BinaryLockfile.Format = if (pm.options.save_text_lockfile) .text else .binary;
             lockfile.saveToDisk(save_format);
             Global.exit(0);
         }
@@ -423,7 +423,7 @@ fn printNodeModulesFolderStructure(
     directory_package_id: ?PackageID,
     depth: usize,
     directories: *std.ArrayList(TreeIterator.NextResult),
-    lockfile: *Lockfile,
+    lockfile: *BinaryLockfile,
     more_packages: []bool,
 ) !void {
     const allocator = lockfile.allocator;

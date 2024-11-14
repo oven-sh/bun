@@ -18,7 +18,7 @@ const strings = @import("../string_immutable.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const Environment = bun.Environment;
 const w = std.os.windows;
-const Lockfile = Install.Lockfile;
+const BinaryLockfile = Install.BinaryLockfile;
 
 const ExtractTarball = @This();
 
@@ -31,7 +31,7 @@ skip_verify: bool = false,
 integrity: Integrity = .{},
 url: strings.StringOrTinyString,
 package_manager: *PackageManager,
-lockfile: *Lockfile,
+lockfile: *BinaryLockfile,
 
 pub inline fn run(this: *const ExtractTarball, bytes: []const u8) !Install.ExtractData {
     if (!this.skip_verify and this.integrity.tag.isSupported()) {

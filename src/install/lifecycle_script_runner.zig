@@ -1,5 +1,5 @@
 const bun = @import("root").bun;
-const Lockfile = @import("./lockfile.zig");
+const BinaryLockfile = @import("./lockfile.zig");
 const std = @import("std");
 const Async = bun.Async;
 const PosixSpawn = bun.posix.spawn;
@@ -16,7 +16,7 @@ const log = Output.scoped(.Script, false);
 pub const LifecycleScriptSubprocess = struct {
     package_name: []const u8,
 
-    scripts: Lockfile.Package.Scripts.List,
+    scripts: BinaryLockfile.Package.Scripts.List,
     current_script_index: u8 = 0,
 
     remaining_fds: i8 = 0,
@@ -53,8 +53,8 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     pub fn scriptName(this: *const LifecycleScriptSubprocess) []const u8 {
-        bun.assert(this.current_script_index < Lockfile.Scripts.names.len);
-        return Lockfile.Scripts.names[this.current_script_index];
+        bun.assert(this.current_script_index < BinaryLockfile.Scripts.names.len);
+        return BinaryLockfile.Scripts.names[this.current_script_index];
     }
 
     pub fn onReaderDone(this: *LifecycleScriptSubprocess) void {
@@ -339,12 +339,12 @@ pub const LifecycleScriptSubprocess = struct {
                     }
                 }
 
-                for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {
+                for (this.current_script_index + 1..BinaryLockfile.Scripts.names.len) |new_script_index| {
                     if (this.scripts.items[new_script_index] != null) {
                         this.resetPolls();
                         this.spawnNextScript(@intCast(new_script_index)) catch |err| {
                             Output.errGeneric("Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
-                                Lockfile.Scripts.names[new_script_index],
+                                BinaryLockfile.Scripts.names[new_script_index],
                                 @errorName(err),
                             });
                             Global.exit(1);
@@ -452,7 +452,7 @@ pub const LifecycleScriptSubprocess = struct {
 
     pub fn spawnPackageScripts(
         manager: *PackageManager,
-        list: Lockfile.Package.Scripts.List,
+        list: BinaryLockfile.Package.Scripts.List,
         envp: [:null]?[*:0]u8,
         optional: bool,
         comptime log_level: PackageManager.Options.LogLevel,
@@ -477,7 +477,7 @@ pub const LifecycleScriptSubprocess = struct {
 
         lifecycle_subprocess.spawnNextScript(list.first_index) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
-                Lockfile.Scripts.names[list.first_index],
+                BinaryLockfile.Scripts.names[list.first_index],
                 @errorName(err),
             });
         };

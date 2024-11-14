@@ -5,7 +5,7 @@ const Output = bun.Output;
 const Command = bun.CLI.Command;
 const Install = bun.install;
 const PackageManager = Install.PackageManager;
-const Lockfile = Install.Lockfile;
+const BinaryLockfile = Install.BinaryLockfile;
 const PackageID = Install.PackageID;
 const DependencyID = Install.DependencyID;
 const Behavior = Install.Dependency.Behavior;
@@ -44,7 +44,7 @@ pub const OutdatedCommand = struct {
     }
 
     fn outdated(ctx: Command.Context, original_cwd: string, manager: *PackageManager, comptime log_level: PackageManager.Options.LogLevel) !void {
-        const load_lockfile_result = Lockfile.loadFromCwd(
+        const load_lockfile_result = BinaryLockfile.loadFromCwd(
             manager.allocator,
             manager.log,
             true,
@@ -142,7 +142,7 @@ pub const OutdatedCommand = struct {
     fn findMatchingWorkspaces(
         allocator: std.mem.Allocator,
         original_cwd: string,
-        lockfile: *Lockfile,
+        lockfile: *BinaryLockfile,
         filters: []const string,
     ) error{OutOfMemory}![]const PackageID {
         const packages = lockfile.packages.slice();
@@ -247,7 +247,7 @@ pub const OutdatedCommand = struct {
 
     fn printOutdatedInfoTable(
         manager: *PackageManager,
-        lockfile: *Lockfile,
+        lockfile: *BinaryLockfile,
         workspace_pkg_ids: []const PackageID,
         was_filtered: bool,
         comptime enable_ansi_colors: bool,
@@ -559,7 +559,7 @@ pub const OutdatedCommand = struct {
 
     fn updateManifestsIfNecessary(
         manager: *PackageManager,
-        lockfile: *Lockfile,
+        lockfile: *BinaryLockfile,
         comptime log_level: PackageManager.Options.LogLevel,
         workspace_pkg_ids: []const PackageID,
     ) !void {
@@ -639,7 +639,7 @@ pub const OutdatedCommand = struct {
 
         const RunClosure = struct {
             manager: *PackageManager,
-            lockfile: *Lockfile,
+            lockfile: *BinaryLockfile,
             err: ?anyerror = null,
             pub fn isDone(closure: *@This()) bool {
                 if (closure.manager.pendingTaskCount() > 0) {

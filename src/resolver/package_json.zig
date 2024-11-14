@@ -902,7 +902,7 @@ pub const PackageJSON = struct {
                     }
                 }
 
-                const DependencyGroup = Install.Lockfile.Package.DependencyGroup;
+                const DependencyGroup = Install.BinaryLockfile.Package.DependencyGroup;
                 const features = .{
                     .dependencies = true,
                     .dev_dependencies = include_dependencies == .main,

@@ -263,7 +263,7 @@ pub inline fn isRemoteTarball(dependency: string) bool {
 }
 
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
-pub fn splitNameAndVersion(str: string) struct { string, ?string } {
+pub fn splitNameAndMaybeVersion(str: string) struct { string, ?string } {
     if (strings.indexOfChar(str, '@')) |at_index| {
         if (at_index != 0) {
             return .{ str[0..at_index], if (at_index + 1 < str.len) str[at_index + 1 ..] else null };
@@ -275,6 +275,14 @@ pub fn splitNameAndVersion(str: string) struct { string, ?string } {
     }
 
     return .{ str, null };
+}
+
+pub fn splitNameAndVersion(str: string) error{ExpectedVersion}!struct { string, string } {
+    const name, const maybe_version = splitNameAndMaybeVersion(str);
+    const version = maybe_version orelse {
+        return error.ExpectedVersion;
+    };
+    return .{ name, version };
 }
 
 pub fn unscopedPackageName(name: []const u8) []const u8 {

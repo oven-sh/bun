@@ -12,6 +12,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const JSC = bun.JSC;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
+const OOM = bun.OOM;
 
 /// String type that stores either an offset/length into an external buffer or a string inline directly
 pub const String = extern struct {
@@ -34,6 +35,62 @@ pub const String = extern struct {
         }
         return String.init(inlinable_buffer, inlinable_buffer);
     }
+
+    pub const Buf = struct {
+        bytes: std.ArrayList(u8),
+        pool: Builder.StringPool,
+
+        pub fn init(allocator: std.mem.Allocator) Buf {
+            return .{
+                .bytes = std.ArrayList(u8).init(allocator),
+                .pool = Builder.StringPool.init(allocator),
+            };
+        }
+
+        pub fn append(this: *Buf, str: string) OOM!String {
+            if (canInline(str)) {
+                return String.initInline(str);
+            }
+
+            const hash = Builder.stringHash(str);
+            const entry = try this.pool.getOrPut(hash);
+            if (entry.found_existing) {
+                return entry.value_ptr.*;
+            }
+
+            // new entry
+            const new = try String.initAppend(&this.bytes, str);
+            entry.value_ptr.* = new;
+            return new;
+        }
+
+        pub fn appendExternal(this: *Buf, str: string) OOM!ExternalString {
+            const hash = Builder.stringHash(str);
+
+            if (canInline(str)) {
+                return .{
+                    .value = String.initInline(str),
+                    .hash = hash,
+                };
+            }
+
+            const entry = try this.pool.getOrPut(hash);
+            if (entry.found_existing) {
+                return .{
+                    .value = entry.value_ptr.*,
+                    .hash = hash,
+                };
+            }
+
+            const new = try String.initAppend(&this.bytes, str);
+            entry.value_ptr.* = new;
+
+            return .{
+                .value = new,
+                .hash = hash,
+            };
+        }
+    };
 
     pub const Tag = enum {
         small,
@@ -187,6 +244,60 @@ pub const String = extern struct {
         };
     }
 
+    pub fn initInline(
+        in: string,
+    ) String {
+        bun.assertWithLocation(canInline(in), @src());
+        return switch (in.len) {
+            0 => .{},
+            1 => .{ .bytes = .{ in[0], 0, 0, 0, 0, 0, 0, 0 } },
+            2 => .{ .bytes = .{ in[0], in[1], 0, 0, 0, 0, 0, 0 } },
+            3 => .{ .bytes = .{ in[0], in[1], in[2], 0, 0, 0, 0, 0 } },
+            4 => .{ .bytes = .{ in[0], in[1], in[2], in[3], 0, 0, 0, 0 } },
+            5 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], 0, 0, 0 } },
+            6 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], 0, 0 } },
+            7 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], 0 } },
+            8 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7] } },
+            else => unreachable,
+        };
+    }
+
+    pub fn initAppendIfNeeded(
+        buf: *std.ArrayList(u8),
+        in: string,
+    ) OOM!String {
+        return switch (in.len) {
+            0 => .{},
+            1 => .{ .bytes = .{ in[0], 0, 0, 0, 0, 0, 0, 0 } },
+            2 => .{ .bytes = .{ in[0], in[1], 0, 0, 0, 0, 0, 0 } },
+            3 => .{ .bytes = .{ in[0], in[1], in[2], 0, 0, 0, 0, 0 } },
+            4 => .{ .bytes = .{ in[0], in[1], in[2], in[3], 0, 0, 0, 0 } },
+            5 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], 0, 0, 0 } },
+            6 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], 0, 0 } },
+            7 => .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], 0 } },
+
+            max_inline_len =>
+            // If they use the final bit, then it's a big string.
+            // This should only happen for non-ascii strings that are exactly 8 bytes.
+            // so that's an edge-case
+            if ((in[max_inline_len - 1]) >= 128)
+                try initAppend(buf, in)
+            else
+                .{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7] } },
+
+            else => try initAppend(buf, in),
+        };
+    }
+
+    pub fn initAppend(
+        buf: *std.ArrayList(u8),
+        in: string,
+    ) OOM!String {
+        try buf.appendSlice(in);
+        const in_buf = buf.items[buf.items.len - in.len ..];
+        return @bitCast((@as(u64, 0) | @as(u64, @as(max_addressable_space, @truncate(@as(u64, @bitCast(Pointer.init(buf.items, in_buf))))))) | 1 << 63);
+    }
+
     pub fn eql(this: String, that: String, this_buf: []const u8, that_buf: []const u8) bool {
         if (this.isInline() and that.isInline()) {
             return @as(u64, @bitCast(this.bytes)) == @as(u64, @bitCast(that.bytes));
@@ -338,41 +449,6 @@ pub const String = extern struct {
                 }
             }
 
-            if (comptime Environment.allow_assert) {
-                assert(this.len <= this.cap); // didn't count everything
-                assert(this.ptr != null); // must call allocate first
-            }
-
-            bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
-            const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
-            this.len += slice_.len;
-
-            if (comptime Environment.allow_assert) assert(this.len <= this.cap);
-
-            switch (Type) {
-                String => {
-                    return String.init(this.allocatedSlice(), final_slice);
-                },
-                ExternalString => {
-                    return ExternalString.init(this.allocatedSlice(), final_slice, hash);
-                },
-                else => @compileError("Invalid type passed to StringBuilder"),
-            }
-        }
-
-        // SlicedString is not supported due to inline strings.
-        pub fn appendWithoutPool(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
-            if (slice_.len <= String.max_inline_len) {
-                switch (Type) {
-                    String => {
-                        return String.init(this.allocatedSlice(), slice_);
-                    },
-                    ExternalString => {
-                        return ExternalString.init(this.allocatedSlice(), slice_, hash);
-                    },
-                    else => @compileError("Invalid type passed to StringBuilder"),
-                }
-            }
             if (comptime Environment.allow_assert) {
                 assert(this.len <= this.cap); // didn't count everything
                 assert(this.ptr != null); // must call allocate first
@@ -592,14 +668,12 @@ pub const SlicedString = struct {
     }
 };
 
-const RawType = void;
 pub const Version = extern struct {
     major: u32 = 0,
     minor: u32 = 0,
     patch: u32 = 0,
     _tag_padding: [4]u8 = .{0} ** 4, // [see padding_checker.zig]
     tag: Tag = .{},
-    // raw: RawType = RawType{},
 
     /// Assumes that there is only one buffer for all the strings
     pub fn sortGt(ctx: []const u8, lhs: Version, rhs: Version) bool {
@@ -1220,12 +1294,30 @@ pub const Version = extern struct {
         var multi_tag_warn = false;
         // TODO: support multiple tags
 
-        pub fn parse(sliced_string: SlicedString) TagResult {
-            return parseWithPreCount(sliced_string, 0);
+        pub fn parse(sliced: SlicedString) TagResult {
+            return parseWithPreCountOptionallyAppend(false, sliced, 0);
         }
 
-        pub fn parseWithPreCount(sliced_string: SlicedString, initial_pre_count: u32) TagResult {
-            var input = sliced_string.slice;
+        pub fn parseAppend(input: string, buf: *String.Buf) OOM!TagResult {
+            return parseWithPreCountOptionallyAppend(true, .{ input, buf }, 0);
+        }
+
+        pub fn parseWithPreCount(sliced: SlicedString, initial_pre_count: u32) TagResult {
+            return parseWithPreCountOptionallyAppend(false, sliced, initial_pre_count);
+        }
+
+        pub fn parseAppendWithPreCount(input: string, buf: *String.Buf, initial_pre_count: u32) OOM!TagResult {
+            return parseWithPreCountOptionallyAppend(true, .{ input, buf }, initial_pre_count);
+        }
+
+        pub fn parseWithPreCountOptionallyAppend(
+            comptime append_buf: bool,
+            in: if (append_buf) struct { string, *String.Buf } else SlicedString,
+            initial_pre_count: u32,
+        ) if (append_buf) OOM!TagResult else TagResult {
+            var input = if (append_buf) in[0] else in.slice;
+            const buf: if (append_buf) *String.Buf else void = if (append_buf) in[1] else {};
+
             var build_count: u32 = 0;
             var pre_count: u32 = initial_pre_count;
 
@@ -1262,7 +1354,10 @@ pub const Version = extern struct {
                     '+' => {
                         // qualifier  ::= ( '-' pre )? ( '+' build )?
                         if (state == .pre or state == .none and initial_pre_count > 0) {
-                            result.tag.pre = sliced_string.sub(input[start..i]).external();
+                            result.tag.pre = if (append_buf)
+                                try buf.appendExternal(input[start..i])
+                            else
+                                in.sub(input[start..i]).external();
                         }
 
                         if (state != .build) {
@@ -1285,16 +1380,32 @@ pub const Version = extern struct {
                         switch (state) {
                             .none => {},
                             .pre => {
-                                result.tag.pre = sliced_string.sub(input[start..i]).external();
+                                result.tag.pre = if (append_buf)
+                                    try buf.appendExternal(input[start..i])
+                                else
+                                    in.sub(input[start..i]).external();
+
                                 if (comptime Environment.isDebug) {
-                                    assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
+                                    if (append_buf) {
+                                        assert(!strings.containsChar(result.tag.pre.slice(buf.bytes.items), '-'));
+                                    } else {
+                                        assert(!strings.containsChar(result.tag.pre.slice(in.buf), '-'));
+                                    }
                                 }
                                 state = State.none;
                             },
                             .build => {
-                                result.tag.build = sliced_string.sub(input[start..i]).external();
+                                result.tag.build = if (append_buf)
+                                    try buf.appendExternal(input[start..i])
+                                else
+                                    in.sub(input[start..i]).external();
+
                                 if (comptime Environment.isDebug) {
-                                    assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
+                                    if (append_buf) {
+                                        assert(!strings.containsChar(result.tag.build.slice(buf.bytes.items), '-'));
+                                    } else {
+                                        assert(!strings.containsChar(result.tag.build.slice(in.buf), '-'));
+                                    }
                                 }
                                 state = State.none;
                             },
@@ -1313,14 +1424,20 @@ pub const Version = extern struct {
             switch (state) {
                 .none => {},
                 .pre => {
-                    result.tag.pre = sliced_string.sub(input[start..i]).external();
+                    result.tag.pre = if (append_buf)
+                        try buf.appendExternal(input[start..i])
+                    else
+                        in.sub(input[start..i]).external();
                     // a pre can contain multiple consecutive tags
                     // checking for "-" prefix is not enough, as --canary.67e7966.0 is a valid tag
                     state = State.none;
                 },
                 .build => {
                     // a build can contain multiple consecutive tags
-                    result.tag.build = sliced_string.sub(input[start..i]).external();
+                    result.tag.build = if (append_buf)
+                        try buf.appendExternal(input[start..i])
+                    else
+                        in.sub(input[start..i]).external();
 
                     state = State.none;
                 },
@@ -1338,8 +1455,21 @@ pub const Version = extern struct {
         len: u32 = 0,
     };
 
-    pub fn parse(sliced_string: SlicedString) ParseResult {
-        var input = sliced_string.slice;
+    pub fn parse(input: SlicedString) ParseResult {
+        return parseOptionallyAppend(false, input);
+    }
+
+    /// Will append big strings from pre/build tags to `buf`
+    pub fn parseAppend(input: string, buf: *String.Buf) OOM!ParseResult {
+        return parseOptionallyAppend(true, .{ input, buf });
+    }
+
+    // pub fn parse(str: string, comptime append_buf: bool, buf: if (append_buf) *String.Buf else string) ParseResult {
+    pub fn parseOptionallyAppend(comptime append_buf: bool, in: if (append_buf) struct { string, *String.Buf } else SlicedString) if (append_buf) OOM!ParseResult else ParseResult {
+        var input = if (append_buf) in[0] else in.slice;
+        const sliced: if (append_buf) void else SlicedString = if (append_buf) {} else in;
+        const buf: if (append_buf) *String.Buf else void = if (append_buf) in[1] else {};
+
         var result = ParseResult{};
 
         var part_i: u8 = 0;
@@ -1455,7 +1585,12 @@ pub const Version = extern struct {
                     }) {
                         i += 1;
                     }
-                    const tag_result = Tag.parse(sliced_string.sub(input[part_start_i..]));
+
+                    const tag_result = if (append_buf)
+                        try Tag.parseAppend(input[part_start_i..], buf)
+                    else
+                        Tag.parse(sliced.sub(input[part_start_i..]));
+
                     result.version.tag = tag_result.tag;
                     i += tag_result.len;
                     break;
@@ -1507,7 +1642,11 @@ pub const Version = extern struct {
                         else => false,
                     }) {
                         part_start_i = i;
-                        const tag_result = Tag.parseWithPreCount(sliced_string.sub(input[part_start_i..]), 1);
+                        const tag_result = if (append_buf)
+                            try Tag.parseAppendWithPreCount(input[part_start_i..], buf, 1)
+                        else
+                            Tag.parseWithPreCount(sliced.sub(input[part_start_i..]), 1);
+
                         result.version.tag = tag_result.tag;
                         i += tag_result.len;
                         is_done = true;
@@ -1539,10 +1678,6 @@ pub const Version = extern struct {
         }
 
         result.len = @as(u32, @intCast(i));
-
-        if (comptime RawType != void) {
-            result.version.raw = sliced_string.sub(input[0..i]).external();
-        }
 
         return result;
     }

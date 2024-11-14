@@ -40,7 +40,7 @@ const debuglog = Output.scoped(.Resolver, true);
 const PackageManager = @import("../install/install.zig").PackageManager;
 const Dependency = @import("../install/dependency.zig");
 const Install = @import("../install/install.zig");
-const Lockfile = @import("../install/lockfile.zig").Lockfile;
+const BinaryLockfile = @import("../install/lockfile.zig").Lockfile;
 const Package = @import("../install/lockfile.zig").Package;
 const Resolution = @import("../install/resolution.zig").Resolution;
 const Semver = @import("../install/semver.zig");
@@ -563,7 +563,7 @@ pub const Resolver = struct {
 
     pub const PackageManagerAndLockfile = struct {
         manager: *PackageManager,
-        lockfile: *Lockfile,
+        lockfile: *BinaryLockfile,
     };
 
     pub fn getPackageManagerAndLockfile(this: *Resolver) PackageManagerAndLockfile {

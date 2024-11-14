@@ -52,7 +52,7 @@ const ShellCompletions = @import("./shell_completions.zig");
 const PosixSpawn = bun.posix.spawn;
 
 const PackageManager = @import("../install/install.zig").PackageManager;
-const Lockfile = @import("../install/lockfile.zig");
+const BinaryLockfile = @import("../install/lockfile.zig");
 
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 

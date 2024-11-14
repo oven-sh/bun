@@ -2448,33 +2448,6 @@ pub const StringBuilder = struct {
         return @call(bun.callmod_inline, appendWithHash, .{ this, Type, slice, String.Builder.stringHash(slice) });
     }
 
-    // SlicedString is not supported due to inline strings.
-    pub fn appendWithoutPool(this: *StringBuilder, comptime Type: type, slice: string, hash: u64) Type {
-        if (String.canInline(slice)) {
-            return switch (Type) {
-                String => String.init(this.lockfile.buffers.string_bytes.items, slice),
-                ExternalString => ExternalString.init(this.lockfile.buffers.string_bytes.items, slice, hash),
-                else => @compileError("Invalid type passed to StringBuilder"),
-            };
-        }
-        if (comptime Environment.allow_assert) {
-            assert(this.len <= this.cap); // didn't count everything
-            assert(this.ptr != null); // must call allocate first
-        }
-
-        bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
-        const final_slice = this.ptr.?[this.len..this.cap][0..slice.len];
-        this.len += slice.len;
-
-        if (comptime Environment.allow_assert) assert(this.len <= this.cap);
-
-        return switch (Type) {
-            String => String.init(this.lockfile.buffers.string_bytes.items, final_slice),
-            ExternalString => ExternalString.init(this.lockfile.buffers.string_bytes.items, final_slice, hash),
-            else => @compileError("Invalid type passed to StringBuilder"),
-        };
-    }
-
     pub fn appendWithHash(this: *StringBuilder, comptime Type: type, slice: string, hash: u64) Type {
         if (String.canInline(slice)) {
             return switch (Type) {

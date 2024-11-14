@@ -7,7 +7,7 @@ const URL = bun.URL;
 const PackageManager = bun.install.PackageManager;
 const OOM = bun.OOM;
 const logger = bun.logger;
-const BinaryLockfile = bun.install.Lockfile;
+const BinaryLockfile = bun.install.BinaryLockfile;
 const JSON = bun.JSON;
 const Output = bun.Output;
 const Expr = bun.js_parser.Expr;
@@ -16,10 +16,15 @@ const DependencySlice = BinaryLockfile.DependencySlice;
 const Install = bun.install;
 const Dependency = Install.Dependency;
 const PackageID = Install.PackageID;
-const String = bun.Semver.String;
-const Resolution = Install.Resolution;
+const Semver = bun.Semver;
+const String = Semver.String;
+const BinaryResolution = Install.Resolution;
 const PackageNameHash = Install.PackageNameHash;
 const NameHashMap = BinaryLockfile.NameHashMap;
+const Repository = Install.Repository;
+const Progress = bun.Progress;
+const Environment = bun.Environment;
+const Global = bun.Global;
 
 /// A property key in the `packages` field of the lockfile
 pub const PkgPath = struct {
@@ -148,6 +153,9 @@ pub const Lockfile = struct {
     workspace_paths: bun.StringHashMapUnmanaged(string),
     workspace_versions: bun.StringHashMapUnmanaged(string),
 
+    // for package names and versions
+    string_buf: String.Buf,
+
     pub const Version = enum(u32) {
         v0 = 0,
         v1,
@@ -178,6 +186,7 @@ pub const Lockfile = struct {
         pub fn save(this: *const Lockfile) void {
             _ = this;
         }
+
         pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *const BinaryLockfile) OOM!string {
             var writer_buf = MutableString.initEmpty(allocator);
             var buffered_writer = writer_buf.bufferedWriter();
@@ -187,11 +196,11 @@ pub const Lockfile = struct {
             const deps_buf = lockfile.buffers.dependencies.items;
             const resolution_buf = lockfile.buffers.resolutions.items;
             const pkgs = lockfile.packages.slice();
-            const pkg_deps: []DependencySlice = pkgs.items(.dependencies);
-            const pkg_resolution: []Resolution = pkgs.items(.resolution);
+            const pkg_dep_lists: []DependencySlice = pkgs.items(.dependencies);
+            const pkg_resolution: []BinaryResolution = pkgs.items(.resolution);
             const pkg_names: []String = pkgs.items(.name);
             const pkg_name_hashes: []PackageNameHash = pkgs.items(.name_hash);
-            // const pkg_metas: []BinaryLockfile.Package.Meta = pkgs.items(.meta);
+            const pkg_metas: []BinaryLockfile.Package.Meta = pkgs.items(.meta);
 
             var _indent: u32 = 0;
             const indent = &_indent;
@@ -211,7 +220,7 @@ pub const Lockfile = struct {
                         .{},
                         pkg_names,
                         pkg_name_hashes,
-                        pkg_deps,
+                        pkg_dep_lists,
                         buf,
                         deps_buf,
                         lockfile.workspace_versions,
@@ -228,7 +237,7 @@ pub const Lockfile = struct {
                             res.value.workspace,
                             pkg_names,
                             pkg_name_hashes,
-                            pkg_deps,
+                            pkg_dep_lists,
                             buf,
                             deps_buf,
                             lockfile.workspace_versions,
@@ -280,44 +289,72 @@ pub const Lockfile = struct {
                         });
 
                         const pkg_name = pkg_names[pkg_id].slice(buf);
-                        const deps = pkg_deps[pkg_id].get(deps_buf);
+                        const pkg_meta = pkg_metas[pkg_id];
+                        const pkg_deps = pkg_dep_lists[pkg_id].get(deps_buf);
+
+                        // first index is resolution for all dependency types
+                        // npm         -> [ "name@npm:version", deps..., integrity, ... ]
+                        // symlink     -> [ "name@link:path", deps..., ... ]
+                        // folder      -> [ "name@file:path", deps..., ... ]
+                        // workspace   -> [ "name@workspace:path", version or "", deps..., ... ]
+                        // tarball     -> [ "name@tarball", deps..., ... ]
+                        // root        -> [ "name@root:" ]
+                        // git         -> [ "name@git+repo", deps..., ... ]
+                        // github      -> [ "name@github:user/repo", deps..., ... ]
+
                         switch (res.tag) {
                             .root => {
-                                // will look like:
-                                // "name@root:": []
-                                try writer.print("[]", .{});
+                                try writer.print("[\"{}@root:\"]", .{
+                                    bun.fmt.jsonStringUtf8(pkg_name, .{ .quote = false }),
+                                    // we don't read the root package version into the binary lockfile
+                                });
                             },
                             .folder => {
-                                try writer.print("[\"{s}@{}\"]", .{
-                                    dep_name,
+                                try writer.print("[\"{s}@file:{}\", ", .{
+                                    pkg_name,
                                     bun.fmt.jsonStringUtf8(res.value.folder.slice(buf), .{ .quote = false }),
                                 });
+
+                                try writePackageDeps(writer, pkg_deps, buf);
+
+                                try writer.print(", \"{}\"]", .{pkg_meta.integrity});
                             },
                             .local_tarball => {
-                                try writer.print("[\"{s}@{}\"]", .{
-                                    dep_name,
+                                try writer.print("[\"{s}@{}\", ", .{
+                                    pkg_name,
                                     bun.fmt.jsonStringUtf8(res.value.local_tarball.slice(buf), .{ .quote = false }),
                                 });
+
+                                try writePackageDeps(writer, pkg_deps, buf);
+
+                                try writer.print(", \"{}\"]", .{pkg_meta.integrity});
                             },
                             .remote_tarball => {
-                                try writer.print("[\"{s}@{}\"]", .{
-                                    dep_name,
+                                try writer.print("[\"{s}@{}\", ", .{
+                                    pkg_name,
                                     bun.fmt.jsonStringUtf8(res.value.remote_tarball.slice(buf), .{ .quote = false }),
                                 });
+
+                                try writePackageDeps(writer, pkg_deps, buf);
+
+                                try writer.print(", \"{}\"]", .{pkg_meta.integrity});
                             },
                             .symlink => {
-                                try writer.print("[\"{s}@{}\"]", .{
-                                    dep_name,
+                                try writer.print("[\"{s}@link:{}\"]", .{
+                                    pkg_name,
                                     bun.fmt.jsonStringUtf8(res.value.symlink.slice(buf), .{ .quote = false }),
                                 });
                             },
                             .npm => {
-                                try writer.print("[\"{s}@{s}\", ", .{
+                                const is_alias = if (dep.version.npm()) |npm_dep| npm_dep.is_alias else false;
+
+                                try writer.print("[\"{s}{s}@{}\", ", .{
+                                    if (is_alias) "npm:" else "",
                                     pkg_name,
                                     res.value.npm.fmt(buf),
                                 });
 
-                                try writePackageDeps(writer, deps, buf);
+                                try writePackageDeps(writer, pkg_deps, buf);
 
                                 // TODO(dylan-conway): delete placeholder
                                 // const pkg_meta = pkg_metas[pkg_id];
@@ -330,21 +367,23 @@ pub const Lockfile = struct {
                                 const workspace_path = res.value.workspace.slice(buf);
 
                                 try writer.print("[\"{s}@workspace:{}\"", .{
-                                    dep_name,
+                                    pkg_name,
                                     bun.fmt.jsonStringUtf8(workspace_path, .{ .quote = false }),
                                 });
 
                                 if (lockfile.workspace_versions.get(pkg_name_hashes[pkg_id])) |workspace_version| {
-                                    try writer.print(", \"{s}\"", .{workspace_version.fmt(buf)});
+                                    try writer.print(", \"{}\"", .{workspace_version.fmt(buf)});
+                                } else {
+                                    try writer.writeAll(", \"\"");
                                 }
 
                                 try writer.writeByte(']');
                             },
                             inline .git, .github => |tag| {
-                                const repo = @field(res.value, @tagName(tag));
-                                _ = repo;
-                                try writer.print("[\"{s}\"]", .{
+                                const repo: Repository = @field(res.value, @tagName(tag));
+                                try writer.print("[\"{s}@{}\"]", .{
                                     pkg_name,
+                                    repo.fmt(if (comptime tag == .git) "git+" else "github:", buf),
                                 });
                             },
                             else => unreachable,
@@ -593,6 +632,8 @@ pub const Lockfile = struct {
     }
 
     fn loadFromJson(allocator: std.mem.Allocator, json: Expr, source: *const logger.Source, log: *logger.Log) !*Lockfile {
+        var string_buf = String.Buf.init(allocator);
+
         const version_expr: Expr = json.get("lockfileVersion") orelse {
             try log.addError(source, logger.Loc.Empty, "Missing lockfile version");
             return error.InvalidLockfileVersion;
@@ -710,22 +751,106 @@ pub const Lockfile = struct {
                     return error.InvalidPackageKey;
                 };
 
-                tree.insert(pkg_path) catch |err| switch (err) {
-                    error.OutOfMemory => |oom| return oom,
+                const value: Expr = prop.value orelse {
+                    try log.addError(source, logger.Loc.Empty, "Expected package value");
+                    return error.InvalidPackageValue;
+                };
+
+                if (!value.isArray()) {
+                    try log.addError(source, value.loc, "Expected an array");
+                    return error.InvalidPackageValue;
+                }
+
+                const pkg_items = value.data.e_array.slice();
+                if (pkg_items.len == 0) {
+                    try log.addError(source, value.loc, "Expected non-empty array");
+                    return error.InvalidPackageValue;
+                }
+
+                const name_and_resolution_str = try pkg_items[0].asStringCloned(allocator) orelse {
+                    try log.addError(source, pkg_items[0].loc, "Expected a string");
+                    return error.InvalidPackageSpecifier;
+                };
+
+                const resolved_name, var res_str = Dependency.splitNameAndVersion(name_and_resolution_str) catch {
+                    try log.addError(source, pkg_items[0].loc, "Expected package resolution");
+                    return error.InvalidPackageValue;
+                };
+
+                const name = try string_buf.append(resolved_name);
+
+                const resolution: Tree.Package.Resolution = resolution: {
+                    if (strings.hasPrefixComptime(res_str, "root:")) {
+                        break :resolution .root;
+                    } else if (strings.hasPrefixComptime(res_str, "github:")) {
+                        //
+                    } else if (strings.hasPrefixComptime(res_str, "link:")) {
+                        //
+                    } else if (strings.hasPrefixComptime(res_str, "workspace:")) {
+                        //
+                        res_str = res_str["workspace:".len..];
+                    } else if (strings.hasPrefixComptime(res_str, "file:")) {
+                        //
+                    } else if (strings.hasPrefixComptime(res_str, "git+")) {
+                        //
+                    } else if (strings.hasPrefixComptime(res_str, "github:")) {
+                        //
+                    } else if (strings.hasPrefixComptime(res_str, "npm:")) {
+                        //
+                        res_str = res_str["npm:".len..];
+
+                        const parsed = try Semver.Version.parseAppend(res_str, &string_buf);
+                        if (!parsed.valid) {
+                            try log.addErrorFmt(source, pkg_items[0].loc, allocator, "Invalid semver '{s}'", .{res_str});
+                            return error.InvalidSemver;
+                        }
+
+                        break :resolution .{
+                            .npm = .{
+                                .version = parsed.version.min(),
+                            },
+                        };
+                    } else {
+                        // must be a local or remote tarball
+                        bun.assertWithLocation(Dependency.isRemoteTarball(res_str) or Dependency.isTarball(res_str), @src());
+                    }
+
+                    break :resolution .uninitialized;
+                };
+
+                tree.put(&string_buf, pkg_path, name, resolution) catch |err| return switch (err) {
+                    error.OutOfMemory => |oom| oom,
                     else => {
                         try log.addError(source, key.loc, "Invalid package specifier path");
                         return error.InvalidPackageSpecifier;
                     },
                 };
+            }
 
-                // const info_expr: Expr = prop.value orelse {
-                //     try log.addError(source, key.loc, "Expected property value");
-                //     return error.InvalidPackageValue;
-                // };
-                // var info_array = info_expr.asArray() orelse {
-                //     try log.addError(source, info_expr.loc, "Expected an array");
-                //     return error.InvalidPackageValue;
-                // };
+            var stack: std.ArrayListUnmanaged(Tree.Package.Map) = .{};
+            defer stack.deinit(allocator);
+
+            try stack.append(allocator, tree.root);
+
+            while (stack.popOrNull()) |packages| {
+                var iter = packages.iterator();
+                while (iter.next()) |entry| {
+                    const package = entry.value_ptr.*;
+                    if (package.packages.count() > 0) {
+                        try stack.append(allocator, package.packages);
+                    }
+
+                    if (package.resolution == .uninitialized) {
+                        const name = entry.key_ptr.slice(string_buf.bytes.items);
+                        try log.addErrorFmt(source, pkgs.loc, allocator, "Failed to build package tree, '{s}' is uninitialized", .{
+                            name,
+                        });
+                    }
+                }
+            }
+
+            if (log.hasErrors()) {
+                return error.InvalidPackagesTree;
             }
         }
 
@@ -737,102 +862,241 @@ pub const Lockfile = struct {
             .tree = tree,
             .workspace_paths = workspace_paths,
             .workspace_versions = workspace_versions,
+            .string_buf = string_buf,
         });
 
         return lockfile;
+    }
+
+    pub const Installer = struct {
+        lockfile: *const Lockfile,
+        manager: *PackageManager,
+
+        root_node_modules_folder: std.fs.Dir,
+
+        force_install: bool,
+
+        pub const TreeContext = PackageManager.TreeContext;
+        pub const Summary = Install.PackageInstall.Summary;
+
+        pub fn installPackages(this: *Installer, packages: *const Tree.Package.Map) OOM!void {
+            var iter = packages.iterator();
+            while (iter.next()) |entry| {
+                const name = entry.key_ptr.slice(this.lockfile.string_buf.bytes.items);
+                try this.installPackage(name, entry.value_ptr);
+            }
+        }
+
+        pub fn installPackage(this: *Installer, name: string, package: *const Tree.Package) OOM!void {
+            const pkg_name = package.name.slice(this.lockfile.string_buf.bytes.items);
+            switch (package.resolution) {
+                .transitive => |transitive| {
+                    std.debug.print("installing: {s}@{s}\n", .{ name, transitive.resolution });
+                },
+                .workspace => |workspace| {
+                    std.debug.print("installing: {s}@workspace:{s}\n", .{ name, workspace.rel_path });
+                },
+                .npm => |npm| {
+                    var buf: bun.PathBuffer = undefined;
+                    const cache_path = this.manager.cachedNPMPackageFolderNamePrint(&buf, name, npm.version, null);
+                    var is_expired = false;
+                    if (this.manager.manifests.byNameAllowExpired(this.manager.options.scopeForPackageName(pkg_name), pkg_name, &is_expired)) |manifest| {
+                        if (manifest.findByVersion(npm.version)) |find| {
+                            _ = find;
+                            // const cpu = find.package.cpu;
+                            // const os = find.package.os;
+                        }
+                    } else {}
+                    std.debug.print("installing: {s}@{} from '{s}'\n", .{ name, npm.version.fmt(this.lockfile.string_buf.bytes.items), cache_path });
+                },
+                .root => {
+                    std.debug.print("installing: {s}@ROOT\n", .{name});
+                },
+                .uninitialized => {
+                    std.debug.print("skipping uninitialized: {s}\n", .{name});
+                },
+            }
+        }
+    };
+
+    pub fn install(
+        this: *const Lockfile,
+        manager: *PackageManager,
+        comptime log_level: PackageManager.Options.LogLevel,
+    ) OOM!void {
+        var root_node: *Progress.Node = undefined;
+        var download_node: Progress.Node = undefined;
+        var install_node: Progress.Node = undefined;
+        var scripts_node: Progress.Node = undefined;
+        var progress = &manager.progress;
+
+        if (comptime log_level.showProgress()) {
+            progress.supports_ansi_escape_codes = Output.enable_ansi_colors;
+            root_node = progress.start("", 0);
+            download_node = root_node.start(PackageManager.ProgressStrings.download(), 0);
+            install_node = root_node.start(PackageManager.ProgressStrings.install(), this.tree.package_count);
+            scripts_node = root_node.start(PackageManager.ProgressStrings.script(), 0);
+        }
+
+        var new_node_modules = false;
+        const cwd = bun.FD.cwd();
+        const node_modules_folder = node_modules_folder: {
+            // Attempt to open the existing node_modules folder
+            switch (bun.sys.openatOSPath(cwd, bun.OSPathLiteral("node_modules"), bun.O.DIRECTORY | bun.O.RDONLY, 0o755)) {
+                .result => |fd| break :node_modules_folder fd.asDir(),
+                .err => {},
+            }
+
+            new_node_modules = true;
+
+            // Attempt to create a new node_modules folder
+            bun.sys.mkdir("node_modules", 0o755).unwrap() catch |err| {
+                if (err != error.EEXIST) {
+                    Output.err(err, "failed to create <b>node_modules<r> folder", .{});
+                    Global.crash();
+                }
+            };
+
+            break :node_modules_folder bun.openDir(cwd.asDir(), "node_modules") catch |err| {
+                Output.err(err, "failed to open <b>node_modules<r> folder", .{});
+                Global.crash();
+            };
+        };
+
+        var skip_delete = new_node_modules;
+        var skip_verify_installed_version_number = new_node_modules;
+
+        if (manager.options.enable.force_install) {
+            skip_verify_installed_version_number = true;
+            skip_delete = false;
+        }
+
+        var installer: Installer = .{
+            .lockfile = this,
+            .manager = manager,
+            .force_install = false,
+            .root_node_modules_folder = node_modules_folder,
+        };
+
+        try installer.installPackages(&this.tree.root);
     }
 
     pub const Tree = struct {
         // TODO(dylan-conway): maybe remove allocator
         allocator: std.mem.Allocator,
 
-        root: Map,
+        root: Package.Map,
         max_depth: u32,
+        package_count: usize,
 
-        const Map = bun.StringArrayHashMapUnmanaged(Node);
+        locked: bool = false,
 
         pub fn init(allocator: std.mem.Allocator) Tree {
             return .{
                 .allocator = allocator,
                 .root = .{},
                 .max_depth = 0,
+                .package_count = 0,
             };
         }
 
-        // pub fn insert(this: *Tree, pkg_path: string, spec: string) !void {
-        pub fn insert(this: *Tree, pkg_path: string) !void {
+        pub fn lock(this: *Tree) void {
+            this.locked = true;
+        }
+
+        pub fn put(this: *Tree, buf: *String.Buf, pkg_path: string, name: String, resolution: Package.Resolution) !void {
             var iter = PkgPath.iterator(pkg_path);
-            var curr: *Node = curr: {
-                const first = try iter.first();
-                const entry = try this.root.getOrPut(this.allocator, first);
+            var pkg: *Package = pkg: {
+                const entry = try this.root.getOrPutContext(
+                    this.allocator,
+                    try buf.append(try iter.first()),
+                    .{ .a_buf = buf.bytes.items, .b_buf = buf.bytes.items },
+                );
                 if (!entry.found_existing) {
                     entry.value_ptr.* = .{
-                        .transitive = .{
-                            .nodes = .{},
-
-                            // TODO(dylan-conway): need a better way to ensure each is set
-                            .resolution = "",
-                        },
+                        .packages = .{},
+                        // TODO(dylan-conway): need a better way to ensure each is set
+                        .resolution = .uninitialized,
+                        .name = .{},
                     };
+                    this.package_count += 1;
                 }
 
-                break :curr entry.value_ptr;
+                break :pkg entry.value_ptr;
             };
 
             var depth: u32 = 0;
             while (try iter.next()) |component| {
                 depth += 1;
-                const entry = switch (curr.*) {
-                    .workspace => try curr.workspace.nodes.getOrPut(this.allocator, component),
-                    .transitive => try curr.transitive.nodes.getOrPut(this.allocator, component),
-                };
+                const entry = try pkg.packages.getOrPutContext(
+                    this.allocator,
+                    try buf.append(component),
+                    .{ .a_buf = buf.bytes.items, .b_buf = buf.bytes.items },
+                );
                 if (!entry.found_existing) {
                     entry.value_ptr.* = .{
-                        .transitive = .{
-                            .nodes = .{},
-
-                            // TODO(dylan-conway): need a better way to ensure each is set
-                            .resolution = "",
-                        },
+                        .packages = .{},
+                        // TODO(dylan-conway): need a better way to ensure each is set
+                        .resolution = .uninitialized,
+                        .name = .{},
                     };
+                    this.package_count += 1;
                 }
-                curr = entry.value_ptr;
+                pkg = entry.value_ptr;
             }
 
-            // const is_workspace = strings.hasPrefixComptime(spec, "workspace:");
-
-            // switch (curr.*) {
-            //     .workspace => |*workspace| {
-            //         workspace.rel_path =
-            //     },
-            //     .transitive => {
-
-            //     }
-            // }
+            pkg.resolution = resolution;
+            pkg.name = name;
 
             if (this.max_depth < depth) {
                 this.max_depth = depth;
             }
         }
 
-        const NodeType = enum {
-            workspace,
-            transitive,
-        };
+        pub const Package = struct {
+            packages: Map,
+            name: String,
+            resolution: Package.Resolution,
 
-        const Node = union(enum) {
-            workspace: struct {
-                nodes: Map,
+            pub const Map = std.ArrayHashMapUnmanaged(String, Package, String.ArrayHashContext, false);
 
-                // workspaces aren't required to have a version, but will always
-                // have a relative path from root.
-                resolution: ?string,
-                rel_path: string,
-            },
-            transitive: struct {
-                nodes: Map,
-                resolution: string,
-            },
+            pub const Id = enum(u32) {
+                none = max,
+                _,
+
+                const max = std.math.maxInt(u32);
+
+                pub inline fn unwrap(this: Id) u32 {
+                    bun.assertWithLocation(this != .none, @src());
+                    return @intFromEnum(this);
+                }
+
+                pub inline fn unwrapOr(this: Id, default: u32) u32 {
+                    return if (this != .none) @intFromEnum(this) else default;
+                }
+
+                pub inline fn from(val: u32) Id {
+                    bun.assertWithLocation(val != max, @src());
+                    return @enumFromInt(val);
+                }
+            };
+
+            pub const Resolution = union(enum) {
+                uninitialized,
+                root,
+                npm: struct {
+                    version: Semver.Version,
+                },
+                workspace: struct {
+                    // workspaces aren't required to have a version, but will always
+                    // have a relative path from root.
+                    resolution: ?string,
+                    rel_path: string,
+                },
+                transitive: struct {
+                    resolution: string,
+                },
+            };
         };
     };
 
@@ -840,38 +1104,47 @@ pub const Lockfile = struct {
         var path_buf: bun.PathBuffer = undefined;
         @memcpy(path_buf[0.."node_modules/".len], "node_modules/");
         const offset = "node_modules/".len;
-        printNodes(this.tree.root, 0, offset, &path_buf);
+        printPackages(this.tree.root, 0, offset, &path_buf, this.string_buf.bytes.items);
         Output.flush();
     }
 
-    fn printNodes(nodes: Tree.Map, depth: usize, offset: usize, buf: []u8) void {
-        var iter = nodes.iterator();
+    fn printPackages(packages: Tree.Package.Map, depth: usize, offset: usize, buf: []u8, string_buf: string) void {
+        var iter = packages.iterator();
         while (iter.next()) |entry| {
-            const name = entry.key_ptr.*;
+            const name = entry.key_ptr.slice(string_buf);
+            const resolution = entry.value_ptr.resolution;
             @memcpy(buf[offset..][0..name.len], name);
-            Output.println("{d} - '{s}@{s}'", .{
-                depth,
-                buf[0 .. offset + name.len],
-                switch (entry.value_ptr.*) {
-                    .transitive => |transitive| transitive.resolution,
-                    .workspace => |workspace| workspace.rel_path,
+
+            switch (resolution) {
+                .npm => |npm| {
+                    Output.println("{d} - '{s}@{s}'", .{
+                        depth,
+                        buf[0 .. offset + name.len],
+                        npm.version.fmt(string_buf),
+                    });
                 },
-            });
+                else => {
+                    Output.println("{d} - '{s}@{s}'", .{
+                        depth,
+                        buf[0 .. offset + name.len],
+                        switch (resolution) {
+                            .uninitialized => "OOPS",
+                            .root => "ROOT",
+                            .npm => unreachable,
+                            .transitive => |transitive| transitive.resolution,
+                            .workspace => |workspace| workspace.rel_path,
+                        },
+                    });
+                },
+            }
         }
 
         iter.reset();
         while (iter.next()) |entry| {
-            const name = entry.key_ptr.*;
+            const name = entry.key_ptr.slice(string_buf);
             @memcpy(buf[offset..][0..name.len], name);
             @memcpy(buf[offset..][name.len..][0.."/node_modules/".len], "/node_modules/");
-            switch (entry.value_ptr.*) {
-                .workspace => |workspace| {
-                    printNodes(workspace.nodes, depth + 1, offset + name.len + "/node_modules/".len, buf);
-                },
-                .transitive => |transitive| {
-                    printNodes(transitive.nodes, depth + 1, offset + name.len + "/node_modules/".len, buf);
-                },
-            }
+            printPackages(entry.value_ptr.packages, depth + 1, offset + name.len + "/node_modules/".len, buf, string_buf);
         }
     }
 };

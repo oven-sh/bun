@@ -24,7 +24,7 @@ const Archive = bun.libarchive.lib.Archive;
 const logger = bun.logger;
 const Dependency = install.Dependency;
 const Pack = bun.CLI.PackCommand;
-const Lockfile = install.Lockfile;
+const BinaryLockfile = install.BinaryLockfile;
 const MimeType = http.MimeType;
 const Expr = bun.js_parser.Expr;
 const prompt = bun.CLI.InitCommand.prompt;
@@ -280,7 +280,7 @@ pub const PublishCommand = struct {
                 ctx: Command.Context,
                 manager: *PackageManager,
             ) FromWorkspaceError!Context(directory_publish) {
-                const load_from_disk_result = Lockfile.loadFromCwd(manager.allocator, manager.log, false, {}, {});
+                const load_from_disk_result = BinaryLockfile.loadFromCwd(manager.allocator, manager.log, false, {}, {});
 
                 var pack_ctx: Pack.Context = .{
                     .allocator = ctx.allocator,

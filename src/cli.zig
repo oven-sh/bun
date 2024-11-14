@@ -2080,7 +2080,7 @@ pub const Command = struct {
                             }
                         }
 
-                        try Install.Lockfile.Printer.print(
+                        try Install.BinaryLockfile.Printer.print(
                             ctx.allocator,
                             ctx.log,
                             ctx.args.entry_points[0],

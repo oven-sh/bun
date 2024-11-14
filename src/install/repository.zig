@@ -184,7 +184,7 @@ pub const Repository = extern struct {
     pub fn createDependencyNameFromVersionLiteral(
         allocator: std.mem.Allocator,
         repository: *const Repository,
-        lockfile: *Install.Lockfile,
+        lockfile: *Install.BinaryLockfile,
         dep_id: Install.DependencyID,
     ) []u8 {
         const buf = lockfile.buffers.string_bytes.items;

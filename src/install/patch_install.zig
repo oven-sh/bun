@@ -18,8 +18,8 @@ pub const PackageID = bun.install.PackageID;
 pub const DependencyID = bun.install.DependencyID;
 
 const Task = bun.install.Task;
-pub const Lockfile = @import("./lockfile.zig");
-pub const PatchedDep = Lockfile.PatchedDep;
+pub const BinaryLockfile = @import("./lockfile.zig");
+pub const PatchedDep = BinaryLockfile.PatchedDep;
 
 const ThreadPool = bun.ThreadPool;
 
@@ -42,7 +42,7 @@ pub const BuntagHashBuf = [max_buntag_hash_buf_len]u8;
 pub const PatchTask = struct {
     // TODO: are either of these needed?
     manager: *PackageManager,
-    lockfile: *Lockfile,
+    lockfile: *BinaryLockfile,
 
     tempdir: std.fs.Dir,
     project_dir: []const u8,
@@ -93,7 +93,7 @@ pub const PatchTask = struct {
         task_id: ?Task.Id.Type = null,
         install_context: ?struct {
             dependency_id: DependencyID,
-            tree_id: Lockfile.Tree.Id,
+            tree_id: BinaryLockfile.Tree.Id,
             path: std.ArrayList(u8),
         } = null,
         // dependency_id: ?struct = null,
@@ -167,7 +167,7 @@ pub const PatchTask = struct {
     fn runFromMainThreadCalcHash(
         this: *PatchTask,
         manager: *PackageManager,
-        lockfile: *Lockfile,
+        lockfile: *BinaryLockfile,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
         // TODO only works for npm package
@@ -517,7 +517,7 @@ pub const PatchTask = struct {
 
     pub fn newCalcPatchHash(
         manager: *PackageManager,
-        lockfile: *Lockfile,
+        lockfile: *BinaryLockfile,
         name_and_version_hash: u64,
         state: ?CalcPatchHash.EnqueueAfterState,
     ) *PatchTask {
@@ -544,7 +544,7 @@ pub const PatchTask = struct {
 
     pub fn newApplyPatchHash(
         manager: *PackageManager,
-        lockfile: *Lockfile,
+        lockfile: *BinaryLockfile,
         pkg_id: PackageID,
         patch_hash: u64,
         name_and_version_hash: u64,

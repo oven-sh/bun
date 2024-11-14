@@ -44,6 +44,7 @@ pub const Run = struct {
 
     pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
         JSC.markBinding(@src());
+        bun.http.allow_multithreaded_decompression = !ctx.runtime_options.smol;
         bun.JSC.initialize(false);
         bun.Analytics.Features.standalone_executable += 1;
 
@@ -183,7 +184,7 @@ pub const Run = struct {
         }
 
         bun.JSC.initialize(ctx.runtime_options.eval.eval_and_print);
-
+        bun.http.allow_multithreaded_decompression = !ctx.runtime_options.smol;
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
         var arena = try Arena.init();

@@ -141,3 +141,5 @@ export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunc
   "jsFunctionIsModuleResolveFilenameSlowPathEnabled",
   0,
 );
+
+export const createInternalStatsObject = $newZigFunction("analytics_thread.zig", "createInternalStatsObject", 1);

@@ -4,8 +4,8 @@ import { bunEnv, bunExe } from "harness";
 import { join, dirname } from "path";
 import os from "node:os";
 
-const jsNativeApiRoot = join(__dirname, "node-napi-tests/test/js-native-api");
-const nodeApiRoot = join(__dirname, "node-napi-tests/test/node-api");
+const jsNativeApiRoot = join(__dirname, "node-napi-tests", "test", "js-native-api");
+const nodeApiRoot = join(__dirname, "node-napi-tests", "test", "node-api");
 
 const jsNativeApiTests = Array.from(new Glob("**/*.js").scanSync(jsNativeApiRoot));
 const nodeApiTests = Array.from(new Glob("**/*.js").scanSync(nodeApiRoot));
@@ -49,6 +49,15 @@ const failingNodeApiTests = [
   "test_env_teardown_gc/test.js",
   "test_worker_terminate/test.js",
 ];
+
+if (process.platform == "win32") {
+  for (const i in failingJsNativeApiTests) {
+    failingJsNativeApiTests[i] = failingJsNativeApiTests[i].replaceAll("/", "\\");
+  }
+  for (const i in failingNodeApiTests) {
+    failingNodeApiTests[i] = failingNodeApiTests[i].replaceAll("/", "\\");
+  }
+}
 
 beforeAll(async () => {
   const directories = jsNativeApiTests

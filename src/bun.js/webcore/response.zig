@@ -509,22 +509,13 @@ pub const Response = struct {
         return response.toJS(globalThis);
     }
 
-    pub fn constructor(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) ?*Response {
-        const args_list = brk: {
-            var args = callframe.arguments(2);
-            if (args.len > 1 and args.ptr[1].isEmptyOrUndefinedOrNull()) {
-                args.len = 1;
-            }
-            break :brk args;
-        };
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Response {
+        const args_list = callframe.argumentsUndef(2);
 
         const arguments = args_list.ptr[0..args_list.len];
 
-        var init: Init = @as(?Init, brk: {
-            switch (arguments.len) {
+        var init: Init = (brk: {
+            switch (callframe.argumentsCount()) {
                 0 => {
                     break :brk Init{
                         .status_code = 200,
@@ -539,22 +530,20 @@ pub const Response = struct {
                 },
                 else => {
                     if (arguments[1].isObject()) {
-                        break :brk Init.init(globalThis, arguments[1]) catch null;
+                        break :brk try Init.init(globalThis, arguments[1]) orelse unreachable;
                     }
-
                     if (!globalThis.hasException()) {
-                        globalThis.throwInvalidArguments("new Response() requires a Response-like object in the 2nd argument", .{});
+                        return globalThis.throwInvalidArguments2("new Response() requires a Response-like object in the 2nd argument", .{});
                     }
-
-                    break :brk null;
+                    return error.JSError;
                 },
             }
             unreachable;
-        }) orelse return null;
+        });
+        errdefer init.deinit(bun.default_allocator);
 
         if (globalThis.hasException()) {
-            init.deinit(bun.default_allocator);
-            return null;
+            return error.JSError;
         }
 
         var body: Body = brk: {
@@ -565,20 +554,15 @@ pub const Response = struct {
                     };
                 },
                 else => {
-                    break :brk Body.extract(globalThis, arguments[0]);
+                    break :brk try Body.extract(globalThis, arguments[0]);
                 },
             }
             unreachable;
-        } orelse {
-            init.deinit(bun.default_allocator);
-
-            return null;
         };
+        errdefer body.deinit(bun.default_allocator);
 
         if (globalThis.hasException()) {
-            body.deinit(bun.default_allocator);
-            init.deinit(bun.default_allocator);
-            return null;
+            return error.JSError;
         }
 
         var response = bun.new(Response, Response{
@@ -616,7 +600,7 @@ pub const Response = struct {
             return that;
         }
 
-        pub fn init(globalThis: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
+        pub fn init(globalThis: *JSGlobalObject, response_init: JSC.JSValue) bun.JSError!?Init {
             var result = Init{ .status_code = 200 };
             errdefer {
                 result.deinit(bun.default_allocator);
@@ -2583,10 +2567,8 @@ pub const Fetch = struct {
             if (options_object) |options| {
                 if (options.fastGet(globalThis, .body)) |body__| {
                     if (!body__.isUndefined()) {
-                        if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
-                            var body_value = body_const;
-                            break :extract_body body_value.useAsAnyBlob();
-                        }
+                        var body_value = try Body.Value.fromJS(ctx.ptr(), body__);
+                        break :extract_body body_value.useAsAnyBlob();
                     }
                 }
 
@@ -2609,10 +2591,8 @@ pub const Fetch = struct {
             if (request_init_object) |req| {
                 if (req.fastGet(globalThis, .body)) |body__| {
                     if (!body__.isUndefined()) {
-                        if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
-                            var body_value = body_const;
-                            break :extract_body body_value.useAsAnyBlob();
-                        }
+                        var body_value = try Body.Value.fromJS(ctx.ptr(), body__);
+                        break :extract_body body_value.useAsAnyBlob();
                     }
                 }
             }

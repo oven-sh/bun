@@ -41,13 +41,6 @@ pub const ResourceUsage = struct {
     pub usingnamespace JSC.Codegen.JSResourceUsage;
     rusage: Rusage,
 
-    pub fn constructor(
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) ?*Subprocess {
-        return null;
-    }
-
     pub fn getCPUTime(
         this: *ResourceUsage,
         globalObject: *JSGlobalObject,
@@ -393,11 +386,8 @@ pub const Subprocess = struct {
         this.updateHasPendingActivity();
     }
 
-    pub fn constructor(
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) ?*Subprocess {
-        return null;
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Subprocess {
+        return globalObject.throw2("Cannot construct Subprocess", .{});
     }
 
     const Readable = union(enum) {

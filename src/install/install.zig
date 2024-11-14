@@ -450,7 +450,7 @@ const NetworkTask = struct {
 
         this.callback = .{
             .package_manifest = .{
-                .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, &FileSystem.FilenameStore.instance),
+                .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, FileSystem.FilenameStore.instance),
                 .loaded_manifest = if (loaded_manifest) |manifest| manifest.* else null,
             },
         };
@@ -4345,7 +4345,7 @@ pub const PackageManager = struct {
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(
                     this.lockfile.str(&package.name),
                     *FileSystem.FilenameStore,
-                    &FileSystem.FilenameStore.instance,
+                    FileSystem.FilenameStore.instance,
                 ),
                 .resolution = package.resolution,
                 .cache_dir = this.getCacheDirectory(),
@@ -4355,7 +4355,7 @@ pub const PackageManager = struct {
                 .url = try strings.StringOrTinyString.initAppendIfNeeded(
                     url,
                     *FileSystem.FilenameStore,
-                    &FileSystem.FilenameStore.instance,
+                    FileSystem.FilenameStore.instance,
                 ),
             },
             scope,
@@ -4811,12 +4811,12 @@ pub const PackageManager = struct {
                     .name = strings.StringOrTinyString.initAppendIfNeeded(
                         name,
                         *FileSystem.FilenameStore,
-                        &FileSystem.FilenameStore.instance,
+                        FileSystem.FilenameStore.instance,
                     ) catch unreachable,
                     .url = strings.StringOrTinyString.initAppendIfNeeded(
                         this.lockfile.str(&repository.repo),
                         *FileSystem.FilenameStore,
-                        &FileSystem.FilenameStore.instance,
+                        FileSystem.FilenameStore.instance,
                     ) catch unreachable,
                     .env = Repository.shared_env.get(this.allocator, this.env),
                 },
@@ -4862,17 +4862,17 @@ pub const PackageManager = struct {
                     .name = strings.StringOrTinyString.initAppendIfNeeded(
                         name,
                         *FileSystem.FilenameStore,
-                        &FileSystem.FilenameStore.instance,
+                        FileSystem.FilenameStore.instance,
                     ) catch unreachable,
                     .url = strings.StringOrTinyString.initAppendIfNeeded(
                         this.lockfile.str(&resolution.value.git.repo),
                         *FileSystem.FilenameStore,
-                        &FileSystem.FilenameStore.instance,
+                        FileSystem.FilenameStore.instance,
                     ) catch unreachable,
                     .resolved = strings.StringOrTinyString.initAppendIfNeeded(
                         resolved,
                         *FileSystem.FilenameStore,
-                        &FileSystem.FilenameStore.instance,
+                        FileSystem.FilenameStore.instance,
                     ) catch unreachable,
                     .env = Repository.shared_env.get(this.allocator, this.env),
                 },
@@ -4914,7 +4914,7 @@ pub const PackageManager = struct {
                         .name = strings.StringOrTinyString.initAppendIfNeeded(
                             name,
                             *FileSystem.FilenameStore,
-                            &FileSystem.FilenameStore.instance,
+                            FileSystem.FilenameStore.instance,
                         ) catch unreachable,
                         .resolution = resolution,
                         .cache_dir = this.getCacheDirectory(),
@@ -4923,7 +4923,7 @@ pub const PackageManager = struct {
                         .url = strings.StringOrTinyString.initAppendIfNeeded(
                             path,
                             *FileSystem.FilenameStore,
-                            &FileSystem.FilenameStore.instance,
+                            FileSystem.FilenameStore.instance,
                         ) catch unreachable,
                     },
                 },

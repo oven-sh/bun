@@ -59,6 +59,9 @@ threadlocal var panic_stage: usize = 0;
 /// rate or only crash due to assertion failures, are debug-only. See `Action`.
 pub threadlocal var current_action: ?Action = null;
 
+var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const OnBeforeCrash }) = .{};
+var before_crash_handlers_mutex: std.Thread.Mutex = .{};
+
 const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
 
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
@@ -179,6 +182,13 @@ pub fn crashHandler(
 
             panic_stage = 1;
             _ = panicking.fetchAdd(1, .seq_cst);
+
+            if (before_crash_handlers_mutex.tryLock()) {
+                for (before_crash_handlers.items) |item| {
+                    const ptr, const cb = item;
+                    cb(ptr);
+                }
+            }
 
             {
                 panic_mutex.lock();
@@ -1733,3 +1743,32 @@ pub const js_bindings = struct {
         return obj;
     }
 };
+
+const OnBeforeCrash = fn (opaque_ptr: *anyopaque) void;
+
+/// For large codebases such as bun.bake.DevServer, it may be helpful
+/// to dump a large amount of state to a file to aid debugging a crash.
+///
+/// Pre-crash handlers are likely, but not guaranteed to call. Errors are ignored.
+pub fn appendPreCrashHandler(comptime T: type, ptr: *T, comptime handler: fn (*T) anyerror!void) !void {
+    const wrap = struct {
+        fn onCrash(opaque_ptr: *anyopaque) void {
+            handler(@ptrCast(@alignCast(opaque_ptr))) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            };
+        }
+    };
+
+    before_crash_handlers_mutex.lock();
+    defer before_crash_handlers_mutex.unlock();
+    try before_crash_handlers.append(bun.default_allocator, .{ ptr, wrap.onCrash });
+}
+
+pub fn removePreCrashHandler(ptr: *anyopaque) void {
+    before_crash_handlers_mutex.lock();
+    defer before_crash_handlers_mutex.unlock();
+    const index = for (before_crash_handlers.items, 0..) |item, i| {
+        if (item.@"0" == ptr) break i;
+    } else return;
+    _ = before_crash_handlers.orderedRemove(index);
+}

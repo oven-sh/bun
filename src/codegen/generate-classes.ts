@@ -1726,9 +1726,9 @@ const JavaScriptCoreBindings = struct {
     if (construct && !noConstructor) {
       exports.set("construct", classSymbolName(typeName, "construct"));
       output += `
-        pub fn ${classSymbolName(typeName, "construct")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) ?*${typeName} {
+        pub fn ${classSymbolName(typeName, "construct")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) ?*anyopaque {
           if (comptime Environment.enable_logs) zig("<r><blue>new<r> ${typeName}<d>({})<r>", .{callFrame});
-          return @call(.always_inline, ${typeName}.constructor, .{globalObject, callFrame});
+          return @call(.always_inline, wrapConstructor(${typeName}, ${typeName}.constructor), .{globalObject, callFrame});
         }
       `;
     }
@@ -1748,7 +1748,7 @@ const JavaScriptCoreBindings = struct {
       output += `
         pub fn ${classSymbolName(typeName, "call")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
           if (comptime Environment.enable_logs) zig("${typeName}<d>({})<r>", .{callFrame});
-          return @call(.always_inline, ${typeName}.call, .{globalObject, callFrame});
+          return @call(.always_inline, wrapHostFunction(${typeName}.call), .{globalObject, callFrame});
         }
       `;
     }
@@ -1801,7 +1801,7 @@ const JavaScriptCoreBindings = struct {
           output += `
         pub fn ${names.fn}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame${proto[name].passThis ? ", js_this_value: JSC.JSValue" : ""}) callconv(JSC.conv) JSC.JSValue {
           if (comptime Environment.enable_logs) zig("<d>${typeName}.<r>${name}<d>({})<r>", .{callFrame});
-          return @call(.always_inline, ${typeName}.${fn}, .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}});
+          return @call(.always_inline, ${proto[name].passThis ? 'wrapMethodWithThis' : 'wrapMethod'}(${typeName}, ${typeName}.${fn}), .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}});
         }
         `;
         }
@@ -2137,6 +2137,13 @@ const Classes = JSC.GeneratedClassesList;
 const Environment = bun.Environment;
 const std = @import("std");
 const zig = bun.Output.scoped(.zig, true);
+
+const wrapHostFunction = bun.gen_classes_lib.wrapHostFunction;
+const wrapMethod = bun.gen_classes_lib.wrapMethod;
+const wrapMethodWithThis = bun.gen_classes_lib.wrapMethodWithThis;
+const wrapConstructor = bun.gen_classes_lib.wrapConstructor;
+const wrapGetterCallback = bun.gen_classes_lib.wrapGetterCallback;
+const wrapGetterWithValueCallback = bun.gen_classes_lib.wrapGetterWithValueCallback;
 
 pub const StaticGetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) callconv(JSC.conv) JSC.JSValue;
 pub const StaticSetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, JSC.JSValue) callconv(JSC.conv) bool;

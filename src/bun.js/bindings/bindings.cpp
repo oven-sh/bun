@@ -2295,19 +2295,17 @@ extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object
     JSC::JSGlobalObject* globalObject = toJS(ctx);
     JSC::VM& vm = globalObject->vm();
 
-    // This is a redundant check, but we add it to make the error message clearer.
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
 
-    if (UNLIKELY(!object))
-        return JSC::JSValue::encode(JSC::JSValue());
-
     JSC::JSValue jsObject = JSValue::decode(object);
+    ASSERT(jsObject);
+
     JSC::JSValue jsThisObject = JSValue::decode(thisObject);
 
     JSValue restoreAsyncContext;
     InternalFieldTuple* asyncContextData = nullptr;
     if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(jsObject)) {
-        jsObject = jsCast<JSC::JSObject*>(wrapper->callback.get());
+        jsObject = jsCast<JSC::JSFunction*>(wrapper->callback.get());
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());
@@ -2317,10 +2315,13 @@ extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object
         jsThisObject = globalObject->globalThis();
 
     JSC::MarkedArgumentBuffer argList;
+    argList.ensureCapacity(argumentCount);
     for (size_t i = 0; i < argumentCount; i++)
         argList.append(toJS(globalObject, arguments[i]));
 
     auto callData = getCallData(jsObject);
+    ASSERT(jsObject.isCallable());
+    ASSERT(callData.type != JSC::CallData::Type::None);
     if (callData.type == JSC::CallData::Type::None)
         return JSC::JSValue::encode(JSC::JSValue());
 
@@ -3704,7 +3705,7 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
     if (UNLIKELY(!object))
         return JSValue::encode({});
 
-    // Since Identifier might not ref' the string, we need to enusre it doesn't get deref'd until this function returns
+    // Since Identifier might not ref' the string, we need to ensure it doesn't get deref'd until this function returns
     const auto propertyString = String(StringImpl::createWithoutCopying({ arg1, arg2 }));
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
     const auto property = JSC::PropertyName(identifier);
@@ -5079,7 +5080,7 @@ JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalOb
     return JSValue::encode(value.getObject()->getDirect(globalObject->vm(), PropertyName(builtinNameMap(globalObject->vm(), arg2))));
 }
 
-JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
+JSC__JSValue JSC__JSValue__fastGet(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     ASSERT(value.isCell());
@@ -5923,4 +5924,13 @@ CPP_DECL JSC__JSValue Bun__ProxyObject__getInternalField(JSC__JSValue value, uin
 CPP_DECL void JSC__SourceProvider__deref(JSC::SourceProvider* provider)
 {
     provider->deref();
+}
+
+CPP_DECL bool Bun__CallFrame__isFromBunMain(JSC::CallFrame* callFrame, JSC::VM* vm)
+{
+    auto source = callFrame->callerSourceOrigin(*vm);
+
+    if (source.isNull())
+        return false;
+    return source.string() == "builtin://bun/main"_s;
 }

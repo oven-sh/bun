@@ -4336,6 +4336,27 @@ pub fn indexOfCharUsize(slice: []const u8, char: u8) ?usize {
     return i;
 }
 
+pub fn indexOfCharPos(slice: []const u8, char: u8, start_index: usize) ?usize {
+    if (!Environment.isNative) {
+        return std.mem.indexOfScalarPos(u8, slice, char);
+    }
+
+    if (start_index >= slice.len) return null;
+
+    const ptr = bun.C.memchr(slice.ptr + start_index, char, slice.len - start_index) orelse
+        return null;
+    const i = @intFromPtr(ptr) - @intFromPtr(slice.ptr);
+    bun.assert(i < slice.len);
+    bun.assert(slice[i] == char);
+
+    return i;
+}
+
+pub fn indexOfAnyPosComptime(slice: []const u8, comptime chars: []const u8, start_index: usize) ?usize {
+    if (chars.len == 1) return indexOfCharPos(slice, chars[0], start_index);
+    return std.mem.indexOfAnyPos(u8, slice, start_index, chars);
+}
+
 pub fn indexOfChar16Usize(slice: []const u16, char: u16) ?usize {
     return std.mem.indexOfScalar(u16, slice, char);
 }

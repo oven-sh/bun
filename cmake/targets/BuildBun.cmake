@@ -947,6 +947,11 @@ else()
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro
+    -Wl,-z,combreloc
+    -Wl,--no-eh-frame-hdr
+    -Wl,--sort-section=name
+    -Wl,--hash-style=gnu
+    -Wl,--build-id=sha1  # Better for debugging than default
     -Wl,-Map=${bun}.linker-map
   )
 endif()

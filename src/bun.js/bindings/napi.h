@@ -21,6 +21,25 @@
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
 extern "C" void napi_internal_crash_in_gc(napi_env);
 
+namespace Napi {
+struct AsyncCleanupHook {
+    napi_async_cleanup_hook function = nullptr;
+    void* data = nullptr;
+    napi_async_cleanup_hook_handle handle = nullptr;
+};
+}
+
+struct napi_async_cleanup_hook_handle__ {
+    napi_env env;
+    std::list<Napi::AsyncCleanupHook>::iterator iter;
+
+    napi_async_cleanup_hook_handle__(napi_env env, decltype(iter) iter)
+        : env(env)
+        , iter(iter)
+    {
+    }
+};
+
 // Named this way so we can manipulate napi_env values directly (since napi_env is defined as a pointer to struct napi_env__)
 struct napi_env__ {
 public:
@@ -45,6 +64,14 @@ public:
             m_cleanupHooks.pop_back();
             ASSERT(function != nullptr);
             function(data);
+        }
+
+        while (!m_asyncCleanupHooks.empty()) {
+            auto [function, data, handle] = m_asyncCleanupHooks.back();
+            m_asyncCleanupHooks.pop_back();
+            ASSERT(function != nullptr);
+            function(handle, data);
+            delete handle;
         }
 
         for (const BoundFinalizer& boundFinalizer : m_finalizers) {
@@ -84,7 +111,7 @@ public:
     /// Will abort the process if a duplicate entry would be added.
     void addCleanupHook(void (*function)(void*), void* data)
     {
-        for (const auto [existing_function, existing_data] : m_cleanupHooks) {
+        for (const auto& [existing_function, existing_data] : m_cleanupHooks) {
             if (UNLIKELY(function == existing_function && data == existing_data)) {
                 RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Attempted to add a duplicate NAPI environment cleanup hook");
             }
@@ -103,6 +130,32 @@ public:
         }
 
         RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Attempted to remove a NAPI environment cleanup hook that had never been added");
+    }
+
+    napi_async_cleanup_hook_handle addAsyncCleanupHook(napi_async_cleanup_hook function, void* data)
+    {
+        for (const auto& [existing_function, existing_data, existing_handle] : m_asyncCleanupHooks) {
+            if (UNLIKELY(function == existing_function && data == existing_data)) {
+                RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Attempted to add a duplicate async NAPI environment cleanup hook");
+            }
+        }
+
+        auto iter = m_asyncCleanupHooks.emplace(m_asyncCleanupHooks.end(), function, data);
+        iter->handle = new napi_async_cleanup_hook_handle__(this, iter);
+        return iter->handle;
+    }
+
+    void removeAsyncCleanupHook(napi_async_cleanup_hook_handle handle)
+    {
+        for (const auto& [existing_function, existing_data, existing_handle] : m_asyncCleanupHooks) {
+            if (existing_handle == handle) {
+                m_asyncCleanupHooks.erase(handle->iter);
+                delete handle;
+                return;
+            }
+        }
+
+        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Attempted to remove an async NAPI environment cleanup hook that had never been added");
     }
 
     void checkGC()
@@ -221,6 +274,7 @@ private:
     std::unordered_set<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
     bool m_inCleanup = false;
     std::list<std::pair<void (*)(void*), void*>> m_cleanupHooks;
+    std::list<Napi::AsyncCleanupHook> m_asyncCleanupHooks;
 };
 
 extern "C" void napi_internal_cleanup_env_cpp(napi_env);

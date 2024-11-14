@@ -1759,20 +1759,6 @@ pub export fn napi_ref_threadsafe_function(env_: napi_env, func: napi_threadsafe
     return env.ok();
 }
 
-pub export fn napi_add_async_cleanup_hook(env_: napi_env, _: napi_async_cleanup_hook, _: ?*anyopaque, _: [*c]napi_async_cleanup_hook_handle) napi_status {
-    log("napi_add_async_cleanup_hook", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    // TODO:
-    return env.ok();
-}
-pub export fn napi_remove_async_cleanup_hook(_: napi_async_cleanup_hook_handle) napi_status {
-    log("napi_remove_async_cleanup_hook", .{});
-    // TODO:
-    return @intFromEnum(NapiStatus.ok);
-}
-
 pub const NAPI_VERSION_EXPERIMENTAL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 2147483647, .decimal);
 pub const NAPI_VERSION = @as(c_int, 8);
 pub const NAPI_AUTO_LENGTH = std.math.maxInt(usize);

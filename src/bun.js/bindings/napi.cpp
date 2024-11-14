@@ -2880,17 +2880,44 @@ extern "C" JS_EXPORT napi_status napi_add_env_cleanup_hook(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
+extern "C" JS_EXPORT napi_status napi_add_async_cleanup_hook(napi_env env,
+    napi_async_cleanup_hook function,
+    void* data, napi_async_cleanup_hook_handle* handle_out)
+{
+    NAPI_PREAMBLE(env);
+    if (function) {
+        napi_async_cleanup_hook_handle handle = env->addAsyncCleanupHook(function, data);
+        if (handle_out) {
+            *handle_out = handle;
+        }
+    }
+    NAPI_RETURN_SUCCESS(env);
+}
+
 extern "C" JS_EXPORT napi_status napi_remove_env_cleanup_hook(napi_env env,
     void (*function)(void*),
     void* data)
 {
     NAPI_PREAMBLE(env);
 
-    if (UNLIKELY(function == nullptr || env->globalObject()->vm().hasTerminationRequest())) {
-        NAPI_RETURN_SUCCESS(env);
+    if (LIKELY(function != nullptr) && !env->globalObject()->vm().hasTerminationRequest()) {
+        env->removeCleanupHook(function, data);
     }
 
-    env->removeCleanupHook(function, data);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" JS_EXPORT napi_status napi_remove_async_cleanup_hook(napi_async_cleanup_hook_handle handle)
+{
+    ASSERT(handle != nullptr);
+    napi_env env = handle->env;
+
+    NAPI_PREAMBLE(env);
+
+    if (!env->globalObject()->vm().hasTerminationRequest()) {
+        env->removeAsyncCleanupHook(handle);
+    }
+
     NAPI_RETURN_SUCCESS(env);
 }
 

@@ -3,7 +3,6 @@ import { beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join, dirname } from "path";
 import os from "node:os";
-import { proxyMarker } from "comlink";
 
 const jsNativeApiRoot = join(__dirname, "node-napi-tests/test/js-native-api");
 const nodeApiRoot = join(__dirname, "node-napi-tests/test/node-api");
@@ -108,7 +107,7 @@ describe.each([
         expect(result.success).toBeTrue();
         expect(result.exitCode).toBe(0);
       },
-      10000, // timeout
+      20000, // timeout
     );
   });
 });

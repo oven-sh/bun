@@ -3284,7 +3284,7 @@ pub const Resolver = struct {
         bun.JSC.markBinding(@src());
         const argument: bun.JSC.JSValue = callframe.argument(0);
 
-        if (argument.isEmpty() or !argument.isString()) {
+        if (argument == .zero or !argument.isString()) {
             globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
             return .zero;
         }

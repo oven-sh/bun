@@ -27,7 +27,5 @@ const { spawnSync } = require('child_process');
 const child = spawnSync(process.execPath, [
   '--expose-gc', __filename, 'child',
 ]);
-// Check the child process did not exit normally
-// Revert to upstream when oven-sh/bun#15111 is fixed
-assert(child.status === null);
+assert(common.nodeProcessAborted(child.status, child.signal));
 assert.match(child.stderr.toString(), /Finalizer is calling a function that may affect GC state|Attempted to call a non-GC-safe function inside a NAPI finalizer/);

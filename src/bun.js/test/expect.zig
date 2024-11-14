@@ -1784,7 +1784,7 @@ pub const Expect = struct {
 
         if (pass) {
             received_property = value.getIfPropertyExistsFromPath(globalThis, expected_property_path);
-            pass = !received_property.isEmpty();
+            pass = received_property != .zero;
         }
 
         if (pass and expected_property != null) {
@@ -1799,7 +1799,7 @@ pub const Expect = struct {
         if (not) {
             if (expected_property != null) {
                 const signature = comptime getSignature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", true);
-                if (!received_property.isEmpty()) {
+                if (received_property != .zero) {
                     this.throw(globalThis, signature, "\n\nExpected path: <green>{any}<r>\n\nExpected value: not <green>{any}<r>\n", .{
                         expected_property_path.toFmt(&formatter),
                         expected_property.?.toFmt(&formatter),
@@ -1818,7 +1818,7 @@ pub const Expect = struct {
 
         if (expected_property != null) {
             const signature = comptime getSignature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", false);
-            if (!received_property.isEmpty()) {
+            if (received_property != .zero) {
                 // deep equal case
                 const diff_format = DiffFormatter{
                     .received = received_property,
@@ -2381,7 +2381,7 @@ pub const Expect = struct {
             const result: JSValue = result_.?;
             var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
 
-            if (expected_value.isEmpty() or expected_value.isUndefined()) {
+            if (expected_value == .zero or expected_value.isUndefined()) {
                 const signature_no_args = comptime getSignature("toThrow", "", true);
                 if (result.toError()) |err| {
                     const name = err.getTruthyComptime(globalThis, "name") orelse JSValue.undefined;
@@ -2474,7 +2474,7 @@ pub const Expect = struct {
         }
 
         if (did_throw) {
-            if (expected_value.isEmpty() or expected_value.isUndefined()) return .undefined;
+            if (expected_value == .zero or expected_value.isUndefined()) return .undefined;
 
             const result: JSValue = if (result_.?.toError()) |r|
                 r
@@ -2631,7 +2631,7 @@ pub const Expect = struct {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         const received_line = "Received function did not throw\nReceived value: <red>{any}<r>\n";
 
-        if (expected_value.isEmpty() or expected_value.isUndefined()) {
+        if (expected_value == .zero or expected_value.isUndefined()) {
             const signature = comptime getSignature("toThrow", "", false);
             this.throw(globalThis, signature, "\n\n" ++ received_line, .{result.toFmt(&formatter)});
             return .zero;
@@ -4663,12 +4663,7 @@ pub const Expect = struct {
         matcher_context_jsvalue.ensureStillAlive();
 
         // call the custom matcher implementation
-        var result = matcher_fn.call(globalThis, matcher_context_jsvalue, args) catch |err| globalThis.takeException(err);
-        assert(!result.isEmpty());
-        if (result.toError()) |err| {
-            globalThis.throwValue(err);
-            return false;
-        }
+        var result = matcher_fn.call(globalThis, matcher_context_jsvalue, args) catch return false;
         // support for async matcher results
         if (result.asAnyPromise()) |promise| {
             const vm = globalThis.vm();
@@ -4678,7 +4673,7 @@ pub const Expect = struct {
 
             result = promise.result(vm);
             result.ensureStillAlive();
-            assert(!result.isEmpty());
+            assert(result != .zero);
             switch (promise.status(vm)) {
                 .pending => unreachable,
                 .fulfilled => {},
@@ -4734,13 +4729,7 @@ pub const Expect = struct {
             if (comptime Environment.allow_assert)
                 assert(message.isCallable(globalThis.vm())); // checked above
 
-            const message_result = message.callWithGlobalThis(globalThis, &.{}) catch |err|
-                globalThis.takeException(err);
-            assert(!message_result.isEmpty());
-            if (message_result.toError()) |err| {
-                globalThis.throwValue(err);
-                return false;
-            }
+            const message_result = message.callWithGlobalThis(globalThis, &.{}) catch return false;
             if (bun.String.tryFromJS(message_result, globalThis)) |str| {
                 message_text = str;
             } else {
@@ -4979,7 +4968,7 @@ pub const ExpectStatic = struct {
     fn createAsymmetricMatcherWithFlags(T: anytype, this: *ExpectStatic, globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         //const this: *ExpectStatic = ExpectStatic.fromJS(callFrame.this());
         const instance_jsvalue = T.call(globalThis, callFrame);
-        if (!instance_jsvalue.isEmpty() and !instance_jsvalue.isAnyError()) {
+        if (instance_jsvalue != .zero and !instance_jsvalue.isAnyError()) {
             var instance = T.fromJS(instance_jsvalue) orelse {
                 globalThis.throwOutOfMemory();
                 return .zero;
@@ -5639,8 +5628,8 @@ pub const ExpectMatcherUtils = struct {
 
 // Extract the matcher_fn from a JSCustomExpectMatcherFunction instance
 inline fn getCustomMatcherFn(thisValue: JSValue, globalThis: *JSGlobalObject) ?JSValue {
-    var matcher_fn = Bun__JSWrappingFunction__getWrappedFunction(thisValue, globalThis);
-    return if (matcher_fn.isEmpty()) null else matcher_fn;
+    const matcher_fn = Bun__JSWrappingFunction__getWrappedFunction(thisValue, globalThis);
+    return if (matcher_fn == .zero) null else matcher_fn;
 }
 
 /// JSValue.zero is used to indicate it was not a JSMockFunction

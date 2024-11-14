@@ -108,8 +108,8 @@ function getPipeline(options) {
    * @property {Arch} arch
    * @property {Abi} [abi]
    * @property {boolean} [baseline]
-   * @property {string} [distro]
-   * @property {string} [release]
+   * @property {string} distro
+   * @property {string} release
    */
 
   /**
@@ -118,14 +118,8 @@ function getPipeline(options) {
    */
   const getPlatformKey = platform => {
     const { os, arch, abi, baseline, distro, release } = platform;
-    let key = getTargetKey({ os, arch, abi, baseline });
-    if (distro) {
-      key += `-${distro}`;
-    }
-    if (release) {
-      key += `-${release.replace(/\./g, "")}`;
-    }
-    return key;
+    const target = getTargetKey({ os, arch, abi, baseline });
+    return `${target}-${distro}-${release.replace(/\./g, "")}`;
   };
 
   /**
@@ -133,11 +127,8 @@ function getPipeline(options) {
    * @returns {string}
    */
   const getPlatformLabel = platform => {
-    const { os, arch, abi, baseline, distro } = platform;
-    let label = `${getEmoji(distro || os)} ${arch}`;
-    if (abi) {
-      label += `-${abi}`;
-    }
+    const { os, arch, baseline, distro, release } = platform;
+    let label = `${getEmoji(distro || os)} ${release} ${arch}`;
     if (baseline) {
       label += "-baseline";
     }
@@ -150,14 +141,7 @@ function getPipeline(options) {
    */
   const getImageKey = platform => {
     const { os, arch, distro, release } = platform;
-    let key = `${os}-${arch}`;
-    if (distro) {
-      key += `-${distro}`;
-    }
-    if (release) {
-      key += `-${release.replace(/\./g, "")}`;
-    }
-    return key;
+    return `${os}-${arch}-${distro}-${release.replace(/\./g, "")}`;
   };
 
   /**
@@ -166,11 +150,7 @@ function getPipeline(options) {
    */
   const getImageLabel = platform => {
     const { os, arch, distro, release } = platform;
-    let label = `${getEmoji(distro || os)} ${arch}`;
-    if (release) {
-      label += `-${release}`;
-    }
-    return label;
+    return `${getEmoji(distro || os)} ${release} ${arch}`;
   };
 
   /**

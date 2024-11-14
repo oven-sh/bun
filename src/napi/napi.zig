@@ -547,7 +547,7 @@ pub export fn napi_get_prototype(env_: napi_env, object_: napi_value, result_: ?
         return env.invalidArg();
     };
     const object = object_.get();
-    if (object.isEmpty()) {
+    if (object == .zero) {
         return env.invalidArg();
     }
     if (!object.isObject()) {

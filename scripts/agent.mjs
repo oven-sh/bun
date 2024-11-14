@@ -178,9 +178,12 @@ export async function doAgent(action) {
     };
 
     if (cloud) {
-      const robobun = await getCloudMetadataTag("robobun");
-      if (robobun === "true") {
-        tags["robobun"] = "true";
+      const requiredTags = ["robobun", "robobun2"];
+      for (const tag of requiredTags) {
+        const value = await getCloudMetadataTag(tag);
+        if (typeof value === "string") {
+          tags[tag] = value;
+        }
       }
     }
 

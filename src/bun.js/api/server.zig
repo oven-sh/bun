@@ -1172,7 +1172,7 @@ pub const ServerConfig = struct {
         args: *ServerConfig,
         arguments: *JSC.Node.ArgumentsSlice,
         allow_bake_config: bool,
-    ) bun.JSError!void {
+    ) bun.JSOOM!void {
         const vm = arguments.vm;
         const env = vm.bundler.env;
 
@@ -1399,22 +1399,16 @@ pub const ServerConfig = struct {
 
             if (arg.getTruthy(global, "app")) |bake_args_js| {
                 if (!bun.FeatureFlags.bake) {
-                    global.throwInvalidArguments("To use the experimental \"app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
-                    return;
+                    return global.throwInvalidArguments2("To use the experimental \"app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
                 }
                 if (!allow_bake_config) {
-                    global.throwInvalidArguments("To use the \"app\" option, change from calling \"Bun.serve({ app })\" to \"export default { app: ... }\"", .{});
-                    return;
+                    return global.throwInvalidArguments2("To use the \"app\" option, change from calling \"Bun.serve({ app })\" to \"export default { app: ... }\"", .{});
                 }
                 if (!args.development) {
-                    global.throwInvalidArguments("TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'", .{});
-                    return;
+                    return global.throwInvalidArguments2("TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'", .{});
                 }
 
-                args.bake = bun.bake.UserOptions.fromJS(bake_args_js, global) catch |err| {
-                    _ = global.errorUnionToCPP(err);
-                    return;
-                };
+                args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global);
             }
 
             if (arg.get(global, "reusePort")) |dev| {

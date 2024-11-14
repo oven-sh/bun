@@ -1233,6 +1233,7 @@ pub const Printer = struct {
 
         var lockfile = try allocator.create(Lockfile);
 
+        PackageManager.allocatePackageManager();
         // TODO remove the need for manager when migrating from package-lock.json
         const manager = PackageManager.get();
 

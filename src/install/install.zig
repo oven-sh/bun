@@ -3657,8 +3657,8 @@ pub const PackageManager = struct {
     const Holder = struct {
         pub var ptr: *PackageManager = undefined;
     };
-    fn setPackageManagerPointer(ptr: *PackageManager) void {
-        Holder.ptr = ptr;
+    pub fn allocatePackageManager() void {
+        Holder.ptr = bun.default_allocator.create(PackageManager) catch bun.outOfMemory();
     }
     pub fn get() *PackageManager {
         return Holder.ptr;
@@ -8673,7 +8673,7 @@ pub const PackageManager = struct {
 
         workspace_names.map.deinit();
 
-        setPackageManagerPointer(bun.default_allocator.create(PackageManager) catch bun.outOfMemory());
+        PackageManager.allocatePackageManager();
         const manager = PackageManager.get();
         // var progress = Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
@@ -8803,7 +8803,7 @@ pub const PackageManager = struct {
         }
 
         const cpu_count = bun.getThreadCount();
-        setPackageManagerPointer(bun.default_allocator.create(PackageManager) catch bun.outOfMemory());
+        PackageManager.allocatePackageManager();
         const manager = PackageManager.get();
         var root_dir = try Fs.FileSystem.instance.fs.readDirectory(
             Fs.FileSystem.instance.top_level_dir,
@@ -14935,7 +14935,7 @@ pub const bun_install_js_bindings = struct {
         lockfile.initEmpty(allocator);
 
         // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
-        const manager = PackageManager.get();
+        const manager = globalObject.bunVM().bundler.resolver.getPackageManager();
 
         const load_result: Lockfile.LoadFromDiskResult = lockfile.loadFromDisk(manager, allocator, &log, lockfile_path, true);
 

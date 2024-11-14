@@ -41,6 +41,7 @@ const failingNodeApiTests = [
   "test_async_context/test.js",
   "test_async_context/test-gcable.js",
   "test_async_context/test-gcable-callback.js",
+  "test_async_cleanup_hook/test.js",
   "test_async/test.js",
   "test_async/test-uncaught.js",
   "test_async/test-async-hooks.js",

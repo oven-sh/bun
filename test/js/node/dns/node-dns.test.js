@@ -1,4 +1,5 @@
-import { describe, expect, test, it, beforeAll, setDefaultTimeout } from "bun:test";
+import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { isWindows } from "harness";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
@@ -8,8 +9,6 @@ import * as util from "node:util";
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
 });
-
-const isWindows = process.platform === "win32";
 
 // TODO:
 test("it exists", () => {
@@ -70,7 +69,7 @@ test("dns.resolveSrv (_test._tcp.test.socketify.dev)", () => {
       expect(err).toBeNull();
       expect(results instanceof Array).toBe(true);
       expect(results[0].name).toBe("_dc-srv.130c90ab9de1._test._tcp.test.socketify.dev");
-      expect(results[0].priority).toBe(50);
+      expect(results[0].priority).toBe(10);
       expect(results[0].weight).toBe(50);
       expect(results[0].port).toBe(80);
       resolve();

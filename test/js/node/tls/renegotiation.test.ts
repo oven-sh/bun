@@ -1,7 +1,7 @@
-import { expect, it, beforeAll, afterAll } from "bun:test";
-import { join } from "path";
 import type { Subprocess } from "bun";
+import { afterAll, beforeAll, expect, it } from "bun:test";
 import type { IncomingMessage } from "http";
+import { join } from "path";
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "ignore"> | null = null;
 beforeAll(async () => {

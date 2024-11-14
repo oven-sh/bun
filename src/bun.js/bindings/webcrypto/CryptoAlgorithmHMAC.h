@@ -45,7 +45,6 @@ public:
     static ExceptionOr<bool> platformVerify(const CryptoKeyHMAC&, const Vector<uint8_t>&, const Vector<uint8_t>&);
     static ExceptionOr<bool> platformVerifyWithAlgorithm(const CryptoKeyHMAC&, CryptoAlgorithmIdentifier, const Vector<uint8_t>&, const Vector<uint8_t>&);
 
-
 private:
     CryptoAlgorithmHMAC() = default;
     CryptoAlgorithmIdentifier identifier() const final;

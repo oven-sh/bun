@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
 import { concatArrayBuffers } from "bun";
+import { describe, expect, it } from "bun:test";
 
 describe("concat", () => {
   function polyfill(chunks) {

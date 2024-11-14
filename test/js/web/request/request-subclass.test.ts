@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 import { RequestInit } from "undici-types";
 
 // https://github.com/oven-sh/bun/issues/4718

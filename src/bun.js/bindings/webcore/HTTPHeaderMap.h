@@ -48,6 +48,13 @@ public:
         bool operator==(const CommonHeader &other) const { return key == other.key && value == other.value; }
     };
 
+    struct HeaderIndex {
+        size_t index;
+        bool isCommon;
+
+        bool isValid() const { return index != notFound; }
+    };
+
     struct UncommonHeader {
         String key;
         String value;
@@ -180,7 +187,13 @@ public:
     WEBCORE_EXPORT void add(const String &name, const String &value);
     WEBCORE_EXPORT void append(const String &name, const String &value);
     WEBCORE_EXPORT bool contains(const String &) const;
+    WEBCORE_EXPORT int64_t indexOf(String &name) const;
     WEBCORE_EXPORT bool remove(const String &);
+
+    WEBCORE_EXPORT String getIndex(HeaderIndex index) const;
+    WEBCORE_EXPORT bool setIndex(HeaderIndex index, const String &value);
+    HeaderIndex indexOf(const String &name) const;
+    HeaderIndex indexOf(HTTPHeaderName name) const;
 
 #if USE(CF)
     void set(CFStringRef name, const String &value);

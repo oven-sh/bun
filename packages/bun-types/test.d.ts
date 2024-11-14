@@ -1250,7 +1250,7 @@ declare module "bun:test" {
      * - If expected is a `string` or `RegExp`, it will check the `message` property.
      * - If expected is an `Error` object, it will check the `name` and `message` properties.
      * - If expected is an `Error` constructor, it will check the class of the `Error`.
-     * - If expected is not provided, it will check if anything as thrown.
+     * - If expected is not provided, it will check if anything has thrown.
      *
      * @example
      * function fail() {

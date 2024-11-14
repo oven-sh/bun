@@ -1,8 +1,8 @@
-import { createServer, Server, AddressInfo, Socket } from "net";
 import { realpathSync } from "fs";
+import { AddressInfo, createServer, Server, Socket } from "net";
+import { createTest } from "node-harness";
 import { tmpdir } from "os";
 import { join } from "path";
-import { createTest } from "node-harness";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 

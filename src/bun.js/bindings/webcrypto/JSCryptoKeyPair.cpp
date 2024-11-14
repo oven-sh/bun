@@ -30,7 +30,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -44,7 +43,7 @@ template<> CryptoKeyPair convertDictionary<CryptoKeyPair>(JSGlobalObject& lexica
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     CryptoKeyPair result;
     JSValue privateKeyValue;
@@ -52,22 +51,22 @@ template<> CryptoKeyPair convertDictionary<CryptoKeyPair>(JSGlobalObject& lexica
         privateKeyValue = jsUndefined();
     else {
         privateKeyValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "privateKey"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!privateKeyValue.isUndefined()) {
         result.privateKey = convert<IDLInterface<CryptoKey>>(lexicalGlobalObject, privateKeyValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     JSValue publicKeyValue;
     if (isNullOrUndefined)
         publicKeyValue = jsUndefined();
     else {
         publicKeyValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "publicKey"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!publicKeyValue.isUndefined()) {
         result.publicKey = convert<IDLInterface<CryptoKey>>(lexicalGlobalObject, publicKeyValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     return result;
 }
@@ -81,12 +80,12 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
 
     if (!IDLInterface<CryptoKey>::isNullValue(dictionary.privateKey)) {
         auto privateKeyValue = toJS<IDLInterface<CryptoKey>>(lexicalGlobalObject, globalObject, throwScope, IDLInterface<CryptoKey>::extractValueFromNullable(dictionary.privateKey));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "privateKey"_s), privateKeyValue);
     }
     if (!IDLInterface<CryptoKey>::isNullValue(dictionary.publicKey)) {
         auto publicKeyValue = toJS<IDLInterface<CryptoKey>>(lexicalGlobalObject, globalObject, throwScope, IDLInterface<CryptoKey>::extractValueFromNullable(dictionary.publicKey));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "publicKey"_s), publicKeyValue);
     }
     return result;

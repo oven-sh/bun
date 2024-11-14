@@ -1,9 +1,9 @@
 "use strict";
 
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import jwt from "jsonwebtoken";
-import { expect, describe, it, beforeEach, afterEach } from "bun:test";
-import util from "util";
 import sinon from "sinon";
+import util from "util";
 
 describe("maxAge option", function () {
   let token;

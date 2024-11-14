@@ -18,4 +18,4 @@ Bun.revision; // => "49231b2cb9aa48497ab966fc0bb6b742dacc4994"
 
 ---
 
-See [Docs > API > Utils](/docs/api/utils) for more useful utilities.
+See [Docs > API > Utils](https://bun.sh/docs/api/utils) for more useful utilities.

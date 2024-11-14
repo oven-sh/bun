@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("WebSocket error event snapshot", async () => {
   const ws = new WebSocket("ws://127.0.0.1:8080");

@@ -308,6 +308,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 HTTPClient,
                 client,
                 "tcp",
+                false,
             )) |out| {
                 // I don't think this case gets reached.
                 if (out.state == .failed) {
@@ -391,18 +392,20 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn handleHandshake(this: *HTTPClient, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             log("onHandshake({d})", .{success});
 
-            const authorized = if (success == 1) true else false;
+            const handshake_success = if (success == 1) true else false;
             var reject_unauthorized = false;
             if (this.outgoing_websocket) |ws| {
                 reject_unauthorized = ws.rejectUnauthorized();
             }
-            if (ssl_error.error_no != 0 and (reject_unauthorized or !authorized)) {
-                this.fail(ErrorCode.tls_handshake_failed);
-                return;
-            }
 
-            if (authorized) {
+            if (handshake_success) {
+                // handshake completed but we may have ssl errors
                 if (reject_unauthorized) {
+                    // only reject the connection if reject_unauthorized == true
+                    if (ssl_error.error_no != 0) {
+                        this.fail(ErrorCode.tls_handshake_failed);
+                        return;
+                    }
                     const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
                     if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
                         const hostname = servername[0..bun.len(servername)];
@@ -411,6 +414,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                         }
                     }
                 }
+            } else {
+                // if we are here is because server rejected us, and the error_no is the cause of this
+                // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
+                this.fail(ErrorCode.tls_handshake_failed);
             }
         }
 
@@ -511,7 +518,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             }
 
-            for (response.headers) |header| {
+            for (response.headers.list) |header| {
                 switch (header.name.len) {
                     "Connection".len => {
                         if (connection_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Connection", false)) {

@@ -39,6 +39,32 @@ function source(name) {
       isClosed: {
         getter: "getIsClosedFromJS",
       },
+      ...(name !== "File"
+        ? // Buffered versions
+          // not implemented in File, yet.
+          {
+            text: {
+              fn: "textFromJS",
+              length: 0,
+            },
+            json: {
+              fn: "jsonFromJS",
+              length: 0,
+            },
+            arrayBuffer: {
+              fn: "arrayBufferFromJS",
+              length: 0,
+            },
+            blob: {
+              fn: "blobFromJS",
+              length: 0,
+            },
+            bytes: {
+              fn: "bytesFromJS",
+              length: 0,
+            },
+          }
+        : {}),
       ...(name === "File"
         ? {
             setRawMode: {

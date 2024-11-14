@@ -49,6 +49,7 @@ BIGNUMPtr convertToBigNumber(const Vector<uint8_t>& bytes);
 
 class AESKey {
     WTF_MAKE_NONCOPYABLE(AESKey);
+
 public:
     AESKey() = default;
     ~AESKey();
@@ -56,6 +57,7 @@ public:
     bool setKey(const Vector<uint8_t>& key, int enc /* AES_ENCRYPT or AES_DECRYPT */);
 
     AES_KEY* key() { return &m_key; }
+
 private:
     AES_KEY m_key;
 };

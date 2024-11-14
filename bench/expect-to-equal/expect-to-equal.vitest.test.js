@@ -1,4 +1,4 @@
-import { test, expect } from "vitest";
+import { expect, test } from "vitest";
 
 const N = parseInt(process.env.RUN_COUNT || "10000", 10);
 if (!Number.isSafeInteger(N)) {

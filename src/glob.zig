@@ -1366,7 +1366,7 @@ pub fn GlobWalker_(
             return matchImpl(
                 codepoints,
                 filepath,
-            );
+            ).matches();
         }
 
         fn componentStringUnicode(this: *GlobWalker, pattern_component: *Component) []const u32 {
@@ -1831,6 +1831,18 @@ const BraceStack = struct {
     }
 };
 
+pub const MatchResult = enum {
+    no_match,
+    match,
+
+    negate_no_match,
+    negate_match,
+
+    pub fn matches(this: MatchResult) bool {
+        return this == .match or this == .negate_match;
+    }
+};
+
 /// This function checks returns a boolean value if the pathname `path` matches
 /// the pattern `glob`.
 ///
@@ -1858,7 +1870,7 @@ const BraceStack = struct {
 ///     Multiple "!" characters negate the pattern multiple times.
 /// "\"
 ///     Used to escape any of the special characters above.
-pub fn matchImpl(glob: []const u32, path: []const u8) bool {
+pub fn matchImpl(glob: []const u32, path: []const u8) MatchResult {
     const path_iter = CodepointIterator.init(path);
 
     // This algorithm is based on https://research.swtch.com/glob
@@ -1943,7 +1955,7 @@ pub fn matchImpl(glob: []const u32, path: []const u8) bool {
                         (glob[state.glob_index] == ',' or glob[state.glob_index] == '}'))
                     {
                         if (state.skipBraces(glob, false) == .Invalid)
-                            return false; // invalid pattern!
+                            return .no_match; // invalid pattern!
                     }
 
                     continue;
@@ -1974,7 +1986,7 @@ pub fn matchImpl(glob: []const u32, path: []const u8) bool {
                     while (state.glob_index < glob.len and (first or glob[state.glob_index] != ']')) {
                         var low = glob[state.glob_index];
                         if (!unescape(&low, glob, &state.glob_index))
-                            return false; // Invalid pattern
+                            return .no_match; // Invalid pattern
                         state.glob_index += 1;
 
                         // If there is a - and the following character is not ],
@@ -1985,7 +1997,7 @@ pub fn matchImpl(glob: []const u32, path: []const u8) bool {
                             state.glob_index += 1;
                             var h = glob[state.glob_index];
                             if (!unescape(&h, glob, &state.glob_index))
-                                return false; // Invalid pattern!
+                                return .no_match; // Invalid pattern!
                             state.glob_index += 1;
                             break :blk h;
                         } else low;
@@ -1995,7 +2007,7 @@ pub fn matchImpl(glob: []const u32, path: []const u8) bool {
                         first = false;
                     }
                     if (state.glob_index >= glob.len)
-                        return false; // Invalid pattern!
+                        return .no_match; // Invalid pattern!
                     state.glob_index += 1;
                     if (is_match != class_negated) {
                         state.path_index.bump(&path_iter);
@@ -2004,7 +2016,7 @@ pub fn matchImpl(glob: []const u32, path: []const u8) bool {
                 },
                 '{' => if (state.path_index.cursor.i < path.len) {
                     if (brace_stack.len >= brace_stack.stack.len)
-                        return false; // Invalid pattern! Too many nested braces.
+                        return .no_match; // Invalid pattern! Too many nested braces.
 
                     // Push old state to the stack, and reset current state.
                     state = brace_stack.push(&state);
@@ -2037,7 +2049,7 @@ pub fn matchImpl(glob: []const u32, path: []const u8) bool {
                     var cc = c;
                     // Match escaped characters as literals.
                     if (!unescape(&cc, glob, &state.glob_index))
-                        return false; // Invalid pattern;
+                        return .no_match; // Invalid pattern;
 
                     const is_match = if (cc == '/')
                         isSeparator(state.path_index.cursor.c)
@@ -2073,7 +2085,7 @@ pub fn matchImpl(glob: []const u32, path: []const u8) bool {
         if (brace_stack.len > 0) {
             // If in braces, find next option and reset path to index where we saw the '{'
             switch (state.skipBraces(glob, true)) {
-                .Invalid => return false,
+                .Invalid => return .no_match,
                 .Comma => {
                     state.path_index = brace_stack.last().path_index;
                     continue;
@@ -2097,10 +2109,10 @@ pub fn matchImpl(glob: []const u32, path: []const u8) bool {
             }
         }
 
-        return negated;
+        return if (negated) .negate_match else .no_match;
     }
 
-    return !negated;
+    return if (!negated) .match else .negate_no_match;
 }
 
 pub inline fn isSeparator(c: Codepoint) bool {

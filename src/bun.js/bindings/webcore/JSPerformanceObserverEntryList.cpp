@@ -198,7 +198,7 @@ static inline JSC::EncodedJSValue jsPerformanceObserverEntryListPrototypeFunctio
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntriesByType(WTFMove(type)))));
 }
 
@@ -218,10 +218,10 @@ static inline JSC::EncodedJSValue jsPerformanceObserverEntryListPrototypeFunctio
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto type = argument1.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntriesByName(WTFMove(name), WTFMove(type)))));
 }
 

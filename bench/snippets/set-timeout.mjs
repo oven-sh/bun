@@ -1,5 +1,3 @@
-import { bench, run } from "../node_modules/mitata/src/cli.mjs";
-
 let count = 20_000_000;
 const batchSize = 1_000_000;
 console.time("Run");

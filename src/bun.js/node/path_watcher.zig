@@ -18,16 +18,17 @@ const GenericWatcher = @import("../../watcher.zig");
 const sync = @import("../../sync.zig");
 const Semaphore = sync.Semaphore;
 
-var default_manager_mutex: Mutex = Mutex.init();
+var default_manager_mutex: Mutex = .{};
 var default_manager: ?*PathWatcherManager = null;
 
 const FSWatcher = bun.JSC.Node.FSWatcher;
 const Event = FSWatcher.Event;
 const StringOrBytesToDecode = FSWatcher.FSWatchTaskWindows.StringOrBytesToDecode;
 
+const Watcher = GenericWatcher.NewWatcher;
+
 pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
-    pub const Watcher = GenericWatcher.NewWatcher(*PathWatcherManager);
     const log = Output.scoped(.PathWatcherManager, false);
     main_watcher: *Watcher,
 
@@ -148,13 +149,14 @@ pub const PathWatcherManager = struct {
             .current_fd_task = bun.FDHashMap(*DirectoryRegisterTask).init(bun.default_allocator),
             .watchers = watchers,
             .main_watcher = try Watcher.init(
+                PathWatcherManager,
                 this,
                 vm.bundler.fs,
                 bun.default_allocator,
             ),
             .vm = vm,
             .watcher_count = 0,
-            .mutex = Mutex.init(),
+            .mutex = .{},
         };
 
         this.* = manager;
@@ -586,7 +588,7 @@ pub const PathWatcherManager = struct {
 
         const path = watcher.path;
         if (path.is_file) {
-            try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, .zero, null, false).unwrap();
+            try this.main_watcher.addFile(path.fd, path.path, path.hash, .file, .zero, null, false).unwrap();
         } else {
             if (comptime Environment.isMac) {
                 if (watcher.fsevents_watcher != null) {
@@ -795,7 +797,7 @@ pub const PathWatcher = struct {
                     .flushCallback = updateEndCallback,
                     .file_paths = .{},
                     .ctx = ctx,
-                    .mutex = Mutex.init(),
+                    .mutex = .{},
                 };
 
                 errdefer this.deinit();
@@ -815,7 +817,7 @@ pub const PathWatcher = struct {
             .recursive = recursive,
             .flushCallback = updateEndCallback,
             .ctx = ctx,
-            .mutex = Mutex.init(),
+            .mutex = .{},
             .file_paths = bun.BabyList([:0]const u8).initCapacity(bun.default_allocator, 1) catch |err| {
                 bun.default_allocator.destroy(this);
                 return err;

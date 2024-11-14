@@ -1,10 +1,9 @@
-import { expect, describe, it, jest } from "bun:test";
-import { Stream, Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
-import { createReadStream } from "node:fs";
-import { join } from "path";
-import { bunExe, bunEnv, tmpdirSync, isGlibcVersionAtLeast, isMacOS } from "harness";
+import { describe, expect, it, jest } from "bun:test";
+import { bunEnv, bunExe, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
+import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { Duplex, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import { join } from "path";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
@@ -343,7 +342,7 @@ it.if(isMacOS || isGlibcVersionAtLeast("2.36.0"))("TTY streams", () => {
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  expect(stdout.toString()).toBe("");
+  expect(stdout.toString()).toEqual(expect.stringContaining("bun test v1."));
   try {
     expect(stderr.toString()).toContain("0 fail");
   } catch (error) {

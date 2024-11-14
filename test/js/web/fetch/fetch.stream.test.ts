@@ -1,13 +1,12 @@
-import { Socket, Server, TCPSocketListener } from "bun";
-import { readFileSync } from "fs";
-import { join } from "path";
+import { Socket } from "bun";
 import { describe, expect, it } from "bun:test";
+import { createReadStream, readFileSync } from "fs";
 import { gcTick } from "harness";
-import zlib from "zlib";
 import http from "http";
-import { createReadStream } from "fs";
-import { pipeline } from "stream";
 import type { AddressInfo } from "net";
+import { join } from "path";
+import { pipeline } from "stream";
+import zlib from "zlib";
 
 const files = [
   join(import.meta.dir, "fixture.html"),
@@ -916,25 +915,44 @@ describe("fetch() with streaming", () => {
     test(`Content-Length response works (multiple parts) with ${compression} compression`, async () => {
       {
         const content = "a".repeat(64 * 1024);
+        var onReceivedHeaders = Promise.withResolvers();
         using server = Bun.serve({
           port: 0,
-          fetch(req) {
-            return new Response(compress(compression, Buffer.from(content)), {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-                ...headers,
+          async fetch(req) {
+            const data = compress(compression, Buffer.from(content));
+            return new Response(
+              new ReadableStream({
+                async pull(controller) {
+                  const firstChunk = data.slice(0, 64);
+                  const secondChunk = data.slice(firstChunk.length);
+                  controller.enqueue(firstChunk);
+                  await onReceivedHeaders.promise;
+                  await Bun.sleep(1);
+                  controller.enqueue(secondChunk);
+                  controller.close();
+                },
+              }),
+              {
+                status: 200,
+                headers: {
+                  "Content-Type": "text/plain",
+                  ...headers,
+                },
               },
-            });
+            );
           },
         });
         let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        onReceivedHeaders.resolve();
+        onReceivedHeaders = Promise.withResolvers();
         gcTick(false);
         const result = await res.text();
         gcTick(false);
         expect(result).toBe(content);
 
         res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        onReceivedHeaders.resolve();
+        onReceivedHeaders = Promise.withResolvers();
         gcTick(false);
         const reader = res.body?.getReader();
 

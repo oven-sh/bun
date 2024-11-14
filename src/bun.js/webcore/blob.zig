@@ -27,7 +27,6 @@ const ZigString = JSC.ZigString;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
-const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 const NullableAllocator = bun.NullableAllocator;
 
@@ -49,8 +48,8 @@ const PathOrBlob = union(enum) {
     path: JSC.Node.PathOrFileDescriptor,
     blob: Blob,
 
-    pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice, exception: js.ExceptionRef) ?PathOrBlob {
-        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator, exception)) |path| {
+    pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice) bun.JSError!?PathOrBlob {
+        if (try JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator)) |path| {
             return PathOrBlob{
                 .path = path,
             };
@@ -260,8 +259,9 @@ pub const Blob = struct {
                     joiner.pushStatic("\r\n\r\n");
 
                     if (blob.store) |store| {
-                        blob.resolveSize();
-
+                        if (blob.size == Blob.max_size) {
+                            blob.resolveSize();
+                        }
                         switch (store.data) {
                             .file => |file| {
 
@@ -364,7 +364,7 @@ pub const Blob = struct {
             },
         };
 
-        _onStructuredCloneSerialize(this, Writer, writer) catch return .zero;
+        try _onStructuredCloneSerialize(this, Writer, writer);
     }
 
     pub fn onStructuredCloneTransfer(
@@ -520,7 +520,16 @@ pub const Blob = struct {
         var buffer_stream = std.io.fixedBufferStream(ptr[0..total_length]);
         const reader = buffer_stream.reader();
 
-        return _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch return .zero;
+        return _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch |err| switch (err) {
+            error.EndOfStream, error.TooSmall, error.InvalidValue => {
+                globalThis.throw("Blob.onStructuredCloneDeserialize failed", .{});
+                return .zero;
+            },
+            error.OutOfMemory => {
+                globalThis.throwOutOfMemory();
+                return .zero;
+            },
+        };
     }
 
     const URLSearchParamsConverter = struct {
@@ -650,21 +659,29 @@ pub const Blob = struct {
         _ = Blob__getFileNameString;
     }
 
-    pub fn writeFormatForSize(size: usize, writer: anytype, comptime enable_ansi_colors: bool) !void {
-        try writer.writeAll(comptime Output.prettyFmt("<r>Blob<r>", enable_ansi_colors));
+    pub fn writeFormatForSize(is_jdom_file: bool, size: usize, writer: anytype, comptime enable_ansi_colors: bool) !void {
+        if (is_jdom_file) {
+            try writer.writeAll(comptime Output.prettyFmt("<r>File<r>", enable_ansi_colors));
+        } else {
+            try writer.writeAll(comptime Output.prettyFmt("<r>Blob<r>", enable_ansi_colors));
+        }
         try writer.print(
             comptime Output.prettyFmt(" (<yellow>{any}<r>)", enable_ansi_colors),
             .{
-                bun.fmt.size(size),
+                bun.fmt.size(size, .{}),
             },
         );
     }
 
-    pub fn writeFormat(this: *const Blob, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn writeFormat(this: *Blob, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
 
         if (this.isDetached()) {
-            try writer.writeAll(comptime Output.prettyFmt("<d>[<r>Blob<r> detached<d>]<r>", enable_ansi_colors));
+            if (this.is_jsdom_file) {
+                try writer.writeAll(comptime Output.prettyFmt("<d>[<r>File<r> detached<d>]<r>", enable_ansi_colors));
+            } else {
+                try writer.writeAll(comptime Output.prettyFmt("<d>[<r>Blob<r> detached<d>]<r>", enable_ansi_colors));
+            }
             return;
         }
 
@@ -687,7 +704,7 @@ pub const Blob = struct {
                             if (comptime Environment.isWindows) {
                                 if (fd_impl.kind == .uv) {
                                     try writer.print(
-                                        comptime Output.prettyFmt(" (<r>fd: <yellow>{d}<r>)<r>", enable_ansi_colors),
+                                        comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{d}<r>)<r>", enable_ansi_colors),
                                         .{fd_impl.uv()},
                                     );
                                 } else {
@@ -696,13 +713,13 @@ pub const Blob = struct {
                                         @panic("this shouldn't be reachable.");
                                     }
                                     try writer.print(
-                                        comptime Output.prettyFmt(" (<r>fd: <yellow>{any}<r>)<r>", enable_ansi_colors),
+                                        comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{any}<r>)<r>", enable_ansi_colors),
                                         .{fd_impl.system()},
                                     );
                                 }
                             } else {
                                 try writer.print(
-                                    comptime Output.prettyFmt(" (<r>fd: <yellow>{d}<r>)<r>", enable_ansi_colors),
+                                    comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{d}<r>)<r>", enable_ansi_colors),
                                     .{fd_impl.system()},
                                 );
                             }
@@ -710,28 +727,46 @@ pub const Blob = struct {
                     }
                 },
                 .bytes => {
-                    try writeFormatForSize(this.size, writer, enable_ansi_colors);
+                    try writeFormatForSize(this.is_jsdom_file, this.size, writer, enable_ansi_colors);
                 },
             }
         }
 
-        if (this.content_type.len > 0 or this.offset > 0) {
+        const show_name = (this.is_jsdom_file and this.getNameString() != null) or (!this.name.isEmpty() and this.store != null and this.store.?.data == .bytes);
+        if (this.content_type.len > 0 or this.offset > 0 or show_name or this.last_modified != 0.0) {
             try writer.writeAll(" {\n");
             {
                 formatter.indent += 1;
                 defer formatter.indent -= 1;
 
+                if (show_name) {
+                    try formatter.writeIndent(Writer, writer);
+
+                    try writer.print(
+                        comptime Output.prettyFmt("name<d>:<r> <green>\"{}\"<r>", enable_ansi_colors),
+                        .{
+                            this.getNameString() orelse bun.String.empty,
+                        },
+                    );
+
+                    if (this.content_type.len > 0 or this.offset > 0 or this.last_modified != 0) {
+                        try formatter.printComma(Writer, writer, enable_ansi_colors);
+                    }
+
+                    try writer.writeAll("\n");
+                }
+
                 if (this.content_type.len > 0) {
                     try formatter.writeIndent(Writer, writer);
                     try writer.print(
-                        comptime Output.prettyFmt("type: <green>\"{s}\"<r>", enable_ansi_colors),
+                        comptime Output.prettyFmt("type<d>:<r> <green>\"{s}\"<r>", enable_ansi_colors),
                         .{
                             this.content_type,
                         },
                     );
 
-                    if (this.offset > 0) {
-                        formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+                    if (this.offset > 0 or this.last_modified != 0) {
+                        try formatter.printComma(Writer, writer, enable_ansi_colors);
                     }
 
                     try writer.writeAll("\n");
@@ -741,9 +776,26 @@ pub const Blob = struct {
                     try formatter.writeIndent(Writer, writer);
 
                     try writer.print(
-                        comptime Output.prettyFmt("offset: <yellow>{d}<r>\n", enable_ansi_colors),
+                        comptime Output.prettyFmt("offset<d>:<r> <yellow>{d}<r>\n", enable_ansi_colors),
                         .{
                             this.offset,
+                        },
+                    );
+
+                    if (this.last_modified != 0) {
+                        try formatter.printComma(Writer, writer, enable_ansi_colors);
+                    }
+
+                    try writer.writeAll("\n");
+                }
+
+                if (this.last_modified != 0) {
+                    try formatter.writeIndent(Writer, writer);
+
+                    try writer.print(
+                        comptime Output.prettyFmt("lastModified<d>:<r> <yellow>{d}<r>\n", enable_ansi_colors),
+                        .{
+                            this.last_modified,
                         },
                     );
                 }
@@ -903,8 +955,7 @@ pub const Blob = struct {
         } else if (destination_type == .bytes and source_type == .file) {
             var fake_call_frame: [8]JSC.JSValue = undefined;
             @memset(@as([*]u8, @ptrCast(&fake_call_frame))[0..@sizeOf(@TypeOf(fake_call_frame))], 0);
-            const blob_value =
-                source_blob.getSlice(ctx, @as(*JSC.CallFrame, @ptrCast(&fake_call_frame)));
+            const blob_value = source_blob.getSlice(ctx, @as(*JSC.CallFrame, @ptrCast(&fake_call_frame))) catch .zero; // TODO:
 
             return JSPromise.resolvedPromiseValue(
                 ctx.ptr(),
@@ -918,20 +969,14 @@ pub const Blob = struct {
     pub fn writeFile(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(3).slice();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
-        var exception_ = [1]JSC.JSValueRef{null};
-        var exception = &exception_;
 
         // accept a path or a blob
-        var path_or_blob = PathOrBlob.fromJSNoCopy(globalThis, &args, exception) orelse {
-            if (exception[0] != null) {
-                globalThis.throwValue(exception[0].?.value());
-            } else {
-                globalThis.throwInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{});
-            }
+        var path_or_blob = (try PathOrBlob.fromJSNoCopy(globalThis, &args)) orelse {
+            globalThis.throwInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{});
             return .zero;
         };
         defer {
@@ -955,7 +1000,7 @@ pub const Blob = struct {
                 globalThis.throwInvalidArguments("Blob is detached", .{});
                 return .zero;
             } else {
-                // TODO only reset last_modified on success pathes instead of
+                // TODO only reset last_modified on success paths instead of
                 // resetting last_modified at the beginning for better performance.
                 if (path_or_blob.blob.store.?.data == .file) {
                     // reset last_modified to force getLastModified() to reload after writing.
@@ -1498,7 +1543,7 @@ pub const Blob = struct {
             }
         }
 
-        this.reported_estimated_size = size + (this.content_type.len * @intFromBool(this.content_type_allocated));
+        this.reported_estimated_size = size + (this.content_type.len * @intFromBool(this.content_type_allocated)) + this.name.byteSlice().len;
     }
 
     pub fn estimatedSize(this: *Blob) usize {
@@ -1515,22 +1560,15 @@ pub const Blob = struct {
     pub fn constructBunFile(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         var vm = globalObject.bunVM();
         const arguments = callframe.arguments(2).slice();
         var args = JSC.Node.ArgumentsSlice.init(vm, arguments);
         defer args.deinit();
-        var exception_ = [1]JSC.JSValueRef{null};
-        const exception = &exception_;
 
-        var path = JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator, exception) orelse {
-            if (exception_[0] == null) {
-                globalObject.throwInvalidArguments("Expected file path string or file descriptor", .{});
-            } else {
-                globalObject.throwValue(exception_[0].?.value());
-            }
-
-            return .undefined;
+        var path = (try JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator)) orelse {
+            globalObject.throwInvalidArguments("Expected file path string or file descriptor", .{});
+            return .zero;
         };
         defer path.deinitAndUnprotect();
 
@@ -1660,6 +1698,21 @@ pub const Blob = struct {
         pub fn ref(this: *Store) void {
             const old = this.ref_count.fetchAdd(1, .monotonic);
             assert(old > 0);
+        }
+
+        pub fn hasOneRef(this: *const Store) bool {
+            return this.ref_count.load(.monotonic) == 1;
+        }
+
+        /// Caller is responsible for derefing the Store.
+        pub fn toAnyBlob(this: *Store) ?AnyBlob {
+            if (this.hasOneRef()) {
+                if (this.data == .bytes) {
+                    return .{ .InternalBlob = this.data.bytes.toInternalBlob() };
+                }
+            }
+
+            return null;
         }
 
         pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.C) void {
@@ -2480,7 +2533,7 @@ pub const Blob = struct {
                 this.read_write_loop.close();
                 this.destination_file_store.deref();
                 this.source_file_store.deref();
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 this.io_request.deinit();
                 this.destroy();
             }
@@ -3158,6 +3211,20 @@ pub const Blob = struct {
             return ByteStore.init(list.items, allocator);
         }
 
+        pub fn toInternalBlob(this: *ByteStore) InternalBlob {
+            const result = InternalBlob{
+                .bytes = std.ArrayList(u8){
+                    .items = this.ptr[0..this.len],
+                    .capacity = this.cap,
+                    .allocator = this.allocator,
+                },
+            };
+
+            this.allocator = bun.default_allocator;
+            this.len = 0;
+            this.cap = 0;
+            return result;
+        }
         pub fn slice(this: ByteStore) []u8 {
             return this.ptr[0..this.len];
         }
@@ -3187,7 +3254,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const thisValue = callframe.this();
         if (Blob.streamGetCached(thisValue)) |cached| {
             return cached;
@@ -3230,7 +3297,7 @@ pub const Blob = struct {
     pub fn toStreamWithOffset(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const this = callframe.this().as(Blob) orelse @panic("this is not a Blob");
         const args = callframe.arguments(1).slice();
 
@@ -3241,22 +3308,31 @@ pub const Blob = struct {
         );
     }
 
-    fn promisified(
-        value: JSC.JSValue,
-        global: *JSGlobalObject,
-    ) JSC.JSValue {
-        return JSC.JSPromise.wrap(global, value);
+    // Zig doesn't let you pass a function with a comptime argument to a runtime-knwon function.
+    fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: JSC.WebCore.Lifetime) fn (*Blob, *JSC.JSGlobalObject) JSC.JSValue {
+        return struct {
+            fn wrap(this: *Blob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+                return Fn(this, globalObject, lifetime);
+            }
+        }.wrap;
     }
 
     pub fn getText(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
+    ) bun.JSError!JSC.JSValue {
+        return this.getTextClone(globalThis);
+    }
+
+    pub fn getTextClone(
+        this: *Blob,
+        globalObject: *JSC.JSGlobalObject,
     ) JSC.JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return promisified(this.toString(globalThis, .clone), globalThis);
+        return JSC.JSPromise.wrap(globalObject, lifetimeWrap(toString, .clone), .{ this, globalObject });
     }
 
     pub fn getTextTransfer(
@@ -3266,21 +3342,26 @@ pub const Blob = struct {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return promisified(this.toString(globalObject, .transfer), globalObject);
+        return JSC.JSPromise.wrap(globalObject, lifetimeWrap(toString, .transfer), .{ this, globalObject });
     }
 
     pub fn getJSON(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
+    ) bun.JSError!JSC.JSValue {
+        return this.getJSONShare(globalThis);
+    }
+
+    pub fn getJSONShare(
+        this: *Blob,
+        globalObject: *JSC.JSGlobalObject,
     ) JSC.JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-
-        return promisified(this.toJSON(globalThis, .share), globalThis);
+        return JSC.JSPromise.wrap(globalObject, lifetimeWrap(toJSON, .share), .{ this, globalObject });
     }
-
     pub fn getArrayBufferTransfer(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
@@ -3289,41 +3370,65 @@ pub const Blob = struct {
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
 
-        return promisified(this.toArrayBuffer(globalThis, .transfer), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toArrayBuffer, .transfer), .{ this, globalThis });
+    }
+
+    pub fn getArrayBufferClone(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+    ) JSC.JSValue {
+        const store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toArrayBuffer, .clone), .{ this, globalThis });
     }
 
     pub fn getArrayBuffer(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
+    ) bun.JSError!JSValue {
+        return this.getArrayBufferClone(globalThis);
+    }
+
+    pub fn getBytesClone(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
     ) JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return promisified(this.toArrayBuffer(globalThis, .clone), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toUint8Array, .clone), .{ this, globalThis });
     }
 
     pub fn getBytes(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
+    ) bun.JSError!JSValue {
+        return this.getBytesClone(globalThis);
+    }
+
+    pub fn getBytesTransfer(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
     ) JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return promisified(this.toUint8Array(globalThis, .clone), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toUint8Array, .transfer), .{ this, globalThis });
     }
 
     pub fn getFormData(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
 
-        return promisified(this.toFormData(globalThis, .temporary), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toFormData, .temporary), .{ this, globalThis });
     }
 
     fn getExistsSync(this: *Blob) JSC.JSValue {
@@ -3350,7 +3455,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return JSC.JSPromise.resolvedPromiseValue(globalThis, this.getExistsSync());
     }
 
@@ -3358,7 +3463,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         var arguments_ = callframe.arguments(1);
         var arguments = arguments_.ptr[0..arguments_.len];
 
@@ -3382,8 +3487,9 @@ pub const Blob = struct {
             const vm = globalThis.bunVM();
             const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
                 var file_path: bun.PathBuffer = undefined;
+                const path = pathlike.path.sliceZ(&file_path);
                 switch (bun.sys.open(
-                    pathlike.path.sliceZ(&file_path),
+                    path,
                     bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
                     write_permissions,
                 )) {
@@ -3391,7 +3497,7 @@ pub const Blob = struct {
                         break :brk result;
                     },
                     .err => |err| {
-                        globalThis.throwInvalidArguments("Failed to create FileSink: {}", .{err.getErrno()});
+                        globalThis.throwValue(err.withPath(path).toJSC(globalThis));
                         return JSValue.jsUndefined();
                     },
                 }
@@ -3419,11 +3525,12 @@ pub const Blob = struct {
                 };
             };
             var sink = JSC.WebCore.FileSink.init(fd, this.globalThis.bunVM().eventLoop());
+            sink.writer.owns_fd = pathlike != .fd;
 
             if (is_stdout_or_stderr) {
                 switch (sink.writer.startSync(fd, false)) {
                     .err => |err| {
-                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        globalThis.throwValue(err.toJSC(globalThis));
                         sink.deref();
 
                         return JSC.JSValue.zero;
@@ -3433,7 +3540,7 @@ pub const Blob = struct {
             } else {
                 switch (sink.writer.start(fd, true)) {
                     .err => |err| {
-                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        globalThis.throwValue(err.toJSC(globalThis));
                         sink.deref();
 
                         return JSC.JSValue.zero;
@@ -3495,7 +3602,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const allocator = bun.default_allocator;
         var arguments_ = callframe.arguments(3);
         var args = arguments_.ptr[0..arguments_.len];
@@ -3637,21 +3744,24 @@ pub const Blob = struct {
         return ZigString.Empty.toJS(globalThis);
     }
 
+    pub fn getNameString(this: *Blob) ?bun.String {
+        if (this.name.tag != .Dead) return this.name;
+
+        if (this.getFileName()) |path| {
+            this.name = bun.String.createUTF8(path);
+            return this.name;
+        }
+
+        return null;
+    }
+
     // TODO: Move this to a separate `File` object or BunFile
     pub fn getName(
         this: *Blob,
         _: JSC.JSValue,
         globalThis: *JSC.JSGlobalObject,
     ) JSValue {
-        if (this.name.tag != .Dead) return this.name.toJS(globalThis);
-
-        if (this.getFileName()) |path| {
-            var str = bun.String.createUTF8(path);
-            this.name = str;
-            return str.toJS(globalThis);
-        }
-
-        return JSValue.undefined;
+        return if (this.getNameString()) |name| name.toJS(globalThis) else .undefined;
     }
 
     pub fn setName(
@@ -3668,10 +3778,16 @@ pub const Blob = struct {
             return true;
         }
         if (value.isString()) {
-            this.name.deref();
-            this.name = bun.String.tryFromJS(value, globalThis) orelse return false;
-            this.name.ref();
+            const old_name = this.name;
+
+            this.name = bun.String.tryFromJS(value, globalThis) orelse {
+                // Handle allocation failure.
+                this.name = bun.String.empty;
+                return false;
+            };
+            // We don't need to increment the reference count since tryFromJS already did it.
             Blob.nameSetCached(jsThis, globalThis, value);
+            old_name.deref();
             return true;
         }
         return false;
@@ -3851,7 +3967,8 @@ pub const Blob = struct {
                         globalThis.throwInvalidArguments("new Blob() expects an Array", .{});
                         return null;
                     }
-                    globalThis.throw("out of memory", .{});
+                    if (!globalThis.hasException())
+                        globalThis.throwOutOfMemory();
                     return null;
                 };
 
@@ -4059,6 +4176,7 @@ pub const Blob = struct {
         } else if (duped.content_type_allocated and duped.allocator != null and include_content_type) {
             duped.content_type = bun.default_allocator.dupe(u8, this.content_type) catch bun.outOfMemory();
         }
+        duped.name = duped.name.dupeRef();
 
         duped.allocator = null;
         return duped;
@@ -4116,10 +4234,13 @@ pub const Blob = struct {
         const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
 
         if (buf.len == 0) {
+            // If all it contained was the bom, we need to free the bytes
+            if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
             return ZigString.Empty.toJS(global);
         }
 
         if (bom == .utf16_le) {
+            defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
             var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
             defer out.deref();
             return out.toJS(global);
@@ -4193,6 +4314,10 @@ pub const Blob = struct {
         }
     }
 
+    pub fn toStringTransfer(this: *Blob, global: *JSGlobalObject) JSValue {
+        return this.toString(global, .transfer);
+    }
+
     pub fn toString(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
         if (this.needsToReadFile()) {
             return this.doReadFile(toStringWithBytes, global);
@@ -4223,6 +4348,8 @@ pub const Blob = struct {
 
         if (bom == .utf16_le) {
             var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+            defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
+            defer if (lifetime == .transfer) this.detach();
             defer out.deref();
             return out.toJSByParseJSON(global);
         }
@@ -4237,7 +4364,7 @@ pub const Blob = struct {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
             if (strings.toUTF16Alloc(allocator, buf, false, false) catch null) |external| {
                 if (comptime lifetime != .temporary) this.setIsASCIIFlag(false);
-                const result = ZigString.init16(external).toJSONObject(global);
+                const result = ZigString.initUTF16(external).toJSONObject(global);
                 allocator.free(external);
                 return result;
             }
@@ -4269,6 +4396,15 @@ pub const Blob = struct {
     pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime, comptime TypedArrayView: JSC.JSValue.JSType) JSValue {
         switch (comptime lifetime) {
             .clone => {
+                if (TypedArrayView != .ArrayBuffer) {
+                    // ArrayBuffer doesn't have this limit.
+                    if (buf.len > JSC.synthetic_allocation_limit) {
+                        global.throwOutOfMemory();
+                        this.detach();
+                        return JSValue.zero;
+                    }
+                }
+
                 if (comptime Environment.isLinux) {
                     // If we can use a copy-on-write clone of the buffer, do so.
                     if (this.store) |store| {
@@ -4303,6 +4439,11 @@ pub const Blob = struct {
                 return JSC.ArrayBuffer.create(global, buf, TypedArrayView);
             },
             .share => {
+                if (buf.len > JSC.synthetic_allocation_limit and TypedArrayView != .ArrayBuffer) {
+                    global.throwOutOfMemory();
+                    return JSValue.zero;
+                }
+
                 this.store.?.ref();
                 return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJSWithContext(
                     global,
@@ -4312,6 +4453,12 @@ pub const Blob = struct {
                 );
             },
             .transfer => {
+                if (buf.len > JSC.synthetic_allocation_limit and TypedArrayView != .ArrayBuffer) {
+                    global.throwOutOfMemory();
+                    this.detach();
+                    return JSValue.zero;
+                }
+
                 const store = this.store.?;
                 this.transfer();
                 return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJSWithContext(
@@ -4322,6 +4469,12 @@ pub const Blob = struct {
                 );
             },
             .temporary => {
+                if (buf.len > JSC.synthetic_allocation_limit and TypedArrayView != .ArrayBuffer) {
+                    global.throwOutOfMemory();
+                    bun.default_allocator.free(buf);
+                    return JSValue.zero;
+                }
+
                 return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJS(
                     global,
                     null,
@@ -4467,6 +4620,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.Uint16Array,
                 JSC.JSValue.JSType.Int32Array,
                 JSC.JSValue.JSType.Uint32Array,
+                JSC.JSValue.JSType.Float16Array,
                 JSC.JSValue.JSType.Float32Array,
                 JSC.JSValue.JSType.Float64Array,
                 JSC.JSValue.JSType.BigInt64Array,
@@ -4551,9 +4705,9 @@ pub const Blob = struct {
                             switch (item.jsTypeLoose()) {
                                 .NumberObject,
                                 .Cell,
-                                JSC.JSValue.JSType.String,
-                                JSC.JSValue.JSType.StringObject,
-                                JSC.JSValue.JSType.DerivedStringObject,
+                                .String,
+                                .StringObject,
+                                .DerivedStringObject,
                                 => {
                                     var sliced = item.toSlice(global, bun.default_allocator);
                                     const allocator = sliced.allocator.get();
@@ -4561,19 +4715,20 @@ pub const Blob = struct {
                                     joiner.push(sliced.slice(), allocator);
                                     continue;
                                 },
-                                JSC.JSValue.JSType.ArrayBuffer,
-                                JSC.JSValue.JSType.Int8Array,
-                                JSC.JSValue.JSType.Uint8Array,
-                                JSC.JSValue.JSType.Uint8ClampedArray,
-                                JSC.JSValue.JSType.Int16Array,
-                                JSC.JSValue.JSType.Uint16Array,
-                                JSC.JSValue.JSType.Int32Array,
-                                JSC.JSValue.JSType.Uint32Array,
-                                JSC.JSValue.JSType.Float32Array,
-                                JSC.JSValue.JSType.Float64Array,
-                                JSC.JSValue.JSType.BigInt64Array,
-                                JSC.JSValue.JSType.BigUint64Array,
-                                JSC.JSValue.JSType.DataView,
+                                .ArrayBuffer,
+                                .Int8Array,
+                                .Uint8Array,
+                                .Uint8ClampedArray,
+                                .Int16Array,
+                                .Uint16Array,
+                                .Int32Array,
+                                .Uint32Array,
+                                .Float16Array,
+                                .Float32Array,
+                                .Float64Array,
+                                .BigInt64Array,
+                                .BigUint64Array,
+                                .DataView,
                                 => {
                                     could_have_non_ascii = true;
                                     var buf = item.asArrayBuffer(global).?;
@@ -4616,19 +4771,20 @@ pub const Blob = struct {
                     }
                 },
 
-                JSC.JSValue.JSType.ArrayBuffer,
-                JSC.JSValue.JSType.Int8Array,
-                JSC.JSValue.JSType.Uint8Array,
-                JSC.JSValue.JSType.Uint8ClampedArray,
-                JSC.JSValue.JSType.Int16Array,
-                JSC.JSValue.JSType.Uint16Array,
-                JSC.JSValue.JSType.Int32Array,
-                JSC.JSValue.JSType.Uint32Array,
-                JSC.JSValue.JSType.Float32Array,
-                JSC.JSValue.JSType.Float64Array,
-                JSC.JSValue.JSType.BigInt64Array,
-                JSC.JSValue.JSType.BigUint64Array,
-                JSC.JSValue.JSType.DataView,
+                .ArrayBuffer,
+                .Int8Array,
+                .Uint8Array,
+                .Uint8ClampedArray,
+                .Int16Array,
+                .Uint16Array,
+                .Int32Array,
+                .Uint32Array,
+                .Float16Array,
+                .Float32Array,
+                .Float64Array,
+                .BigInt64Array,
+                .BigUint64Array,
+                .DataView,
                 => {
                     var buf = current.asArrayBuffer(global).?;
                     joiner.pushStatic(buf.slice());
@@ -4664,6 +4820,14 @@ pub const AnyBlob = union(enum) {
     InternalBlob: InternalBlob,
     WTFStringImpl: bun.WTF.StringImpl,
 
+    pub fn hasOneRef(this: *const AnyBlob) bool {
+        if (this.store()) |s| {
+            return s.hasOneRef();
+        }
+
+        return false;
+    }
+
     pub fn getFileName(this: *const AnyBlob) ?[]const u8 {
         return switch (this.*) {
             .Blob => this.Blob.getFileName(),
@@ -4686,6 +4850,65 @@ pub const AnyBlob = union(enum) {
             .WTFStringImpl => false,
             .InternalBlob => false,
         };
+    }
+
+    fn toInternalBlobIfPossible(this: *AnyBlob) void {
+        if (this.* == .Blob) {
+            if (this.Blob.store) |s| {
+                if (s.data == .bytes and s.hasOneRef()) {
+                    this.* = .{ .InternalBlob = s.data.bytes.toInternalBlob() };
+                    s.deref();
+                    return;
+                }
+            }
+        }
+    }
+
+    pub fn toActionValue(this: *AnyBlob, globalThis: *JSGlobalObject, action: JSC.WebCore.BufferedReadableStreamAction) JSC.JSValue {
+        if (action != .blob) {
+            this.toInternalBlobIfPossible();
+        }
+
+        switch (action) {
+            .text => {
+                if (this.* == .Blob) {
+                    return this.toString(globalThis, .clone);
+                }
+
+                return this.toStringTransfer(globalThis);
+            },
+            .bytes => {
+                if (this.* == .Blob) {
+                    return this.toArrayBufferView(globalThis, .clone, .Uint8Array);
+                }
+
+                return this.toUint8ArrayTransfer(globalThis);
+            },
+            .blob => {
+                const result = Blob.new(this.toBlob(globalThis));
+                result.allocator = bun.default_allocator;
+                result.globalThis = globalThis;
+                return result.toJS(globalThis);
+            },
+            .arrayBuffer => {
+                if (this.* == .Blob) {
+                    return this.toArrayBufferView(globalThis, .clone, .ArrayBuffer);
+                }
+
+                return this.toArrayBufferTransfer(globalThis);
+            },
+            .json => {
+                return this.toJSON(globalThis, .share);
+            },
+        }
+    }
+
+    pub fn toPromise(this: *AnyBlob, globalThis: *JSGlobalObject, action: JSC.WebCore.BufferedReadableStreamAction) JSC.JSValue {
+        return JSC.JSPromise.wrap(globalThis, toActionValue, .{ this, globalThis, action });
+    }
+
+    pub fn wrap(this: *AnyBlob, promise: JSC.AnyPromise, globalThis: *JSGlobalObject, action: JSC.WebCore.BufferedReadableStreamAction) void {
+        promise.wrap(globalThis, toActionValue, .{ this, globalThis, action });
     }
 
     pub fn toJSON(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) JSValue {
@@ -4726,6 +4949,42 @@ pub const AnyBlob = union(enum) {
                 return str.toJSByParseJSON(global);
             },
         }
+    }
+
+    pub fn toJSONShare(this: *AnyBlob, global: *JSGlobalObject) JSValue {
+        return this.toJSON(global, .share);
+    }
+
+    pub fn toStringTransfer(this: *AnyBlob, global: *JSGlobalObject) JSValue {
+        return this.toString(global, .transfer);
+    }
+
+    pub fn toUint8ArrayTransfer(this: *AnyBlob, global: *JSGlobalObject) JSValue {
+        return this.toUint8Array(global, .transfer);
+    }
+
+    pub fn toArrayBufferTransfer(this: *AnyBlob, global: *JSGlobalObject) JSValue {
+        return this.toArrayBuffer(global, .transfer);
+    }
+
+    pub fn toBlob(this: *AnyBlob, global: *JSGlobalObject) Blob {
+        if (this.size() == 0) {
+            return Blob.initEmpty(global);
+        }
+
+        if (this.* == .Blob) {
+            return this.Blob.dupe();
+        }
+
+        if (this.* == .WTFStringImpl) {
+            const blob = Blob.create(this.slice(), bun.default_allocator, global, true);
+            this.* = .{ .Blob = .{} };
+            return blob;
+        }
+
+        const blob = Blob.init(this.InternalBlob.slice(), this.InternalBlob.bytes.allocator, global);
+        this.* = .{ .Blob = .{} };
+        return blob;
     }
 
     pub fn toString(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) JSValue {
@@ -4789,11 +5048,12 @@ pub const AnyBlob = union(enum) {
 
                 const bytes = this.InternalBlob.toOwnedSlice();
                 this.* = .{ .Blob = .{} };
-                const value = JSC.ArrayBuffer.fromBytes(
+
+                return JSC.ArrayBuffer.fromDefaultAllocator(
+                    global,
                     bytes,
                     TypedArrayView,
                 );
-                return value.toJS(global, null);
             },
             .WTFStringImpl => {
                 const str = bun.String.init(this.WTFStringImpl);
@@ -4802,11 +5062,11 @@ pub const AnyBlob = union(enum) {
 
                 const out_bytes = str.toUTF8WithoutRef(bun.default_allocator);
                 if (out_bytes.isAllocated()) {
-                    const value = JSC.ArrayBuffer.fromBytes(
+                    return JSC.ArrayBuffer.fromDefaultAllocator(
+                        global,
                         @constCast(out_bytes.slice()),
                         TypedArrayView,
                     );
-                    return value.toJS(global, null);
                 }
 
                 return JSC.ArrayBuffer.create(global, out_bytes.slice(), TypedArrayView);

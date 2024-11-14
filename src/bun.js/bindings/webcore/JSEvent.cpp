@@ -156,10 +156,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventDOMConstructor::c
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto eventInitDict = convert<IDLDictionary<EventInit>>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = Event::create(WTFMove(type), WTFMove(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -565,13 +565,13 @@ static inline JSC::EncodedJSValue jsEventPrototypeFunction_initEventBody(JSC::JS
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto bubbles = convert<IDLBoolean>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto cancelable = convert<IDLBoolean>(*lexicalGlobalObject, argument2.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initEvent(WTFMove(type), WTFMove(bubbles), WTFMove(cancelable)); })));
 }
 

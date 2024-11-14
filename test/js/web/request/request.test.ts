@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("undefined args don't throw", () => {
   const request = new Request("https://example.com/", {

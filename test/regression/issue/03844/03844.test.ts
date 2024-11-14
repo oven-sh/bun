@@ -1,5 +1,5 @@
+import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { test, expect } from "bun:test";
 
 test("test bun target", async () => {
   const { success, outputs, logs } = await Bun.build({
@@ -12,8 +12,8 @@ test("test bun target", async () => {
   const content = await blob.text();
 
   // use bun's ws
-  expect(content).toContain('import {WebSocket} from "ws"');
-  expect(content).not.toContain("var websocket = __toESM(require_websocket(), 1);");
+  expect(content).toContain('import { WebSocket } from "ws"');
+  expect(content).not.toContain("var import_websocket = __toESM(require_websocket(), 1);");
 });
 
 test("test node target", async () => {
@@ -28,5 +28,5 @@ test("test node target", async () => {
 
   // use node's ws
   expect(content).not.toContain('import {WebSocket} from "ws"');
-  expect(content).toContain("var websocket = __toESM(require_websocket(), 1);");
+  expect(content).toContain("var import_websocket = __toESM(require_websocket(), 1);");
 });

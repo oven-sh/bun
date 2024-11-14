@@ -1,6 +1,6 @@
-import type { ServerWebSocket, Server, Socket } from "bun";
+import type { Server, ServerWebSocket, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunExe, bunEnv, rejectUnauthorizedScope } from "harness";
+import { bunEnv, bunExe, rejectUnauthorizedScope } from "harness";
 import path from "path";
 
 describe("Server", () => {
@@ -100,7 +100,7 @@ describe("Server", () => {
   });
 
   test("should not allow Bun.serve with invalid tls option", () => {
-    [1, "string", true, Symbol("symbol"), false].forEach(value => {
+    [1, "string", true, Symbol("symbol")].forEach(value => {
       expect(() => {
         using server = Bun.serve({
           //@ts-ignore
@@ -435,7 +435,7 @@ describe("Server", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    expect(stderr).toBeEmpty();
+    expect(stderr.toString('utf-8')).toBeEmpty();
     expect(exitCode).toBe(0);
   });
 });
@@ -514,9 +514,82 @@ test("Bun should be able to handle utf16 inside Content-Type header #11316", asy
   expect(result.headers.get("Content-Type")).toBe("text/html");
 });
 
+test("should be able to await server.stop()", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  const ready = Promise.withResolvers();
+  const received = Promise.withResolvers();
+  using server = Bun.serve({
+    port: 0,
+    // Avoid waiting for DNS resolution in fetch()
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      received.resolve();
+      await ready.promise;
+      return new Response("Hello World", {
+        headers: {
+          // Prevent Keep-Alive from keeping the connection open
+          "Connection": "close",
+        },
+      });
+    },
+  });
+
+  // Start the request
+  const responsePromise = fetch(server.url);
+  // Wait for the server to receive it.
+  await received.promise;
+  // Stop listening for new connections
+  const stopped = server.stop();
+  // Continue the request
+  ready.resolve();
+  // Wait for the response
+  await (await responsePromise).text();
+  // Wait for the server to stop
+  await stopped;
+  // Ensure the server is completely stopped
+  expect(async () => await fetch(server.url)).toThrow();
+});
+
+test("should be able to await server.stop(true) with keep alive", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  const ready = Promise.withResolvers();
+  const received = Promise.withResolvers();
+  using server = Bun.serve({
+    port: 0,
+    // Avoid waiting for DNS resolution in fetch()
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      received.resolve();
+      await ready.promise;
+      return new Response("Hello World");
+    },
+  });
+
+  // Start the request
+  const responsePromise = fetch(server.url);
+  // Wait for the server to receive it.
+  await received.promise;
+  // Stop listening for new connections
+  const stopped = server.stop(true);
+  // Continue the request
+  ready.resolve();
+
+  // Wait for the server to stop
+  await stopped;
+
+  // It should fail before the server responds
+  expect(async () => {
+    await (await responsePromise).text();
+  }).toThrow();
+
+  // Ensure the server is completely stopped
+  expect(async () => await fetch(server.url)).toThrow();
+});
+
 test("should be able to async upgrade using custom protocol", async () => {
   const { promise, resolve } = Promise.withResolvers<{ code: number; reason: string } | boolean>();
   using server = Bun.serve<unknown>({
+    port: 0,
     async fetch(req: Request, server: Server) {
       await Bun.sleep(1);
 
@@ -554,7 +627,7 @@ test("should be able to abrubtly close a upload request", async () => {
     async fetch(req) {
       let total_size = 0;
       req.signal.addEventListener("abort", resolve);
-      try{
+      try {
         for await (const chunk of req.body as ReadableStream) {
           total_size += chunk.length;
           if (total_size > 1024 * 1024 * 1024) {
@@ -566,7 +639,7 @@ test("should be able to abrubtly close a upload request", async () => {
       } finally {
         resolve2();
       }
-            
+
       return new Response("Received " + total_size);
     },
   });
@@ -629,3 +702,48 @@ test("should be able to abrubtly close a upload request", async () => {
   await Promise.all([promise, promise2]);
   expect().pass();
 });
+
+// This test is disabled because it can OOM the CI
+test.skip("should be able to stream huge amounts of data", async () => {
+  const buf = Buffer.alloc(1024 * 1024 * 256);
+  const CONTENT_LENGTH = 3 * 1024 * 1024 * 1024;
+  let received = 0;
+  let written = 0;
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            while (written < CONTENT_LENGTH) {
+              written += buf.byteLength;
+              await controller.write(buf);
+            }
+            controller.close();
+          },
+        }),
+        {
+          headers: {
+            "Content-Type": "text/plain",
+            "Content-Length": CONTENT_LENGTH.toString(),
+          },
+        },
+      );
+    },
+  });
+
+  const response = await fetch(server.url);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type")).toBe("text/plain");
+  const reader = (response.body as ReadableStream).getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    received += value ? value.byteLength : 0;
+    if (done) {
+      break;
+    }
+  }
+  expect(written).toBe(CONTENT_LENGTH);
+  expect(received).toBe(CONTENT_LENGTH);
+}, 30_000);

@@ -1,4 +1,4 @@
-import { listen, connect, TCPSocketListener, SocketHandler } from "bun";
+import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
 import { expectMaxObjectTypeCount } from "harness";
 
@@ -15,7 +15,7 @@ it("remoteAddress works", async () => {
     };
     reject = reject1;
   });
-  let server = Bun.listen({
+  using server = Bun.listen({
     socket: {
       open(ws) {
         try {
@@ -25,8 +25,6 @@ it("remoteAddress works", async () => {
           reject(e);
 
           return;
-        } finally {
-          setTimeout(() => server.stop(true), 0);
         }
       },
       close() {},
@@ -63,7 +61,7 @@ it("should not allow invalid tls option", () => {
   [1, "string", Symbol("symbol")].forEach(value => {
     expect(() => {
       // @ts-ignore
-      const server = Bun.listen({
+      using server = Bun.listen({
         socket: {
           open(ws) {},
           close() {},
@@ -73,7 +71,6 @@ it("should not allow invalid tls option", () => {
         hostname: "localhost",
         tls: value,
       });
-      server.stop(true);
     }).toThrow("tls option expects an object");
   });
 });
@@ -82,7 +79,7 @@ it("should allow using false, null or undefined tls option", () => {
   [false, null, undefined].forEach(value => {
     expect(() => {
       // @ts-ignore
-      const server = Bun.listen({
+      using server = Bun.listen({
         socket: {
           open(ws) {},
           close() {},
@@ -92,7 +89,6 @@ it("should allow using false, null or undefined tls option", () => {
         hostname: "localhost",
         tls: value,
       });
-      server.stop(true);
     }).not.toThrow("tls option expects an object");
   });
 });
@@ -167,7 +163,7 @@ it("echo server 1 on 1", async () => {
       },
     } as SocketHandler<any>;
 
-    var server: TCPSocketListener<any> | undefined = listen({
+    using server: TCPSocketListener<any> | undefined = listen({
       socket: handlers,
       hostname: "localhost",
       port: 0,
@@ -186,8 +182,6 @@ it("echo server 1 on 1", async () => {
       },
     });
     await Promise.all([prom, clientProm, serverProm]);
-    server.stop(true);
-    server = serverData = clientData = undefined;
   })();
 });
 
@@ -276,7 +270,7 @@ describe("tcp socket binaryType", () => {
           binaryType: type,
         } as SocketHandler<any>;
 
-        var server: TCPSocketListener<any> | undefined = listen({
+        using server: TCPSocketListener<any> | undefined = listen({
           socket: handlers,
           hostname: "localhost",
           port: 0,
@@ -296,8 +290,6 @@ describe("tcp socket binaryType", () => {
         });
 
         await Promise.all([prom, clientProm, serverProm]);
-        server.stop(true);
-        server = serverData = clientData = undefined;
       })();
     });
   }

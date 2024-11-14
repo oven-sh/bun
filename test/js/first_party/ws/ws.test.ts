@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
 
@@ -411,6 +411,47 @@ it("close event", async () => {
   wss.close();
 });
 
+// https://github.com/oven-sh/bun/issues/14345
+it("WebSocket finishRequest mocked", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  using server = Bun.serve({
+    port: 0,
+    websocket: {
+      open() {},
+      close() {},
+      message() {},
+    },
+    fetch(req, server) {
+      expect(req.headers.get("X-Custom-Header")).toBe("CustomValue");
+      expect(req.headers.get("Another-Header")).toBe("AnotherValue");
+      return server.upgrade(req);
+    },
+  });
+
+  const customHeaders = {
+    "X-Custom-Header": "CustomValue",
+    "Another-Header": "AnotherValue",
+  };
+
+  const ws = new WebSocket(server.url, [], {
+    finishRequest: req => {
+      Object.entries(customHeaders).forEach(([key, value]) => {
+        req.setHeader(key, value);
+      });
+      req.end();
+    },
+  });
+
+  ws.once("open", () => {
+    ws.send("Hello");
+    ws.close();
+    resolve();
+  });
+
+  await promise;
+});
+
 function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) => void, timeout?: number) {
   it(
     label,
@@ -436,21 +477,74 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
 
 async function listen(): Promise<URL> {
   const pathname = path.resolve(import.meta.dir, "../../web/websocket/websocket-server-echo.mjs");
+  const { promise, resolve, reject } = Promise.withResolvers();
   const server = spawn({
     cmd: [bunExe(), pathname],
     cwd: import.meta.dir,
     env: bunEnv,
+    stdout: "inherit",
     stderr: "inherit",
-    stdout: "pipe",
+    serialization: "json",
+    ipc(message) {
+      const url = message?.href;
+      if (url) {
+        try {
+          resolve(new URL(url));
+        } catch (error) {
+          reject(error);
+        }
+      }
+    },
   });
+
   servers.push(server);
-  for await (const chunk of server.stdout) {
-    const text = new TextDecoder().decode(chunk);
-    try {
-      return new URL(text);
-    } catch {
-      throw new Error(`Invalid URL: '${text}'`);
-    }
-  }
-  throw new Error("No URL found?");
+
+  return await promise;
 }
+
+it("WebSocketServer should handle backpressure", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const PAYLOAD_SIZE = 64 * 1024;
+  const ITERATIONS = 10;
+  const payload = Buffer.alloc(PAYLOAD_SIZE, "a");
+  let received = 0;
+
+  const wss = new WebSocketServer({ port: 0 });
+
+  wss.on("connection", function connection(ws) {
+    ws.onerror = reject;
+
+    let i = 0;
+
+    async function commit(err?: Error) {
+      if (err) {
+        reject(err);
+        return;
+      }
+      await Bun.sleep(10);
+
+      if (i < ITERATIONS) {
+        i++;
+        ws.send(payload, commit);
+      } else {
+        ws.close();
+      }
+    }
+
+    commit(undefined);
+  });
+
+  try {
+    const ws = new WebSocket("ws://localhost:" + wss.address().port);
+    ws.onmessage = event => {
+      received += event.data.byteLength;
+    };
+    ws.onclose = resolve;
+    ws.onerror = reject;
+    await promise;
+
+    expect(received).toBe(PAYLOAD_SIZE * ITERATIONS);
+  } finally {
+    wss.close();
+  }
+});

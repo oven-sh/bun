@@ -42,7 +42,7 @@ const response = await fetch("http://example.com", {
 });
 ```
 
-`body` can be a string, a `FormData` object, an `ArrayBuffer`, a `Blob`, and more. See the [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/API/Body/body) for more information.
+`body` can be a string, a `FormData` object, an `ArrayBuffer`, a `Blob`, and more. See the [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch#setting_a_body) for more information.
 
 ### Proxying requests
 
@@ -241,7 +241,7 @@ dns.prefetch("bun.sh", 443);
 
 By default, Bun caches and deduplicates DNS queries in-memory for up to 30 seconds. You can see the cache stats by calling `dns.getCacheStats()`:
 
-To learn more about DNS caching in Bun, see the [DNS caching](/docs/api/dns) documentation.
+To learn more about DNS caching in Bun, see the [DNS caching](https://bun.sh/docs/api/dns) documentation.
 
 ### Preconnect to a host
 

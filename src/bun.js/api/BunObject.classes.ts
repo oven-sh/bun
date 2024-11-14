@@ -62,6 +62,10 @@ export default [
         getter: "getStdout",
         cache: true,
       },
+      stderr: {
+        getter: "getStderr",
+        cache: true,
+      },
       writable: {
         getter: "getStdin",
         cache: "stdin",
@@ -70,11 +74,6 @@ export default [
         getter: "getStdout",
         cache: "stdout",
       },
-      stderr: {
-        getter: "getStderr",
-        cache: true,
-      },
-
       ref: {
         fn: "doRef",
         length: 0,
@@ -91,20 +90,24 @@ export default [
         fn: "doSend",
         length: 1,
       },
-
       kill: {
         fn: "kill",
         length: 1,
+      },
+      disconnect: {
+        fn: "disconnect",
+        length: 0,
+      },
+      connected: {
+        getter: "getConnected",
       },
       "@@asyncDispose": {
         fn: "asyncDispose",
         length: 1,
       },
-
       killed: {
         getter: "getKilled",
       },
-
       exitCode: {
         getter: "getExitCode",
       },

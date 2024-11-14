@@ -2,12 +2,19 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
+const { ERR_INVALID_ARG_TYPE, ERR_INVALID_PROTOCOL } = require("internal/errors");
+const { isPrimary } = require("internal/cluster/isPrimary");
+const { kAutoDestroyed } = require("internal/shared");
+const { urlToHttpOptions } = require("internal/url");
+const { validateFunction, checkIsHttpToken } = require("internal/validators");
 
 const {
   getHeader,
   setHeader,
   assignHeaders: assignHeadersFast,
+  assignEventCallback,
+  setRequestTimeout,
+  setServerIdleTimeout,
   Response,
   Request,
   Headers,
@@ -17,12 +24,19 @@ const {
   getHeader: (headers: Headers, name: string) => string | undefined;
   setHeader: (headers: Headers, name: string, value: string) => void;
   assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
+  assignEventCallback: (req: Request, callback: (event: number) => void) => void;
+  setRequestTimeout: (req: Request, timeout: number) => void;
+  setServerIdleTimeout: (server: any, timeout: number) => void;
   Response: (typeof globalThis)["Response"];
   Request: (typeof globalThis)["Request"];
   Headers: (typeof globalThis)["Headers"];
   Blob: (typeof globalThis)["Blob"];
   headersTuple: any;
 };
+
+let cluster;
+const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
+const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
 
 // TODO: make this more robust.
 function isAbortError(err) {
@@ -45,8 +59,7 @@ function checkInvalidHeaderChar(val: string) {
 
 const validateHeaderName = (name, label) => {
   if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
-    // throw new ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
-    throw new Error("ERR_INVALID_HTTP_TOKEN");
+    throw $ERR_INVALID_HTTP_TOKEN(`The arguments Header name is invalid. Received ${name}`);
   }
 };
 
@@ -78,6 +91,7 @@ const kEmptyObject = Object.freeze(Object.create(null));
 const kEndCalled = Symbol.for("kEndCalled");
 const kAbortController = Symbol.for("kAbortController");
 const kClearTimeout = Symbol("kClearTimeout");
+const kRealListen = Symbol("kRealListen");
 
 // Primordials
 const StringPrototypeSlice = String.prototype.slice;
@@ -90,9 +104,9 @@ const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const NODE_HTTP_WARNING =
   "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.";
 
-var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
 const kInternalSocketData = Symbol.for("::bunternal::");
+const serverSymbol = Symbol.for("::bunternal::");
 const kfakeSocket = Symbol("kfakeSocket");
 
 const kEmptyBuffer = Buffer.alloc(0);
@@ -117,17 +131,10 @@ function validateMsecs(numberlike: any, field: string) {
 
   return numberlike;
 }
-function validateFunction(callable: any, field: string) {
-  if (typeof callable !== "function") {
-    throw ERR_INVALID_ARG_TYPE(field, "Function", callable);
-  }
-
-  return callable;
-}
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]!: [import("bun").Server, typeof OutgoingMessage, typeof Request];
+  [kInternalSocketData]!: [typeof Server, typeof OutgoingMessage, typeof Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
@@ -138,7 +145,8 @@ var FakeSocket = class Socket extends Duplex {
   address() {
     // Call server.requestIP() without doing any propety getter twice.
     var internalData;
-    return (this.#address ??= (internalData = this[kInternalSocketData])?.[0]?.requestIP(internalData[2]) ?? {});
+    return (this.#address ??=
+      (internalData = this[kInternalSocketData])?.[0]?.[serverSymbol].requestIP(internalData[2]) ?? {});
   }
 
   get bufferSize() {
@@ -149,7 +157,11 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  _destroy(err, callback) {}
+  _destroy(err, callback) {
+    const socketData = this[kInternalSocketData];
+    if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
+    if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
+  }
 
   _final(callback) {}
 
@@ -220,6 +232,11 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   setTimeout(timeout, callback) {
+    const socketData = this[kInternalSocketData];
+    if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
+
+    const [server, http_res, req] = socketData;
+    http_res?.req?.setTimeout(timeout, callback);
     return this;
   }
 
@@ -246,9 +263,9 @@ function Agent(options = kEmptyObject) {
   if (options.noDelay === undefined) options.noDelay = true;
 
   // Don't confuse net and make it think that we're connecting to a pipe
-  this.requests = kEmptyObject;
-  this.sockets = kEmptyObject;
-  this.freeSockets = kEmptyObject;
+  this.requests = Object.create(null);
+  this.sockets = Object.create(null);
+  this.freeSockets = Object.create(null);
 
   this.keepAliveMsecs = options.keepAliveMsecs || 1000;
   this.keepAlive = options.keepAlive || false;
@@ -260,8 +277,7 @@ function Agent(options = kEmptyObject) {
   this.defaultPort = options.defaultPort || 80;
   this.protocol = options.protocol || "http:";
 }
-Agent.prototype = {};
-$setPrototypeDirect.$call(Agent.prototype, EventEmitter.prototype);
+Agent.prototype = Object.create(EventEmitter.prototype);
 
 ObjectDefineProperty(Agent, "globalAgent", {
   get: function () {
@@ -329,14 +345,14 @@ function emitListeningNextTick(self, hostname, port) {
 var tlsSymbol = Symbol("tls");
 var isTlsSymbol = Symbol("is_tls");
 var optionsSymbol = Symbol("options");
-var serverSymbol = Symbol("server");
+
 function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
 
   this.listening = false;
   this._unref = false;
-  this[serverSymbol] = undefined;
+  this[kInternalSocketData] = undefined;
 
   if (typeof options === "function") {
     callback = options;
@@ -409,6 +425,23 @@ function Server(options, callback) {
   return this;
 }
 
+function onRequestEvent(event) {
+  const [server, http_res, req] = this.socket[kInternalSocketData];
+  if (!http_res[finishedSymbol]) {
+    switch (event) {
+      case 0: // timeout
+        this.emit("timeout");
+        server.emit("timeout", req.socket);
+        break;
+      case 1: // abort
+        this.complete = true;
+        this.emit("close");
+        http_res[finishedSymbol] = true;
+        break;
+    }
+  }
+}
+
 Server.prototype = {
   ref() {
     this._unref = false;
@@ -429,7 +462,6 @@ Server.prototype = {
     }
     this[serverSymbol] = undefined;
     server.stop(true);
-    process.nextTick(emitCloseNT, this);
   },
 
   closeIdleConnections() {
@@ -446,7 +478,6 @@ Server.prototype = {
     this[serverSymbol] = undefined;
     if (typeof optionalCallback === "function") this.once("close", optionalCallback);
     server.stop();
-    process.nextTick(emitCloseNT, this);
   },
 
   [Symbol.asyncDispose]() {
@@ -500,23 +531,86 @@ Server.prototype = {
       port = 0;
     }
 
+    if (typeof port === "string") {
+      const portNumber = parseInt(port);
+      if (!Number.isNaN(portNumber)) {
+        port = portNumber;
+      }
+    }
+
     if ($isCallable(arguments[arguments.length - 1])) {
       onListen = arguments[arguments.length - 1];
     }
 
-    const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
-    const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
-    let isHTTPS = false;
-
     try {
+      // listenInCluster
+
+      if (isPrimary) {
+        server[kRealListen](tls, port, host, socketPath, false, onListen);
+        return this;
+      }
+
+      if (cluster === undefined) cluster = require("node:cluster");
+
+      // TODO: our net.Server and http.Server use different Bun APIs and our IPC doesnt support sending and receiving handles yet. use reusePort instead for now.
+
+      // const serverQuery = {
+      //   // address: address,
+      //   port: port,
+      //   addressType: 4,
+      //   // fd: fd,
+      //   // flags,
+      //   // backlog,
+      //   // ...options,
+      // };
+      // cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
+      //   // err = checkBindError(err, port, handle);
+      //   // if (err) {
+      //   //   throw new ExceptionWithHostPort(err, "bind", address, port);
+      //   // }
+      //   if (err) {
+      //     throw err;
+      //   }
+      //   server[kRealListen](port, host, socketPath, onListen);
+      // });
+
+      server.once("listening", () => {
+        cluster.worker.state = "listening";
+        const address = server.address();
+        const message = {
+          act: "listening",
+          port: (address && address.port) || port,
+          data: null,
+          addressType: 4,
+        };
+        sendHelper(message, null);
+      });
+
+      server[kRealListen](tls, port, host, socketPath, true, onListen);
+    } catch (err) {
+      setTimeout(() => server.emit("error", err), 1);
+    }
+
+    return this;
+  },
+
+  [kRealListen](tls, port, host, socketPath, reusePort, onListen) {
+    {
+      const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
+      const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
+      let isHTTPS = false;
+      let server = this;
+
       if (tls) {
         this.serverName = tls.serverName || host || "localhost";
       }
       this[serverSymbol] = Bun.serve<any>({
+        idleTimeout: 0, // nodejs dont have a idleTimeout by default
         tls,
         port,
         hostname: host,
         unix: socketPath,
+        reusePort,
         // Bindings to be used for WS Server
         websocket: {
           open(ws) {
@@ -564,13 +658,14 @@ Server.prototype = {
           const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = isHTTPS;
           const http_req = new RequestClass(req);
+          assignEventCallback(req, onRequestEvent.bind(http_req));
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
 
           const upgrade = http_req.headers.upgrade;
 
           const http_res = new ResponseClass(http_req, reply);
 
-          http_req.socket[kInternalSocketData] = [_server, http_res, req];
+          http_req.socket[kInternalSocketData] = [server, http_res, req];
           server.emit("connection", http_req.socket);
 
           const rejectFn = err => reject(err);
@@ -595,6 +690,7 @@ Server.prototype = {
           return promise;
         },
       });
+      getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
       isHTTPS = this[serverSymbol].protocol === "https";
 
       if (this?._unref) {
@@ -606,15 +702,15 @@ Server.prototype = {
       }
 
       setTimeout(emitListeningNextTick, 1, this, this[serverSymbol].hostname, this[serverSymbol].port);
-    } catch (err) {
-      server.emit("error", err);
     }
-
-    return this;
   },
 
   setTimeout(msecs, callback) {
-    // TODO:
+    const server = this[serverSymbol];
+    if (server) {
+      setServerIdleTimeout(server, Math.ceil(msecs / 1000));
+      typeof callback === "function" && this.once("timeout", callback);
+    }
     return this;
   },
 
@@ -677,10 +773,6 @@ function assignHeaders(object, req) {
 
 var defaultIncomingOpts = { type: "request" };
 
-function getDefaultHTTPSAgent() {
-  return (_defaultHTTPSAgent ??= new Agent({ defaultPort: 443, protocol: "https:" }));
-}
-
 function requestHasNoBody(method, req) {
   if ("GET" === method || "HEAD" === method || "TRACE" === method || "CONNECT" === method || "OPTIONS" === method)
     return true;
@@ -705,6 +797,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
   this._dumped = false;
   this[noBodySymbol] = false;
   this[abortedSymbol] = false;
+  this.complete = false;
   Readable.$call(this);
   var { type = "request", [kInternalRequest]: nodeReq } = defaultIncomingOpts || {};
 
@@ -734,8 +827,6 @@ function IncomingMessage(req, defaultIncomingOpts) {
     type === "request" // TODO: Add logic for checking for body on response
       ? requestHasNoBody(this.method, this)
       : false;
-
-  this.complete = !!this[noBodySymbol];
 }
 
 IncomingMessage.prototype = {
@@ -855,7 +946,11 @@ IncomingMessage.prototype = {
     // noop
   },
   setTimeout(msecs, callback) {
-    // noop
+    const req = this[reqSymbol];
+    if (req) {
+      setRequestTimeout(req, Math.ceil(msecs / 1000));
+      typeof callback === "function" && this.once("timeout", callback);
+    }
     return this;
   },
   get socket() {
@@ -1063,11 +1158,25 @@ Object.defineProperty(OutgoingMessage.prototype, "finished", {
   },
 });
 
+function emitContinueAndSocketNT(self) {
+  if (self.destroyed) return;
+  // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
+  self.emit("socket", self.socket);
+
+  //Emit continue event for the client (internally we auto handle it)
+  if (!self._closed && self.getHeader("expect") === "100-continue") {
+    self.emit("continue");
+  }
+}
 function emitCloseNT(self) {
   if (!self._closed) {
     self._closed = true;
     self.emit("close");
   }
+}
+
+function emitRequestCloseNT(self) {
+  self.emit("close");
 }
 
 function onServerResponseClose() {
@@ -1201,10 +1310,14 @@ function drainHeadersIfObservable() {
 }
 
 ServerResponse.prototype._final = function (callback) {
+  const req = this.req;
+  const shouldEmitClose = req && req.emit && !this[finishedSymbol];
+
   if (!this.headersSent) {
     var data = this[firstWriteSymbol] || "";
     this[firstWriteSymbol] = undefined;
     this[finishedSymbol] = true;
+    this.headersSent = true; // https://github.com/oven-sh/bun/issues/3458
     drainHeadersIfObservable.$call(this);
     this._reply(
       new Response(data, {
@@ -1213,6 +1326,10 @@ ServerResponse.prototype._final = function (callback) {
         statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
       }),
     );
+    if (shouldEmitClose) {
+      req.complete = true;
+      process.nextTick(emitRequestCloseNT, req);
+    }
     callback && callback();
     return;
   }
@@ -1220,7 +1337,10 @@ ServerResponse.prototype._final = function (callback) {
   this[finishedSymbol] = true;
   ensureReadableStreamController.$call(this, controller => {
     controller.end();
-
+    if (shouldEmitClose) {
+      req.complete = true;
+      process.nextTick(emitRequestCloseNT, req);
+    }
     callback();
     const deferred = this[deferredSymbol];
     if (deferred) {
@@ -1411,10 +1531,12 @@ class ClientRequest extends OutgoingMessage {
     this.#bodyChunks.push(...chunks);
     callback();
   }
+
   _destroy(err, callback) {
     this.destroyed = true;
     // If request is destroyed we abort the current response
     this[kAbortController]?.abort?.();
+    this.socket.destroy();
     emitErrorNextTick(this, err, callback);
   }
 
@@ -1452,6 +1574,19 @@ class ClientRequest extends OutgoingMessage {
       proxy = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}`;
     } else {
       url = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${path}`;
+      // support agent proxy url/string for http/https
+      try {
+        // getters can throw
+        const agentProxy = this.#agent?.proxy;
+        // this should work for URL like objects and strings
+        proxy = agentProxy?.href || agentProxy;
+      } catch {}
+    }
+
+    let keepalive = true;
+    const agentKeepalive = this.#agent?.keepalive;
+    if (agentKeepalive !== undefined) {
+      keepalive = agentKeepalive;
     }
     const tls = protocol === "https:" && this.#tls ? { ...this.#tls, serverName: this.#tls.servername } : undefined;
     try {
@@ -1464,6 +1599,7 @@ class ClientRequest extends OutgoingMessage {
         timeout: false,
         // Disable auto gzip/deflate
         decompress: false,
+        keepalive,
       };
 
       if (body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
@@ -1547,7 +1683,6 @@ class ClientRequest extends OutgoingMessage {
 
   constructor(input, options, cb) {
     super();
-
     if (typeof input === "string") {
       const urlStr = input;
       try {
@@ -1572,38 +1707,26 @@ class ClientRequest extends OutgoingMessage {
       options = ObjectAssign(input || {}, options);
     }
 
-    var defaultAgent = options._defaultAgent || Agent.globalAgent;
+    let agent = options.agent;
+    const defaultAgent = options._defaultAgent || Agent.globalAgent;
+    if (agent === false) {
+      agent = new defaultAgent.constructor();
+    } else if (agent == null) {
+      agent = defaultAgent;
+    } else if (typeof agent.addRequest !== "function") {
+      throw ERR_INVALID_ARG_TYPE("options.agent", "Agent-like Object, undefined, or false", agent);
+    }
+    this.#agent = agent;
 
-    let protocol = options.protocol;
-    if (!protocol) {
-      if (options.port === 443) {
-        protocol = "https:";
-      } else {
-        protocol = defaultAgent.protocol || "http:";
-      }
+    const protocol = options.protocol || defaultAgent.protocol;
+    let expectedProtocol = defaultAgent.protocol;
+    if (this.agent.protocol) {
+      expectedProtocol = this.agent.protocol;
+    }
+    if (protocol !== expectedProtocol) {
+      throw ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }
     this.#protocol = protocol;
-
-    switch (this.#agent?.protocol) {
-      case undefined: {
-        break;
-      }
-      case "http:": {
-        if (protocol === "https:") {
-          defaultAgent = this.#agent = getDefaultHTTPSAgent();
-          break;
-        }
-      }
-      case "https:": {
-        if (protocol === "https") {
-          defaultAgent = this.#agent = Agent.globalAgent;
-          break;
-        }
-      }
-      default: {
-        break;
-      }
-    }
 
     if (options.path) {
       const path = String(options.path);
@@ -1614,16 +1737,8 @@ class ClientRequest extends OutgoingMessage {
       }
     }
 
-    // Since we don't implement Agent, we don't need this
-    if (protocol !== "http:" && protocol !== "https:" && protocol) {
-      const expectedProtocol = defaultAgent?.protocol ?? "http:";
-      throw new Error(`Protocol mismatch. Expected: ${expectedProtocol}. Got: ${protocol}`);
-      // throw new ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
-    }
-
-    const defaultPort = protocol === "https:" ? 443 : 80;
-
-    this.#port = options.port || options.defaultPort || this.#agent?.defaultPort || defaultPort;
+    const defaultPort = options.defaultPort || this.#agent.defaultPort;
+    this.#port = options.port || defaultPort || 80;
     this.#useDefaultPort = this.#port === defaultPort;
     const host =
       (this.#host =
@@ -1651,8 +1766,7 @@ class ClientRequest extends OutgoingMessage {
 
     if (methodIsString && method) {
       if (!checkIsHttpToken(method)) {
-        // throw new ERR_INVALID_HTTP_TOKEN("Method", method);
-        throw new Error("ERR_INVALID_HTTP_TOKEN: Method");
+        throw $ERR_INVALID_HTTP_TOKEN("Method");
       }
       method = this.#method = StringPrototypeToUpperCase.$call(method);
     } else {
@@ -1684,7 +1798,17 @@ class ClientRequest extends OutgoingMessage {
     if (options.pfx) {
       throw new Error("pfx is not supported");
     }
+
     if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
+    else {
+      let agentRejectUnauthorized = agent?.options?.rejectUnauthorized;
+      if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
+      else {
+        // popular https-proxy-agent uses connectOpts
+        agentRejectUnauthorized = agent?.connectOpts?.rejectUnauthorized;
+        if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
+      }
+    }
     if (options.ca) {
       if (!isValidTLSArray(options.ca))
         throw new TypeError(
@@ -1757,9 +1881,9 @@ class ClientRequest extends OutgoingMessage {
       this.setTimeout(timeout, undefined);
     }
 
+    const { headers } = options;
     const headersArray = $isJSArray(headers);
     if (!headersArray) {
-      var headers = options.headers;
       if (headers) {
         for (let key in headers) {
           this.setHeader(key, headers[key]);
@@ -1816,11 +1940,7 @@ class ClientRequest extends OutgoingMessage {
 
     this._httpMessage = this;
 
-    process.nextTick(() => {
-      // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
-      if (this.destroyed) return;
-      this.emit("socket", this.socket);
-    });
+    process.nextTick(emitContinueAndSocketNT, this);
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {
@@ -1874,24 +1994,6 @@ class ClientRequest extends OutgoingMessage {
   }
 }
 
-function urlToHttpOptions(url) {
-  var { protocol, hostname, hash, search, pathname, href, port, username, password } = url;
-  return {
-    protocol,
-    hostname:
-      typeof hostname === "string" && StringPrototypeStartsWith.$call(hostname, "[")
-        ? StringPrototypeSlice.$call(hostname, 1, -1)
-        : hostname,
-    hash,
-    search,
-    pathname,
-    path: `${pathname || ""}${search || ""}`,
-    href,
-    port: port ? Number(port) : protocol === "https:" ? 443 : protocol === "http:" ? 80 : undefined,
-    auth: username || password ? `${decodeURIComponent(username)}:${decodeURIComponent(password)}` : undefined,
-  };
-}
-
 function validateHost(host, name) {
   if (host !== null && host !== undefined && typeof host !== "string") {
     // throw ERR_INVALID_ARG_TYPE(
@@ -1902,16 +2004,6 @@ function validateHost(host, name) {
     throw new Error("Invalid arg type in options");
   }
   return host;
-}
-
-const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
-/**
- * Verifies that the given val is a valid HTTP token
- * per the rules defined in RFC 7230
- * See https://tools.ietf.org/html/rfc7230#section-3.2.6
- */
-function checkIsHttpToken(val) {
-  return RegExpPrototypeExec.$call(tokenRegExp, val) !== null;
 }
 
 // Copyright Joyent, Inc. and other Node contributors.
@@ -2083,7 +2175,7 @@ function _writeHead(statusCode, reason, obj, response) {
   } else {
     // writeHead(statusCode[, headers])
     if (!response.statusMessage) response.statusMessage = STATUS_CODES[statusCode] || "unknown";
-    obj = reason;
+    obj ??= reason;
   }
   response.statusCode = statusCode;
 
@@ -2122,6 +2214,10 @@ function _writeHead(statusCode, reason, obj, response) {
     // consisting only of the Status-Line and optional headers, and is
     // terminated by an empty line.
     response._hasBody = false;
+    const req = response.req;
+    if (req) {
+      req.complete = true;
+    }
   }
 }
 
@@ -2134,6 +2230,13 @@ function _writeHead(statusCode, reason, obj, response) {
  */
 function request(url, options, cb) {
   return new ClientRequest(url, options, cb);
+}
+
+function emitCloseServer(self: Server) {
+  self.emit("close");
+}
+function emitCloseNTServer(this: Server) {
+  process.nextTick(emitCloseServer, this);
 }
 
 /**
@@ -2165,6 +2268,9 @@ function emitAbortNextTick(self) {
   self.emit("abort");
 }
 
+const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
+const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
+
 var globalAgent = new Agent();
 export default {
   Agent,
@@ -2176,7 +2282,12 @@ export default {
   IncomingMessage,
   request,
   get,
-  maxHeaderSize: 16384,
+  get maxHeaderSize() {
+    return getMaxHTTPHeaderSize();
+  },
+  set maxHeaderSize(value) {
+    setMaxHTTPHeaderSize(value);
+  },
   validateHeaderName,
   validateHeaderValue,
   setMaxIdleHTTPParsers(max) {

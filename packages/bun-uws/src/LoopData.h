@@ -18,17 +18,17 @@
 #ifndef UWS_LOOPDATA_H
 #define UWS_LOOPDATA_H
 
-#include <thread>
-#include <functional>
-#include <vector>
-#include <mutex>
-#include <map>
-#include <ctime>
 #include <cstdint>
+#include <ctime>
+#include <functional>
+#include <map>
+#include <mutex>
+#include <thread>
+#include <vector>
 
-#include "PerMessageDeflate.h"
 #include "MoveOnlyFunction.h"
-
+#include "PerMessageDeflate.h"
+// clang-format off
 struct us_timer_t;
 
 namespace uWS {
@@ -44,7 +44,11 @@ private:
 
     /* Map from void ptr to handler */
     std::map<void *, MoveOnlyFunction<void(Loop *)>> postHandlers, preHandlers;
-
+    /* Cork data */
+    char *corkBuffer = new char[CORK_BUFFER_SIZE];
+    unsigned int corkOffset = 0;
+    void *corkedSocket = nullptr;
+    bool corkedSocketIsSSL = false;
 public:
     LoopData() {
         updateDate();
@@ -58,6 +62,55 @@ public:
             delete deflationStream;
         }
         delete [] corkBuffer;
+    }
+    void* getCorkedSocket() {
+        return this->corkedSocket;
+    }
+
+    void setCorkedSocket(void *corkedSocket, bool ssl) {
+        this->corkedSocket = corkedSocket;
+        this->corkedSocketIsSSL = ssl;
+    }
+
+    bool isCorkedSSL() {
+        return this->corkedSocketIsSSL;
+    }
+
+    bool isCorked() {
+        return this->corkOffset && this->corkedSocket;
+    }
+
+    bool canCork() {
+        return this->corkedSocket == nullptr;
+    }
+
+    bool isCorkedWith(void* socket) {
+        return this->corkedSocket == socket;
+    }
+
+    char* getCorkSendBuffer() {
+        return this->corkBuffer + this->corkOffset;
+    }
+
+    void cleanCorkedSocket() {
+        this->corkedSocket = nullptr;
+        this->corkOffset = 0;
+    }
+        
+    unsigned int getCorkOffset() {
+        return this->corkOffset;
+    }
+    
+    void setCorkOffset(unsigned int offset) {
+        this->corkOffset = offset;
+    }
+
+    void incrementCorkedOffset(unsigned int offset) {
+        this->corkOffset += offset;
+    }
+    
+    char* getCorkBuffer() {
+        return this->corkBuffer;
     }
 
     void updateDate() {
@@ -93,12 +146,6 @@ public:
 
     /* Good 16k for SSL perf. */
     static const unsigned int CORK_BUFFER_SIZE = 16 * 1024;
-
-    /* Cork data */
-    char *corkBuffer = new char[CORK_BUFFER_SIZE];
-    unsigned int corkOffset = 0;
-    void *corkedSocket = nullptr;
-    bool corkedSocketIsSSL = false;
 
     /* Per message deflate data */
     ZlibContext *zlibContext = nullptr;

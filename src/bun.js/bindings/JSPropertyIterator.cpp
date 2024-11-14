@@ -24,7 +24,7 @@ public:
     }
 
     RefPtr<JSC::PropertyNameArrayData> properties;
-    JSC::VM& vm;
+    Ref<JSC::VM> vm;
     static JSPropertyIterator* create(JSC::VM& vm, RefPtr<JSC::PropertyNameArrayData> data)
     {
         return new JSPropertyIterator(vm, data);

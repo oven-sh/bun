@@ -1,8 +1,8 @@
-import { expect, test } from "bun:test";
-import { join } from "path";
 import { $ } from "bun";
+import { test } from "bun:test";
 import "harness";
 import { bunExe, tempDirWithFiles } from "harness";
+import { join } from "path";
 
 $.throws(true);
 

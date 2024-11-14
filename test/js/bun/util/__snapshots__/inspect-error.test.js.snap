@@ -1,7 +1,7 @@
 // Bun Snapshot v1, https://goo.gl/fbAQLP
 
 exports[`error.cause 1`] = `
-"1 | import { test, expect } from "bun:test";
+"1 | import { expect, test } from "bun:test";
 2 | 
 3 | test("error.cause", () => {
 4 |   const err = new Error("error 1");
@@ -10,7 +10,7 @@ exports[`error.cause 1`] = `
 error: error 2
       at [dir]/inspect-error.test.js:5:16
 
-1 | import { test, expect } from "bun:test";
+1 | import { expect, test } from "bun:test";
 2 | 
 3 | test("error.cause", () => {
 4 |   const err = new Error("error 1");

@@ -259,7 +259,7 @@ fn makeGlobWalker(
 
     if (cwd != null) {
         var globWalker = alloc.create(GlobWalker) catch {
-            globalThis.throw("Out of memory", .{});
+            globalThis.throwOutOfMemory();
             return null;
         };
 
@@ -275,7 +275,7 @@ fn makeGlobWalker(
             error_on_broken_symlinks,
             only_files,
         ) catch {
-            globalThis.throw("Out of memory", .{});
+            globalThis.throwOutOfMemory();
             return null;
         }) {
             .err => |err| {
@@ -287,7 +287,7 @@ fn makeGlobWalker(
         return globWalker;
     }
     var globWalker = alloc.create(GlobWalker) catch {
-        globalThis.throw("Out of memory", .{});
+        globalThis.throwOutOfMemory();
         return null;
     };
 
@@ -301,7 +301,7 @@ fn makeGlobWalker(
         error_on_broken_symlinks,
         only_files,
     ) catch {
-        globalThis.throw("Out of memory", .{});
+        globalThis.throwOutOfMemory();
         return null;
     }) {
         .err => |err| {
@@ -384,7 +384,7 @@ fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void 
     _ = has_pending_activity.fetchSub(1, .seq_cst);
 }
 
-pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
@@ -400,7 +400,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     incrPendingActivityFlag(&this.has_pending_activity);
     var task = WalkTask.create(globalThis, alloc, globWalker, &this.has_pending_activity) catch {
         decrPendingActivityFlag(&this.has_pending_activity);
-        globalThis.throw("Out of memory", .{});
+        globalThis.throwOutOfMemory();
         return .undefined;
     };
     task.schedule();
@@ -408,7 +408,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     return task.promise.value();
 }
 
-pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
@@ -423,7 +423,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
     defer globWalker.deinit(true);
 
     switch (globWalker.walk() catch {
-        globalThis.throw("Out of memory", .{});
+        globalThis.throwOutOfMemory();
         return .undefined;
     }) {
         .err => |err| {
@@ -438,7 +438,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
     return matchedPaths;
 }
 
-pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const alloc = getAllocator(globalThis);
     var arena = Arena.init(alloc);
     defer arena.deinit();
@@ -480,7 +480,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
         break :codepoints codepoints.items[0..codepoints.items.len];
     };
 
-    return JSC.JSValue.jsBoolean(globImpl.matchImpl(codepoints, str.slice()));
+    return if (globImpl.matchImpl(codepoints, str.slice()).matches()) .true else .false;
 }
 
 pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {

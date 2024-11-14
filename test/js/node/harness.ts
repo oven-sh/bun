@@ -1,5 +1,5 @@
 import { AnyFunction } from "bun";
-import { gcTick, hideFromStackTrace } from "harness";
+import { hideFromStackTrace } from "harness";
 import assertNode from "node:assert";
 
 type DoneCb = (err?: Error) => any;

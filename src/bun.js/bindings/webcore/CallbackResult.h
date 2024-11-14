@@ -58,7 +58,6 @@ private:
     CallbackResultType m_type = CallbackResultType::Success;
 };
 
-
 template<typename ReturnType> inline CallbackResult<ReturnType>::CallbackResult(CallbackResultType type)
     : m_value(makeUnexpected(type))
 {
@@ -79,7 +78,6 @@ template<typename ReturnType> inline auto CallbackResult<ReturnType>::releaseRet
     ASSERT(m_value.has_value());
     return WTFMove(m_value.value());
 }
-
 
 // Void specialization
 

@@ -73,6 +73,9 @@ const getReleases = text => {
       release[kNSSDate] = new Date(normalizeTD(cells[columns[kNSSDate]]));
       release[kFirefoxVersion] = normalizeTD(cells[columns[kFirefoxVersion]]);
       release[kFirefoxDate] = new Date(normalizeTD(cells[columns[kFirefoxDate]]));
+      if (!isNaN(release[kFirefoxDate]) && isNaN(release[kNSSDate])) {
+        release[kNSSDate] = new Date(release[kFirefoxDate]);
+      }
       releases.push(release);
       row = matches.next();
     }

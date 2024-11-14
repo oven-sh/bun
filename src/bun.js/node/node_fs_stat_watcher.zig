@@ -234,21 +234,12 @@ pub const StatWatcher = struct {
 
         global_this: JSC.C.JSContextRef,
 
-        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Arguments {
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Arguments {
             const vm = ctx.vm();
-            const path = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
-                if (exception.* == null) {
-                    JSC.throwInvalidArguments(
-                        "filename must be a string or TypedArray",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                }
-                return null;
+            const path = try PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator) orelse {
+                ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
+                return error.JSError;
             };
-
-            if (exception.* != null) return null;
 
             var listener: JSC.JSValue = .zero;
             var persistent: bool = true;
@@ -259,20 +250,15 @@ pub const StatWatcher = struct {
                 // options
                 if (options_or_callable.isObject()) {
                     // default true
-                    persistent = (options_or_callable.getOptional(ctx, "persistent", bool) catch return null) orelse true;
+                    persistent = (try options_or_callable.getBooleanStrict(ctx, "persistent")) orelse true;
 
                     // default false
-                    bigint = (options_or_callable.getOptional(ctx, "bigint", bool) catch return null) orelse false;
+                    bigint = (try options_or_callable.getBooleanStrict(ctx, "bigint")) orelse false;
 
                     if (options_or_callable.get(ctx, "interval")) |interval_| {
                         if (!interval_.isNumber() and !interval_.isAnyInt()) {
-                            JSC.throwInvalidArguments(
-                                "interval must be a number.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
+                            ctx.throwInvalidArguments("interval must be a number", .{});
+                            return error.JSError;
                         }
                         interval = interval_.coerce(i32, ctx);
                     }
@@ -286,8 +272,8 @@ pub const StatWatcher = struct {
             }
 
             if (listener == .zero) {
-                exception.* = JSC.toInvalidArguments("Expected \"listener\" callback", .{}, ctx).asObjectRef();
-                return null;
+                ctx.throwInvalidArguments("Expected \"listener\" callback", .{});
+                return error.JSError;
             }
 
             return Arguments{
@@ -309,7 +295,7 @@ pub const StatWatcher = struct {
         }
     };
 
-    pub fn doRef(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doRef(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (!this.closed and !this.persistent) {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
@@ -317,7 +303,7 @@ pub const StatWatcher = struct {
         return .undefined;
     }
 
-    pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (this.persistent) {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
@@ -343,7 +329,7 @@ pub const StatWatcher = struct {
         this.last_jsvalue.clear();
     }
 
-    pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         this.close();
         return .undefined;
     }
@@ -415,19 +401,16 @@ pub const StatWatcher = struct {
         const jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
         this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
 
-        const result = StatWatcher.listenerGetCached(this.js_this).?.call(
+        const vm = this.globalThis.bunVM();
+
+        _ = StatWatcher.listenerGetCached(this.js_this).?.call(
             this.globalThis,
             .undefined,
             &[2]JSC.JSValue{
                 jsvalue,
                 jsvalue,
             },
-        );
-
-        const vm = this.globalThis.bunVM();
-        if (result.isAnyError()) {
-            _ = vm.uncaughtException(this.globalThis, result, false);
-        }
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
 
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
     }
@@ -453,18 +436,14 @@ pub const StatWatcher = struct {
         const current_jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
         this.last_jsvalue.set(this.globalThis, current_jsvalue);
 
-        const result = StatWatcher.listenerGetCached(this.js_this).?.call(
+        _ = StatWatcher.listenerGetCached(this.js_this).?.call(
             this.globalThis,
             .undefined,
             &[2]JSC.JSValue{
                 current_jsvalue,
                 prev_jsvalue,
             },
-        );
-        if (result.isAnyError()) {
-            const vm = this.globalThis.bunVM();
-            _ = vm.uncaughtException(this.globalThis, result, false);
-        }
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
     }
 
     pub fn onTimerInterval(timer: *uws.Timer) callconv(.C) void {

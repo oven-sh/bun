@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
 import type { Connection, ConnectionOptions } from "mysql2/promise";
 import { createConnection } from "mysql2/promise";

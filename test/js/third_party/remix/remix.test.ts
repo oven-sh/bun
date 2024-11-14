@@ -1,4 +1,4 @@
-import { describe, it, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 test("remix works", async () => {
   process.env.PORT = "0";
   process.exitCode = 1;

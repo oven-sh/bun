@@ -1,6 +1,6 @@
-import { test, expect, describe } from "bun:test";
-import { join } from "path";
+import { describe, expect, test } from "bun:test";
 import * as Comlink from "comlink";
+import { join } from "path";
 
 describe("comlink", () => {
   test("should start without big delay", async () => {

@@ -44,10 +44,49 @@ function warnNotImplementedOnce(feature: string, issue?: number) {
 
 const fileSinkSymbol = Symbol("fileSink");
 
+//
+
+let util;
+class ExceptionWithHostPort extends Error {
+  errno: number;
+  syscall: string;
+  port?: number;
+
+  constructor(err, syscall, address, port) {
+    // TODO(joyeecheung): We have to use the type-checked
+    // getSystemErrorName(err) to guard against invalid arguments from users.
+    // This can be replaced with [ code ] = errmap.get(err) when this method
+    // is no longer exposed to user land.
+    util ??= require("node:util");
+    const code = util.getSystemErrorName(err);
+    let details = "";
+    if (port && port > 0) {
+      details = ` ${address}:${port}`;
+    } else if (address) {
+      details = ` ${address}`;
+    }
+
+    super(`${syscall} ${code}${details}`);
+
+    this.errno = err;
+    this.code = code;
+    this.syscall = syscall;
+    this.address = address;
+    if (port) {
+      this.port = port;
+    }
+  }
+}
+
+//
+
 export default {
   NotImplementedError,
   throwNotImplemented,
   hideFromStack,
   warnNotImplementedOnce,
   fileSinkSymbol,
+  ExceptionWithHostPort,
+  kHandle: Symbol("kHandle"),
+  kAutoDestroyed: Symbol("kAutoDestroyed"),
 };

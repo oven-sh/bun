@@ -83,11 +83,14 @@ function ErrorCaptureStackTrace(targetObject) {
 }
 
 const arrayProtoPush = Array.prototype.push;
-
+const ArrayPrototypeSymbolIterator = uncurryThis(Array.prototype[Symbol.iterator]);
+const ArrayIteratorPrototypeNext = uncurryThis(ArrayPrototypeSymbolIterator.next);
 export default {
   makeSafe, // exported for testing
   Array,
   ArrayFrom: Array.from,
+  ArrayIsArray: Array.isArray,
+  SafeArrayIterator: createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext),
   ArrayPrototypeFlat: uncurryThis(Array.prototype.flat),
   ArrayPrototypeFilter: uncurryThis(Array.prototype.filter),
   ArrayPrototypeForEach,
@@ -169,6 +172,8 @@ export default {
       }
     },
   ),
+  DatePrototypeGetMilliseconds: uncurryThis(Date.prototype.getMilliseconds),
+  DatePrototypeToUTCString: uncurryThis(Date.prototype.toUTCString),
   SetPrototypeGetSize: getGetter(Set, "size"),
   SetPrototypeEntries: uncurryThis(Set.prototype.entries),
   SetPrototypeValues: uncurryThis(Set.prototype.values),
@@ -196,7 +201,10 @@ export default {
   SymbolPrototypeValueOf: uncurryThis(Symbol.prototype.valueOf),
   FunctionPrototypeToString: uncurryThis(Function.prototype.toString),
   FunctionPrototypeBind: uncurryThis(Function.prototype.bind),
+  SymbolDispose: Symbol.dispose,
+  SymbolAsyncDispose: Symbol.asyncDispose,
   SymbolIterator: Symbol.iterator,
+  SymbolAsyncIterator: Symbol.asyncIterator,
   SymbolFor: Symbol.for,
   SymbolToStringTag: Symbol.toStringTag,
   TypedArrayPrototypeGetLength: getGetter(Uint8Array, "length"),
@@ -208,6 +216,7 @@ export default {
   Int8Array,
   Int16Array,
   Int32Array,
+  Float16Array,
   Float32Array,
   Float64Array,
   BigUint64Array,

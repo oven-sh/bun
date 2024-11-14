@@ -1,5 +1,5 @@
+import { expect, it } from "bun:test";
 import { Readable } from "stream";
-import { it, expect } from "bun:test";
 
 function makeUint8Array(str: string) {
   return new Uint8Array(

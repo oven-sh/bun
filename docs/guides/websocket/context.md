@@ -4,7 +4,7 @@ name: Set per-socket contextual data on a WebSocket
 
 When building a WebSocket server, it's typically necessary to store some identifying information or context associated with each connected client.
 
-With [Bun.serve()](/docs/api/websockets#contextual-data), this "contextual data" is set when the connection is initially upgraded by passing a `data` parameter in the `server.upgrade()` call.
+With [Bun.serve()](https://bun.sh/docs/api/websockets#contextual-data), this "contextual data" is set when the connection is initially upgraded by passing a `data` parameter in the `server.upgrade()` call.
 
 ```ts
 Bun.serve<{ socketId: number }>({

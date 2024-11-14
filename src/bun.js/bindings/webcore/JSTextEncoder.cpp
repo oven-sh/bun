@@ -238,11 +238,6 @@ template<> void JSTextEncoderDOMConstructor::initializeProperties(VM& vm, JSDOMG
 static const HashTableValue JSTextEncoderPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTextEncoderConstructor, 0 } },
     { "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsTextEncoder_encoding, 0 } },
-    // TODO: bring these back after fix issue with globalObject pointer argument in `encodeInto`
-    // REPRO:
-    // 1. bun create docusaurus
-    // 2. bun ./node_modules/.bin/docusaurus build --no-minify
-    // https://github.com/oven-sh/bun/issues/12335
     // { "encode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTextEncoderPrototypeFunction_encode, &DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck } },
     // { "encodeInto"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTextEncoderPrototypeFunction_encodeInto, &DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck } },
     { "encode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTextEncoderPrototypeFunction_encode, 1 } },
@@ -298,8 +293,8 @@ static const HashTableValue JSTextEncoderPrototypeTableValues[] = {
 //         res = TextEncoder__encodeInto8(source.span8().data(), source.length(), destination->vector(), destination->byteLength());
 //     }
 
-//     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-//     auto* result = JSC::constructEmptyObject(vm, globalObject->encodeIntoObjectStructure());
+//     Bun::GlobalScope* globalScope = reinterpret_cast<Bun::GlobalScope*>(lexicalGlobalObject);
+//     auto* result = JSC::constructEmptyObject(vm, globalScope->encodeIntoObjectStructure());
 //     result->putDirectOffset(vm, 0, JSC::jsNumber(static_cast<uint32_t>(res)));
 //     result->putDirectOffset(vm, 1, JSC::jsNumber(static_cast<uint32_t>(res >> 32)));
 
@@ -383,6 +378,10 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
+    if (argument0.value().isUndefined()) {
+        auto res = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), 0);
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(res));
+    }
     JSC::JSString* input = argument0.value().toStringOrNull(lexicalGlobalObject);
     JSC::EncodedJSValue res;
     String str;
@@ -404,7 +403,7 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
 
     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
         throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));
-        return encodedJSValue();
+        return {};
     }
 
     RELEASE_AND_RETURN(throwScope, res);
@@ -423,12 +422,12 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto source = argument0.value().toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto* destination = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(argument1.value());
     if (!destination) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
-        return encodedJSValue();
+        return {};
     }
 
     size_t res = 0;
@@ -440,9 +439,8 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
         res = TextEncoder__encodeInto8(span.data(), span.size(), destination->vector(), destination->byteLength());
     }
 
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-    auto* result = JSC::constructEmptyObject(vm, globalObject->encodeIntoObjectStructure());
+    Bun::GlobalScope* globalScope = reinterpret_cast<Bun::GlobalScope*>(lexicalGlobalObject);
+    auto* result = JSC::constructEmptyObject(vm, globalScope->encodeIntoObjectStructure());
     result->putDirectOffset(vm, 0, JSC::jsNumber(static_cast<uint32_t>(res)));
     result->putDirectOffset(vm, 1, JSC::jsNumber(static_cast<uint32_t>(res >> 32)));
 

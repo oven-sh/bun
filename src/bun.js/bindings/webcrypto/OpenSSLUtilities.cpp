@@ -84,7 +84,7 @@ Vector<uint8_t> convertToBytesExpand(const BIGNUM* bignum, size_t minimumBufferS
 {
     int length = BN_num_bytes(bignum);
     if (length < 0)
-        return { };
+        return {};
 
     size_t bufferSize = std::max<size_t>(length, minimumBufferSize);
 
@@ -133,6 +133,5 @@ AESKey::~AESKey()
 }
 
 } // namespace WebCore
-
 
 #endif // ENABLE(WEB_CRYPTO)

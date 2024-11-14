@@ -1,11 +1,11 @@
 import { $ } from "bun";
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { join } from "path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
-import { bunEnv, tmpdirSync } from "harness";
-import { join } from "path";
 
-const BUN = process.argv0;
+const BUN = bunExe();
 
 $.nothrow();
 describe("bun exec", () => {
@@ -19,7 +19,7 @@ describe("bun exec", () => {
   TestBuilder.command`${BUN} exec`
     .env(bunEnv)
     .stdout(
-      'Usage: bun exec <script>\n\nExecute a shell script directly from Bun.\n\nNote: If executing this from a shell, make sure to escape the string!\n\nExamples:\n  bunx exec "echo hi"\n  bunx exec "echo \\"hey friends\\"!"\n',
+      'Usage: bun exec <script>\n\nExecute a shell script directly from Bun.\n\nNote: If executing this from a shell, make sure to escape the string!\n\nExamples:\n  bun exec "echo hi"\n  bun exec "echo \\"hey friends\\"!"\n',
     )
     .runAsTest("no args prints help text");
 
@@ -86,8 +86,9 @@ describe("bun exec", () => {
 
   test("works with latin1 paths", async () => {
     const tempdir = tmpdirSync();
-    await Bun.write(join(tempdir, "Í", "hi"), "text");
-    const result = await $`bun exec ls`
+    const abs = join(tempdir, "Í", "hi");
+    await Bun.write(abs, "text");
+    const result = await $`${BUN} exec ls`
       .env({ ...(bunEnv as any) })
       .cwd(join(tempdir, "Í"))
       .quiet();

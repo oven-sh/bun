@@ -9,6 +9,10 @@ export default [
         fn: "request",
         length: 2,
       },
+      setNativeSocket: {
+        fn: "setNativeSocketFromJS",
+        length: 1,
+      },
       ping: {
         fn: "ping",
         length: 0,
@@ -29,6 +33,14 @@ export default [
         fn: "read",
         length: 1,
       },
+      flush: {
+        fn: "flushFromJS",
+        length: 0,
+      },
+      detach: {
+        fn: "detachFromJS",
+        length: 0,
+      },
       rstStream: {
         fn: "rstStream",
         length: 1,
@@ -41,12 +53,20 @@ export default [
         fn: "sendTrailers",
         length: 2,
       },
+      noTrailers: {
+        fn: "noTrailers",
+        length: 1,
+      },
       setStreamPriority: {
         fn: "setStreamPriority",
         length: 2,
       },
-      setEndAfterHeaders: {
-        fn: "setEndAfterHeaders",
+      getStreamContext: {
+        fn: "getStreamContext",
+        length: 1,
+      },
+      setStreamContext: {
+        fn: "setStreamContext",
         length: 2,
       },
       getEndAfterHeaders: {
@@ -60,6 +80,30 @@ export default [
       getStreamState: {
         fn: "getStreamState",
         length: 1,
+      },
+      bufferSize: {
+        fn: "getBufferSize",
+        length: 0,
+      },
+      hasNativeRead: {
+        fn: "hasNativeRead",
+        length: 1,
+      },
+      getAllStreams: {
+        fn: "getAllStreams",
+        length: 0,
+      },
+      emitErrorToAllStreams: {
+        fn: "emitErrorToAllStreams",
+        length: 1,
+      },
+      emitAbortToAllStreams: {
+        fn: "emitAbortToAllStreams",
+        length: 0,
+      },
+      getNextStream: {
+        fn: "getNextStream",
+        length: 0,
       },
     },
     finalize: true,

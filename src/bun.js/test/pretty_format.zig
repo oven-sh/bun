@@ -294,7 +294,7 @@ pub const JestPrettyFormat = struct {
         // For detecting circular references
         pub const Visited = struct {
             const ObjectPool = @import("../../pool.zig").ObjectPool;
-            pub const Map = std.AutoHashMap(JSValue.Type, void);
+            pub const Map = std.AutoHashMap(JSValue, void);
             pub const Pool = ObjectPool(
                 Map,
                 struct {
@@ -359,7 +359,7 @@ pub const JestPrettyFormat = struct {
 
             const Result = struct {
                 tag: Tag,
-                cell: JSValue.JSType = JSValue.JSType.Cell,
+                cell: JSValue.JSType = .Cell,
             };
 
             pub fn get(value: JSValue, globalThis: *JSGlobalObject) Result {
@@ -442,8 +442,8 @@ pub const JestPrettyFormat = struct {
                 }
 
                 // Is this a react element?
-                if (js_type.isObject()) {
-                    if (value.get(globalThis, "$$typeof")) |typeof_symbol| {
+                if (js_type.isObject() and js_type != .ProxyObject) {
+                    if (value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
                         var reactElement = ZigString.init("react.element");
                         var react_fragment = ZigString.init("react.fragment");
 
@@ -455,36 +455,37 @@ pub const JestPrettyFormat = struct {
 
                 return .{
                     .tag = switch (js_type) {
-                        JSValue.JSType.ErrorInstance => .Error,
-                        JSValue.JSType.NumberObject => .Double,
-                        JSValue.JSType.DerivedArray, JSValue.JSType.Array => .Array,
-                        JSValue.JSType.DerivedStringObject, JSValue.JSType.String, JSValue.JSType.StringObject => .String,
-                        JSValue.JSType.RegExpObject => .String,
-                        JSValue.JSType.Symbol => .Symbol,
-                        JSValue.JSType.BooleanObject => .Boolean,
-                        JSValue.JSType.JSFunction => .Function,
-                        JSValue.JSType.JSWeakMap, JSValue.JSType.JSMap => .Map,
-                        JSValue.JSType.JSWeakSet, JSValue.JSType.JSSet => .Set,
-                        JSValue.JSType.JSDate => .JSON,
-                        JSValue.JSType.JSPromise => .Promise,
-                        JSValue.JSType.Object,
-                        JSValue.JSType.FinalObject,
+                        .ErrorInstance => .Error,
+                        .NumberObject => .Double,
+                        .DerivedArray, .Array => .Array,
+                        .DerivedStringObject, .String, .StringObject => .String,
+                        .RegExpObject => .String,
+                        .Symbol => .Symbol,
+                        .BooleanObject => .Boolean,
+                        .JSFunction => .Function,
+                        .WeakMap, .Map => .Map,
+                        .WeakSet, .Set => .Set,
+                        .JSDate => .JSON,
+                        .JSPromise => .Promise,
+                        .Object,
+                        .FinalObject,
                         .ModuleNamespaceObject,
                         .GlobalObject,
                         => .Object,
 
                         .ArrayBuffer,
-                        JSValue.JSType.Int8Array,
-                        JSValue.JSType.Uint8Array,
-                        JSValue.JSType.Uint8ClampedArray,
-                        JSValue.JSType.Int16Array,
-                        JSValue.JSType.Uint16Array,
-                        JSValue.JSType.Int32Array,
-                        JSValue.JSType.Uint32Array,
-                        JSValue.JSType.Float32Array,
-                        JSValue.JSType.Float64Array,
-                        JSValue.JSType.BigInt64Array,
-                        JSValue.JSType.BigUint64Array,
+                        .Int8Array,
+                        .Uint8Array,
+                        .Uint8ClampedArray,
+                        .Int16Array,
+                        .Uint16Array,
+                        .Int32Array,
+                        .Uint32Array,
+                        .Float16Array,
+                        .Float32Array,
+                        .Float64Array,
+                        .BigInt64Array,
+                        .BigUint64Array,
                         .DataView,
                         => .TypedArray,
 
@@ -860,7 +861,7 @@ pub const JestPrettyFormat = struct {
 
                             writer.print(
                                 comptime Output.prettyFmt("<r><green>{s}<r><d>:<r> ", enable_ansi_colors),
-                                .{JSPrinter.formatJSONString(key.slice())},
+                                .{bun.fmt.formatJSONString(key.slice())},
                             );
                         }
                     } else {
@@ -914,7 +915,7 @@ pub const JestPrettyFormat = struct {
                     this.map = this.map_node.?.data;
                 }
 
-                const entry = this.map.getOrPut(@intFromEnum(value)) catch unreachable;
+                const entry = this.map.getOrPut(value) catch unreachable;
                 if (entry.found_existing) {
                     writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                     return;
@@ -923,7 +924,7 @@ pub const JestPrettyFormat = struct {
 
             defer {
                 if (comptime Format.canHaveCircularReferences()) {
-                    _ = this.map.remove(@intFromEnum(value));
+                    _ = this.map.remove(value);
                 }
             }
 
@@ -1243,7 +1244,8 @@ pub const JestPrettyFormat = struct {
                             .Object,
                             Writer,
                             writer_,
-                            toJSONFunction.call(this.globalThis, value, &.{}),
+                            toJSONFunction.call(this.globalThis, value, &.{}) catch |err|
+                                this.globalThis.takeException(err),
                             .Object,
                             enable_ansi_colors,
                         );
@@ -1315,7 +1317,7 @@ pub const JestPrettyFormat = struct {
                     this.quote_strings = true;
                     defer this.quote_strings = prev_quote_strings;
 
-                    const map_name = if (value.jsType() == .JSWeakMap) "WeakMap" else "Map";
+                    const map_name = if (value.jsType() == .WeakMap) "WeakMap" else "Map";
 
                     if (length == 0) {
                         return writer.print("{s} {{}}", .{map_name});
@@ -1345,7 +1347,7 @@ pub const JestPrettyFormat = struct {
 
                     this.writeIndent(Writer, writer_) catch {};
 
-                    const set_name = if (value.jsType() == .JSWeakSet) "WeakSet" else "Set";
+                    const set_name = if (value.jsType() == .WeakSet) "WeakSet" else "Set";
 
                     if (length == 0) {
                         return writer.print("{s} {{}}", .{set_name});
@@ -1371,7 +1373,7 @@ pub const JestPrettyFormat = struct {
 
                     value.jsonStringify(this.globalThis, this.indent, &str);
                     this.addForNewLine(str.length());
-                    if (jsType == JSValue.JSType.JSDate) {
+                    if (jsType == .JSDate) {
                         // in the code for printing dates, it never exceeds this amount
                         var iso_string_buf: [36]u8 = undefined;
                         var out_buf: []const u8 = std.fmt.bufPrint(&iso_string_buf, "{}", .{str}) catch "";
@@ -1860,6 +1862,16 @@ pub const JestPrettyFormat = struct {
                             },
                             .Uint32Array => {
                                 const slice_with_type: []align(std.meta.alignment([]u32)) u32 = @alignCast(std.mem.bytesAsSlice(u32, slice));
+                                this.indent += 1;
+                                defer this.indent -|= 1;
+                                for (slice_with_type) |el| {
+                                    writer.writeAll("\n");
+                                    this.writeIndent(Writer, writer_) catch {};
+                                    writer.print("{d},", .{el});
+                                }
+                            },
+                            .Float16Array => {
+                                const slice_with_type: []align(std.meta.alignment([]f16)) f16 = @alignCast(std.mem.bytesAsSlice(f16, slice));
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 for (slice_with_type) |el| {

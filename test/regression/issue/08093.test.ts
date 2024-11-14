@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv as env } from "harness";
 import { access, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env } from "harness";
 import { join } from "path";
 import {
   dummyAfterAll,

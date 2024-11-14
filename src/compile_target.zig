@@ -19,7 +19,7 @@ version: bun.Semver.Version = .{
     .minor = @truncate(Environment.version.minor),
     .patch = @truncate(Environment.version.patch),
 },
-libc: Libc = .default,
+libc: Libc = if (!Environment.isMusl) .default else .musl,
 
 const Libc = enum {
     /// The default libc for the target
@@ -137,7 +137,7 @@ const HTTP = bun.http;
 const MutableString = bun.MutableString;
 const Global = bun.Global;
 pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, allocator: std.mem.Allocator, dest_z: [:0]const u8) !void {
-    HTTP.HTTPThread.init();
+    HTTP.HTTPThread.init(&.{});
     var refresher = bun.Progress{};
 
     {
@@ -170,7 +170,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
             async_http.client.progress_node = progress;
             async_http.client.flags.reject_unauthorized = env.getTLSRejectUnauthorized();
 
-            const response = try async_http.sendSync(true);
+            const response = try async_http.sendSync();
 
             switch (response.status_code) {
                 404 => {
@@ -254,13 +254,13 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                 var node = refresher.start("Extracting", 0);
                 defer node.end();
 
-                const libarchive = @import("./libarchive//libarchive.zig");
+                const libarchive = bun.libarchive;
                 var tmpname_buf: [1024]u8 = undefined;
                 const tempdir_name = bun.span(try bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()));
                 var tmpdir = try std.fs.cwd().makeOpenPath(tempdir_name, .{});
                 defer tmpdir.close();
                 defer std.fs.cwd().deleteTree(tempdir_name) catch {};
-                _ = libarchive.Archive.extractToDir(
+                _ = libarchive.Archiver.extractToDir(
                     tarball_bytes.items,
                     tmpdir,
                     null,
@@ -429,6 +429,8 @@ pub fn defineValues(this: *const CompileTarget) []const []const u8 {
                         .arm64 => "\"arm64\"",
                         else => @compileError("TODO"),
                     },
+
+                    "\"" ++ Global.package_json_version ++ "\"",
                 };
             }.values,
             else => @panic("TODO"),

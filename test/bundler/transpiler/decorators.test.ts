@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 

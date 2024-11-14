@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeAll } from "bun:test";
 import { spawnSync } from "bun";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 

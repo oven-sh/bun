@@ -1,5 +1,5 @@
-import { describe, test, it, expect } from "bun:test";
-import { setTimeout, setImmediate } from "node:timers/promises";
+import { describe, expect, it } from "bun:test";
+import { setImmediate, setTimeout } from "node:timers/promises";
 
 describe("setTimeout", () => {
   it("abort() does not emit global error", async () => {

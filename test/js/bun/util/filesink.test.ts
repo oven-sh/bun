@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isWindows, tmpdirSync } from "harness";
+import { fileDescriptorLeakChecker, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -83,11 +83,18 @@ describe("FileSink", () => {
 
         it(`${JSON.stringify(label)}`, async () => {
           const path = getPathOrFd();
-          const sink = Bun.file(path).writer();
-          for (let i = 0; i < input.length; i++) {
-            sink.write(input[i]);
+          {
+            using _ = fileDescriptorLeakChecker();
+
+            const sink = Bun.file(path).writer();
+            for (let i = 0; i < input.length; i++) {
+              sink.write(input[i]);
+            }
+            await sink.end();
+
+            // For the file descriptor leak checker.
+            await Bun.sleep(10);
           }
-          await sink.end();
 
           if (!isPipe) {
             const output = new Uint8Array(await Bun.file(path).arrayBuffer());
@@ -104,12 +111,20 @@ describe("FileSink", () => {
 
         it(`flushing -> ${JSON.stringify(label)}`, async () => {
           const path = getPathOrFd();
-          const sink = Bun.file(path).writer();
-          for (let i = 0; i < input.length; i++) {
-            sink.write(input[i]);
-            await sink.flush();
+
+          {
+            using _ = fileDescriptorLeakChecker();
+            const sink = Bun.file(path).writer();
+            for (let i = 0; i < input.length; i++) {
+              sink.write(input[i]);
+              await sink.flush();
+            }
+            await sink.end();
+
+            // For the file descriptor leak checker.
+            await Bun.sleep(10);
           }
-          await sink.end();
+
           if (!isPipe) {
             const output = new Uint8Array(await Bun.file(path).arrayBuffer());
             for (let i = 0; i < expected.length; i++) {
@@ -124,12 +139,16 @@ describe("FileSink", () => {
 
         it(`highWaterMark -> ${JSON.stringify(label)}`, async () => {
           const path = getPathOrFd();
-          const sink = Bun.file(path).writer({ highWaterMark: 1 });
-          for (let i = 0; i < input.length; i++) {
-            sink.write(input[i]);
-            await sink.flush();
+          {
+            using _ = fileDescriptorLeakChecker();
+            const sink = Bun.file(path).writer({ highWaterMark: 1 });
+            for (let i = 0; i < input.length; i++) {
+              sink.write(input[i]);
+              await sink.flush();
+            }
+            await sink.end();
+            await Bun.sleep(10); // For the file descriptor leak checker.
           }
-          await sink.end();
 
           if (!isPipe) {
             const output = new Uint8Array(await Bun.file(path).arrayBuffer());
@@ -146,3 +165,55 @@ describe("FileSink", () => {
     });
   }
 });
+
+import fs from "node:fs";
+import path from "node:path";
+import util from "node:util";
+
+it("end doesn't close when backed by a file descriptor", async () => {
+  using _ = fileDescriptorLeakChecker();
+  const x = tmpdirSync();
+  const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");
+  const chunk = Buffer.from("1 Hello, world!");
+  const file = Bun.file(fd);
+  const writer = file.writer();
+  const written = await writer.write(chunk);
+  await writer.end();
+  await util.promisify(fs.ftruncate)(fd, written);
+  await util.promisify(fs.close)(fd);
+});
+
+it("end does close when not backed by a file descriptor", async () => {
+  using _ = fileDescriptorLeakChecker();
+  const x = tmpdirSync();
+  const file = Bun.file(path.join(x, "test.txt"));
+  const writer = file.writer();
+  await writer.write(Buffer.from("1 Hello, world!"));
+  await writer.end();
+  await Bun.sleep(10); // For the file descriptor leak checker.
+});
+
+it("write result is not cummulative", async () => {
+  using _ = fileDescriptorLeakChecker();
+  const x = tmpdirSync();
+  const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");
+  const file = Bun.file(fd);
+  const writer = file.writer();
+  expect(await writer.write("1 ")).toBe(2);
+  expect(await writer.write("Hello, ")).toBe(7);
+  expect(await writer.write("world!")).toBe(6);
+  await writer.end();
+  await util.promisify(fs.close)(fd);
+});
+
+if (isWindows) {
+  it("ENOENT, Windows", () => {
+    expect(() => Bun.file("A:\\this-does-not-exist.txt").writer()).toThrow(
+      expect.objectContaining({
+        code: "ENOENT",
+        path: "A:\\this-does-not-exist.txt",
+        syscall: "open",
+      }),
+    );
+  });
+}

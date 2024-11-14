@@ -1,7 +1,6 @@
 import assert from "assert";
-import { describe, test, expect } from "bun:test";
-import def from "util/types";
-import * as ns from "util/types";
+import { expect, test } from "bun:test";
+import def, * as ns from "util/types";
 const req = require("util/types");
 const types = def;
 

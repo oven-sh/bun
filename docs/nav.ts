@@ -164,6 +164,12 @@ export default {
     page("cli/update", "`bun update`", {
       description: "Update your project's dependencies.",
     }),
+    page("cli/publish", "`bun publish`", {
+      description: "Publish your package to an npm registry.",
+    }),
+    page("cli/outdated", "`bun outdated`", {
+      description: "Check for outdated dependencies.",
+    }),
     page("cli/link", "`bun link`", {
       description: "Install local packages as dependencies in your project.",
     }),
@@ -343,6 +349,9 @@ export default {
     page("api/ffi", "FFI", {
       description: `Call native code from JavaScript with Bun's foreign function interface (FFI) API.`,
     }), // "`bun:ffi`"),
+    page("api/cc", "C Compiler", {
+      description: `Build & run native C from JavaScript with Bun's native C compiler API`,
+    }), // "`bun:ffi`"),
     page("api/html-rewriter", "HTMLRewriter", {
       description: `Parse and transform HTML with Bun's native HTMLRewriter API, inspired by Cloudflare Workers.`,
     }), // "`HTMLRewriter`"),
@@ -367,6 +376,10 @@ export default {
     page("api/semver", "Semver", {
       description: `Bun's native Semver implementation is 20x faster than the popular \`node-semver\` package.`,
     }), // "`Semver`"),
+
+    page("api/color", "Color", {
+      description: `Bun's color function leverages Bun's CSS parser for parsing, normalizing, and converting colors from user input to a variety of output formats.`,
+    }), // "`Color`"),
 
     // divider("Dev Server"),
     // page("bun-dev", "Vanilla"),

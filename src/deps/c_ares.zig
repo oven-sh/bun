@@ -854,7 +854,7 @@ pub const struct_ares_srv_reply = extern struct {
         //   name: 'service.example.com'
         // }
 
-        obj.put(globalThis, JSC.ZigString.static("priority"), JSC.JSValue.jsNumber(this.weight));
+        obj.put(globalThis, JSC.ZigString.static("priority"), JSC.JSValue.jsNumber(this.priority));
         obj.put(globalThis, JSC.ZigString.static("weight"), JSC.JSValue.jsNumber(this.weight));
         obj.put(globalThis, JSC.ZigString.static("port"), JSC.JSValue.jsNumber(this.port));
 
@@ -1321,7 +1321,7 @@ pub const Error = enum(i32) {
         error_value.put(
             globalThis,
             JSC.ZigString.static("name"),
-            JSC.ZigString.init("DNSException").toJS(globalThis),
+            bun.String.static("DNSException").toJS(globalThis),
         );
         error_value.put(
             globalThis,
@@ -1554,10 +1554,14 @@ pub const ares_uri_reply = struct_ares_uri_reply;
 pub const ares_addr_node = struct_ares_addr_node;
 pub const ares_addr_port_node = struct_ares_addr_port_node;
 
-pub export fn Bun__canonicalizeIP(
+comptime {
+    const Bun__canonicalizeIP = JSC.toJSHostFunction(Bun__canonicalizeIP_);
+    @export(Bun__canonicalizeIP, .{ .name = "Bun__canonicalizeIP" });
+}
+pub fn Bun__canonicalizeIP_(
     ctx: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(JSC.conv) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
 
     const globalThis = ctx.ptr();
@@ -1655,9 +1659,4 @@ pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.posix.sockaddr) c_int {
     return -1;
 }
 
-comptime {
-    if (!JSC.is_bindgen) {
-        _ = Bun__canonicalizeIP;
-    }
-}
 const GetAddrInfo = bun.dns.GetAddrInfo;

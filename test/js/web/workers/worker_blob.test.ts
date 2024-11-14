@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Worker from a Blob", async () => {
   const worker = new Worker(

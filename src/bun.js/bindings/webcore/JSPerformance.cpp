@@ -113,11 +113,10 @@ static JSC_DECLARE_HOST_FUNCTION(functionPerformanceNow);
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSPerformance*));
 }
 
-static inline JSC::EncodedJSValue functionPerformanceNowBody(JSGlobalObject* globalObject)
+static inline JSC::EncodedJSValue functionPerformanceNowBody(VM& vm)
 {
-    auto* global = reinterpret_cast<GlobalObject*>(globalObject);
     // nanoseconds to seconds
-    double time = static_cast<double>(Bun__readOriginTimer(global->bunVM()));
+    double time = static_cast<double>(Bun__readOriginTimer(Bun::vm(vm)));
     double result = time / 1000000.0;
 
     // https://github.com/oven-sh/bun/issues/5604
@@ -126,7 +125,7 @@ static inline JSC::EncodedJSValue functionPerformanceNowBody(JSGlobalObject* glo
 
 JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return functionPerformanceNowBody(globalObject);
+    return functionPerformanceNowBody(globalObject->vm());
 }
 
 JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSPerformance* castedThis))
@@ -136,7 +135,7 @@ JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSV
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return { functionPerformanceNowBody(lexicalGlobalObject) };
+    return { functionPerformanceNowBody(vm) };
 }
 
 // -- end copied --
@@ -434,7 +433,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_getEntriesByTyp
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntriesByType(WTFMove(type)))));
 }
 
@@ -454,10 +453,10 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_getEntriesByNam
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto type = argument1.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntriesByName(WTFMove(name), WTFMove(type)))));
 }
 
@@ -492,7 +491,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_getEntriesByName, (JSGlo
 //         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
 //     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
 //     auto maxSize = convert<IDLUnsignedLong>(*lexicalGlobalObject, argument0.value());
-//     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+//     RETURN_IF_EXCEPTION(throwScope, {});
 //     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.setResourceTimingBufferSize(WTFMove(maxSize)); })));
 // }
 
@@ -512,10 +511,10 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_markBody(JSC::J
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto markName = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto markOptions = convert<IDLDictionary<PerformanceMarkOptions>>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<PerformanceMark>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.mark(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(markName), WTFMove(markOptions)))));
 }
 
@@ -533,7 +532,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_clearMarksBody(
     auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto markName = argument0.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.clearMarks(WTFMove(markName)); })));
 }
 
@@ -553,13 +552,13 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_measureBody(JSC
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto measureName = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto startOrMeasureOptions = argument1.value().isUndefined() ? std::optional<Converter<IDLUnion<IDLDOMString, IDLDictionary<PerformanceMeasureOptions>>>::ReturnType>() : std::optional<Converter<IDLUnion<IDLDOMString, IDLDictionary<PerformanceMeasureOptions>>>::ReturnType>(convert<IDLUnion<IDLDOMString, IDLDictionary<PerformanceMeasureOptions>>>(*lexicalGlobalObject, argument1.value()));
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto endMark = argument2.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument2.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<PerformanceMeasure>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.measure(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(measureName), WTFMove(startOrMeasureOptions), WTFMove(endMark)))));
 }
 
@@ -577,7 +576,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_clearMeasuresBo
     auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto measureName = argument0.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.clearMeasures(WTFMove(measureName)); })));
 }
 

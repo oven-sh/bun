@@ -1,7 +1,7 @@
 import { describe, test } from "bun:test";
 import assert from "node:assert";
-import { inspect } from "node:util";
 import url from "node:url";
+import { inspect } from "node:util";
 
 // [from, path, expected]
 const relativeTests = [

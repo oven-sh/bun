@@ -15,8 +15,7 @@
  * limitations under the License.
  */
 // clang-format off
-#ifndef UWS_HTTPRESPONSEDATA_H
-#define UWS_HTTPRESPONSEDATA_H
+#pragma once
 
 /* This data belongs to the HttpResponse */
 
@@ -35,8 +34,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     public:
     using OnWritableCallback = bool (*)(uWS::HttpResponse<SSL>*, uint64_t, void*);
     using OnAbortedCallback = void (*)(uWS::HttpResponse<SSL>*, void*);
+    using OnTimeoutCallback = void (*)(uWS::HttpResponse<SSL>*, void*);
     using OnDataCallback = void (*)(uWS::HttpResponse<SSL>* response, const char* chunk, size_t chunk_length, bool, void*);
-
+    
     /* When we are done with a response we mark it like so */
     void markDone() {
         onAborted = nullptr;
@@ -44,6 +44,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         onWritable = nullptr;
         /* Ignore data after this point */
         inStream = nullptr;
+
+        // Ensure we don't call a timeout callback
+        onTimeout = nullptr;
 
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
@@ -68,9 +71,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         return ret;
     }
-
     /* Bits of status */
-    enum  : int32_t{
+    enum  : uint8_t {
         HTTP_STATUS_CALLED = 1, // used
         HTTP_WRITE_CALLED = 2, // used
         HTTP_END_CALLED = 4, // used
@@ -85,6 +87,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     OnWritableCallback onWritable = nullptr;
     OnAbortedCallback onAborted = nullptr;
     OnDataCallback inStream = nullptr;
+    OnTimeoutCallback onTimeout = nullptr;
     /* Outgoing offset */
     uint64_t offset = 0;
 
@@ -92,7 +95,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     unsigned int received_bytes_per_timeout = 0;
 
     /* Current state (content-length sent, status sent, write called, etc */
-    int state = 0;
+    uint8_t state = 0;
+    uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
 
 #ifdef UWS_WITH_PROXY
     ProxyParser proxyParser;
@@ -101,4 +105,4 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
 }
 
-#endif // UWS_HTTPRESPONSEDATA_H
+

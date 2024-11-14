@@ -1,5 +1,5 @@
-import { createTest } from "node-harness";
 import { TLSBinding } from "bun:internal-for-testing";
+import { createTest } from "node-harness";
 const { describe, expect } = createTest(import.meta.path);
 
 const { canonicalizeIP, rootCertificates } = TLSBinding;

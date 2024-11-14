@@ -1,6 +1,5 @@
-import { $ } from "bun";
-import { bunExe, createTestBuilder } from "./test_builder";
 import { bunEnv } from "harness";
+import { bunExe, createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
 test("default throw on command failure", async () => {
@@ -24,6 +23,7 @@ test("default throw on command failure", async () => {
 
   await TestBuilder.command`echo ${code} > index.test.ts; ${bunExe()} test index.test.ts`
     .ensureTempDir()
+    .stdout(`bun test ${Bun.version_with_sha}\n`)
     .stderr(s => s.includes("1 pass"))
     .env(bunEnv)
     .run();
@@ -48,6 +48,7 @@ test("ShellError has .text()", async () => {
 
   await TestBuilder.command`echo ${code} > index.test.ts; ${bunExe()} test index.test.ts`
     .ensureTempDir()
+    .stdout(`bun test ${Bun.version_with_sha}\n`)
     .stderr(s => s.includes("1 pass"))
     .env(bunEnv)
     .run();

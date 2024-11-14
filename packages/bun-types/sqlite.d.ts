@@ -91,7 +91,7 @@ declare module "bun:sqlite" {
              * @default false
              * @since v1.1.14
              */
-            safeInteger?: boolean;
+            safeIntegers?: boolean;
 
             /**
              * When set to `false` or `undefined`:
@@ -536,7 +536,7 @@ declare module "bun:sqlite" {
      * // => [{bar: "baz"}]
      *
      * stmt.all();
-     * // => [{bar: "baz"}]
+     * // => []
      *
      * stmt.all("foo");
      * // => [{bar: "foo"}]
@@ -555,14 +555,14 @@ declare module "bun:sqlite" {
      * ```ts
      * const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?");
      *
-     * stmt.all("baz");
-     * // => [{bar: "baz"}]
+     * stmt.get("baz");
+     * // => {bar: "baz"}
      *
-     * stmt.all();
-     * // => [{bar: "baz"}]
+     * stmt.get();
+     * // => null
      *
-     * stmt.all("foo");
-     * // => [{bar: "foo"}]
+     * stmt.get("foo");
+     * // => {bar: "foo"}
      * ```
      *
      * The following types can be used when binding parameters:
@@ -578,6 +578,15 @@ declare module "bun:sqlite" {
      * | `null` | `NULL` |
      */
     get(...params: ParamsType): ReturnType | null;
+
+    /**
+     * Execute the prepared statement and return an
+     *
+     * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
+     *
+     */
+    iterate(...params: ParamsType): IterableIterator<ReturnType>;
+    [Symbol.iterator](): IterableIterator<ReturnType>;
 
     /**
      * Execute the prepared statement. This returns `undefined`.
@@ -747,7 +756,7 @@ declare module "bun:sqlite" {
      * query.as(User);
      * const user = query.get();
      * console.log(user.birthdate);
-     * // => Date(1995, 11, 19)
+     * // => Date(1995, 12, 19)
      * ```
      */
     as<T = unknown>(Class: new (...args: any[]) => T): Statement<T, ParamsType>;

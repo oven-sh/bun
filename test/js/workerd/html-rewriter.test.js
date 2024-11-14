@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import fs from "fs";
 import { gcTick, tls, tmpdirSync } from "harness";
 import path, { join } from "path";
-import fs from "fs";
 var setTimeoutAsync = (fn, delay) => {
   return new Promise((resolve, reject) => {
     setTimeout(() => {

@@ -1,7 +1,7 @@
 var PS_SUPPORTED = true;
-import jwt from "jsonwebtoken";
-import { expect, describe, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import fs from "fs";
+import jwt from "jsonwebtoken";
 
 describe("schema", function () {
   describe("sign options", function () {

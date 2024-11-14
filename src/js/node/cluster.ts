@@ -1,40 +1,22 @@
 // Hardcoded module "node:cluster"
-// This is a stub
-// We leave it in here to provide a better error message
-// TODO: implement node cluster
-const EventEmitter = require("node:events");
-const { throwNotImplemented } = require("internal/shared");
 
-// TODO: is it okay for this to be a class?
-class Cluster extends EventEmitter {
-  isWorker = false;
-  isPrimary = true;
-  isMaster = true;
-  workers = {};
-  settings = {};
-  SCHED_NONE = 1;
-  SCHED_RR = 2;
-  schedulingPolicy = 2;
+const { isPrimary } = require("internal/cluster/isPrimary");
+const cluster = isPrimary ? require("internal/cluster/primary") : require("internal/cluster/child");
+export default cluster;
 
-  Worker = function Worker() {
-    throwNotImplemented("node:cluster Worker", 2428);
-  };
+//
+//
 
-  setupPrimary() {
-    throwNotImplemented("node:cluster", 2428);
-  }
+function initializeClusterIPC() {
+  if (process.argv[1] && process.env.NODE_UNIQUE_ID) {
+    cluster._setupWorker();
+    // Make sure it's not accidentally inherited by child processes.
+    delete process.env.NODE_UNIQUE_ID;
 
-  setupMaster() {
-    throwNotImplemented("node:cluster", 2428);
-  }
-
-  fork() {
-    throwNotImplemented("node:cluster", 2428);
-  }
-
-  disconnect() {
-    throwNotImplemented("node:cluster", 2428);
+    process.channel.unref();
   }
 }
 
-export default new Cluster();
+if (Bun.isMainThread) {
+  initializeClusterIPC();
+}

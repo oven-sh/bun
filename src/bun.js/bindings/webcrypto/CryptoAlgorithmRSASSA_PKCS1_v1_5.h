@@ -40,12 +40,13 @@ public:
     static Ref<CryptoAlgorithm> create();
 
     static ExceptionOr<Vector<uint8_t>> platformSign(const CryptoKeyRSA&, const Vector<uint8_t>&);
+    static ExceptionOr<Vector<uint8_t>> platformSignNoAlgorithm(const CryptoKeyRSA&, size_t padding, const Vector<uint8_t>&);
     static ExceptionOr<Vector<uint8_t>> platformSignWithAlgorithm(const CryptoKeyRSA&, CryptoAlgorithmIdentifier, const Vector<uint8_t>&);
 
     static ExceptionOr<bool> platformVerify(const CryptoKeyRSA&, const Vector<uint8_t>&, const Vector<uint8_t>&);
+    static ExceptionOr<Vector<uint8_t>> platformVerifyRecover(const CryptoKeyRSA&, size_t padding, const Vector<uint8_t>&);
     static ExceptionOr<bool> platformVerifyWithAlgorithm(const CryptoKeyRSA&, CryptoAlgorithmIdentifier, const Vector<uint8_t>&, const Vector<uint8_t>&);
 
-    
 private:
     CryptoAlgorithmRSASSA_PKCS1_v1_5() = default;
     CryptoAlgorithmIdentifier identifier() const final;

@@ -1,6 +1,6 @@
-import jwt from "jsonwebtoken";
-import { expect, describe, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 
 describe("when verifying a malicious token", function () {
   // attacker has access to the public rsa key, but crafts the token as HS256

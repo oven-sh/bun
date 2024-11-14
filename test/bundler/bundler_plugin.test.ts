@@ -1,6 +1,6 @@
-import { join, resolve, dirname } from "node:path";
-import { itBundled } from "./expectBundled";
 import { describe, expect } from "bun:test";
+import { dirname, join, resolve } from "node:path";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   const loadFixture = {
@@ -687,6 +687,7 @@ describe("bundler", () => {
         expect(resolveCount).toBe(5050);
         expect(loadCount).toBe(101);
       },
+      debugTimeoutScale: 3,
     };
   });
   // itBundled("plugin/ManyPlugins", ({ root }) => {

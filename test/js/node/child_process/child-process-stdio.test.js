@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll } from "bun:test";
-import { spawn, execSync } from "node:child_process";
-import { bunExe, bunEnv } from "harness";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { execSync, spawn } from "node:child_process";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";

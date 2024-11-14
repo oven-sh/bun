@@ -6,7 +6,6 @@ import { createServer } from "net";
 import { join } from "path";
 import process from "process";
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
-const isWindows = process.platform === "win32";
 const COMMON_CERT = { ...tls };
 
 describe("WebSocket", () => {
@@ -147,7 +146,7 @@ describe("WebSocket", () => {
       const url = `wss://127.0.0.1:${server.address.port}`;
       {
         // by default rejectUnauthorized is true
-        const client = WebSocket(url);
+        const client = new WebSocket(url);
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);
@@ -156,7 +155,7 @@ describe("WebSocket", () => {
 
       {
         // just in case we change the default to true and test
-        const client = WebSocket(url, { tls: { rejectUnauthorized: true } });
+        const client = new WebSocket(url, { tls: { rejectUnauthorized: true } });
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);
@@ -208,7 +207,7 @@ describe("WebSocket", () => {
 
       {
         // should allow self-signed certs when rejectUnauthorized is false
-        const client = WebSocket(url, { tls: { rejectUnauthorized: false } });
+        const client = new WebSocket(url, { tls: { rejectUnauthorized: false } });
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).toEqual(messages);
         expect(result.code).toBe(1000);
@@ -263,7 +262,7 @@ describe("WebSocket", () => {
       }
       const url = `wss://localhost:${server.address.port}`;
       {
-        const client = WebSocket(url);
+        const client = new WebSocket(url);
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);
@@ -558,8 +557,29 @@ describe("WebSocket", () => {
   });
 
   it("should be able to send big messages", async () => {
+    using serve = Bun.serve({
+      port: 0,
+      tls,
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("failed to upgrade", { status: 403 });
+      },
+      websocket: {
+        message(ws, message) {
+          if (ws.send(message) == 0) {
+            ws.data = ws.data || [];
+            ws.data.push(message);
+          }
+        },
+        drain(ws) {
+          while (ws.data && ws.data.length) {
+            if (ws.send(ws.data.shift()) == 0) break;
+          }
+        },
+      },
+    });
     const { promise, resolve, reject } = Promise.withResolvers();
-    const ws = new WebSocket("https://echo.websocket.org/");
+    const ws = new WebSocket(serve.url, { tls: { rejectUnauthorized: false } });
 
     const payload = crypto.randomBytes(1024 * 16);
     const iterations = 10;

@@ -1,9 +1,9 @@
-import { describe, test, expect } from "bun:test";
 import { file, serve } from "bun";
+import { describe, expect, test } from "bun:test";
+import { isWindows, tmpdirSync } from "harness";
 import type { NetworkInterfaceInfo } from "node:os";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
-import { isWindows, tmpdirSync } from "harness";
 
 const networks = Object.values(networkInterfaces()).flat() as NetworkInterfaceInfo[];
 const hasIPv4 = networks.some(({ family }) => family === "IPv4");

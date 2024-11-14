@@ -1,6 +1,5 @@
 import { $, ShellError, ShellPromise } from "bun";
-import { beforeAll, describe, test, expect } from "bun:test";
-import { runWithErrorPromise } from "harness";
+import { describe, expect, test } from "bun:test";
 
 describe("ShellOutput + ShellError", () => {
   test("output", async () => {

@@ -23,7 +23,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-
 #pragma once
 
 #include "JSDOMPromiseDeferred.h"
@@ -54,8 +53,8 @@ private:
     explicit SimpleWritableStreamSink(WriteCallback&&);
 
     void write(ScriptExecutionContext&, JSC::JSValue, DOMPromiseDeferred<void>&&) final;
-    void close() final { }
-    void error(String&&) final { }
+    void close() final {}
+    void error(String&&) final {}
 
     WriteCallback m_writeCallback;
 };

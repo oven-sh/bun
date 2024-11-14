@@ -48,7 +48,6 @@ PerformanceObserver::PerformanceObserver(ScriptExecutionContext& scriptExecution
     // } else
     //     ASSERT_NOT_REACHED();
     m_performance = jsCast<Zig::GlobalObject*>(scriptExecutionContext.globalObject())->performance();
-
 }
 
 void PerformanceObserver::disassociate()
@@ -74,7 +73,7 @@ ExceptionOr<void> PerformanceObserver::observe(Init&& init)
                 filter.add(*type);
         }
         if (filter.isEmpty())
-            return { };
+            return {};
         m_typeFilter = filter;
     } else {
         if (!init.type)
@@ -85,7 +84,7 @@ ExceptionOr<void> PerformanceObserver::observe(Init&& init)
         if (auto type = PerformanceEntry::parseEntryTypeString(*init.type))
             filter.add(*type);
         else
-            return { };
+            return {};
         if (init.buffered) {
             isBuffered = true;
             auto oldSize = m_entriesToDeliver.size();
@@ -106,12 +105,12 @@ ExceptionOr<void> PerformanceObserver::observe(Init&& init)
     if (isBuffered)
         deliver();
 
-    return { };
+    return {};
 }
 
 Vector<RefPtr<PerformanceEntry>> PerformanceObserver::takeRecords()
 {
-    return std::exchange(m_entriesToDeliver, { });
+    return std::exchange(m_entriesToDeliver, {});
 }
 
 void PerformanceObserver::disconnect()
@@ -121,7 +120,7 @@ void PerformanceObserver::disconnect()
 
     m_registered = false;
     m_entriesToDeliver.clear();
-    m_typeFilter = { };
+    m_typeFilter = {};
 }
 
 void PerformanceObserver::queueEntry(PerformanceEntry& entry)
@@ -138,7 +137,7 @@ void PerformanceObserver::deliver()
     if (!context)
         return;
 
-    Vector<RefPtr<PerformanceEntry>> entries = std::exchange(m_entriesToDeliver, { });
+    Vector<RefPtr<PerformanceEntry>> entries = std::exchange(m_entriesToDeliver, {});
     auto list = PerformanceObserverEntryList::create(WTFMove(entries));
 
     // InspectorInstrumentation::willFireObserverCallback(*context, "PerformanceObserver"_s);

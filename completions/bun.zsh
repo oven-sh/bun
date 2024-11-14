@@ -563,6 +563,22 @@ _bun_update_completion() {
     esac
 }
 
+_bun_outdated_completion() {
+    _arguments -s -C \
+        '--cwd[Set a specific cwd]:cwd' \
+        '--verbose[Excessively verbose logging]' \
+        '--no-progress[Disable the progress bar]' \
+        '--help[Print this help menu]' &&
+        ret=0
+    
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    esac
+}
+
 _bun_test_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
@@ -669,6 +685,7 @@ _bun() {
             'add\:"Add a dependency to package.json (bun a)" '
             'remove\:"Remove a dependency from package.json (bun rm)" '
             'update\:"Update outdated dependencies & save to package.json" '
+            'outdated\:"Display the latest versions of outdated dependencies" '
             'link\:"Link an npm package globally" '
             'unlink\:"Globally unlink an npm package" '
             'pm\:"More commands for managing packages" '
@@ -739,6 +756,10 @@ _bun() {
             ;;
         update)
             _bun_update_completion
+
+            ;;
+        outdated)
+            _bun_outdated_completion
 
             ;;
         'test')
@@ -818,6 +839,10 @@ _bun() {
                     ;;
                 update)
                     _bun_update_completion
+
+                    ;;
+                outdated)
+                    _bun_outdated_completion
 
                     ;;
                 'test')

@@ -1,6 +1,6 @@
 import assert from "assert";
-import { itBundled } from "./expectBundled";
 import { describe, expect } from "bun:test";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   const nodePolyfillList = {
@@ -55,6 +55,9 @@ describe("bundler", () => {
     run: {
       stdout: "function\nfunction\nundefined",
     },
+    onAfterBundle(api) {
+      api.expectFile('out.js').not.toInclude('import ');
+    },
   });
   itBundled("browser/NodeTTY", {
     files: {
@@ -68,6 +71,9 @@ describe("bundler", () => {
     target: "browser",
     run: {
       stdout: "function\nfunction\nfalse",
+    },
+    onAfterBundle(api) {
+      api.expectFile('out.js').not.toInclude('import ');
     },
   });
   // TODO: use nodePolyfillList to generate the code in here.

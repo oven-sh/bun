@@ -7,8 +7,8 @@
 // - Write test for export {foo} from "./foo"
 // - Write test for import {foo} from "./foo"; export {foo}
 
-import { expect, mock, spyOn, test, describe } from "bun:test";
-import { fn, iCallFn, variable, default as defaultValue, rexported, rexportedAs } from "./mock-module-fixture";
+import { expect, mock, spyOn, test } from "bun:test";
+import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
 test("mock.module async", async () => {

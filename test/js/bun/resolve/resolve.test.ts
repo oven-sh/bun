@@ -1,9 +1,12 @@
 import { it, expect } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import { bunExe, bunEnv, tempDirWithFiles, isWindows } from "harness";
 import { pathToFileURL } from "bun";
-import { sep } from "path";
+import { expect, it } from "bun:test";
+import { mkdirSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { join, sep } from "path";
 
 it("spawn test file", () => {
   writePackageJSONImportsFixture();
@@ -311,4 +314,24 @@ it("import override to bun", async () => {
 it.todo("import override to bun:test", async () => {
   // @ts-expect-error
   expect(await import("#bun_test")).toBeDefined();
+});
+
+it.if(isWindows)("directory cache key computation", () => {
+  expect(import(`${process.cwd()}\\\\doesnotexist.ts`)).rejects.toThrow();
+  expect(import(`${process.cwd()}\\\\\\doesnotexist.ts`)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\doesnotexist.ts\\\\\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\\\doesnotexist.ts` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\\\\\doesnotexist.ts` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\doesnotexist.ts` as any)).rejects.toThrow();
+  expect(import(`\\\\\\Test\\doesnotexist.ts` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  expect(import(`\\\\\\Test\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+  expect(import(`\\\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
 });

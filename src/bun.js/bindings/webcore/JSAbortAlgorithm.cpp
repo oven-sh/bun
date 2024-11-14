@@ -24,6 +24,7 @@
 #include "JSDOMConvertBase.h"
 #include "JSDOMExceptionHandling.h"
 #include "ScriptExecutionContext.h"
+#include "DeleteCallbackDataTask.h"
 
 namespace WebCore {
 using namespace JSC;

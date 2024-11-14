@@ -1,0 +1,397 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`npa @scoped/package 1`] = `
+{
+  "name": "@scoped/package",
+  "version": {
+    "name": "@scoped/package",
+    "tag": "latest",
+    "type": "dist_tag",
+  },
+}
+`;
+
+exports[`npa @scoped/package@1.0.0 1`] = `
+{
+  "name": "@scoped/package",
+  "version": {
+    "alias": false,
+    "name": "@scoped/package",
+    "type": "npm",
+    "version": "==1.0.0",
+  },
+}
+`;
+
+exports[`npa @scoped/package@1.0.0-beta.1 1`] = `
+{
+  "name": "@scoped/package",
+  "version": {
+    "alias": false,
+    "name": "@scoped/package",
+    "type": "npm",
+    "version": "==1.0.0-beta.1",
+  },
+}
+`;
+
+exports[`npa @scoped/package@1.0.0-beta.1+build.123 1`] = `
+{
+  "name": "@scoped/package",
+  "version": {
+    "alias": false,
+    "name": "@scoped/package",
+    "type": "npm",
+    "version": "==1.0.0-beta.1+build.123",
+  },
+}
+`;
+
+exports[`npa package 1`] = `
+{
+  "name": "package",
+  "version": {
+    "name": "package",
+    "tag": "latest",
+    "type": "dist_tag",
+  },
+}
+`;
+
+exports[`npa package@1.0.0 1`] = `
+{
+  "name": "package",
+  "version": {
+    "alias": false,
+    "name": "package",
+    "type": "npm",
+    "version": "==1.0.0",
+  },
+}
+`;
+
+exports[`npa package@1.0.0-beta.1 1`] = `
+{
+  "name": "package",
+  "version": {
+    "alias": false,
+    "name": "package",
+    "type": "npm",
+    "version": "==1.0.0-beta.1",
+  },
+}
+`;
+
+exports[`npa package@1.0.0-beta.1+build.123 1`] = `
+{
+  "name": "package",
+  "version": {
+    "alias": false,
+    "name": "package",
+    "type": "npm",
+    "version": "==1.0.0-beta.1+build.123",
+  },
+}
+`;
+
+exports[`npa bitbucket:dylan-conway/public-install-test 1`] = `
+{
+  "name": "",
+  "version": {
+    "owner": "",
+    "ref": "",
+    "repo": "bitbucket:dylan-conway/public-install-test",
+    "type": "git",
+  },
+}
+`;
+
+exports[`npa bitbucket.org:dylan-conway/public-install-test 1`] = `
+{
+  "name": "",
+  "version": {
+    "owner": "",
+    "ref": "",
+    "repo": "bitbucket.org:dylan-conway/public-install-test",
+    "type": "git",
+  },
+}
+`;
+
+exports[`npa bitbucket.com:dylan-conway/public-install-test 1`] = `
+{
+  "name": "",
+  "version": {
+    "owner": "",
+    "ref": "",
+    "repo": "bitbucket.com:dylan-conway/public-install-test",
+    "type": "git",
+  },
+}
+`;
+
+exports[`npa git@bitbucket.org:dylan-conway/public-install-test 1`] = `
+{
+  "name": "",
+  "version": {
+    "owner": "",
+    "ref": "",
+    "repo": "git@bitbucket.org:dylan-conway/public-install-test",
+    "type": "git",
+  },
+}
+`;
+
+exports[`npa foo/bar 1`] = `
+{
+  "name": "",
+  "version": {
+    "owner": "foo",
+    "ref": "",
+    "repo": "bar",
+    "type": "github",
+  },
+}
+`;
+
+exports[`npa gitlab:dylan-conway/public-install-test 1`] = `
+{
+  "name": "",
+  "version": {
+    "owner": "",
+    "ref": "",
+    "repo": "gitlab:dylan-conway/public-install-test",
+    "type": "git",
+  },
+}
+`;
+
+exports[`npa gitlab.com:dylan-conway/public-install-test 1`] = `
+{
+  "name": "",
+  "version": {
+    "owner": "",
+    "ref": "",
+    "repo": "gitlab.com:dylan-conway/public-install-test",
+    "type": "git",
+  },
+}
+`;
+
+exports[`npa http://localhost:5000/no-deps/-/no-deps-2.0.0.tgz 1`] = `
+{
+  "name": "",
+  "version": {
+    "name": "",
+    "type": "tarball",
+    "url": "http://localhost:5000/no-deps/-/no-deps-2.0.0.tgz",
+  },
+}
+`;
+
+exports[`npa https://registry.npmjs.org/no-deps/-/no-deps-2.0.0.tgz 1`] = `
+{
+  "name": "",
+  "version": {
+    "name": "",
+    "type": "tarball",
+    "url": "https://registry.npmjs.org/no-deps/-/no-deps-2.0.0.tgz",
+  },
+}
+`;
+
+exports[`npa file:./path/to/tarball.tgz 1`] = `
+{
+  "name": "",
+  "version": {
+    "name": "",
+    "path": "./path/to/tarball.tgz",
+    "type": "tarball",
+  },
+}
+`;
+
+exports[`npa ./path/to/tarball.tgz 1`] = `
+{
+  "name": "",
+  "version": {
+    "name": "",
+    "path": "./path/to/tarball.tgz",
+    "type": "tarball",
+  },
+}
+`;
+
+exports[`npa foo/bar 2`] = `
+{
+  "name": "",
+  "version": {
+    "owner": "foo",
+    "ref": "",
+    "repo": "bar",
+    "type": "github",
+  },
+}
+`;
+
+exports[`npa github:dylan-conway/public-install-test 1`] = `
+{
+  "name": "",
+  "version": {
+    "owner": "dylan-conway",
+    "ref": "",
+    "repo": "public-install-test",
+    "type": "github",
+  },
+}
+`;
+
+exports[`npa git@github.com:dylan-conway/public-install-test 1`] = `
+{
+  "name": "",
+  "version": {
+    "owner": "",
+    "ref": "",
+    "repo": "git@github.com:dylan-conway/public-install-test",
+    "type": "git",
+  },
+}
+`;
+
+exports[`npa https://github.com/dylan-conway/public-install-test 1`] = `
+{
+  "name": "",
+  "version": {
+    "owner": "dylan-conway",
+    "ref": "",
+    "repo": "public-install-test",
+    "type": "github",
+  },
+}
+`;
+
+exports[`npa https://github.com/dylan-conway/public-install-test.git 1`] = `
+{
+  "name": "",
+  "version": {
+    "owner": "dylan-conway",
+    "ref": "",
+    "repo": "public-install-test",
+    "type": "github",
+  },
+}
+`;
+
+exports[`npa https://github.com/dylan-conway/public-install-test.git#semver:^1.0.0 1`] = `
+{
+  "name": "",
+  "version": {
+    "owner": "",
+    "ref": "semver:^1.0.0",
+    "repo": "https://github.com/dylan-conway/public-install-test.git",
+    "type": "git",
+  },
+}
+`;
+
+exports[`dependencies: {"foo": "1.2.3"} 1`] = `
+{
+  "alias": false,
+  "name": "foo",
+  "type": "npm",
+  "version": "==1.2.3-foo",
+}
+`;
+
+exports[`dependencies: {"foo": "latest"} 1`] = `
+{
+  "name": "foo",
+  "tag": "latest",
+  "type": "dist_tag",
+}
+`;
+
+exports[`dependencies: {"foo": "workspace:*"} 1`] = `
+{
+  "name": "*foo",
+  "type": "workspace",
+}
+`;
+
+exports[`dependencies: {"foo": "workspace:^1.0.0"} 1`] = `
+{
+  "name": "^1.0.0foo",
+  "type": "workspace",
+}
+`;
+
+exports[`dependencies: {"foo": "workspace:1.0.0"} 1`] = `
+{
+  "name": "1.0.0foo",
+  "type": "workspace",
+}
+`;
+
+exports[`dependencies: {"foo": "workspace:1.0.0-beta.1"} 1`] = `
+{
+  "name": "1.0.0-beta.1foo",
+  "type": "workspace",
+}
+`;
+
+exports[`dependencies: {"foo": "workspace:1.0.0-beta.1+build.123"} 1`] = `
+{
+  "name": "1.0.0-beta.1+build.123foo",
+  "type": "workspace",
+}
+`;
+
+exports[`dependencies: {"foo": "workspace:1.0.0-beta.1+build.123"} 2`] = `
+{
+  "name": "1.0.0-beta.1+build.123foo",
+  "type": "workspace",
+}
+`;
+
+exports[`dependencies: {"foo": "workspace:1.0.0-beta.1+build.123"} 3`] = `
+{
+  "name": "1.0.0-beta.1+build.123foo",
+  "type": "workspace",
+}
+`;
+
+exports[`dependencies: {"bar": "^1.0.0"} 1`] = `
+{
+  "alias": false,
+  "name": "bar",
+  "type": "npm",
+  "version": ">=1.0.0-bar <2.0.0",
+}
+`;
+
+exports[`dependencies: {"bar": "~1.0.0"} 1`] = `
+{
+  "alias": false,
+  "name": "bar",
+  "type": "npm",
+  "version": ">=1.0.0-bar <1.1.0",
+}
+`;
+
+exports[`dependencies: {"bar": "> 1.0.0 < 2.0.0"} 1`] = `
+{
+  "alias": false,
+  "name": "bar",
+  "type": "npm",
+  "version": ">1.0.0 && <2.0.0-bar",
+}
+`;
+
+exports[`dependencies: {"bar": "1.0.0 - 2.0.0"} 1`] = `
+{
+  "alias": false,
+  "name": "bar",
+  "type": "npm",
+  "version": ">=1.0.0 <=2.0.0-bar",
+}
+`;

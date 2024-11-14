@@ -4,6 +4,13 @@ const StreamModule = require("node:stream");
 const OsModule = require("node:os");
 const { ERR_INVALID_ARG_TYPE, ERR_IPC_DISCONNECTED } = require("internal/errors");
 const { kHandle } = require("internal/shared");
+const {
+  validateBoolean,
+  validateFunction,
+  validateString,
+  validateAbortSignal,
+  validateArray,
+} = require("internal/validators");
 
 var NetModule;
 
@@ -32,6 +39,7 @@ var StringPrototypeSlice = String.prototype.slice;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
+const kFromNode = Symbol("kFromNode");
 
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
 if ($debug) {
@@ -134,11 +142,12 @@ function spawn(file, args, options) {
   const child = new ChildProcess();
 
   $debug("spawn", options);
+  options[kFromNode] = true;
   child.spawn(options);
 
   const timeout = options.timeout;
   if (timeout && timeout > 0) {
-    let timeoutId = setTimeout(() => {
+    let timeoutId: Timer | null = setTimeout(() => {
       if (timeoutId) {
         timeoutId = null;
 
@@ -255,7 +264,7 @@ function execFile(file, args, options, callback) {
 
   let cmd = file;
 
-  function exitHandler(code, signal) {
+  function exitHandler(code = 0, signal?: number | null) {
     if (exited) return;
     exited = true;
 
@@ -554,6 +563,7 @@ function spawnSync(file, args, options) {
     stderr = null,
     success,
     exitCode,
+    signalCode,
   } = Bun.spawnSync({
     cmd: options.args,
     env: options.env || undefined,
@@ -564,7 +574,7 @@ function spawnSync(file, args, options) {
   });
 
   const result = {
-    signal: null,
+    signal: signalCode ?? null,
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     output: [null, stdout, stderr],
@@ -987,7 +997,6 @@ class ChildProcess extends EventEmitter {
   #closesNeeded = 1;
   #closesGot = 0;
 
-  connected = false;
   signalCode = null;
   exitCode = null;
   spawnfile;
@@ -1036,10 +1045,6 @@ class ChildProcess extends EventEmitter {
       } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr?.destroyed) {
         stderr.resume?.();
       }
-    }
-
-    if (this.#handle) {
-      this.#handle = null;
     }
 
     if (err) {
@@ -1117,8 +1122,6 @@ class ChildProcess extends EventEmitter {
             if (autoResume) pipe.resume();
             return pipe;
           }
-          case "inherit":
-            return process[fdToStdioName(i)] || null;
           case "destroyed":
             return new ShimmedStdioOutStream();
           default:
@@ -1189,6 +1192,16 @@ class ChildProcess extends EventEmitter {
     return (this.#stdioObject ??= this.#createStdioObject());
   }
 
+  get connected() {
+    const handle = this.#handle;
+    if (handle === null) return false;
+    return handle.connected ?? false;
+  }
+
+  get [kHandle]() {
+    return this.#handle;
+  }
+
   spawn(options) {
     validateObject(options, "options");
 
@@ -1215,21 +1228,20 @@ class ChildProcess extends EventEmitter {
     const bunStdio = getBunStdioFromOptions(stdio);
     const argv0 = file || options.argv0;
 
-    // TODO: better ipc support
-    const ipc = $isJSArray(stdio) && stdio[3] === "ipc";
-    var env = options.envPairs || undefined;
+    const has_ipc = $isJSArray(stdio) && stdio[3] === "ipc";
+    var env = options.envPairs || process.env;
+
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
-    this.#closesNeeded = 1;
 
     this.#handle = Bun.spawn({
       cmd: spawnargs,
       stdio: bunStdio,
       cwd: options.cwd || undefined,
-      env: env || process.env,
+      env: env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
         if (hasSocketsToEagerlyLoad) {
@@ -1247,7 +1259,8 @@ class ChildProcess extends EventEmitter {
         );
       },
       lazy: true,
-      ipc: ipc ? this.#emitIpcMessage.bind(this) : undefined,
+      ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
+      onDisconnect: has_ipc ? ok => this.#disconnect(ok) : undefined,
       serialization,
       argv0,
       windowsHide: !!options.windowsHide,
@@ -1259,9 +1272,10 @@ class ChildProcess extends EventEmitter {
 
     onSpawnNT(this);
 
-    if (ipc) {
+    if (has_ipc) {
       this.send = this.#send;
       this.disconnect = this.#disconnect;
+      if (options[kFromNode]) this.#closesNeeded += 1;
     }
 
     if (hasSocketsToEagerlyLoad) {
@@ -1285,7 +1299,7 @@ class ChildProcess extends EventEmitter {
       options = undefined;
     } else if (options !== undefined) {
       if (typeof options !== "object" || options === null) {
-        throw ERR_INVALID_ARG_TYPE("options", "Object", options);
+        throw ERR_INVALID_ARG_TYPE("options", "object", options);
       }
     }
 
@@ -1313,13 +1327,18 @@ class ChildProcess extends EventEmitter {
     }
   }
 
-  #disconnect() {
-    if (!this.connected) {
-      this.emit("error", new TypeError("Process was closed while trying to send message"));
+  #disconnect(ok) {
+    if (ok == null) {
+      $assert(this.connected);
+      this.#handle.disconnect();
+    } else if (!ok) {
+      this.emit("error", ERR_IPC_DISCONNECTED());
       return;
     }
-    this.connected = false;
     this.#handle.disconnect();
+    $assert(!this.connected);
+    process.nextTick(() => this.emit("disconnect"));
+    this.#maybeClose();
   }
 
   kill(sig?) {
@@ -1572,35 +1591,6 @@ function validateTimeout(timeout) {
   }
 }
 
-function validateBoolean(value, name) {
-  if (typeof value !== "boolean") throw ERR_INVALID_ARG_TYPE(name, "boolean", value);
-}
-
-/**
- * @callback validateFunction
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is Function}
- */
-
-/** @type {validateFunction} */
-function validateFunction(value, name) {
-  if (typeof value !== "function") throw ERR_INVALID_ARG_TYPE(name, "Function", value);
-}
-
-/**
- * @callback validateAbortSignal
- * @param {*} signal
- * @param {string} name
- */
-
-/** @type {validateAbortSignal} */
-const validateAbortSignal = (signal, name) => {
-  if (signal !== undefined && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-    throw ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
-  }
-};
-
 /**
  * @callback validateOneOf
  * @template T
@@ -1647,38 +1637,6 @@ const validateObject = (value, name, options = null) => {
     throw ERR_INVALID_ARG_TYPE(name, "object", value);
   }
 };
-
-/**
- * @callback validateArray
- * @param {*} value
- * @param {string} name
- * @param {number} [minLength]
- * @returns {asserts value is any[]}
- */
-
-/** @type {validateArray} */
-const validateArray = (value, name, minLength = 0) => {
-  // const validateArray = hideStackFrames((value, name, minLength = 0) => {
-  if (!$isJSArray(value)) {
-    throw ERR_INVALID_ARG_TYPE(name, "Array", value);
-  }
-  if (value.length < minLength) {
-    const reason = `must be longer than ${minLength}`;
-    throw ERR_INVALID_ARG_VALUE(name, value, reason);
-  }
-};
-
-/**
- * @callback validateString
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is string}
- */
-
-/** @type {validateString} */
-function validateString(value, name) {
-  if (typeof value !== "string") throw ERR_INVALID_ARG_TYPE(name, "string", value);
-}
 
 function isInt32(value) {
   return value === (value | 0);
@@ -1752,7 +1710,7 @@ class AbortError extends Error {
   name = "AbortError";
   constructor(message = "The operation was aborted", options = undefined) {
     if (options !== undefined && typeof options !== "object") {
-      throw ERR_INVALID_ARG_TYPE("options", "Object", options);
+      throw ERR_INVALID_ARG_TYPE("options", "object", options);
     }
     super(message, options);
   }

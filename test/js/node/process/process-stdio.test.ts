@@ -1,8 +1,8 @@
 import { spawn, spawnSync } from "bun";
-import { describe, expect, it, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { isatty } from "tty";
 import path from "path";
+import { isatty } from "tty";
 test("process.stdin", () => {
   expect(process.stdin).toBeDefined();
   expect(process.stdin.isTTY).toBe(isatty(0) ? true : undefined);

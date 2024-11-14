@@ -1,5 +1,5 @@
-import { viewSource, dlopen, CString, ptr, toBuffer, toArrayBuffer, FFIType, callback } from "bun:ffi";
-import { bench, group, run } from "./runner.mjs";
+import { dlopen } from "bun:ffi";
+import { bench, group, run } from "../runner.mjs";
 
 const types = {
   returns_true: {

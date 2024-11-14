@@ -30,7 +30,7 @@ $ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config 
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install go cmake ninja automake git rustup && rustup toolchain install stable
+$ sudo zypper install go cmake ninja automake git icu rustup && rustup toolchain install stable
 ```
 
 {% /codetabs %}
@@ -63,7 +63,7 @@ Bun requires LLVM 16 (`clang` is part of LLVM). This version requirement is to m
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@16
+$ brew install llvm@18
 ```
 
 ```bash#Ubuntu/Debian
@@ -77,8 +77,8 @@ $ sudo pacman -S llvm clang lld
 
 ```bash#Fedora
 $ sudo dnf install 'dnf-command(copr)'
-$ sudo dnf copr enable -y @fedora-llvm-team/llvm-snapshots
-$ sudo dnf install llvm clang lld
+$ sudo dnf copr enable -y @fedora-llvm-team/llvm17
+$ sudo dnf install llvm16 clang16 lld16-devel
 ```
 
 ```bash#openSUSE Tumbleweed
@@ -116,42 +116,26 @@ $ export PATH="$PATH:/usr/lib/llvm16/bin"
 
 ## Building Bun
 
-After cloning the repository, run the following command to run the first build. This may take a while as it will clone submodules and build dependencies.
-
-```bash
-$ bun setup
-```
-
-The binary will be located at `./build/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
-
-```bash
-$ build/bun-debug --version
-x.y.z_debug
-```
-
-To rebuild, you can invoke `bun run build`
+After cloning the repository, run the following command to build. This may take a while as it will clone submodules and build dependencies.
 
 ```bash
 $ bun run build
 ```
 
-These two scripts, `setup` and `build`, are aliases to do roughly the following:
+The binary will be located at `./build/debug/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
 
 ```bash
-$ ./scripts/setup.sh
-$ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-$ ninja -C build # 'bun run build' runs just this
+$ build/debug/bun-debug --version
+x.y.z_debug
 ```
-
-Advanced users can pass CMake flags to customize the build.
 
 ## VSCode
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
 
-If you use a different editor, make sure that you tell ZLS to use the automatically installed Zig compiler, which is located at `./.cache/zig/zig.exe`. The filename is `zig.exe` so that it works as expected on Windows, but it still works on macOS/Linux (it just has a surprising file extension).
+If you use a different editor, make sure that you tell ZLS to use the automatically installed Zig compiler, which is located at `./vendor/zig/zig.exe`. The filename is `zig.exe` so that it works as expected on Windows, but it still works on macOS/Linux (it just has a surprising file extension).
 
-We recommend adding `./build` to your `$PATH` so that you can run `bun-debug` in your terminal:
+We recommend adding `./build/debug` to your `$PATH` so that you can run `bun-debug` in your terminal:
 
 ```sh
 $ bun-debug
@@ -163,8 +147,8 @@ Several code generation scripts are used during Bun's build process. These are r
 
 In particular, these are:
 
-- `./src/codegen/generate-jssink.ts` -- Generates `build/codegen/JSSink.cpp`, `build/codegen/JSSink.h` which implement various classes for interfacing with `ReadableStream`. This is internally how `FileSink`, `ArrayBufferSink`, `"type": "direct"` streams and other code related to streams works.
-- `./src/codegen/generate-classes.ts` -- Generates `build/codegen/ZigGeneratedClasses*`, which generates Zig & C++ bindings for JavaScriptCore classes implemented in Zig. In `**/*.classes.ts` files, we define the interfaces for various classes, methods, prototypes, getters/setters etc which the code generator reads to generate boilerplate code implementing the JavaScript objects in C++ and wiring them up to Zig
+- `./src/codegen/generate-jssink.ts` -- Generates `build/debug/codegen/JSSink.cpp`, `build/debug/codegen/JSSink.h` which implement various classes for interfacing with `ReadableStream`. This is internally how `FileSink`, `ArrayBufferSink`, `"type": "direct"` streams and other code related to streams works.
+- `./src/codegen/generate-classes.ts` -- Generates `build/debug/codegen/ZigGeneratedClasses*`, which generates Zig & C++ bindings for JavaScriptCore classes implemented in Zig. In `**/*.classes.ts` files, we define the interfaces for various classes, methods, prototypes, getters/setters etc which the code generator reads to generate boilerplate code implementing the JavaScript objects in C++ and wiring them up to Zig
 - `./src/codegen/bundle-modules.ts` -- Bundles built-in modules like `node:fs`, `bun:ffi` into files we can include in the final binary. In development, these can be reloaded without rebuilding Zig (you still need to run `bun run build`, but it re-reads the transpiled files from disk afterwards). In release builds, these are embedded into the binary.
 - `./src/codegen/bundle-functions.ts` -- Bundles globally-accessible functions implemented in JavaScript/TypeScript like `ReadableStream`, `WritableStream`, and a handful more. These are used similarly to the builtin modules, but the output more closely aligns with what WebKit/Safari does for Safari's built-in functions so that we can copy-paste the implementations from WebKit as a starting point.
 
@@ -180,7 +164,7 @@ To compile a release build of Bun, run:
 $ bun run build:release
 ```
 
-The binary will be located at `./build-release/bun` and `./build-release/bun-profile`.
+The binary will be located at `./build/release/bun` and `./build/release/bun-profile`.
 
 ### Download release build from pull requests
 
@@ -189,8 +173,8 @@ To save you time spent building a release build locally, we provide a way to run
 To run a release build from a pull request, you can use the `bun-pr` npm package:
 
 ```sh
-bunx bun-pr pr-number
-bunx bun-pr branch/branch-name
+bunx bun-pr <pr-number>
+bunx bun-pr <branch-name>
 bunx bun-pr "https://github.com/oven-sh/bun/pull/1234566"
 ```
 
@@ -222,24 +206,18 @@ $ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 
 ## Building WebKit locally + Debug mode of JSC
 
-{% callout %}
-
-**TODO**: This is out of date. TLDR is pass `-DUSE_DEBUG_JSC=1` or `-DWEBKIT_DIR=...` to CMake. it will probably need more fiddling. ask @paperdave if you need this.
-
-{% /callout %}
-
 WebKit is not cloned by default (to save time and disk space). To clone and build WebKit locally, run:
 
 ```bash
-# once you run this, `make submodule` can be used to automatically
-# update WebKit and the other submodules
-$ git submodule update --init --depth 1 --checkout src/bun.js/WebKit
-# to make a jsc release build
-$ make jsc
-# JSC debug build does not work perfectly with Bun yet, this is actively being
-# worked on and will eventually become the default.
-$ make jsc-build-linux-compile-debug cpp
-$ make jsc-build-mac-compile-debug cpp
+# Clone WebKit into ./vendor/WebKit
+$ git clone https://github.com/oven-sh/WebKit vendor/WebKit
+
+# Make a debug build of JSC. This will output build artifacts in ./vendor/WebKit/WebKitBuild/Debug
+# Optionally, you can use `make jsc` for a release build
+$ make jsc-debug
+
+# Build bun with the local JSC build
+$ bun run build:local
 ```
 
 Note that the WebKit folder, including build artifacts, is 8GB+ in size.
@@ -307,17 +285,17 @@ If you see this error when compiling, run:
 $ xcode-select --install
 ```
 
-## Cannot find `libatomic.a`
+### Cannot find `libatomic.a`
 
 Bun defaults to linking `libatomic` statically, as not all systems have it. If you are building on a distro that does not have a static libatomic available, you can run the following command to enable dynamic linking:
 
 ```bash
-$ bun setup -DUSE_STATIC_LIBATOMIC=OFF
+$ bun run build -DUSE_STATIC_LIBATOMIC=OFF
 ```
 
 The built version of Bun may not work on other systems if compiled this way.
 
-## ccache conflicts with building TinyCC on macOS
+### ccache conflicts with building TinyCC on macOS
 
 If you run into issues with `ccache` when building TinyCC, try reinstalling ccache
 
@@ -325,3 +303,9 @@ If you run into issues with `ccache` when building TinyCC, try reinstalling ccac
 brew uninstall ccache
 brew install ccache
 ```
+
+## Using bun-debug
+
+- Disable logging: `BUN_DEBUG_QUIET_LOGS=1 bun-debug ...` (to disable all debug logging)
+- Enable logging for a specific zig scope: `BUN_DEBUG_EventLoop=1 bun-debug ...` (to allow `std.log.scoped(.EventLoop)`)
+- Bun transpiles every file it runs, to see the actual executed source in a debug build find it in `/tmp/bun-debug-src/...path/to/file`, for example the transpiled version of `/home/bun/index.ts` would be in `/tmp/bun-debug-src/home/bun/index.ts`

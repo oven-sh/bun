@@ -29,7 +29,7 @@
 #include <wtf/MainThread.h>
 
 namespace WebCore {
-namespace ProcessIdent {
+namespace Process {
 
 static std::optional<ProcessIdentifier> globalIdentifier;
 

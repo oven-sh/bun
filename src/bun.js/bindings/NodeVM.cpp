@@ -1,7 +1,7 @@
-
 #include "root.h"
 #include "JavaScriptCore/ExecutableInfo.h"
 
+#include "BunClientData.h"
 #include "NodeVM.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "wtf/text/ExternalStringImpl.h"
@@ -26,10 +26,6 @@
 #include "JSBuffer.h"
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
-#include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include <JavaScriptCore/Completion.h>
 
@@ -49,17 +45,22 @@ public:
     {
         auto& vm = globalObject->vm();
         ScriptOptions opts;
+        JSObject* options;
         bool any = false;
         if (!optionsArg.isUndefined()) {
-            if (!optionsArg.isObject()) {
+            if (optionsArg.isObject()) {
+                options = asObject(optionsArg);
+            } else if (optionsArg.isString()) {
+                options = constructEmptyObject(globalObject);
+                options->putDirect(vm, Identifier::fromString(vm, "filename"_s), optionsArg);
+            } else {
                 auto scope = DECLARE_THROW_SCOPE(vm);
-                throwVMTypeError(globalObject, scope, "options must be an object"_s);
+                throwVMTypeError(globalObject, scope, "options must be an object or a string"_s);
                 failed = true;
                 return std::nullopt;
             }
-            JSObject* options = asObject(optionsArg);
 
-            if (JSValue filenameOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filename"_s))) {
+            if (JSValue filenameOpt = options->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName())) {
                 if (filenameOpt.isString()) {
                     opts.filename = filenameOpt.toWTFString(globalObject);
                     any = true;
@@ -158,7 +159,7 @@ static JSC::EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScri
         auto returnedException = catchScope.exception();
         catchScope.clearException();
         JSC::throwException(globalObject, throwScope, returnedException);
-        return JSValue::encode({});
+        return {};
     }
 
     return JSValue::encode(result);
@@ -195,7 +196,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
 
     if (UNLIKELY(!script)) {
         throwVMTypeError(globalObject, scope, "Script.prototype.runInContext can only be called on a Script object"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     ArgList args(callFrame);
@@ -203,7 +204,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
     JSValue contextArg = args.at(0);
     if (!UNLIKELY(contextArg.isObject())) {
         throwVMTypeError(globalObject, scope, "context parameter must be a contextified object"_s);
-        return JSValue::encode({});
+        return {};
     }
     JSObject* context = asObject(contextArg);
 
@@ -211,19 +212,19 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
     JSValue scopeVal = zigGlobalObject->vmModuleContextMap()->get(context);
     if (UNLIKELY(scopeVal.isUndefined())) {
         throwVMTypeError(globalObject, scope, "context parameter must be a contextified object"_s);
-        return JSValue::encode({});
+        return {};
     }
     JSScope* jsScope = jsDynamicCast<JSScope*>(scopeVal);
     if (UNLIKELY(!jsScope)) {
         throwVMTypeError(globalObject, scope, "context parameter must be a contextified object"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     JSGlobalProxy* globalProxy = jsDynamicCast<JSGlobalProxy*>(context->getPrototypeDirect());
     if (!globalProxy) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         throwVMTypeError(globalObject, scope, "context parameter must be a contextified object"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     return runInContext(globalProxy->target(), script, context, jsScope, args.at(1));
@@ -239,7 +240,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
 
     if (!sourceStringValue.isString()) {
         throwTypeError(globalObject, throwScope, "Script code must be a string"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     auto sourceString = sourceStringValue.toWTFString(globalObject);
@@ -250,7 +251,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
 
     if (UNLIKELY(!contextObjectValue || !contextObjectValue.isObject())) {
         throwTypeError(globalObject, throwScope, "Context must be an object"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     // we don't care about options for now
@@ -272,8 +273,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
 
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSObject* context = asObject(contextObjectValue);
-    auto* targetContext = JSC::JSGlobalObject::create(
-        vm, zigGlobal->globalObjectStructure());
+    auto* targetContext = NodeVMGlobalObject::create(
+        vm, zigGlobal->NodeVMGlobalObjectStructure());
 
     auto* executable = JSC::DirectEvalExecutable::create(
         targetContext, source, NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
@@ -304,25 +305,15 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
 {
     auto& vm = globalObject->vm();
     auto sourceStringValue = callFrame->argument(0);
-    JSValue contextObjectValue = callFrame->argument(1);
-    JSValue optionsObjectValue = callFrame->argument(2);
+    JSValue optionsObjectValue = callFrame->argument(1);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     if (!sourceStringValue.isString()) {
         throwTypeError(globalObject, throwScope, "Script code must be a string"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     auto sourceString = sourceStringValue.toWTFString(globalObject);
-
-    if (!contextObjectValue || contextObjectValue.isUndefinedOrNull()) {
-        contextObjectValue = JSC::constructEmptyObject(globalObject);
-    }
-
-    if (UNLIKELY(!contextObjectValue || !contextObjectValue.isObject())) {
-        throwTypeError(globalObject, throwScope, "Context must be an object"_s);
-        return JSValue::encode({});
-    }
 
     ScriptOptions options;
     {
@@ -338,19 +329,13 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
     SourceCode source(
         JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)), options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset)),
         options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
-    auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    JSObject* context = asObject(contextObjectValue);
-
-    auto proxyStructure = zigGlobal->globalProxyStructure();
-    auto proxy = JSGlobalProxy::create(vm, proxyStructure);
-    proxy->setTarget(vm, globalObject);
-    context->setPrototypeDirect(vm, proxy);
 
     auto* executable = JSC::DirectEvalExecutable::create(
         globalObject, source, NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
         false, false, EvalContextType::None, nullptr, nullptr);
     RETURN_IF_EXCEPTION(throwScope, {});
 
+    JSObject* context = asObject(JSC::constructEmptyObject(globalObject));
     JSScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
     JSValue result = vm.interpreter.executeEval(executable, globalObject, contextScope);
@@ -376,7 +361,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 
     if (!script) {
         throwTypeError(globalObject, scope, "Script.prototype.runInNewContext can only be called on a Script object"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     if (!contextObjectValue || contextObjectValue.isUndefinedOrNull()) {
@@ -385,7 +370,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 
     if (UNLIKELY(!contextObjectValue || !contextObjectValue.isObject())) {
         throwTypeError(globalObject, scope, "Context must be an object"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     // we don't care about options for now
@@ -394,13 +379,13 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSObject* context = asObject(contextObjectValue);
-    auto* targetContext = JSC::JSGlobalObject::create(
-        vm, zigGlobal->globalObjectStructure());
+    auto* targetContext = NodeVMGlobalObject::create(
+        vm, zigGlobal->NodeVMGlobalObjectStructure());
 
-    // auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
-    // auto proxy = JSGlobalProxy::create(vm, proxyStructure);
-    // proxy->setTarget(vm, targetContext);
-    // context->setPrototypeDirect(vm, proxy);
+    auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
+    auto proxy = JSGlobalProxy::create(vm, proxyStructure);
+    proxy->setTarget(vm, targetContext);
+    context->setPrototypeDirect(vm, proxy);
 
     JSScope* contextScope = JSWithScope::create(vm, targetContext, targetContext->globalScope(), context);
     return runInContext(globalObject, script, targetContext, contextScope, callFrame->argument(0));
@@ -411,21 +396,14 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     JSValue thisValue = callFrame->thisValue();
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    // TODO: options
+    // JSValue optionsObjectValue = callFrame->argument(0);
 
     if (UNLIKELY(!script)) {
         return throwVMTypeError(globalObject, throwScope, "Script.prototype.runInThisContext can only be called on a Script object"_s);
     }
 
-    JSValue contextArg = callFrame->argument(0);
-    if (!contextArg || contextArg.isUndefinedOrNull()) {
-        contextArg = JSC::constructEmptyObject(globalObject);
-    }
-
-    if (!contextArg.isObject()) {
-        return throwVMTypeError(globalObject, throwScope, "context must be an object"_s);
-    }
-
-    JSObject* context = asObject(contextArg);
+    JSObject* context = asObject(JSC::constructEmptyObject(globalObject));
     JSWithScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
 
     return runInContext(globalObject, script, globalObject->globalThis(), contextScope, callFrame->argument(1));
@@ -446,6 +424,11 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
     return JSValue::encode(jsString(vm, url));
 }
 
+Structure* createNodeVMGlobalObjectStructure(JSC::VM& vm)
+{
+    return NodeVMGlobalObject::createStructure(vm, jsNull());
+}
+
 JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -462,8 +445,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     }
     JSObject* context = asObject(contextArg);
     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    auto* targetContext = JSC::JSGlobalObject::create(
-        vm, zigGlobalObject->globalObjectStructure());
+    auto* targetContext = NodeVMGlobalObject::create(
+        vm, zigGlobalObject->NodeVMGlobalObjectStructure());
 
     auto proxyStructure = zigGlobalObject->globalProxyStructure();
     auto proxy = JSGlobalProxy::create(vm, proxyStructure);
@@ -536,6 +519,7 @@ static const struct HashTableValue scriptPrototypeTableValues[] = {
 const ClassInfo NodeVMScriptPrototype::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScriptPrototype) };
 const ClassInfo NodeVMScript::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScript) };
 const ClassInfo NodeVMScriptConstructor::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScriptConstructor) };
+const ClassInfo NodeVMGlobalObject::s_info = { "NodeVMGlobalObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMGlobalObject) };
 
 DEFINE_VISIT_CHILDREN(NodeVMScript);
 

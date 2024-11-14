@@ -65,4 +65,4 @@ Ran 1 tests across 1 files. 1 total [125.00ms]
 
 ---
 
-Refer to the [Happy DOM repo](https://github.com/capricorn86/happy-dom) and [Docs > Test runner > DOM](/docs/test/dom) for complete documentation on writing browser tests with Bun.
+Refer to the [Happy DOM repo](https://github.com/capricorn86/happy-dom) and [Docs > Test runner > DOM](https://bun.sh/docs/test/dom) for complete documentation on writing browser tests with Bun.

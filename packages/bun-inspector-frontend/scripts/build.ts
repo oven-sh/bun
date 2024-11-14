@@ -1,4 +1,3 @@
-import { build } from "esbuild";
 import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync } from "fs";
 import { join } from "path";
 

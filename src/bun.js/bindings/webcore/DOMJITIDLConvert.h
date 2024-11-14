@@ -27,7 +27,8 @@
 
 #include "IDLTypes.h"
 
-namespace WebCore { namespace DOMJIT {
+namespace WebCore {
+namespace DOMJIT {
 
 template<typename IDLType>
 struct DirectConverter;
@@ -56,4 +57,5 @@ struct DirectConverter<IDLRequiresExistingAtomStringAdaptor<IDLDOMString>> {
     }
 };
 
-} }
+}
+}

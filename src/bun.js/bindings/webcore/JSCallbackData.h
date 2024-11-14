@@ -109,15 +109,4 @@ private:
     JSC::Weak<JSC::JSObject> m_callback;
 };
 
-class DeleteCallbackDataTask : public EventLoopTask {
-public:
-    template<typename CallbackDataType>
-    explicit DeleteCallbackDataTask(CallbackDataType* data)
-        : EventLoopTask(EventLoopTask::CleanupTask, [data](ScriptExecutionContext&) mutable {
-            delete data;
-        })
-    {
-    }
-};
-
 } // namespace WebCore

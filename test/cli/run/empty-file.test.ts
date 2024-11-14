@@ -1,4 +1,4 @@
-import { it, expect } from "bun:test";
+import { expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 

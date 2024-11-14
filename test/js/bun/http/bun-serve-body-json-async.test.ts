@@ -1,5 +1,4 @@
-import { serve, sleep, $ } from "bun";
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 

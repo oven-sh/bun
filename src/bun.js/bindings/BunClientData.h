@@ -190,6 +190,11 @@ static inline BunBuiltinNames& builtinNames(JSC::VM& vm)
 
 } // namespace WebCore
 
+inline void* bunVM(JSC::VM& vm)
+{
+    return WebCore::clientData(vm)->bunVM;
+}
+
 namespace WebCore {
 using JSVMClientData = WebCore::JSVMClientData;
 using JSHeapData = WebCore::JSHeapData;

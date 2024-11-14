@@ -1,5 +1,5 @@
+import { describe, expect, it } from "bun:test";
 import jwt from "jsonwebtoken";
-import { describe, it, expect } from "bun:test";
 
 describe("issue 304 - verifying values other than strings", function () {
   it("should fail with numbers", function (done) {

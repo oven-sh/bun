@@ -70,6 +70,8 @@ pub const Lexer = struct {
 
     has_newline_before: bool = false,
 
+    should_redact_logs: bool,
+
     pub inline fn loc(self: *const Lexer) logger.Loc {
         return logger.usize2Loc(self.start);
     }
@@ -77,11 +79,15 @@ pub const Lexer = struct {
     pub fn syntaxError(self: *Lexer) !void {
         @setCold(true);
 
-        self.addError(self.start, "Syntax Error!!", .{}, true);
+        // Only add this if there is not already an error.
+        // It is possible that there is a more descriptive error already emitted.
+        if (!self.log.hasErrors())
+            self.addError(self.start, "Syntax Error", .{});
+
         return Error.SyntaxError;
     }
 
-    pub fn addError(self: *Lexer, _loc: usize, comptime format: []const u8, args: anytype, _: bool) void {
+    pub fn addError(self: *Lexer, _loc: usize, comptime format: []const u8, args: anytype) void {
         @setCold(true);
 
         var __loc = logger.usize2Loc(_loc);
@@ -89,24 +95,33 @@ pub const Lexer = struct {
             return;
         }
 
-        self.log.addErrorFmt(&self.source, __loc, self.log.msgs.allocator, format, args) catch unreachable;
+        self.log.addErrorFmtOpts(
+            self.log.msgs.allocator,
+            format,
+            args,
+            .{
+                .source = &self.source,
+                .loc = __loc,
+                .redact_sensitive_information = self.should_redact_logs,
+            },
+        ) catch unreachable;
         self.prev_error_loc = __loc;
     }
 
     pub fn addDefaultError(self: *Lexer, msg: []const u8) !void {
         @setCold(true);
 
-        self.addError(self.start, "{s}", .{msg}, true);
+        self.addError(self.start, "{s}", .{msg});
         return Error.SyntaxError;
     }
 
     pub fn addSyntaxError(self: *Lexer, _loc: usize, comptime fmt: []const u8, args: anytype) !void {
         @setCold(true);
-        self.addError(_loc, fmt, args, false);
+        self.addError(_loc, fmt, args);
         return Error.SyntaxError;
     }
 
-    pub fn addRangeError(self: *Lexer, r: logger.Range, comptime format: []const u8, args: anytype, _: bool) !void {
+    pub fn addRangeError(self: *Lexer, r: logger.Range, comptime format: []const u8, args: anytype) !void {
         @setCold(true);
 
         if (self.prev_error_loc.eql(r.loc)) {
@@ -114,12 +129,13 @@ pub const Lexer = struct {
         }
 
         const errorMessage = std.fmt.allocPrint(self.log.msgs.allocator, format, args) catch unreachable;
-        try self.log.addRangeError(&self.source, r, errorMessage);
+        try self.log.addErrorOpts(errorMessage, .{
+            .source = &self.source,
+            .loc = r.loc,
+            .len = r.len,
+            .redact_sensitive_information = self.should_redact_logs,
+        });
         self.prev_error_loc = r.loc;
-
-        // if (panic) {
-        //     return Error.ParserError;
-        // }
     }
 
     /// Look ahead at the next n codepoints without advancing the iterator.
@@ -920,7 +936,6 @@ pub const Lexer = struct {
                                     logger.Range{ .loc = .{ .start = @as(i32, @intCast(octal_start)) }, .len = @as(i32, @intCast(iter.i - octal_start)) },
                                     "Invalid legacy octal literal",
                                     .{},
-                                    false,
                                 ) catch unreachable;
                             }
                         },
@@ -1032,7 +1047,6 @@ pub const Lexer = struct {
                                         .{ .loc = .{ .start = @as(i32, @intCast(start + hex_start)) }, .len = @as(i32, @intCast((iter.i - hex_start))) },
                                         "Unicode escape sequence is out of range",
                                         .{},
-                                        true,
                                     );
                                     return;
                                 }
@@ -1128,7 +1142,7 @@ pub const Lexer = struct {
             }
         };
 
-        try lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
+        try lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found});
     }
 
     pub fn expectedString(self: *Lexer, text: string) !void {
@@ -1140,7 +1154,7 @@ pub const Lexer = struct {
             }
         };
 
-        try self.addRangeError(self.range(), "Expected {s} but found {s}", .{ text, found }, true);
+        try self.addRangeError(self.range(), "Expected {s} but found {s}", .{ text, found });
     }
 
     pub fn range(self: *Lexer) logger.Range {
@@ -1150,12 +1164,13 @@ pub const Lexer = struct {
         };
     }
 
-    pub fn init(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !Lexer {
+    pub fn init(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator, redact_logs: bool) !Lexer {
         var lex = Lexer{
             .log = log,
             .source = source,
             .prev_error_loc = logger.Loc.Empty,
             .allocator = allocator,
+            .should_redact_logs = redact_logs,
         };
         lex.step();
         try lex.next();
@@ -1169,7 +1184,7 @@ pub const Lexer = struct {
         }
 
         return js_ast.Expr.init(
-            js_ast.E.UTF8String,
+            js_ast.E.String,
             .{ .data = lexer.string_literal_slice },
             loc_,
         );

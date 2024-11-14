@@ -80,7 +80,7 @@ ExceptionOr<size_t> CryptoAlgorithmHKDF::getKeyLength(const CryptoAlgorithmParam
 {
     return 0;
 }
-    
+
 } // namespace WebCore
 
 #endif // ENABLE(WEB_CRYPTO)

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import stripAnsiColors from "strip-ansi";
 
 test("expect-label", () => {

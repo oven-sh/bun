@@ -1,7 +1,7 @@
 // Running this file in jest/vitest does not work as expected. Jest & Vitest
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
-import { test, expect, it } from "bun:test";
+import { expect, it } from "bun:test";
 const isBun = !!process.versions.bun;
 
 it("process.nextTick", async () => {

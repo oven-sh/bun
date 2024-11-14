@@ -15,6 +15,8 @@ fn mimalloc_free(
     buf_align: u8,
     _: usize,
 ) void {
+    if (comptime Environment.enable_logs)
+        log("mi_free({d})", .{buf.len});
     // mi_free_size internally just asserts the size
     // so it's faster if we don't pass that value through
     // but its good to have that assertion
@@ -34,6 +36,9 @@ const CAllocator = struct {
     pub const supports_posix_memalign = true;
 
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
+        if (comptime Environment.enable_logs)
+            log("mi_alloc({d}, {d})", .{ len, alignment });
+
         const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment))
             mimalloc.mi_malloc_aligned(len, alignment)
         else

@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
 import { spawn } from "bun";
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 test("node:http should not crash when server throws", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();

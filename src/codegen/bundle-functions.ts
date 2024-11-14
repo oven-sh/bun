@@ -44,6 +44,7 @@ interface ParsedBuiltin {
   directives: Record<string, any>;
   source: string;
   async: boolean;
+  enums: string[];
 }
 
 interface BundledBuiltin {
@@ -74,13 +75,15 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
   // and then compile those separately
 
   const consumeWhitespace = /^\s*/;
-  const consumeTopLevelContent = /^(\/\*|\/\/|type|import|interface|\$|export (?:async )?function|(?:async )?function)/;
-  const consumeEndOfType = /;|.(?=export|type|interface|\$|\/\/|\/\*|function)/;
+  const consumeTopLevelContent =
+    /^(\/\*|\/\/|type|import|interface|\$|const enum|export (?:async )?function|(?:async )?function)/;
+  const consumeEndOfType = /;|.(?=export|type|interface|\$|\/\/|\/\*|function|const enum)/;
 
   const functions: ParsedBuiltin[] = [];
   let directives: Record<string, any> = {};
   const bundledFunctions: BundledBuiltin[] = [];
   let internal = false;
+  const topLevelEnums: { name: string; code: string }[] = [];
 
   while (contents.length) {
     contents = contents.replace(consumeWhitespace, "");
@@ -107,6 +110,16 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       contents = contents.slice(i + 1);
     } else if (match[1] === "interface") {
       contents = sliceSourceCode(contents, false).rest;
+    } else if (match[1] === "const enum") {
+      const { result, rest } = sliceSourceCode(contents, false);
+      const i = result.indexOf("{\n");
+      // Support const enums in module scope.
+      topLevelEnums.push({
+        name: result.slice("const enum ".length, i).trim(),
+        code: "\n" + result,
+      });
+
+      contents = rest;
     } else if (match[1] === "$") {
       const directive = contents.match(/^\$([a-zA-Z0-9]+)(?:\s*=\s*([^\r\n]+?))?\s*;?\r?\n/);
       if (!directive) {
@@ -148,12 +161,27 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
         globalThis.requireTransformer(x, SRC_DIR + "/" + basename),
       );
 
+      const source = result.trim().slice(2, -1);
+      const constEnumsUsedInFunction: string[] = [];
+      if (topLevelEnums.length) {
+        // If the function references a top-level const enum let's add the code
+        // to the top-level scope of the function so that the transpiler will
+        // inline all the values and strip out the enum object.
+        for (const { name, code } of topLevelEnums) {
+          // Only include const enums which are referenced in the function source.
+          if (source.includes(name)) {
+            constEnumsUsedInFunction.push(code);
+          }
+        }
+      }
+
       functions.push({
         name,
         params,
         directives,
-        source: result.trim().slice(2, -1),
+        source,
         async,
+        enums: constEnumsUsedInFunction,
       });
       contents = rest;
       directives = {};
@@ -178,7 +206,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       `// @ts-nocheck
 // GENERATED TEMP FILE - DO NOT EDIT
 // Sourced from ${path.relative(TMP_DIR, filename)}
-
+${fn.enums.join("\n")}
 // do not allow the bundler to rename a symbol to $
 ($);
 
@@ -193,6 +221,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const build = await Bun.build({
       entrypoints: [tmpFile],
       define,
+      target: "bun",
       minify: { syntax: true, whitespace: false },
     });
     if (!build.success) {
@@ -201,7 +230,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     if (build.outputs.length !== 1) {
       throw new Error("expected one output");
     }
-    const output = await build.outputs[0].text();
+    let output = (await build.outputs[0].text()).replaceAll("// @bun\n", "");
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];

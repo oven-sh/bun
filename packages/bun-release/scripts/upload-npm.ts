@@ -173,6 +173,14 @@ function publishModule(name: string, dryRun?: boolean): void {
     );
     error(stderr || stdout);
     if (exitCode !== 0) {
+      if (
+        stdout.includes("You cannot publish over the previously published version") ||
+        stderr.includes("You cannot publish over the previously published version")
+      ) {
+        console.warn("Ignoring npm publish error:", stdout, stderr);
+        return;
+      }
+
       throw new Error("npm publish failed with code " + exitCode);
     }
   } else {

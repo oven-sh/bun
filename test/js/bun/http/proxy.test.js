@@ -1,12 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { gc } from "harness";
+import { afterAll, beforeAll, expect, it } from "bun:test";
 import fs from "fs";
+import { bunExe, gc } from "harness";
 import { tmpdir } from "os";
 import path from "path";
-import { bunExe } from "harness";
 
 let proxy, auth_proxy, server;
-
 beforeAll(() => {
   proxy = Bun.serve({
     port: 0,

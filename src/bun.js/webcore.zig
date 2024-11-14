@@ -12,6 +12,7 @@ const string = bun.string;
 pub const AbortSignal = @import("./bindings/bindings.zig").AbortSignal;
 pub const JSValue = @import("./bindings/bindings.zig").JSValue;
 const Environment = bun.Environment;
+const UUID7 = @import("./uuid.zig").UUID7;
 
 pub const Lifetime = enum {
     clone,
@@ -22,7 +23,7 @@ pub const Lifetime = enum {
 };
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
-fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
@@ -72,7 +73,7 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(
     return .undefined;
 }
 
-fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
@@ -210,7 +211,7 @@ pub const Prompt = struct {
     pub fn call(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(3).slice();
         var state = std.heap.stackFallback(2048, bun.default_allocator);
         const allocator = state.get();
@@ -403,7 +404,7 @@ pub const Crypto = struct {
                 return .zero;
             }
 
-            if (options_value.getTruthy(globalThis, "cost") orelse options_value.get(globalThis, "N")) |N_value| {
+            if (options_value.getTruthy(globalThis, "cost") orelse options_value.getTruthy(globalThis, "N")) |N_value| {
                 if (cost != null) return throwInvalidParameter(globalThis);
                 const N_int = N_value.to(i64);
                 if (N_int < 0 or !N_value.isNumber()) {
@@ -418,7 +419,7 @@ pub const Crypto = struct {
                 }
             }
 
-            if (options_value.getTruthy(globalThis, "blockSize") orelse options_value.get(globalThis, "r")) |r_value| {
+            if (options_value.getTruthy(globalThis, "blockSize") orelse options_value.getTruthy(globalThis, "r")) |r_value| {
                 if (blockSize != null) return throwInvalidParameter(globalThis);
                 const r_int = r_value.to(i64);
                 if (r_int < 0 or !r_value.isNumber()) {
@@ -433,7 +434,7 @@ pub const Crypto = struct {
                 }
             }
 
-            if (options_value.getTruthy(globalThis, "parallelization") orelse options_value.get(globalThis, "p")) |p_value| {
+            if (options_value.getTruthy(globalThis, "parallelization") orelse options_value.getTruthy(globalThis, "p")) |p_value| {
                 if (parallelization != null) return throwInvalidParameter(globalThis);
                 const p_int = p_value.to(i64);
                 if (p_int < 0 or !p_value.isNumber()) {
@@ -538,25 +539,13 @@ pub const Crypto = struct {
     }
 
     fn throwInvalidParameter(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const err = globalThis.createErrorInstanceWithCode(
-            .ERR_CRYPTO_SCRYPT_INVALID_PARAMETER,
-            "Invalid scrypt parameters",
-            .{},
-        );
-        globalThis.throwValue(err);
+        globalThis.ERR_CRYPTO_SCRYPT_INVALID_PARAMETER("Invalid scrypt parameters", .{}).throw();
         return .zero;
     }
 
     fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: [:0]const u8, fmt: anytype) JSC.JSValue {
-        const err = switch (error_type) {
-            .RangeError => globalThis.createRangeErrorInstanceWithCode(
-                .ERR_CRYPTO_INVALID_SCRYPT_PARAMS,
-                message,
-                fmt,
-            ),
-            else => @compileError("Error type not added!"),
-        };
-        globalThis.throwValue(err);
+        if (error_type != .RangeError) @compileError("Error type not added!");
+        globalThis.ERR_CRYPTO_INVALID_SCRYPT_PARAMS(message, fmt).throw();
         BoringSSL.ERR_clear_error();
         return .zero;
     }
@@ -565,7 +554,7 @@ pub const Crypto = struct {
         _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(2).slice();
 
         if (arguments.len < 2) {
@@ -615,7 +604,7 @@ pub const Crypto = struct {
         _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(1).slice();
         if (arguments.len == 0) {
             globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
@@ -666,7 +655,7 @@ pub const Crypto = struct {
         _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const str, var bytes = bun.String.createUninitialized(.latin1, 36);
         defer str.deref();
 
@@ -674,6 +663,70 @@ pub const Crypto = struct {
 
         uuid.print(bytes[0..36]);
         return str.toJS(globalThis);
+    }
+
+    comptime {
+        const Bun__randomUUIDv7 = JSC.toJSHostFunction(Bun__randomUUIDv7_);
+        @export(Bun__randomUUIDv7, .{ .name = "Bun__randomUUIDv7" });
+    }
+    pub fn Bun__randomUUIDv7_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const arguments = callframe.argumentsUndef(2).slice();
+
+        var encoding_value: JSC.JSValue = .undefined;
+
+        const encoding: JSC.Node.Encoding = brk: {
+            if (arguments.len > 0) {
+                if (arguments[0] != .undefined) {
+                    if (arguments[0].isString()) {
+                        encoding_value = arguments[0];
+                        break :brk JSC.Node.Encoding.fromJS(encoding_value, globalThis) orelse {
+                            globalThis.ERR_UNKNOWN_ENCODING("Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
+                            return .undefined;
+                        };
+                    }
+                }
+            }
+
+            break :brk JSC.Node.Encoding.hex;
+        };
+
+        const timestamp: u64 = brk: {
+            const timestamp_value: JSC.JSValue = if (encoding_value != .undefined and arguments.len > 1)
+                arguments[1]
+            else if (arguments.len == 1 and encoding_value == .undefined)
+                arguments[0]
+            else
+                .undefined;
+
+            if (timestamp_value != .undefined) {
+                if (timestamp_value.isDate()) {
+                    const date = timestamp_value.getUnixTimestamp();
+                    break :brk @intFromFloat(@max(0, date));
+                }
+
+                if (globalThis.validateIntegerRange(timestamp_value, i64, 0, .{
+                    .min = 0,
+                    .field_name = "timestamp",
+                })) |timestamp_int| {
+                    break :brk @intCast(timestamp_int);
+                }
+                return .zero;
+            }
+
+            break :brk @intCast(@max(0, std.time.milliTimestamp()));
+        };
+
+        const entropy = globalThis.bunVM().rareData().entropySlice(8);
+
+        const uuid = UUID7.init(timestamp, &entropy[0..8].*);
+
+        if (encoding == .hex) {
+            var str, var bytes = bun.String.createUninitialized(.latin1, 36);
+            uuid.print(bytes[0..36]);
+            return str.transferToJS(globalThis);
+        }
+
+        return encoding.encodeWithMaxSize(globalThis, 32, &uuid.bytes);
     }
 
     pub fn randomUUIDWithoutTypeChecks(
@@ -718,8 +771,11 @@ pub const Crypto = struct {
 
 comptime {
     if (!JSC.is_bindgen) {
-        @export(alert, .{ .name = "WebCore__alert" });
-        @export(Prompt.call, .{ .name = "WebCore__prompt" });
-        @export(confirm, .{ .name = "WebCore__confirm" });
+        const js_alert = JSC.toJSHostFunction(alert);
+        @export(js_alert, .{ .name = "WebCore__alert" });
+        const js_prompt = JSC.toJSHostFunction(Prompt.call);
+        @export(js_prompt, .{ .name = "WebCore__prompt" });
+        const js_confirm = JSC.toJSHostFunction(confirm);
+        @export(js_confirm, .{ .name = "WebCore__confirm" });
     }
 }

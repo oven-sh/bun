@@ -4,7 +4,7 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 const StreamModule = require("node:stream");
 const BufferModule = require("node:buffer");
 const StringDecoder = require("node:string_decoder").StringDecoder;
-
+const { CryptoHasher } = Bun;
 const {
   symmetricKeySize,
   asymmetricKeyDetails,
@@ -18,6 +18,10 @@ const {
   generateKeyPairSync,
   sign: nativeSign,
   verify: nativeVerify,
+  publicEncrypt,
+  privateDecrypt,
+  privateEncrypt,
+  publicDecrypt,
 } = $cpp("KeyObject.cpp", "createNodeCryptoBinding");
 
 const {
@@ -1190,7 +1194,7 @@ var require_browser2 = __commonJS({
     // does not become a node stream unless you create it into one
     const LazyHash = function Hash(algorithm, options) {
       this._options = options;
-      this._hasher = new CryptoHasher(algorithm, options);
+      this._hasher = new CryptoHasher(algorithm);
       this._finalized = false;
     };
     LazyHash.prototype = Object.create(StreamModule.Transform.prototype);
@@ -11439,193 +11443,6 @@ var require_browser9 = __commonJS({
   },
 });
 
-// node_modules/public-encrypt/mgf.js
-var require_mgf = __commonJS({
-  "node_modules/public-encrypt/mgf.js"(exports, module) {
-    var createHash = require_browser2(),
-      Buffer2 = require_safe_buffer().Buffer;
-    module.exports = function (seed, len) {
-      for (var t = Buffer2.alloc(0), i = 0, c; t.length < len; )
-        (c = i2ops(i++)), (t = Buffer2.concat([t, createHash("sha1").update(seed).update(c).digest()]));
-      return t.slice(0, len);
-    };
-    function i2ops(c) {
-      var out = Buffer2.allocUnsafe(4);
-      return out.writeUInt32BE(c, 0), out;
-    }
-  },
-});
-
-// node_modules/public-encrypt/xor.js
-var require_xor = __commonJS({
-  "node_modules/public-encrypt/xor.js"(exports, module) {
-    module.exports = function (a, b) {
-      for (var len = a.length, i = -1; ++i < len; ) a[i] ^= b[i];
-      return a;
-    };
-  },
-});
-
-// node_modules/public-encrypt/node_modules/bn.js/lib/bn.js
-var require_bn7 = require_bn;
-
-const { CryptoHasher } = globalThis.Bun;
-
-// node_modules/public-encrypt/withPublic.js
-var require_withPublic = __commonJS({
-  "node_modules/public-encrypt/withPublic.js"(exports, module) {
-    var BN = require_bn7(),
-      Buffer2 = require_safe_buffer().Buffer;
-    function withPublic(paddedMsg, key) {
-      return Buffer2.from(paddedMsg.toRed(BN.mont(key.modulus)).redPow(new BN(key.publicExponent)).fromRed().toArray());
-    }
-    module.exports = withPublic;
-  },
-});
-
-// node_modules/public-encrypt/publicEncrypt.js
-var require_publicEncrypt = __commonJS({
-  "node_modules/public-encrypt/publicEncrypt.js"(exports, module) {
-    var parseKeys = require_parse_asn1(),
-      randomBytes = require_browser(),
-      createHash = require_browser2(),
-      mgf = require_mgf(),
-      xor = require_xor(),
-      BN = require_bn7(),
-      withPublic = require_withPublic(),
-      crt = require_browserify_rsa(),
-      Buffer2 = require_safe_buffer().Buffer;
-    module.exports = function (publicKey, msg, reverse) {
-      var padding;
-      publicKey.padding ? (padding = publicKey.padding) : reverse ? (padding = 1) : (padding = 4);
-      var key = parseKeys(publicKey),
-        paddedMsg;
-      if (padding === 4) paddedMsg = oaep(key, msg);
-      else if (padding === 1) paddedMsg = pkcs1(key, msg, reverse);
-      else if (padding === 3) {
-        if (((paddedMsg = new BN(msg)), paddedMsg.cmp(key.modulus) >= 0)) throw new Error("data too long for modulus");
-      } else throw new Error("unknown padding");
-      return reverse ? crt(paddedMsg, key) : withPublic(paddedMsg, key);
-    };
-    function oaep(key, msg) {
-      var k = key.modulus.byteLength(),
-        mLen = msg.length,
-        iHash = createHash("sha1").update(Buffer2.alloc(0)).digest(),
-        hLen = iHash.length,
-        hLen2 = 2 * hLen;
-      if (mLen > k - hLen2 - 2) throw new Error("message too long");
-      var ps = Buffer2.alloc(k - mLen - hLen2 - 2),
-        dblen = k - hLen - 1,
-        seed = randomBytes(hLen),
-        maskedDb = xor(Buffer2.concat([iHash, ps, Buffer2.alloc(1, 1), msg], dblen), mgf(seed, dblen)),
-        maskedSeed = xor(seed, mgf(maskedDb, hLen));
-      return new BN(Buffer2.concat([Buffer2.alloc(1), maskedSeed, maskedDb], k));
-    }
-    function pkcs1(key, msg, reverse) {
-      var mLen = msg.length,
-        k = key.modulus.byteLength();
-      if (mLen > k - 11) throw new Error("message too long");
-      var ps;
-      return (
-        reverse ? (ps = Buffer2.alloc(k - mLen - 3, 255)) : (ps = nonZero(k - mLen - 3)),
-        new BN(Buffer2.concat([Buffer2.from([0, reverse ? 1 : 2]), ps, Buffer2.alloc(1), msg], k))
-      );
-    }
-    function nonZero(len) {
-      for (var out = Buffer2.allocUnsafe(len), i = 0, cache = randomBytes(len * 2), cur = 0, num; i < len; )
-        cur === cache.length && ((cache = randomBytes(len * 2)), (cur = 0)),
-          (num = cache[cur++]),
-          num && (out[i++] = num);
-      return out;
-    }
-  },
-});
-
-// node_modules/public-encrypt/privateDecrypt.js
-var require_privateDecrypt = __commonJS({
-  "node_modules/public-encrypt/privateDecrypt.js"(exports, module) {
-    var parseKeys = require_parse_asn1(),
-      mgf = require_mgf(),
-      xor = require_xor(),
-      BN = require_bn7(),
-      crt = require_browserify_rsa(),
-      createHash = require_browser2(),
-      withPublic = require_withPublic(),
-      Buffer2 = require_safe_buffer().Buffer;
-    module.exports = function (privateKey, enc, reverse) {
-      var padding;
-      privateKey.padding ? (padding = privateKey.padding) : reverse ? (padding = 1) : (padding = 4);
-      var key = parseKeys(privateKey),
-        k = key.modulus.byteLength();
-      if (enc.length > k || new BN(enc).cmp(key.modulus) >= 0) throw new Error("decryption error");
-      var msg;
-      reverse ? (msg = withPublic(new BN(enc), key)) : (msg = crt(enc, key));
-      var zBuffer = Buffer2.alloc(k - msg.length);
-      if (((msg = Buffer2.concat([zBuffer, msg], k)), padding === 4)) return oaep(key, msg);
-      if (padding === 1) return pkcs1(key, msg, reverse);
-      if (padding === 3) return msg;
-      throw new Error("unknown padding");
-    };
-    function oaep(key, msg) {
-      var k = key.modulus.byteLength(),
-        iHash = createHash("sha1").update(Buffer2.alloc(0)).digest(),
-        hLen = iHash.length;
-      if (msg[0] !== 0) throw new Error("decryption error");
-      var maskedSeed = msg.slice(1, hLen + 1),
-        maskedDb = msg.slice(hLen + 1),
-        seed = xor(maskedSeed, mgf(maskedDb, hLen)),
-        db = xor(maskedDb, mgf(seed, k - hLen - 1));
-      if (compare(iHash, db.slice(0, hLen))) throw new Error("decryption error");
-      for (var i = hLen; db[i] === 0; ) i++;
-      if (db[i++] !== 1) throw new Error("decryption error");
-      return db.slice(i);
-    }
-    function pkcs1(key, msg, reverse) {
-      for (var p1 = msg.slice(0, 2), i = 2, status = 0; msg[i++] !== 0; )
-        if (i >= msg.length) {
-          status++;
-          break;
-        }
-      var ps = msg.slice(2, i - 1);
-      if (
-        (((p1.toString("hex") !== "0002" && !reverse) || (p1.toString("hex") !== "0001" && reverse)) && status++,
-        ps.length < 8 && status++,
-        status)
-      )
-        throw new Error("decryption error");
-      return msg.slice(i);
-    }
-    function compare(a, b) {
-      (a = Buffer2.from(a)), (b = Buffer2.from(b));
-      var dif = 0,
-        len = a.length;
-      a.length !== b.length && (dif++, (len = Math.min(a.length, b.length)));
-      for (var i = -1; ++i < len; ) dif += a[i] ^ b[i];
-      return dif;
-    }
-  },
-});
-
-// node_modules/public-encrypt/browser.js
-var require_browser10 = __commonJS({
-  "node_modules/public-encrypt/browser.js"(exports) {
-    var publicEncrypt = require_publicEncrypt();
-    exports.publicEncrypt = function (key, buf, options) {
-      return publicEncrypt(getKeyFrom(key, "public"), buf, options);
-    };
-    var privateDecrypt = require_privateDecrypt();
-    exports.privateDecrypt = function (key, buf, options) {
-      return privateDecrypt(getKeyFrom(key, "private"), buf, options);
-    };
-    exports.privateEncrypt = function (key, buf) {
-      return publicEncrypt(getKeyFrom(key, "private"), buf, !0);
-    };
-    exports.publicDecrypt = function (key, buf) {
-      return privateDecrypt(getKeyFrom(key, "public"), buf, !0);
-    };
-  },
-});
-
 // node_modules/randomfill/browser.js
 var require_browser11 = __commonJS({
   "node_modules/randomfill/browser.js"(exports) {
@@ -11720,11 +11537,6 @@ var require_crypto_browserify2 = __commonJS({
     exports.createVerify = sign.createVerify;
     exports.Verify = sign.Verify;
     exports.createECDH = require_browser9();
-    var publicEncrypt = require_browser10();
-    exports.publicEncrypt = publicEncrypt.publicEncrypt;
-    exports.privateEncrypt = publicEncrypt.privateEncrypt;
-    exports.publicDecrypt = publicEncrypt.publicDecrypt;
-    exports.privateDecrypt = publicEncrypt.privateDecrypt;
     exports.getRandomValues = values => crypto.getRandomValues(values);
     var rf = require_browser11();
     exports.randomFill = rf.randomFill;
@@ -11746,8 +11558,7 @@ var require_crypto_browserify2 = __commonJS({
 // crypto.js
 var crypto_exports = require_crypto_browserify2();
 
-var DEFAULT_ENCODING = "buffer",
-  getRandomValues = array => crypto.getRandomValues(array),
+var getRandomValues = array => crypto.getRandomValues(array),
   randomUUID = () => crypto.randomUUID(),
   timingSafeEqual =
     "timingSafeEqual" in crypto
@@ -11764,7 +11575,7 @@ var DEFAULT_ENCODING = "buffer",
     "scryptSync" in crypto
       ? (password, salt, keylen, options) => {
           let res = crypto.scryptSync(password, salt, keylen, options);
-          return DEFAULT_ENCODING !== "buffer" ? new Buffer(res).toString(DEFAULT_ENCODING) : new Buffer(res);
+          return new Buffer(res);
         }
       : void 0,
   scrypt =
@@ -11778,11 +11589,7 @@ var DEFAULT_ENCODING = "buffer",
           }
           try {
             let result = crypto.scryptSync(password, salt, keylen, options);
-            process.nextTick(
-              callback,
-              null,
-              DEFAULT_ENCODING !== "buffer" ? new Buffer(result).toString(DEFAULT_ENCODING) : new Buffer(result),
-            );
+            process.nextTick(callback, null, new Buffer(result));
           } catch (err2) {
             throw err2;
           }
@@ -11935,14 +11742,17 @@ function _generateKeyPairSync(algorithm, options) {
 }
 crypto_exports.generateKeyPairSync = _generateKeyPairSync;
 
-crypto_exports.generateKeyPair = function (algorithm, options, callback) {
+function _generateKeyPair(algorithm, options, callback) {
   try {
     const result = _generateKeyPairSync(algorithm, options);
     typeof callback === "function" && callback(null, result.publicKey, result.privateKey);
   } catch (err) {
     typeof callback === "function" && callback(err);
   }
-};
+}
+const { defineCustomPromisifyArgs } = require("internal/promisify");
+defineCustomPromisifyArgs(_generateKeyPair, ["publicKey", "privateKey"]);
+crypto_exports.generateKeyPair = _generateKeyPair;
 
 crypto_exports.createSecretKey = function (key, encoding) {
   if (key instanceof KeyObject || key instanceof CryptoKey) {
@@ -12031,7 +11841,7 @@ function _createPublicKey(key) {
         }
         return KeyObject.from(
           createPublicKey({
-            key: createPrivateKey({ key: actual_key, format: key.format, passphrase: key.passphrase }),
+            key: createPrivateKey({ key: actual_key, format: key.format || "pem", passphrase: key.passphrase }),
             format: "",
           }),
         );
@@ -12163,18 +11973,79 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
   }
 };
 
-__export(crypto_exports, {
-  DEFAULT_ENCODING: () => DEFAULT_ENCODING,
-  getRandomValues: () => getRandomValues,
-  randomUUID: () => randomUUID,
-  randomInt: () => randomInt,
-  getCurves: () => getCurves,
-  scrypt: () => scrypt,
-  scryptSync: () => scryptSync,
-  timingSafeEqual: () => timingSafeEqual,
-  webcrypto: () => webcrypto,
-  subtle: () => _subtle,
-});
+// We are not allowed to call createPublicKey/createPrivateKey when we're already working with a
+// KeyObject/CryptoKey of the same type (public/private).
+function toCryptoKey(key, asPublic) {
+  // Top level CryptoKey.
+  if (key instanceof KeyObject || key instanceof CryptoKey) {
+    if (asPublic && key.type === "private") {
+      return _createPublicKey(key).$bunNativePtr;
+    }
+    return key.$bunNativePtr || key;
+  }
+
+  // Nested CryptoKey.
+  if (key.key instanceof KeyObject || key.key instanceof CryptoKey) {
+    if (asPublic && key.key.type === "private") {
+      return _createPublicKey(key.key).$bunNativePtr;
+    }
+    return key.key.$bunNativePtr || key.key;
+  }
+
+  // One of string, ArrayBuffer, Buffer, TypedArray, DataView, or Object.
+  return asPublic ? _createPublicKey(key).$bunNativePtr : _createPrivateKey(key).$bunNativePtr;
+}
+
+function doAsymmetricCipher(key, message, operation, isEncrypt) {
+  // Our crypto bindings expect the key to be a `JSCryptoKey` property within an object.
+  const cryptoKey = toCryptoKey(key, isEncrypt);
+  const oaepLabel = typeof key.oaepLabel === "string" ? Buffer.from(key.oaepLabel, key.encoding) : key.oaepLabel;
+  const keyObject = {
+    key: cryptoKey,
+    oaepHash: key.oaepHash,
+    oaepLabel,
+    padding: key.padding,
+  };
+  const buffer = typeof message === "string" ? Buffer.from(message, key.encoding) : message;
+  return operation(keyObject, buffer);
+}
+
+crypto_exports.publicEncrypt = function (key, message) {
+  return doAsymmetricCipher(key, message, publicEncrypt, true);
+};
+
+crypto_exports.privateDecrypt = function (key, message) {
+  return doAsymmetricCipher(key, message, privateDecrypt, false);
+};
+
+function doAsymmetricSign(key, message, operation, isEncrypt) {
+  // Our crypto bindings expect the key to be a `JSCryptoKey` property within an object.
+  const cryptoKey = toCryptoKey(key, isEncrypt);
+  const buffer = typeof message === "string" ? Buffer.from(message, key.encoding) : message;
+  return operation(cryptoKey, buffer, key.padding);
+}
+
+crypto_exports.privateEncrypt = function (key, message) {
+  return doAsymmetricSign(key, message, privateEncrypt, false);
+};
+
+crypto_exports.publicDecrypt = function (key, message) {
+  return doAsymmetricSign(key, message, publicDecrypt, true);
+};
+
+crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
+  return CryptoHasher.hash(algorithm, input, outputEncoding);
+};
+
+crypto_exports.getRandomValues = getRandomValues;
+crypto_exports.randomUUID = randomUUID;
+crypto_exports.randomInt = randomInt;
+crypto_exports.getCurves = getCurves;
+crypto_exports.scrypt = scrypt;
+crypto_exports.scryptSync = scryptSync;
+crypto_exports.timingSafeEqual = timingSafeEqual;
+crypto_exports.webcrypto = webcrypto;
+crypto_exports.subtle = _subtle;
 
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

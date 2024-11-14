@@ -30,6 +30,7 @@
 
 namespace WebCore {
 
+// clang-format off
 #define WEBCORE_COMMON_ATOM_STRINGS_FOR_EACH_KEYWORD(macro) \
     macro(alternative, "alternative") \
     macro(auto, "auto") \
@@ -66,6 +67,7 @@ namespace WebCore {
 WEBCORE_COMMON_ATOM_STRINGS_FOR_EACH_KEYWORD(DECLARE_COMMON_ATOM)
 
 #undef DECLARE_COMMON_ATOM
+// clang-format on
 
 WEBCORE_EXPORT void initializeCommonAtomStrings();
 

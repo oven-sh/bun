@@ -1,3 +1,8 @@
+/**
+ * Browser polyfill for the `"events"` module.
+ *
+ * Imported on usage in `bun build --target=browser`
+ */
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -478,6 +483,5 @@ function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
 }
 
 export default EventEmitter;
-export { once };
-export { EventEmitter };
+export { EventEmitter, once };
 export var prototype = EventEmitter.prototype;

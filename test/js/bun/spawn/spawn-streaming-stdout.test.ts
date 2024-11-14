@@ -1,8 +1,6 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { closeSync, openSync } from "fs";
 import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, gcTick, getMaxFD } from "harness";
-import { devNull } from "os";
 
 test("spawn can read from stdout multiple chunks", async () => {
   gcTick(true);

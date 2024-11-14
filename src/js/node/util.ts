@@ -3,6 +3,7 @@ const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
 const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE } = require("internal/errors");
+const { promisify } = require("internal/promisify");
 
 const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
 
@@ -135,15 +136,19 @@ var log = function log() {
   console.log("%s - %s", timestamp(), format.$apply(cjs_exports, arguments));
 };
 var inherits = function inherits(ctor, superCtor) {
+  if (ctor === undefined || ctor === null) {
+    throw ERR_INVALID_ARG_TYPE("ctor", "function", ctor);
+  }
+
+  if (superCtor === undefined || superCtor === null) {
+    throw ERR_INVALID_ARG_TYPE("superCtor", "function", superCtor);
+  }
+
+  if (superCtor.prototype === undefined) {
+    throw ERR_INVALID_ARG_TYPE("superCtor.prototype", "object", superCtor.prototype);
+  }
   ctor.super_ = superCtor;
-  ctor.prototype = Object.create(superCtor.prototype, {
-    constructor: {
-      value: ctor,
-      enumerable: false,
-      writable: true,
-      configurable: true,
-    },
-  });
+  Object.setPrototypeOf(ctor.prototype, superCtor.prototype);
 };
 var _extend = function (origin, add) {
   if (!add || !isObject(add)) return origin;
@@ -154,80 +159,7 @@ var _extend = function (origin, add) {
   }
   return origin;
 };
-var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
-function defineCustomPromisify(target, callback) {
-  Object.defineProperty(target, kCustomPromisifiedSymbol, {
-    value: callback,
-    __proto__: null,
-    configurable: true,
-  });
 
-  return callback;
-}
-
-// Lazily load node:timers/promises promisifed functions onto the global timers.
-// This is not a complete solution, as one could load these without loading the "util" module
-// But it is better than nothing.
-{
-  const { setTimeout: timeout, setImmediate: immediate, setInterval: interval } = globalThis;
-
-  if (timeout && $isCallable(timeout)) {
-    defineCustomPromisify(timeout, function setTimeout(arg1) {
-      const fn = defineCustomPromisify(timeout, require("node:timers/promises").setTimeout);
-      return fn.$apply(this, arguments);
-    });
-  }
-
-  if (immediate && $isCallable(immediate)) {
-    defineCustomPromisify(immediate, function setImmediate(arg1) {
-      const fn = defineCustomPromisify(immediate, require("node:timers/promises").setImmediate);
-      return fn.$apply(this, arguments);
-    });
-  }
-
-  if (interval && $isCallable(interval)) {
-    defineCustomPromisify(interval, function setInterval(arg1) {
-      const fn = defineCustomPromisify(interval, require("node:timers/promises").setInterval);
-      return fn.$apply(this, arguments);
-    });
-  }
-}
-
-var promisify = function promisify(original) {
-  if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
-  const custom = original[kCustomPromisifiedSymbol];
-  if (custom) {
-    if (typeof custom !== "function") {
-      throw new TypeError('The "util.promisify.custom" argument must be of type Function');
-    }
-    // ensure that we don't create another promisified function wrapper
-    return defineCustomPromisify(custom, custom);
-  }
-
-  function fn(...originalArgs) {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    try {
-      original.$apply(this, [
-        ...originalArgs,
-        function (err, ...values) {
-          if (err) {
-            return reject(err);
-          }
-
-          resolve(values[0]);
-        },
-      ]);
-    } catch (err) {
-      reject(err);
-    }
-
-    return promise;
-  }
-  Object.setPrototypeOf(fn, Object.getPrototypeOf(original));
-  defineCustomPromisify(fn, fn);
-  return Object.defineProperties(fn, getOwnPropertyDescriptors(original));
-};
-promisify.custom = kCustomPromisifiedSymbol;
 function callbackifyOnRejected(reason, cb) {
   if (!reason) {
     var newReason = new Error("Promise was rejected with a falsy value");

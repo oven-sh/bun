@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // See https://github.com/oven-sh/bun/pull/2939

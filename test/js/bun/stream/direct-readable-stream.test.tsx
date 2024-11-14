@@ -1,9 +1,9 @@
 import {
   concatArrayBuffers,
   readableStreamToArray,
-  readableStreamToBytes,
   readableStreamToArrayBuffer,
   readableStreamToBlob,
+  readableStreamToBytes,
   readableStreamToText,
   serve,
   Server,
@@ -11,9 +11,9 @@ import {
 import { describe, expect, it } from "bun:test";
 import { expectMaxObjectTypeCount, gc } from "harness";
 // @ts-ignore
-import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
-import * as ReactDOM from "react-dom/server";
 import * as React from "react";
+import * as ReactDOM from "react-dom/server";
+import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
 
 Object.defineProperty(renderToReadableStreamBrowser, "name", {
   value: "server.browser",

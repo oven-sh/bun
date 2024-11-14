@@ -1,7 +1,7 @@
-import { file, listen, Socket, spawn } from "bun";
+import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { access, readFile, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
-import { readFile, access, mkdir, readlink, realpath, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -70,6 +70,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
     expect(err1).toContain("Saved lockfile");
     const out1 = await new Response(stdout1).text();
     expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
       "",
       "+ baz@0.0.3",
       "",
@@ -112,6 +113,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
     expect(err2).toContain("Saved lockfile");
     const out2 = await new Response(stdout2).text();
     expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun update v1."),
       "",
       `installed baz@${tilde ? "0.0.5" : "0.0.3"} with binaries:`,
       ` - ${tilde ? "baz-exec" : "baz-run"}`,
@@ -188,6 +190,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
     expect(err1).toContain("Saved lockfile");
     const out1 = await new Response(stdout1).text();
     expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
       "",
       "+ @barn/moo@0.1.0",
       "+ baz@0.0.3",
@@ -239,6 +242,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
     const out2 = await new Response(stdout2).text();
     if (tilde) {
       expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun update v1."),
         "",
         "^ baz 0.0.3 -> 0.0.5",
         "",
@@ -248,6 +252,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
       ]);
     } else {
       expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun update v1."),
         "",
         "+ @barn/moo@0.1.0",
         "+ baz@0.0.3",
@@ -324,6 +329,7 @@ it("lockfile should not be modified when there are no version changes, issue#588
   expect(err1).toContain("Saved lockfile");
   const out1 = await new Response(stdout).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun install v1."),
     "",
     "+ baz@0.0.3",
     "",

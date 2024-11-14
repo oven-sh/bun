@@ -1,9 +1,6 @@
-import { $ } from "bun";
-import { describe, test, expect } from "bun:test";
+import { describe } from "bun:test";
 import { createTestBuilder } from "../test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
-import { sortedShellOutput } from "../util";
-import { join } from "path";
 
 describe("exit", async () => {
   TestBuilder.command`exit`.exitCode(0).runAsTest("works");

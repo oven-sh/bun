@@ -1,5 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import { file, spawn, version, readableStreamToText } from "bun";
+import { file, readableStreamToText, spawn, version } from "bun";
+import { describe, expect, test } from "bun:test";
 
 const bodyTypes = [
   {
@@ -28,6 +28,7 @@ const bufferTypes = [
   Int8Array,
   Int16Array,
   Int32Array,
+  Float16Array,
   Float32Array,
   Float64Array,
 ];

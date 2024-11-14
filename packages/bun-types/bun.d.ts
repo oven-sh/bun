@@ -1497,13 +1497,35 @@ declare module "bun" {
     kind: ImportKind;
   }
 
-  type ModuleFormat = "esm"; // later: "cjs", "iife"
-
   interface BuildConfig {
     entrypoints: string[]; // list of file path
     outdir?: string; // output directory
     target?: Target; // default: "browser"
-    format?: ModuleFormat; // later: "cjs", "iife"
+    /**
+     * Output module format. Top-level await is only supported for `"esm"`.
+     *
+     * Can be:
+     * - `"esm"`
+     * - `"cjs"` (**experimental**)
+     * - `"iife"` (**experimental**)
+     *
+     * @default "esm"
+     */
+    format?: /**
+
+     * ECMAScript Module format
+     */
+    | "esm"
+      /**
+       * CommonJS format
+       * **Experimental**
+       */
+      | "cjs"
+      /**
+       * IIFE format
+       * **Experimental**
+       */
+      | "iife";
     naming?:
       | string
       | {
@@ -1521,7 +1543,7 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "linked" | "inline" | "external"; // default: "none", true -> "inline"
+    sourcemap?: "none" | "linked" | "inline" | "external" | "linked"; // default: "none", true -> "inline"
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -1561,6 +1583,40 @@ declare module "bun" {
     //       /** Only works when runtime=automatic */
     //       importSource?: string; // default: "react"
     //     };
+
+    /**
+     * Generate bytecode for the output. This can dramatically improve cold
+     * start times, but will make the final output larger and slightly increase
+     * memory usage.
+     *
+     * Bytecode is currently only supported for CommonJS (`format: "cjs"`).
+     *
+     * Must be `target: "bun"`
+     * @default false
+     */
+    bytecode?: boolean;
+    /**
+     * Add a banner to the bundled code such as "use client";
+     */
+    banner?: string;
+    /**
+     * Add a footer to the bundled code such as a comment block like
+     *
+     * `// made with bun!`
+     */
+    footer?: string;
+
+    /**
+     * **Experimental**
+     *
+     * Enable CSS support.
+     */
+    experimentalCss?: boolean;
+
+    /**
+     * Drop function calls to matching property accesses.
+     */
+    drop?: string[];
   }
 
   namespace Password {
@@ -1594,7 +1650,7 @@ declare module "bun" {
    * automatically run in a worker thread.
    *
    * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+   * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
    * work on this.
    *
    * ### Example with argon2
@@ -1697,7 +1753,7 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
      * work on this.
      *
      * ### Example with argon2
@@ -1736,7 +1792,7 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
      * work on this.
      *
      * ### Example with argon2
@@ -1781,7 +1837,7 @@ declare module "bun" {
     path: string;
     loader: Loader;
     hash: string | null;
-    kind: "entry-point" | "chunk" | "asset" | "sourcemap";
+    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
     sourcemap: BuildArtifact | null;
   }
 
@@ -2282,7 +2338,7 @@ declare module "bun" {
      */
     development?: boolean;
 
-    error?: (this: Server, request: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
+    error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
 
     /**
      * Uniquely identify a server instance with an ID
@@ -2298,6 +2354,26 @@ declare module "bun" {
      * This string will currently do nothing. But in the future it could be useful for logs or metrics.
      */
     id?: string | null;
+
+    /**
+     * Server static Response objects by route.
+     *
+     * @example
+     * ```ts
+     * Bun.serve({
+     *   static: {
+     *     "/": new Response("Hello World"),
+     *     "/about": new Response("About"),
+     *   },
+     *   fetch(req) {
+     *     return new Response("Fallback response");
+     *   },
+     * });
+     * ```
+     *
+     * @experimental
+     */
+    static?: Record<`/${string}`, Response>;
   }
 
   interface ServeOptions extends GenericServeOptions {
@@ -2341,6 +2417,14 @@ declare module "bun" {
      * (Cannot be used with hostname+port)
      */
     unix?: never;
+
+    /**
+     * Sets the the number of seconds to wait before timing out a connection
+     * due to inactivity.
+     *
+     * Default is `10` seconds.
+     */
+    idleTimeout?: number;
 
     /**
      * Handle HTTP requests
@@ -2632,7 +2716,7 @@ declare module "bun" {
      * @param closeActiveConnections Immediately terminate in-flight requests, websockets, and stop accepting new connections.
      * @default false
      */
-    stop(closeActiveConnections?: boolean): void;
+    stop(closeActiveConnections?: boolean): Promise<void>;
 
     /**
      * Update the `fetch` and `error` handlers without restarting the server.
@@ -2760,6 +2844,16 @@ declare module "bun" {
     ): ServerWebSocketSendStatus;
 
     /**
+     * A count of connections subscribed to a given topic
+     *
+     * This operation will loop through each topic internally to get the count.
+     *
+     * @param topic the websocket topic to check how many subscribers are connected to
+     * @returns the number of subscribers
+     */
+    subscriberCount(topic: string): number;
+
+    /**
      * Returns the client IP address and port of the given Request. If the request was closed or is a unix socket, returns null.
      *
      * @example
@@ -2773,6 +2867,21 @@ declare module "bun" {
      */
     requestIP(request: Request): SocketAddress | null;
 
+    /**
+     * Reset the idleTimeout of the given Request to the number in seconds. 0 means no timeout.
+     *
+     * @example
+     * ```js
+     * export default {
+     *  async fetch(request, server) {
+     *    server.timeout(request, 60);
+     *    await Bun.sleep(30000);
+     *    return new Response("30 seconds have passed");
+     *  }
+     * }
+     * ```
+     */
+    timeout(request: Request, seconds: number): void;
     /**
      * Undo a call to {@link Server.unref}
      *
@@ -2861,6 +2970,13 @@ declare module "bun" {
   function file(path: string | URL, options?: BlobPropertyBag): BunFile;
 
   /**
+   * A list of files embedded into the standalone executable. Lexigraphically sorted by name.
+   *
+   * If the process is not a standalone executable, this returns an empty array.
+   */
+  const embeddedFiles: ReadonlyArray<Blob>;
+
+  /**
    * `Blob` that leverages the fastest system calls available to operate on files.
    *
    * This Blob is lazy. It won't do any work until you read from it. Errors propagate as promise rejections.
@@ -2907,6 +3023,7 @@ declare module "bun" {
     colors?: boolean;
     depth?: number;
     sorted?: boolean;
+    compact?: boolean;
   }
 
   /**
@@ -2922,6 +3039,14 @@ declare module "bun" {
      * That can be used to declare custom inspect functions.
      */
     const custom: typeof import("util").inspect.custom;
+
+    /**
+     * Pretty-print an object or array as a table
+     *
+     * Like {@link console.table}, except it returns a string
+     */
+    function table(tabularData: object | unknown[], properties?: string[], options?: { colors?: boolean }): string;
+    function table(tabularData: object | unknown[], options?: { colors?: boolean }): string;
   }
 
   interface MMapOptions {
@@ -2968,6 +3093,105 @@ declare module "bun" {
   const stdin: BunFile;
 
   type StringLike = string | { toString(): string };
+
+  type ColorInput =
+    | { r: number; g: number; b: number; a?: number }
+    | [number, number, number]
+    | [number, number, number, number]
+    | Uint8Array
+    | Uint8ClampedArray
+    | Float32Array
+    | Float64Array
+    | string
+    | number
+    | { toString(): string };
+
+  function color(
+    input: ColorInput,
+    outputFormat?: /**
+     * True color ANSI color string, for use in terminals
+     * @example \x1b[38;2;100;200;200m
+     */
+    | "ansi"
+      | "ansi-16"
+      | "ansi-16m"
+      /**
+       * 256 color ANSI color string, for use in terminals which don't support true color
+       *
+       * Tries to match closest 24-bit color to 256 color palette
+       */
+      | "ansi-256"
+      /**
+       * Picks the format that produces the shortest output
+       */
+      | "css"
+      /**
+       * Lowercase hex color string without alpha
+       * @example #ff9800
+       */
+      | "hex"
+      /**
+       * Uppercase hex color string without alpha
+       * @example #FF9800
+       */
+      | "HEX"
+      /**
+       * @example hsl(35.764706, 1, 0.5)
+       */
+      | "hsl"
+      /**
+       * @example lab(0.72732764, 33.938198, -25.311619)
+       */
+      | "lab"
+      /**
+       * @example 16750592
+       */
+      | "number"
+      /**
+       * RGB color string without alpha
+       * @example rgb(255, 152, 0)
+       */
+      | "rgb"
+      /**
+       * RGB color string with alpha
+       * @example rgba(255, 152, 0, 1)
+       */
+      | "rgba",
+  ): string | null;
+
+  function color(
+    input: ColorInput,
+    /**
+     * An array of numbers representing the RGB color
+     * @example [100, 200, 200]
+     */
+    outputFormat: "[rgb]",
+  ): [number, number, number] | null;
+  function color(
+    input: ColorInput,
+    /**
+     * An array of numbers representing the RGBA color
+     * @example [100, 200, 200, 255]
+     */
+    outputFormat: "[rgba]",
+  ): [number, number, number, number] | null;
+  function color(
+    input: ColorInput,
+    /**
+     * An object representing the RGB color
+     * @example { r: 100, g: 200, b: 200 }
+     */
+    outputFormat: "{rgb}",
+  ): { r: number; g: number; b: number } | null;
+  function color(
+    input: ColorInput,
+    /**
+     * An object representing the RGBA color
+     * @example { r: 100, g: 200, b: 200, a: 0.5 }
+     */
+    outputFormat: "{rgba}",
+  ): { r: number; g: number; b: number; a: number } | null;
+  function color(input: ColorInput, outputFormat: "number"): number | null;
 
   interface Semver {
     /**
@@ -3025,7 +3249,7 @@ declare module "bun" {
   }
   const unsafe: Unsafe;
 
-  type DigestEncoding = "hex" | "base64";
+  type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";
 
   /**
    * Are ANSI colors enabled for stdin and stdout?
@@ -3204,8 +3428,9 @@ declare module "bun" {
      * Create a new hasher
      *
      * @param algorithm The algorithm to use. See {@link algorithms} for a list of supported algorithms
+     * @param hmacKey Optional key for HMAC. Must be a string or `TypedArray`. If not provided, the hasher will be a non-HMAC hasher.
      */
-    constructor(algorithm: SupportedCryptoAlgorithms);
+    constructor(algorithm: SupportedCryptoAlgorithms, hmacKey?: string | NodeJS.TypedArray);
 
     /**
      * Update the hash with data
@@ -3560,7 +3785,7 @@ declare module "bun" {
     | "browser";
 
   /** https://bun.sh/docs/bundler/loaders */
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text";
+  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css";
 
   interface PluginConstraints {
     /**
@@ -3648,10 +3873,18 @@ declare module "bun" {
      * The default loader for this file extension
      */
     loader: Loader;
+
+    /**
+     * Defer the execution of this callback until all other modules have been parsed.
+     *
+     * @returns Promise which will be resolved when all modules have been parsed
+     */
+    defer: () => Promise<void>;
   }
 
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
+  type OnStartCallback = () => void | Promise<void>;
 
   interface OnResolveArgs {
     /**
@@ -3729,6 +3962,20 @@ declare module "bun" {
      */
     onResolve(constraints: PluginConstraints, callback: OnResolveCallback): void;
     /**
+     * Register a callback which will be invoked when bundling starts.
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   setup(builder) {
+     *     builder.onStart(() => {
+     *       console.log("bundle just started!!")
+     *     });
+     *   },
+     * });
+     * ```
+     */
+    onStart(callback: OnStartCallback): void;
+    /**
      * The config object passed to `Bun.build` as is. Can be mutated.
      */
     config: BuildConfig & { plugins: BunPlugin[] };
@@ -3768,7 +4015,7 @@ declare module "bun" {
      *
      * In a future version of Bun, this will be used in error messages.
      */
-    name?: string;
+    name: string;
 
     /**
      * The target JavaScript environment the plugin should be applied to.
@@ -4137,6 +4384,35 @@ declare module "bun" {
      * @param [size=16384] The maximum TLS fragment size. The maximum value is `16384`.
      */
     setMaxSendFragment(size: number): boolean;
+
+    /**
+     * Enable/disable the use of Nagle's algorithm.
+     * Only available for already connected sockets, will return false otherwise
+     * @param noDelay Default: `true`
+     * @returns true if is able to setNoDelay and false if it fails.
+     */
+    setNoDelay(noDelay?: boolean): boolean;
+
+    /**
+     * Enable/disable keep-alive functionality, and optionally set the initial delay before the first keepalive probe is sent on an idle socket.
+     * Set `initialDelay` (in milliseconds) to set the delay between the last data packet received and the first keepalive probe.
+     * Only available for already connected sockets, will return false otherwise.
+     *
+     * Enabling the keep-alive functionality will set the following socket options:
+     * SO_KEEPALIVE=1
+     * TCP_KEEPIDLE=initialDelay
+     * TCP_KEEPCNT=10
+     * TCP_KEEPINTVL=1
+     * @param enable Default: `false`
+     * @param initialDelay Default: `0`
+     * @returns true if is able to setNoDelay and false if it fails.
+     */
+    setKeepAlive(enable?: boolean, initialDelay?: number): boolean;
+
+    /**
+     * The number of bytes written to the socket.
+     */
+    readonly bytesWritten: number;
   }
 
   interface SocketListener<Data = undefined> extends Disposable {
@@ -4241,15 +4517,20 @@ declare module "bun" {
     hostname: string;
     port: number;
     tls?: TLSOptions;
+    exclusive?: boolean;
+    allowHalfOpen?: boolean;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
     hostname: string;
     port: number;
     tls?: boolean;
+    exclusive?: boolean;
+    allowHalfOpen?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    tls?: TLSOptions;
     unix: string;
   }
 
@@ -4555,6 +4836,32 @@ declare module "bun" {
        * @default cmds[0]
        */
       argv0?: string;
+
+      /**
+       * An {@link AbortSignal} that can be used to abort the subprocess.
+       *
+       * This is useful for aborting a subprocess when some other part of the
+       * program is aborted, such as a `fetch` response.
+       *
+       * Internally, this works by calling `subprocess.kill(1)`.
+       *
+       * @example
+       * ```ts
+       * const controller = new AbortController();
+       * const { signal } = controller;
+       * const start = performance.now();
+       * const subprocess = Bun.spawn({
+       *  cmd: ["sleep", "100"],
+       *  signal,
+       * });
+       * await Bun.sleep(1);
+       * controller.abort();
+       * await subprocess.exited;
+       * const end = performance.now();
+       * console.log(end - start); // 1ms instead of 101ms
+       * ```
+       */
+      signal?: AbortSignal;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =
@@ -5059,6 +5366,12 @@ declare module "bun" {
   const version: string;
 
   /**
+   * The current version of Bun with the shortened commit sha of the build
+   * @example "v1.1.30 (d09df1af)"
+   */
+  const version_with_sha: string;
+
+  /**
    * The git sha at the time the currently-running version of Bun was compiled
    * @example
    * "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
@@ -5204,6 +5517,57 @@ declare module "bun" {
      */
     match(str: string): boolean;
   }
+
+  /**
+   * Generate a UUIDv7, which is a sequential ID based on the current timestamp with a random component.
+   *
+   * When the same timestamp is used multiple times, a monotonically increasing
+   * counter is appended to allow sorting. The final 8 bytes are
+   * cryptographically random. When the timestamp changes, the counter resets to
+   * a psuedo-random integer.
+   *
+   * @param encoding "hex" | "base64" | "base64url"
+   * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv7 } from "bun";
+   * const array = [
+   *   randomUUIDv7(),
+   *   randomUUIDv7(),
+   *   randomUUIDv7(),
+   * ]
+   * [
+   *   "0192ce07-8c4f-7d66-afec-2482b5c9b03c",
+   *   "0192ce07-8c4f-7d67-805f-0f71581b5622",
+   *   "0192ce07-8c4f-7d68-8170-6816e4451a58"
+   * ]
+   * ```
+   */
+  function randomUUIDv7(
+    /**
+     * @default "hex"
+     */
+    encoding?: "hex" | "base64" | "base64url",
+    /**
+     * @default Date.now()
+     */
+    timestamp?: number | Date,
+  ): string;
+
+  /**
+   * Generate a UUIDv7 as a Buffer
+   *
+   * @param encoding "buffer"
+   * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
+   */
+  function randomUUIDv7(
+    encoding: "buffer",
+    /**
+     * @default Date.now()
+     */
+    timestamp?: number | Date,
+  ): Buffer;
 }
 
 // extends lib.dom.d.ts

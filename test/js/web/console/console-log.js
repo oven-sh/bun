@@ -201,6 +201,8 @@ console.log({ "": "" });
   console.log(proxy.proxy);
 }
 
+console.log([[[[Array(1000).fill(4)]]]]);
+
 {
   // proxy custom inspect
   const proxy = new Proxy(

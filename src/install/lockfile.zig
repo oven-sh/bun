@@ -18,7 +18,7 @@ const logger = bun.logger;
 
 const js_parser = bun.js_parser;
 const Expr = @import("../js_ast.zig").Expr;
-const json_parser = bun.JSON;
+const JSON = bun.JSON;
 const JSPrinter = bun.js_printer;
 
 const linker = @import("../linker.zig");
@@ -206,7 +206,7 @@ pub const Scripts = struct {
 };
 
 pub fn isEmpty(this: *const Lockfile) bool {
-    return this.packages.len == 0 or this.packages.len == 1 or this.packages.get(0).resolutions.len == 0;
+    return this.packages.len == 0 or (this.packages.len == 1 and this.packages.get(0).resolutions.len == 0);
 }
 
 pub const LoadFromDiskResult = union(enum) {
@@ -841,15 +841,19 @@ pub fn isRootDependency(this: *const Lockfile, manager: *PackageManager, id: Dep
 /// Is this a direct dependency of any workspace (including workspace root)?
 /// TODO make this faster by caching the workspace package ids
 pub fn isWorkspaceDependency(this: *const Lockfile, id: DependencyID) bool {
+    return getWorkspacePkgIfWorkspaceDep(this, id) != invalid_package_id;
+}
+
+pub fn getWorkspacePkgIfWorkspaceDep(this: *const Lockfile, id: DependencyID) PackageID {
     const packages = this.packages.slice();
     const resolutions = packages.items(.resolution);
     const dependencies_lists = packages.items(.dependencies);
-    for (resolutions, dependencies_lists) |resolution, dependencies| {
+    for (resolutions, dependencies_lists, 0..) |resolution, dependencies, pkg_id| {
         if (resolution.tag != .workspace and resolution.tag != .root) continue;
-        if (dependencies.contains(id)) return true;
+        if (dependencies.contains(id)) return @intCast(pkg_id);
     }
 
-    return false;
+    return invalid_package_id;
 }
 
 /// Does this tree id belong to a workspace (including workspace root)?
@@ -1029,8 +1033,6 @@ pub fn cleanWithLogger(
     if (updates.len > 0) {
         const string_buf = new.buffers.string_bytes.items;
         const slice = new.packages.slice();
-        const names = slice.items(.name);
-        const resolutions = slice.items(.resolution);
 
         // updates might be applied to the root package.json or one
         // of the workspace package.json files.
@@ -1042,14 +1044,13 @@ pub fn cleanWithLogger(
         const resolved_ids: []const PackageID = res_list.get(new.buffers.resolutions.items);
 
         request_updated: for (updates) |*update| {
-            if (update.resolution.tag == .uninitialized) {
+            if (update.package_id == invalid_package_id) {
                 for (resolved_ids, workspace_deps) |package_id, dep| {
                     if (update.matches(dep, string_buf)) {
                         if (package_id > new.packages.len) continue;
                         update.version_buf = string_buf;
                         update.version = dep.version;
-                        update.resolution = resolutions[package_id];
-                        update.resolved_name = names[package_id];
+                        update.package_id = package_id;
 
                         continue :request_updated;
                     }
@@ -1232,8 +1233,9 @@ pub const Printer = struct {
 
         var lockfile = try allocator.create(Lockfile);
 
+        PackageManager.allocatePackageManager();
         // TODO remove the need for manager when migrating from package-lock.json
-        const manager = &PackageManager.instance;
+        const manager = PackageManager.get();
 
         const load_from_disk = lockfile.loadFromDisk(manager, allocator, log, lockfile_path, false);
         switch (load_from_disk) {
@@ -1253,11 +1255,7 @@ pub const Printer = struct {
                     }),
                 }
                 if (log.errors > 0) {
-                    switch (Output.enable_ansi_colors) {
-                        inline else => |enable_ansi_colors| {
-                            try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors);
-                        },
-                    }
+                    try log.print(Output.errorWriter());
                 }
                 Global.crash();
             },
@@ -1296,6 +1294,7 @@ pub const Printer = struct {
 
             const loader = try allocator.create(DotEnv.Loader);
             loader.* = DotEnv.Loader.init(map, allocator);
+            loader.quiet = true;
             break :brk loader;
         };
 
@@ -1625,7 +1624,7 @@ pub const Printer = struct {
                 } else {
                     // just print installed packages for the current workspace
                     var workspace_package_id: DependencyID = 0;
-                    if (PackageManager.instance.workspace_name_hash) |workspace_name_hash| {
+                    if (PackageManager.get().workspace_name_hash) |workspace_name_hash| {
                         for (resolutions_list[0].begin()..resolutions_list[0].end()) |dep_id| {
                             const dep = dependencies_buffer[dep_id];
                             if (dep.behavior.isWorkspace() and dep.name_hash == workspace_name_hash) {
@@ -1731,7 +1730,7 @@ pub const Printer = struct {
 
                         {
                             const fmt = comptime Output.prettyFmt("<r> <d>- <r><b>{s}<r>\n", enable_ansi_colors);
-                            var manager = &bun.PackageManager.instance;
+                            const manager = PackageManager.get();
 
                             if (manager.track_installed_bin == .pending) {
                                 if (iterator.next() catch null) |bin_name| {
@@ -3093,7 +3092,7 @@ pub const Package = extern struct {
                 };
 
                 initializeStore();
-                break :brk try json_parser.ParsePackageJSONUTF8(
+                break :brk try JSON.parsePackageJSONUTF8(
                     &json_src,
                     log,
                     allocator,
@@ -3848,7 +3847,7 @@ pub const Package = extern struct {
 
                                 var workspace = Package{};
 
-                                const json = PackageManager.instance.workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
+                                const json = PackageManager.get().workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
 
                                 try workspace.parseWithJSON(
                                     to_lockfile,
@@ -3940,12 +3939,8 @@ pub const Package = extern struct {
         comptime features: Features,
     ) !void {
         initializeStore();
-        const json = json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
-            switch (Output.enable_ansi_colors) {
-                inline else => |enable_ansi_colors| {
-                    log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                },
-            }
+        const json = JSON.parsePackageJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
+            log.print(Output.errorWriter()) catch {};
             Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
             Global.crash();
         };
@@ -4023,10 +4018,18 @@ pub const Package = extern struct {
                 if (trimmed.len != 1 or (trimmed[0] != '*' and trimmed[0] != '^' and trimmed[0] != '~')) {
                     const at = strings.lastIndexOfChar(input, '@') orelse 0;
                     if (at > 0) {
-                        workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch return error.InstallFailed;
+                        workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch |err| {
+                            switch (err) {
+                                error.OutOfMemory => bun.outOfMemory(),
+                            }
+                        };
                         break :brk String.Builder.stringHash(input[0..at]);
                     }
-                    workspace_range = Semver.Query.parse(allocator, input, sliced) catch null;
+                    workspace_range = Semver.Query.parse(allocator, input, sliced) catch |err| {
+                        switch (err) {
+                            error.OutOfMemory => bun.outOfMemory(),
+                        }
+                    };
                 }
                 break :brk external_alias.hash;
             } else external_alias.hash,
@@ -4325,7 +4328,7 @@ pub const Package = extern struct {
         }).unwrap();
 
         const name_expr = workspace_json.root.get("name") orelse return error.MissingPackageName;
-        const name = name_expr.asStringCloned(allocator) orelse return error.MissingPackageName;
+        const name = try name_expr.asStringCloned(allocator) orelse return error.MissingPackageName;
 
         var entry = WorkspaceEntry{
             .name = name,
@@ -4333,7 +4336,7 @@ pub const Package = extern struct {
         };
         debug("processWorkspaceName({s}) = {s}", .{ abs_package_json_path, entry.name });
         if (workspace_json.root.get("version")) |version_expr| {
-            if (version_expr.asStringCloned(allocator)) |version| {
+            if (try version_expr.asStringCloned(allocator)) |version| {
                 entry.version = version;
             }
         }
@@ -4363,7 +4366,7 @@ pub const Package = extern struct {
 
         for (arr.slice()) |item| {
             // TODO: when does this get deallocated?
-            const input_path = item.asStringZ(allocator) orelse {
+            const input_path = try item.asStringZ(allocator) orelse {
                 log.addErrorFmt(source, item.loc, allocator,
                     \\Workspaces expects an array of strings, like:
                     \\  <r><green>"workspaces"<r>: [
@@ -4791,7 +4794,7 @@ pub const Package = extern struct {
                         total_dependencies_count += try processWorkspaceNamesArray(
                             &workspace_names,
                             allocator,
-                            &PackageManager.instance.workspace_package_json_cache,
+                            &PackageManager.get().workspace_package_json_cache,
                             log,
                             arr,
                             &source,
@@ -4815,7 +4818,7 @@ pub const Package = extern struct {
                                     total_dependencies_count += try processWorkspaceNamesArray(
                                         &workspace_names,
                                         allocator,
-                                        &PackageManager.instance.workspace_package_json_cache,
+                                        &PackageManager.get().workspace_package_json_cache,
                                         log,
                                         packages_query.data.e_array,
                                         &source,
@@ -4967,6 +4970,21 @@ pub const Package = extern struct {
             };
         }
 
+        if (json.asProperty("patchedDependencies")) |patched_deps| {
+            const obj = patched_deps.expr.data.e_object;
+            lockfile.patched_dependencies.ensureTotalCapacity(allocator, obj.properties.len) catch unreachable;
+            for (obj.properties.slice()) |prop| {
+                const key = prop.key.?;
+                const value = prop.value.?;
+                if (key.isString() and value.isString()) {
+                    var sfb = std.heap.stackFallback(1024, allocator);
+                    const keyhash = try key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
+                    const patch_path = string_builder.append(String, value.asString(allocator).?);
+                    lockfile.patched_dependencies.put(allocator, keyhash, .{ .path = patch_path }) catch unreachable;
+                }
+            }
+        }
+
         bin: {
             if (json.asProperty("bin")) |bin| {
                 switch (bin.expr.data) {
@@ -5026,21 +5044,6 @@ pub const Package = extern struct {
                         }
                     },
                     else => {},
-                }
-            }
-
-            if (json.asProperty("patchedDependencies")) |patched_deps| {
-                const obj = patched_deps.expr.data.e_object;
-                lockfile.patched_dependencies.ensureTotalCapacity(allocator, obj.properties.len) catch unreachable;
-                for (obj.properties.slice()) |prop| {
-                    const key = prop.key.?;
-                    const value = prop.value.?;
-                    if (key.isString() and value.isString()) {
-                        var sfb = std.heap.stackFallback(1024, allocator);
-                        const keyhash = key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
-                        const patch_path = string_builder.append(String, value.asString(allocator).?);
-                        lockfile.patched_dependencies.put(allocator, keyhash, .{ .path = patch_path }) catch unreachable;
-                    }
                 }
             }
 
@@ -5707,7 +5710,7 @@ const Buffers = struct {
     ) !void {
         const buffers = lockfile.buffers;
         inline for (sizes.names) |name| {
-            if (PackageManager.instance.options.log_level.isVerbose()) {
+            if (PackageManager.get().options.log_level.isVerbose()) {
                 Output.prettyErrorln("Saving {d} {s}", .{ @field(buffers, name).items.len, name });
             }
 
@@ -5820,7 +5823,7 @@ const Buffers = struct {
             if (comptime Type == @TypeOf(this.dependencies)) {
                 external_dependency_list_ = try readArray(stream, allocator, std.ArrayListUnmanaged(Dependency.External));
 
-                if (PackageManager.instance.options.log_level.isVerbose()) {
+                if (PackageManager.get().options.log_level.isVerbose()) {
                     Output.prettyErrorln("Loaded {d} {s}", .{ external_dependency_list_.items.len, name });
                 }
             } else if (comptime Type == @TypeOf(this.trees)) {
@@ -5834,7 +5837,7 @@ const Buffers = struct {
                 }
             } else {
                 @field(this, name) = try readArray(stream, allocator, Type);
-                if (PackageManager.instance.options.log_level.isVerbose()) {
+                if (PackageManager.get().options.log_level.isVerbose()) {
                     Output.prettyErrorln("Loaded {d} {s}", .{ @field(this, name).items.len, name });
                 }
             }

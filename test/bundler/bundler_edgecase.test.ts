@@ -1,6 +1,7 @@
+import { describe, expect } from "bun:test";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
-import { describe, expect } from "bun:test";
+import { isBroken, isWindows } from "harness";
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -484,6 +485,7 @@ describe("bundler", () => {
       stdout: "success",
     },
   });
+
   itBundled("edgecase/StaticClassNameIssue2806", {
     files: {
       "/entry.ts": /* ts */ `
@@ -1121,7 +1123,7 @@ describe("bundler", () => {
     snapshotSourceMap: {
       "entry.js.map": {
         files: ["../node_modules/react/index.js", "../entry.js"],
-        mappingsExactMatch: "uYACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
+        mappingsExactMatch: "qYACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
       },
     },
   });
@@ -1344,6 +1346,8 @@ describe("bundler", () => {
     },
     target: "bun",
     run: true,
+    todo: isBroken && isWindows,
+    debugTimeoutScale: 5,
   });
   itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
     files: {
@@ -1818,6 +1822,259 @@ describe("bundler", () => {
     },
     run: { stdout: "1" },
   });
+  itBundled("edgecase/DoNotMoveTaggedTemplateLiterals", {
+    files: {
+      "/entry.ts": `
+        globalThis.z = () => console.log(2)
+        const y = await import('./second.ts');
+      `,
+      "/second.ts": `
+        console.log(1);
+        export const y = z\`zyx\`;
+      `,
+    },
+    run: { stdout: "1\n2" },
+  });
+  itBundled("edgecase/Latin1StringInImportedJSON", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x + 'a');
+      `,
+      "/second.json": `
+        "测试"
+      `,
+    },
+    target: "bun",
+    run: { stdout: `测试a` },
+  });
+  itBundled("edgecase/Latin1StringInImportedJSONBrowser", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x + 'a');
+      `,
+      "/second.json": `
+        "测试"
+      `,
+    },
+    target: "browser",
+    run: { stdout: `测试a` },
+  });
+  itBundled("edgecase/Latin1StringKey", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x["测试" + "a"]);
+      `,
+      "/second.json": `
+        {"测试a" : 123}
+      `,
+    },
+    target: "bun",
+    run: { stdout: `123` },
+  });
+  itBundled("edgecase/Latin1StringKeyBrowser", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x["测试" + "a"]);
+      `,
+      "/second.json": `
+        {"测试a" : 123}
+      `,
+    },
+    target: "browser",
+    run: { stdout: `123` },
+  });
+
+  itBundled("edgecase/UninitializedVariablesMoved", {
+    files: {
+      "/entry.ts": `
+        await import('./b.js');
+      `,
+      "/b.js": `
+        export var a = 32;
+        export var b;
+        (function (c) {
+            c.d = 1;
+        })(b ?? {});
+        +a;
+      `,
+    },
+    minifySyntax: true,
+    run: true, // pass if no thrown error
+  });
+
+  itBundled("edgecase/UsingExportDefault", {
+    files: {
+      "/entry.ts": `
+        import module from "./module.ts";
+        console.log(module.x);
+      `,
+      "/module.ts": `
+        using a = {
+          [Symbol.dispose]: () => {
+            console.log("Disposing");
+          }
+        };
+        export default {x: 1};
+      `,
+    },
+    run: {
+      stdout: "Disposing\n1",
+    },
+  });
+
+  itBundled("edgecase/UsingExportClass", {
+    files: {
+      "/entry.ts": `
+        export class A {
+          [Symbol.dispose](){
+            console.info("Disposing");
+          }
+        }
+        using a = new A();
+      `,
+    },
+    run: {
+      stdout: "Disposing",
+    },
+  });
+
+  itBundled("edgecase/UsingExportDefaultThrows", {
+    files: {
+      "/entry.ts": `
+        import("./module.ts").catch(error => {
+          console.log("Caught error:", error.message);
+        });
+      `,
+      "/module.ts": `
+        function somethingThatThrows() {
+          throw new Error("This function throws");
+        }
+
+        using disposable = {
+          [Symbol.dispose]: () => {
+            console.log("Disposing");
+          }
+        };
+
+        export default somethingThatThrows();
+      `,
+    },
+    run: {
+      stdout: "Disposing\nCaught error: This function throws",
+    },
+  });
+
+  itBundled("edgecase/UsingExportDefaultAsync", {
+    files: {
+      "/entry.ts": `
+        const result = await import("./importer.ts");
+        console.log(await result.default);
+      `,
+      "/importer.ts": `
+        async function main() {
+          using disposable = {
+            [Symbol.dispose]: () => {
+              console.log("Disposing");
+            }
+          };
+          return "Success";
+        }
+        export default main();
+      `,
+    },
+    run: {
+      stdout: "Disposing\nSuccess",
+    },
+  });
+
+  itBundled("edgecase/UsingDisposeThrowDoesntMask", {
+    files: {
+      "/entry.ts": `
+        using a = {
+          [Symbol.dispose]: () => {
+            throw new Error("Error");
+          }
+        };
+        using b = {
+          [Symbol.dispose]: () => {
+            console.log("Disposing");
+          }
+        }
+      `,
+    },
+    run: {
+      error: "error: Error",
+      stdout: "Disposing",
+    },
+  });
+
+  itBundled("edgecase/UsingExportFails", {
+    files: {
+      "/entry.ts": `
+        import a from "./import.ts";
+        console.log(a.ok);
+      `,
+      "/import.ts": `
+        using a = {
+          [Symbol.dispose]: () => {
+            console.log("Disposing");
+          },
+          ok: true,
+        };
+        export default a;
+      `,
+    },
+    run: {
+      stdout: "Disposing\ntrue",
+    },
+  });
+
+  itBundled("edgecase/NoOutWithTwoFiles", {
+    files: {
+      "/entry.ts": `
+        import index from './index.html'
+        console.log(index);
+      `,
+      "/index.html": `
+        <head></head>
+      `,
+    },
+    generateOutput: false,
+    backend: "api",
+    onAfterApiBundle: async build => {
+      expect(build.success).toEqual(true);
+      expect(build.outputs).toBeArrayOfSize(2);
+
+      expect(build.outputs[0].path).toEqual("./entry.js");
+      expect(build.outputs[0].loader).toEqual("ts");
+      expect(build.outputs[0].kind).toEqual("entry-point");
+
+      expect(build.outputs[1].loader).toEqual("file");
+      expect(build.outputs[1].kind).toEqual("asset");
+      expect(await build.outputs[1].text()).toEqual("<head></head>");
+    },
+  });
+
+  itBundled("edgecase/OutWithTwoFiles", {
+    files: {
+      "/entry.ts": `
+        import index from './index.html'
+        console.log(index);
+      `,
+      "/index.html": `
+        <head></head>
+      `,
+    },
+    generateOutput: true,
+    bundleErrors: {
+      "<bun>": ["cannot write multiple output files without an output directory"],
+    },
+    run: true,
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [
@@ -1827,5 +2084,173 @@ describe("bundler", () => {
     ["typeof require", "import.meta.require", "typeof __require"],
   ];
 
-  // itBundled('edgecase/RequireTranspilation')
+  // // itBundled('edgecase/RequireTranspilation')
+
+  itBundled("edgecase/TSConfigPathsConfigDir", {
+    files: {
+      "/src/entry.ts": /* ts */ `
+        import { value } from "alias/foo";
+        import { other } from "@scope/bar";
+        import { nested } from "deep/path";
+        import { absolute } from "abs/path";
+        console.log(value, other, nested, absolute);
+      `,
+      "/src/actual/foo.ts": `export const value = "foo";`,
+      "/src/lib/bar.ts": `export const other = "bar";`,
+      "/src/nested/deep/file.ts": `export const nested = "nested";`,
+      "/src/absolute.ts": `export const absolute = "absolute";`,
+      "/src/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}",
+          "paths": {
+            "alias/*": ["actual/*"],
+            "@scope/*": ["lib/*"],
+            "deep/path": ["nested/deep/file.ts"],
+            "abs/*": ["\${configDir}/absolute.ts"]
+          }
+        }
+      }`,
+    },
+    run: {
+      stdout: "foo bar nested absolute",
+    },
+  });
+
+  itBundled("edgecase/TSConfigBaseUrlConfigDir", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { value } from "./src/subdir/module";
+        console.log(value);
+      `,
+      "/src/lib/module.ts": `export const value = "found";`,
+      "/src/subdir/module.ts": `
+        import { value } from "absolute";
+        export { value };
+      `,
+      "tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}/src/lib",
+          "paths": {
+            "absolute": ["./module.ts"]
+          }
+        }
+      }`,
+    },
+    run: {
+      stdout: "found",
+    },
+  });
+
+  itBundled("edgecase/TSConfigPathsConfigDirWildcard", {
+    files: {
+      "/src/entry.ts": /* ts */ `
+        import { one } from "prefix/one";
+        import { two } from "prefix/two";
+        import { three } from "other/three";
+        console.log(one, two, three);
+      `,
+      "/src/modules/one.ts": `export const one = "one";`,
+      "/src/modules/two.ts": `export const two = "two";`,
+      "/src/alternate/three.ts": `export const three = "three";`,
+      "/src/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}",
+          "paths": {
+            "prefix/*": ["modules/*"],
+            "other/*": ["\${configDir}/alternate/*"]
+          }
+        }
+      }`,
+    },
+    run: {
+      stdout: "one two three",
+    },
+  });
+
+  itBundled("edgecase/TSConfigPathsConfigDirNested", {
+    files: {
+      "/deeply/nested/src/entry.ts": /* ts */ `
+        import { value } from "alias/module";
+        console.log(value);
+      `,
+      "/deeply/nested/src/actual/module.ts": `export const value = "nested";`,
+      "/deeply/nested/src/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}",
+          "paths": {
+            "alias/*": ["actual/*"]
+          }
+        }
+      }`,
+    },
+    run: {
+      stdout: "nested",
+    },
+  });
+
+  itBundled("edgecase/TSConfigPathsConfigDirMultiple", {
+    files: {
+      "/src/entry.ts": /* ts */ `
+        import { value } from "multi/module";
+        console.log(value);
+      `,
+      "/src/fallback/module.ts": `export const value = "fallback";`,
+      "/src/primary/module.ts": `export const value = "primary";`,
+      "/src/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}",
+          "paths": {
+            "multi/*": [
+              "\${configDir}/primary/*",
+              "\${configDir}/fallback/*"
+            ]
+          }
+        }
+      }`,
+    },
+    run: {
+      stdout: "primary",
+    },
+  });
+
+  itBundled("edgecase/TSConfigPathsConfigDirInvalid", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { value } from "invalid/module";
+        console.log(value);
+      `,
+      "/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}",
+          "paths": {
+            "invalid/*": ["\${configDir}/\${configDir}/*"]
+          }
+        }
+      }`,
+    },
+    bundleErrors: {
+      "/entry.ts": ['Could not resolve: "invalid/module". Maybe you need to "bun install"?'],
+    },
+  });
+
+  itBundled("edgecase/TSConfigPathsConfigDirBackslash", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { value } from "windows/style";
+        console.log(value);
+      `,
+      "/win/style.ts": `export const value = "windows";`,
+      "/tsconfig.json": /* json */ `{
+        "compilerOptions": {
+          "baseUrl": "\${configDir}",
+          "paths": {
+            "windows/*": ["win\\\\*"]
+          }
+        }
+      }`,
+    },
+    run: {
+      stdout: "windows",
+    },
+  });
 });

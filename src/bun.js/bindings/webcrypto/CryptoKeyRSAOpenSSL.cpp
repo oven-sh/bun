@@ -395,7 +395,7 @@ std::unique_ptr<CryptoKeyRSAComponents> CryptoKeyRSA::exportData() const
 
         return CryptoKeyRSAComponents::createPrivateWithAdditionalData(
             convertToBytes(n), convertToBytes(e), convertToBytes(d),
-            WTFMove(firstPrimeInfo), WTFMove(secondPrimeInfo), Vector<CryptoKeyRSAComponents::PrimeInfo> { });
+            WTFMove(firstPrimeInfo), WTFMove(secondPrimeInfo), Vector<CryptoKeyRSAComponents::PrimeInfo> {});
     }
     default:
         ASSERT_NOT_REACHED();

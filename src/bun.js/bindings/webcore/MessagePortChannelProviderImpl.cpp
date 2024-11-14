@@ -48,7 +48,7 @@ void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePo
 
 void MessagePortChannelProviderImpl::entangleLocalPortInThisProcessToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
-    m_registry.didEntangleLocalToRemote(local, remote, ProcessIdent::identifier());
+    m_registry.didEntangleLocalToRemote(local, remote, WebCore::Process::identifier());
 }
 
 void MessagePortChannelProviderImpl::messagePortDisentangled(const MessagePortIdentifier& local)

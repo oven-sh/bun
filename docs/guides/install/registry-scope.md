@@ -24,7 +24,7 @@ Bun does not read `.npmrc` files; instead private registries are configured via 
 
 ---
 
-Your `bunfig.toml` can reference environment variables. Bun automatically loads environment variables from `.env.local`, `.env.[NODE_ENV]`, and `.env`. See [Docs > Environment variables](/docs/runtime/env) for more information.
+Your `bunfig.toml` can reference environment variables. Bun automatically loads environment variables from `.env.local`, `.env.[NODE_ENV]`, and `.env`. See [Docs > Environment variables](https://bun.sh/docs/runtime/env) for more information.
 
 ```toml#bunfig.toml
 [install.scopes]
@@ -33,4 +33,4 @@ Your `bunfig.toml` can reference environment variables. Bun automatically loads 
 
 ---
 
-See [Docs > Package manager](/docs/cli/install) for complete documentation of Bun's package manager.
+See [Docs > Package manager](https://bun.sh/docs/cli/install) for complete documentation of Bun's package manager.

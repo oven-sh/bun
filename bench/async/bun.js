@@ -1,4 +1,4 @@
-import { run, bench } from "mitata";
+import { bench, run } from "../runner.mjs";
 
 bench("sync", () => {});
 bench("async", async () => {});

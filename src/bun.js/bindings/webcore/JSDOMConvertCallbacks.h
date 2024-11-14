@@ -68,7 +68,7 @@ template<typename T> struct JSConverter<IDLCallbackFunction<T>> {
     static constexpr bool needsState = false;
     static constexpr bool needsGlobalObject = false;
 
-    template <typename U>
+    template<typename U>
     static JSC::JSValue convert(const U& value)
     {
         return toJS(Detail::getPtrOrRef(value));
@@ -80,7 +80,6 @@ template<typename T> struct JSConverter<IDLCallbackFunction<T>> {
         return toJSNewlyCreated(std::forward<U>(value));
     }
 };
-
 
 template<typename T> struct Converter<IDLCallbackInterface<T>> : DefaultConverter<IDLCallbackInterface<T>> {
     template<typename ExceptionThrower = DefaultExceptionThrower>
@@ -102,7 +101,7 @@ template<typename T> struct JSConverter<IDLCallbackInterface<T>> {
     static constexpr bool needsState = false;
     static constexpr bool needsGlobalObject = false;
 
-    template <typename U>
+    template<typename U>
     static JSC::JSValue convert(const U& value)
     {
         return toJS(Detail::getPtrOrRef(value));

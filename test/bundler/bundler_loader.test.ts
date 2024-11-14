@@ -1,6 +1,8 @@
 import { fileURLToPath } from "bun";
-import { itBundled } from "./expectBundled";
 import { describe } from "bun:test";
+import fs from "node:fs";
+import { join } from "path";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", async () => {
   for (let target of ["bun", "node"] as const) {
@@ -70,6 +72,24 @@ describe("bundler", async () => {
     },
     run: {
       stdout: "'`Hello, \nworld!``${Hello}\n, world!`'",
+    },
+  });
+
+  itBundled("bun/wasm-is-copied-to-outdir", {
+    target: "bun",
+    outdir: "/out",
+
+    files: {
+      "/entry.ts": /* js */ `
+    import wasm from './add.wasm';
+    import { join } from 'path';
+    const { instance } = await WebAssembly.instantiate(await Bun.file(join(import.meta.dir, wasm)).arrayBuffer());
+    console.log(instance.exports.add(1, 2));
+  `,
+      "/add.wasm": fs.readFileSync(join(import.meta.dir, "fixtures", "add.wasm")),
+    },
+    run: {
+      stdout: "3",
     },
   });
 

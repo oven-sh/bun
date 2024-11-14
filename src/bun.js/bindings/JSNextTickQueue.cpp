@@ -87,7 +87,6 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
             globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
         }
         auto* drainFn = internalField(2).get().getObject();
-
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         MarkedArgumentBuffer drainArgs;
         JSC::call(globalObject, drainFn, drainArgs, "Failed to drain next tick queue"_s);

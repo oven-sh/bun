@@ -202,7 +202,7 @@ pub const ShellSubprocess = struct {
                     .memfd, .path, .ignore => {
                         return Writable{ .ignore = {} };
                     },
-                    .capture => {
+                    .ipc, .capture => {
                         return Writable{ .ignore = {} };
                     },
                 }
@@ -240,7 +240,7 @@ pub const ShellSubprocess = struct {
                 .path, .ignore => {
                     return Writable{ .ignore = {} };
                 },
-                .capture => {
+                .ipc, .capture => {
                     return Writable{ .ignore = {} };
                 },
             }
@@ -375,7 +375,7 @@ pub const ShellSubprocess = struct {
             if (Environment.isWindows) {
                 return switch (stdio) {
                     .inherit => Readable{ .inherit = {} },
-                    .dup2, .ignore => Readable{ .ignore = {} },
+                    .ipc, .dup2, .ignore => Readable{ .ignore = {} },
                     .path => Readable{ .ignore = {} },
                     .fd => |fd| Readable{ .fd = fd },
                     // blobs are immutable, so we should only ever get the case
@@ -396,7 +396,7 @@ pub const ShellSubprocess = struct {
 
             return switch (stdio) {
                 .inherit => Readable{ .inherit = {} },
-                .dup2, .ignore => Readable{ .ignore = {} },
+                .ipc, .dup2, .ignore => Readable{ .ignore = {} },
                 .path => Readable{ .ignore = {} },
                 .fd => Readable{ .fd = result.? },
                 // blobs are immutable, so we should only ever get the case

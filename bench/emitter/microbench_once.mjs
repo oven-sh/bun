@@ -1,4 +1,4 @@
-import { bench, run } from "mitata";
+import { bench, run } from "../runner.mjs";
 import { groupForEmitter } from "./implementations.mjs";
 
 var id = 0;

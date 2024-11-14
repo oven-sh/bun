@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("readableStreamToArrayBuffer works", async () => {
   // the test calls InternalPromise.then. this test ensures that such function is not user-overridable.

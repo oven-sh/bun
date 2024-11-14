@@ -1,7 +1,7 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
-import { it, expect } from "bun:test";
 
 it("correctly handles CRLF multiline string in CRLF terminated files", async () => {
   const testDir = tmpdirSync();

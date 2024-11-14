@@ -12,4 +12,4 @@ Bun.which("bun"); // => "/home/user/.bun/bin/bun"
 
 ---
 
-See [Docs > API > Utils](/docs/api/utils#bun-which) for complete documentation.
+See [Docs > API > Utils](https://bun.sh/docs/api/utils#bun-which) for complete documentation.

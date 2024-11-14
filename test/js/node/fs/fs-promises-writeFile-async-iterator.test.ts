@@ -1,4 +1,4 @@
-import { test, expect, mock } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { writeFile } from "fs/promises";
 import { tempDirWithFiles } from "harness";
 test("fs.promises.writeFile async iterator", async () => {

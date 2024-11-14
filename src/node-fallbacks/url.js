@@ -1,3 +1,9 @@
+/**
+ * Browser polyfill for the `"url"` module.
+ *
+ * Imported on usage in `bun build --target=browser`
+ */
+// -----------------------------------------------------------------------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -732,12 +738,15 @@ Url.prototype.parseHost = function () {
   if (host) this.hostname = host;
 };
 
-export { URL, URLSearchParams };
-export { urlParse as parse };
-export { urlResolve as resolve };
-export { urlResolveObject as resolveObject };
-export { urlFormat as format };
-export { Url as Url };
+export {
+  URL,
+  URLSearchParams,
+  Url as Url,
+  urlFormat as format,
+  urlParse as parse,
+  urlResolve as resolve,
+  urlResolveObject as resolveObject,
+};
 
 export default {
   parse: urlParse,

@@ -1,5 +1,4 @@
-import { test, expect } from "bun:test";
-import { withoutAggressiveGC } from "harness";
+import { expect, test } from "bun:test";
 
 test("load the same file 10,000 times", async () => {
   const meta = {

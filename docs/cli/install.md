@@ -68,7 +68,7 @@ $ bun install --concurrent-scripts 5
 
 ## Workspaces
 
-Bun supports `"workspaces"` in package.json. For complete documentation refer to [Package manager > Workspaces](/docs/install/workspaces).
+Bun supports `"workspaces"` in package.json. For complete documentation refer to [Package manager > Workspaces](https://bun.sh/docs/install/workspaces).
 
 ```json#package.json
 {
@@ -83,7 +83,7 @@ Bun supports `"workspaces"` in package.json. For complete documentation refer to
 
 ## Overrides and resolutions
 
-Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. These are mechanisms for specifying a version range for _metadependencies_—the dependencies of your dependencies. Refer to [Package manager > Overrides and resolutions](/docs/install/overrides) for complete documentation.
+Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. These are mechanisms for specifying a version range for _metadependencies_—the dependencies of your dependencies. Refer to [Package manager > Overrides and resolutions](https://bun.sh/docs/install/overrides) for complete documentation.
 
 ```json-diff#package.json
   {
@@ -128,7 +128,7 @@ For reproducible installs, use `--frozen-lockfile`. This will install the exact 
 $ bun install --frozen-lockfile
 ```
 
-For more information on Bun's binary lockfile `bun.lockb`, refer to [Package manager > Lockfile](/docs/install/lockfile).
+For more information on Bun's binary lockfile `bun.lockb`, refer to [Package manager > Lockfile](https://bun.sh/docs/install/lockfile).
 
 ## Dry run
 
@@ -140,7 +140,7 @@ $ bun install --dry-run
 
 ## Non-npm dependencies
 
-Bun supports installing dependencies from Git, GitHub, and local or remotely-hosted tarballs. For complete documentation refer to [Package manager > Git, GitHub, and tarball dependencies](/docs/cli/add).
+Bun supports installing dependencies from Git, GitHub, and local or remotely-hosted tarballs. For complete documentation refer to [Package manager > Git, GitHub, and tarball dependencies](https://bun.sh/docs/cli/add).
 
 ```json#package.json
 {

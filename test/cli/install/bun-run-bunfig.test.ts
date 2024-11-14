@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { realpathSync, chmodSync } from "fs";
+import { realpathSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles, toTOMLString } from "harness";
-import { join } from "path";
 
 describe.each(["bun run", "bun"])(`%s`, cmd => {
   const runCmd = cmd === "bun" ? ["-c=bunfig.toml", "run"] : ["-c=bunfig.toml"];

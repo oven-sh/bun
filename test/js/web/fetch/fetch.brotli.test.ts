@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("fetch brotli response works", async () => {
   const [firstText, secondText, { headers }] = await Promise.all([

@@ -1,6 +1,6 @@
-import { describe, test, expect } from "bun:test";
-import { bunExe, fakeNodeRun, tempDirWithFiles } from "../../harness";
+import { describe, expect, test } from "bun:test";
 import { join } from "path";
+import { fakeNodeRun, tempDirWithFiles } from "../../harness";
 
 describe("fake node cli", () => {
   test("the node cli actually works", () => {

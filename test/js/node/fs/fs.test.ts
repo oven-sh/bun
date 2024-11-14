@@ -1,55 +1,55 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { dirname, resolve, relative } from "node:path";
-import { promisify } from "node:util";
 import { bunEnv, bunExe, gc, getMaxFD, isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
+  constants,
+  copyFileSync,
+  createReadStream,
+  createWriteStream,
+  Dir,
+  Dirent,
   existsSync,
+  fdatasync,
+  fdatasyncSync,
+  fstatSync,
+  lstatSync,
   mkdirSync,
+  mkdtemp,
+  mkdtempSync,
+  openAsBlob,
   openSync,
+  promises,
   readdirSync,
   readFile,
   readFileSync,
+  readlinkSync,
   readSync,
-  writeFileSync,
-  writeSync,
-  statSync,
-  lstatSync,
-  copyFileSync,
-  rmSync,
+  readvSync,
+  realpathSync,
+  renameSync,
   rmdir,
   rmdirSync,
-  renameSync,
-  createReadStream,
-  createWriteStream,
-  promises,
-  unlinkSync,
-  mkdtempSync,
-  mkdtemp,
-  constants,
-  Dir,
-  Dirent,
+  rmSync,
   Stats,
-  realpathSync,
-  readlinkSync,
+  statSync,
   symlinkSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
   writevSync,
-  readvSync,
-  fstatSync,
-  fdatasync,
-  fdatasyncSync,
-  openAsBlob,
 } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
+import { promisify } from "node:util";
 
 import _promises, { type FileHandle } from "node:fs/promises";
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { spawnSync } from "bun";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
-import { spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -60,6 +60,19 @@ if (!import.meta.dir) {
 
 function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
+}
+
+function tmpdirTestMkdir(): string {
+  const now = Date.now().toString();
+  const tempdir = `${tmpdir()}/fs.test.ts/${now}/1234/hi`;
+  expect(existsSync(tempdir)).toBe(false);
+  const res = mkdirSync(tempdir, { recursive: true });
+  if (!res?.includes(now)) {
+    expect(res).toInclude("fs.test.ts");
+  }
+  expect(res).not.toInclude("1234");
+  expect(existsSync(tempdir)).toBe(true);
+  return tempdir;
 }
 
 it("fs.writeFile(1, data) should work when its inherited", async () => {
@@ -81,6 +94,117 @@ it("fs.openAsBlob", async () => {
 it("writing to 1, 2 are possible", () => {
   expect(fs.writeSync(1, Buffer.from("\nhello-stdout-test\n"))).toBe(19);
   expect(fs.writeSync(2, Buffer.from("\nhello-stderr-test\n"))).toBe(19);
+});
+
+describe("test-fs-assert-encoding-error", () => {
+  const testPath = join(tmpdirSync(), "assert-encoding-error");
+  const options = "test";
+  const expectedError = expect.objectContaining({
+    code: "ERR_INVALID_ARG_VALUE",
+    name: "TypeError",
+  });
+
+  it("readFile throws on invalid encoding", () => {
+    expect(() => {
+      fs.readFile(testPath, options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("readFileSync throws on invalid encoding", () => {
+    expect(() => {
+      fs.readFileSync(testPath, options);
+    }).toThrow(expectedError);
+  });
+
+  it("readdir throws on invalid encoding", () => {
+    expect(() => {
+      fs.readdir(testPath, options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("readdirSync throws on invalid encoding", () => {
+    expect(() => {
+      fs.readdirSync(testPath, options);
+    }).toThrow(expectedError);
+  });
+
+  it("readlink throws on invalid encoding", () => {
+    expect(() => {
+      fs.readlink(testPath, options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("readlinkSync throws on invalid encoding", () => {
+    expect(() => {
+      fs.readlinkSync(testPath, options);
+    }).toThrow(expectedError);
+  });
+
+  it("writeFile throws on invalid encoding", () => {
+    expect(() => {
+      fs.writeFile(testPath, "data", options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("writeFileSync throws on invalid encoding", () => {
+    expect(() => {
+      fs.writeFileSync(testPath, "data", options);
+    }).toThrow(expectedError);
+  });
+
+  it("appendFile throws on invalid encoding", () => {
+    expect(() => {
+      fs.appendFile(testPath, "data", options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("appendFileSync throws on invalid encoding", () => {
+    expect(() => {
+      fs.appendFileSync(testPath, "data", options);
+    }).toThrow(expectedError);
+  });
+
+  it("watch throws on invalid encoding", () => {
+    expect(() => {
+      fs.watch(testPath, options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("realpath throws on invalid encoding", () => {
+    expect(() => {
+      fs.realpath(testPath, options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("realpathSync throws on invalid encoding", () => {
+    expect(() => {
+      fs.realpathSync(testPath, options);
+    }).toThrow(expectedError);
+  });
+
+  it("mkdtemp throws on invalid encoding", () => {
+    expect(() => {
+      fs.mkdtemp(testPath, options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("mkdtempSync throws on invalid encoding", () => {
+    expect(() => {
+      fs.mkdtempSync(testPath, options);
+    }).toThrow(expectedError);
+  });
+
+  it.todo("ReadStream throws on invalid encoding", () => {
+    expect(() => {
+      fs.ReadStream(testPath, options);
+    }).toThrow(expectedError);
+  });
+
+  it.todo("WriteStream throws on invalid encoding", () => {
+    expect(() => {
+      fs.WriteStream(testPath, options);
+    }).toThrow(expectedError);
+  });
 });
 
 // TODO: port node.js tests for these
@@ -315,9 +439,7 @@ it("writeFileSync NOT in append SHOULD truncate the file", () => {
 
 describe("copyFileSync", () => {
   it("should work for files < 128 KB", () => {
-    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}/1234/hi`;
-    expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+    const tempdir = tmpdirTestMkdir();
 
     // that don't exist
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js");
@@ -333,9 +455,7 @@ describe("copyFileSync", () => {
   });
 
   it("should work for files > 128 KB ", () => {
-    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/1234/hi`;
-    expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+    const tempdir = tmpdirTestMkdir();
     var buffer = new Int32Array(128 * 1024);
     for (let i = 0; i < buffer.length; i++) {
       buffer[i] = i % 256;
@@ -362,9 +482,7 @@ describe("copyFileSync", () => {
   });
 
   it("FICLONE option does not error ever", () => {
-    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.FICLONE/1234/hi`;
-    expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+    const tempdir = tmpdirTestMkdir();
 
     // that don't exist
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
@@ -373,9 +491,7 @@ describe("copyFileSync", () => {
   });
 
   it("COPYFILE_EXCL works", () => {
-    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.COPYFILE_EXCL/1234/hi`;
-    expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+    const tempdir = tmpdirTestMkdir();
 
     // that don't exist
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_EXCL);
@@ -387,9 +503,7 @@ describe("copyFileSync", () => {
   if (process.platform === "linux") {
     describe("should work when copyFileRange is not available", () => {
       it("on large files", () => {
-        const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/1234/large`;
-        expect(existsSync(tempdir)).toBe(false);
-        expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+        const tempdir = tmpdirTestMkdir();
         var buffer = new Int32Array(128 * 1024);
         for (let i = 0; i < buffer.length; i++) {
           buffer[i] = i % 256;
@@ -421,9 +535,7 @@ describe("copyFileSync", () => {
       });
 
       it("on small files", () => {
-        const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/1234/small`;
-        expect(existsSync(tempdir)).toBe(false);
-        expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+        const tempdir = tmpdirTestMkdir();
         var buffer = new Int32Array(1 * 1024);
         for (let i = 0; i < buffer.length; i++) {
           buffer[i] = i % 256;
@@ -460,10 +572,20 @@ describe("copyFileSync", () => {
 
 describe("mkdirSync", () => {
   it("should create a directory", () => {
-    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.mkdirSync/1234/hi`;
+    const now = Date.now().toString();
+    const base = join(now, ".mkdirSync", "1234", "hi");
+    const tempdir = `${tmpdir()}/${base}`;
     expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+
+    const res = mkdirSync(tempdir, { recursive: true });
+    expect(res).toInclude(now);
+    expect(res).not.toInclude(".mkdirSync");
     expect(existsSync(tempdir)).toBe(true);
+  });
+
+  it("should throw ENOENT for empty string", () => {
+    expect(() => mkdirSync("", { recursive: true })).toThrow("No such file or directory");
+    expect(() => mkdirSync("")).toThrow("No such file or directory");
   });
 
   it("throws for invalid options", () => {
@@ -475,7 +597,7 @@ describe("mkdirSync", () => {
         // @ts-expect-error
         { recursive: "lalala" },
       ),
-    ).toThrow("recursive must be a boolean");
+    ).toThrow("The \"recursive\" property must be of type boolean, got string");
   });
 });
 
@@ -1089,6 +1211,11 @@ describe("readSync", () => {
       expect(count).toBe(4);
     }
     closeSync(fd);
+  });
+
+  it("works with invalid fd but zero length", () => {
+    expect(readSync(2147483640, Buffer.alloc(0))).toBe(0);
+    expect(readSync(2147483640, Buffer.alloc(10), 0, 0, 0)).toBe(0);
   });
 });
 
@@ -1883,8 +2010,10 @@ describe("fs.WriteStream", () => {
     });
 
     stream.on("finish", () => {
-      expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
-      done();
+      Bun.sleep(1000).then(() => {
+        expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+        done();
+      });
     });
   });
 
@@ -2067,7 +2196,7 @@ describe("fs.ReadStream", () => {
 
 describe("createWriteStream", () => {
   it("simple write stream finishes", async () => {
-    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStream.txt`;
+    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStream.txt`;
     const stream = createWriteStream(path);
     stream.write("Test file written successfully");
     stream.end();
@@ -2085,7 +2214,7 @@ describe("createWriteStream", () => {
   });
 
   it("writing null throws ERR_STREAM_NULL_VALUES", async () => {
-    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamNulls.txt`;
+    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamNulls.txt`;
     const stream = createWriteStream(path);
     try {
       stream.write(null);
@@ -2096,7 +2225,7 @@ describe("createWriteStream", () => {
   });
 
   it("writing null throws ERR_STREAM_NULL_VALUES (objectMode: true)", async () => {
-    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamNulls.txt`;
+    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamNulls.txt`;
     const stream = createWriteStream(path, {
       // @ts-ignore-next-line
       objectMode: true,
@@ -2110,7 +2239,7 @@ describe("createWriteStream", () => {
   });
 
   it("writing false throws ERR_INVALID_ARG_TYPE", async () => {
-    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamFalse.txt`;
+    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamFalse.txt`;
     const stream = createWriteStream(path);
     try {
       stream.write(false);
@@ -2121,7 +2250,7 @@ describe("createWriteStream", () => {
   });
 
   it("writing false throws ERR_INVALID_ARG_TYPE (objectMode: true)", async () => {
-    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamFalse.txt`;
+    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamFalse.txt`;
     const stream = createWriteStream(path, {
       // @ts-ignore-next-line
       objectMode: true,
@@ -2135,7 +2264,7 @@ describe("createWriteStream", () => {
   });
 
   it("writing in append mode should not truncate the file", async () => {
-    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamAppend.txt`;
+    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamAppend.txt`;
     const stream = createWriteStream(path, {
       // @ts-ignore-next-line
       flags: "a",
@@ -2226,7 +2355,7 @@ describe("fs/promises", () => {
   });
 
   it("writeFile", async () => {
-    const path = `${tmpdir()}/fs.test.js/${Date.now()}.writeFile.txt`;
+    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.writeFile.txt`;
     await writeFile(path, "File written successfully");
     expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });
@@ -2376,25 +2505,33 @@ describe("fs/promises", () => {
   }, 100000);
 
   for (let withFileTypes of [false, true] as const) {
-    const warmup = 1;
     const iterCount = 200;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
-      for (let i = 0; i < warmup; i++) {
-        await promises.readdir(full, { withFileTypes });
-      }
-
       const maxFD = getMaxFD();
+
+      await Promise.all(
+        Array.from({ length: iterCount }, () => promises.readdir(full, { withFileTypes, recursive: true })),
+      );
+
       const pending = new Array(iterCount);
       for (let i = 0; i < iterCount; i++) {
         pending[i] = promises.readdir(full, { recursive: true, withFileTypes });
       }
 
       const results = await Promise.all(pending);
-      for (let i = 0; i < iterCount; i++) {
-        results[i].sort();
+      // Sort the results for determinism.
+      if (withFileTypes) {
+        for (let i = 0; i < iterCount; i++) {
+          results[i].sort((a, b) => a.path.localeCompare(b.path));
+        }
+      } else {
+        for (let i = 0; i < iterCount; i++) {
+          results[i].sort();
+        }
       }
+
       expect(results[0].length).toBeGreaterThan(0);
       for (let i = 1; i < iterCount; i++) {
         expect(results[i]).toEqual(results[0]);
@@ -2407,7 +2544,11 @@ describe("fs/promises", () => {
       }
 
       const newMaxFD = getMaxFD();
-      expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
+
+      // assert we do not leak file descriptors
+      // but we might start some threads or create kqueue
+      // so we should allow *some* increase
+      expect(newMaxFD - maxFD).toBeLessThan(5);
     };
 
     const fail = async () => {
@@ -2551,11 +2692,32 @@ describe("fs/promises", () => {
   });
 });
 
+it("fstatSync(decimal)", () => {
+  expect(() => fstatSync(eval("1.0"))).not.toThrow();
+  expect(() => fstatSync(eval("0.0"))).not.toThrow();
+  expect(() => fstatSync(eval("2.0"))).not.toThrow();
+  expect(() => fstatSync(eval("-1.0"))).toThrow();
+  expect(() => fstatSync(eval("Infinity"))).toThrow();
+  expect(() => fstatSync(eval("-Infinity"))).toThrow();
+  expect(() =>
+    fstatSync(
+      // > max int32 is not valid in most C APIs still.
+      2147483647 + 1,
+    ),
+  ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  expect(() =>
+    fstatSync(
+      // max int32 is a valid fd
+      2147483647,
+    ),
+  ).toThrow(expect.objectContaining({ code: "EBADF" }));
+});
+
 it("fstat on a large file", () => {
   var dest: string = "",
     fd;
   try {
-    dest = `${tmpdir()}/fs.test.js/${Math.trunc(Math.random() * 10000000000).toString(32)}.stat.txt`;
+    dest = `${tmpdir()}/fs.test.ts/${Math.trunc(Math.random() * 10000000000).toString(32)}.stat.txt`;
     mkdirSync(dirname(dest), { recursive: true });
     const bigBuffer = new Uint8Array(1024 * 1024 * 1024);
     fd = openSync(dest, "w");
@@ -2618,6 +2780,8 @@ it("fs.constants", () => {
       COPYFILE_FICLONE: 2,
       UV_FS_COPYFILE_FICLONE_FORCE: 4,
       COPYFILE_FICLONE_FORCE: 4,
+      EXTENSIONLESS_FORMAT_JAVASCRIPT: 0,
+      EXTENSIONLESS_FORMAT_WASM: 1,
     } as any);
     return;
   }
@@ -3130,7 +3294,7 @@ it("new Stats", () => {
 it("test syscall errno, issue#4198", () => {
   const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
   expect(() => openSync(path, "r")).toThrow("No such file or directory");
-  expect(() => readSync(2147483640, Buffer.alloc(0))).toThrow("Bad file descriptor");
+  expect(() => readSync(2147483640, Buffer.alloc(1))).toThrow("Bad file descriptor");
   expect(() => readlinkSync(path)).toThrow("No such file or directory");
   expect(() => realpathSync(path)).toThrow("No such file or directory");
   expect(() => readFileSync(path)).toThrow("No such file or directory");
@@ -3284,4 +3448,31 @@ it("promises.appendFile should accept a FileHandle", async () => {
   expect(await Bun.file(x_path).text()).toBe("data");
   await fs.promises.appendFile(file, "data");
   expect(await Bun.file(x_path).text()).toBe("datadata");
+});
+
+it("chown should verify its arguments", () => {
+  expect(() => fs.chown("doesnt-matter.txt", "a", 0)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+  expect(() => fs.chown("doesnt-matter.txt", 0, "a")).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+});
+
+it("open flags verification", async () => {
+  const invalid = 4_294_967_296;
+  expect(() => fs.open(__filename, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  expect(() => fs.openSync(__filename, invalid)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  expect(async () => await fs.promises.open(__filename, invalid)).toThrow(RangeError);
+
+  expect(() => fs.open(__filename, 4294967298.5, () => {})).toThrow(
+    RangeError(`The value of "flags" is out of range. It must be an integer. Received 4294967298.5`),
+  );
+});
+
+it("open mode verification", async () => {
+  const invalid = 4_294_967_296;
+  expect(() => fs.open(__filename, 0, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  expect(() => fs.openSync(__filename, 0, invalid)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  expect(async () => await fs.promises.open(__filename, 0, invalid)).toThrow(RangeError);
+
+  expect(() => fs.open(__filename, 0, 4294967298.5, () => {})).toThrow(
+    RangeError(`The value of "mode" is out of range. It must be an integer. Received 4294967298.5`),
+  );
 });

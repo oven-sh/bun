@@ -1,9 +1,9 @@
 import { expect, it } from "bun:test";
-import tls from "tls";
-import type { Server, TLSSocket } from "node:tls";
-import type { AddressInfo } from "node:net";
-import { join } from "path";
 import { readFileSync } from "fs";
+import type { AddressInfo } from "node:net";
+import type { Server, TLSSocket } from "node:tls";
+import { join } from "path";
+import tls from "tls";
 
 const client = {
   key: readFileSync(join(import.meta.dir, "fixtures", "ec10-key.pem"), "utf8"),

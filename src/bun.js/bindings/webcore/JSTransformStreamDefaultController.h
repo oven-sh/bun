@@ -53,12 +53,11 @@ public:
         return subspaceForImpl(vm);
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
+
 protected:
     JSTransformStreamDefaultController(JSC::Structure*, JSDOMGlobalObject&);
 
     void finishCreation(JSC::VM&);
 };
-
-
 
 } // namespace WebCore

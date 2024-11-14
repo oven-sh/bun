@@ -60,6 +60,43 @@ describe("mock()", () => {
 
       expect(onData).toHaveBeenCalled();
     });
+
+    // https://github.com/oven-sh/bun/issues/13331
+    describe("checks the this value", () => {
+      const fn = jest.fn();
+      const proto = Object.getPrototypeOf(fn);
+      test.each(Object.getOwnPropertyNames(proto))("%s", fnName => {
+        if (fnName === "_isMockFunction") {
+          expect(proto[fnName]).toBe(true);
+          return;
+        }
+
+        if (typeof Object.getOwnPropertyDescriptor(proto, fnName)?.value === "function") {
+          try {
+            const protoFn = fn[fnName];
+            protoFn.call(undefined);
+            expect.unreachable();
+          } catch (e) {
+            expect(e).toHaveProperty("code", "ERR_INVALID_THIS");
+            expect(e.message).toContain("Mock");
+          }
+        } else if ("value" in Object.getOwnPropertyDescriptor(proto, fnName)) {
+          try {
+            proto[fnName].value;
+            expect.unreachable();
+          } catch (e) {
+            expect(e.message).not.toContain("unreachable");
+          }
+        } else {
+          try {
+            proto[fnName];
+            expect.unreachable();
+          } catch (e) {
+            expect(e.message).not.toContain("unreachable");
+          }
+        }
+      });
+    });
   }
   test("are callable", () => {
     const fn = jest.fn(() => 42);
@@ -75,6 +112,18 @@ describe("mock()", () => {
     expect(fn.mock.calls[1]).toBeEmpty();
     expect(fn).toHaveBeenLastCalledWith();
     expect(fn).toHaveBeenCalledWith();
+  });
+
+  test("mockName returns this", () => {
+    const fn = jest.fn();
+    expect(fn.mockName()).toBe(fn);
+    fn.mockName("foo");
+    expect(fn.getMockName()).toBe("foo");
+
+    // nullish values are ignored.
+    expect(fn.mockName("")).toBe(fn);
+
+    expect(fn.getMockName()).toBe("foo");
   });
 
   test("jest.clearAllMocks()", () => {
@@ -716,6 +765,10 @@ describe("spyOn", () => {
       },
     };
     const fn = spyOn(obj, "original");
+    expect(fn.getMockName()).toBe("original");
+    fn.mockName("not the original");
+    expect(fn.getMockName()).toBe("not the original");
+    expect(obj.original.name).toBe("not the original");
     fn.mockImplementation(() => 43);
     expect(fn).toBe(obj.original);
     expect(obj.original()).toBe(43);

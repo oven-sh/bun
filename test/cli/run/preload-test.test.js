@@ -1,9 +1,9 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
+import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
-import { bunEnv, bunExe } from "harness";
 const preloadModule = `
 import {plugin} from 'bun';
 

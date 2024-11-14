@@ -690,14 +690,14 @@ pub const WriteFileWaitFromLockedValueTask = struct {
             .Error => |*err_ref| {
                 file_blob.detach();
                 _ = value.use();
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 bun.destroy(this);
                 promise.reject(globalThis, err_ref.toJS(globalThis));
             },
             .Used => {
                 file_blob.detach();
                 _ = value.use();
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 bun.destroy(this);
                 promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
             },
@@ -710,26 +710,18 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                 var blob = value.use();
                 // TODO: this should be one promise not two!
                 const new_promise = Blob.writeFileWithSourceDestination(globalThis, &blob, &file_blob, this.mkdirp_if_not_exists);
-                if (new_promise.asAnyPromise()) |_promise| {
-                    switch (_promise.status(globalThis.vm())) {
-                        .Pending => {
-                            // Fulfill the new promise using the old promise
-                            promise.resolve(
-                                globalThis,
-                                new_promise,
-                            );
-                        },
-                        .Rejected => {
-                            promise.reject(globalThis, _promise.result(globalThis.vm()));
-                        },
-                        else => {
-                            promise.resolve(globalThis, _promise.result(globalThis.vm()));
-                        },
+                if (new_promise.asAnyPromise()) |p| {
+                    switch (p.unwrap(globalThis.vm(), .mark_handled)) {
+                        // Fulfill the new promise using the pending promise
+                        .pending => promise.resolve(globalThis, new_promise),
+
+                        .rejected => |err| promise.reject(globalThis, err),
+                        .fulfilled => |result| promise.resolve(globalThis, result),
                     }
                 }
 
                 file_blob.detach();
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 bun.destroy(this);
             },
             .Locked => {

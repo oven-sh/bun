@@ -1,5 +1,5 @@
-import { callbackify } from "util";
 import { createTest } from "node-harness";
+import { callbackify } from "util";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 

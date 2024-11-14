@@ -45,6 +45,7 @@ pub const Run = struct {
     pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
         JSC.markBinding(@src());
         bun.JSC.initialize(false);
+        bun.Analytics.Features.standalone_executable += 1;
 
         const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
         graph_ptr.* = graph;
@@ -92,6 +93,8 @@ pub const Run = struct {
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
+        b.options.experimental_css = ctx.bundler_options.experimental_css;
+
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
         switch (ctx.debug.macros) {
@@ -106,9 +109,6 @@ pub const Run = struct {
 
         b.options.env.behavior = .load_all_without_inlining;
 
-        b.configureRouter(false) catch {
-            failWithBuildError(vm);
-        };
         b.configureDefines() catch {
             failWithBuildError(vm);
         };
@@ -127,7 +127,7 @@ pub const Run = struct {
 
     fn doPreconnect(preconnect: []const string) void {
         if (preconnect.len == 0) return;
-        bun.HTTPThread.init();
+        bun.HTTPThread.init(&.{});
 
         for (preconnect) |url_str| {
             const url = bun.URL.parse(url_str);
@@ -251,9 +251,6 @@ pub const Run = struct {
             .unspecified => {},
         }
 
-        b.configureRouter(false) catch {
-            failWithBuildError(vm);
-        };
         b.configureDefines() catch {
             failWithBuildError(vm);
         };
@@ -306,7 +303,7 @@ pub const Run = struct {
         }
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
-            if (promise.status(vm.global.vm()) == .Rejected) {
+            if (promise.status(vm.global.vm()) == .rejected) {
                 const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
                 if (vm.hot_reload != .none or handled) {
@@ -374,7 +371,7 @@ pub const Run = struct {
         {
             if (this.vm.isWatcherEnabled()) {
                 var prev_promise = this.vm.pending_internal_promise;
-                if (prev_promise.status(vm.global.vm()) == .Rejected) {
+                if (prev_promise.status(vm.global.vm()) == .rejected) {
                     _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                 }
 
@@ -383,7 +380,7 @@ pub const Run = struct {
                         vm.tick();
 
                         // Report exceptions in hot-reloaded modules
-                        if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
+                        if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
                             prev_promise = this.vm.pending_internal_promise;
                             _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                             continue;
@@ -394,7 +391,7 @@ pub const Run = struct {
 
                     vm.onBeforeExit();
 
-                    if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
+                    if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
                         prev_promise = this.vm.pending_internal_promise;
                         _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                     }
@@ -402,7 +399,7 @@ pub const Run = struct {
                     vm.eventLoop().tickPossiblyForever();
                 }
 
-                if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
+                if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
                     prev_promise = this.vm.pending_internal_promise;
                     _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                 }
@@ -417,8 +414,8 @@ pub const Run = struct {
                         const result = vm.entry_point_result.value.get() orelse .undefined;
                         if (result.asAnyPromise()) |promise| {
                             switch (promise.status(vm.jsc)) {
-                                .Pending => {
-                                    result._then(vm.global, .undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
+                                .pending => {
+                                    result._then2(vm.global, .undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
 
                                     vm.tick();
                                     vm.eventLoop().autoTickActive();
@@ -498,12 +495,10 @@ noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
 
     const writer = buffered_writer.writer();
 
-    switch (Output.enable_ansi_colors_stderr) {
-        inline else => |enable_colors| vm.log.printForLogLevelWithEnableAnsiColors(writer, enable_colors) catch {},
-    }
+    vm.log.print(writer) catch {};
 }
 
-noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
+pub noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
     @setCold(true);
     dumpBuildError(vm);
     Global.exit(1);

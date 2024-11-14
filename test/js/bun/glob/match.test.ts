@@ -22,8 +22,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-import { expect, test, describe } from "bun:test";
 import { Glob } from "bun";
+import { describe, expect, test } from "bun:test";
 
 describe("Glob.match", () => {
   test("single wildcard", () => {

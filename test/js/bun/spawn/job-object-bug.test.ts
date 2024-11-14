@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { it, expect } from "bun:test";
+import { expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 

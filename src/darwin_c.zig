@@ -363,7 +363,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ENOEXEC, "Exec format error");
         map.put(.ENOLCK, "No locks available");
         map.put(.ENOLINK, "Reserved");
-        map.put(.ENOMEM, "Cannot allocate memory");
+        map.put(.ENOMEM, "Out of memory");
         map.put(.ENOMSG, "No message of desired type");
         map.put(.ENOPOLICY, "No such policy registered");
         map.put(.ENOPROTOOPT, "Protocol not available");
@@ -553,8 +553,7 @@ pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
 
 pub fn getFreeMemory() u64 {
-    // NOT IMPLEMENTED YET
-    return 1024 * 1024;
+    return @extern(*const fn () callconv(.C) u64, .{ .name = "Bun__Os__getFreeMemory" })();
 }
 
 pub fn getTotalMemory() u64 {
@@ -827,9 +826,9 @@ pub const sockaddr_dl = extern struct {
     sdl_slen: u8, // link layer selector length */
     sdl_data: [12]u8, // minimum work area, can be larger; contains both if name and ll address */
     //#ifndef __APPLE__
-    //	/* For TokenRing */
-    //	u_short sdl_rcf;        /* source routing control */
-    //	u_short sdl_route[16];  /* source routing information */
+    //    /* For TokenRing */
+    //    u_short sdl_rcf;        /* source routing control */
+    //    u_short sdl_route[16];  /* source routing information */
     //#endif
 };
 
@@ -889,3 +888,7 @@ pub const CLOCK_THREAD_CPUTIME_ID = 1;
 pub const netdb = @cImport({
     @cInclude("netdb.h");
 });
+
+pub extern fn memset_pattern4(buf: [*]u8, pattern: [*]const u8, len: usize) void;
+pub extern fn memset_pattern8(buf: [*]u8, pattern: [*]const u8, len: usize) void;
+pub extern fn memset_pattern16(buf: [*]u8, pattern: [*]const u8, len: usize) void;

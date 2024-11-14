@@ -48,6 +48,7 @@ typedef union DataCellValue {
     int64_t bigint;
     uint8_t boolean;
     double date;
+    double date_with_time_zone;
     size_t bytea[2];
     WTF::StringImpl* json;
     DataCellArray array;
@@ -62,10 +63,11 @@ enum class DataCellTag : uint8_t {
     Bigint = 4,
     Boolean = 5,
     Date = 6,
-    Bytea = 7,
-    Json = 8,
-    Array = 9,
-    TypedArray = 10,
+    DateWithTimeZone = 7,
+    Bytea = 8,
+    Json = 9,
+    Array = 10,
+    TypedArray = 11,
 };
 
 typedef struct DataCell {
@@ -96,9 +98,11 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     case DataCellTag::Boolean:
         return jsBoolean(cell.value.boolean);
         break;
-    case DataCellTag::Date:
+    case DataCellTag::DateWithTimeZone:
+    case DataCellTag::Date: {
         return JSC::DateInstance::create(vm, globalObject->dateStructure(), cell.value.date);
         break;
+    }
     case DataCellTag::Bytea: {
         Zig::GlobalObject* zigGlobal = jsCast<Zig::GlobalObject*>(globalObject);
         auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
@@ -179,6 +183,17 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
 
             if (length > 0) {
                 memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(uint16_t));
+            }
+            return array;
+        }
+        case JSC::JSType::Float16ArrayType: {
+            JSC::JSFloat16Array* array = JSC::JSFloat16Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeFloat16, false), length);
+            if (UNLIKELY(array == nullptr)) {
+                return {};
+            }
+
+            if (length > 0) {
+                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * 2); // sizeof(float16_t)
             }
             return array;
         }

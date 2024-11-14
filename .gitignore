@@ -49,7 +49,6 @@
 /build-*/
 /bun-webkit
 /kcov-out
-/src/deps/libuv
 /test-report.json
 /test-report.md
 /test.js
@@ -117,11 +116,6 @@ sign.json
 src/bun.js/bindings-obj
 src/bun.js/bindings/GeneratedJS2Native.zig
 src/bun.js/debug-bindings-obj
-src/deps/c-ares/build
-src/deps/libiconv
-src/deps/openssl
-src/deps/PLCrashReporter/
-src/deps/s2n-tls
 src/deps/zig-clap/.gitattributes
 src/deps/zig-clap/.github
 src/deps/zig-clap/example
@@ -146,3 +140,31 @@ zig-out
 test/node.js/upstream
 .zig-cache
 scripts/env.local
+*.generated.ts
+src/bake/generated.ts
+
+# Dependencies
+/vendor
+
+# Dependencies (before CMake)
+# These can be removed in the far future
+/src/bun.js/WebKit
+/src/deps/WebKit
+/src/deps/boringssl
+/src/deps/brotli
+/src/deps/c*ares
+/src/deps/lol*html
+/src/deps/libarchive
+/src/deps/libdeflate
+/src/deps/libuv
+/src/deps/ls*hpack
+/src/deps/mimalloc
+/src/deps/picohttpparser
+/src/deps/tinycc
+/src/deps/zstd
+/src/deps/zlib
+/src/deps/zig
+
+# Generated files
+
+.buildkite/ci.yml

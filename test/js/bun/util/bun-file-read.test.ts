@@ -1,4 +1,4 @@
-import { it, expect } from "bun:test";
+import { expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 
 it("offset should work in Bun.file() #4963", async () => {

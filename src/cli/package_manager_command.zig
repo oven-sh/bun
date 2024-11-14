@@ -24,6 +24,8 @@ const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
 const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
 const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
 const Environment = bun.Environment;
+pub const PackCommand = @import("./pack_command.zig").PackCommand;
+const Npm = Install.Npm;
 
 const ByName = struct {
     dependencies: []const Dependency,
@@ -62,7 +64,8 @@ pub const PackageManagerCommand = struct {
         lockfile_buffer[lockfile_.len] = 0;
         const lockfile = lockfile_buffer[0..lockfile_.len :0];
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
-        var pm = try PackageManager.init(ctx, cli, PackageManager.Subcommand.pm);
+        var pm, const cwd = try PackageManager.init(ctx, cli, PackageManager.Subcommand.pm);
+        defer ctx.allocator.free(cwd);
 
         const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, lockfile, true);
         handleLoadLockfileErrors(load_lockfile, pm);
@@ -98,10 +101,16 @@ pub const PackageManagerCommand = struct {
         Output.prettyln(
             \\<b><blue>bun pm<r>: Package manager utilities
             \\
+            \\  bun pm <b>pack<r>               create a tarball of the current workspace
+            \\  <d>├<r>  <cyan>--dry-run<r>              do everything except for writing the tarball to disk
+            \\  <d>├<r>  <cyan>--destination<r>          the directory the tarball will be saved in
+            \\  <d>├<r>  <cyan>--ignore-scripts<r>       don't run pre/postpack and prepare scripts
+            \\  <d>└<r>  <cyan>--gzip-level<r>           specify a custom compression level for gzip (0-9, default is 9)
             \\  bun pm <b>bin<r>                print the path to bin folder
             \\  <d>└<r>  <cyan>-g<r>                     print the <b>global<r> path to bin folder
             \\  bun pm <b>ls<r>                 list the dependency tree according to the current lockfile
             \\  <d>└<r>  <cyan>--all<r>                  list the entire dependency tree according to the current lockfile
+            \\  bun pm <b>whoami<r>             print the current npm username
             \\  bun pm <b>hash<r>               generate & print the hash of the current lockfile
             \\  bun pm <b>hash-string<r>        print the string used to hash the lockfile
             \\  bun pm <b>hash-print<r>         print the hash stored in the current lockfile
@@ -122,7 +131,7 @@ pub const PackageManagerCommand = struct {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
-        var pm = PackageManager.init(ctx, cli, PackageManager.Subcommand.pm) catch |err| {
+        var pm, const cwd = PackageManager.init(ctx, cli, PackageManager.Subcommand.pm) catch |err| {
             if (err == error.MissingPackageJSON) {
                 var cwd_buf: bun.PathBuffer = undefined;
                 if (bun.getcwd(&cwd_buf)) |cwd| {
@@ -135,13 +144,34 @@ pub const PackageManagerCommand = struct {
             }
             return err;
         };
+        defer ctx.allocator.free(cwd);
 
         const subcommand = getSubcommand(&pm.options.positionals);
         if (pm.options.global) {
             try pm.setupGlobalDir(ctx);
         }
 
-        if (strings.eqlComptime(subcommand, "bin")) {
+        if (strings.eqlComptime(subcommand, "pack")) {
+            try PackCommand.execWithManager(ctx, pm);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "whoami")) {
+            const username = Npm.whoami(ctx.allocator, pm) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                    error.NeedAuth => {
+                        Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
+                    },
+                    error.ProbablyInvalidAuth => {
+                        Output.errGeneric("failed to authenticate with registry '{}'", .{
+                            bun.fmt.redactedNpmUrl(pm.options.scope.url.href),
+                        });
+                    },
+                }
+                Global.crash();
+            };
+            Output.println("{s}", .{username});
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "bin")) {
             const output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));
             Output.prettyln("{s}", .{output_path});
             if (Output.stdout_descriptor_type == .terminal) {

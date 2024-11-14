@@ -71,6 +71,9 @@ enum ExceptionCode {
 
     // Used to indicate to the bindings that a JS exception was thrown below and it should be propagated.
     ExistingExceptionError,
+
+    InvalidThisError,
+    InvalidURLError,
 };
 
 } // namespace WebCore
@@ -116,7 +119,9 @@ template<> struct EnumTraits<WebCore::ExceptionCode> {
         WebCore::ExceptionCode::TypeError,
         WebCore::ExceptionCode::JSSyntaxError,
         WebCore::ExceptionCode::StackOverflowError,
-        WebCore::ExceptionCode::ExistingExceptionError>;
+        WebCore::ExceptionCode::ExistingExceptionError,
+        WebCore::ExceptionCode::InvalidThisError,
+        WebCore::ExceptionCode::InvalidURLError>;
 };
 
 } // namespace WTF

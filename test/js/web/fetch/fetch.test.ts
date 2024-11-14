@@ -1,11 +1,11 @@
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
-import { afterAll, afterEach, beforeAll, describe, expect, it, beforeEach } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, gc, isWindows, tls, tmpdirSync, withoutAggressiveGC } from "harness";
 import { mkfifo } from "mkfifo";
-import { gzipSync } from "zlib";
-import { join } from "path";
-import { gc, withoutAggressiveGC, isWindows, bunExe, bunEnv, tmpdirSync, tls } from "harness";
 import net from "net";
+import { join } from "path";
+import { gzipSync } from "zlib";
 
 const tmp_dir = tmpdirSync();
 
@@ -1170,7 +1170,11 @@ describe("Response", () => {
   describe("should consume body correctly", async () => {
     it("with text first", async () => {
       var response = new Response("<div>hello</div>");
-      expect(await response.text()).toBe("<div>hello</div>");
+      expect(response.bodyUsed).toBe(false);
+      const promise = response.text();
+      expect(response.bodyUsed).toBe(true);
+      expect(await promise).toBe("<div>hello</div>");
+      expect(response.bodyUsed).toBe(true);
       expect(async () => {
         await response.text();
       }).toThrow("Body already used");
@@ -1189,7 +1193,11 @@ describe("Response", () => {
     });
     it("with json first", async () => {
       var response = new Response('{ "hello": "world" }');
-      expect(await response.json()).toEqual({ "hello": "world" });
+      expect(response.bodyUsed).toBe(false);
+      const promise = response.json();
+      expect(response.bodyUsed).toBe(true);
+      expect(await promise).toEqual({ "hello": "world" });
+      expect(response.bodyUsed).toBe(true);
       expect(async () => {
         await response.json();
       }).toThrow("Body already used");
@@ -1212,7 +1220,11 @@ describe("Response", () => {
           "content-type": "multipart/form-data;boundary=boundary",
         },
       });
-      expect(await response.formData()).toBeInstanceOf(FormData);
+      expect(response.bodyUsed).toBe(false);
+      const promise = response.formData();
+      expect(response.bodyUsed).toBe(true);
+      expect(await promise).toBeInstanceOf(FormData);
+      expect(response.bodyUsed).toBe(true);
       expect(async () => {
         await response.formData();
       }).toThrow("Body already used");
@@ -1231,14 +1243,16 @@ describe("Response", () => {
     });
     it("with blob first", async () => {
       var response = new Response("<div>hello</div>");
-      expect(response.body instanceof ReadableStream).toBe(true);
-      expect(response.headers instanceof Headers).toBe(true);
-      expect(response.type).toBe("default");
-      var blob = await response.blob();
-      expect(blob).toBeInstanceOf(Blob);
-      expect(blob.stream()).toBeInstanceOf(ReadableStream);
+      expect(response.bodyUsed).toBe(false);
+      const promise = response.blob();
+      expect(response.bodyUsed).toBe(true);
+      expect(await promise).toBeInstanceOf(Blob);
+      expect(response.bodyUsed).toBe(true);
       expect(async () => {
         await response.blob();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.bytes();
       }).toThrow("Body already used");
       expect(async () => {
         await response.text();
@@ -1255,7 +1269,11 @@ describe("Response", () => {
     });
     it("with arrayBuffer first", async () => {
       var response = new Response("<div>hello</div>");
-      expect(await response.arrayBuffer()).toBeInstanceOf(ArrayBuffer);
+      expect(response.bodyUsed).toBe(false);
+      const promise = response.arrayBuffer();
+      expect(response.bodyUsed).toBe(true);
+      expect(await promise).toBeInstanceOf(ArrayBuffer);
+      expect(response.bodyUsed).toBe(true);
       expect(async () => {
         await response.arrayBuffer();
       }).toThrow("Body already used");

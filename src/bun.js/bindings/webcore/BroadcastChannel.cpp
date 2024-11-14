@@ -88,6 +88,8 @@ public:
     String name() const { return m_name.isolatedCopy(); }
     ScriptExecutionContextIdentifier contextId() const { return m_contextId; }
 
+    virtual ~MainThreadBridge() = default;
+
 private:
     MainThreadBridge(BroadcastChannel&, const String& name, ScriptExecutionContext&);
 

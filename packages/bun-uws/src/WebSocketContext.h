@@ -252,6 +252,8 @@ private:
 
         /* Handle socket disconnections */
         us_socket_context_on_close(SSL, getSocketContext(), [](auto *s, int code, void *reason) {
+            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
+
             /* For whatever reason, if we already have emitted close event, do not emit it again */
             WebSocketData *webSocketData = (WebSocketData *) (us_socket_ext(SSL, s));
             if (!webSocketData->isShuttingDown) {
@@ -371,6 +373,7 @@ private:
 
         /* Handle FIN, HTTP does not support half-closed sockets, so simply close */
         us_socket_context_on_end(SSL, getSocketContext(), [](auto *s) {
+            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
             /* If we get a fin, we just close I guess */
             us_socket_close(SSL, (us_socket_t *) s, 0, nullptr);

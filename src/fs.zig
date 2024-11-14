@@ -19,6 +19,7 @@ const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
 const PathString = bun.PathString;
 const allocators = bun.allocators;
+const OOM = bun.OOM;
 
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const PathBuffer = bun.PathBuffer;
@@ -36,7 +37,7 @@ pub const Preallocate = struct {
 };
 
 pub const FileSystem = struct {
-    top_level_dir: string = if (Environment.isWindows) "C:\\" else "/",
+    top_level_dir: string,
 
     // used on subsequent updates
     top_level_dir_buf: bun.PathBuffer = undefined,
@@ -45,8 +46,6 @@ pub const FileSystem = struct {
 
     dirname_store: *DirnameStore,
     filename_store: *FilenameStore,
-
-    _tmpdir: ?std.fs.Dir = null,
 
     threadlocal var tmpdir_handle: ?std.fs.Dir = null;
 
@@ -136,7 +135,6 @@ pub const FileSystem = struct {
             };
             instance_loaded = true;
 
-            instance.fs.parent_fs = &instance;
             _ = DirEntry.EntryStore.init(allocator);
         }
 
@@ -191,20 +189,20 @@ pub const FileSystem = struct {
                 const name = try strings.StringOrTinyString.initAppendIfNeeded(
                     name_slice,
                     *FileSystem.FilenameStore,
-                    &FileSystem.FilenameStore.instance,
+                    FileSystem.FilenameStore.instance,
                 );
 
                 const name_lowercased = try strings.StringOrTinyString.initLowerCaseAppendIfNeeded(
                     name_slice,
                     *FileSystem.FilenameStore,
-                    &FileSystem.FilenameStore.instance,
+                    FileSystem.FilenameStore.instance,
                 );
 
                 break :brk EntryStore.instance.append(.{
                     .base_ = name,
                     .base_lowercase_ = name_lowercased,
                     .dir = dir.dir,
-                    .mutex = Mutex.init(),
+                    .mutex = .{},
                     // Call "stat" lazily for performance. The "@material-ui/icons" package
                     // contains a directory with over 11,000 entries in it and running "stat"
                     // for each entry was a big performance issue for that package.
@@ -533,10 +531,9 @@ pub const FileSystem = struct {
     }
 
     pub const RealFS = struct {
-        entries_mutex: Mutex = Mutex.init(),
+        entries_mutex: Mutex = .{},
         entries: *EntriesOption.Map,
         cwd: string,
-        parent_fs: *FileSystem = undefined,
         file_limit: usize = 32,
         file_quota: usize = 32,
 
@@ -617,7 +614,7 @@ pub const FileSystem = struct {
             var existing = this.entries.atIndex(index) orelse return null;
             if (existing.* == .entries) {
                 if (existing.entries.generation < generation) {
-                    var handle = bun.openDirA(std.fs.cwd(), existing.entries.dir) catch |err| {
+                    var handle = bun.openDirForIteration(std.fs.cwd(), existing.entries.dir) catch |err| {
                         existing.entries.data.clearAndFree(bun.fs_allocator);
 
                         return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
@@ -991,7 +988,7 @@ pub const FileSystem = struct {
             return dir;
         }
 
-        fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) !*EntriesOption {
+        fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) OOM!*EntriesOption {
             if (comptime FeatureFlags.enable_entry_cache) {
                 var get_or_put_result = try fs.entries.getOrPut(dir);
                 const opt = try fs.entries.put(&get_or_put_result, EntriesOption{
@@ -1036,7 +1033,7 @@ pub const FileSystem = struct {
             comptime Iterator: type,
             iterator: Iterator,
         ) !*EntriesOption {
-            var dir = bun.strings.pathWithoutTrailingSlashOne(dir_maybe_trail_slash);
+            var dir = bun.strings.withoutTrailingSlashWindowsPath(dir_maybe_trail_slash);
 
             bun.resolver.Resolver.assertValidCacheKey(dir);
             var cache_result: ?allocators.Result = null;
@@ -1092,8 +1089,7 @@ pub const FileSystem = struct {
                 iterator,
             ) catch |err| {
                 if (in_place) |existing| existing.data.clearAndFree(bun.fs_allocator);
-
-                return fs.readDirectoryError(dir, err) catch bun.outOfMemory();
+                return try fs.readDirectoryError(dir, err);
             };
 
             if (comptime FeatureFlags.enable_entry_cache) {
@@ -1407,7 +1403,7 @@ pub const FileSystem = struct {
             return cache;
         }
 
-        //     	// Stores the file entries for directories we've listed before
+        //         // Stores the file entries for directories we've listed before
         // entries_mutex: std.Mutex
         // entries      map[string]entriesOrErr
 
@@ -1616,7 +1612,7 @@ pub const PathName = struct {
             dir = _path[0 .. dir.len + 2];
         }
 
-        return PathName{
+        return .{
             .dir = dir,
             .base = base,
             .ext = ext,
@@ -1629,9 +1625,15 @@ threadlocal var normalize_buf: [1024]u8 = undefined;
 threadlocal var join_buf: [1024]u8 = undefined;
 
 pub const Path = struct {
+    /// The display path. In the bundler, this is relative to the current
+    /// working directory. Since it can be emitted in bundles (and used
+    /// for content hashes), this should contain forward slashes on Windows.
     pretty: string,
+    /// The location of this resource. For the `file` namespace, this is
+    /// an absolute path with native slashes.
     text: string,
-    namespace: string = "unspecified",
+    namespace: string,
+    // TODO(@paperdave): investigate removing or simplifying this property (it's 64 bytes)
     name: PathName,
     is_disabled: bool = false,
     is_symlink: bool = false,
@@ -1650,6 +1652,14 @@ pub const Path = struct {
         hasher.update("::::::::");
         hasher.update(this.text);
         return hasher.final();
+    }
+
+    /// This hash is used by the hot-module-reloading client in order to
+    /// identify modules. Since that code is JavaScript, the hash must remain in
+    /// range [-MAX_SAFE_INTEGER, MAX_SAFE_INTEGER] or else information is lost
+    /// due to floating-point precision.
+    pub fn hashForKit(path: Path) u52 {
+        return @truncate(path.hashKey());
     }
 
     pub fn packageName(this: *const Path) ?string {
@@ -1851,13 +1861,23 @@ pub const Path = struct {
         };
     }
 
-    pub fn initWithNamespaceVirtual(comptime text: string, comptime namespace: string, comptime package: string) Path {
-        return Path{
-            .pretty = comptime "node:" ++ package,
+    pub inline fn initWithNamespaceVirtual(comptime text: string, comptime namespace: string, comptime package: string) Path {
+        return comptime Path{
+            .pretty = namespace ++ ":" ++ package,
             .is_symlink = true,
             .text = text,
             .namespace = namespace,
             .name = PathName.init(text),
+        };
+    }
+
+    pub inline fn initForKitBuiltIn(comptime namespace: string, comptime package: string) Path {
+        return comptime Path{
+            .pretty = namespace ++ ":" ++ package,
+            .is_symlink = true,
+            .text = "_bun/" ++ package,
+            .namespace = namespace,
+            .name = PathName.init(package),
         };
     }
 

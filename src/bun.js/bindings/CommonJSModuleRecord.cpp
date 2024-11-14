@@ -225,7 +225,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoadModule, (JSGlobalObject * lexicalGlobalOb
     if (!moduleObject->load(vm, globalObject, exception)) {
         throwException(globalObject, throwScope, exception.get());
         exception.clear();
-        return JSValue::encode({});
+        return {};
     }
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(true)));
@@ -511,11 +511,11 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     String sourceString = callframe->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSValue filenameValue = callframe->argument(1);
     String filenameString = filenameValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     String wrappedString = makeString(
         "(function(exports,require,module,__filename,__dirname){"_s,
@@ -536,7 +536,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
 #else
     JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
 #endif
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     String dirnameString = dirnameValue.toWTFString(globalObject);
 
@@ -552,7 +552,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     if (exception) {
         throwException(globalObject, throwScope, exception.get());
         exception.clear();
-        return JSValue::encode({});
+        return {};
     }
 
     return JSValue::encode(jsUndefined());
@@ -763,7 +763,7 @@ void populateESMExports(
     bool ignoreESModuleAnnotation)
 {
     auto& vm = globalObject->vm();
-    Identifier esModuleMarker = builtinNames(vm).__esModulePublicName();
+    const Identifier& esModuleMarker = vm.propertyNames->__esModule;
 
     // Bun's intepretation of the "__esModule" annotation:
     //
@@ -795,9 +795,23 @@ void populateESMExports(
     //       unit tests of build tools. Happy to revisit this if users file an issue.
     bool needsToAssignDefault = true;
 
-    if (result.isObject()) {
-        auto* exports = result.getObject();
-        bool hasESModuleMarker = !ignoreESModuleAnnotation && exports->hasProperty(globalObject, esModuleMarker);
+    if (auto* exports = result.getObject()) {
+        bool hasESModuleMarker = false;
+        if (!ignoreESModuleAnnotation) {
+            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            if (exports->getPropertySlot(globalObject, esModuleMarker, slot)) {
+                JSValue value = slot.getValue(globalObject, esModuleMarker);
+                if (!value.isUndefinedOrNull()) {
+                    if (value.pureToBoolean() == TriState::True) {
+                        hasESModuleMarker = true;
+                    }
+                }
+            }
+            if (catchScope.exception()) {
+                catchScope.clearException();
+            }
+        }
 
         auto* structure = exports->structure();
         uint32_t size = structure->inlineSize() + structure->outOfLineSize();
@@ -814,12 +828,13 @@ void populateESMExports(
             if (canPerformFastEnumeration(structure)) {
                 exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     auto key = entry.key();
-                    if (key->isSymbol() || entry.attributes() & PropertyAttribute::DontEnum || key == esModuleMarker)
+                    if (key->isSymbol() || key == esModuleMarker)
                         return true;
 
                     needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
 
                     JSValue value = exports->getDirect(entry.offset());
+
                     exportNames.append(Identifier::fromUid(vm, key));
                     exportValues.append(value);
                     return true;
@@ -844,6 +859,14 @@ void populateESMExports(
                     if (!exports->getPropertySlot(globalObject, property, slot))
                         continue;
 
+                    // Allow DontEnum properties which are not getter/setters
+                    // https://github.com/oven-sh/bun/issues/4432
+                    if (slot.attributes() & PropertyAttribute::DontEnum) {
+                        if (!(slot.isValue() || slot.isCustom())) {
+                            continue;
+                        }
+                    }
+
                     exportNames.append(property);
 
                     JSValue getterResult = slot.getValue(globalObject, property);
@@ -864,7 +887,7 @@ void populateESMExports(
         } else if (canPerformFastEnumeration(structure)) {
             exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 auto key = entry.key();
-                if (key->isSymbol() || entry.attributes() & PropertyAttribute::DontEnum || key == vm.propertyNames->defaultKeyword)
+                if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
                     return true;
 
                 JSValue value = exports->getDirect(entry.offset());
@@ -875,7 +898,7 @@ void populateESMExports(
             });
         } else {
             JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-            exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
+            exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
             if (catchScope.exception()) {
                 catchScope.clearExceptionExceptTermination();
                 return;
@@ -892,6 +915,14 @@ void populateESMExports(
                 JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
                 if (!exports->getPropertySlot(globalObject, property, slot))
                     continue;
+
+                if (slot.attributes() & PropertyAttribute::DontEnum) {
+                    // Allow DontEnum properties which are not getter/setters
+                    // https://github.com/oven-sh/bun/issues/4432
+                    if (!(slot.isValue() || slot.isCustom())) {
+                        continue;
+                    }
+                }
 
                 exportNames.append(property);
 
@@ -923,6 +954,11 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
     auto result = this->exportsObject();
 
     populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation);
+}
+
+void JSCommonJSModule::setExportsObject(JSC::JSValue exportsObject)
+{
+    this->putDirect(vm(), JSC::PropertyName(clientData(vm())->builtinNames().exportsPublicName()), exportsObject, 0);
 }
 
 JSValue JSCommonJSModule::exportsObject()
@@ -986,12 +1022,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     JSValue specifierValue = callframe->argument(0);
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-
-    // Special-case for "process" to just return the process object directly.
-    if (UNLIKELY(specifier == "process"_s || specifier == "node:process"_s)) {
-        jsCast<JSCommonJSModule*>(callframe->argument(1))->putDirect(vm, builtinNames(vm).exportsPublicName(), globalObject->processObject(), 0);
-        return JSValue::encode(globalObject->processObject());
-    }
 
     WTF::String referrer = thisObject->id().toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});

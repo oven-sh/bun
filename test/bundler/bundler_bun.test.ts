@@ -1,6 +1,6 @@
-import { itBundled } from "./expectBundled";
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("bun/embedded-sqlite-file", {
@@ -92,5 +92,14 @@ error: Hello World`,
         expect(stderr).toInclude("entry.ts:6:19");
       },
     },
+  });
+  itBundled("bun/unicode comment", {
+    target: "bun",
+    files: {
+      "/a.ts": /* js */ `
+        /* æ */
+      `,
+    },
+    run: { stdout: "" },
   });
 });

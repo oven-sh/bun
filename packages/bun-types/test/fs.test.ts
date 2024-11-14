@@ -1,4 +1,4 @@
-import { constants, watch, readdir } from "node:fs";
+import { constants, readdir, watch } from "node:fs";
 
 constants.O_APPEND;
 

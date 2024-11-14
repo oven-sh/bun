@@ -2,7 +2,7 @@ Bun provides a universal plugin API that can be used to extend both the _runtime
 
 Plugins intercept imports and perform custom loading logic: reading files, transpiling code, etc. They can be used to add support for additional file types, like `.scss` or `.yaml`. In the context of Bun's bundler, plugins can be used to implement framework-level features like CSS extraction, macros, and client-server code co-location.
 
-For more complete documentation of the Plugin API, see [Runtime > Plugins](/docs/runtime/plugins).
+For more complete documentation of the Plugin API, see [Runtime > Plugins](https://bun.sh/docs/runtime/plugins).
 
 ## Usage
 

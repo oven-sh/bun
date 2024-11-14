@@ -1,4 +1,4 @@
-import { test, describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { Console } from "node:console";
 
 import { Writable } from "node:stream";

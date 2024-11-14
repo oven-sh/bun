@@ -1,8 +1,8 @@
 // @ts-nocheck
-import readline from "node:readline";
-import { Writable, PassThrough } from "node:stream";
-import { EventEmitter } from "node:events";
 import { createTest } from "node-harness";
+import { EventEmitter } from "node:events";
+import readline from "node:readline";
+import { PassThrough, Writable } from "node:stream";
 const { beforeEach, describe, it, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
 var {
@@ -90,9 +90,13 @@ describe("readline.clearScreenDown()", () => {
 
   it("should throw on invalid callback", () => {
     // Verify that clearScreenDown() throws on invalid callback.
-    assert.throws(() => {
+    expect(() => {
       readline.clearScreenDown(writable, null);
-    }, /ERR_INVALID_ARG_TYPE/);
+    }).toThrowError(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+      }),
+    );
   });
 
   it("should that clearScreenDown() does not throw on null or undefined stream", done => {
@@ -138,9 +142,13 @@ describe("readline.clearLine()", () => {
 
   it("should throw on an invalid callback", () => {
     // Verify that clearLine() throws on invalid callback.
-    assert.throws(() => {
+    expect(() => {
       readline.clearLine(writable, 0, null);
-    }, /ERR_INVALID_ARG_TYPE/);
+    }).toThrowError(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+      }),
+    );
   });
 
   it("should not throw on null or undefined stream", done => {
@@ -188,9 +196,13 @@ describe("readline.moveCursor()", () => {
 
   it("should throw on invalid callback", () => {
     // Verify that moveCursor() throws on invalid callback.
-    assert.throws(() => {
+    expect(() => {
       readline.moveCursor(writable, 1, 1, null);
-    }, /ERR_INVALID_ARG_TYPE/);
+    }).toThrowError(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+      }),
+    );
   });
 
   it("should not throw on null or undefined stream", done => {
@@ -281,9 +293,13 @@ describe("readline.cursorTo()", () => {
 
   it("should throw on invalid callback", () => {
     // Verify that cursorTo() throws on invalid callback.
-    assert.throws(() => {
+    expect(() => {
       readline.cursorTo(writable, 1, 1, null);
-    }, /ERR_INVALID_ARG_TYPE/);
+    }).toThrowError(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+      }),
+    );
   });
 
   it("should throw if x or y is NaN", () => {

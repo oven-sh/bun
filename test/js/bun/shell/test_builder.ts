@@ -1,9 +1,8 @@
-import { ShellError, ShellOutput } from "bun";
-import { ShellPromise, ShellExpression } from "bun";
+import { ShellError, ShellExpression } from "bun";
 // import { tempDirWithFiles } from "harness";
-import { join } from "node:path";
-import * as os from "node:os";
 import * as fs from "node:fs";
+import * as os from "node:os";
+import { join } from "node:path";
 // import { bunExe } from "harness";
 
 export function createTestBuilder(path: string) {

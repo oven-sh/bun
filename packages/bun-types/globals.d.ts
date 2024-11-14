@@ -137,8 +137,8 @@ type _Body = typeof globalThis extends { onerror: any }
       readonly text: () => Promise<string>;
     };
 
+import type { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "util";
 import type { MessagePort } from "worker_threads";
-import type { TextEncoder as NodeTextEncoder, TextDecoder as NodeTextDecoder } from "util";
 import type { WebSocket as _WebSocket } from "ws";
 
 declare module "*.txt" {
@@ -595,8 +595,16 @@ declare global {
        * @default true
        */
       // trackUnmanagedFds?: boolean;
-
       // resourceLimits?: import("worker_threads").ResourceLimits;
+
+      /**
+       * An array of module specifiers to preload in the worker.
+       *
+       * These modules load before the worker's entry point is executed.
+       *
+       * Equivalent to passing the `--preload` CLI argument, but only for this Worker.
+       */
+      preload?: string[] | string | undefined;
     }
 
     interface Worker extends EventTarget, AbstractWorker {
@@ -955,6 +963,7 @@ declare global {
     ref(): Timer;
     unref(): Timer;
     hasRef(): boolean;
+    refresh(): Timer;
 
     [Symbol.toPrimitive](): number;
   }
@@ -1672,7 +1681,36 @@ declare global {
     groupEnd(): void;
     info(...data: any[]): void;
     log(...data: any[]): void;
-    /** Does nothing currently */
+    /**
+     * Try to construct a table with the columns of the properties of `tabularData` (or use `properties`) and rows of `tabularData` and log it. Falls back to just
+     * logging the argument if it can't be parsed as tabular.
+     *
+     * ```js
+     * // These can't be parsed as tabular data
+     * console.table(Symbol());
+     * // Symbol()
+     *
+     * console.table(undefined);
+     * // undefined
+     *
+     * console.table([{ a: 1, b: 'Y' }, { a: 'Z', b: 2 }]);
+     * // ┌────┬─────┬─────┐
+     * // │    │  a  │  b  │
+     * // ├────┼─────┼─────┤
+     * // │  0 │  1  │ 'Y' │
+     * // │  1 │ 'Z' │  2  │
+     * // └────┴─────┴─────┘
+     *
+     * console.table([{ a: 1, b: 'Y' }, { a: 'Z', b: 2 }], ['a']);
+     * // ┌────┬─────┐
+     * // │    │  a  │
+     * // ├────┼─────┤
+     * // │ 0  │  1  │
+     * // │ 1  │ 'Z' │
+     * // └────┴─────┘
+     * ```
+     * @param properties Alternate properties for constructing the table.
+     */
     table(tabularData?: any, properties?: string[]): void;
     /**
      * Begin a timer to log with {@link console.timeEnd}
@@ -1837,14 +1875,6 @@ declare global {
     withCredentials?: boolean;
   }
 
-  interface EventSource extends Bun.EventSource {}
-  var EventSource: typeof globalThis extends {
-    onerror: any;
-    EventSource: infer T;
-  }
-    ? T
-    : EventSource;
-
   interface PromiseConstructor {
     /**
      * Create a deferred promise, with exposed `resolve` and `reject` methods which can be called
@@ -1917,6 +1947,13 @@ declare global {
      * closely to the `BodyMixin` API.
      */
     formData(): Promise<FormData>;
+
+    arrayBuffer(): Promise<ArrayBuffer>;
+
+    /**
+     * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes) its the same as `new Uint8Array(await blob.arrayBuffer())`
+     */
+    bytes(): Promise<Uint8Array>;
   }
   var Blob: typeof globalThis extends {
     onerror: any;

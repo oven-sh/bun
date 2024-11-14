@@ -19,4 +19,4 @@ $ bun test --bail 10
 
 ---
 
-See [Docs > Test runner](/docs/cli/test) for complete documentation of `bun test`.
+See [Docs > Test runner](https://bun.sh/docs/cli/test) for complete documentation of `bun test`.

@@ -12,7 +12,7 @@ using namespace WebCore;
 struct SerializedValueSlice {
     const uint8_t* bytes;
     size_t size;
-    WebCore::SerializedScriptValue* value;
+    WebCore::SerializedScriptValue* value; // NOLINT
 };
 
 /// Returns a "slice" that also contains a pointer to the SerializedScriptValue. Must be freed by the caller

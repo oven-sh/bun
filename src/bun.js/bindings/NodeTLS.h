@@ -2,7 +2,7 @@
 #include "ZigGlobalObject.h"
 
 namespace Bun {
-  
+
 JSC::JSValue createNodeTLSBinding(Zig::GlobalObject*);
 
 }

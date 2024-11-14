@@ -1,9 +1,9 @@
 // TODO: uncomment when Blob bug in isBinary is fixed
 
+import { describe, expect, it } from "bun:test";
 import { Server } from "socket.io";
-import { describe, it, expect } from "bun:test";
 
-import { success, fail, createClient } from "./support/util.ts";
+import { createClient, fail, success } from "./support/util.ts";
 
 describe("socket middleware", () => {
   it.skip("should call functions", done => {

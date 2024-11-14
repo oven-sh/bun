@@ -254,9 +254,14 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
 /// @param s 
 int us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fast_shutdown) {
   // if we are already shutdown or in the middle of a handshake we dont need to do anything
-  if(us_internal_ssl_socket_is_shut_down(s) || s->fatal_error) return 1;
-  
-  
+  // Scenarios:
+  // 1 - SSL is not initialized yet (null)
+  // 2 - socket is alread shutdown
+  // 3 - we already sent a shutdown
+  // 4 - we are in the middle of a handshake
+  // 5 - we received a fatal error
+  if(us_internal_ssl_socket_is_shut_down(s) || s->fatal_error || !SSL_is_init_finished(s->ssl)) return 1;
+    
   // we are closing the socket but did not sent a shutdown yet
   int state = SSL_get_shutdown(s->ssl);
   int sent_shutdown = state & SSL_SENT_SHUTDOWN;
@@ -279,8 +284,24 @@ int us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fa
         // clear
         ERR_clear_error();
         s->fatal_error = 1;
+        // Fatal error occurred, we should close the socket imeadiatly
         return 1;
       }
+      if(err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+        // We are waiting to be readable or writable this will come in SSL_read to complete the shutdown
+        // if we are forcing a fast shutdown we should return 1 here to imeadiatly close the socket
+        // Scenarios:
+        // 1 - We called abort but the socket is not writable or reable anymore (force_fast_shutdown = 1)
+        // 2 - We called close but wanna to wait until close_notify is received (force_fast_shutdown = 0)
+        return force_fast_shutdown ? 1 : 0;
+      }
+      // If we error we probably do not even start the first handshake or have a critical error so just close the socket
+      // Scenarios:
+      // 1 - We abort the connection to fast and we did not even start the first handshake
+      // 2 - SSL is in a broken state
+      // 3 - SSL is not broken but is in a state that we cannot recover from
+      s->fatal_error = 1;
+      return 1;
     }
     return ret == 1;
   }
@@ -319,7 +340,7 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
   }
 
   // if we are in the middle of a close_notify we need to finish it (code != 0 forces a fast shutdown)
-  int can_close = s->ssl && us_internal_handle_shutdown(s, code != 0);
+  int can_close = us_internal_handle_shutdown(s, code != 0);
 
   // only close the socket if we are not in the middle of a handshake
   if(can_close) {
@@ -567,8 +588,11 @@ restart:
       goto restart;
     }
   }
-  // trigger writable if we failed last write with want read
-  if (s->ssl_write_wants_read) {
+  // Trigger writable if we failed last SSL_write with SSL_ERROR_WANT_READ 
+  // If we failed SSL_read because we need to write more data (SSL_ERROR_WANT_WRITE) we are not going to trigger on_writable, we will wait until the next on_data or on_writable event
+  // SSL_read will try to flush the write buffer and if fails with SSL_ERROR_WANT_WRITE means the socket is not in a writable state anymore and only makes sense to trigger on_writable if we can write more data
+  // Otherwise we possible would trigger on_writable -> on_data event in a recursive loop
+  if (s->ssl_write_wants_read && !s->ssl_read_wants_write) {
     s->ssl_write_wants_read = 0;
 
     // make sure to update context before we call (context can change if the
@@ -744,11 +768,20 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
   }
 
   if (options.passphrase) {
+    #ifdef _WIN32
+    /* When freeing the CTX we need to check
+     * SSL_CTX_get_default_passwd_cb_userdata and free it if set */
+    SSL_CTX_set_default_passwd_cb_userdata(ssl_context,
+                                           (void *)_strdup(options.passphrase));
+    SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
+
+    #else
     /* When freeing the CTX we need to check
      * SSL_CTX_get_default_passwd_cb_userdata and free it if set */
     SSL_CTX_set_default_passwd_cb_userdata(ssl_context,
                                            (void *)strdup(options.passphrase));
     SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
+    #endif
   }
 
   /* This one most probably do not need the cert_file_name string to be kept
@@ -829,6 +862,11 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
       free_ssl_context(ssl_context);
       return NULL;
     }
+  }
+
+  if (ERR_peek_error() != 0) {
+    free_ssl_context(ssl_context);
+    return NULL;
   }
 
   /* This must be free'd with free_ssl_context, not SSL_CTX_free */
@@ -1034,15 +1072,8 @@ long us_internal_verify_peer_certificate( // NOLINT(runtime/int)
   }
   return err;
 }
+struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl) {
 
-struct us_bun_verify_error_t
-us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
-  if (us_internal_ssl_socket_is_closed(s) || us_internal_ssl_socket_is_shut_down(s)) {
-    return (struct us_bun_verify_error_t){
-        .error = 0, .code = NULL, .reason = NULL};
-  }
-
-  SSL *ssl = s->ssl;
   long x509_verify_error = // NOLINT(runtime/int)
       us_internal_verify_peer_certificate(ssl,
                                           X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);
@@ -1057,6 +1088,17 @@ us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
   return (struct us_bun_verify_error_t){
       .error = x509_verify_error, .code = code, .reason = reason};
 }
+
+struct us_bun_verify_error_t
+us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
+  if (!s->ssl || us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
+    return (struct us_bun_verify_error_t){
+        .error = 0, .code = NULL, .reason = NULL};
+  }
+
+  return us_ssl_socket_verify_error_from_ssl(s->ssl);
+}
+
 
 int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
   // From https://www.openssl.org/docs/man1.1.1/man3/SSL_verify_cb:
@@ -1076,7 +1118,10 @@ int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
 }
 
 SSL_CTX *create_ssl_context_from_bun_options(
-    struct us_bun_socket_context_options_t options) {
+    struct us_bun_socket_context_options_t options, 
+    enum create_bun_socket_error_t *err) {
+  ERR_clear_error();
+
   /* Create the context */
   SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
 
@@ -1099,11 +1144,19 @@ SSL_CTX *create_ssl_context_from_bun_options(
   }
 
   if (options.passphrase) {
+    #ifdef _WIN32
+    /* When freeing the CTX we need to check
+     * SSL_CTX_get_default_passwd_cb_userdata and free it if set */
+    SSL_CTX_set_default_passwd_cb_userdata(ssl_context,
+                                           (void *)_strdup(options.passphrase));
+    SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
+    #else
     /* When freeing the CTX we need to check
      * SSL_CTX_get_default_passwd_cb_userdata and free it if set */
     SSL_CTX_set_default_passwd_cb_userdata(ssl_context,
                                            (void *)strdup(options.passphrase));
     SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
+    #endif
   }
 
   /* This one most probably do not need the cert_file_name string to be kept
@@ -1146,6 +1199,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
     STACK_OF(X509_NAME) * ca_list;
     ca_list = SSL_load_client_CA_file(options.ca_file_name);
     if (ca_list == NULL) {
+      *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
       free_ssl_context(ssl_context);
       return NULL;
     }
@@ -1153,6 +1207,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
     SSL_CTX_set_client_CA_list(ssl_context, ca_list);
     if (SSL_CTX_load_verify_locations(ssl_context, options.ca_file_name,
                                       NULL) != 1) {
+      *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
       free_ssl_context(ssl_context);
       return NULL;
     }
@@ -1175,9 +1230,13 @@ SSL_CTX *create_ssl_context_from_bun_options(
       }
 
       if (!add_ca_cert_to_ctx_store(ssl_context, options.ca[i], cert_store)) {
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
         free_ssl_context(ssl_context);
         return NULL;
       }
+
+     // It may return spurious errors here.
+    ERR_clear_error();
 
       if (options.reject_unauthorized) {
         SSL_CTX_set_verify(ssl_context,
@@ -1304,13 +1363,17 @@ void us_internal_ssl_socket_context_add_server_name(
   }
 }
 
-void us_bun_internal_ssl_socket_context_add_server_name(
+int us_bun_internal_ssl_socket_context_add_server_name(
     struct us_internal_ssl_socket_context_t *context,
     const char *hostname_pattern,
     struct us_bun_socket_context_options_t options, void *user) {
 
   /* Try and construct an SSL_CTX from options */
-  SSL_CTX *ssl_context = create_ssl_context_from_bun_options(options);
+  enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
+  SSL_CTX *ssl_context = create_ssl_context_from_bun_options(options, &err);
+  if (ssl_context == NULL) {
+    return -1;
+  }
 
   /* Attach the user data to this context */
   if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
@@ -1318,15 +1381,15 @@ void us_bun_internal_ssl_socket_context_add_server_name(
     printf("CANNOT SET EX DATA!\n");
     abort();
 #endif
+    return -1;
   }
 
-  /* We do not want to hold any nullptr's in our SNI tree */
-  if (ssl_context) {
-    if (sni_add(context->sni, hostname_pattern, ssl_context)) {
-      /* If we already had that name, ignore */
-      free_ssl_context(ssl_context);
-    }
+  if (sni_add(context->sni, hostname_pattern, ssl_context)) {
+    /* If we already had that name, ignore */
+    free_ssl_context(ssl_context);
   }
+
+  return 0;
 }
 
 void us_internal_ssl_socket_context_on_server_name(
@@ -1440,14 +1503,15 @@ struct us_internal_ssl_socket_context_t *us_internal_create_ssl_socket_context(
 struct us_internal_ssl_socket_context_t *
 us_internal_bun_create_ssl_socket_context(
     struct us_loop_t *loop, int context_ext_size,
-    struct us_bun_socket_context_options_t options) {
+    struct us_bun_socket_context_options_t options,
+    enum create_bun_socket_error_t *err) {
   /* If we haven't initialized the loop data yet, do so .
    * This is needed because loop data holds shared OpenSSL data and
    * the function is also responsible for initializing OpenSSL */
   us_internal_init_loop_ssl_data(loop);
 
   /* First of all we try and create the SSL context from options */
-  SSL_CTX *ssl_context = create_ssl_context_from_bun_options(options);
+  SSL_CTX *ssl_context = create_ssl_context_from_bun_options(options, err);
   if (!ssl_context) {
     /* We simply fail early if we cannot even create the OpenSSL context */
     return NULL;
@@ -1459,7 +1523,7 @@ us_internal_bun_create_ssl_socket_context(
       (struct us_internal_ssl_socket_context_t *)us_create_bun_socket_context(
           0, loop,
           sizeof(struct us_internal_ssl_socket_context_t) + context_ext_size,
-          options);
+          options, err);
 
   /* I guess this is the only optional callback */
   context->on_server_name = NULL;
@@ -1505,20 +1569,20 @@ void us_internal_ssl_socket_context_free(
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
     struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, int options, int socket_ext_size) {
+    int port, int options, int socket_ext_size, int* error) {
   return us_socket_context_listen(0, &context->sc, host, port, options,
                                   sizeof(struct us_internal_ssl_socket_t) -
                                       sizeof(struct us_socket_t) +
-                                      socket_ext_size);
+                                      socket_ext_size, error);
 }
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
     struct us_internal_ssl_socket_context_t *context, const char *path,
-    size_t pathlen, int options, int socket_ext_size) {
+    size_t pathlen, int options, int socket_ext_size, int* error) {
   return us_socket_context_listen_unix(0, &context->sc, path, pathlen, options,
                                        sizeof(struct us_internal_ssl_socket_t) -
                                            sizeof(struct us_socket_t) +
-                                           socket_ext_size);
+                                           socket_ext_size, error);
 }
 
 // TODO does this need more changes?
@@ -1796,6 +1860,7 @@ ssl_wrapped_context_on_close(struct us_internal_ssl_socket_t *s, int code,
     wrapped_context->old_events.on_close((struct us_socket_t *)s, code, reason);
   }
 
+  us_socket_context_unref(0, wrapped_context->tcp_context);
   return s;
 }
 
@@ -1952,10 +2017,18 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   }
 
   struct us_socket_context_t *old_context = us_socket_context(0, s);
+  us_socket_context_ref(0,old_context);
 
+  enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
   struct us_socket_context_t *context = us_create_bun_socket_context(
       1, old_context->loop, sizeof(struct us_wrapped_socket_context_t),
-      options);
+      options, &err);
+  
+  // Handle SSL context creation failure
+  if (UNLIKELY(!context)) {
+    return NULL;
+  }
+
   struct us_internal_ssl_socket_context_t *tls_context =
       (struct us_internal_ssl_socket_context_t *)context;
 
@@ -1974,6 +2047,7 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   };
   wrapped_context->old_events = old_events;
   wrapped_context->events = events;
+  wrapped_context->tcp_context = old_context;
 
   // no need to wrap open because socket is already open (only new context will
   // be called so we can configure hostname and ssl stuff normally here before

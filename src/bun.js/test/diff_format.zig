@@ -129,8 +129,8 @@ pub const DiffFormatter = struct {
             buffered_writer.flush() catch unreachable;
         }
 
-        const received_slice = received_buf.toOwnedSliceLeaky();
-        const expected_slice = expected_buf.toOwnedSliceLeaky();
+        const received_slice = received_buf.slice();
+        const expected_slice = expected_buf.slice();
 
         if (this.not) {
             const not_fmt = "Expected: not <green>{s}<r>";

@@ -3782,7 +3782,7 @@ pub fn handleTemplateValue(
     jsobjref_buf: []u8,
 ) !bool {
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
-    if (!template_value.isEmpty()) {
+    if (template_value != .zero) {
         if (template_value.asArrayBuffer(globalThis)) |array_buffer| {
             _ = array_buffer;
             const idx = out_jsobjs.items.len;
@@ -3860,7 +3860,7 @@ pub fn handleTemplateValue(
         }
 
         if (template_value.isObject()) {
-            if (template_value.getTruthy(globalThis, "raw")) |maybe_str| {
+            if (template_value.getOwnTruthy(globalThis, "raw")) |maybe_str| {
                 const bunstr = maybe_str.toBunString(globalThis);
                 defer bunstr.deref();
                 if (!try builder.appendBunStr(bunstr, false)) {
@@ -4009,18 +4009,15 @@ const BACKSLASHABLE_CHARS = [_]u8{ '$', '`', '"', '\\' };
 
 pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !bool {
     if (bunstr.isUTF16()) {
-        return try escapeUtf16(bunstr.utf16(), outbuf, add_quotes);
+        const res = try escapeUtf16(bunstr.utf16(), outbuf, add_quotes);
+        return !res.is_invalid;
     }
-    if (bunstr.isUTF8()) {
-        try escapeWTF8(bunstr.byteSlice(), outbuf, add_quotes);
-        return true;
-    }
-    // otherwise should be latin-1 or ascii
+    // otherwise should be utf-8, latin-1, or ascii
     try escape8Bit(bunstr.byteSlice(), outbuf, add_quotes);
     return true;
 }
 
-/// works for latin-1 and ascii
+/// works for utf-8, latin-1, and ascii
 pub fn escape8Bit(str: []const u8, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !void {
     try outbuf.ensureUnusedCapacity(str.len);
 
@@ -4040,37 +4037,6 @@ pub fn escape8Bit(str: []const u8, outbuf: *std.ArrayList(u8), comptime add_quot
     }
 
     if (add_quotes) try outbuf.append('\"');
-}
-
-pub fn escapeWTF8(str: []const u8, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !void {
-    try outbuf.ensureUnusedCapacity(str.len);
-
-    var bytes: [8]u8 = undefined;
-    var n: u3 = if (add_quotes) bun.strings.encodeWTF8Rune(bytes[0..4], '"') else 0;
-    if (add_quotes) try outbuf.appendSlice(bytes[0..n]);
-
-    loop: for (str) |c| {
-        inline for (BACKSLASHABLE_CHARS) |spc| {
-            if (spc == c) {
-                n = bun.strings.encodeWTF8Rune(bytes[0..4], '\\');
-                var next: [4]u8 = bytes[n..][0..4].*;
-                n += bun.strings.encodeWTF8Rune(&next, @intCast(c));
-                try outbuf.appendSlice(bytes[0..n]);
-                // try outbuf.appendSlice(&.{
-                //     '\\',
-                //     c,
-                // });
-                continue :loop;
-            }
-        }
-        n = bun.strings.encodeWTF8Rune(bytes[0..4], @intCast(c));
-        try outbuf.appendSlice(bytes[0..n]);
-    }
-
-    if (add_quotes) {
-        n = bun.strings.encodeWTF8Rune(bytes[0..4], '"');
-        try outbuf.appendSlice(bytes[0..n]);
-    }
 }
 
 pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !struct { is_invalid: bool = false } {
@@ -4347,7 +4313,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
 
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub const TestingAPIs = struct {
-    pub fn disabledOnThisPlatform(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn disabledOnThisPlatform(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (comptime bun.Environment.isWindows) return JSValue.false;
 
         const arguments_ = callframe.arguments(1);
@@ -4373,7 +4339,7 @@ pub const TestingAPIs = struct {
     pub fn shellLex(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments_ = callframe.arguments(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
@@ -4463,7 +4429,7 @@ pub const TestingAPIs = struct {
     pub fn shellParse(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments_ = callframe.arguments(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {

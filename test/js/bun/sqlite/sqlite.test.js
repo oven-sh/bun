@@ -1,8 +1,8 @@
-import { expect, it, describe } from "bun:test";
-import { Database, constants, SQLiteError } from "bun:sqlite";
-import { existsSync, fstat, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { $, spawnSync } from "bun";
-import { BREAKING_CHANGES_BUN_1_2, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
+import { spawnSync } from "bun";
+import { constants, Database, SQLiteError } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
+import { existsSync, readdirSync, realpathSync, writeFileSync } from "fs";
+import { bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -586,6 +586,50 @@ it("db.query()", () => {
       domjit.get().name;
     }
   })(domjit);
+
+  // statement iterator
+  let i;
+  i = 0;
+  for (const row of db.query("SELECT * FROM test")) {
+    i === 0 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 1, name: "Hello" }));
+    i === 1 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 2, name: "World" }));
+    i++;
+  }
+  expect(i).toBe(2);
+
+  // iterate (no args)
+  i = 0;
+  for (const row of db.query("SELECT * FROM test").iterate()) {
+    i === 0 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 1, name: "Hello" }));
+    i === 1 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 2, name: "World" }));
+    i++;
+  }
+  expect(i).toBe(2);
+
+  // iterate (args)
+  i = 0;
+  for (const row of db.query("SELECT * FROM test WHERE name = $name").iterate({ $name: "World" })) {
+    i === 0 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 2, name: "World" }));
+    i++;
+  }
+  expect(i).toBe(1);
+
+  // interrupted iterating, then call all()
+  const stmt = db.query("SELECT * FROM test");
+  i = 0;
+  for (const row of stmt) {
+    i === 0 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 1, name: "Hello" }));
+    i++;
+    break;
+  }
+  expect(i).toBe(1);
+  rows = stmt.all();
+  expect(JSON.stringify(rows)).toBe(
+    JSON.stringify([
+      { id: 1, name: "Hello" },
+      { id: 2, name: "World" },
+    ]),
+  );
 
   db.close();
 
@@ -1260,4 +1304,29 @@ it("reports changes in Statement#run", () => {
   expect(db.run(sql).changes).toBe(2);
   expect(db.prepare(sql).run().changes).toBe(2);
   expect(db.query(sql).run().changes).toBe(2);
+});
+
+it("#13082", async () => {
+  async function run() {
+    const stmt = (() => {
+      const db = new Database(":memory:");
+      let stmt = db.prepare("select 1");
+      db.close();
+      return stmt;
+    })();
+    Bun.gc(true);
+    await Bun.sleep(100);
+    Bun.gc(true);
+    stmt.all();
+    stmt.get();
+    stmt.run();
+  }
+
+  const count = 100;
+  const runs = new Array(count);
+  for (let i = 0; i < count; i++) {
+    runs[i] = run();
+  }
+
+  await Promise.allSettled(runs);
 });

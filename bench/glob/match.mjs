@@ -1,5 +1,5 @@
 import micromatch from "micromatch";
-import { bench, run } from "mitata";
+import { bench, run } from "../runner.mjs";
 
 const Glob = typeof Bun !== "undefined" ? Bun.Glob : undefined;
 const doMatch = typeof Bun === "undefined" ? micromatch.isMatch : (a, b) => new Glob(b).match(a);

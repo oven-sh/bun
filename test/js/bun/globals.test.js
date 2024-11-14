@@ -1,6 +1,44 @@
-import { expect, it, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
+
+it("ERR_INVALID_THIS", () => {
+  try {
+    Request.prototype.formData.call(undefined);
+    expect.unreachable();
+  } catch (e) {
+    expect(e.code).toBe("ERR_INVALID_THIS");
+    expect(e.name).toBe("TypeError");
+    expect(e.message).toBe("Expected this to be instanceof Request");
+  }
+
+  try {
+    Request.prototype.formData.call(null);
+    expect.unreachable();
+  } catch (e) {
+    expect(e.code).toBe("ERR_INVALID_THIS");
+    expect(e.name).toBe("TypeError");
+    expect(e.message).toBe("Expected this to be instanceof Request, but received null");
+  }
+
+  try {
+    Request.prototype.formData.call(new (class Boop {})());
+    expect.unreachable();
+  } catch (e) {
+    expect(e.code).toBe("ERR_INVALID_THIS");
+    expect(e.name).toBe("TypeError");
+    expect(e.message).toBe("Expected this to be instanceof Request, but received Boop");
+  }
+
+  try {
+    Request.prototype.formData.call("hellooo");
+    expect.unreachable();
+  } catch (e) {
+    expect(e.code).toBe("ERR_INVALID_THIS");
+    expect(e.name).toBe("TypeError");
+    expect(e.message).toBe("Expected this to be instanceof Request, but received a string");
+  }
+});
 
 it("extendable", () => {
   const classes = [Blob, TextDecoder, TextEncoder, Request, Response, Headers, HTMLRewriter, Bun.Transpiler, Buffer];

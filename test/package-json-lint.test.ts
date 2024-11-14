@@ -1,6 +1,6 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { existsSync, readdirSync } from "fs";
 import { join } from "path";
-import { readdirSync, existsSync } from "fs";
 const base = join(import.meta.dir, "../");
 
 const packageJSONDirs = [

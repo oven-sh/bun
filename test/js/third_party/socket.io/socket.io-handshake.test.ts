@@ -1,6 +1,6 @@
+import { describe, expect, it } from "bun:test";
 import { Server } from "socket.io";
-import { describe, it, expect } from "bun:test";
-import { getPort, success, fail } from "./support/util.ts";
+import { fail, getPort, success } from "./support/util.ts";
 
 describe("handshake", () => {
   const request = require("superagent");

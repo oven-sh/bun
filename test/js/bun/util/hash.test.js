@@ -1,4 +1,4 @@
-import { it, expect } from "bun:test";
+import { expect, it } from "bun:test";
 import { gcTick } from "harness";
 
 it(`Bun.hash()`, () => {

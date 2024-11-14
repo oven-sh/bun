@@ -1,5 +1,5 @@
 const onlyCheck = process.env.ONLY_CHECK_TTY === "0";
-import { dlopen, ptr } from "bun:ffi";
+import { dlopen } from "bun:ffi";
 
 const suffix = process.platform === "darwin" ? "dylib" : "so.6";
 const { tcgetattr, tcsetattr } = dlopen(`libc.${suffix}`, {

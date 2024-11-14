@@ -1,7 +1,7 @@
-import { spawn, file } from "bun";
+import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv as env, runBunInstall, toBeValidBin, toHaveBins, tmpdirSync } from "harness";
-import { access, writeFile, mkdir } from "fs/promises";
+import { access, mkdir, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, runBunInstall, tmpdirSync, toBeValidBin, toHaveBins } from "harness";
 import { basename, join } from "path";
 import {
   dummyAfterAll,
@@ -56,8 +56,12 @@ it("should link and unlink workspace package", async () => {
     }),
   );
   let { out, err } = await runBunInstall(env, link_dir);
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun install", "Saved lockfile", ""]);
-  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
+  expect(err.split(/\r?\n/)).toEqual(["Saved lockfile", ""]);
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun install v1."),
+    "",
+    "2 packages installed",
+  ]);
 
   let { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "link"],
@@ -69,7 +73,7 @@ it("should link and unlink workspace package", async () => {
   });
 
   err = await new Response(stderr).text();
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
+  expect(err.split(/\r?\n/)).toEqual([""]);
   expect(await new Response(stdout).text()).toContain(`Success! Registered "moo"`);
   expect(await exited).toBe(0);
 
@@ -83,8 +87,9 @@ it("should link and unlink workspace package", async () => {
   }));
 
   err = await new Response(stderr).text();
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
+  expect(err.split(/\r?\n/)).toEqual([""]);
   expect((await new Response(stdout).text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun link v1."),
     "",
     `installed moo@link:moo`,
     "",
@@ -106,7 +111,7 @@ it("should link and unlink workspace package", async () => {
   }));
 
   err = await new Response(stderr).text();
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun unlink", ""]);
+  expect(err.split(/\r?\n/)).toEqual([""]);
   expect(await new Response(stdout).text()).toContain(`success: unlinked package "moo"`);
   expect(await exited).toBe(0);
 
@@ -121,7 +126,7 @@ it("should link and unlink workspace package", async () => {
   }));
 
   err = await new Response(stderr).text();
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
+  expect(err.split(/\r?\n/)).toEqual([""]);
   expect(await new Response(stdout).text()).toContain(`Success! Registered "foo"`);
   expect(await exited).toBe(0);
 
@@ -135,8 +140,9 @@ it("should link and unlink workspace package", async () => {
   }));
 
   err = await new Response(stderr).text();
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
+  expect(err.split(/\r?\n/)).toEqual([""]);
   expect((await new Response(stdout).text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun link v1."),
     "",
     `installed foo@link:foo`,
     "",
@@ -159,7 +165,7 @@ it("should link and unlink workspace package", async () => {
   }));
 
   err = await new Response(stderr).text();
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun unlink", ""]);
+  expect(err.split(/\r?\n/)).toEqual([""]);
   expect(await new Response(stdout).text()).toContain(`success: unlinked package "foo"`);
   expect(await exited).toBe(0);
 });
@@ -194,7 +200,7 @@ it("should link package", async () => {
     env,
   });
   const err1 = await new Response(stderr1).text();
-  expect(err1.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
+  expect(err1.split(/\r?\n/)).toEqual([""]);
   expect(await new Response(stdout1).text()).toContain(`Success! Registered "${link_name}"`);
   expect(await exited1).toBe(0);
 
@@ -211,9 +217,10 @@ it("should link package", async () => {
     env,
   });
   const err2 = await new Response(stderr2).text();
-  expect(err2.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
+  expect(err2.split(/\r?\n/)).toEqual([""]);
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun link v1."),
     "",
     `installed ${link_name}@link:${link_name}`,
     "",
@@ -234,7 +241,7 @@ it("should link package", async () => {
     env,
   });
   const err3 = await new Response(stderr3).text();
-  expect(err3.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun unlink", ""]);
+  expect(err3.split(/\r?\n/)).toEqual([""]);
   expect(await new Response(stdout3).text()).toContain(`success: unlinked package "${link_name}"`);
   expect(await exited3).toBe(0);
 
@@ -252,7 +259,7 @@ it("should link package", async () => {
   });
   const err4 = await new Response(stderr4).text();
   expect(err4).toContain(`error: Package "${link_name}" is not linked`);
-  expect(await new Response(stdout4).text()).toBe("");
+  expect(await new Response(stdout4).text()).toEqual(expect.stringContaining("bun link v1."));
   expect(await exited4).toBe(1);
 });
 
@@ -286,7 +293,7 @@ it("should link scoped package", async () => {
     env,
   });
   const err1 = await new Response(stderr1).text();
-  expect(err1.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
+  expect(err1.split(/\r?\n/)).toEqual([""]);
   expect(await new Response(stdout1).text()).toContain(`Success! Registered "${link_name}"`);
   expect(await exited1).toBe(0);
 
@@ -303,9 +310,10 @@ it("should link scoped package", async () => {
     env,
   });
   const err2 = await new Response(stderr2).text();
-  expect(err2.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
+  expect(err2.split(/\r?\n/)).toEqual([""]);
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun link v1."),
     "",
     `installed ${link_name}@link:${link_name}`,
     "",
@@ -326,7 +334,7 @@ it("should link scoped package", async () => {
     env,
   });
   const err3 = await new Response(stderr3).text();
-  expect(err3.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun unlink", ""]);
+  expect(err3.split(/\r?\n/)).toEqual([""]);
   expect(await new Response(stdout3).text()).toContain(`success: unlinked package "${link_name}"`);
   expect(await exited3).toBe(0);
 
@@ -344,7 +352,7 @@ it("should link scoped package", async () => {
   });
   const err4 = await new Response(stderr4).text();
   expect(err4).toContain(`error: Package "${link_name}" is not linked`);
-  expect(await new Response(stdout4).text()).toBe("");
+  expect((await new Response(stdout4).text()).split(/\r?\n/)).toEqual([expect.stringContaining("bun link v1."), ""]);
   expect(await exited4).toBe(1);
 });
 
@@ -385,26 +393,16 @@ it("should link dependency without crashing", async () => {
     env,
   });
   const err1 = await new Response(stderr1).text();
-  expect(err1.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
+  expect(err1.split(/\r?\n/)).toEqual([""]);
   expect(await new Response(stdout1).text()).toContain(`Success! Registered "${link_name}"`);
   expect(await exited1).toBe(0);
 
-  const {
-    stdout: stdout2,
-    stderr: stderr2,
-    exited: exited2,
-  } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
+  const { out: stdout2, err: stderr2, exited: exited2 } = await runBunInstall(env, package_dir);
   const err2 = await new Response(stderr2).text();
-  expect(err2.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun install", "Saved lockfile", ""]);
+  expect(err2.split(/\r?\n/)).toEqual(["Saved lockfile", ""]);
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun install v1."),
     "",
     `+ ${link_name}@link:${link_name}`,
     "",
@@ -432,7 +430,7 @@ it("should link dependency without crashing", async () => {
     env,
   });
   const err3 = await new Response(stderr3).text();
-  expect(err3.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun unlink", ""]);
+  expect(err3.split(/\r?\n/)).toEqual([""]);
   expect(await new Response(stdout3).text()).toContain(`success: unlinked package "${link_name}"`);
   expect(await exited3).toBe(0);
 
@@ -452,6 +450,7 @@ it("should link dependency without crashing", async () => {
   expect(err4).toContain(`error: FileNotFound installing ${link_name}`);
   const out4 = await new Response(stdout4).text();
   expect(out4.replace(/\[[0-9\.]+m?s\]/, "[]").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun install v1."),
     "",
     "Failed to install 1 package",
     "[] done",

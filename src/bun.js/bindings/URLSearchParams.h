@@ -34,6 +34,7 @@
 namespace WebCore {
 
 class DOMURL;
+class ScriptExecutionContext;
 
 class URLSearchParams : public RefCounted<URLSearchParams> {
 public:
@@ -66,6 +67,7 @@ public:
         size_t m_index { 0 };
     };
     Iterator createIterator() { return Iterator { *this }; }
+    Iterator createIterator(const ScriptExecutionContext* context) { return Iterator { *this }; }
 
 private:
     const Vector<KeyValuePair<String, String>>& pairs() const { return m_pairs; }

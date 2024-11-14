@@ -1,9 +1,9 @@
-import { test, expect } from "bun:test";
 import { $, which } from "bun";
-import { rmSync, chmodSync, mkdirSync, realpathSync, rmdirSync } from "node:fs";
-import { join, basename } from "node:path";
-import { tmpdir } from "node:os";
+import { expect, test } from "bun:test";
 import { isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
+import { chmodSync, mkdirSync, realpathSync, rmdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 
 $.nothrow();
 

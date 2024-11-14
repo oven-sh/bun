@@ -1,5 +1,5 @@
+import { describe, expect, it } from "bun:test";
 import jwt from "jsonwebtoken";
-import { expect, describe, it } from "bun:test";
 
 describe("buffer payload", function () {
   it("should work", function () {

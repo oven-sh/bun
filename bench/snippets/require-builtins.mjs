@@ -1,7 +1,6 @@
-import { bench, run } from "./runner.mjs";
-import { builtinModules } from "node:module";
-import { writeFile } from "node:fs/promises";
 import { spawnSync } from "child_process";
+import { writeFile } from "node:fs/promises";
+import { builtinModules } from "node:module";
 
 for (let builtin of builtinModules) {
   const path = `/tmp/require.${builtin.replaceAll("/", "_")}.cjs`;

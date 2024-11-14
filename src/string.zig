@@ -3,6 +3,7 @@ const bun = @import("root").bun;
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
 const Parent = @This();
+const OOM = bun.OOM;
 
 pub const BufferOwnership = enum(u32) {
     BufferInternal,
@@ -92,7 +93,7 @@ pub const WTFStringImplStruct = extern struct {
         if (this.is8Bit()) {
             return ZigString.init(this.latin1Slice());
         } else {
-            return ZigString.init16(this.utf16Slice());
+            return ZigString.initUTF16(this.utf16Slice());
         }
     }
 
@@ -142,6 +143,8 @@ pub const WTFStringImplStruct = extern struct {
             bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch bun.outOfMemory(),
         );
     }
+
+    pub const max = std.math.maxInt(u32);
 
     pub fn toUTF8WithoutRef(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
         if (this.is8Bit()) {
@@ -338,7 +341,7 @@ pub const String = extern struct {
         return bytes;
     }
 
-    pub fn toOwnedSliceReturningAllASCII(this: String, allocator: std.mem.Allocator) !struct { []u8, bool } {
+    pub fn toOwnedSliceReturningAllASCII(this: String, allocator: std.mem.Allocator) OOM!struct { []u8, bool } {
         switch (this.tag) {
             .ZigString => return .{ try this.value.ZigString.toOwnedSlice(allocator), true },
             .WTFStringImpl => {
@@ -403,6 +406,8 @@ pub const String = extern struct {
     ///
     /// This is not allowed on zero-length strings, in this case you should
     /// check earlier and use String.empty in that case.
+    ///
+    /// If the length is too large, this will return a dead string.
     pub fn createUninitialized(
         comptime kind: WTFStringEncoding,
         len: usize,
@@ -434,7 +439,7 @@ pub const String = extern struct {
         return BunString__fromUTF16(bytes.ptr, bytes.len);
     }
 
-    pub fn createFormat(comptime fmt: [:0]const u8, args: anytype) !String {
+    pub fn createFormat(comptime fmt: [:0]const u8, args: anytype) OOM!String {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len == 0) {
             return String.static(fmt);
         }
@@ -474,7 +479,9 @@ pub const String = extern struct {
 
         if (this.isUTF16()) {
             const new, const bytes = createUninitialized(.utf16, this.length());
-            @memcpy(bytes, this.value.ZigString.utf16Slice());
+            if (new.tag != .Dead) {
+                @memcpy(bytes, this.value.ZigString.utf16Slice());
+            }
             return new;
         }
 
@@ -586,6 +593,16 @@ pub const String = extern struct {
         return JSC__createError(globalObject, this);
     }
 
+    pub fn toTypeErrorInstance(this: *const String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        defer this.deref();
+        return JSC__createTypeError(globalObject, this);
+    }
+
+    pub fn toRangeErrorInstance(this: *const String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        defer this.deref();
+        return JSC__createRangeError(globalObject, this);
+    }
+
     extern fn BunString__createExternal(
         bytes: [*]const u8,
         len: usize,
@@ -604,9 +621,15 @@ pub const String = extern struct {
     /// len is the number of characters in that buffer.
     pub const ExternalStringImplFreeFunction = fn (ctx: *anyopaque, buffer: *anyopaque, len: u32) callconv(.C) void;
 
-    pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const ExternalStringImplFreeFunction) String {
+    pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: *anyopaque, callback: ?*const ExternalStringImplFreeFunction) String {
         JSC.markBinding(@src());
         bun.assert(bytes.len > 0);
+        if (bytes.len > max_length()) {
+            if (callback) |cb| {
+                cb(ctx, @ptrCast(@constCast(bytes.ptr)), @truncate(bytes.len));
+            }
+            return dead;
+        }
         return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
     }
 
@@ -630,9 +653,21 @@ pub const String = extern struct {
         len: usize,
     ) String;
 
+    /// Max WTFStringImpl length.
+    /// **Not** in bytes. In characters.
+    pub inline fn max_length() usize {
+        return JSC.string_allocation_limit;
+    }
+
+    /// If the allocation fails, this will free the bytes and return a dead string.
     pub fn createExternalGloballyAllocated(comptime kind: WTFStringEncoding, bytes: []kind.Byte()) String {
         JSC.markBinding(@src());
         bun.assert(bytes.len > 0);
+
+        if (bytes.len > max_length()) {
+            bun.default_allocator.free(bytes);
+            return dead;
+        }
 
         return switch (comptime kind) {
             .latin1 => BunString__createExternalGloballyAllocatedLatin1(bytes.ptr, bytes.len),
@@ -644,6 +679,10 @@ pub const String = extern struct {
         return String.init(ZigString.initUTF8(value));
     }
 
+    pub fn fromUTF16(value: []const u16) String {
+        return String.init(ZigString.initUTF16(value));
+    }
+
     pub fn fromBytes(value: []const u8) String {
         return String.init(ZigString.fromBytes(value));
     }
@@ -652,6 +691,7 @@ pub const String = extern struct {
         try self.toZigString().format(fmt, opts, writer);
     }
 
+    /// Deprecated: use `fromJS2` to handle errors explicitly
     pub fn fromJS(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) String {
         JSC.markBinding(@src());
 
@@ -660,6 +700,17 @@ pub const String = extern struct {
             return out;
         } else {
             return String.dead;
+        }
+    }
+
+    pub fn fromJS2(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
+        var out: String = String.dead;
+        if (BunString__fromJS(globalObject, value, &out)) {
+            bun.assert(out.tag != .Dead);
+            return out;
+        } else {
+            bun.assert(globalObject.hasException());
+            return error.JSError;
         }
     }
 
@@ -681,7 +732,7 @@ pub const String = extern struct {
         if (BunString__fromJS(globalObject, value, &out)) {
             return out;
         } else {
-            return null;
+            return null; //TODO: return error.JSError
         }
     }
 
@@ -703,6 +754,7 @@ pub const String = extern struct {
         len: usize,
     ) JSC.JSValue;
 
+    /// calls toJS on all elements of `array`.
     pub fn toJSArray(globalObject: *bun.JSC.JSGlobalObject, array: []const bun.String) JSC.JSValue {
         JSC.markBinding(@src());
 
@@ -842,7 +894,7 @@ pub const String = extern struct {
     }
 
     pub fn encode(self: String, enc: JSC.Node.Encoding) []u8 {
-        return self.toZigString().encode(enc);
+        return self.toZigString().encodeWithAllocator(bun.default_allocator, enc);
     }
 
     pub inline fn utf8(self: String) []const u8 {
@@ -882,7 +934,7 @@ pub const String = extern struct {
                 if (this.value.WTFStringImpl.is8Bit()) {
                     return String.init(ZigString.init(this.value.WTFStringImpl.latin1Slice()[start_index..end_index]));
                 } else {
-                    return String.init(ZigString.init16(this.value.WTFStringImpl.utf16Slice()[start_index..end_index]));
+                    return String.init(ZigString.initUTF16(this.value.WTFStringImpl.utf16Slice()[start_index..end_index]));
                 }
             },
             else => return this,
@@ -1230,6 +1282,8 @@ pub const String = extern struct {
     }
 
     extern fn JSC__createError(*JSC.JSGlobalObject, str: *const String) JSC.JSValue;
+    extern fn JSC__createTypeError(*JSC.JSGlobalObject, str: *const String) JSC.JSValue;
+    extern fn JSC__createRangeError(*JSC.JSGlobalObject, str: *const String) JSC.JSValue;
 
     fn concat(comptime n: usize, allocator: std.mem.Allocator, strings: *const [n]String) !String {
         var num_16bit: usize = 0;
@@ -1272,7 +1326,7 @@ pub const String = extern struct {
         return try concat(strings.len, allocator, strings);
     }
 
-    pub export fn jsGetStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    pub fn jsGetStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args.ptr[0].isString()) {
@@ -1289,6 +1343,11 @@ pub const String = extern struct {
         const width = str.visibleWidth(false);
         return JSC.jsNumber(width);
     }
+
+    // TODO: move ZigString.Slice here
+    /// A UTF-8 encoded slice tied to the lifetime of a `bun.String`
+    /// Must call `.deinit` to release memory
+    pub const Slice = ZigString.Slice;
 };
 
 pub const SliceWithUnderlyingString = struct {

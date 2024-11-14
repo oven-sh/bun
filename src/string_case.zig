@@ -360,73 +360,49 @@ pub fn convertLen(
 }
 
 pub fn NewWordIterator(comptime kind: Encoding) type {
-    return switch (kind) {
-        .utf8 => struct {
-            const Self = @This();
-            bytes: []const kind.Byte(),
-            i: usize,
+    return struct {
+        const Self = @This();
+        bytes: []const kind.Byte(),
+        i: usize,
 
-            pub fn init(bytes: []const kind.Byte()) Self {
-                return .{
-                    .bytes = bytes,
-                    .i = 0,
-                };
-            }
+        pub fn init(bytes: []const kind.Byte()) Self {
+            return .{
+                .bytes = bytes,
+                .i = 0,
+            };
+        }
 
-            pub fn next(self: *Self) ?[]const kind.Byte() {
-                if (peekNextUtf8(self.bytes, self.i)) |res| {
-                    const start, const end = res;
-                    self.i = end;
-                    return self.bytes[start..end];
-                }
-                return null;
-            }
+        pub fn next(self: *Self) ?[]const kind.Byte() {
+            const res = switch (kind) {
+                .utf8 => peekNextUtf8(self.bytes, self.i),
+                else => peekNext(kind, self.bytes, self.i),
+            } orelse return null;
 
-            pub fn peek(self: *const Self) ?[]const kind.Byte() {
-                if (peekNextUtf8(self.bytes, self.start)) |res| {
-                    const start, const end = res;
-                    return self.bytes[start..end];
-                } else return null;
-            }
-        },
-        else => struct {
-            const Self = @This();
-            bytes: []const kind.Byte(),
-            i: usize,
+            const start, const end = res;
+            self.i = end;
+            return self.bytes[start..end];
+        }
 
-            pub fn init(bytes: []const kind.Byte()) Self {
-                return .{
-                    .bytes = bytes,
-                    .i = 0,
-                };
-            }
+        pub fn peek(self: *const Self) ?[]const kind.Byte() {
+            const res = switch (kind) {
+                .utf8 => peekNextUtf8(self.bytes, self.i),
+                else => peekNext(kind, self.bytes, self.i),
+            } orelse return null;
 
-            pub fn next(self: *Self) ?[]const kind.Byte() {
-                if (peekNext(kind, self.bytes, self.i)) |res| {
-                    const start, const end = res;
-                    self.i = end;
-                    return self.bytes[start..end];
-                }
-                return null;
-            }
-
-            pub fn peek(self: *const Self) ?[]const kind.Byte() {
-                if (peekNext(kind, self.bytes, self.start)) |res| {
-                    const start, const end = res;
-                    return self.bytes[start..end];
-                } else return null;
-            }
-        },
+            const start, const end = res;
+            return self.bytes[start..end];
+        }
     };
 }
 
 pub fn camelCase(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("camelCase", 1, 0);
+        return JSC.JSValue.jsUndefined();
     }
 
     const input = arguments.ptr[0].toBunString(globalThis);
@@ -441,10 +417,11 @@ pub fn camelCase(
 pub fn capitalCase(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("capitalCase", 1, 0);
+        return JSC.JSValue.jsUndefined();
     }
 
     const input = arguments.ptr[0].toBunString(globalThis);
@@ -459,10 +436,11 @@ pub fn capitalCase(
 pub fn constantCase(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("constantCase", 1, 0);
+        return JSC.JSValue.jsUndefined();
     }
 
     const input = arguments.ptr[0].toBunString(globalThis);
@@ -477,10 +455,11 @@ pub fn constantCase(
 pub fn dotCase(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("dotCase()", 1, 0);
+        return JSC.JSValue.jsUndefined();
     }
 
     const input = arguments.ptr[0].toBunString(globalThis);
@@ -495,10 +474,11 @@ pub fn dotCase(
 pub fn kebabCase(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("kebabCase()", 1, 0);
+        return JSC.JSValue.jsUndefined();
     }
 
     const input = arguments.ptr[0].toBunString(globalThis);
@@ -513,10 +493,11 @@ pub fn kebabCase(
 pub fn pascalCase(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("pascalCase()", 1, 0);
+        return JSC.JSValue.jsUndefined();
     }
 
     const input = arguments.ptr[0].toBunString(globalThis);
@@ -531,10 +512,11 @@ pub fn pascalCase(
 pub fn snakeCase(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("snakeCase()", 1, 0);
+        return JSC.JSValue.jsUndefined();
     }
 
     const input = arguments.ptr[0].toBunString(globalThis);
@@ -549,10 +531,11 @@ pub fn snakeCase(
 pub fn trainCase(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("trainCase()", 1, 0);
+        return JSC.JSValue.jsUndefined();
     }
 
     const input = arguments.ptr[0].toBunString(globalThis);

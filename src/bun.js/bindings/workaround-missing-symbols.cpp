@@ -65,6 +65,7 @@ extern "C" int kill(int pid, int sig)
 #include <stdarg.h>
 #include <errno.h>
 #include <math.h>
+#include <mutex>
 
 #ifndef _STAT_VER
 #if defined(__aarch64__)
@@ -150,18 +151,6 @@ int __wrap_fcntl(int fd, int cmd, ...)
 }
 
 typedef int (*fcntl64_func)(int fd, int cmd, ...);
-static fcntl64_func real_fcntl64 = NULL;
-
-static void init_real_fcntl64()
-{
-    if (!real_fcntl64) {
-        real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl64");
-
-        if (!real_fcntl64) {
-            real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl");
-        }
-    }
-}
 
 enum arg_type {
     NO_ARG,
@@ -217,7 +206,14 @@ extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
     va_list ap;
     enum arg_type type = get_arg_type(cmd);
 
-    init_real_fcntl64();
+    static fcntl64_func real_fcntl64;
+    static std::once_flag real_fcntl64_initialized;
+    std::call_once(real_fcntl64_initialized, []() {
+        real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl64");
+        if (!real_fcntl64) {
+            real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl");
+        }
+    });
 
     switch (type) {
     case NO_ARG:

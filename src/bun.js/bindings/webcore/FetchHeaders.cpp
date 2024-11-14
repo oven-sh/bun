@@ -338,7 +338,7 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
         if (key.isNull()) {
             if (m_cookieIndex < setCookieHeaders.size()) {
                 String value = setCookieHeaders[m_cookieIndex++];
-                return KeyValuePair<String, String> { WTF::staticHeaderNames[static_cast<uint8_t>(HTTPHeaderName::SetCookie)], WTFMove(value) };
+                return KeyValuePair<String, String> { WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), WTFMove(value) };
             }
             m_currentIndex++;
             continue;

@@ -946,7 +946,7 @@ pub fn parseWithTag(
             };
 
             if (is_alias) {
-                PackageManager.instance.known_npm_aliases.put(
+                PackageManager.get().known_npm_aliases.put(
                     allocator,
                     alias_hash.?,
                     result,

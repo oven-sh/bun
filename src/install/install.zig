@@ -14933,6 +14933,9 @@ pub const bun_install_js_bindings = struct {
 
         var lockfile: Lockfile = undefined;
         lockfile.initEmpty(allocator);
+        if (globalObject.bunVM().bundler.resolver.env_loader == null) {
+            globalObject.bunVM().bundler.resolver.env_loader = globalObject.bunVM().bundler.env;
+        }
 
         // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
         const manager = globalObject.bunVM().bundler.resolver.getPackageManager();

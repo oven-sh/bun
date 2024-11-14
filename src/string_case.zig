@@ -75,7 +75,7 @@ const Encoding = enum {
     }
 };
 
-fn isSeperator(c: u32) bool {
+fn isSeparator(c: u32) bool {
     return switch (c) {
         // ASCII separators
         0x0020, // space
@@ -136,7 +136,7 @@ fn peekNextUtf8(bytes: []const u8, offset: usize) ?struct { usize, usize } {
         else
             bytes[i];
 
-        if (!isSeperator(c)) break;
+        if (!isSeparator(c)) break;
 
         i += if (bytes[i] > 127)
             strings.wtf8ByteSequenceLength(bytes[i])
@@ -153,7 +153,7 @@ fn peekNextUtf8(bytes: []const u8, offset: usize) ?struct { usize, usize } {
         else
             bytes[i];
 
-        const is_separator = isSeperator(c);
+        const is_separator = isSeparator(c);
 
         const is_case_boundary = if (i > 0 and i + 1 < bytes.len and
             bytes[i] <= 127 and bytes[i - 1] <= 127)
@@ -185,7 +185,7 @@ fn peekNext(comptime kind: Encoding, bytes: []const kind.Byte(), offset: usize) 
     var i = offset;
     var start = offset;
 
-    while (i < bytes.len and isSeperator(bytes[i])) {
+    while (i < bytes.len and isSeparator(bytes[i])) {
         i += 1;
         start = i;
     }
@@ -195,7 +195,7 @@ fn peekNext(comptime kind: Encoding, bytes: []const kind.Byte(), offset: usize) 
     while (i < bytes.len) {
         const curr = bytes[i];
 
-        const is_separator = isSeperator(curr);
+        const is_separator = isSeparator(curr);
 
         const is_case_boundary = if (i > 0 and i + 1 < bytes.len)
             isLower(kind, bytes[i - 1]) and isUpper(kind, curr)

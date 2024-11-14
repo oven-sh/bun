@@ -3270,7 +3270,11 @@ pub const Resolver = struct {
         };
     }
 
-    pub export fn Resolver__nodeModulePathsForJS(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    comptime {
+        const Resolver__nodeModulePathsForJS = JSC.toJSHostFunction(Resolver__nodeModulePathsForJS_);
+        @export(Resolver__nodeModulePathsForJS, .{ .name = "Resolver__nodeModulePathsForJS" });
+    }
+    pub fn Resolver__nodeModulePathsForJS_(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) bun.JSError!JSC.JSValue {
         bun.JSC.markBinding(@src());
         const argument: bun.JSC.JSValue = callframe.argument(0);
 
@@ -4194,7 +4198,6 @@ pub const GlobalCache = enum {
 
 comptime {
     if (!bun.JSC.is_bindgen) {
-        _ = Resolver.Resolver__nodeModulePathsForJS;
         _ = Resolver.Resolver__propForRequireMainPaths;
     }
 }

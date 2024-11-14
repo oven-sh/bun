@@ -1968,7 +1968,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             ctxLog("onResolve", .{});
 
             const arguments = callframe.arguments(2);
@@ -2113,7 +2113,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.ref_count += 1;
         }
 
-        pub fn onReject(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        pub fn onReject(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             ctxLog("onReject", .{});
 
             const arguments = callframe.arguments(2);
@@ -3331,7 +3331,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             req.endStream(req.shouldCloseConnection());
         }
 
-        pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             streamLog("onResolveStream", .{});
             var args = callframe.arguments(2);
             var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
@@ -3339,7 +3339,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             req.handleResolveStream();
             return JSValue.jsUndefined();
         }
-        pub fn onRejectStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        pub fn onRejectStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             streamLog("onRejectStream", .{});
             const args = callframe.arguments(2);
             var req = args.ptr[args.len - 1].asPromisePtr(@This());
@@ -4122,18 +4122,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         });
 
         comptime {
-            @export(onResolve, .{
-                .name = Export[0].symbol_name,
-            });
-            @export(onReject, .{
-                .name = Export[1].symbol_name,
-            });
-            @export(onResolveStream, .{
-                .name = Export[2].symbol_name,
-            });
-            @export(onRejectStream, .{
-                .name = Export[3].symbol_name,
-            });
+            const jsonResolve = JSC.toJSHostFunction(onResolve);
+            @export(jsonResolve, .{ .name = Export[0].symbol_name });
+            const jsonReject = JSC.toJSHostFunction(onReject);
+            @export(jsonReject, .{ .name = Export[1].symbol_name });
+            const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
+            @export(jsonResolveStream, .{ .name = Export[2].symbol_name });
+            const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
+            @export(jsonRejectStream, .{ .name = Export[3].symbol_name });
         }
     };
 }
@@ -4835,7 +4831,7 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args = callframe.arguments(4);
         if (args.len < 1) {
             log("publish()", .{});
@@ -4920,7 +4916,7 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args = callframe.arguments(4);
 
         if (args.len < 1) {
@@ -4983,7 +4979,7 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args = callframe.arguments(4);
 
         if (args.len < 1) {
@@ -5136,7 +5132,7 @@ pub const ServerWebSocket = struct {
         // Since we're passing the `this` value to the cork function, we need to
         // make sure the `this` value is up to date.
         this_value: JSC.JSValue,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args = callframe.arguments(1);
         this.this_value = this_value;
 
@@ -5175,7 +5171,7 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args = callframe.arguments(2);
 
         if (args.len < 1) {
@@ -5249,7 +5245,7 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args = callframe.arguments(2);
 
         if (args.len < 1) {
@@ -5333,7 +5329,7 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args = callframe.arguments(2);
 
         if (args.len < 1) {
@@ -5411,7 +5407,7 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return sendPing(this, globalThis, callframe, "ping", .ping);
     }
 
@@ -5419,7 +5415,7 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return sendPing(this, globalThis, callframe, "pong", .pong);
     }
 
@@ -5533,7 +5529,7 @@ pub const ServerWebSocket = struct {
         callframe: *JSC.CallFrame,
         // Since close() can lead to the close() callback being called, let's always ensure the `this` value is up to date.
         this_value: JSC.JSValue,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args = callframe.arguments(2);
         log("close()", .{});
         this.this_value = this_value;
@@ -5580,7 +5576,7 @@ pub const ServerWebSocket = struct {
         callframe: *JSC.CallFrame,
         // Since terminate() can lead to close() being called, let's always ensure the `this` value is up to date.
         this_value: JSC.JSValue,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         _ = globalThis;
         const args = callframe.arguments(2);
         _ = args;
@@ -5638,7 +5634,7 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         log("getBufferedAmount()", .{});
 
         if (this.isClosed()) {
@@ -5651,7 +5647,7 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args = callframe.arguments(1);
         if (args.len < 1) {
             globalThis.throw("subscribe requires at least 1 argument", .{});
@@ -5688,7 +5684,7 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args = callframe.arguments(1);
         if (args.len < 1) {
             globalThis.throw("unsubscribe requires at least 1 argument", .{});
@@ -5725,7 +5721,7 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args = callframe.arguments(1);
         if (args.len < 1) {
             globalThis.throw("isSubscribed requires at least 1 argument", .{});
@@ -5828,7 +5824,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doRequestIP = JSC.wrapInstanceMethod(ThisServer, "requestIP", false);
         pub const doTimeout = JSC.wrapInstanceMethod(ThisServer, "timeout", false);
 
-        pub fn doSubscriberCount(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+        pub fn doSubscriberCount(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments(1);
             if (arguments.len < 1) {
                 globalThis.throwNotEnoughArguments("subscriberCount", 1, 0);
@@ -6152,7 +6148,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.setRoutes();
         }
 
-        pub fn onReload(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSC.JSValue {
+        pub fn onReload(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments(1).slice();
             if (arguments.len < 1) {
                 globalThis.throwNotEnoughArguments("reload", 1, 0);
@@ -6178,7 +6174,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this: *ThisServer,
             ctx: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSC.JSValue {
+        ) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
             const arguments = callframe.arguments(2).slice();
             if (arguments.len == 0) {
@@ -6790,14 +6786,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.poll_ref.unref(this.vm);
         }
 
-        pub fn doRef(this: *ThisServer, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+        pub fn doRef(this: *ThisServer, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const this_value = callframe.this();
             this.ref();
 
             return this_value;
         }
 
-        pub fn doUnref(this: *ThisServer, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+        pub fn doUnref(this: *ThisServer, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const this_value = callframe.this();
             this.unref();
 

@@ -147,7 +147,7 @@ pub const PostgresSQLContext = struct {
     onQueryResolveFn: JSC.Strong = .{},
     onQueryRejectFn: JSC.Strong = .{},
 
-    pub fn init(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn init(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var ctx = &globalObject.bunVM().rareData().postgresql_context;
         ctx.onQueryResolveFn.set(globalObject, callframe.argument(0));
         ctx.onQueryRejectFn.set(globalObject, callframe.argument(1));
@@ -157,9 +157,8 @@ pub const PostgresSQLContext = struct {
 
     comptime {
         if (!JSC.is_bindgen) {
-            @export(init, .{
-                .name = "PostgresSQLContext__init",
-            });
+            const js_init = JSC.toJSHostFunction(init);
+            @export(js_init, .{ .name = "PostgresSQLContext__init" });
         }
     }
 };
@@ -416,7 +415,7 @@ pub const PostgresSQLQuery = struct {
         return @sizeOf(PostgresSQLQuery);
     }
 
-    pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(4).slice();
         const query = arguments[0];
         const values = arguments[1];
@@ -467,13 +466,13 @@ pub const PostgresSQLQuery = struct {
         pending_value.push(globalThis, value);
     }
 
-    pub fn doDone(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn doDone(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         _ = globalObject;
         this.is_done = true;
         return .undefined;
     }
 
-    pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         var arguments_ = callframe.arguments(2);
         const arguments = arguments_.slice();
         var connection = arguments[0].as(PostgresSQLConnection) orelse {
@@ -579,7 +578,7 @@ pub const PostgresSQLQuery = struct {
         return .undefined;
     }
 
-    pub fn doCancel(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn doCancel(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         _ = callframe;
         _ = globalObject;
         _ = this;
@@ -589,7 +588,8 @@ pub const PostgresSQLQuery = struct {
 
     comptime {
         if (!JSC.is_bindgen) {
-            @export(call, .{ .name = "PostgresSQLQuery__createInstance" });
+            const jscall = JSC.toJSHostFunction(call);
+            @export(jscall, .{ .name = "PostgresSQLQuery__createInstance" });
         }
     }
 };
@@ -1221,11 +1221,12 @@ pub const PostgresSQLConnection = struct {
 
     comptime {
         if (!JSC.is_bindgen) {
-            @export(call, .{ .name = "PostgresSQLConnection__createInstance" });
+            const jscall = JSC.toJSHostFunction(call);
+            @export(jscall, .{ .name = "PostgresSQLConnection__createInstance" });
         }
     }
 
-    pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var vm = globalObject.bunVM();
         const arguments = callframe.arguments(9).slice();
         const hostname_str = arguments[0].toBunString(globalObject);
@@ -1379,13 +1380,13 @@ pub const PostgresSQLConnection = struct {
         this.ref_count += 1;
     }
 
-    pub fn doRef(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn doRef(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.poll_ref.ref(this.globalObject.bunVM());
         this.updateHasPendingActivity();
         return .undefined;
     }
 
-    pub fn doUnref(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn doUnref(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.poll_ref.unref(this.globalObject.bunVM());
         this.updateHasPendingActivity();
         return .undefined;
@@ -1401,7 +1402,7 @@ pub const PostgresSQLConnection = struct {
         }
     }
 
-    pub fn doClose(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn doClose(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         _ = globalObject;
         this.disconnect();
         this.write_buffer.deinit(bun.default_allocator);
@@ -2263,7 +2264,7 @@ pub const PostgresSQLConnection = struct {
         }
     }
 
-    pub fn doFlush(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn doFlush(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         _ = callframe;
         _ = globalObject;
         _ = this;
@@ -2271,7 +2272,7 @@ pub const PostgresSQLConnection = struct {
         return .undefined;
     }
 
-    pub fn createQuery(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn createQuery(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         _ = callframe;
         _ = globalObject;
         _ = this;

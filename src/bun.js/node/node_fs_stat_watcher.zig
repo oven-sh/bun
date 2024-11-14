@@ -295,7 +295,7 @@ pub const StatWatcher = struct {
         }
     };
 
-    pub fn doRef(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doRef(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (!this.closed and !this.persistent) {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
@@ -303,7 +303,7 @@ pub const StatWatcher = struct {
         return .undefined;
     }
 
-    pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (this.persistent) {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
@@ -329,7 +329,7 @@ pub const StatWatcher = struct {
         this.last_jsvalue.clear();
     }
 
-    pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         this.close();
         return .undefined;
     }

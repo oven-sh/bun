@@ -650,7 +650,11 @@ const ParseArgsState = struct {
     }
 };
 
-pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
+pub fn parseArgs(
+    globalThis: *JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) bun.JSError!JSValue {
+    JSC.markBinding(@src());
     const arguments = callframe.argumentsAsArray(1);
     return parseArgsImpl(globalThis, arguments[0]);
 }

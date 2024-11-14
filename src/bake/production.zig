@@ -132,8 +132,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     const config_entry_point_string = bun.String.createUTF8(config_entry_point.pathConst().?.text);
     defer config_entry_point_string.deref();
 
-    const config_promise = bun.JSC.JSModuleLoader.loadAndEvaluateModule(global, &config_entry_point_string) orelse
-        return global.jsErrorFromCPP();
+    const config_promise = bun.JSC.JSModuleLoader.loadAndEvaluateModule(global, &config_entry_point_string) orelse {
+        bun.assert(global.hasException());
+        return error.JSError;
+    };
 
     vm.waitForPromise(.{ .internal = config_promise });
     var options = switch (config_promise.unwrap(vm.jsc, .mark_handled)) {

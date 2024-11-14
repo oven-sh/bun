@@ -415,7 +415,7 @@ pub const Run = struct {
                         if (result.asAnyPromise()) |promise| {
                             switch (promise.status(vm.jsc)) {
                                 .pending => {
-                                    result._then(vm.global, .undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
+                                    result._then2(vm.global, .undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
 
                                     vm.tick();
                                     vm.eventLoop().autoTickActive();

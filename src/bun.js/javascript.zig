@@ -429,10 +429,14 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
 
 extern fn Bun__Process__queueNextTick1(*JSC.ZigGlobalObject, JSC.JSValue, JSC.JSValue) void;
 
-pub export fn Bun__Process__send(
+comptime {
+    const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
+    @export(Bun__Process__send, .{ .name = "Bun__Process__send" });
+}
+pub fn Bun__Process__send_(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
-) callconv(JSC.conv) JSValue {
+) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
     var message, var handle, var options_, var callback = callFrame.arguments(4).ptr;
 
@@ -453,7 +457,7 @@ pub export fn Bun__Process__send(
     }
 
     const S = struct {
-        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments_ = callframe.arguments(1).slice();
             const ex = arguments_[0];
             VirtualMachine.Process__emitErrorEvent(globalThis, ex);
@@ -4544,7 +4548,7 @@ comptime {
     @export(string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
 }
 
-pub export fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const args = callframe.arguments(1).slice();
     if (args.len < 1) {
         globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);

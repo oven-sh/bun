@@ -1019,7 +1019,7 @@ pub const JSFrameworkRouter = struct {
             InsertionContext.wrap(JSFrameworkRouter, jsfr),
         ) catch |err| {
             global.throwError(err, "while scanning route list");
-            return global.jsErrorFromCPP();
+            return error.JSError;
         };
 
         return jsfr;
@@ -1054,7 +1054,7 @@ pub const JSFrameworkRouter = struct {
         return .null;
     }
 
-    pub fn toJSON(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
+    pub fn toJSON(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         _ = callframe;
 
         var sfb = std.heap.stackFallback(4096, bun.default_allocator);
@@ -1129,7 +1129,7 @@ pub const JSFrameworkRouter = struct {
         const parsed = style.parse(filepath.slice(), std.fs.path.extension(filepath.slice()), &log, alloc) catch |err| switch (err) {
             error.InvalidRoutePattern => {
                 global.throw("{s} ({d}:{d})", .{ log.msg.slice(), log.cursor_at, log.cursor_len });
-                return global.jsErrorFromCPP();
+                return error.JSError;
             },
             else => |e| return e,
         } orelse

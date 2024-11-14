@@ -1,0 +1,3 @@
+# Ignore imported sqlite3 files
+sqlite3_local.h
+sqlite3.c

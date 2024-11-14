@@ -401,7 +401,7 @@ pub fn camelCase(
 ) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
-        globalThis.throwNotEnoughArguments("camelCase", 1, 0);
+        globalThis.throwNotEnoughArguments("camelCase()", 1, 0);
         return JSC.JSValue.jsUndefined();
     }
 
@@ -420,7 +420,7 @@ pub fn capitalCase(
 ) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
-        globalThis.throwNotEnoughArguments("capitalCase", 1, 0);
+        globalThis.throwNotEnoughArguments("capitalCase()", 1, 0);
         return JSC.JSValue.jsUndefined();
     }
 
@@ -439,7 +439,7 @@ pub fn constantCase(
 ) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
-        globalThis.throwNotEnoughArguments("constantCase", 1, 0);
+        globalThis.throwNotEnoughArguments("constantCase()", 1, 0);
         return JSC.JSValue.jsUndefined();
     }
 

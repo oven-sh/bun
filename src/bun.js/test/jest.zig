@@ -1228,22 +1228,6 @@ pub const DescribeScope = struct {
     }
 
     const ScopeStack = ObjectPool(std.ArrayListUnmanaged(*DescribeScope), null, true, 16);
-
-    // pub fn runBeforeAll(this: *DescribeScope, ctx: js.JSContextRef, exception: js.ExceptionRef) bool {
-    //     var scopes = ScopeStack.get(default_allocator);
-    //     defer scopes.release();
-    //     scopes.data.clearRetainingCapacity();
-    //     var cur: ?*DescribeScope = this;
-    //     while (cur) |scope| {
-    //         scopes.data.append(default_allocator, this) catch unreachable;
-    //         cur = scope.parent;
-    //     }
-
-    //     // while (scopes.data.popOrNull()) |scope| {
-    //     //     scope.
-    //     // }
-    // }
-
 };
 
 pub fn wrapTestFunction(comptime name: []const u8, comptime func: anytype) DescribeScope.CallbackFn {
@@ -1902,7 +1886,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
 
             switch (label[idx + 1]) {
                 's' => {
-                    try consumeArg(globalThis, !current_arg.isEmpty() and current_arg.jsType().isString(), &idx, &args_idx, &list, &current_arg, "%s");
+                    try consumeArg(globalThis, current_arg != .zero and current_arg.jsType().isString(), &idx, &args_idx, &list, &current_arg, "%s");
                 },
                 'i' => {
                     try consumeArg(globalThis, current_arg.isAnyInt(), &idx, &args_idx, &list, &current_arg, "%i");
@@ -2144,7 +2128,7 @@ inline fn createEach(
     }
 
     var array = args[0];
-    if (array.isEmpty() or !array.jsType().isArray()) {
+    if (array == .zero or !array.jsType().isArray()) {
         globalThis.throwPretty("{s} expects an array", .{signature});
         return .zero;
     }

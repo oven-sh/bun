@@ -1406,20 +1406,6 @@ pub export fn napi_get_uv_event_loop(env_: napi_env, loop_: ?*napi_event_loop) n
 }
 pub extern fn napi_fatal_exception(env: napi_env, err: napi_value) napi_status;
 
-// We use a linked list here because we assume removing these is relatively rare
-// and array reallocations are relatively expensive.
-pub export fn napi_add_env_cleanup_hook(env_: napi_env, fun: ?*const fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status {
-    log("napi_add_env_cleanup_hook", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    if (fun == null)
-        return env.ok();
-
-    env.toJS().bunVM().rareData().pushCleanupHook(env.toJS(), arg, fun.?);
-    return env.ok();
-}
-
 extern fn napi_internal_cleanup_env_cpp(env: napi_env) callconv(.C) void;
 extern fn napi_internal_check_gc(env: napi_env) callconv(.C) void;
 
@@ -1430,34 +1416,6 @@ pub export fn napi_internal_register_cleanup_zig(env_: napi_env) void {
             napi_internal_cleanup_env_cpp(@ptrCast(data));
         }
     }.callback);
-}
-
-pub export fn napi_remove_env_cleanup_hook(env_: napi_env, fun: ?*const fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status {
-    log("napi_remove_env_cleanup_hook", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-
-    // Avoid looking up env.bunVM().
-    if (bun.Global.isExiting()) {
-        return env.ok();
-    }
-
-    const vm = JSC.VirtualMachine.get();
-
-    if (vm.rare_data == null or fun == null or vm.isShuttingDown())
-        return env.ok();
-
-    var rare_data = vm.rare_data.?;
-    const cmp = JSC.RareData.CleanupHook.init(env.toJS(), arg, fun.?);
-    for (rare_data.cleanup_hooks.items, 0..) |*hook, i| {
-        if (hook.eql(cmp)) {
-            _ = rare_data.cleanup_hooks.orderedRemove(i);
-            break;
-        }
-    }
-
-    return env.ok();
 }
 
 extern fn napi_internal_remove_finalizer(env: napi_env, fun: napi_finalize, hint: ?*anyopaque, data: ?*anyopaque) callconv(.C) void;

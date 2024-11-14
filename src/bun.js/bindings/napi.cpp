@@ -2869,6 +2869,31 @@ extern "C" JS_EXPORT napi_status node_api_get_module_file_name(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
+extern "C" JS_EXPORT napi_status napi_add_env_cleanup_hook(napi_env env,
+    void (*function)(void*),
+    void* data)
+{
+    NAPI_PREAMBLE(env);
+    if (function) {
+        env->addCleanupHook(function, data);
+    }
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" JS_EXPORT napi_status napi_remove_env_cleanup_hook(napi_env env,
+    void (*function)(void*),
+    void* data)
+{
+    NAPI_PREAMBLE(env);
+
+    if (UNLIKELY(function == nullptr || env->globalObject()->vm().hasTerminationRequest())) {
+        NAPI_RETURN_SUCCESS(env);
+    }
+
+    env->removeCleanupHook(function, data);
+    NAPI_RETURN_SUCCESS(env);
+}
+
 extern "C" void napi_internal_cleanup_env_cpp(napi_env env)
 {
     env->cleanup();

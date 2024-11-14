@@ -13,7 +13,9 @@
 #include "ZigGlobalObject.h"
 #include "napi_handle_scope.h"
 #include "napi_finalizer.h"
+#include "wtf/Assertions.h"
 
+#include <list>
 #include <unordered_set>
 
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
@@ -37,6 +39,14 @@ public:
     void cleanup()
     {
         m_inCleanup = true;
+
+        while (!m_cleanupHooks.empty()) {
+            auto [function, data] = m_cleanupHooks.back();
+            m_cleanupHooks.pop_back();
+            ASSERT(function != nullptr);
+            function(data);
+        }
+
         for (const BoundFinalizer& boundFinalizer : m_finalizers) {
             Bun::NapiHandleScope handle_scope(m_globalObject);
             boundFinalizer.call(this);
@@ -69,6 +79,30 @@ public:
     bool hasFinalizers() const
     {
         return !m_finalizers.empty();
+    }
+
+    /// Will abort the process if a duplicate entry would be added.
+    void addCleanupHook(void (*function)(void*), void* data)
+    {
+        for (const auto [existing_function, existing_data] : m_cleanupHooks) {
+            if (UNLIKELY(function == existing_function && data == existing_data)) {
+                RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Attempted to add a duplicate NAPI environment cleanup hook");
+            }
+        }
+
+        m_cleanupHooks.emplace_back(function, data);
+    }
+
+    void removeCleanupHook(void (*function)(void*), void* data)
+    {
+        for (auto iter = m_cleanupHooks.begin(), end = m_cleanupHooks.end(); iter != end; ++iter) {
+            if (iter->first == function && iter->second == data) {
+                m_cleanupHooks.erase(iter);
+                return;
+            }
+        }
+
+        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Attempted to remove a NAPI environment cleanup hook that had never been added");
     }
 
     void checkGC()
@@ -186,6 +220,7 @@ private:
     // TODO(@heimskr): Use WTF::HashSet
     std::unordered_set<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
     bool m_inCleanup = false;
+    std::list<std::pair<void (*)(void*), void*>> m_cleanupHooks;
 };
 
 extern "C" void napi_internal_cleanup_env_cpp(napi_env);

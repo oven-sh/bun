@@ -4284,7 +4284,7 @@ pub const FFIObject = struct {
         value: JSValue,
         byteOffset: ?JSValue,
     ) JSValue {
-        if (value.isEmpty()) {
+        if (value == .zero) {
             return JSC.JSValue.jsNull();
         }
 

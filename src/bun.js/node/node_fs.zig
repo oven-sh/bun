@@ -2334,7 +2334,7 @@ pub const Arguments = struct {
                     if (val.getTruthy(ctx, "mode")) |mode_| {
                         mode = try JSC.Node.modeFromJS(ctx, mode_) orelse mode;
                     }
-                } else if (!val.isEmpty()) {
+                } else if (val != .zero) {
                     if (!val.isUndefinedOrNull()) {
                         // error is handled below
                         flags = try FileSystemFlags.fromJS(ctx, val) orelse flags;

@@ -41,7 +41,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             defer slice.deinit();
 
             const args = if (comptime Arguments != void)
-                (Arguments.fromJS(globalObject, &slice) catch return .zero)
+                (try Arguments.fromJS(globalObject, &slice))
             else
                 Arguments{};
             defer {

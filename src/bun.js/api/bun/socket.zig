@@ -580,7 +580,7 @@ pub const Listener = struct {
             return .zero;
         };
 
-        const handlers = Handlers.fromJS(globalObject, socket_obj) catch return .zero;
+        const handlers = try Handlers.fromJS(globalObject, socket_obj);
 
         var prev_handlers = &this.handlers;
         prev_handlers.unprotect();
@@ -590,7 +590,7 @@ pub const Listener = struct {
         return JSValue.jsUndefined();
     }
 
-    pub fn listen(globalObject: *JSC.JSGlobalObject, opts: JSValue) JSValue {
+    pub fn listen(globalObject: *JSC.JSGlobalObject, opts: JSValue) bun.JSError!JSValue {
         log("listen", .{});
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
             globalObject.throwInvalidArguments("Expected object", .{});
@@ -599,7 +599,7 @@ pub const Listener = struct {
 
         const vm = JSC.VirtualMachine.get();
 
-        var socket_config = SocketConfig.fromJS(vm, opts, globalObject) catch return .zero;
+        var socket_config = try SocketConfig.fromJS(vm, opts, globalObject);
 
         var hostname_or_unix = socket_config.hostname_or_unix;
         const port = socket_config.port;
@@ -897,7 +897,7 @@ pub const Listener = struct {
         socket.setTimeout(120);
     }
 
-    pub fn addServerName(this: *Listener, global: *JSC.JSGlobalObject, hostname: JSValue, tls: JSValue) JSValue {
+    pub fn addServerName(this: *Listener, global: *JSC.JSGlobalObject, hostname: JSValue, tls: JSValue) bun.JSError!JSValue {
         if (!this.ssl) {
             global.throwInvalidArguments("addServerName requires SSL support", .{});
             return .zero;
@@ -918,7 +918,7 @@ pub const Listener = struct {
             return .zero;
         }
 
-        if (JSC.API.ServerConfig.SSLConfig.fromJS(JSC.VirtualMachine.get(), global, tls) catch return .zero) |ssl_config| {
+        if (try JSC.API.ServerConfig.SSLConfig.fromJS(JSC.VirtualMachine.get(), global, tls)) |ssl_config| {
             // to keep nodejs compatibility, we allow to replace the server name
             uws.us_socket_context_remove_server_name(1, this.socket_context, server_name);
             uws.us_bun_socket_context_add_server_name(1, this.socket_context, server_name, ssl_config.asUSockets(), null);
@@ -1055,17 +1055,14 @@ pub const Listener = struct {
         return JSValue.jsUndefined();
     }
 
-    pub fn connect(
-        globalObject: *JSC.JSGlobalObject,
-        opts: JSValue,
-    ) JSValue {
+    pub fn connect(globalObject: *JSC.JSGlobalObject, opts: JSValue) bun.JSError!JSValue {
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
             globalObject.throwInvalidArguments("Expected options object", .{});
             return .zero;
         }
         const vm = globalObject.bunVM();
 
-        const socket_config = SocketConfig.fromJS(vm, opts, globalObject) catch return .zero;
+        const socket_config = try SocketConfig.fromJS(vm, opts, globalObject);
 
         var hostname_or_unix = socket_config.hostname_or_unix;
         const port = socket_config.port;
@@ -2611,7 +2608,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             };
 
-            const handlers = Handlers.fromJS(globalObject, socket_obj) catch return .zero;
+            const handlers = try Handlers.fromJS(globalObject, socket_obj);
 
             var prev_handlers = this.handlers;
             prev_handlers.unprotect();
@@ -3380,7 +3377,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            const handlers = Handlers.fromJS(globalObject, socket_obj) catch return .zero;
+            const handlers = try Handlers.fromJS(globalObject, socket_obj);
 
             if (globalObject.hasException()) {
                 return .zero;
@@ -3401,7 +3398,7 @@ fn NewSocket(comptime ssl: bool) type {
                         ssl_opts = JSC.API.ServerConfig.SSLConfig.zero;
                     }
                 } else {
-                    if (JSC.API.ServerConfig.SSLConfig.fromJS(JSC.VirtualMachine.get(), globalObject, tls) catch return .zero) |ssl_config| {
+                    if (try JSC.API.ServerConfig.SSLConfig.fromJS(JSC.VirtualMachine.get(), globalObject, tls)) |ssl_config| {
                         ssl_opts = ssl_config;
                     }
                 }
@@ -4285,7 +4282,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
         return .zero;
     };
 
-    var handlers = Handlers.fromJS(globalObject, socket_obj) catch return .zero;
+    var handlers = try Handlers.fromJS(globalObject, socket_obj);
 
     var ssl_opts: ?JSC.API.ServerConfig.SSLConfig = null;
     if (opts.getTruthy(globalObject, "tls")) |tls| {
@@ -4294,7 +4291,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
                 ssl_opts = JSC.API.ServerConfig.SSLConfig.zero;
             }
         } else {
-            if (JSC.API.ServerConfig.SSLConfig.fromJS(JSC.VirtualMachine.get(), globalObject, tls) catch return .zero) |ssl_config| {
+            if (try JSC.API.ServerConfig.SSLConfig.fromJS(JSC.VirtualMachine.get(), globalObject, tls)) |ssl_config| {
                 ssl_opts = ssl_config;
             }
         }

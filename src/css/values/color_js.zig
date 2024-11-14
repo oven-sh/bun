@@ -169,7 +169,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                 return JSC.JSValue.jsUndefined();
             }
 
-            break :brk args[1].toEnum(globalThis, "format", OutputColorFormat) catch return .zero;
+            break :brk try args[1].toEnum(globalThis, "format", OutputColorFormat);
         }
 
         break :brk OutputColorFormat.css;

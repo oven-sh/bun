@@ -364,7 +364,7 @@ pub const Blob = struct {
             },
         };
 
-        _onStructuredCloneSerialize(this, Writer, writer) catch return .zero;
+        try _onStructuredCloneSerialize(this, Writer, writer);
     }
 
     pub fn onStructuredCloneTransfer(
@@ -520,7 +520,16 @@ pub const Blob = struct {
         var buffer_stream = std.io.fixedBufferStream(ptr[0..total_length]);
         const reader = buffer_stream.reader();
 
-        return _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch return .zero;
+        return _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch |err| switch (err) {
+            error.EndOfStream, error.TooSmall, error.InvalidValue => {
+                globalThis.throw("Blob.onStructuredCloneDeserialize failed", .{});
+                return .zero;
+            },
+            error.OutOfMemory => {
+                globalThis.throwOutOfMemory();
+                return .zero;
+            },
+        };
     }
 
     const URLSearchParamsConverter = struct {
@@ -966,7 +975,7 @@ pub const Blob = struct {
         defer args.deinit();
 
         // accept a path or a blob
-        var path_or_blob = (PathOrBlob.fromJSNoCopy(globalThis, &args) catch return .zero) orelse {
+        var path_or_blob = (try PathOrBlob.fromJSNoCopy(globalThis, &args)) orelse {
             globalThis.throwInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{});
             return .zero;
         };
@@ -1557,7 +1566,7 @@ pub const Blob = struct {
         var args = JSC.Node.ArgumentsSlice.init(vm, arguments);
         defer args.deinit();
 
-        var path = (JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator) catch return .zero) orelse {
+        var path = (try JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator)) orelse {
             globalObject.throwInvalidArguments("Expected file path string or file descriptor", .{});
             return .zero;
         };

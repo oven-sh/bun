@@ -201,7 +201,7 @@ pub fn CompressionStream(comptime T: type) type {
             //
 
             this.stream.doWork();
-            if (this.checkError(globalThis) catch return .zero) {
+            if (try this.checkError(globalThis)) {
                 this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
                 this.write_in_progress = false;
             }
@@ -215,7 +215,7 @@ pub fn CompressionStream(comptime T: type) type {
 
             const err = this.stream.reset();
             if (err.isError()) {
-                this.emitError(globalThis, err) catch return .zero;
+                try this.emitError(globalThis, err);
             }
             return .undefined;
         }
@@ -363,13 +363,13 @@ pub const SNativeZlib = struct {
             return .zero;
         }
 
-        const windowBits = validators.validateInt32(globalThis, arguments[0], "windowBits", .{}, null, null) catch return .zero;
-        const level = validators.validateInt32(globalThis, arguments[1], "level", .{}, null, null) catch return .zero;
-        const memLevel = validators.validateInt32(globalThis, arguments[2], "memLevel", .{}, null, null) catch return .zero;
-        const strategy = validators.validateInt32(globalThis, arguments[3], "strategy", .{}, null, null) catch return .zero;
+        const windowBits = try validators.validateInt32(globalThis, arguments[0], "windowBits", .{}, null, null);
+        const level = try validators.validateInt32(globalThis, arguments[1], "level", .{}, null, null);
+        const memLevel = try validators.validateInt32(globalThis, arguments[2], "memLevel", .{}, null, null);
+        const strategy = try validators.validateInt32(globalThis, arguments[3], "strategy", .{}, null, null);
         // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
         const writeResult = arguments[4].asArrayBuffer(globalThis).?.asU32().ptr;
-        const writeCallback = validators.validateFunction(globalThis, arguments[5], "writeCallback", .{}) catch return .zero;
+        const writeCallback = try validators.validateFunction(globalThis, arguments[5], "writeCallback", .{});
         const dictionary = if (arguments[6].isUndefined()) null else arguments[6].asArrayBuffer(globalThis).?.byteSlice();
 
         this.write_result = writeResult;
@@ -388,12 +388,12 @@ pub const SNativeZlib = struct {
             return .zero;
         }
 
-        const level = validators.validateInt32(globalThis, arguments[0], "level", .{}, null, null) catch return .zero;
-        const strategy = validators.validateInt32(globalThis, arguments[1], "strategy", .{}, null, null) catch return .zero;
+        const level = try validators.validateInt32(globalThis, arguments[0], "level", .{}, null, null);
+        const strategy = try validators.validateInt32(globalThis, arguments[1], "strategy", .{}, null, null);
 
         const err = this.stream.setParams(level, strategy);
         if (err.isError()) {
-            this.emitError(globalThis, err) catch return .zero;
+            try this.emitError(globalThis, err);
         }
         return .undefined;
     }
@@ -728,13 +728,13 @@ pub const SNativeBrotli = struct {
 
         // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
         const writeResult = arguments[1].asArrayBuffer(globalThis).?.asU32().ptr;
-        const writeCallback = validators.validateFunction(globalThis, arguments[2], "writeCallback", .{}) catch return .zero;
+        const writeCallback = try validators.validateFunction(globalThis, arguments[2], "writeCallback", .{});
         this.write_result = writeResult;
         this.write_callback.set(globalThis, writeCallback);
 
         var err = this.stream.init();
         if (err.isError()) {
-            this.emitError(globalThis, err) catch return .zero;
+            try this.emitError(globalThis, err);
             return JSC.jsBoolean(false);
         }
 
@@ -747,7 +747,7 @@ pub const SNativeBrotli = struct {
             }
             err = this.stream.setParams(@intCast(i), d);
             if (err.isError()) {
-                // this.emitError(globalThis, err) catch return .zero; //XXX: onerror isn't set yet
+                // try this.emitError(globalThis, err); //XXX: onerror isn't set yet
                 return JSC.jsBoolean(false);
             }
         }

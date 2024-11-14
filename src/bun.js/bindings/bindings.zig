@@ -6860,6 +6860,14 @@ pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunction
     }.function;
 }
 
+// XXX: temporary
+pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!JSValue) JSValue {
+    return value catch |err| switch (err) {
+        error.JSError => .zero,
+        error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+    };
+}
+
 const ParsedHostFunctionErrorSet = struct {
     OutOfMemory: bool = false,
     JSError: bool = false,

@@ -654,7 +654,7 @@ pub const Subprocess = struct {
                 if (arguments.ptr[0].asString().length() == 0) {
                     break :brk SignalCode.default;
                 }
-                const signal_code = arguments.ptr[0].toEnum(globalThis, "signal", SignalCode) catch return .zero;
+                const signal_code = try arguments.ptr[0].toEnum(globalThis, "signal", SignalCode);
                 break :brk @intFromEnum(signal_code);
             } else if (!arguments.ptr[0].isEmptyOrUndefinedOrNull()) {
                 globalThis.throwInvalidArguments("Invalid signal: must be a string or an integer", .{});

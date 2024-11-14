@@ -506,7 +506,7 @@ pub fn inspectTable(
         .single_line = true,
     };
     if (arguments[2].isObject()) {
-        formatOptions.fromJS(globalThis, arguments[2..]) catch return .zero;
+        try formatOptions.fromJS(globalThis, arguments[2..]);
     }
     const value = arguments[0];
 
@@ -572,7 +572,7 @@ pub fn inspect(
         .ordered_properties = false,
     };
     if (arguments.len > 1) {
-        formatOptions.fromJS(globalThis, arguments[1..]) catch return .zero;
+        try formatOptions.fromJS(globalThis, arguments[1..]);
     }
     const value = arguments[0];
 
@@ -1092,7 +1092,7 @@ export fn Bun__resolveSync(
     const source_str = source.toBunString(global);
     defer source_str.deref();
 
-    return doResolveWithArgs(global, specifier_str, source_str, is_esm, true) catch return .zero;
+    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true));
 }
 
 export fn Bun__resolveSyncWithStrings(
@@ -1102,7 +1102,7 @@ export fn Bun__resolveSyncWithStrings(
     is_esm: bool,
 ) JSC.JSValue {
     Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
-    return doResolveWithArgs(global, specifier.*, source.*, is_esm, true) catch return .zero;
+    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier.*, source.*, is_esm, true));
 }
 
 export fn Bun__resolveSyncWithSource(
@@ -1113,7 +1113,7 @@ export fn Bun__resolveSyncWithSource(
 ) JSC.JSValue {
     const specifier_str = specifier.toBunString(global);
     defer specifier_str.deref();
-    return doResolveWithArgs(global, specifier_str, source.*, is_esm, true) catch return .zero;
+    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true));
 }
 
 extern fn dump_zone_malloc_stats() void;

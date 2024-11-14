@@ -1862,7 +1862,10 @@ fn consumeArg(
 ) !void {
     const allocator = getAllocator(globalThis);
     if (should_write) {
-        const owned_slice = arg.toSliceOrNull(globalThis) orelse return error.Failed;
+        const owned_slice = arg.toSliceOrNull(globalThis) orelse {
+            bun.assert(globalThis.hasException());
+            return error.JSError;
+        };
         defer owned_slice.deinit();
         array_list.appendSlice(allocator, owned_slice.slice()) catch bun.outOfMemory();
     } else {
@@ -2053,7 +2056,7 @@ fn eachBind(
                 ""
             else
                 (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
-            const formattedLabel = formatLabel(globalThis, label, function_args, test_idx) catch return .zero;
+            const formattedLabel = try formatLabel(globalThis, label, function_args, test_idx);
 
             const tag = parent.tag;
 

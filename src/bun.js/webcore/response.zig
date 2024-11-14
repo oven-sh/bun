@@ -510,35 +510,22 @@ pub const Response = struct {
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Response {
-        const args_list = callframe.argumentsUndef(2);
-
-        const arguments = args_list.ptr[0..args_list.len];
+        const arguments = callframe.argumentsAsArray(2);
 
         var init: Init = (brk: {
-            switch (callframe.argumentsCount()) {
-                0 => {
-                    break :brk Init{
-                        .status_code = 200,
-                        .headers = null,
-                    };
-                },
-                1 => {
-                    break :brk Init{
-                        .status_code = 200,
-                        .headers = null,
-                    };
-                },
-                else => {
-                    if (arguments[1].isObject()) {
-                        break :brk try Init.init(globalThis, arguments[1]) orelse unreachable;
-                    }
-                    if (!globalThis.hasException()) {
-                        return globalThis.throwInvalidArguments2("new Response() requires a Response-like object in the 2nd argument", .{});
-                    }
-                    return error.JSError;
-                },
+            if (arguments[1].isUndefinedOrNull()) {
+                break :brk Init{
+                    .status_code = 200,
+                    .headers = null,
+                };
             }
-            unreachable;
+            if (arguments[1].isObject()) {
+                break :brk try Init.init(globalThis, arguments[1]) orelse unreachable;
+            }
+            if (!globalThis.hasException()) {
+                return globalThis.throwInvalidArguments2("Failed to construct 'Response': The provided body value is not of type 'ResponseInit'", .{});
+            }
+            return error.JSError;
         });
         errdefer init.deinit(bun.default_allocator);
 
@@ -547,17 +534,12 @@ pub const Response = struct {
         }
 
         var body: Body = brk: {
-            switch (arguments.len) {
-                0 => {
-                    break :brk Body{
-                        .value = Body.Value{ .Null = {} },
-                    };
-                },
-                else => {
-                    break :brk try Body.extract(globalThis, arguments[0]);
-                },
+            if (arguments[0].isUndefinedOrNull()) {
+                break :brk Body{
+                    .value = Body.Value{ .Null = {} },
+                };
             }
-            unreachable;
+            break :brk try Body.extract(globalThis, arguments[0]);
         };
         errdefer body.deinit(bun.default_allocator);
 

@@ -59,13 +59,6 @@
         blue: "#89b4fa",
         yellow: "#f9e2af",
       };
-      const ws = new WebSocket(location.origin + "/_bun/hmr");
-
-      ws.binaryType = "arraybuffer"; // We are expecting binary data
-
-      ws.onopen = function () {
-        ws.send(new Uint8Array([118])); // Send 'v' byte to initiate connection
-      };
 
       // Store nodes and edges
       let clientFiles = [];
@@ -74,15 +67,34 @@
       let serverEdges = [];
       let currentEdgeIds = new Set();
       let currentNodeIds = new Set();
-      let isFirst = true;
+      let = true;
 
-      // When a message is received
-      ws.onmessage = function (event) {
-        const buffer = new Uint8Array(event.data);
+      // Initialize Vis.js network
+      const nodes = new vis.DataSet();
+      const edges = new vis.DataSet();
 
+      const container = document.getElementById("network");
+      const data = { nodes, edges };
+      const options = {};
+      const network = new vis.Network(container, data, options);
+
+      // Crash handler injects `inlinedData` to produce an offline-compatible version of IncrementalVisualizer
+      if (typeof inlinedData !== "undefined") {
+        decodeAndUpdate(inlinedData);
+      } else {
+        const ws = new WebSocket(location.origin + "/_bun/hmr");
+        ws.binaryType = "arraybuffer"; // We are expecting binary data
+        ws.onopen = function () {
+          ws.send(new Uint8Array([118])); // Send 'v' byte to initiate connection
+        };
+        ws.onmessage = function (event) {
+          decodeAndUpdate(new Uint8Array(event.data));
+        };
+      }
+
+      function decodeAndUpdate(buffer) {
         // Only process messages starting with 'v' (ASCII code 118)
         if (buffer[0] !== 118) return;
-        console.log("Got Event");
 
         let offset = 1; // Skip the 'v' byte
 
@@ -118,7 +130,7 @@
 
         // Update the graph visualization
         updateGraph();
-      };
+      }
 
       // Helper to read 4-byte unsigned int
       function readUint32(buffer, offset) {
@@ -126,7 +138,8 @@
       }
 
       function basename(path) {
-        return path.slice(path.lastIndexOf("/") + 1);
+        const match = /node_modules\/(.*?)\//.exec(path);
+        return match ? match[1] : path;
       }
 
       // Parse the files from the buffer
@@ -182,22 +195,13 @@
         return { edges, offset };
       }
 
-      // Initialize Vis.js network
-      const nodes = new vis.DataSet();
-      const edges = new vis.DataSet();
-
-      const container = document.getElementById("network");
-      const data = { nodes, edges };
-      const options = {};
-      const network = new vis.Network(container, data, options);
-
       // Helper function to add or update nodes in the graph
       function updateNode(id, file, group) {
         const label = basename(file.name);
-        const color = file.name.includes("/node_modules/")
-          ? c.gray
-          : file.isStale
-            ? c.red
+        const color = file.isStale
+          ? c.red
+          : file.name.startsWith("node_modules/")
+            ? c.gray
             : file.isBoundary
               ? c.orange
               : group === "client"
@@ -216,7 +220,7 @@
           color: color,
           borderWidth: file.isRoute ? 3 : 1,
           group,
-          font: file.name.includes("/node_modules/") ? "10px sans-serif #cdd6f488" : "20px sans-serif #cdd6f4",
+          font: file.name.startsWith("node_modules/") ? "10px sans-serif #cdd6f488" : "20px sans-serif #cdd6f4",
         };
         if (nodes.get(id)) {
           nodes.update(props);

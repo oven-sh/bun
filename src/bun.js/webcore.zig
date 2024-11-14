@@ -23,7 +23,7 @@ pub const Lifetime = enum {
 };
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
-fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
@@ -73,7 +73,7 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(
     return .undefined;
 }
 
-fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
@@ -211,7 +211,7 @@ pub const Prompt = struct {
     pub fn call(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(3).slice();
         var state = std.heap.stackFallback(2048, bun.default_allocator);
         const allocator = state.get();
@@ -554,7 +554,7 @@ pub const Crypto = struct {
         _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(2).slice();
 
         if (arguments.len < 2) {
@@ -604,7 +604,7 @@ pub const Crypto = struct {
         _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(1).slice();
         if (arguments.len == 0) {
             globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
@@ -655,7 +655,7 @@ pub const Crypto = struct {
         _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const str, var bytes = bun.String.createUninitialized(.latin1, 36);
         defer str.deref();
 
@@ -665,10 +665,11 @@ pub const Crypto = struct {
         return str.toJS(globalThis);
     }
 
-    pub export fn Bun__randomUUIDv7(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
+    comptime {
+        const Bun__randomUUIDv7 = JSC.toJSHostFunction(Bun__randomUUIDv7_);
+        @export(Bun__randomUUIDv7, .{ .name = "Bun__randomUUIDv7" });
+    }
+    pub fn Bun__randomUUIDv7_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(2).slice();
 
         var encoding_value: JSC.JSValue = .undefined;
@@ -770,8 +771,11 @@ pub const Crypto = struct {
 
 comptime {
     if (!JSC.is_bindgen) {
-        @export(alert, .{ .name = "WebCore__alert" });
-        @export(Prompt.call, .{ .name = "WebCore__prompt" });
-        @export(confirm, .{ .name = "WebCore__confirm" });
+        const js_alert = JSC.toJSHostFunction(alert);
+        @export(js_alert, .{ .name = "WebCore__alert" });
+        const js_prompt = JSC.toJSHostFunction(Prompt.call);
+        @export(js_prompt, .{ .name = "WebCore__prompt" });
+        const js_confirm = JSC.toJSHostFunction(confirm);
+        @export(js_confirm, .{ .name = "WebCore__confirm" });
     }
 }

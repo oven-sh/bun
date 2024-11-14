@@ -9704,7 +9704,7 @@ pub const PackageManager = struct {
                     const outro_text =
                         \\<b>Examples:<r>
                         \\  <d>Display files that would be published, without publishing to the registry.<r>
-                        \\  <b><green>bun publish --dry-run<r>  
+                        \\  <b><green>bun publish --dry-run<r>
                         \\
                         \\  <d>Publish the current package with public access.<r>
                         \\  <b><green>bun publish --access public<r>
@@ -13023,11 +13023,10 @@ pub const PackageManager = struct {
                                             resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
                                         });
                                     }
+                                    const entry = this.summary.packages_with_blocked_scripts.getOrPut(this.manager.allocator, name_hash) catch bun.outOfMemory();
+                                    if (!entry.found_existing) entry.value_ptr.* = 0;
+                                    entry.value_ptr.* += count;
                                 }
-
-                                const entry = this.summary.packages_with_blocked_scripts.getOrPut(this.manager.allocator, name_hash) catch bun.outOfMemory();
-                                if (!entry.found_existing) entry.value_ptr.* = 0;
-                                entry.value_ptr.* += count;
                             },
                         }
 
@@ -14911,7 +14910,7 @@ pub const bun_install_js_bindings = struct {
         return obj;
     }
 
-    pub fn jsParseLockfile(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
+    pub fn jsParseLockfile(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
         const allocator = bun.default_allocator;
         var log = logger.Log.init(allocator);
         defer log.deinit();

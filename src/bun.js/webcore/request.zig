@@ -802,7 +802,7 @@ pub const Request = struct {
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const this_value = callframe.this();
         var cloned = this.clone(getAllocator(globalThis), globalThis);
 

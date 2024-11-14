@@ -89,7 +89,11 @@ pub fn has(this: *ObjectURLRegistry, pathname: []const u8) bool {
     return this.map.contains(uuid);
 }
 
-export fn Bun__createObjectURL(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+comptime {
+    const Bun__createObjectURL = JSC.toJSHostFunction(Bun__createObjectURL_);
+    @export(Bun__createObjectURL, .{ .name = "Bun__createObjectURL" });
+}
+fn Bun__createObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalObject.throwNotEnoughArguments("createObjectURL", 1, arguments.len);
@@ -105,7 +109,11 @@ export fn Bun__createObjectURL(globalObject: *JSC.JSGlobalObject, callframe: *JS
     return str.transferToJS(globalObject);
 }
 
-export fn Bun__revokeObjectURL(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+comptime {
+    const Bun__revokeObjectURL = JSC.toJSHostFunction(Bun__revokeObjectURL_);
+    @export(Bun__revokeObjectURL, .{ .name = "Bun__revokeObjectURL" });
+}
+fn Bun__revokeObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalObject.throwNotEnoughArguments("revokeObjectURL", 1, arguments.len);
@@ -132,7 +140,11 @@ export fn Bun__revokeObjectURL(globalObject: *JSC.JSGlobalObject, callframe: *JS
     return JSC.JSValue.undefined;
 }
 
-export fn jsFunctionResolveObjectURL(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+comptime {
+    const jsFunctionResolveObjectURL = JSC.toJSHostFunction(jsFunctionResolveObjectURL_);
+    @export(jsFunctionResolveObjectURL, .{ .name = "jsFunctionResolveObjectURL" });
+}
+fn jsFunctionResolveObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1);
 
     // Errors are ignored.
@@ -159,12 +171,6 @@ export fn jsFunctionResolveObjectURL(globalObject: *JSC.JSGlobalObject, callfram
     const registry = ObjectURLRegistry.singleton();
     const blob = registry.resolveAndDupeToJS(sliced["blob:".len..], globalObject);
     return blob orelse JSC.JSValue.undefined;
-}
-
-comptime {
-    _ = &Bun__createObjectURL;
-    _ = &Bun__revokeObjectURL;
-    _ = &jsFunctionResolveObjectURL;
 }
 
 pub const specifier_len = "blob:".len + UUID.stringLength;

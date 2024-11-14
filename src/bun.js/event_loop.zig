@@ -1487,38 +1487,36 @@ pub const EventLoop = struct {
 
     pub fn tick(this: *EventLoop) void {
         JSC.markBinding(@src());
-        {
-            this.entered_event_loop_count += 1;
-            this.debug.enter();
-            defer {
-                this.entered_event_loop_count -= 1;
-                this.debug.exit();
-            }
-
-            const ctx = this.virtual_machine;
-            this.tickConcurrent();
-            this.processGCTimer();
-
-            const global = ctx.global;
-            const global_vm = ctx.jsc;
-
-            while (true) {
-                while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
-                    this.tickConcurrent();
-                } else {
-                    this.drainMicrotasksWithGlobal(global, global_vm);
-                    this.tickConcurrent();
-                    if (this.tasks.count > 0) continue;
-                }
-                break;
-            }
-
-            while (this.tickWithCount(ctx) > 0) {
-                this.tickConcurrent();
-            }
-
-            this.global.handleRejectedPromises();
+        this.entered_event_loop_count += 1;
+        this.debug.enter();
+        defer {
+            this.entered_event_loop_count -= 1;
+            this.debug.exit();
         }
+
+        const ctx = this.virtual_machine;
+        this.tickConcurrent();
+        this.processGCTimer();
+
+        const global = ctx.global;
+        const global_vm = ctx.jsc;
+
+        while (true) {
+            while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
+                this.tickConcurrent();
+            } else {
+                this.drainMicrotasksWithGlobal(global, global_vm);
+                this.tickConcurrent();
+                if (this.tasks.count > 0) continue;
+            }
+            break;
+        }
+
+        while (this.tickWithCount(ctx) > 0) {
+            this.tickConcurrent();
+        }
+
+        this.global.handleRejectedPromises();
     }
 
     pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {

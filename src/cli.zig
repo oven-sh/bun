@@ -182,11 +182,12 @@ pub const Arguments = struct {
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
-        clap.parseParam("<POS>...") catch unreachable,
-    } ++ if (builtin.have_error_return_tracing) [_]ParamType{
+    } ++ (if (builtin.have_error_return_tracing) [_]ParamType{
         // This will print more error return traces, as a debug aid
-        clap.parseParam("--verbose-error-trace") catch unreachable,
-    } else [_]ParamType{};
+        clap.parseParam("--verbose-error-trace             Dump error return traces") catch unreachable,
+    } else [_]ParamType{}) ++ [_]ParamType{
+        clap.parseParam("<POS>...") catch unreachable,
+    };
 
     const debug_params = [_]ParamType{
         clap.parseParam("--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string") catch unreachable,
@@ -769,11 +770,9 @@ pub const Arguments = struct {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
             ctx.bundler_options.bytecode = args.flag("--bytecode");
 
-            if (comptime FeatureFlags.bake) {
-                if (args.flag("--app")) {
-                    ctx.bundler_options.bake = true;
-                    ctx.bundler_options.bake_debug_dump_server = args.flag("--debug-dump-server-files");
-                }
+            if (FeatureFlags.bake and args.flag("--app")) {
+                ctx.bundler_options.bake = true;
+                ctx.bundler_options.bake_debug_dump_server = args.flag("--debug-dump-server-files");
             }
 
             // TODO: support --format=esm
@@ -935,18 +934,12 @@ pub const Arguments = struct {
                 ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
-            if (comptime FeatureFlags.bake) {
-                if (args.flag("--server-components")) {
-                    if (!bun.FeatureFlags.cli_server_components) {
-                        // TODO: i want to disable this in non-canary
-                        // but i also want to have tests that can run for PRs
-                    }
-                    ctx.bundler_options.server_components = true;
-                    if (opts.target) |target| {
-                        if (!bun.options.Target.from(target).isServerSide()) {
-                            bun.Output.errGeneric("Cannot use client-side --target={s} with --server-components", .{@tagName(target)});
-                            Global.crash();
-                        }
+            if (bun.FeatureFlags.bake and args.flag("--server-components")) {
+                ctx.bundler_options.server_components = true;
+                if (opts.target) |target| {
+                    if (!bun.options.Target.from(target).isServerSide()) {
+                        bun.Output.errGeneric("Cannot use client-side --target={s} with --server-components", .{@tagName(target)});
+                        Global.crash();
                     } else {
                         opts.target = .bun;
                     }

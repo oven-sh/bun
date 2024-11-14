@@ -7,7 +7,7 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const uv = bun.windows.libuv;
 
-pub fn getBunServerAllClosedPromise(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn getBunServerAllClosedPromise(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("getBunServerAllClosePromise", 1, arguments.len);
@@ -30,13 +30,13 @@ pub fn getBunServerAllClosedPromise(globalThis: *JSC.JSGlobalObject, callframe: 
     return globalThis.throwInvalidArgumentTypeValue("server", "bun.Server", value);
 }
 
-pub fn getMaxHTTPHeaderSize(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn getMaxHTTPHeaderSize(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     _ = globalThis; // autofix
     _ = callframe; // autofix
     return JSC.JSValue.jsNumber(bun.http.max_http_header_size);
 }
 
-pub fn setMaxHTTPHeaderSize(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn setMaxHTTPHeaderSize(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     if (arguments.len < 1) {
         globalThis.throwNotEnoughArguments("setMaxHTTPHeaderSize", 1, arguments.len);

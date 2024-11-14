@@ -195,7 +195,7 @@ pub const TextEncoder = struct {
             return .undefined;
         }
 
-        if (array.isEmpty()) {
+        if (array == .zero) {
             array = JSC.JSValue.createUninitializedUint8Array(globalThis, length);
             array.ensureStillAlive();
             @memcpy(array.asArrayBuffer(globalThis).?.ptr[0..length], buf_to_use[0..length]);
@@ -420,7 +420,7 @@ pub const TextEncoderStreamEncoder = struct {
         return TextEncoderStreamEncoder.new(.{});
     }
 
-    pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
+    pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callFrame.arguments(1).slice();
         if (arguments.len == 0) {
             globalObject.throwNotEnoughArguments("TextEncoderStreamEncoder.encode", 1, arguments.len);
@@ -590,7 +590,7 @@ pub const TextEncoderStreamEncoder = struct {
         }
     }
 
-    pub fn flush(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn flush(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         return flushBody(this, globalObject);
     }
 
@@ -640,25 +640,7 @@ pub const TextDecoder = struct {
     ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.ignore_bom);
     }
-    // pub fn setIgnoreBOM(
-    //     this: *TextDecoder,
-    //     _: *JSC.JSGlobalObject,
-    // )  JSC.JSValue {
-    //     this.ignore_bom = JSValue.fromRef(this.ignore_bom).toBoolean();
-    //     return true;
-    // }
 
-    // pub fn setFatal(
-    //     this: *TextDecoder,
-    //     _: js.JSContextRef,
-    //     _: js.JSValueRef,
-    //     _: js.JSStringRef,
-    //     value: JSC.C.JSValueRef,
-    //     _: js.ExceptionRef,
-    // ) bool {
-    //     this.fatal = JSValue.fromRef(value).toBoolean();
-    //     return true;
-    // }
     pub fn getFatal(
         this: *TextDecoder,
         _: *JSC.JSGlobalObject,
@@ -778,7 +760,7 @@ pub const TextDecoder = struct {
         return .{ output, saw_error };
     }
 
-    pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments(2).slice();
 
         const input_slice = input_slice: {

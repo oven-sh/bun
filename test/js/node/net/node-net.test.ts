@@ -563,48 +563,57 @@ it("should not hang after destroy", async () => {
   }
 });
 
-it.if(isWindows)("should work with named pipes", async () => {
-  async function test(pipe_name: string) {
-    const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers();
-    const { promise: clientReceived, resolve: resolveClientReceived } = Promise.withResolvers();
-    let client: ReturnType<typeof connect> | null = null;
-    let server: ReturnType<typeof createServer> | null = null;
-    try {
-      server = createServer(socket => {
-        socket.on("data", data => {
-          const message = data.toString();
-          socket.end("Goodbye World!");
-          resolveMessageReceived(message);
+it.if(isWindows)(
+  "should work with named pipes",
+  async () => {
+    async function test(pipe_name: string) {
+      const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers();
+      const { promise: clientReceived, resolve: resolveClientReceived } = Promise.withResolvers();
+      let client: ReturnType<typeof connect> | null = null;
+      let server: ReturnType<typeof createServer> | null = null;
+      try {
+        server = createServer(socket => {
+          socket.on("data", data => {
+            const message = data.toString();
+            socket.end("Goodbye World!");
+            resolveMessageReceived(message);
+          });
         });
-      });
 
-      server.listen(pipe_name);
-      client = connect(pipe_name).on("data", data => {
-        const message = data.toString();
-        resolveClientReceived(message);
-      });
+        server.listen(pipe_name);
+        client = connect(pipe_name).on("data", data => {
+          const message = data.toString();
+          resolveClientReceived(message);
+        });
 
-      client?.write("Hello World!");
-      const message = await messageReceived;
-      expect(message).toBe("Hello World!");
-      const client_message = await clientReceived;
-      expect(client_message).toBe("Goodbye World!");
-    } finally {
-      client?.destroy();
-      server?.close();
+        client?.write("Hello World!");
+        const message = await messageReceived;
+        expect(message).toBe("Hello World!");
+        const client_message = await clientReceived;
+        expect(client_message).toBe("Goodbye World!");
+      } finally {
+        client?.destroy();
+        server?.close();
+      }
     }
-  }
 
-  const batch = [];
-  const before = heapStats().objectTypeCounts.TLSSocket || 0;
-  for (let i = 0; i < 200; i++) {
-    batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
-    batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
-    if (i % 50 === 0) {
-      await Promise.all(batch);
-      batch.length = 0;
+    const batch = [];
+    const before = heapStats().objectTypeCounts.TLSSocket || 0;
+    for (let i = 0; i < 100; i++) {
+      batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
+      batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
+      batch.push(test(`//?/pipe/test/${randomUUID()}`));
+      batch.push(test(`//./pipe/test/${randomUUID()}`));
+      batch.push(test(`/\\./pipe/test/${randomUUID()}`));
+      batch.push(test(`/\\./pipe\\test/${randomUUID()}`));
+      batch.push(test(`\\/.\\pipe/test\\${randomUUID()}`));
+      if (i % 50 === 0) {
+        await Promise.all(batch);
+        batch.length = 0;
+      }
     }
-  }
-  await Promise.all(batch);
-  expectMaxObjectTypeCount(expect, "TCPSocket", before);
-});
+    await Promise.all(batch);
+    expectMaxObjectTypeCount(expect, "TCPSocket", before);
+  },
+  20_000,
+);

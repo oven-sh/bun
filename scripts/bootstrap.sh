@@ -821,7 +821,7 @@ create_buildkite_user() {
 		execute_sudo usermod -aG docker "$user"
 	fi
 
-	paths="$home /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent/buildkite-agent.sock"
+	paths="$home /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /var/run/buildkite-agent/buildkite-agent.sock"
 	for path in $paths; do
 		execute_sudo mkdir -p "$path"
 		execute_sudo chown -R "$user:$group" "$path"

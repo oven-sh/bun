@@ -148,13 +148,13 @@ function getPipeline(options) {
    * @param {number} [limit]
    * @link https://buildkite.com/docs/pipelines/command-step#retry-attributes
    */
-  const getRetry = (limit = 3) => {
+  const getRetry = (limit = 0) => {
     return {
       automatic: [
-        { exit_status: 1, limit: 1 },
-        { exit_status: -1, limit },
-        { exit_status: 255, limit },
-        { signal_reason: "agent_stop", limit },
+        { exit_status: 1, limit },
+        { exit_status: -1, limit: 3 },
+        { exit_status: 255, limit: 3 },
+        { signal_reason: "agent_stop", limit: 3 },
       ],
     };
   };
@@ -250,12 +250,18 @@ function getPipeline(options) {
 
   /**
    * @param {Target} target
+   * @param {boolean} [singleCore]
    * @returns {Agent}
    */
-  const getBuildAgent = target => {
+  const getBuildAgent = (target, singleCore = false) => {
     const { os, arch, abi } = target;
     if (abi === "musl") {
-      const instanceType = arch === "aarch64" ? "c8g.8xlarge" : "c7i.8xlarge";
+      let instanceType;
+      if (singleCore) {
+        instanceType = arch === "aarch64" ? "c8g.xlarge" : "x2iezn.2xlarge";
+      } else {
+        instanceType = arch === "aarch64" ? "c8g.8xlarge" : "c7i.8xlarge";
+      }
       return getEmphemeralAgent("v2", target, instanceType);
     }
     return {
@@ -389,7 +395,7 @@ function getPipeline(options) {
       key: `${getTargetKey(target)}-build-zig`,
       label: `${getTargetLabel(target)} - build-zig`,
       agents: getZigAgent(target),
-      retry: getRetry(),
+      retry: getRetry(1), // FIXME: Sometimes zig build hangs, so we need to retry once
       cancel_on_build_failing: isMergeQueue(),
       env: getBuildEnv(target),
       command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
@@ -409,7 +415,7 @@ function getPipeline(options) {
         `${getTargetKey(target)}-build-cpp`,
         `${getTargetKey(target)}-build-zig`,
       ],
-      agents: getBuildAgent(target),
+      agents: getBuildAgent(target, true),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
       env: {
@@ -451,7 +457,7 @@ function getPipeline(options) {
     if (os !== "windows") {
       // When the runner fails on Windows, Buildkite only detects an exit code of 1.
       // Because of this, we don't know if the run was fatal, or soft-failed.
-      retry = getRetry();
+      retry = getRetry(1);
     }
     return {
       key: `${getPlatformKey(platform)}-test-bun`,

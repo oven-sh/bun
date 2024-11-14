@@ -30,31 +30,6 @@ export async function doAgent(action) {
   const username = "buildkite-agent";
   const command = which("buildkite-agent") || "buildkite-agent";
 
-  /**
-   * @param {...string} args
-   * @returns {string}
-   */
-  function getPath(...args) {
-    const lastArg = args.at(-1);
-    const options = typeof lastArg === "object" ? lastArg : undefined;
-    const paths = options ? args.slice(0, -1) : args;
-    const path = join(...paths);
-
-    // if (action === "install") {
-    //   if (options?.["mkdir"]) {
-    //     mkdirSync(path, { recursive: true });
-    //   } else if (options?.["touch"]) {
-    //     appendFileSync(path, "");
-    //   }
-    //   const { error } = spawnSync(["sudo", "chown", "-R", `${username}:${username}`, path], { stdio: "ignore" });
-    //   if (error) {
-    //     spawnSync(["chown", "-R", `${username}:${username}`, path]);
-    //   }
-    // }
-
-    return path;
-  }
-
   let homePath, cachePath, logsPath, agentLogPath, pidPath;
   if (isWindows) {
     throw new Error("TODO: Windows");
@@ -75,7 +50,7 @@ export async function doAgent(action) {
     const args = [realpathSync(process.argv[1]), "start"];
 
     if (isOpenRc()) {
-      const servicePath = join("/", "etc", "init.d", "buildkite-agent");
+      const servicePath = "/etc/init.d/buildkite-agent";
       const service = `#!/sbin/openrc-run
         name="buildkite-agent"
         description="Buildkite Agent"
@@ -100,7 +75,7 @@ export async function doAgent(action) {
     }
 
     if (isSystemd()) {
-      const servicePath = join("/", "etc", "systemd", "system", "buildkite-agent.service");
+      const servicePath = "/etc/systemd/system/buildkite-agent.service";
       const service = `
         [Unit]
         Description=Buildkite Agent

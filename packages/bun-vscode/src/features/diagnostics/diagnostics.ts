@@ -11,9 +11,9 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
       console.log("HMR Version:", Buffer.from(view.buffer.slice(1)).toString("ascii"));
     },
     [MessageId.errors]: view => {
-      console.log("HMR Errors:", Buffer.from(view.buffer.slice(1)).toString("hex"));
-    },
-    [MessageId.route_update]: view => {
+      // console.log("HMR Errors:", Buffer.from(view.buffer.slice(1)).toString("hex"));
+
+      // TODO: Pull the error information from the view buffer?
       const uri = vscode.Uri.file("/Users/ali/code/bun/packages/bun-vscode/example/bug/pages/index.tsx");
       const diagnostics: vscode.Diagnostic[] = [];
 
@@ -58,22 +58,4 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
       socket.close();
     },
   });
-}
-
-function parseDiagnostics(data: string): vscode.Diagnostic[] {
-  const diagnostics: vscode.Diagnostic[] = [];
-  const messages = JSON.parse(data);
-
-  for (const message of messages) {
-    const range = new vscode.Range(
-      new vscode.Position(message.line - 1, message.character - 1),
-      new vscode.Position(message.endLine - 1, message.endCharacter - 1),
-    );
-
-    const diagnostic = new vscode.Diagnostic(range, message.message, vscode.DiagnosticSeverity.Error);
-
-    diagnostics.push(diagnostic);
-  }
-
-  return diagnostics;
 }

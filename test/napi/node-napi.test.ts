@@ -52,8 +52,9 @@ const failingNodeApiTests = [
 
 beforeAll(async () => {
   const directories = jsNativeApiTests
+    .filter(t => !failingJsNativeApiTests.includes(t))
     .map(t => join(jsNativeApiRoot, t))
-    .concat(nodeApiTests.map(t => join(nodeApiRoot, t)))
+    .concat(nodeApiTests.filter(t => !failingNodeApiTests.includes(t)).map(t => join(nodeApiRoot, t)))
     .map(t => dirname(t));
   const uniqueDirectories = Array.from(new Set(directories));
 

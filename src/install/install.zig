@@ -453,7 +453,7 @@ const NetworkTask = struct {
 
         this.callback = .{
             .package_manifest = .{
-                .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, &FileSystem.FilenameStore.instance),
+                .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, FileSystem.FilenameStore.instance),
                 .loaded_manifest = if (loaded_manifest) |manifest| manifest.* else null,
             },
         };
@@ -1760,7 +1760,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             var queue: Queue = undefined;
             pub fn getQueue() *Queue {
                 queue = Queue{
-                    .thread_pool = &PackageManager.instance.thread_pool,
+                    .thread_pool = &PackageManager.get().thread_pool,
                 };
                 return &queue;
             }
@@ -2147,8 +2147,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                             var unintall_task: *@This() = @fieldParentPtr("task", task);
                             var debug_timer = bun.Output.DebugTimer.start();
                             defer {
-                                _ = PackageManager.instance.decrementPendingTasks();
-                                PackageManager.instance.wake();
+                                _ = PackageManager.get().decrementPendingTasks();
+                                PackageManager.get().wake();
                             }
 
                             defer unintall_task.deinit();
@@ -2188,8 +2188,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     var task = UninstallTask.new(.{
                         .absolute_path = bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ this.node_modules.path.items, temp_path }, .auto)) catch bun.outOfMemory(),
                     });
-                    PackageManager.instance.thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
-                    _ = PackageManager.instance.incrementPendingTasks(1);
+                    PackageManager.get().thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
+                    _ = PackageManager.get().incrementPendingTasks(1);
                 },
             }
         }
@@ -2514,8 +2514,8 @@ const TaskCallbackContext = union(enum) {
 const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
 const TaskDependencyQueue = std.HashMapUnmanaged(u64, TaskCallbackList, IdentityContext(u64), 80);
 
-const PreallocatedTaskStore = bun.HiveArray(Task, 512).Fallback;
-const PreallocatedNetworkTasks = bun.HiveArray(NetworkTask, 1024).Fallback;
+const PreallocatedTaskStore = bun.HiveArray(Task, 64).Fallback;
+const PreallocatedNetworkTasks = bun.HiveArray(NetworkTask, 128).Fallback;
 const ResolveTaskQueue = bun.UnboundedQueue(Task, .next);
 
 const ThreadPool = bun.ThreadPool;
@@ -2572,14 +2572,14 @@ const PackageManifestMap = struct {
             return null;
         }
 
-        if (PackageManager.instance.options.enable.manifest_cache) {
+        if (PackageManager.get().options.enable.manifest_cache) {
             if (Npm.PackageManifest.Serializer.loadByFileID(
-                PackageManager.instance.allocator,
+                PackageManager.get().allocator,
                 scope,
-                PackageManager.instance.getCacheDirectory(),
+                PackageManager.get().getCacheDirectory(),
                 name_hash,
             ) catch null) |manifest| {
-                if (PackageManager.instance.options.enable.manifest_cache_control and manifest.pkg.public_max_age > PackageManager.instance.timestamp_for_manifest_cache_control) {
+                if (PackageManager.get().options.enable.manifest_cache_control and manifest.pkg.public_max_age > PackageManager.get().timestamp_for_manifest_cache_control) {
                     entry.value_ptr.* = .{ .manifest = manifest };
                     return &entry.value_ptr.manifest;
                 } else {
@@ -2978,7 +2978,7 @@ pub const PackageManager = struct {
     };
 
     pub fn hasEnoughTimePassedBetweenWaitingMessages() bool {
-        const iter = instance.event_loop.loop().iterationNumber();
+        const iter = get().event_loop.loop().iterationNumber();
         if (TimePasser.last_time < iter) {
             TimePasser.last_time = iter;
             return true;
@@ -3182,7 +3182,7 @@ pub const PackageManager = struct {
                                     manager: *PackageManager,
                                     lockfile: *Lockfile,
                                     pub fn isDone(closure: *@This()) bool {
-                                        var manager = closure.manager;
+                                        const manager = closure.manager;
                                         if (manager.pendingTaskCount() > 0) {
                                             manager.runTasks(
                                                 closure.lockfile,
@@ -3202,7 +3202,7 @@ pub const PackageManager = struct {
                                             };
 
                                             if (PackageManager.verbose_install and manager.pendingTaskCount() > 0) {
-                                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pendingTaskCount()});
+                                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.get().pendingTaskCount()});
                                             }
                                         }
 
@@ -3655,7 +3655,15 @@ pub const PackageManager = struct {
         try this.env.map.putAllocKeyAndValue(this.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
     }
 
-    pub var instance: PackageManager = undefined;
+    const Holder = struct {
+        pub var ptr: *PackageManager = undefined;
+    };
+    pub fn allocatePackageManager() void {
+        Holder.ptr = bun.default_allocator.create(PackageManager) catch bun.outOfMemory();
+    }
+    pub fn get() *PackageManager {
+        return Holder.ptr;
+    }
 
     pub fn getNetworkTask(this: *PackageManager) *NetworkTask {
         return this.preallocated_network_tasks.get();
@@ -4343,12 +4351,12 @@ pub const PackageManager = struct {
         try network_task.forTarball(
             this.allocator,
             &.{
-                .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
+                .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
                 .lockfile = lockfile,
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(
                     lockfile.str(&package.name),
                     *FileSystem.FilenameStore,
-                    &FileSystem.FilenameStore.instance,
+                    FileSystem.FilenameStore.instance,
                 ),
                 .resolution = package.resolution,
                 .cache_dir = this.getCacheDirectory(),
@@ -4358,7 +4366,7 @@ pub const PackageManager = struct {
                 .url = try strings.StringOrTinyString.initAppendIfNeeded(
                     url,
                     *FileSystem.FilenameStore,
-                    &FileSystem.FilenameStore.instance,
+                    FileSystem.FilenameStore.instance,
                 ),
             },
             scope,
@@ -4760,7 +4768,7 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
-            .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
+            .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
             .lockfile = lockfile,
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.package_manifest,
@@ -4784,7 +4792,7 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
-            .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
+            .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
             .lockfile = lockfile,
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.extract,
@@ -4813,7 +4821,7 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
-            .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
+            .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
             .lockfile = lockfile,
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.git_clone,
@@ -4822,12 +4830,12 @@ pub const PackageManager = struct {
                     .name = strings.StringOrTinyString.initAppendIfNeeded(
                         name,
                         *FileSystem.FilenameStore,
-                        &FileSystem.FilenameStore.instance,
+                        FileSystem.FilenameStore.instance,
                     ) catch unreachable,
                     .url = strings.StringOrTinyString.initAppendIfNeeded(
                         lockfile.str(&repository.repo),
                         *FileSystem.FilenameStore,
-                        &FileSystem.FilenameStore.instance,
+                        FileSystem.FilenameStore.instance,
                     ) catch unreachable,
                     .env = Repository.shared_env.get(this.allocator, this.env),
                 },
@@ -4863,7 +4871,7 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
-            .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
+            .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
             .lockfile = lockfile,
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.git_checkout,
@@ -4875,17 +4883,17 @@ pub const PackageManager = struct {
                     .name = strings.StringOrTinyString.initAppendIfNeeded(
                         name,
                         *FileSystem.FilenameStore,
-                        &FileSystem.FilenameStore.instance,
+                        FileSystem.FilenameStore.instance,
                     ) catch unreachable,
                     .url = strings.StringOrTinyString.initAppendIfNeeded(
                         lockfile.str(&resolution.value.git.repo),
                         *FileSystem.FilenameStore,
-                        &FileSystem.FilenameStore.instance,
+                        FileSystem.FilenameStore.instance,
                     ) catch unreachable,
                     .resolved = strings.StringOrTinyString.initAppendIfNeeded(
                         resolved,
                         *FileSystem.FilenameStore,
-                        &FileSystem.FilenameStore.instance,
+                        FileSystem.FilenameStore.instance,
                     ) catch unreachable,
                     .env = Repository.shared_env.get(this.allocator, this.env),
                 },
@@ -4918,19 +4926,19 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
-            .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
+            .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
             .lockfile = lockfile,
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.local_tarball,
             .request = .{
                 .local_tarball = .{
                     .tarball = .{
-                        .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
+                        .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
                         .lockfile = lockfile,
                         .name = strings.StringOrTinyString.initAppendIfNeeded(
                             name,
                             *FileSystem.FilenameStore,
-                            &FileSystem.FilenameStore.instance,
+                            FileSystem.FilenameStore.instance,
                         ) catch unreachable,
                         .resolution = resolution,
                         .cache_dir = this.getCacheDirectory(),
@@ -4939,7 +4947,7 @@ pub const PackageManager = struct {
                         .url = strings.StringOrTinyString.initAppendIfNeeded(
                             path,
                             *FileSystem.FilenameStore,
-                            &FileSystem.FilenameStore.instance,
+                            FileSystem.FilenameStore.instance,
                         ) catch unreachable,
                     },
                 },
@@ -5288,7 +5296,7 @@ pub const PackageManager = struct {
 
                                     var network_task = this.getNetworkTask();
                                     network_task.* = .{
-                                        .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
+                                        .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
                                         .lockfile = lockfile,
                                         .callback = undefined,
                                         .task_id = task_id,
@@ -8710,7 +8718,8 @@ pub const PackageManager = struct {
 
         workspace_names.map.deinit();
 
-        var manager = &instance;
+        PackageManager.allocatePackageManager();
+        const manager = PackageManager.get();
         // var progress = Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
         manager.* = PackageManager{
@@ -8839,8 +8848,8 @@ pub const PackageManager = struct {
         }
 
         const cpu_count = bun.getThreadCount();
-
-        var manager = &instance;
+        PackageManager.allocatePackageManager();
+        const manager = PackageManager.get();
         var root_dir = try Fs.FileSystem.instance.fs.readDirectory(
             Fs.FileSystem.instance.top_level_dir,
             null,
@@ -12421,7 +12430,7 @@ pub const PackageManager = struct {
                         if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.monotonic)});
                     }
 
-                    PackageManager.instance.sleep();
+                    PackageManager.get().sleep();
                 }
 
                 const optional = entry.optional;
@@ -12463,7 +12472,7 @@ pub const PackageManager = struct {
                     }
                 }
 
-                PackageManager.instance.sleep();
+                PackageManager.get().sleep();
             }
         }
 
@@ -13881,8 +13890,8 @@ pub const PackageManager = struct {
                             return true;
                         }
 
-                        if (PackageManager.verbose_install and PackageManager.instance.pendingTaskCount() > 0) {
-                            if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pendingTaskCount()});
+                        if (PackageManager.verbose_install and PackageManager.get().pendingTaskCount() > 0) {
+                            if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.get().pendingTaskCount()});
                         }
 
                         return closure.manager.pendingTaskCount() == 0 and closure.manager.hasNoMorePendingLifecycleScripts();

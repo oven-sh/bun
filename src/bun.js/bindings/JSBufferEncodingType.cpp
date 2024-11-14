@@ -29,20 +29,18 @@
 namespace WebCore {
 using namespace JSC;
 
-static const NeverDestroyed<String> values[] = {
-    MAKE_STATIC_STRING_IMPL("utf8"),
-    MAKE_STATIC_STRING_IMPL("ucs2"),
-    MAKE_STATIC_STRING_IMPL("utf16le"),
-    MAKE_STATIC_STRING_IMPL("latin1"),
-    MAKE_STATIC_STRING_IMPL("ascii"),
-    MAKE_STATIC_STRING_IMPL("base64"),
-    MAKE_STATIC_STRING_IMPL("base64url"),
-    MAKE_STATIC_STRING_IMPL("hex"),
-};
-
 String convertEnumerationToString(BufferEncodingType enumerationValue)
 {
-
+    static const NeverDestroyed<String> values[] = {
+        MAKE_STATIC_STRING_IMPL("utf8"),
+        MAKE_STATIC_STRING_IMPL("ucs2"),
+        MAKE_STATIC_STRING_IMPL("utf16le"),
+        MAKE_STATIC_STRING_IMPL("latin1"),
+        MAKE_STATIC_STRING_IMPL("ascii"),
+        MAKE_STATIC_STRING_IMPL("base64"),
+        MAKE_STATIC_STRING_IMPL("base64url"),
+        MAKE_STATIC_STRING_IMPL("hex"),
+    };
     ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }

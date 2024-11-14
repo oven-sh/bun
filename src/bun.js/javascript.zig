@@ -1858,7 +1858,7 @@ pub const VirtualMachine = struct {
             },
         }
 
-        if (debugger != .unspecified) {
+        if (this.debugger != null) {
             this.bundler.options.minify_identifiers = false;
             this.bundler.options.minify_syntax = false;
             this.bundler.options.minify_whitespace = false;

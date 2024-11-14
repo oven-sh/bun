@@ -937,9 +937,6 @@ fn NewPrinter(
                     p.writer.print(@TypeOf(span), span);
                 },
                 else => {
-                    if (Environment.allow_assert and ascii_only) {
-                        for (str) |char| std.debug.assert(char > 0 and char < 0x80);
-                    }
                     p.writer.print(StringType, str);
                 },
             }

@@ -1783,7 +1783,7 @@ pub const Resolver = struct {
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
                 const info = r.getPackageManagerAndLockfile();
-                var manager = info.manager;
+                const manager = info.manager;
                 const lockfile = info.lockfile;
                 var dependency_version = Dependency.Version{};
                 var dependency_behavior = Dependency.Behavior.normal;

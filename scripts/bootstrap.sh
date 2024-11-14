@@ -826,6 +826,12 @@ create_buildkite_user() {
 		execute_sudo mkdir -p "$path"
 		execute_sudo chown -R "$user:$group" "$path"
 	done
+	
+	files="/var/run/buildkite-agent/buildkite-agent.pid"
+	for file in $files; do
+		execute_sudo touch "$file"
+		execute_sudo chown "$user:$group" "$file"
+	done
 }
 
 install_buildkite() {

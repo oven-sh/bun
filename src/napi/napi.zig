@@ -997,7 +997,7 @@ pub export fn napi_is_promise(env_: napi_env, value_: napi_value, is_promise_: ?
         return env.invalidArg();
     };
 
-    if (value.isEmpty()) {
+    if (value == .zero) {
         return env.invalidArg();
     }
 

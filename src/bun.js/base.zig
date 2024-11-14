@@ -413,7 +413,8 @@ pub const ArrayBuffer = extern struct {
 
     pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);
-        bun.assert(value.asArrayBuffer_(ctx.ptr(), &out));
+        const was = value.asArrayBuffer_(ctx.ptr(), &out);
+        bun.assert(was);
         out.value = value;
         return out;
     }
@@ -479,7 +480,7 @@ pub const ArrayBuffer = extern struct {
     const log = Output.scoped(.ArrayBuffer, false);
 
     pub fn toJS(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
-        if (!this.value.isEmpty()) {
+        if (this.value != .zero) {
             return this.value;
         }
 
@@ -519,7 +520,7 @@ pub const ArrayBuffer = extern struct {
         callback: JSC.C.JSTypedArrayBytesDeallocator,
         exception: JSC.C.ExceptionRef,
     ) JSC.JSValue {
-        if (!this.value.isEmpty()) {
+        if (this.value != .zero) {
             return this.value;
         }
 
@@ -605,7 +606,7 @@ pub const MarkedArrayBuffer = struct {
         return MarkedArrayBuffer.fromBytes(buf, allocator, JSC.JSValue.JSType.Uint8Array);
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, _: JSC.C.ExceptionRef) ?MarkedArrayBuffer {
+    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue) ?MarkedArrayBuffer {
         const array_buffer = value.asArrayBuffer(global) orelse return null;
         return MarkedArrayBuffer{ .buffer = array_buffer, .allocator = null };
     }
@@ -1160,7 +1161,10 @@ pub fn wrapInstanceMethod(
                 }
             }
 
-            return @call(.always_inline, @field(Container, name), args);
+            const result = @call(.always_inline, @field(Container, name), args);
+            if (@TypeOf(result) == JSValue) return result;
+            if (@TypeOf(result) == bun.JSError!JSValue) return result catch .zero;
+            comptime unreachable;
         }
     }.method;
 }

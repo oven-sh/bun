@@ -1158,10 +1158,7 @@ pub fn wrapInstanceMethod(
                 }
             }
 
-            const result = @call(.always_inline, @field(Container, name), args);
-            if (@TypeOf(result) == JSValue) return result;
-            if (@TypeOf(result) == bun.JSError!JSValue) return result catch .zero;
-            comptime unreachable;
+            return @call(.always_inline, @field(Container, name), args);
         }
     }.method;
 }

@@ -14,6 +14,7 @@ import {
   getChangedFiles,
   getCommit,
   getCommitMessage,
+  getEnv,
   getLastSuccessfulBuild,
   getMainBranch,
   getRepositoryOwner,
@@ -340,6 +341,7 @@ function getPipeline(options) {
    */
   const getBuildImageStep = platform => {
     const { os, arch, distro, release } = platform;
+    const action = isMainBranch() || getEnv("PUBLISH_IMAGES", false) === "true" ? "publish-image" : "create-image";
     return {
       key: `${getImageKey(platform)}-build-image`,
       label: `${getImageLabel(platform)} - build-image`,
@@ -349,7 +351,7 @@ function getPipeline(options) {
       env: {
         DEBUG: "1",
       },
-      command: `node ./scripts/machine.mjs --cloud=aws --os=${os} --arch=${arch} --distro=${distro} --distro-version=${release}`,
+      command: `node ./scripts/machine.mjs ${action} --ci --cloud=aws --os=${os} --arch=${arch} --distro=${distro} --distro-version=${release}`,
     };
   };
 

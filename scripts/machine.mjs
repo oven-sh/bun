@@ -3,10 +3,12 @@
 import { inspect, parseArgs } from "node:util";
 import {
   $,
-  getArch,
+  getBootstrapVersion,
   getBuildNumber,
   getSecret,
   isCI,
+  parseArch,
+  parseOs,
   readFile,
   spawn,
   spawnSafe,
@@ -16,9 +18,10 @@ import {
   waitForPort,
   which,
 } from "./utils.mjs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const docker = {
   getPlatform(platform) {
@@ -721,10 +724,10 @@ function getUsername(distro) {
  * @returns {number}
  */
 function getDiskSize(options) {
-  const { os, diskSize } = options;
+  const { os, diskSizeGb } = options;
 
-  if (diskSize) {
-    return diskSize;
+  if (diskSizeGb) {
+    return diskSizeGb;
   }
 
   return os === "windows" ? 50 : 30;
@@ -778,7 +781,7 @@ function getSshKeys() {
   const sshPath = join(homePath, ".ssh");
 
   /** @type {SshKey[]} */
-  let sshKeys = [];
+  const sshKeys = [];
   if (existsSync(sshPath)) {
     const sshFiles = readdirSync(sshPath, { withFileTypes: true });
     const publicPaths = sshFiles
@@ -913,6 +916,18 @@ async function spawnScp(options) {
  */
 
 /**
+ * @param {string} name
+ * @returns {Cloud}
+ */
+function getCloud(name) {
+  switch (name) {
+    case "aws":
+      return aws;
+  }
+  throw new Error(`Unsupported cloud: ${name}`);
+}
+
+/**
  * @typedef Machine
  * @property {string} cloud
  * @property {string} [name]
@@ -929,7 +944,6 @@ async function spawnScp(options) {
  */
 
 /**
- * @typedef {"aws" | "docker" | "google"} Cloud
  * @typedef {"linux" | "darwin" | "windows"} Os
  * @typedef {"aarch64" | "x64"} Arch
  */
@@ -940,114 +954,177 @@ async function spawnScp(options) {
  * @property {Os} os
  * @property {Arch} arch
  * @property {string} distro
- * @property {Record<string, string | undefined>} [metadata]
  * @property {string} [distroVersion]
- * @property {string} [instanceType]
  * @property {string} [imageId]
- * @property {number} [diskSize]
+ * @property {string} [imageName]
+ * @property {number} [cpuCount]
+ * @property {number} [memoryGb]
+ * @property {number} [diskSizeGb]
+ * @property {boolean} [persistent]
+ * @property {boolean} [detached]
+ * @property {Record<string, unknown>} [tags]
+ * @property {boolean} [bootstrap]
+ * @property {boolean} [ci]
+ * @property {SshKey[]} [sshKeys]
  */
 
-/**
- * @param {string[]} args
- * @returns {MachineOptions}
- */
-function parseOptions(args) {
-  const { values: options, positionals } = parseArgs({
-    args,
+async function main() {
+  const { positionals } = parseArgs({
+    allowPositionals: true,
+    strict: false,
+  });
+
+  const [command] = positionals;
+  if (!/^(ssh|create-image|publish-image)$/.test(command)) {
+    const scriptPath = relative(process.cwd(), fileURLToPath(import.meta.url));
+    throw new Error(`Usage: ./${scriptPath} [ssh|create-image|publish-image] [options]`);
+  }
+
+  const { values: args } = parseArgs({
     allowPositionals: true,
     options: {
-      "cloud": { type: "string", default: "docker" },
+      "cloud": { type: "string", default: "aws" },
       "os": { type: "string", default: "linux" },
-      "arch": { type: "string", default: getArch() },
+      "arch": { type: "string", default: "x64" },
       "distro": { type: "string", default: "debian" },
       "distro-version": { type: "string" },
       "instance-type": { type: "string" },
       "image-id": { type: "string" },
-      "disk-size": { type: "string" },
+      "image-name": { type: "string" },
+      "cpu-count": { type: "string" },
+      "memory-gb": { type: "string" },
+      "disk-size-gb": { type: "string" },
+      "persistent": { type: "boolean" },
+      "detached": { type: "boolean" },
+      "tag": { type: "string", multiple: true },
+      "ci": { type: "boolean" },
+      "no-bootstrap": { type: "boolean" },
       "buildkite-token": { type: "string" },
+      "tailscale-authkey": { type: "string" },
     },
   });
 
-  return {
-    ...options,
-    distroVersion: options["distro-version"],
-    instanceType: options["instance-type"],
-    imageId: options["image-id"],
-    diskSize: parseInt(options["disk-size"]) || undefined,
-    buildkiteToken: options["buildkite-token"],
-    command: positionals.length ? positionals : undefined,
-  };
-}
-
-async function main() {
-  const { command, buildkiteToken, ...options } = parseOptions(process.argv.slice(2));
-  const sshKeys = getSshKeys();
-
-  let cloud;
-  if (options["cloud"] === "docker") {
-    cloud = docker;
-  } else if (options["cloud"] === "aws") {
-    cloud = aws;
-  } else if (options["cloud"] === "google") {
-    cloud = google;
-  } else {
-    throw new Error(`Unsupported cloud: ${inspect(options)}`);
-  }
-
-  let metadata = {
-    "robobun": true,
-    "robobun2": true,
+  /** @type {MachineOptions} */
+  const options = {
+    cloud: getCloud(args["cloud"]),
+    os: parseOs(args["os"]),
+    arch: parseArch(args["arch"]),
+    distro: args["distro"],
+    distroVersion: args["distro-version"],
+    instanceType: args["instance-type"],
+    imageId: args["image-id"],
+    imageName: args["image-name"],
+    tags: {
+      "robobun": "true",
+      "robobun2": "true",
+      "buildkite:token": args["buildkite-token"],
+      "tailscale:authkey": args["tailscale-authkey"],
+      ...Object.fromEntries(args["tag"]?.map(tag => tag.split("=")) ?? []),
+    },
+    cpuCount: parseInt(args["cpu-count"]) || undefined,
+    memoryGb: parseInt(args["memory-gb"]) || undefined,
+    diskSizeGb: parseInt(args["disk-size-gb"]) || undefined,
+    persistent: !!args["persistent"],
+    detached: !!args["detached"],
+    bootstrap: args["no-bootstrap"] !== true,
+    ci: !!args["ci"],
+    sshKeys: getSshKeys(),
   };
 
-  if (buildkiteToken) {
-    metadata = {
-      "buildkite:token": buildkiteToken,
-    };
+  const { cloud, detached, bootstrap, ci, os } = options;
+
+  let bootstrapPath, agentPath;
+  if (bootstrap) {
+    bootstrapPath = resolve(import.meta.dirname, "bootstrap.sh");
+    if (!existsSync(bootstrapPath)) {
+      throw new Error(`Script not found: ${bootstrapPath}`);
+    }
+    if (ci) {
+      const npx = which("bunx") || which("npx");
+      if (!npx) {
+        throw new Error("Executable not found: bunx or npx");
+      }
+      const entryPath = resolve(import.meta.dirname, "agent.mjs");
+      const tmpPath = mkdtempSync(join(tmpdir(), "agent-"));
+      agentPath = join(tmpPath, "agent.mjs");
+      await spawnSafe($`${npx} esbuild ${entryPath} --bundle --platform=node --format=esm --outfile=${agentPath}`);
+    }
   }
 
-  const machine = await startGroup("Creating machine", async () => {
-    const result = await cloud.createMachine({ ...options, sshKeys, metadata });
+  /** @type {Machine} */
+  const machine = await startGroup("Creating machine...", async () => {
+    console.log("Creating machine:", JSON.parse(JSON.stringify(options)));
+    const result = await cloud.createMachine(options);
     console.log("Created machine:", result);
     return result;
   });
 
-  process.on("SIGINT", () => {
-    machine.close().finally(() => process.exit(1));
-  });
+  if (!detached) {
+    for (const event of ["beforeExit", "SIGINT", "SIGTERM"]) {
+      process.on(event, () => {
+        machine.close().finally(() => process.exit(1));
+      });
+    }
+  }
 
   try {
-    await startGroup("Connecting to machine", async () => {
-      await machine.exec(["uname", "-a"], { stdio: "inherit" });
+    await startGroup("Connecting...", async () => {
+      const command = os === "windows" ? ["cmd", "/c", "ver"] : ["uname", "-a"];
+      await machine.exec(command, { stdio: "inherit" });
     });
 
-    await startGroup("Running bootstrap script", async () => {
-      const localPath = resolve(import.meta.dirname, "bootstrap.sh");
+    if (bootstrapPath) {
       const remotePath = "/tmp/bootstrap.sh";
-      await machine.upload(localPath, remotePath);
-      await machine.exec(["sh", remotePath, "--ci"], { stdio: "inherit" });
-    });
+      const args = ci ? ["--ci"] : [];
+      await startGroup("Running bootstrap...", async () => {
+        await machine.upload(bootstrapPath, remotePath);
+        await machine.exec(["sh", remotePath, ...args], { stdio: "inherit" });
+      });
+    }
 
-    await startGroup("Installing buildkite-agent", async () => {
-      const templatePath = resolve(import.meta.dirname, "agent.mjs");
-      const tmpPath = mkdtempSync(join(tmpdir(), "agent-"));
-      const localPath = join(tmpPath, "agent.mjs");
+    if (agentPath) {
       const remotePath = "/tmp/agent.mjs";
-      const npx = which("bunx") || which("npx");
-      await spawnSafe($`${npx} esbuild ${templatePath} --bundle --platform=node --format=esm --outfile=${localPath}`);
-      await machine.upload(localPath, remotePath);
-      await machine.exec(["node", remotePath, "install"], { stdio: "inherit" });
-    });
+      await startGroup("Installing agent...", async () => {
+        await machine.upload(agentPath, remotePath);
+        await machine.exec(["node", remotePath, "install"], { stdio: "inherit" });
+      });
+    }
 
-    const imageId = await startGroup("Creating snapshot", async () => {
+    if (command === "create-image" || command === "publish-image") {
       const { os, arch, distro, distroVersion } = options;
-      const suffix = isCI ? `build-${getBuildNumber()}` : `draft-${Date.now()}`;
+      let suffix;
+      if (command === "publish-image") {
+        suffix = `v${getBootstrapVersion()}`;
+      } else if (isCI) {
+        suffix = `build-${getBuildNumber()}`;
+      } else {
+        suffix = `draft-${Date.now()}`;
+      }
       const name = `${os}-${arch}-${distro}-${distroVersion}-${suffix}`;
-      const result = await machine.snapshot(name);
-      console.log("Created snapshot:", result);
-      return result;
-    });
+      await startGroup("Creating image...", async () => {
+        console.log("Creating image:", name);
+        const result = await machine.snapshot(name);
+        console.log("Created image:", result);
+      });
+    }
+
+    if (command === "ssh") {
+      await machine.attach();
+    }
+  } catch (error) {
+    if (isCI) {
+      throw error;
+    }
+    console.error(error);
+    try {
+      await machine.attach();
+    } catch (error) {
+      console.error(error);
+    }
   } finally {
-    await machine.close();
+    if (!detached) {
+      await machine.close();
+    }
   }
 }
 

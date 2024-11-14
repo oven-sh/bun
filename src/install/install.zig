@@ -1755,7 +1755,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             var queue: Queue = undefined;
             pub fn getQueue() *Queue {
                 queue = Queue{
-                    .thread_pool = PackageManager.get().thread_pool,
+                    .thread_pool = &PackageManager.get().thread_pool,
                 };
                 return &queue;
             }

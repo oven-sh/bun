@@ -2483,25 +2483,15 @@ pub const Resolver = struct {
         return PackageJSON.new(pkg);
     }
 
-    fn dirInfoCached(
-        r: *ThisResolver,
-        path: string,
-    ) !?*DirInfo {
+    fn dirInfoCached(r: *ThisResolver, path: string) !?*DirInfo {
         return try r.dirInfoCachedMaybeLog(path, true, true);
     }
 
-    /// The path must have a trailing slash and a sentinel 0
-    pub fn readDirInfo(
-        r: *ThisResolver,
-        path: string,
-    ) !?*DirInfo {
+    pub fn readDirInfo(r: *ThisResolver, path: string) !?*DirInfo {
         return try r.dirInfoCachedMaybeLog(path, false, true);
     }
 
-    pub fn readDirInfoIgnoreError(
-        r: *ThisResolver,
-        path: string,
-    ) ?*const DirInfo {
+    pub fn readDirInfoIgnoreError(r: *ThisResolver, path: string) ?*const DirInfo {
         return r.dirInfoCachedMaybeLog(path, false, true) catch null;
     }
 

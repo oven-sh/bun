@@ -531,11 +531,10 @@ pub const MatchedRoute = struct {
                         for (entry.values, 0..) |value, i| {
                             values[i] = ZigString.init(value).withEncoding();
                         }
-                        obj.putRecord(global, &str, values.ptr, values.len);
+                        obj.putRecord(global, &str, values);
                     } else {
                         query_string_value_refs_buf[0] = ZigString.init(entry.values[0]).withEncoding();
-
-                        obj.putRecord(global, &str, &query_string_value_refs_buf, 1);
+                        obj.putRecord(global, &str, query_string_value_refs_buf[0..1]);
                     }
                 }
             }

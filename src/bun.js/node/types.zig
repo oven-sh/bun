@@ -23,7 +23,7 @@ const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const Syscall = bun.sys;
 const URL = @import("../../url.zig").URL;
 const Value = std.json.Value;
-const validators = @import("./util/validators.zig");
+pub const validators = @import("./util/validators.zig");
 
 pub const Path = @import("./path.zig");
 

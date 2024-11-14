@@ -643,6 +643,7 @@ install_build_essentials() {
 	apk)
 		install_packages \
 			build-base \
+			linux-headers \
 			ninja \
 			go \
 			xz

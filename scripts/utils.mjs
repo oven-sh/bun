@@ -945,6 +945,22 @@ export function getBuildLabel() {
 }
 
 /**
+ * @returns {number}
+ */
+export function getBootstrapVersion() {
+  if (isWindows) {
+    return 0; // TODO
+  }
+  const scriptPath = join(import.meta.dirname, "bootstrap.sh");
+  const scriptContent = readFile(scriptPath, { cache: true });
+  const match = /# Version: (\d+)/.exec(scriptContent);
+  if (match) {
+    return parseInt(match[1]);
+  }
+  return 0;
+}
+
+/**
  * @typedef {object} BuildArtifact
  * @property {string} [job]
  * @property {string} filename

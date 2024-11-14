@@ -7,7 +7,6 @@ import {
   getBuildNumber,
   getSecret,
   isCI,
-  isMacOS,
   readFile,
   spawn,
   spawnSafe,

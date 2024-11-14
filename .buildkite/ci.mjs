@@ -8,6 +8,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  getBootstrapVersion,
   getBuildNumber,
   getCanaryRevision,
   getChangedFiles,
@@ -229,6 +230,8 @@ function getPipeline(options) {
     let image = `${os}-${arch}-${distro}-${release}`;
     if (buildImages) {
       image += `-build-${getBuildNumber()}`;
+    } else {
+      image += `-v${getBootstrapVersion()}`;
     }
     return {
       robobun: true,
@@ -459,6 +462,44 @@ function getPipeline(options) {
       parallelism,
       command,
       env,
+    };
+  };
+
+  /**
+   * Input
+   */
+
+  /**
+   * @typedef SelectField
+   * @property {string} key
+   * @property {{label: string, value: string}[]} options
+   * @property {string} [default]
+   * @property {string} [hint]
+   * @property {boolean} [required]
+   * @property {boolean} [multiple]
+   */
+
+  /**
+   * @typedef Input
+   * @property {string} key
+   * @property {string} prompt
+   * @property {string[]} [depends_on]
+   * @property {SelectField[]} fields
+   */
+
+  /**
+   * @param {Platform[]} platforms
+   * @returns {Input}
+   */
+  const getPublishImageInput = platforms => {
+    return {
+      key: "publish-image",
+      prompt: "Should the build images be published?",
+      multiple: true,
+      fields: platforms.map(platform => ({
+        label: getPlatformLabel(platform),
+        value: getPlatformKey(platform),
+      })),
     };
   };
 

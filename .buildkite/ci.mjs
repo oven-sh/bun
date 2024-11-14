@@ -145,6 +145,35 @@ function getPipeline(options) {
   };
 
   /**
+   * @param {Platform} platform
+   * @returns {string}
+   */
+  const getImageKey = platform => {
+    const { os, arch, distro, release } = platform;
+    let key = `${os}-${arch}`;
+    if (distro) {
+      key += `-${distro}`;
+    }
+    if (release) {
+      key += `-${release.replace(/\./g, "")}`;
+    }
+    return key;
+  };
+
+  /**
+   * @param {Platform} platform
+   * @returns {string}
+   */
+  const getImageLabel = platform => {
+    const { os, arch, distro, release } = platform;
+    let label = `${getEmoji(distro || os)} ${arch}`;
+    if (release) {
+      label += `-${release}`;
+    }
+    return label;
+  };
+
+  /**
    * @param {number} [limit]
    * @link https://buildkite.com/docs/pipelines/command-step#retry-attributes
    */
@@ -338,8 +367,8 @@ function getPipeline(options) {
   const getBuildImageStep = platform => {
     const { os, arch, distro, release } = platform;
     return {
-      key: `${getPlatformKey(platform)}-build-image`,
-      label: `${getPlatformLabel(platform)} - build-image`,
+      key: `${getImageKey(platform)}-build-image`,
+      label: `${getImageLabel(platform)} - build-image`,
       agents: {
         queue: "build-image",
       },
@@ -521,6 +550,7 @@ function getPipeline(options) {
   const buildPlatforms = [
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
+    { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
   ];
 
   /**
@@ -529,6 +559,7 @@ function getPipeline(options) {
   const testPlatforms = [
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
+    { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
   ];
 
   return {
@@ -547,7 +578,7 @@ function getPipeline(options) {
         /** @type {Step[]} */
         const steps = [];
 
-        if (buildImages) {
+        if (buildImages && !steps.some(({ key }) => key === `${getImageKey(platform)}-build-image`)) {
           steps.push(getBuildImageStep(platform));
         }
 
@@ -557,7 +588,7 @@ function getPipeline(options) {
             steps.push(
               ...buildSteps.map(step => ({
                 ...step,
-                depends_on: [`${getPlatformKey(platform)}-build-image`],
+                depends_on: [`${getImageKey(platform)}-build-image`],
               })),
             );
           } else {

@@ -1998,7 +1998,7 @@ export function toYaml(object, depth = 0) {
     if (object.length === 0) {
       return indent("[]");
     }
-    return object.map(item => indent("- ") + toYaml(item, depth + 1).substring((depth + 1) * 2)).join("\n");
+    return object.map(item => indent("- ") + toYaml(item, depth + 1)).join("\n");
   }
 
   if (typeof object === "object") {
@@ -2006,14 +2006,7 @@ export function toYaml(object, depth = 0) {
       return indent("{}");
     }
     return Object.entries(object)
-      .map(([key, value]) => {
-        const string = toYaml(value, depth + 1);
-        return (
-          indent(`${escapeYaml(key)}:`) +
-          (string.startsWith(" ".repeat((depth + 1) * 2)) ? "" : " ") +
-          string.substring(depth * 2)
-        );
-      })
+      .map(([key, value]) => indent(`${escapeYaml(key)}: ${toYaml(value, depth + 1)}`))
       .join("\n");
   }
 

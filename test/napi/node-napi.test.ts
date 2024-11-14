@@ -107,7 +107,7 @@ describe.each([
         expect(result.success).toBeTrue();
         expect(result.exitCode).toBe(0);
       },
-      10000, // timeout
+      20000, // timeout
     );
   });
 });

@@ -339,14 +339,9 @@ function getPipeline(options) {
    * @returns {Step}
    */
   const getBuildVendorStep = target => {
-    let depends_on;
-    if (buildImages) {
-      depends_on = [`${getTargetKey(target)}-build-image`];
-    }
     return {
       key: `${getTargetKey(target)}-build-vendor`,
       label: `${getTargetLabel(target)} - build-vendor`,
-      depends_on,
       agents: getBuildAgent(target),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
@@ -360,14 +355,9 @@ function getPipeline(options) {
    * @returns {Step}
    */
   const getBuildCppStep = target => {
-    let depends_on;
-    if (buildImages) {
-      depends_on = [`${getTargetKey(target)}-build-image`];
-    }
     return {
       key: `${getTargetKey(target)}-build-cpp`,
       label: `${getTargetLabel(target)} - build-cpp`,
-      depends_on,
       agents: getBuildAgent(target),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
@@ -385,10 +375,6 @@ function getPipeline(options) {
    */
   const getBuildZigStep = target => {
     const toolchain = getBuildToolchain(target);
-    let depends_on;
-    if (buildImages) {
-      depends_on = [`${getTargetKey(target)}-build-image`];
-    }
     return {
       key: `${getTargetKey(target)}-build-zig`,
       label: `${getTargetLabel(target)} - build-zig`,
@@ -513,12 +499,18 @@ function getPipeline(options) {
         }
 
         if (buildImages || !buildId) {
-          steps.push(
-            getBuildVendorStep(platform),
-            getBuildCppStep(platform),
-            getBuildZigStep(platform),
-            getBuildBunStep(platform),
-          );
+          const buildSteps = [getBuildVendorStep(platform), getBuildCppStep(platform), getBuildZigStep(platform)];
+          if (buildImages) {
+            steps.push(
+              ...buildSteps.map(step => ({
+                ...step,
+                depends_on: [`${getPlatformKey(platform)}-build-image`],
+              })),
+            );
+          } else {
+            steps.push(...buildSteps);
+          }
+          steps.push(getBuildBunStep(platform));
         }
 
         for (const platform of tests) {

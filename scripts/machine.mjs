@@ -1060,9 +1060,13 @@ async function main() {
   });
 
   if (!detached) {
+    let closing;
     for (const event of ["beforeExit", "SIGINT", "SIGTERM"]) {
       process.on(event, () => {
-        machine.close().finally(() => process.exit(1));
+        if (!closing) {
+          closing = true;
+          machine.close().finally(() => process.exit(1));
+        }
       });
     }
   }

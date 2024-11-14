@@ -129,8 +129,14 @@ function reloadCss(id: string, newContent: string) {
   sheet.replace(newContent);
 }
 
-window.addEventListener("error", function (evt) {
-  console.error(evt.error);
+window.addEventListener("error", event => {
+  const data = {
+    line: event.lineno,
+    column: event.colno,
+    file: event.filename,
+    error: event.error,
+  };
+
   // TODO: Send to socket
   // ws.send(...);
 });

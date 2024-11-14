@@ -1,6 +1,35 @@
+import * as util from "node:util";
 import * as vscode from "vscode";
+import { decodeSerializedError, type DeserializedFailure } from "../../../../../src/bake/client/error-serialization";
+import { DataViewReader } from "../../../../../src/bake/client/reader";
 import { MessageId } from "../../../../../src/bake/generated";
 import { ReconnectingWebSocket } from "./ws";
+
+function parseDiagnostics(view: DataView) {
+  const reader = new DataViewReader(view, 1);
+  const removedCount = reader.u32();
+  const errors = new Map<number, DeserializedFailure>();
+
+  for (let i = 0; i < removedCount; i++) {
+    const removed = reader.u32();
+    errors.delete(removed);
+  }
+
+  while (reader.hasMoreData()) {
+    const owner = reader.u32();
+    const file = reader.string32() || null;
+    const messageCount = reader.u32();
+    const messages = new Array(messageCount);
+
+    for (let i = 0; i < messageCount; i++) {
+      messages[i] = decodeSerializedError(reader);
+    }
+
+    errors.set(owner, { file, messages });
+  }
+
+  return errors;
+}
 
 export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
   const diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
@@ -11,22 +40,24 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
       console.log("HMR Version:", Buffer.from(view.buffer.slice(1)).toString("ascii"));
     },
     [MessageId.errors]: view => {
-      // console.log("HMR Errors:", Buffer.from(view.buffer.slice(1)).toString("hex"));
+      const errors = parseDiagnostics(view);
 
-      // TODO: Pull the error information from the view buffer?
-      const uri = vscode.Uri.file("/Users/ali/code/bun/packages/bun-vscode/example/bug/pages/index.tsx");
-      const diagnostics: vscode.Diagnostic[] = [];
+      console.log(util.inspect(errors, { depth: Infinity }));
 
-      const line = 2;
-      const column = 3;
-      const message = "something went mad wrong";
+      // // TODO: Pull the error information from the view buffer?
+      // const uri = vscode.Uri.file("/Users/ali/code/bun/packages/bun-vscode/example/bug/pages/index.tsx");
+      // const diagnostics: vscode.Diagnostic[] = [];
 
-      const range = new vscode.Range(new vscode.Position(line, column), new vscode.Position(line, column + 1));
-      const diagnostic = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Error);
+      // const line = 2;
+      // const column = 3;
+      // const message = "something went mad wrong";
 
-      diagnostics.push(diagnostic);
+      // const range = new vscode.Range(new vscode.Position(line, column), new vscode.Position(line, column + 1));
+      // const diagnostic = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Error);
 
-      diagnosticCollection.set(uri, diagnostics);
+      // diagnostics.push(diagnostic);
+
+      // diagnosticCollection.set(uri, diagnostics);
     },
   };
 
@@ -35,7 +66,7 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
       const { data } = event;
       const view = new DataView(data as ArrayBufferLike);
 
-      console.log(parseInt(Buffer.from(view.buffer.slice(0, 1)).toString("hex"), 16).toString());
+      console.log("MessageId:", parseInt(Buffer.from(view.buffer.slice(0, 1)).toString("hex"), 16).toString());
 
       handlers[view.getUint8(0)]?.(view);
     },

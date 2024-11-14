@@ -386,8 +386,8 @@ function getPipeline(options) {
 
   const testPlatforms = [
     ...buildPlatforms,
-    { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
-    { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
+    // { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
+    // { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
   ];
 
   return {

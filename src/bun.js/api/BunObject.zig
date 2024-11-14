@@ -1047,8 +1047,7 @@ fn doResolveWithArgs(
 
 pub fn resolveSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(3);
-    const result = doResolve(globalObject, arguments.slice());
-    return result catch .zero;
+    return try doResolve(globalObject, arguments.slice());
 }
 
 pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

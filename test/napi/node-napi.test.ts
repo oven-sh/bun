@@ -74,7 +74,7 @@ beforeAll(async () => {
       stderr: "pipe",
       stdout: "ignore",
       stdin: "inherit",
-      env: bunEnv,
+      env: { ...bunEnv, npm_config_target: "v23.2.0" },
     });
     await process.exited;
     if (process.exitCode !== 0) {

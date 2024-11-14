@@ -848,6 +848,7 @@ if(WIN32)
   endif()
 elseif(APPLE)
   target_link_options(${bun} PUBLIC
+    -Wl,-merge_zero_fill_sections
     -dead_strip
     -dead_strip_dylibs
     -Wl,-stack_size,0x1200000
@@ -940,6 +941,7 @@ else()
     -Wl,-no-pie
     -Wl,-icf=safe
     -Wl,--as-needed
+    -Wl,--merge-zero-contents
     -Wl,--gc-sections
     -Wl,-z,stack-size=12800000
     ${ARCH_WRAP_FLAGS}

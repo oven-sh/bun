@@ -2407,7 +2407,7 @@ pub const JSPromise = extern struct {
     }
 
     pub fn wrapValue(globalObject: *JSGlobalObject, value: JSValue) JSValue {
-        if (value.isEmpty()) {
+        if (value == .zero) {
             return resolvedPromiseValue(globalObject, JSValue.jsUndefined());
         } else if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
             return resolvedPromiseValue(globalObject, value);
@@ -4303,9 +4303,7 @@ pub const JSValue = enum(i64) {
     pub fn jsType(
         this: JSValue,
     ) JSType {
-        if (comptime bun.Environment.allow_assert) {
-            bun.assert(!this.isEmpty());
-        }
+        bun.assert(this != .zero);
         return cppFn("jsType", .{this});
     }
 
@@ -4927,13 +4925,6 @@ pub const JSValue = enum(i64) {
             else => false,
         };
     }
-    /// Empty as in "JSValue {}" rather than an empty string
-    pub inline fn isEmpty(this: JSValue) bool {
-        return switch (@intFromEnum(this)) {
-            0 => true,
-            else => false,
-        };
-    }
     pub fn isBoolean(this: JSValue) bool {
         return cppFn("isBoolean", .{this});
     }
@@ -5455,7 +5446,8 @@ pub const JSValue = enum(i64) {
 
     /// Equivalent to `obj.property` in JavaScript.
     /// Reminder: `undefined` is a value!
-    /// Prefer `get2` in new code.
+    ///
+    /// Prefer `get2` in new code, as this function is incapable of returning an exception
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         if (comptime bun.Environment.isDebug) {
             if (BuiltinName.has(property)) {
@@ -5472,11 +5464,13 @@ pub const JSValue = enum(i64) {
     }
 
     /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
-    /// throw. Null indicates the property does not exist. Undefined can exist
-    /// as a property.
+    /// throw. Null indicates the property does not exist. JavaScript undefined
+    /// can exist as a property and is different than null.
     ///
     /// `property` must be either `[]const u8`. A comptime slice may defer to
-    /// calling `fastGet`, which use a more optimal code path.
+    /// calling `fastGet`, which use a more optimal code path. This function is
+    /// marked `inline` to allow Zig to determine if `fastGet` should be used
+    /// per invocation.
     ///
     /// This function will eventually replace `get`.
     pub inline fn get2(target: JSValue, global: *JSGlobalObject, property: anytype) JSError!?JSValue {

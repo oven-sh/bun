@@ -453,7 +453,7 @@ pub const TablePrinter = struct {
                 value = row_value.getOwn(this.globalObject, col.name) orelse JSValue.zero;
             }
 
-            if (value.isEmpty()) {
+            if (value == .zero) {
                 try writer.writeByteNTimes(' ', col.width + (PADDING * 2));
             } else {
                 const len: u32 = this.getWidthForValue(value);
@@ -2259,7 +2259,7 @@ pub const Formatter = struct {
                             this.addForNewLine(2);
                         }
 
-                        if (element.isEmpty()) {
+                        if (element == .zero) {
                             empty_start = 0;
                             break :first;
                         }
@@ -2278,7 +2278,7 @@ pub const Formatter = struct {
 
                     while (i < len) : (i += 1) {
                         const element = value.getDirectIndex(this.globalThis, i);
-                        if (element.isEmpty()) {
+                        if (element == .zero) {
                             if (empty_start == null) {
                                 empty_start = i;
                             }

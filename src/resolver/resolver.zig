@@ -1774,7 +1774,7 @@ pub const Resolver = struct {
             load_module_from_cache: {
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
-                var manager = r.getPackageManager();
+                const manager = r.getPackageManager();
                 var dependency_version = Dependency.Version{};
                 var dependency_behavior = Dependency.Behavior.normal;
                 var string_buf = esm.version;

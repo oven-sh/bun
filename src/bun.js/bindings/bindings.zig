@@ -3012,19 +3012,6 @@ pub const JSGlobalObject = opaque {
         return .zero;
     }
 
-    /// This is a wrapper around just returning JSError
-    ///
-    /// The intent is for writing C++ bindings where null or some other value is
-    /// returned in the exception case. In a debug build, this asserts that such
-    /// exception is actually present, or else this will leak a .zero into
-    /// JS-land.
-    pub fn jsErrorFromCPP(global: *JSGlobalObject) JSError {
-        if (bun.Environment.isDebug) {
-            bun.assert(global.hasException());
-        }
-        return JSError.JSError;
-    }
-
     /// Pass a JSOrMemoryError!JSValue and variants through the C ABI boundary
     ///
     /// In C++, WebKit represents a thrown JavaScript expression as
@@ -5405,7 +5392,10 @@ pub const JSValue = enum(i64) {
 
         fn unwrap(value: GetResult, global: *JSGlobalObject) JSError!?JSValue {
             return switch (value) {
-                .thrown_exception => global.jsErrorFromCPP(),
+                .thrown_exception => {
+                    bun.assert(global.hasException());
+                    return error.JSError;
+                },
                 .does_not_exist => null,
                 else => @enumFromInt(@intFromEnum(value)),
             };
@@ -6867,7 +6857,7 @@ pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunction
                 error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
             };
         }
-    }.wrapper;
+    }.function;
 }
 
 const ParsedHostFunctionErrorSet = struct {

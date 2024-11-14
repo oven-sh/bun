@@ -709,7 +709,8 @@ pub const String = extern struct {
             bun.assert(out.tag != .Dead);
             return out;
         } else {
-            return globalObject.jsErrorFromCPP();
+            bun.assert(globalObject.hasException());
+            return error.JSError;
         }
     }
 

@@ -52,11 +52,11 @@ pub const UserOptions = struct {
             bun.getcwdAlloc(alloc) catch |err| switch (err) {
                 error.OutOfMemory => {
                     global.throwOutOfMemory();
-                    return global.jsErrorFromCPP();
+                    return error.JSError;
                 },
                 else => {
                     global.throwError(err, "while querying current working directory");
-                    return global.jsErrorFromCPP();
+                    return error.JSError;
                 },
             };
 

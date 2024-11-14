@@ -205,34 +205,19 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
     ...wrapperCalls
       .filter(x => x.type === "zig")
       .flatMap(x => [
-        `const ${symbol({
+        `export fn ${symbol({
           type: "zig",
-          symbol: x.symbol_taget,
+          symbol: x.symbol_target,
+          filename: x.filename,
         })}(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {`,
         `
           const function = @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), x.filename))});
-          return @call(.always_inline, function.${x.symbol_taget}, .{global, call_frame}) catch |err| switch (err) {
+          return @call(.always_inline, function.${x.symbol_target}, .{global, call_frame}) catch |err| switch (err) {
               error.JSError => .zero,
               error.OutOfMemory => global.throwOutOfMemoryValue(),
           };`,
         "}",
       ]),
-    "comptime {",
-    ...wrapperCalls
-      .filter(x => x.type === "zig")
-      .flatMap(x => {
-        const s = symbol({
-          type: "zig",
-          symbol: x.symbol_target,
-          filename: x.filename,
-        });
-        return `  @export(${s}, .{ .name = "${s}" });`;
-      }),
-    ...nativeCalls.filter(x => x.type === "zig").flatMap(call => `  _ = &${symbol(call)}_workaround;`),
-    ...wrapperCalls
-      .filter(x => x.type === "zig")
-      .flatMap(x => `  _ = &${symbol({ type: "zig", symbol: x.symbol_target, filename: x.filename })};`),
-    "}",
   ].join("\n");
 }
 

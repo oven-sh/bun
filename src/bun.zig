@@ -91,19 +91,8 @@ pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
 pub const OOM = std.mem.Allocator.Error;
 
 pub const JSError = error{
-    /// There is an active exception on the global object. Options:
-    ///
-    /// - Bubble up `error.JSError` to the caller.
-    /// - Call `global.takeException(err)` to branch on the JSValue of the exception.
-    /// - Call `global.reportActiveExceptionAsUnhandled(err)` to mark it unhandled.
-    ///
-    /// Calling into JS bindings while an active error exists is will crash.
-    /// Ignoring the exception will also cause a crash.
-    ///
-    /// Prefer `global.jsErrorFromCPP()` over constructing this error manually,
-    /// that way the exception is asserted to actually exist.
-    ///
-    /// To pass this to C++ code as JSC::JSValue, use `global.errorUnionToCPP(...)`
+    /// There is an active exception on the global object.
+    /// You should almost never have to construct this manually.
     JSError,
     // XXX: This is temporary! meghan will remove this soon
     OutOfMemory,

@@ -95,4 +95,9 @@ export function initWebSocket(handlers: Record<number, (dv: DataView) => void>) 
   ws.onmessage = onMessage;
   ws.onclose = onClose;
   ws.onerror = onError;
+
+  return {
+    close: () => ws.close(),
+    send: (data: ArrayBuffer) => ws.send(data),
+  };
 }

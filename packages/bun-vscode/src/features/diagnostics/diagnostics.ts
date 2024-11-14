@@ -2,11 +2,8 @@ import * as vscode from "vscode";
 import { MessageId } from "../../../../../src/bake/generated";
 import { ReconnectingWebSocket } from "./ws";
 
-let diagnosticCollection: vscode.DiagnosticCollection;
-let socket: ReconnectingWebSocket;
-
 export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
-  diagnosticCollection = vscode.languages.createDiagnosticCollection("bunDiagnostics");
+  const diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
   context.subscriptions.push(diagnosticCollection);
 
   const handlers: Record<number, (view: DataView) => void> = {
@@ -16,14 +13,29 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
     [MessageId.errors]: view => {
       console.log("HMR Errors:", Buffer.from(view.buffer.slice(1)).toString("hex"));
     },
+    [MessageId.route_update]: view => {
+      const uri = vscode.Uri.file("/Users/ali/code/bun/packages/bun-vscode/example/bug/pages/index.tsx");
+      const diagnostics: vscode.Diagnostic[] = [];
+
+      const line = 2;
+      const column = 3;
+      const message = "something went mad wrong";
+
+      const range = new vscode.Range(new vscode.Position(line, column), new vscode.Position(line, column + 1));
+      const diagnostic = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Error);
+
+      diagnostics.push(diagnostic);
+
+      diagnosticCollection.set(uri, diagnostics);
+    },
   };
 
-  socket = new ReconnectingWebSocket("ws://localhost:3000/_bun/hmr", {
+  const socket = new ReconnectingWebSocket("ws://localhost:3000/_bun/hmr", {
     onMessage: event => {
       const { data } = event;
       const view = new DataView(data as ArrayBufferLike);
 
-      console.log(Buffer.from(view.buffer.slice(0, 1)).toString("ascii"));
+      console.log(parseInt(Buffer.from(view.buffer.slice(0, 1)).toString("hex"), 16).toString());
 
       handlers[view.getUint8(0)]?.(view);
     },
@@ -41,7 +53,11 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
     ws.binaryType = "arraybuffer";
   });
 
-  console.log({ socket }, "hi");
+  context.subscriptions.push({
+    dispose() {
+      socket.close();
+    },
+  });
 }
 
 function parseDiagnostics(data: string): vscode.Diagnostic[] {
@@ -60,14 +76,4 @@ function parseDiagnostics(data: string): vscode.Diagnostic[] {
   }
 
   return diagnostics;
-}
-
-export function deactivateDiagnosticsSocket() {
-  if (diagnosticCollection) {
-    diagnosticCollection.dispose();
-  }
-
-  if (socket) {
-    socket.close();
-  }
 }

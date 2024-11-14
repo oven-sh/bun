@@ -195,7 +195,7 @@ pub const TextEncoder = struct {
             return .undefined;
         }
 
-        if (array.isEmpty()) {
+        if (array == .zero) {
             array = JSC.JSValue.createUninitializedUint8Array(globalThis, length);
             array.ensureStillAlive();
             @memcpy(array.asArrayBuffer(globalThis).?.ptr[0..length], buf_to_use[0..length]);
@@ -640,25 +640,7 @@ pub const TextDecoder = struct {
     ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.ignore_bom);
     }
-    // pub fn setIgnoreBOM(
-    //     this: *TextDecoder,
-    //     _: *JSC.JSGlobalObject,
-    // )  JSC.JSValue {
-    //     this.ignore_bom = JSValue.fromRef(this.ignore_bom).toBoolean();
-    //     return true;
-    // }
 
-    // pub fn setFatal(
-    //     this: *TextDecoder,
-    //     _: js.JSContextRef,
-    //     _: js.JSValueRef,
-    //     _: js.JSStringRef,
-    //     value: JSC.C.JSValueRef,
-    //     _: js.ExceptionRef,
-    // ) bool {
-    //     this.fatal = JSValue.fromRef(value).toBoolean();
-    //     return true;
-    // }
     pub fn getFatal(
         this: *TextDecoder,
         _: *JSC.JSGlobalObject,

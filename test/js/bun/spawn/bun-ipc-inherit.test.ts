@@ -1,12 +1,13 @@
 import { spawn } from "bun";
 import { expect, it } from "bun:test";
-import { bunExe, isWindows } from "harness";
+import { bunExe, isWindows, tmpdirSync } from "harness";
 import fs from "node:fs/promises";
 import path from "path";
 
 it.todoIf(isWindows)("spawning a bun package script should inherit the ipc fd", async () => {
+  const x = tmpdirSync();
   await fs.writeFile(
-    path.join(process.cwd(), "package.json"),
+    path.join(x, "package.json"),
     JSON.stringify({
       scripts: {
         test: `${bunExe()} -e 'process.send("hello")'`,
@@ -21,6 +22,7 @@ it.todoIf(isWindows)("spawning a bun package script should inherit the ipc fd", 
       testMessage = message;
     },
     stdio: ["inherit", "inherit", "inherit"],
+    cwd: x,
   });
 
   await child.exited;

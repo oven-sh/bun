@@ -16,7 +16,7 @@
     "forceConsistentCasingInFileNames": true,
     "allowJs": true,
     "types": [
-      "bun-types" // add Bun global
+      "@types/bun" // add Bun global
     ]
   }
 }

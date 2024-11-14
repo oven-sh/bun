@@ -55,17 +55,15 @@ export async function doAgent(action) {
     return path;
   }
 
-  let homePath, cachePath, logsPath, agentLogPath, socketPath, pidPath;
+  let homePath, cachePath, logsPath, agentLogPath, pidPath;
   if (isWindows) {
     throw new Error("TODO: Windows");
   } else {
-    const varPath = join("/", "var");
-    homePath = getPath(varPath, "lib", "buildkite-agent", { mkdir: true });
-    cachePath = getPath(varPath, "cache", "buildkite-agent", { mkdir: true });
-    logsPath = getPath(varPath, "log", "buildkite-agent", { mkdir: true });
-    agentLogPath = getPath(logsPath, "buildkite-agent.log", { touch: true });
-    socketPath = getPath(varPath, "run", "buildkite-agent", "buildkite-agent.sock", { mkdir: true });
-    pidPath = getPath(varPath, "run", "buildkite-agent", "buildkite-agent.pid", { touch: true });
+    homePath = "/var/lib/buildkite-agent";
+    cachePath = "/var/cache/buildkite-agent";
+    logsPath = "/var/log/buildkite-agent";
+    agentLogPath = join(logsPath, "buildkite-agent.log");
+    pidPath = join(logsPath, "buildkite-agent.pid");
   }
 
   function escape(string) {

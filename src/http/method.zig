@@ -52,7 +52,6 @@ pub const Method = enum {
 
     const with_body: std.enums.EnumSet(Method) = brk: {
         var values = std.enums.EnumSet(Method).initFull();
-        values.remove(.CONNECT);
         values.remove(.HEAD);
         values.remove(.TRACE);
         break :brk values;
@@ -60,7 +59,6 @@ pub const Method = enum {
 
     const with_request_body: std.enums.EnumSet(Method) = brk: {
         var values = std.enums.EnumSet(Method).initFull();
-        values.remove(.CONNECT);
         values.remove(.GET);
         values.remove(.HEAD);
         values.remove(.OPTIONS);

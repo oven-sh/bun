@@ -4086,8 +4086,8 @@ JSC::SourceProvider* Bun__getSourceCodeViewFromErrorInstance(
     JSValue exceptionValue,
     BunString* source_lines,
     int32_t* source_line_numbers,
-    uint8_t source_lines_count
-) {
+    uint8_t source_lines_count)
+{
     JSC::ErrorInstance* error = nullptr;
 
     if (JSC::ErrorInstance* e = JSC::jsDynamicCast<JSC::ErrorInstance*>(exceptionValue)) {
@@ -4096,7 +4096,7 @@ JSC::SourceProvider* Bun__getSourceCodeViewFromErrorInstance(
         if (JSC::ErrorInstance* e = JSC::jsDynamicCast<JSC::ErrorInstance*>(jscException->value())) {
             error = e;
         }
-    } 
+    }
 
     if (!error) return nullptr;
 
@@ -4105,9 +4105,10 @@ JSC::SourceProvider* Bun__getSourceCodeViewFromErrorInstance(
 
     JSC::StackFrame& frame = stack->first();
     JSC::SourceProvider* provider = frame.codeBlock()->source().provider();
-    WTF::StringView view = provider->source();;
+    WTF::StringView view = provider->source();
+    ;
 
-    if(!view.is8Bit()) return nullptr;
+    if (!view.is8Bit()) return nullptr;
 
     if (source_lines_count <= 1 || source_lines == nullptr) return nullptr;
 
@@ -4141,7 +4142,6 @@ JSC::SourceProvider* Bun__getSourceCodeViewFromErrorInstance(
         auto byte_offset_in_source_string = lineStart - 1;
         uint8_t source_line_i = 1;
         auto remaining_lines_to_grab = source_lines_count - 1;
-
 
         while (byte_offset_in_source_string > 0 && remaining_lines_to_grab > 0) {
             --line;

@@ -1968,49 +1968,49 @@ export function getGithubUrl() {
 }
 
 /**
- * @param {unknown} object
- * @param {number} [depth]
+ * @param {object} obj
+ * @param {number} indent
  * @returns {string}
  */
-export function toYaml(object, depth = 0) {
-  const indent = (value, d = depth) => {
-    return " ".repeat(d * 2) + `${value}`;
-  };
-
-  if (typeof object === "number" || typeof object === "boolean" || object === null) {
-    return indent(object);
-  }
-
-  if (typeof object === "string") {
-    if (/[\n\r]/.test(object)) {
-      const prefix = indent("|\n");
-      const block = object
-        .split(/[\n\r]/)
-        .map(line => indent(line, depth + 1))
-        .join("\n");
-      return prefix + block;
+export function toYaml(obj, indent = 0) {
+  const spaces = " ".repeat(indent);
+  let result = "";
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) {
+      continue;
     }
-
-    return escapeYaml(object);
-  }
-
-  if (Array.isArray(object)) {
-    if (object.length === 0) {
-      return indent("[]");
+    if (value === null) {
+      result += `${spaces}${key}: null\n`;
+      continue;
     }
-    return object.map(item => indent("- ") + toYaml(item, depth + 1)).join("\n");
-  }
-
-  if (typeof object === "object") {
-    if (Object.keys(object).length === 0) {
-      return indent("{}");
+    if (Array.isArray(value)) {
+      result += `${spaces}${key}:\n`;
+      value.forEach(item => {
+        if (typeof item === "object" && item !== null) {
+          result += `${spaces}- \n${toYaml(item, indent + 2)
+            .split("\n")
+            .map(line => `${spaces}  ${line}`)
+            .join("\n")}\n`;
+        } else {
+          result += `${spaces}- ${item}\n`;
+        }
+      });
+      continue;
     }
-    return Object.entries(object)
-      .map(([key, value]) => indent(`${escapeYaml(key)}: ${toYaml(value, depth + 1)}`))
-      .join("\n");
+    if (typeof value === "object") {
+      result += `${spaces}${key}:\n${toYaml(value, indent + 2)}`;
+      continue;
+    }
+    if (
+      typeof value === "string" &&
+      (value.includes(":") || value.includes("#") || value.includes("'") || value.includes('"') || value.includes("\n"))
+    ) {
+      result += `${spaces}${key}: "${value.replace(/"/g, '\\"')}"\n`;
+      continue;
+    }
+    result += `${spaces}${key}: ${value}\n`;
   }
-
-  return "";
+  return result;
 }
 
 /**

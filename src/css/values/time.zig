@@ -149,7 +149,7 @@ pub const Time = union(enum) {
         return css.generic.partialCmpF32(&this.toMs(), &other.toMs());
     }
 
-    pub fn map(this: *const @This(), comptime map_fn: *const fn (f32) f32) Time {
+    pub fn map(this: *const @This(), map_fn: *const fn (f32) f32) Time {
         return switch (this.*) {
             .seconds => Time{ .seconds = map_fn(this.seconds) },
             .milliseconds => Time{ .milliseconds = map_fn(this.milliseconds) },
@@ -166,8 +166,9 @@ pub const Time = union(enum) {
     pub fn op(
         this: *const Time,
         other: *const Time,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+        comptime Ctx: type,
+        ctx: Ctx,
+        op_fn: *const fn (Ctx, a: f32, b: f32) f32,
     ) Time {
         const self_tag: u16 = @intFromEnum(this.*);
         const other_tag: u16 = @intFromEnum(other.*);
@@ -188,8 +189,9 @@ pub const Time = union(enum) {
         this: *const Time,
         other: *const Time,
         comptime R: type,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) R,
+        comptime Ctx: type,
+        ctx: Ctx,
+        op_fn: *const fn (Ctx, a: f32, b: f32) R,
     ) R {
         const self_tag: u16 = @intFromEnum(this.*);
         const other_tag: u16 = @intFromEnum(other.*);

@@ -71,14 +71,14 @@ pub fn Size2D(comptime T: type) type {
             return css.implementDeepClone(@This(), this, allocator);
         }
 
-        pub inline fn valEql(lhs: *const T, rhs: *const T) bool {
+        pub fn valEql(lhs: *const T, rhs: *const T) bool {
             return switch (T) {
                 f32 => lhs.* == rhs.*,
                 else => lhs.eql(rhs),
             };
         }
 
-        pub inline fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return switch (T) {
                 f32 => lhs.a == rhs.b,
                 else => lhs.a.eql(&rhs.b),

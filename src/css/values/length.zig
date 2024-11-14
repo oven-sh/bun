@@ -373,7 +373,7 @@ pub const LengthValue = union(enum) {
         unreachable;
     }
 
-    pub fn map(this: *const @This(), comptime map_fn: *const fn (f32) f32) LengthValue {
+    pub fn map(this: *const @This(), map_fn: *const fn (f32) f32) LengthValue {
         inline for (comptime bun.meta.EnumFields(@This())) |field| {
             if (field.value == @intFromEnum(this.*)) {
                 return @unionInit(LengthValue, field.name, map_fn(@field(this, field.name)));
@@ -419,8 +419,9 @@ pub const LengthValue = union(enum) {
     pub fn tryOp(
         this: *const LengthValue,
         other: *const LengthValue,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+        comptime Ctx: type,
+        ctx: Ctx,
+        op_fn: *const fn (Ctx, f32, f32) f32,
     ) ?LengthValue {
         if (@intFromEnum(this.*) == @intFromEnum(other.*)) {
             inline for (bun.meta.EnumFields(LengthValue)) |field| {
@@ -445,8 +446,9 @@ pub const LengthValue = union(enum) {
         this: *const LengthValue,
         other: *const LengthValue,
         comptime R: type,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) R,
+        comptime Ctx: type,
+        ctx: Ctx,
+        op_fn: *const fn (Ctx, f32, f32) R,
     ) ?R {
         if (@intFromEnum(this.*) == @intFromEnum(other.*)) {
             inline for (bun.meta.EnumFields(LengthValue)) |field| {
@@ -751,7 +753,7 @@ pub const Length = union(enum) {
         return null;
     }
 
-    pub fn tryMap(this: *const Length, comptime map_fn: *const fn (f32) f32) ?Length {
+    pub fn tryMap(this: *const Length, map_fn: *const fn (f32) f32) ?Length {
         return switch (this.*) {
             .value => |v| .{ .value = v.map(map_fn) },
             else => null,
@@ -761,11 +763,12 @@ pub const Length = union(enum) {
     pub fn tryOp(
         this: *const Length,
         other: *const Length,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+        comptime Ctx: type,
+        ctx: Ctx,
+        op_fn: *const fn (Ctx, f32, f32) f32,
     ) ?Length {
         if (this.* == .value and other.* == .value) {
-            if (this.value.tryOp(&other.value, ctx, op_fn)) |val| return .{ .value = val };
+            if (this.value.tryOp(&other.value, Ctx, ctx, op_fn)) |val| return .{ .value = val };
             return null;
         }
         return null;
@@ -775,11 +778,12 @@ pub const Length = union(enum) {
         this: *const Length,
         other: *const Length,
         comptime R: type,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) R,
+        comptime Ctx: type,
+        ctx: Ctx,
+        op_fn: *const fn (Ctx, f32, f32) R,
     ) ?R {
         if (this.* == .value and other.* == .value) {
-            return this.value.tryOpTo(&other.value, R, ctx, op_fn);
+            return this.value.tryOpTo(&other.value, R, Ctx, ctx, op_fn);
         }
         return null;
     }

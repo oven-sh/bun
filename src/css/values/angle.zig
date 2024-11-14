@@ -170,7 +170,7 @@ pub const Angle = union(Tag) {
         };
     }
 
-    pub fn map(this: *const Angle, comptime opfn: *const fn (f32) f32) Angle {
+    pub fn map(this: *const Angle, opfn: *const fn (f32) f32) Angle {
         return switch (this.*) {
             .deg => |deg| .{ .deg = opfn(deg) },
             .rad => |rad| .{ .rad = opfn(rad) },
@@ -179,7 +179,7 @@ pub const Angle = union(Tag) {
         };
     }
 
-    pub fn tryMap(this: *const Angle, comptime opfn: *const fn (f32) f32) ?Angle {
+    pub fn tryMap(this: *const Angle, opfn: *const fn (f32) f32) ?Angle {
         return map(this, opfn);
     }
 
@@ -189,7 +189,7 @@ pub const Angle = union(Tag) {
                 return a + b;
             }
         };
-        return Angle.op(&this, &rhs, {}, addfn.add);
+        return Angle.op(&this, &rhs, void, {}, addfn.add);
     }
 
     pub fn tryAdd(this: *const Angle, _: std.mem.Allocator, rhs: *const Angle) ?Angle {
@@ -217,27 +217,30 @@ pub const Angle = union(Tag) {
     pub fn tryOp(
         this: *const Angle,
         other: *const Angle,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+        comptime Ctx: type,
+        ctx: Ctx,
+        op_fn: *const fn (Ctx, f32, f32) f32,
     ) ?Angle {
-        return Angle.op(this, other, ctx, op_fn);
+        return Angle.op(this, other, Ctx, ctx, op_fn);
     }
 
     pub fn tryOpTo(
         this: *const Angle,
         other: *const Angle,
         comptime R: type,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) R,
+        comptime Ctx: type,
+        ctx: Ctx,
+        op_fn: *const fn (Ctx, f32, f32) R,
     ) ?R {
-        return Angle.opTo(this, other, R, ctx, op_fn);
+        return Angle.opTo(this, other, R, Ctx, ctx, op_fn);
     }
 
     pub fn op(
         this: *const Angle,
         other: *const Angle,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+        comptime Ctx: type,
+        ctx: Ctx,
+        op_fn: *const fn (Ctx, a: f32, b: f32) f32,
     ) Angle {
         // PERF: not sure if this is faster
         const self_tag: u8 = @intFromEnum(this.*);
@@ -261,8 +264,9 @@ pub const Angle = union(Tag) {
         this: *const Angle,
         other: *const Angle,
         comptime T: type,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) T,
+        comptime Ctx: type,
+        ctx: Ctx,
+        op_fn: *const fn (Ctx, a: f32, b: f32) T,
     ) T {
         // PERF: not sure if this is faster
         const self_tag: u8 = @intFromEnum(this.*);

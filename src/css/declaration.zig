@@ -153,7 +153,7 @@ pub const DeclarationBlock = struct {
         context: *css.PropertyHandlerContext,
     ) void {
         const handle = struct {
-            inline fn handle(
+            fn handle(
                 self: *This,
                 ctx: *css.PropertyHandlerContext,
                 hndlr: *DeclarationHandler,
@@ -299,12 +299,12 @@ pub fn parse_declaration(
         property_id: css.PropertyId,
         options: *const css.ParserOptions,
     };
-    var closure = Closure{
+    const closure = Closure{
         .property_id = property_id,
         .options = options,
     };
-    const property = switch (input.parseUntilBefore(delimiters, css.Property, &closure, struct {
-        pub fn parseFn(this: *Closure, input2: *css.Parser) Result(css.Property) {
+    const property = switch (input.parseUntilBefore(delimiters, css.Property, *const Closure, &closure, struct {
+        pub fn parseFn(this: *const Closure, input2: *css.Parser) Result(css.Property) {
             return css.Property.parse(this.property_id, input2, this.options);
         }
     }.parseFn)) {

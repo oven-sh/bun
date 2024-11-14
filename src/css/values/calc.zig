@@ -45,6 +45,32 @@ pub fn needsDeepclone(comptime V: type) bool {
     };
 }
 
+const CalcUnit = enum {
+    abs,
+    acos,
+    asin,
+    atan,
+    atan2,
+    calc,
+    clamp,
+    cos,
+    exp,
+    hypot,
+    log,
+    max,
+    min,
+    mod,
+    pow,
+    rem,
+    round,
+    sign,
+    sin,
+    sqrt,
+    tan,
+
+    pub const Map = bun.ComptimeEnumMap(CalcUnit);
+};
+
 /// A mathematical expression used within the `calc()` function.
 ///
 /// This type supports generic value types. Values such as `Length`, `Percentage`,
@@ -266,39 +292,14 @@ pub fn Calc(comptime V: type) type {
                     return null;
                 }
             };
-            return parseWith(input, {}, Fn.parseWithFn);
+            return parseWith(input, void, {}, Fn.parseWithFn);
         }
-
-        const CalcUnit = enum {
-            abs,
-            acos,
-            asin,
-            atan,
-            atan2,
-            calc,
-            clamp,
-            cos,
-            exp,
-            hypot,
-            log,
-            max,
-            min,
-            mod,
-            pow,
-            rem,
-            round,
-            sign,
-            sin,
-            sqrt,
-            tan,
-
-            pub const Map = bun.ComptimeEnumMap(CalcUnit);
-        };
 
         pub fn parseWith(
             input: *css.Parser,
-            ctx: anytype,
-            comptime parseIdent: *const fn (@TypeOf(ctx), []const u8) ?This,
+            comptime Ctx: type,
+            ctx: Ctx,
+            parseIdent: *const fn (Ctx, []const u8) ?This,
         ) Result(This) {
             const location = input.currentSourceLocation();
             const f = switch (input.expectFunction()) {
@@ -308,14 +309,22 @@ pub fn Calc(comptime V: type) type {
 
             switch (CalcUnit.Map.getAnyCase(f) orelse return .{ .err = location.newUnexpectedTokenError(.{ .ident = f }) }) {
                 .calc => {
+                    const State = ClosureState(Ctx, This);
                     const Closure = struct {
-                        ctx: @TypeOf(ctx),
-                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                            return This.parseSum(i, self.ctx, parseIdent);
+                        pub fn parseNestedBlockFn(state: *const State, i: *css.Parser) Result(This) {
+                            return This.parseSum(i, Ctx, state.ctx, state.parse_ident);
                         }
                     };
-                    var closure = Closure{ .ctx = ctx };
-                    const calc = switch (input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn)) {
+
+                    const calc = switch (input.parseNestedBlockT(
+                        This,
+                        *const State,
+                        &State{
+                            .ctx = ctx,
+                            .parse_ident = parseIdent,
+                        },
+                        Closure.parseNestedBlockFn,
+                    )) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     };
@@ -329,17 +338,20 @@ pub fn Calc(comptime V: type) type {
                     } };
                 },
                 .min => {
+                    const State = ClosureState(Ctx, This);
                     const Closure = struct {
-                        ctx: @TypeOf(ctx),
-                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(ArrayList(This)) {
-                            return i.parseCommaSeparatedWithCtx(This, self, @This().parseOne);
+                        pub fn parseNestedBlockFn(self: *const State, i: *css.Parser) Result(ArrayList(This)) {
+                            return i.parseCommaSeparatedWithCtx(This, *const State, self, @This().parseOne);
                         }
-                        pub fn parseOne(self: *@This(), i: *css.Parser) Result(This) {
-                            return This.parseSum(i, self.ctx, parseIdent);
+                        pub fn parseOne(self: *const State, i: *css.Parser) Result(This) {
+                            return This.parseSum(i, Ctx, self.ctx, self.parse_ident);
                         }
                     };
-                    var closure = Closure{ .ctx = ctx };
-                    var reduced = switch (input.parseNestedBlock(ArrayList(This), &closure, Closure.parseNestedBlockFn)) {
+
+                    var reduced = switch (input.parseNestedBlockT(ArrayList(This), *const State, &State{
+                        .ctx = ctx,
+                        .parse_ident = parseIdent,
+                    }, Closure.parseNestedBlockFn)) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     };
@@ -360,17 +372,19 @@ pub fn Calc(comptime V: type) type {
                     } };
                 },
                 .max => {
+                    const State = ClosureState(Ctx, This);
                     const Closure = struct {
-                        ctx: @TypeOf(ctx),
-                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(ArrayList(This)) {
-                            return i.parseCommaSeparatedWithCtx(This, self, @This().parseOne);
+                        pub fn parseNestedBlockFn(self: *const State, i: *css.Parser) Result(ArrayList(This)) {
+                            return i.parseCommaSeparatedWithCtx(This, *const State, self, @This().parseOne);
                         }
-                        pub fn parseOne(self: *@This(), i: *css.Parser) Result(This) {
-                            return This.parseSum(i, self.ctx, parseIdent);
+                        pub fn parseOne(self: *const State, i: *css.Parser) Result(This) {
+                            return This.parseSum(i, Ctx, self.ctx, self.parse_ident);
                         }
                     };
-                    var closure = Closure{ .ctx = ctx };
-                    var reduced = switch (input.parseNestedBlock(ArrayList(This), &closure, Closure.parseNestedBlockFn)) {
+                    var reduced = switch (input.parseNestedBlockT(ArrayList(This), *const State, &State{
+                        .ctx = ctx,
+                        .parse_ident = parseIdent,
+                    }, Closure.parseNestedBlockFn)) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     };
@@ -390,37 +404,33 @@ pub fn Calc(comptime V: type) type {
                 },
                 .clamp => {
                     const ClosureResult = struct { ?This, This, ?This };
+                    const State = ClosureState(Ctx, This);
                     const Closure = struct {
-                        ctx: @TypeOf(ctx),
-
-                        pub fn parseNestedBlock(self: *@This(), i: *css.Parser) Result(ClosureResult) {
-                            const min = switch (This.parseSum(i, self, parseIdentWrapper)) {
+                        pub fn parseNestedBlock(self: *const State, i: *css.Parser) Result(ClosureResult) {
+                            const min = switch (This.parseSum(i, Ctx, self.ctx, self.parse_ident)) {
                                 .result => |vv| vv,
                                 .err => |e| return .{ .err = e },
                             };
                             if (i.expectComma().asErr()) |e| return .{ .err = e };
-                            const center = switch (This.parseSum(i, self, parseIdentWrapper)) {
+                            const center = switch (This.parseSum(i, Ctx, self.ctx, self.parse_ident)) {
                                 .result => |vv| vv,
                                 .err => |e| return .{ .err = e },
                             };
                             if (i.expectComma().asErr()) |e| return .{ .err = e };
-                            const max = switch (This.parseSum(i, self, parseIdentWrapper)) {
+                            const max = switch (This.parseSum(i, Ctx, self.ctx, self.parse_ident)) {
                                 .result => |vv| vv,
                                 .err => |e| return .{ .err = e },
                             };
                             return .{ .result = .{ min, center, max } };
                         }
-
-                        pub fn parseIdentWrapper(self: *@This(), ident: []const u8) ?This {
-                            return parseIdent(self.ctx, ident);
-                        }
                     };
-                    var closure = Closure{
-                        .ctx = ctx,
-                    };
-                    var min, var center, var max = switch (input.parseNestedBlock(
+                    var min, var center, var max = switch (input.parseNestedBlockT(
                         ClosureResult,
-                        &closure,
+                        *const State,
+                        &State{
+                            .ctx = ctx,
+                            .parse_ident = parseIdent,
+                        },
                         Closure.parseNestedBlock,
                     )) {
                         .result => |vv| vv,
@@ -492,9 +502,9 @@ pub fn Calc(comptime V: type) type {
                     } };
                 },
                 .round => {
+                    const State = ClosureState(Ctx, This);
                     const Closure = struct {
-                        ctx: @TypeOf(ctx),
-                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                        pub fn parseNestedBlockFn(self: *const State, i: *css.Parser) Result(This) {
                             const strategy = if (i.tryParse(RoundingStrategy.parse, .{}).asValue()) |s| brk: {
                                 if (i.expectComma().asErr()) |e| return .{ .err = e };
                                 break :brk s;
@@ -503,11 +513,11 @@ pub fn Calc(comptime V: type) type {
                             const OpAndFallbackCtx = struct {
                                 strategy: RoundingStrategy,
 
-                                pub fn op(this: *const @This(), a: f32, b: f32) f32 {
+                                pub fn op(this: @This(), a: f32, b: f32) f32 {
                                     return round({}, a, b, this.strategy);
                                 }
 
-                                pub fn fallback(this: *const @This(), a: This, b: This) MathFunction(V) {
+                                pub fn fallback(this: @This(), a: This, b: This) MathFunction(V) {
                                     return MathFunction(V){
                                         .round = .{
                                             .strategy = this.strategy,
@@ -517,36 +527,40 @@ pub fn Calc(comptime V: type) type {
                                     };
                                 }
                             };
-                            var ctx_for_op_and_fallback = OpAndFallbackCtx{
+                            const ctx_for_op_and_fallback = OpAndFallbackCtx{
                                 .strategy = strategy,
                             };
                             return This.parseMathFn(
                                 i,
-                                &ctx_for_op_and_fallback,
+                                OpAndFallbackCtx,
+                                ctx_for_op_and_fallback,
                                 OpAndFallbackCtx.op,
                                 OpAndFallbackCtx.fallback,
+                                Ctx,
                                 self.ctx,
-                                parseIdent,
+                                self.parse_ident,
                             );
                         }
                     };
-                    var closure = Closure{
+
+                    return input.parseNestedBlockT(This, *const State, &.{
                         .ctx = ctx,
-                    };
-                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                        .parse_ident = parseIdent,
+                    }, Closure.parseNestedBlockFn);
                 },
                 .rem => {
+                    const State = ClosureState(Ctx, This);
                     const Closure = struct {
-                        ctx: @TypeOf(ctx),
-
-                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                        pub fn parseNestedBlockFn(self: *const State, i: *css.Parser) Result(This) {
                             return This.parseMathFn(
                                 i,
+                                void,
                                 {},
                                 @This().rem,
                                 mathFunctionRem,
+                                Ctx,
                                 self.ctx,
-                                parseIdent,
+                                self.parse_ident,
                             );
                         }
 
@@ -562,23 +576,25 @@ pub fn Calc(comptime V: type) type {
                             };
                         }
                     };
-                    var closure = Closure{
+
+                    return input.parseNestedBlockT(This, *const State, &State{
                         .ctx = ctx,
-                    };
-                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                        .parse_ident = parseIdent,
+                    }, Closure.parseNestedBlockFn);
                 },
                 .mod => {
+                    const State = ClosureState(Ctx, This);
                     const Closure = struct {
-                        ctx: @TypeOf(ctx),
-
-                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                        pub fn parseNestedBlockFn(self: *const State, i: *css.Parser) Result(This) {
                             return This.parseMathFn(
                                 i,
+                                void,
                                 {},
                                 @This().modulo,
                                 mathFunctionMod,
+                                Ctx,
                                 self.ctx,
-                                parseIdent,
+                                self.parse_ident,
                             );
                         }
 
@@ -595,34 +611,35 @@ pub fn Calc(comptime V: type) type {
                             };
                         }
                     };
-                    var closure = Closure{
+
+                    return input.parseNestedBlockT(This, *const State, &State{
                         .ctx = ctx,
-                    };
-                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                        .parse_ident = parseIdent,
+                    }, Closure.parseNestedBlockFn);
                 },
                 .sin => {
-                    return This.parseTrig(input, .sin, false, ctx, parseIdent);
+                    return This.parseTrig(input, .sin, false, Ctx, ctx, parseIdent);
                 },
                 .cos => {
-                    return This.parseTrig(input, .cos, false, ctx, parseIdent);
+                    return This.parseTrig(input, .cos, false, Ctx, ctx, parseIdent);
                 },
                 .tan => {
-                    return This.parseTrig(input, .tan, false, ctx, parseIdent);
+                    return This.parseTrig(input, .tan, false, Ctx, ctx, parseIdent);
                 },
                 .asin => {
-                    return This.parseTrig(input, .asin, true, ctx, parseIdent);
+                    return This.parseTrig(input, .asin, true, Ctx, ctx, parseIdent);
                 },
                 .acos => {
-                    return This.parseTrig(input, .acos, true, ctx, parseIdent);
+                    return This.parseTrig(input, .acos, true, Ctx, ctx, parseIdent);
                 },
                 .atan => {
-                    return This.parseTrig(input, .atan, true, ctx, parseIdent);
+                    return This.parseTrig(input, .atan, true, Ctx, ctx, parseIdent);
                 },
                 .atan2 => {
+                    const State = ClosureState(Ctx, This);
                     const Closure = struct {
-                        ctx: @TypeOf(ctx),
-                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                            const res = switch (This.parseAtan2(i, self.ctx, parseIdent)) {
+                        pub fn parseNestedBlockFn(self: *const State, i: *css.Parser) Result(This) {
+                            const res = switch (This.parseAtan2(i, Ctx, self.ctx, self.parse_ident)) {
                                 .result => |v| v,
                                 .err => |e| return .{ .err = e },
                             };
@@ -639,21 +656,23 @@ pub fn Calc(comptime V: type) type {
                             return .{ .err = i.newCustomError(css.ParserError{ .invalid_value = {} }) };
                         }
                     };
-                    var closure = Closure{ .ctx = ctx };
-                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                    return input.parseNestedBlockT(This, *const State, &State{
+                        .ctx = ctx,
+                        .parse_ident = parseIdent,
+                    }, Closure.parseNestedBlockFn);
                 },
                 .pow => {
+                    const State = ClosureState(Ctx, This);
                     const Closure = struct {
-                        ctx: @TypeOf(ctx),
-                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                            const a = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
+                        pub fn parseNestedBlockFn(self: *const State, i: *css.Parser) Result(This) {
+                            const a = switch (This.parseNumeric(i, Ctx, self.ctx, self.parse_ident)) {
                                 .result => |vv| vv,
                                 .err => |e| return .{ .err = e },
                             };
 
                             if (i.expectComma().asErr()) |e| return .{ .err = e };
 
-                            const b = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
+                            const b = switch (This.parseNumeric(i, Ctx, self.ctx, self.parse_ident)) {
                                 .result => |vv| vv,
                                 .err => |e| return .{ .err = e },
                             };
@@ -663,19 +682,21 @@ pub fn Calc(comptime V: type) type {
                             } };
                         }
                     };
-                    var closure = Closure{ .ctx = ctx };
-                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                    return input.parseNestedBlockT(This, *const State, &State{
+                        .ctx = ctx,
+                        .parse_ident = parseIdent,
+                    }, Closure.parseNestedBlockFn);
                 },
                 .log => {
+                    const State = ClosureState(Ctx, This);
                     const Closure = struct {
-                        ctx: @TypeOf(ctx),
-                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                            const value = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
+                        pub fn parseNestedBlockFn(self: *const State, i: *css.Parser) Result(This) {
+                            const value = switch (This.parseNumeric(i, Ctx, self.ctx, self.parse_ident)) {
                                 .result => |vv| vv,
                                 .err => |e| return .{ .err = e },
                             };
                             if (i.tryParse(css.Parser.expectComma, .{}).isOk()) {
-                                const base = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
+                                const base = switch (This.parseNumeric(i, Ctx, self.ctx, self.parse_ident)) {
                                     .result => |vv| vv,
                                     .err => |e| return .{ .err = e },
                                 };
@@ -684,20 +705,22 @@ pub fn Calc(comptime V: type) type {
                             return .{ .result = This{ .number = std.math.log(f32, std.math.e, value) } };
                         }
                     };
-                    var closure = Closure{ .ctx = ctx };
-                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                    return input.parseNestedBlockT(This, *const State, &State{
+                        .ctx = ctx,
+                        .parse_ident = parseIdent,
+                    }, Closure.parseNestedBlockFn);
                 },
                 .sqrt => {
-                    return This.parseNumericFn(input, .sqrt, ctx, parseIdent);
+                    return This.parseNumericFn(input, .sqrt, Ctx, ctx, parseIdent);
                 },
                 .exp => {
-                    return This.parseNumericFn(input, .exp, ctx, parseIdent);
+                    return This.parseNumericFn(input, .exp, Ctx, ctx, parseIdent);
                 },
                 .hypot => {
+                    const State = ClosureState(Ctx, This);
                     const Closure = struct {
-                        ctx: @TypeOf(ctx),
-                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                            var args = switch (i.parseCommaSeparatedWithCtx(This, self, parseOne)) {
+                        pub fn parseNestedBlockFn(self: *const State, i: *css.Parser) Result(This) {
+                            var args = switch (i.parseCommaSeparatedWithCtx(This, *const State, self, parseOne)) {
                                 .result => |v| v,
                                 .err => |e| return .{ .err = e },
                             };
@@ -717,18 +740,20 @@ pub fn Calc(comptime V: type) type {
                             } };
                         }
 
-                        pub fn parseOne(self: *@This(), i: *css.Parser) Result(This) {
-                            return This.parseSum(i, self.ctx, parseIdent);
+                        pub fn parseOne(self: *const State, i: *css.Parser) Result(This) {
+                            return This.parseSum(i, Ctx, self.ctx, self.parse_ident);
                         }
                     };
-                    var closure = Closure{ .ctx = ctx };
-                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                    return input.parseNestedBlockT(This, *const State, &State{
+                        .ctx = ctx,
+                        .parse_ident = parseIdent,
+                    }, Closure.parseNestedBlockFn);
                 },
                 .abs => {
+                    const State = ClosureState(Ctx, This);
                     const Closure = struct {
-                        ctx: @TypeOf(ctx),
-                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                            const v = switch (This.parseSum(i, self.ctx, parseIdent)) {
+                        pub fn parseNestedBlockFn(self: *const State, i: *css.Parser) Result(This) {
+                            const v = switch (This.parseSum(i, Ctx, self.ctx, self.parse_ident)) {
                                 .result => |vv| vv,
                                 .err => |e| return .{ .err = e },
                             };
@@ -743,14 +768,16 @@ pub fn Calc(comptime V: type) type {
                             };
                         }
                     };
-                    var closure = Closure{ .ctx = ctx };
-                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                    return input.parseNestedBlockT(This, *const State, &State{
+                        .ctx = ctx,
+                        .parse_ident = parseIdent,
+                    }, Closure.parseNestedBlockFn);
                 },
                 .sign => {
+                    const State = ClosureState(Ctx, This);
                     const Closure = struct {
-                        ctx: @TypeOf(ctx),
-                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                            const v = switch (This.parseSum(i, self.ctx, parseIdent)) {
+                        pub fn parseNestedBlockFn(self: *const State, i: *css.Parser) Result(This) {
+                            const v = switch (This.parseSum(i, Ctx, self.ctx, self.parse_ident)) {
                                 .result => |vv| vv,
                                 .err => |e| return .{ .err = e },
                             };
@@ -786,25 +813,36 @@ pub fn Calc(comptime V: type) type {
                             } };
                         }
                     };
-                    var closure = Closure{ .ctx = ctx };
-                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                    return input.parseNestedBlockT(This, *const State, &State{
+                        .ctx = ctx,
+                        .parse_ident = parseIdent,
+                    }, Closure.parseNestedBlockFn);
                 },
             }
         }
 
-        pub fn parseNumericFn(input: *css.Parser, comptime op: enum { sqrt, exp }, ctx: anytype, comptime parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This) Result(This) {
-            const Closure = struct { ctx: @TypeOf(ctx) };
-            var closure = Closure{ .ctx = ctx };
+        const NumericFnOp = enum { sqrt, exp };
+        pub fn parseNumericFn(input: *css.Parser, op: NumericFnOp, comptime Ctx: type, ctx: Ctx, parse_ident: *const fn (Ctx, []const u8) ?This) Result(This) {
+            const Closure = struct {
+                ctx: Ctx,
+                parse_ident: *const fn (Ctx, []const u8) ?This,
+                op: NumericFnOp,
+            };
+            const closure = Closure{
+                .ctx = ctx,
+                .parse_ident = parse_ident,
+                .op = op,
+            };
             return input.parseNestedBlock(This, &closure, struct {
-                pub fn parseNestedBlockFn(self: *Closure, i: *css.Parser) Result(This) {
-                    const v = switch (This.parseNumeric(i, self.ctx, parse_ident)) {
+                pub fn parseNestedBlockFn(self: *const Closure, i: *css.Parser) Result(This) {
+                    const v = switch (This.parseNumeric(i, Ctx, self.ctx, self.parse_ident)) {
                         .result => |v| v,
                         .err => |e| return .{ .err = e },
                     };
 
                     return .{
                         .result = Calc(V){
-                            .number = switch (op) {
+                            .number = switch (self.op) {
                                 .sqrt => std.math.sqrt(v),
                                 .exp => std.math.exp(v),
                             },
@@ -816,23 +854,25 @@ pub fn Calc(comptime V: type) type {
 
         pub fn parseMathFn(
             input: *css.Parser,
-            ctx_for_op_and_fallback: anytype,
-            comptime op: *const fn (@TypeOf(ctx_for_op_and_fallback), f32, f32) f32,
-            comptime fallback: *const fn (@TypeOf(ctx_for_op_and_fallback), This, This) MathFunction(V),
-            ctx_for_parse_ident: anytype,
-            comptime parse_ident: *const fn (@TypeOf(ctx_for_parse_ident), []const u8) ?This,
+            comptime CtxForOpAndFallback: type,
+            ctx_for_op_and_fallback: CtxForOpAndFallback,
+            op: *const fn (CtxForOpAndFallback, f32, f32) f32,
+            fallback: *const fn (CtxForOpAndFallback, This, This) MathFunction(V),
+            comptime CtxForParseIdent: type,
+            ctx_for_parse_ident: CtxForParseIdent,
+            parse_ident: *const fn (CtxForParseIdent, []const u8) ?This,
         ) Result(This) {
-            const a = switch (This.parseSum(input, ctx_for_parse_ident, parse_ident)) {
+            const a = switch (This.parseSum(input, CtxForParseIdent, ctx_for_parse_ident, parse_ident)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
             if (input.expectComma().asErr()) |e| return .{ .err = e };
-            const b = switch (This.parseSum(input, ctx_for_parse_ident, parse_ident)) {
+            const b = switch (This.parseSum(input, CtxForParseIdent, ctx_for_parse_ident, parse_ident)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
 
-            const val = This.applyOp(&a, &b, input.allocator(), ctx_for_op_and_fallback, op) orelse This{
+            const val = This.applyOp(&a, &b, input.allocator(), CtxForOpAndFallback, ctx_for_op_and_fallback, op) orelse This{
                 .function = bun.create(
                     input.allocator(),
                     MathFunction(V),
@@ -843,12 +883,13 @@ pub fn Calc(comptime V: type) type {
             return .{ .result = val };
         }
 
-        pub fn parseSum(
+        fn parseSum(
             input: *css.Parser,
-            ctx: anytype,
-            comptime parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
+            comptime Ctx: type,
+            ctx: Ctx,
+            parse_ident: *const fn (Ctx, []const u8) ?This,
         ) Result(This) {
-            var cur = switch (This.parseProduct(input, ctx, parse_ident)) {
+            var cur = switch (This.parseProduct(input, Ctx, ctx, parse_ident)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
@@ -871,13 +912,13 @@ pub fn Calc(comptime V: type) type {
                         .err => |e| return .{ .err = e },
                     };
                     if (next_tok.* == .delim and next_tok.delim == '+') {
-                        const next = switch (Calc(V).parseProduct(input, ctx, parse_ident)) {
+                        const next = switch (Calc(V).parseProduct(input, Ctx, ctx, parse_ident)) {
                             .result => |vv| vv,
                             .err => |e| return .{ .err = e },
                         };
                         cur = cur.add(input.allocator(), next);
                     } else if (next_tok.* == .delim and next_tok.delim == '-') {
-                        var rhs = switch (This.parseProduct(input, ctx, parse_ident)) {
+                        var rhs = switch (This.parseProduct(input, Ctx, ctx, parse_ident)) {
                             .result => |vv| vv,
                             .err => |e| return .{ .err = e },
                         };
@@ -897,8 +938,9 @@ pub fn Calc(comptime V: type) type {
 
         pub fn parseProduct(
             input: *css.Parser,
-            ctx: anytype,
-            comptime parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
+            comptime Ctx: type,
+            ctx: Ctx,
+            parse_ident: *const fn (Ctx, []const u8) ?This,
         ) Result(This) {
             var node = switch (This.parseValue(input, ctx, parse_ident)) {
                 .result => |vv| vv,
@@ -916,7 +958,7 @@ pub fn Calc(comptime V: type) type {
 
                 if (tok.* == .delim and tok.delim == '*') {
                     // At least one of the operands must be a number.
-                    const rhs = switch (This.parseValue(input, ctx, parse_ident)) {
+                    const rhs = switch (This.parseValueT(input, Ctx, ctx, parse_ident)) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     };
@@ -930,7 +972,7 @@ pub fn Calc(comptime V: type) type {
                         return .{ .err = input.newUnexpectedTokenError(.{ .delim = '*' }) };
                     }
                 } else if (tok.* == .delim and tok.delim == '/') {
-                    const rhs = switch (This.parseValue(input, ctx, parse_ident)) {
+                    const rhs = switch (This.parseValueT(input, Ctx, ctx, parse_ident)) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     };
@@ -951,11 +993,20 @@ pub fn Calc(comptime V: type) type {
         pub fn parseValue(
             input: *css.Parser,
             ctx: anytype,
-            comptime parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
+            parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
         ) Result(This) {
+            return parseValueT(input, @TypeOf(ctx), ctx, parse_ident);
+        }
+
+        fn parseValueT(
+            input: *css.Parser,
+            comptime Ctx: type,
+            ctx: Ctx,
+            parseIdent: *const fn (Ctx, []const u8) ?This,
+        ) Result(This) {
+
             // Parse nested calc() and other math functions.
-            if (input.tryParse(This.parse, .{}).asValue()) |_calc| {
-                const calc: This = _calc;
+            if (input.tryParse(This.parse, .{}).asValue()) |calc| {
                 switch (calc) {
                     .function => |f| return switch (f.*) {
                         .calc => |c| .{ .result = c },
@@ -966,16 +1017,16 @@ pub fn Calc(comptime V: type) type {
             }
 
             if (input.tryParse(css.Parser.expectParenthesisBlock, .{}).isOk()) {
+                const State = ClosureState(Ctx, This);
                 const Closure = struct {
-                    ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                        return This.parseSum(i, self.ctx, parse_ident);
+                    pub fn parseNestedBlockFn(self: *const State, i: *css.Parser) Result(This) {
+                        return This.parseSum(i, Ctx, self.ctx, self.parse_ident);
                     }
                 };
-                var closure = Closure{
+                return input.parseNestedBlock(This, &State{
                     .ctx = ctx,
-                };
-                return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                    .parse_ident = parseIdent,
+                }, Closure.parseNestedBlockFn);
             }
 
             if (input.tryParse(css.Parser.expectNumber, .{}).asValue()) |num| {
@@ -988,7 +1039,7 @@ pub fn Calc(comptime V: type) type {
 
             const location = input.currentSourceLocation();
             if (input.tryParse(css.Parser.expectIdent, .{}).asValue()) |ident| {
-                if (parse_ident(ctx, ident)) |c| {
+                if (parseIdent(ctx, ident)) |c| {
                     return .{ .result = c };
                 }
 
@@ -1008,40 +1059,42 @@ pub fn Calc(comptime V: type) type {
             } };
         }
 
+        const TrigFn = enum {
+            sin,
+            cos,
+            tan,
+            asin,
+            acos,
+            atan,
+
+            pub fn run(this: @This(), x: f32) f32 {
+                return switch (this) {
+                    .sin => std.math.sin(x),
+                    .cos => std.math.cos(x),
+                    .tan => std.math.tan(x),
+                    .asin => std.math.asin(x),
+                    .acos => std.math.acos(x),
+                    .atan => std.math.atan(x),
+                };
+            }
+        };
         pub fn parseTrig(
             input: *css.Parser,
-            comptime trig_fn_kind: enum {
-                sin,
-                cos,
-                tan,
-                asin,
-                acos,
-                atan,
-            },
+            trig_fn: TrigFn,
             to_angle: bool,
-            ctx: anytype,
-            comptime parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
+            comptime Ctx: type,
+            ctx: Ctx,
+            parse_ident: *const fn (Ctx, []const u8) ?This,
         ) Result(This) {
-            const trig_fn = struct {
-                pub fn run(x: f32) f32 {
-                    const mathfn = comptime switch (trig_fn_kind) {
-                        .sin => std.math.sin,
-                        .cos => std.math.cos,
-                        .tan => std.math.tan,
-                        .asin => std.math.asin,
-                        .acos => std.math.acos,
-                        .atan => std.math.atan,
-                    };
-                    return mathfn(x);
-                }
-            };
             const Closure = struct {
-                ctx: @TypeOf(ctx),
+                ctx: Ctx,
                 to_angle: bool,
-
-                pub fn parseNestedBockFn(this: *@This(), i: *css.Parser) Result(This) {
+                trig_fn: TrigFn,
+                parse_ident: *const fn (Ctx, []const u8) ?This,
+                pub fn parseNestedBockFn(this: *const @This(), i: *css.Parser) Result(This) {
                     const v = switch (Calc(Angle).parseSum(
                         i,
+                        *const @This(),
                         this,
                         @This().parseIdentFn,
                     )) {
@@ -1052,9 +1105,9 @@ pub fn Calc(comptime V: type) type {
                     const rad = rad: {
                         switch (v) {
                             .value => |angle| {
-                                if (!this.to_angle) break :rad trig_fn.run(angle.toRadians());
+                                if (!this.to_angle) break :rad this.trig_fn.run(angle.toRadians());
                             },
-                            .number => break :rad trig_fn.run(v.number),
+                            .number => break :rad this.trig_fn.run(v.number),
                             else => {},
                         }
                         return .{ .err = i.newCustomError(css.ParserError{ .invalid_value = {} }) };
@@ -1076,15 +1129,17 @@ pub fn Calc(comptime V: type) type {
                     }
                 }
 
-                pub fn parseIdentFn(this: *@This(), ident: []const u8) ?Calc(Angle) {
-                    const v = parse_ident(this.ctx, ident) orelse return null;
+                pub fn parseIdentFn(this: *const @This(), ident: []const u8) ?Calc(Angle) {
+                    const v = this.parse_ident(this.ctx, ident) orelse return null;
                     if (v == .number) return .{ .number = v.number };
                     return null;
                 }
             };
-            var closure = Closure{
+            const closure = Closure{
                 .ctx = ctx,
                 .to_angle = to_angle,
+                .trig_fn = trig_fn,
+                .parse_ident = parse_ident,
             };
             return input.parseNestedBlock(This, &closure, Closure.parseNestedBockFn);
         }
@@ -1099,10 +1154,10 @@ pub fn Calc(comptime V: type) type {
 
         pub fn parseAtan2(
             input: *css.Parser,
-            ctx: anytype,
-            comptime parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
+            comptime Ctx: type,
+            ctx: Ctx,
+            parse_ident: *const fn (Ctx, []const u8) ?This,
         ) Result(Angle) {
-            const Ctx = @TypeOf(ctx);
 
             // atan2 supports arguments of any <number>, <dimension>, or <percentage>, even ones that wouldn't
             // normally be supported by V. The only requirement is that the arguments be of the same type.
@@ -1124,18 +1179,20 @@ pub fn Calc(comptime V: type) type {
             }
 
             const Closure = struct {
-                ctx: @TypeOf(ctx),
+                ctx: Ctx,
+                parse_ident: *const fn (Ctx, []const u8) ?This,
 
-                pub fn parseIdentFn(self: *@This(), ident: []const u8) ?Calc(CSSNumber) {
-                    const v = parse_ident(self.ctx, ident) orelse return null;
+                pub fn parseIdentFn(self: *const @This(), ident: []const u8) ?Calc(CSSNumber) {
+                    const v = self.parse_ident(self.ctx, ident) orelse return null;
                     if (v == .number) return .{ .number = v.number };
                     return null;
                 }
             };
-            var closure = Closure{
+            const closure = Closure{
                 .ctx = ctx,
+                .parse_ident = parse_ident,
             };
-            return Calc(CSSNumber).parseAtan2Args(input, &closure, Closure.parseIdentFn);
+            return Calc(CSSNumber).parseAtan2Args(input, *const Closure, &closure, Closure.parseIdentFn);
         }
 
         inline fn tryParseAtan2Args(
@@ -1145,20 +1202,21 @@ pub fn Calc(comptime V: type) type {
             ctx: Ctx,
         ) Result(Angle) {
             const func = ParseIdentNone(Ctx, Value).func;
-            return input.tryParseImpl(Result(Angle), Calc(Value).parseAtan2Args, .{ input, ctx, func });
+            return input.tryParseImpl(Result(Angle), Calc(Value).parseAtan2Args, .{ input, Ctx, ctx, func });
         }
 
         pub fn parseAtan2Args(
             input: *css.Parser,
-            ctx: anytype,
-            comptime parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
+            comptime Ctx: type,
+            ctx: Ctx,
+            parse_ident: *const fn (Ctx, []const u8) ?This,
         ) Result(Angle) {
-            const a = switch (This.parseSum(input, ctx, parse_ident)) {
+            const a = switch (This.parseSum(input, Ctx, ctx, parse_ident)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
             if (input.expectComma().asErr()) |e| return .{ .err = e };
-            const b = switch (This.parseSum(input, ctx, parse_ident)) {
+            const b = switch (This.parseSum(input, Ctx, ctx, parse_ident)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
@@ -1169,7 +1227,7 @@ pub fn Calc(comptime V: type) type {
                         return .{ .rad = std.math.atan2(x, y) };
                     }
                 };
-                if (css.generic.tryOpTo(V, Angle, a.value, b.value, {}, Fn.opToFn)) |v| {
+                if (css.generic.tryOpTo(V, Angle, a.value, b.value, void, {}, Fn.opToFn)) |v| {
                     return .{ .result = v };
                 }
             } else if (a == .number and b == .number) {
@@ -1185,22 +1243,25 @@ pub fn Calc(comptime V: type) type {
 
         pub fn parseNumeric(
             input: *css.Parser,
-            ctx: anytype,
-            comptime parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
+            comptime Ctx: type,
+            ctx: Ctx,
+            parse_ident: *const fn (Ctx, []const u8) ?This,
         ) Result(f32) {
             const Closure = struct {
-                ctx: @TypeOf(ctx),
+                ctx: Ctx,
+                parse_ident: *const fn (Ctx, []const u8) ?This,
 
-                pub fn parseIdentFn(self: *@This(), ident: []const u8) ?Calc(CSSNumber) {
-                    const v = parse_ident(self.ctx, ident) orelse return null;
+                pub fn parseIdentFn(self: *const @This(), ident: []const u8) ?Calc(CSSNumber) {
+                    const v = self.parse_ident(self.ctx, ident) orelse return null;
                     if (v == .number) return .{ .number = v.number };
                     return null;
                 }
             };
-            var closure = Closure{
+            const closure = Closure{
                 .ctx = ctx,
+                .parse_ident = parse_ident,
             };
-            const v: Calc(CSSNumber) = switch (Calc(CSSNumber).parseSum(input, &closure, Closure.parseIdentFn)) {
+            const v: Calc(CSSNumber) = switch (Calc(CSSNumber).parseSum(input, *const Closure, &closure, Closure.parseIdentFn)) {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
             };
@@ -1220,7 +1281,7 @@ pub fn Calc(comptime V: type) type {
             }
 
             if (args.items.len == 2) {
-                return .{ .result = This.applyOp(&args.items[0], &args.items[1], allocator, {}, hypot) };
+                return .{ .result = This.applyOp(&args.items[0], &args.items[1], allocator, void, {}, hypot) };
             }
 
             var i: usize = 0;
@@ -1238,7 +1299,7 @@ pub fn Calc(comptime V: type) type {
                         return a + bun.powf(b, 2);
                     }
                 };
-                sum = This.applyOp(&sum, arg, allocator, {}, Fn.applyOpFn) orelse {
+                sum = This.applyOp(&sum, arg, allocator, void, {}, Fn.applyOpFn) orelse {
                     errored = true;
                     break;
                 };
@@ -1253,11 +1314,12 @@ pub fn Calc(comptime V: type) type {
             a: *const This,
             b: *const This,
             allocator: std.mem.Allocator,
-            ctx: anytype,
-            comptime op: *const fn (@TypeOf(ctx), f32, f32) f32,
+            comptime Ctx: type,
+            ctx: Ctx,
+            op: *const fn (Ctx, f32, f32) f32,
         ) ?This {
             if (a.* == .value and b.* == .value) {
-                if (css.generic.tryOp(V, a.value, b.value, ctx, op)) |v| {
+                if (css.generic.tryOp(V, a.value, b.value, Ctx, ctx, op)) |v| {
                     return This{
                         .value = bun.create(
                             allocator,
@@ -1278,7 +1340,7 @@ pub fn Calc(comptime V: type) type {
             return null;
         }
 
-        pub fn applyMap(this: *const This, allocator: Allocator, comptime op: *const fn (f32) f32) ?This {
+        pub fn applyMap(this: *const This, allocator: Allocator, op: *const fn (f32) f32) ?This {
             switch (this.*) {
                 .number => |n| return This{ .number = op(n) },
                 .value => |v| {
@@ -1847,4 +1909,11 @@ pub const Constant = enum {
 
 fn absf(a: f32) f32 {
     return @abs(a);
+}
+
+fn ClosureState(comptime Ctx: type, comptime This: type) type {
+    return struct {
+        ctx: Ctx,
+        parse_ident: *const fn (Ctx, []const u8) ?This,
+    };
 }

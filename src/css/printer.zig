@@ -198,7 +198,7 @@ pub fn Printer(comptime Writer: type) type {
             };
         }
 
-        pub inline fn getImportRecords(this: *This) PrintErr!*const bun.BabyList(bun.ImportRecord) {
+        pub fn getImportRecords(this: *This) PrintErr!*const bun.BabyList(bun.ImportRecord) {
             if (this.import_records) |import_records| return import_records;
             try this.addNoImportRecordError();
             unreachable;
@@ -215,13 +215,13 @@ pub fn Printer(comptime Writer: type) type {
             return this.addNoImportRecordError();
         }
 
-        pub inline fn importRecord(this: *Printer(Writer), import_record_idx: u32) PrintErr!*const bun.ImportRecord {
+        pub fn importRecord(this: *Printer(Writer), import_record_idx: u32) PrintErr!*const bun.ImportRecord {
             if (this.import_records) |import_records| return import_records.at(import_record_idx);
             try this.addNoImportRecordError();
             unreachable;
         }
 
-        pub inline fn getImportRecordUrl(this: *This, import_record_idx: u32) PrintErr![]const u8 {
+        pub fn getImportRecordUrl(this: *This, import_record_idx: u32) PrintErr![]const u8 {
             return (try this.importRecord(import_record_idx)).path.text;
         }
 

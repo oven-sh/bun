@@ -538,7 +538,7 @@ pub const ConicGradient = struct {
 
     pub fn parse(input: *css.Parser) Result(ConicGradient) {
         const angle = input.tryParse(struct {
-            inline fn parse(i: *css.Parser) Result(Angle) {
+            fn parse(i: *css.Parser) Result(Angle) {
                 if (i.expectIdentMatching("from").asErr()) |e| return .{ .err = e };
                 // Spec allows unitless zero angles for gradients.
                 // https://w3c.github.io/csswg-drafts/css-images-4/#valdef-conic-gradient-angle
@@ -547,7 +547,7 @@ pub const ConicGradient = struct {
         }.parse, .{}).unwrapOr(Angle{ .deg = 0.0 });
 
         const position = input.tryParse(struct {
-            inline fn parse(i: *css.Parser) Result(Position) {
+            fn parse(i: *css.Parser) Result(Position) {
                 if (i.expectIdentMatching("at").asErr()) |e| return .{ .err = e };
                 return Position.parse(i);
             }
@@ -1543,6 +1543,7 @@ pub fn parseItems(comptime D: type, input: *css.Parser) Result(ArrayList(Gradien
         if (input.parseUntilBefore(
             css.Delimiters{ .comma = true },
             void,
+            Closure,
             Closure{ .items = &items, .seen_stop = &seen_stop },
             struct {
                 fn parse(closure: Closure, i: *css.Parser) Result(void) {

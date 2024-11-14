@@ -2273,7 +2273,7 @@ const RelativeComponentParser = struct {
             angle: Angle,
             parser: *const RelativeComponentParser,
             pub fn tryParseFn(i: *css.Parser, t: *@This()) Result(Angle) {
-                if (Calc(Angle).parseWith(i, t, @This().calcParseIdentFn).asValue()) |val| {
+                if (Calc(Angle).parseWith(i, *@This(), t, @This().calcParseIdentFn).asValue()) |val| {
                     if (val == .value) {
                         return .{ .result = val.value.* };
                     }
@@ -2323,7 +2323,7 @@ const RelativeComponentParser = struct {
                 percentage: Percentage = .{ .v = 0 },
 
                 pub fn parsefn(i: *css.Parser, self: *@This()) Result(Percentage) {
-                    if (Calc(Percentage).parseWith(i, self, @This().calcparseident).asValue()) |calc_value| {
+                    if (Calc(Percentage).parseWith(i, *@This(), self, @This().calcparseident).asValue()) |calc_value| {
                         if (calc_value == .value) return .{ .result = calc_value.value.* };
                     }
                     return .{ .err = i.newCustomError(css.ParserError.invalid_value) };
@@ -2369,7 +2369,7 @@ const RelativeComponentParser = struct {
         var _closure = Closure{ .self = this };
         if (input.tryParse(struct {
             pub fn parseFn(i: *css.Parser, closure: *Closure) Result(Percentage) {
-                const calc_value = switch (Calc(Percentage).parseWith(i, closure, parseIdentFn)) {
+                const calc_value = switch (Calc(Percentage).parseWith(i, *Closure, closure, parseIdentFn)) {
                     .result => |v| v,
                     .err => return .{ .err = i.newCustomError(css.ParserError.invalid_value) },
                 };
@@ -2434,16 +2434,16 @@ const RelativeComponentParser = struct {
             p: *const RelativeComponentParser,
             allowed_types: ChannelType,
 
-            pub fn parseIdentFn(self: *@This(), ident: []const u8) ?Calc(f32) {
+            pub fn parseIdentFn(self: *const @This(), ident: []const u8) ?Calc(f32) {
                 const v = self.p.getIdent(ident, self.allowed_types) orelse return null;
                 return .{ .number = v };
             }
         };
-        var closure = Closure{
+        const closure = Closure{
             .p = this,
             .allowed_types = allowed_types,
         };
-        if (Calc(f32).parseWith(input, &closure, Closure.parseIdentFn).asValue()) |calc_val| {
+        if (Calc(f32).parseWith(input, *const Closure, &closure, Closure.parseIdentFn).asValue()) |calc_val| {
             // PERF: I don't like this redundant allocation
             if (calc_val == .value) return .{ .result = calc_val.value.* };
             if (calc_val == .number) return .{ .result = calc_val.number };

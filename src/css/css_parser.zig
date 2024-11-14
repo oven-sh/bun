@@ -126,7 +126,7 @@ pub const PrintErr = error{
 
 pub fn OOM(e: anyerror) noreturn {
     if (comptime bun.Environment.isDebug) {
-        std.debug.assert(e == std.mem.Allocator.Error.OutOfMemory);
+        assert(e == std.mem.Allocator.Error.OutOfMemory);
     }
     bun.outOfMemory();
 }
@@ -244,6 +244,14 @@ pub fn PrintResult(comptime T: type) type {
 pub fn todo(comptime fmt: []const u8, args: anytype) noreturn {
     bun.Analytics.Features.todo_panic = 1;
     std.debug.panic("TODO: " ++ fmt, args);
+}
+
+fn RuntimeVoidWrap(comptime T: type) type {
+    return struct {
+        fn wrapped(fn_ptr: *const fn (*Parser) Result(T), p: *Parser) Result(T) {
+            return fn_ptr(p);
+        }
+    };
 }
 
 pub fn voidWrap(comptime T: type, comptime parsefn: *const fn (*Parser) Result(T)) *const fn (void, *Parser) Result(T) {
@@ -954,12 +962,12 @@ fn parse_at_rule(
         name: []const u8,
         parser: *P,
 
-        pub fn parsefn(this: *@This(), input2: *Parser) Result(P.AtRuleParser.Prelude) {
+        pub fn parsefn(this: *const @This(), input2: *Parser) Result(P.AtRuleParser.Prelude) {
             return P.AtRuleParser.parsePrelude(this.parser, this.name, input2);
         }
     };
-    var closure = Closure{ .name = name, .parser = parser };
-    const prelude: P.AtRuleParser.Prelude = switch (input.parseUntilBefore(delimiters, P.AtRuleParser.Prelude, &closure, Closure.parsefn)) {
+    const closure = Closure{ .name = name, .parser = parser };
+    const prelude: P.AtRuleParser.Prelude = switch (input.parseUntilBefore(delimiters, P.AtRuleParser.Prelude, *const Closure, &closure, Closure.parsefn)) {
         .result => |vvv| vvv,
         .err => |e| {
             // const end_position = input.position();
@@ -1004,16 +1012,16 @@ fn parse_at_rule(
                 prelude: P.AtRuleParser.Prelude,
                 start: *const ParserState,
                 parser: *P,
-                pub fn parsefn(this: *@This(), input2: *Parser) Result(P.AtRuleParser.AtRule) {
+                pub fn parsefn(this: *const @This(), input2: *Parser) Result(P.AtRuleParser.AtRule) {
                     return P.AtRuleParser.parseBlock(this.parser, this.prelude, this.start, input2);
                 }
             };
-            var another_closure = AnotherClosure{
+            const another_closure = AnotherClosure{
                 .prelude = prelude,
                 .start = start,
                 .parser = parser,
             };
-            return parse_nested_block(input, P.AtRuleParser.AtRule, &another_closure, AnotherClosure.parsefn);
+            return parse_nested_block(input, P.AtRuleParser.AtRule, *const AnotherClosure, &another_closure, AnotherClosure.parsefn);
         },
         else => {
             bun.unreachablePanic("", .{});
@@ -1099,7 +1107,7 @@ fn parse_qualified_rule(
 ) Result(P.QualifiedRuleParser.QualifiedRule) {
     ValidQualifiedRuleParser(P);
     const prelude_result = brk: {
-        const prelude = input.parseUntilBefore(delimiters, P.QualifiedRuleParser.Prelude, parser, P.QualifiedRuleParser.parsePrelude);
+        const prelude = input.parseUntilBefore(delimiters, P.QualifiedRuleParser.Prelude, *P, parser, P.QualifiedRuleParser.parsePrelude);
         break :brk prelude;
     };
     if (input.expectCurlyBracketBlock().asErr()) |e| return .{ .err = e };
@@ -1112,16 +1120,16 @@ fn parse_qualified_rule(
         prelude: P.QualifiedRuleParser.Prelude,
         parser: *P,
 
-        pub fn parsefn(this: *@This(), input2: *Parser) Result(P.QualifiedRuleParser.QualifiedRule) {
+        pub fn parsefn(this: *const @This(), input2: *Parser) Result(P.QualifiedRuleParser.QualifiedRule) {
             return P.QualifiedRuleParser.parseBlock(this.parser, this.prelude, this.start, input2);
         }
     };
-    var closure = Closure{
+    const closure = Closure{
         .start = start,
         .prelude = prelude,
         .parser = parser,
     };
-    return parse_nested_block(input, P.QualifiedRuleParser.QualifiedRule, &closure, Closure.parsefn);
+    return parse_nested_block(input, P.QualifiedRuleParser.QualifiedRule, *const Closure, &closure, Closure.parsefn);
 }
 
 fn parse_until_before(
@@ -1129,8 +1137,9 @@ fn parse_until_before(
     delimiters_: Delimiters,
     error_behavior: ParseUntilErrorBehavior,
     comptime T: type,
-    closure: anytype,
-    comptime parse_fn: *const fn (@TypeOf(closure), *Parser) Result(T),
+    comptime Closure: type,
+    closure: Closure,
+    parse_fn: *const fn (Closure, *Parser) Result(T),
 ) Result(T) {
     const delimiters = parser.stop_before.bitwiseOr(delimiters_);
     const result = result: {
@@ -1143,7 +1152,7 @@ fn parse_until_before(
             .stop_before = delimiters,
             .import_records = parser.import_records,
         };
-        const result = delimited_parser.parseEntirely(T, closure, parse_fn);
+        const result = delimited_parser.parseEntirely(T, Closure, closure, parse_fn);
         if (error_behavior == .stop and result.isErr()) {
             return result;
         }
@@ -1172,15 +1181,16 @@ fn parse_until_before(
 
 // fn parse_until_before_impl(parser: *Parser, delimiters: Delimiters, error_behavior: Parse
 
-pub fn parse_until_after(
+fn parse_until_after(
     parser: *Parser,
     delimiters: Delimiters,
     error_behavior: ParseUntilErrorBehavior,
     comptime T: type,
-    closure: anytype,
-    comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T),
+    comptime Closure: type,
+    closure: Closure,
+    parsefn: *const fn (Closure, *Parser) Result(T),
 ) Result(T) {
-    const result = parse_until_before(parser, delimiters, error_behavior, T, closure, parsefn);
+    const result = parse_until_before(parser, delimiters, error_behavior, T, Closure, closure, parsefn);
     const is_err = result.isErr();
     if (error_behavior == .stop and is_err) {
         return result;
@@ -1197,7 +1207,7 @@ pub fn parse_until_after(
     return result;
 }
 
-fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
+fn parse_nested_block(parser: *Parser, comptime T: type, comptime Closure: type, closure: Closure, comptime parsefn: *const fn (Closure, *Parser) Result(T)) Result(T) {
     const block_type: BlockType = if (parser.at_start_of) |block_type| brk: {
         parser.at_start_of = null;
         break :brk block_type;
@@ -1218,7 +1228,7 @@ fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, compt
         .stop_before = closing_delimiter,
         .import_records = parser.import_records,
     };
-    const result = nested_parser.parseEntirely(T, closure, parsefn);
+    const result = nested_parser.parseEntirely(T, Closure, closure, parsefn);
     if (nested_parser.at_start_of) |block_type2| {
         consume_until_end_of_block(block_type2, &nested_parser.input.tokenizer);
     }
@@ -2618,7 +2628,7 @@ pub fn StyleSheetParser(comptime P: type) type {
                             .semicolon = true,
                             .close_curly_bracket = true,
                         };
-                        _ = this.input.parseUntilAfter(delimiters, void, {}, voidWrap(void, Parser.parseEmpty));
+                        _ = this.input.parseUntilAfter(delimiters, void, void, {}, voidWrap(void, Parser.parseEmpty));
                     } else {
                         return parse_at_rule(allocator, &start, name, this.input, P, this.parser);
                     }
@@ -3141,16 +3151,16 @@ pub fn RuleBodyParser(comptime P: type) type {
                                 const Closure = struct {
                                     parser: *P,
                                     name: []const u8,
-                                    pub fn parsefn(self: *@This(), input: *Parser) Result(I) {
+                                    pub fn parsefn(self: *const @This(), input: *Parser) Result(I) {
                                         if (input.expectColon().asErr()) |e| return .{ .err = e };
                                         return P.DeclarationParser.parseValue(self.parser, self.name, input);
                                     }
                                 };
-                                var closure = Closure{
+                                const closure = Closure{
                                     .parser = this.parser,
                                     .name = name,
                                 };
-                                break :result parse_until_after(this.input, Delimiters{ .semicolon = true }, error_behavior, I, &closure, Closure.parsefn);
+                                break :result parse_until_after(this.input, Delimiters{ .semicolon = true }, error_behavior, I, *const Closure, &closure, Closure.parsefn);
                             };
                             if (result.isErr() and parse_qualified) {
                                 this.input.reset(&start);
@@ -3182,7 +3192,7 @@ pub fn RuleBodyParser(comptime P: type) type {
                     const token = tok.*;
 
                     const Closure = struct { token: Token, start: ParserState };
-                    break :result this.input.parseUntilAfter(Delimiters{ .semicolon = true }, I, &Closure{ .token = token, .start = start }, struct {
+                    break :result this.input.parseUntilAfter(Delimiters{ .semicolon = true }, I, *const Closure, &Closure{ .token = token, .start = start }, struct {
                         pub fn parseFn(closure: *const Closure, i: *Parser) Result(I) {
                             _ = i; // autofix
                             return .{ .err = closure.start.sourceLocation().newUnexpectedTokenError(closure.token) };
@@ -3355,7 +3365,7 @@ pub const Parser = struct {
     }
 
     /// Implementation of Vec::<T>::parse
-    pub fn parseList(this: *Parser, comptime T: type, comptime parse_one: *const fn (*Parser) Result(T)) Result(ArrayList(T)) {
+    pub fn parseList(this: *Parser, comptime T: type, parse_one: *const fn (*Parser) Result(T)) Result(ArrayList(T)) {
         return this.parseCommaSeparated(T, parse_one);
     }
 
@@ -3373,25 +3383,29 @@ pub const Parser = struct {
     pub fn parseCommaSeparated(
         this: *Parser,
         comptime T: type,
-        comptime parse_one: *const fn (*Parser) Result(T),
+        parse_one: *const fn (*Parser) Result(T),
     ) Result(ArrayList(T)) {
-        return this.parseCommaSeparatedInternal(T, {}, voidWrap(T, parse_one), false);
+        const Wrapper = RuntimeVoidWrap(T);
+        const parse_fn = &Wrapper.wrapped;
+        return this.parseCommaSeparatedInternal(T, @TypeOf(parse_one), parse_one, parse_fn, false);
     }
 
     pub fn parseCommaSeparatedWithCtx(
         this: *Parser,
         comptime T: type,
-        closure: anytype,
-        comptime parse_one: *const fn (@TypeOf(closure), *Parser) Result(T),
+        comptime Ctx: type,
+        closure: Ctx,
+        parse_one: *const fn (Ctx, *Parser) Result(T),
     ) Result(ArrayList(T)) {
-        return this.parseCommaSeparatedInternal(T, closure, parse_one, false);
+        return this.parseCommaSeparatedInternal(T, Ctx, closure, parse_one, false);
     }
 
     fn parseCommaSeparatedInternal(
         this: *Parser,
         comptime T: type,
-        closure: anytype,
-        comptime parse_one: *const fn (@TypeOf(closure), *Parser) Result(T),
+        comptime Closure: type,
+        closure: Closure,
+        parse_one: *const fn (Closure, *Parser) Result(T),
         ignore_errors: bool,
     ) Result(ArrayList(T)) {
         // Vec grows from 0 to 4 by default on first push().  So allocate with
@@ -3408,7 +3422,7 @@ pub const Parser = struct {
 
         while (true) {
             this.skipWhitespace(); // Unnecessary for correctness, but may help try() in parse_one rewind less.
-            switch (this.parseUntilBefore(Delimiters{ .comma = true }, T, closure, parse_one)) {
+            switch (this.parseUntilBefore(Delimiters{ .comma = true }, T, Closure, closure, parse_one)) {
                 .result => |v| {
                     values.append(alloc, v) catch unreachable;
                 },
@@ -3458,7 +3472,7 @@ pub const Parser = struct {
         return result;
     }
 
-    pub inline fn tryParseImpl(this: *Parser, comptime Ret: type, comptime func: anytype, args: anytype) Ret {
+    pub fn tryParseImpl(this: *Parser, comptime Ret: type, comptime func: anytype, args: anytype) Ret {
         const start = this.state();
         const result = result: {
             break :result @call(.auto, func, args);
@@ -3470,7 +3484,11 @@ pub const Parser = struct {
     }
 
     pub inline fn parseNestedBlock(this: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
-        return parse_nested_block(this, T, closure, parsefn);
+        return parseNestedBlockT(this, T, @TypeOf(closure), closure, parsefn);
+    }
+
+    pub inline fn parseNestedBlockT(this: *Parser, comptime T: type, comptime Closure: type, closure: Closure, comptime parsefn: *const fn (Closure, *Parser) Result(T)) Result(T) {
+        return parse_nested_block(this, T, Closure, closure, parsefn);
     }
 
     pub fn isExhausted(this: *Parser) bool {
@@ -3731,12 +3749,12 @@ pub const Parser = struct {
         return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
-    pub fn position(this: *Parser) usize {
+    pub fn position(this: *const Parser) usize {
         bun.debugAssert(bun.strings.isOnCharBoundary(this.input.tokenizer.src, this.input.tokenizer.position));
         return this.input.tokenizer.position;
     }
 
-    fn parseEmpty(_: *Parser) Result(void) {
+    fn parseEmpty(_: *const Parser) Result(void) {
         return .{ .result = {} };
     }
 
@@ -3749,24 +3767,26 @@ pub const Parser = struct {
         this: *Parser,
         delimiters: Delimiters,
         comptime T: type,
-        closure: anytype,
-        comptime parse_fn: *const fn (@TypeOf(closure), *Parser) Result(T),
+        comptime Closure: type,
+        closure: Closure,
+        parse_fn: *const fn (Closure, *Parser) Result(T),
     ) Result(T) {
         return parse_until_after(
             this,
             delimiters,
             ParseUntilErrorBehavior.consume,
             T,
+            Closure,
             closure,
             parse_fn,
         );
     }
 
-    pub fn parseUntilBefore(this: *Parser, delimiters: Delimiters, comptime T: type, closure: anytype, comptime parse_fn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
-        return parse_until_before(this, delimiters, .consume, T, closure, parse_fn);
+    pub fn parseUntilBefore(this: *Parser, delimiters: Delimiters, comptime T: type, comptime Closure: type, closure: Closure, parse_fn: *const fn (Closure, *Parser) Result(T)) Result(T) {
+        return parse_until_before(this, delimiters, .consume, T, Closure, closure, parse_fn);
     }
 
-    pub fn parseEntirely(this: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
+    pub inline fn parseEntirely(this: *Parser, comptime T: type, comptime Closure: type, closure: Closure, parsefn: *const fn (Closure, *Parser) Result(T)) Result(T) {
         const result = switch (parsefn(closure, this)) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
@@ -3840,7 +3860,7 @@ pub const Parser = struct {
         if (this.import_records) |import_records| import_records.len = state_.import_record_count;
     }
 
-    pub fn state(this: *Parser) ParserState {
+    pub fn state(this: *const Parser) ParserState {
         return ParserState{
             .position = this.input.tokenizer.getPosition(),
             .current_line_start_position = this.input.tokenizer.current_line_start_position,
@@ -4249,18 +4269,18 @@ const Tokenizer = struct {
         };
     }
 
-    pub fn prev(this: *Tokenizer) Token {
+    pub fn prev(this: *const Tokenizer) Token {
         bun.assert(this.position > 0);
         return this.previous;
     }
 
-    pub inline fn isEof(this: *Tokenizer) bool {
+    pub inline fn isEof(this: *const Tokenizer) bool {
         return this.position >= this.src.len;
     }
 
     pub fn seeFunction(this: *Tokenizer, name: []const u8) void {
         if (this.var_or_env_functions == .looking_for_them) {
-            if (std.ascii.eqlIgnoreCase(name, "var") and std.ascii.eqlIgnoreCase(name, "env")) {
+            if (name.len == 3 and bun.strings.eqlCaseInsensitiveASCII(name, "var", false) or bun.strings.eqlCaseInsensitiveASCII(name, "env", false)) {
                 this.var_or_env_functions = .seen_at_least_one;
             }
         }
@@ -5174,7 +5194,7 @@ const Tokenizer = struct {
     pub fn consumeNewline(this: *Tokenizer) void {
         const byte = this.nextByteUnchecked();
         if (bun.Environment.allow_assert) {
-            std.debug.assert(byte == '\r' or byte == '\n' or byte == FORM_FEED_BYTE);
+            assert(byte == '\r' or byte == '\n' or byte == FORM_FEED_BYTE);
         }
         this.position += 1;
         if (byte == '\r' and this.nextByte() == '\n') {
@@ -5194,7 +5214,7 @@ const Tokenizer = struct {
     /// 11110xxx  0xF0..0xF7   First byte of a 4-byte character encoding
     /// 10xxxxxx  0x80..0xBF   Continuation byte: one of 1-3 bytes following the first <--
     pub fn consumeContinuationByte(this: *Tokenizer) void {
-        if (bun.Environment.allow_assert) std.debug.assert(this.nextByteUnchecked() & 0xC0 == 0x80);
+        if (bun.Environment.allow_assert) assert(this.nextByteUnchecked() & 0xC0 == 0x80);
         // Continuation bytes contribute to column overcount. Note
         // that due to the special case for the 4-byte sequence intro,
         // we must use wrapping add here.
@@ -5212,7 +5232,7 @@ const Tokenizer = struct {
     /// 11110xxx  0xF0..0xF7   First byte of a 4-byte character encoding <--
     /// 10xxxxxx  0x80..0xBF   Continuation byte: one of 1-3 bytes following the first
     pub fn consume4byteIntro(this: *Tokenizer) void {
-        if (bun.Environment.allow_assert) std.debug.assert(this.nextByteUnchecked() & 0xF0 == 0xF0);
+        if (bun.Environment.allow_assert) assert(this.nextByteUnchecked() & 0xF0 == 0xF0);
         // This takes two UTF-16 characters to represent, so we
         // actually have an undercount.
         // this.current_line_start_position = self.current_line_start_position.wrapping_sub(1);
@@ -5220,7 +5240,7 @@ const Tokenizer = struct {
         this.position += 1;
     }
 
-    pub fn isIdentStart(this: *Tokenizer) bool {
+    pub fn isIdentStart(this: *const Tokenizer) bool {
 
         // todo_stuff.match_byte
         return !this.isEof() and switch (this.nextByteUnchecked()) {
@@ -5239,19 +5259,19 @@ const Tokenizer = struct {
 
     /// If true, the input has at least `n` bytes left *after* the current one.
     /// That is, `tokenizer.char_at(n)` will not panic.
-    fn hasAtLeast(this: *Tokenizer, n: usize) bool {
+    fn hasAtLeast(this: *const Tokenizer, n: usize) bool {
         return this.position + n < this.src.len;
     }
 
-    fn hasNewlineAt(this: *Tokenizer, offset: usize) bool {
+    fn hasNewlineAt(this: *const Tokenizer, offset: usize) bool {
         return this.position + offset < this.src.len and switch (this.byteAt(offset)) {
             '\n', '\r', FORM_FEED_BYTE => true,
             else => false,
         };
     }
 
-    pub fn startsWith(this: *Tokenizer, comptime needle: []const u8) bool {
-        return std.mem.eql(u8, this.src[this.position .. this.position + needle.len], needle);
+    pub fn startsWith(this: *const Tokenizer, comptime needle: []const u8) bool {
+        return bun.strings.hasPrefixComptime(this.src[this.position..], needle);
     }
 
     /// Advance over N bytes in the input.  This function can advance
@@ -5264,8 +5284,8 @@ const Tokenizer = struct {
             // rejected.
             for (0..n) |i| {
                 const b = this.byteAt(i);
-                std.debug.assert(std.ascii.isASCII(b) or (b & 0xF0 != 0xF0 and b & 0xC0 != 0x80));
-                std.debug.assert(b != '\r' and b != '\n' and b != '\x0C');
+                assert(std.ascii.isASCII(b) or (b & 0xF0 != 0xF0 and b & 0xC0 != 0x80));
+                assert(b != '\r' and b != '\n' and b != '\x0C');
             }
         }
         this.position += n;
@@ -5273,7 +5293,7 @@ const Tokenizer = struct {
 
     /// Advance over any kind of byte, excluding newlines.
     pub fn consumeKnownByte(this: *Tokenizer, byte: u8) void {
-        if (bun.Environment.allow_assert) std.debug.assert(byte != '\r' and byte != '\n' and byte != FORM_FEED_BYTE);
+        if (bun.Environment.allow_assert) assert(byte != '\r' and byte != '\n' and byte != FORM_FEED_BYTE);
         this.position += 1;
         // Continuation bytes contribute to column overcount.
         if (byte & 0xF0 == 0xF0) {
@@ -5287,25 +5307,25 @@ const Tokenizer = struct {
         }
     }
 
-    pub inline fn byteAt(this: *Tokenizer, n: usize) u8 {
+    pub inline fn byteAt(this: *const Tokenizer, n: usize) u8 {
         return this.src[this.position + n];
     }
 
-    pub inline fn nextByte(this: *Tokenizer) ?u8 {
+    pub inline fn nextByte(this: *const Tokenizer) ?u8 {
         if (this.isEof()) return null;
         return this.src[this.position];
     }
 
-    pub inline fn nextChar(this: *Tokenizer) u32 {
+    pub inline fn nextChar(this: *const Tokenizer) u32 {
         const len = bun.strings.utf8ByteSequenceLength(this.src[this.position]);
         return bun.strings.decodeWTF8RuneT(this.src[this.position..].ptr[0..4], len, u32, bun.strings.unicode_replacement);
     }
 
-    pub inline fn nextByteUnchecked(this: *Tokenizer) u8 {
+    pub inline fn nextByteUnchecked(this: *const Tokenizer) u8 {
         return this.src[this.position];
     }
 
-    pub inline fn sliceFrom(this: *Tokenizer, start: usize) []const u8 {
+    pub inline fn sliceFrom(this: *const Tokenizer, start: usize) []const u8 {
         return this.src[start..this.position];
     }
 };
@@ -6828,3 +6848,5 @@ fn restrict_prec(buf: []u8, comptime prec: u8) struct { []u8, Notation } {
 pub inline fn fract(val: f32) f32 {
     return val - @trunc(val);
 }
+
+const assert = bun.assert;

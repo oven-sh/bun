@@ -49,7 +49,7 @@ pub const MediaList = struct {
     pub fn parse(input: *css.Parser) Result(MediaList) {
         var media_queries = ArrayList(MediaQuery){};
         while (true) {
-            const mq = switch (input.parseUntilBefore(css.Delimiters{ .comma = true }, MediaQuery, {}, css.voidWrap(MediaQuery, MediaQuery.parse))) {
+            const mq = switch (input.parseUntilBefore(css.Delimiters{ .comma = true }, MediaQuery, void, {}, css.voidWrap(MediaQuery, MediaQuery.parse))) {
                 .result => |v| v,
                 .err => |e| {
                     if (e.kind == .basic and e.kind.basic == .end_of_input) break;

@@ -617,7 +617,7 @@ pub export fn napi_set_element(env: napi_env, object_: napi_value, index: c_uint
     if (!object.jsType().isIndexable()) {
         return .array_expected;
     }
-    if (value.isEmpty())
+    if (value == .zero)
         return invalidArg();
     JSC.C.JSObjectSetPropertyAtIndex(env.ref(), object.asObjectRef(), index, value.asObjectRef(), TODO_EXCEPTION);
     return .ok;
@@ -1004,7 +1004,7 @@ pub export fn napi_is_promise(_: napi_env, value_: napi_value, is_promise_: ?*bo
         return invalidArg();
     };
 
-    if (value.isEmpty()) {
+    if (value == .zero) {
         return invalidArg();
     }
 

@@ -2434,7 +2434,7 @@ pub const JSPromise = extern struct {
     }
 
     pub fn wrapValue(globalObject: *JSGlobalObject, value: JSValue) JSValue {
-        if (value.isEmpty()) {
+        if (value == .zero) {
             return resolvedPromiseValue(globalObject, JSValue.jsUndefined());
         } else if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
             return resolvedPromiseValue(globalObject, value);
@@ -4170,9 +4170,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn jsType(
         this: JSValue,
     ) JSType {
-        if (comptime bun.Environment.allow_assert) {
-            bun.assert(!this.isEmpty());
-        }
+        bun.assert(this != .zero);
         return cppFn("jsType", .{this});
     }
 
@@ -4794,13 +4792,6 @@ pub const JSValue = enum(JSValueReprInt) {
             else => false,
         };
     }
-    /// Empty as in "JSValue {}" rather than an empty string
-    pub inline fn isEmpty(this: JSValue) bool {
-        return switch (@intFromEnum(this)) {
-            0 => true,
-            else => false,
-        };
-    }
     pub fn isBoolean(this: JSValue) bool {
         return cppFn("isBoolean", .{this});
     }
@@ -5279,6 +5270,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     /// Equivalent to `obj.property` in JavaScript.
     /// Reminder: `undefined` is a value!
+    // TODO: change the return of this from `?JSValue` to `bun.JSError!JSValue`
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         if (comptime bun.Environment.isDebug) {
             if (BuiltinName.has(property)) {
@@ -5287,7 +5279,7 @@ pub const JSValue = enum(JSValueReprInt) {
         }
 
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @as(u32, @intCast(property.len)));
-        return if (value.isEmpty()) null else value;
+        return if (value == .zero) null else value;
     }
 
     extern fn JSC__JSValue__getOwn(value: JSValue, globalObject: *JSGlobalObject, propertyName: [*c]const bun.String) JSValue;

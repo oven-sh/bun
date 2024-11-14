@@ -116,11 +116,9 @@ BunString toString(const char* bytes, size_t length)
 BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     WTF::String str = value.toWTFString(globalObject);
-
     if (UNLIKELY(str.isNull())) {
         return { BunStringTag::Dead };
     }
-
     if (UNLIKELY(str.length() == 0)) {
         return { BunStringTag::Empty };
     }
@@ -148,7 +146,10 @@ BunString toString(JSC::JSGlobalObject* globalObject, JSValue value)
 BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto str = value.toWTFString(globalObject);
-    if (str.isEmpty()) {
+    if (UNLIKELY(str.isNull())) {
+        return { BunStringTag::Dead };
+    }
+    if (UNLIKELY(str.length() == 0)) {
         return { BunStringTag::Empty };
     }
 

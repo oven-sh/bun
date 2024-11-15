@@ -2796,8 +2796,8 @@ extern "C" bool Bun__queueFinishNapiFinalizers(JSGlobalObject* jsGlobalObject)
 {
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
     if (globalObject->hasNapiFinalizers()) {
-        globalObject->queueTask(new EventLoopTask([globalObject](ScriptExecutionContext&) {
-            globalObject->finishNapiFinalizers();
+        globalObject->queueTask(new EventLoopTask([](ScriptExecutionContext&) {
+            // TODO(@heimskr): do something more sensible
         }));
         return true;
     }

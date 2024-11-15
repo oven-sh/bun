@@ -4331,7 +4331,7 @@ napi_env GlobalObject::makeNapiEnvForFFI()
 void GlobalObject::finishNapiFinalizers()
 {
     for (const auto& env : m_napiEnvs) {
-        env->cleanup();
+        env->finishFinalizers();
     }
 }
 

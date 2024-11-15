@@ -40,6 +40,22 @@ struct napi_async_cleanup_hook_handle__ {
     }
 };
 
+#define NAPI_PERISH(...)                                                      \
+    do {                                                                      \
+        WTFReportError(__FILE__, __LINE__, __PRETTY_FUNCTION__, __VA_ARGS__); \
+        WTFReportBacktrace();                                                 \
+        WTFCrash();                                                           \
+    } while (0)
+
+#define NAPI_RELEASE_ASSERT(assertion, ...)                                                                         \
+    do {                                                                                                            \
+        if (UNLIKELY(!(assertion))) {                                                                               \
+            WTFReportAssertionFailureWithMessage(__FILE__, __LINE__, __PRETTY_FUNCTION__, #assertion, __VA_ARGS__); \
+            WTFReportBacktrace();                                                                                   \
+            WTFCrash();                                                                                             \
+        }                                                                                                           \
+    } while (0)
+
 // Named this way so we can manipulate napi_env values directly (since napi_env is defined as a pointer to struct napi_env__)
 struct napi_env__ {
 public:
@@ -55,10 +71,14 @@ public:
         delete[] filename;
     }
 
+    void finishFinalizers()
+    {
+        m_isFinishingFinalizers = true;
+        m_isFinishingFinalizers = false;
+    }
+
     void cleanup()
     {
-        m_inCleanup = true;
-
         while (!m_cleanupHooks.empty()) {
             auto [function, data] = m_cleanupHooks.back();
             m_cleanupHooks.pop_back();
@@ -68,22 +88,22 @@ public:
 
         while (!m_asyncCleanupHooks.empty()) {
             auto [function, data, handle] = m_asyncCleanupHooks.back();
-            m_asyncCleanupHooks.pop_back();
             ASSERT(function != nullptr);
             function(handle, data);
             delete handle;
+            m_asyncCleanupHooks.pop_back();
         }
 
+        m_isFinishingFinalizers = true;
         for (const BoundFinalizer& boundFinalizer : m_finalizers) {
             Bun::NapiHandleScope handle_scope(m_globalObject);
             boundFinalizer.call(this);
         }
-
         m_finalizers.clear();
-        instanceDataFinalizer.call(this, instanceData);
-        instanceDataFinalizer.clear();
+        m_isFinishingFinalizers = false;
 
-        m_inCleanup = false;
+        instanceDataFinalizer.call(this, instanceData, true);
+        instanceDataFinalizer.clear();
     }
 
     void removeFinalizer(napi_finalize callback, void* hint, void* data)
@@ -112,9 +132,7 @@ public:
     void addCleanupHook(void (*function)(void*), void* data)
     {
         for (const auto& [existing_function, existing_data] : m_cleanupHooks) {
-            if (UNLIKELY(function == existing_function && data == existing_data)) {
-                RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Attempted to add a duplicate NAPI environment cleanup hook");
-            }
+            NAPI_RELEASE_ASSERT(function != existing_function || data != existing_data, "Attempted to add a duplicate NAPI environment cleanup hook");
         }
 
         m_cleanupHooks.emplace_back(function, data);
@@ -129,15 +147,13 @@ public:
             }
         }
 
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Attempted to remove a NAPI environment cleanup hook that had never been added");
+        NAPI_PERISH("Attempted to remove a NAPI environment cleanup hook that had never been added");
     }
 
     napi_async_cleanup_hook_handle addAsyncCleanupHook(napi_async_cleanup_hook function, void* data)
     {
         for (const auto& [existing_function, existing_data, existing_handle] : m_asyncCleanupHooks) {
-            if (UNLIKELY(function == existing_function && data == existing_data)) {
-                RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Attempted to add a duplicate async NAPI environment cleanup hook");
-            }
+            NAPI_RELEASE_ASSERT(function != existing_function || data != existing_data, "Attempted to add a duplicate async NAPI environment cleanup hook");
         }
 
         auto iter = m_asyncCleanupHooks.emplace(m_asyncCleanupHooks.end(), function, data);
@@ -155,18 +171,21 @@ public:
             }
         }
 
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Attempted to remove an async NAPI environment cleanup hook that had never been added");
+        NAPI_PERISH("Attempted to remove an async NAPI environment cleanup hook that had never been added");
     }
 
-    void checkGC()
+    bool inGC() const
     {
-        if (UNLIKELY(m_globalObject->vm().heap.mutatorState() == JSC::MutatorState::Sweeping)) {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE(
-                "Attempted to call a non-GC-safe function inside a NAPI finalizer from a NAPI module with version %d.\n"
-                "Finalizers must not create new objects during garbage collection. Use the `node_api_post_finalizer` function\n"
-                "inside the finalizer to defer the code to the next event loop tick.\n",
-                m_napiModule.nm_version);
-        }
+        return m_globalObject->vm().heap.mutatorState() == JSC::MutatorState::Sweeping;
+    }
+
+    void checkGC() const
+    {
+        NAPI_RELEASE_ASSERT(!inGC(),
+            "Attempted to call a non-GC-safe function inside a NAPI finalizer from a NAPI module with version %d.\n"
+            "Finalizers must not create new objects during garbage collection. Use the `node_api_post_finalizer` function\n"
+            "inside the finalizer to defer the code to the next event loop tick.\n",
+            m_napiModule.nm_version);
     }
 
     void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)
@@ -193,7 +212,7 @@ public:
         return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL && !m_globalObject->vm().hasTerminationRequest();
     }
 
-    inline bool inCleanup() const { return m_inCleanup; }
+    inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
 
     // Almost all NAPI functions should set error_code to the status they're returning right before
     // they return it
@@ -243,7 +262,7 @@ public:
 
         void deactivate(napi_env env) const
         {
-            if (env->inCleanup()) {
+            if (env->isFinishingFinalizers()) {
                 active = false;
             } else {
                 env->removeFinalizer(*this);
@@ -272,7 +291,7 @@ private:
     napi_module m_napiModule;
     // TODO(@heimskr): Use WTF::HashSet
     std::unordered_set<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
-    bool m_inCleanup = false;
+    bool m_isFinishingFinalizers = false;
     std::list<std::pair<void (*)(void*), void*>> m_cleanupHooks;
     std::list<Napi::AsyncCleanupHook> m_asyncCleanupHooks;
 };
@@ -472,7 +491,7 @@ public:
 
     void callFinalizer()
     {
-        finalizer.call(env, nativeObject, !defer);
+        finalizer.call(env, nativeObject, !defer || !env->inGC());
         finalizer.clear();
     }
 

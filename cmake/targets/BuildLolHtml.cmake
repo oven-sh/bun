@@ -27,7 +27,7 @@ if(RELEASE)
 endif()
 
 # The encoded escape sequences are intentional. They're how you delimit multiple arguments in a single environment variable.
-set(RUSTFLAGS "-C panic=abort-Cdebuginfo=0-Cforce-unwind-tables=no")
+set(RUSTFLAGS "-Cpanic=abort-Cdebuginfo=0-Cforce-unwind-tables=no")
 
 register_command(
   TARGET
@@ -44,7 +44,7 @@ register_command(
     CARGO_TERM_COLOR=always
     CARGO_TERM_VERBOSE=true
     CARGO_TERM_DIAGNOSTIC=true
-    CARGO_ENCODED_RUSTFLAGS="${RUSTFLAGS}"
+    CARGO_ENCODED_RUSTFLAGS=${RUSTFLAGS}
 )
 
 target_link_libraries(${bun} PRIVATE ${LOLHTML_LIBRARY})

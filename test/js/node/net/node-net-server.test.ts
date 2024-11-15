@@ -3,7 +3,7 @@ import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { tmpdir } from "os";
 import { join } from "path";
-import { unlinkSync } from "../fs/export-star-from";
+import { once } from "node:events";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
@@ -571,9 +571,8 @@ describe("net.createServer events", () => {
     const server = createServer();
     const socketPath = join(tmpdir(), "test-unix-socket");
 
-    await new Promise<void>(resolve => {
-      server.listen({ path: socketPath }, () => resolve());
-    });
+    server.listen({ path: socketPath });
+    await once(server, "listening");
 
     try {
       const address = server.address() as string;

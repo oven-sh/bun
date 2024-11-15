@@ -1,6 +1,6 @@
 import { spawnSync, spawn, Glob } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isCI } from "harness";
 import { join, dirname } from "path";
 import os from "node:os";
 
@@ -68,17 +68,25 @@ beforeAll(async () => {
   const uniqueDirectories = Array.from(new Set(directories));
 
   async function buildOne(dir: string) {
-    const process = spawn({
+    const child = spawn({
       cmd: [bunExe(), "x", "node-gyp", "rebuild", "--debug"],
       cwd: dir,
       stderr: "pipe",
       stdout: "ignore",
       stdin: "inherit",
-      env: { ...bunEnv, npm_config_target: "v23.2.0" },
+      env: {
+        ...bunEnv,
+        npm_config_target: "v23.2.0",
+        // on linux CI, node-gyp will default to g++ and the version installed there is very old,
+        // so we make it use clang instead
+        ...(process.platform == "linux" && isCI
+          ? { "CC": "/usr/lib/llvm-16/bin/clang", CXX: "/usr/lib/llvm-16/bin/clang++" }
+          : {}),
+      },
     });
-    await process.exited;
-    if (process.exitCode !== 0) {
-      const stderr = await new Response(process.stderr).text();
+    await child.exited;
+    if (child.exitCode !== 0) {
+      const stderr = await new Response(child.stderr).text();
       throw new Error(`node-gyp rebuild in ${dir} failed:\n${stderr}`);
     }
   }

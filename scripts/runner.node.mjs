@@ -1134,13 +1134,20 @@ function addPath(...paths) {
 }
 
 /**
+ * @returns {string | undefined}
+ */
+function getTestLabel() {
+  return getBuildLabel()?.replace(" - test-bun", "");
+}
+
+/**
  * @param  {TestResult | TestResult[]} result
  * @param  {boolean} concise
  * @returns {string}
  */
 function formatTestToMarkdown(result, concise) {
   const results = Array.isArray(result) ? result : [result];
-  const buildLabel = getBuildLabel();
+  const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
   const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
 
@@ -1273,7 +1280,7 @@ function reportAnnotationToBuildKite({ label, content, style = "error", priority
     const cause = error ?? signal ?? `code ${status}`;
     throw new Error(`Failed to create annotation: ${label}`, { cause });
   }
-  const buildLabel = getBuildLabel();
+  const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
   const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
   let errorMessage = `<details><summary><a><code>${label}</code></a> - annotation error on ${platform}</summary>`;

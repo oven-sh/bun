@@ -370,17 +370,9 @@ check_user() {
 package_manager() {
 	case "$pm" in
 	apt)
-		# if [ -f "/var/lib/apt/lists/lock" ]; then
-		# 	print "Cleaning up apt lock..."
-		# 	execute_sudo rm -f /var/lib/apt/lists/lock
-		# 	execute_sudo rm -rf /var/lib/apt/lists/partial
-		# 	execute_sudo mkdir -p /var/lib/apt/lists/partial
-		# 	execute_sudo rm -f /var/cache/apt/archives/lock
-		# 	execute_sudo rm -rf /var/lib/apt/lists
-		# 	execute_sudo rm -f /var/lib/dpkg/lock*
-		# 	execute_sudo dpkg --configure -a
-		# 	execute_sudo apt-get clean
-		# fi
+		while ! sudo apt-get update -y; do
+			sleep 1
+		done
 		DEBIAN_FRONTEND=noninteractive execute_sudo apt-get "$@"
 		;;
 	dnf)
@@ -721,7 +713,14 @@ install_llvm() {
 	apt)
 		bash="$(require bash)"
 		script="$(download_file "https://apt.llvm.org/llvm.sh")"
-		execute_sudo "$bash" "$script" "$(llvm_version)" all
+		case "$distro-$release" in
+		ubuntu-24*)
+			execute_sudo "$bash" "$script" "$(llvm_version)" all -njammy
+			;;
+		*)
+			execute_sudo "$bash" "$script" "$(llvm_version)" all
+			;;
+		esac
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"

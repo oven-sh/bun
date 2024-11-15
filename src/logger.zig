@@ -699,7 +699,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, fmt: string) JSC.JSValue {
+    pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, message: string) JSC.JSValue {
         const msgs: []const Msg = this.msgs.items;
         var errors_stack: [256]JSC.JSValue = undefined;
 
@@ -720,11 +720,33 @@ pub const Log = struct {
                         .resolve => JSC.ResolveMessage.create(global, allocator, msg, ""),
                     };
                 }
-                const out = JSC.ZigString.init(fmt);
+                const out = JSC.ZigString.init(message);
                 const agg = global.createAggregateError(errors_stack[0..count], &out);
                 return agg;
             },
         }
+    }
+
+    /// unlike toJS, this always produces an AggregateError object
+    pub fn toJSAggregateError(this: Log, global: *JSC.JSGlobalObject, message: []const u8) JSC.JSValue {
+        const msgs: []const Msg = this.msgs.items;
+
+        // TODO: remove arbitrary upper limit. cannot use the heap because
+        // values could be GC'd to do this correctly, expose a binding that
+        // allows creating an AggregateError using an array
+        var errors_stack: [256]JSC.JSValue = undefined;
+
+        const count = @min(msgs.len, errors_stack.len);
+
+        for (msgs[0..count], 0..) |msg, i| {
+            errors_stack[i] = switch (msg.metadata) {
+                .build => JSC.BuildMessage.create(global, bun.default_allocator, msg),
+                .resolve => JSC.ResolveMessage.create(global, bun.default_allocator, msg, ""),
+            };
+        }
+
+        const out = JSC.ZigString.init(message);
+        return global.createAggregateError(errors_stack[0..count], &out);
     }
 
     pub fn toJSArray(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {

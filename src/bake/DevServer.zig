@@ -6,21 +6,21 @@
 //! adjusting imports) must always rebundle only that one file.
 //!
 //! All work is held in-memory, using manually managed data-oriented design.
-//!
-//! TODO: Currently does not have a `deinit()`, as it was assumed to be alive for
-//! the remainder of this process' lifespan. Later, it will be required to fully
-//! clean up server state.
 pub const DevServer = @This();
 pub const debug = bun.Output.Scoped(.Bake, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 
 pub const Options = struct {
+    /// Arena must live until DevServer.deinit()
+    arena: Allocator,
     root: []const u8,
-    framework: bake.Framework,
-    dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
-    dump_state_on_crash: bool = bun.FeatureFlags.bake_debugging_features,
-    verbose_watcher: bool = false,
     vm: *VirtualMachine,
+    framework: bake.Framework,
+
+    // Debugging features
+    dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
+    dump_state_on_crash: bool = false,
+    verbose_watcher: bool = false,
 };
 
 // The fields `client_graph`, `server_graph`, and `directory_watchers` all
@@ -54,6 +54,10 @@ client_graph: IncrementalGraph(.client),
 server_graph: IncrementalGraph(.server),
 /// State populated during bundling and hot updates. Often cleared
 incremental_result: IncrementalResult,
+/// Quickly retrieve a route's index from its entry point file. These are
+/// populated as the routes are discovered. The route may not be bundled OR
+/// navigatable, such as the case where a layout's index is looked up.
+route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, RouteIndexAndRecurseFlag),
 /// CSS files are accessible via `/_bun/css/<hex key>.css`
 /// Value is bundled code owned by `dev.allocator`
 css_files: AutoArrayHashMapUnmanaged(u64, []const u8),
@@ -80,13 +84,17 @@ server_register_update_callback: JSC.Strong,
 // Watching
 bun_watcher: *JSC.Watcher,
 directory_watchers: DirectoryWatchStore,
-/// Only two hot-reload tasks exist ever. Memory is reused by swapping between the two.
-/// These items are aligned to cache lines to reduce contention.
+/// Only two hot-reload tasks exist ever, since only one bundle may be active at
+/// once. Memory is reused by swapping between these two. These items are
+/// aligned to cache lines to reduce contention, since these structures are
+/// carefully passed between two threads.
 watch_events: [2]HotReloadTask.Aligned,
 /// 0  - no watch
 /// 1  - has fired additional watch
 /// 2+ - new events available, watcher is waiting on bundler to finish
 watch_state: std.atomic.Value(u32),
+/// Which event is the watcher holding on to. This is not atomic because only
+/// the watcher thread uses this value.
 watch_current: u1 = 0,
 
 /// Number of bundles that have been executed. This is currently not read, but
@@ -95,22 +103,45 @@ generation: usize = 0,
 /// Displayed in the HMR success indicator
 bundles_since_last_error: usize = 0,
 
-/// Quickly retrieve a route's index from the entry point file. These are
-/// populated as the routes are discovered. The route may not be bundled or
-/// navigatable, in the case a layout's index is looked up.
-route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, RouteIndexAndRecurseFlag),
-
 framework: bake.Framework,
 // Each logical graph gets its own bundler configuration
 server_bundler: Bundler,
 client_bundler: Bundler,
 ssr_bundler: Bundler,
-
-// TODO: This being shared state is likely causing a crash
-/// Stored and reused for bundling tasks
+/// The log used by all `server_bundler`, `client_bundler` and `ssr_bundler`.
+/// Note that it is rarely correct to write messages into it. Instead, associate
+/// messages with the IncrementalGraph file or Route using `SerializedFailure`
 log: Log,
+/// There is only ever one bundle executing at the same time, since all bundles
+/// inevitably share state. This bundle is asynchronous, storing its state here
+/// while in-flight. All allocations held by `.bv2.graph.heap`'s arena
+current_bundle: ?struct {
+    bv2: *BundleV2,
+    /// Information BundleV2 needs to finalize the bundle
+    start_data: bun.bundle_v2.BakeBundleStart,
+    /// Started when the bundle was queued
+    timer: std.time.Timer,
+},
+/// This is not stored in `current_bundle` so that its memory can be reused when
+/// there is no active bundle. After the bundle finishes, these requests will
+/// be continued, either calling their handler on success or sending the error
+/// page on failure.
+current_bundle_requests: ArrayListUnmanaged(DeferredRequest),
+/// When `current_bundle` is non-null and new requests to bundle come in,
+/// those are temporaried here. When the current bundle is finished, it
+/// will immediately enqueue this.
+next_bundle: struct {
+    /// A list of `RouteBundle`s which have active requests to bundle it.
+    route_queue: AutoArrayHashMapUnmanaged(RouteBundle.Index, void),
+    /// If a watch event exists and should be drained. The information
+    /// for this watch event is in one of the `watch_events`
+    watch_event: bool,
+    /// The list of requests that are blocked on this bundle.
+    requests: ArrayListUnmanaged(DeferredRequest),
+},
 
 // Debugging
+
 dump_dir: ?std.fs.Dir,
 /// Reference count to number of active sockets with the visualizer enabled.
 emit_visualizer_events: u32,
@@ -129,8 +160,7 @@ pub const RouteBundle = struct {
     server_state: State,
 
     /// Used to communicate over WebSocket the pattern. The HMR client contains code
-    /// to match this against the URL bar to determine if a reloading route applies
-    /// or not.
+    /// to match this against the URL bar to determine if a reloaded route applies.
     full_pattern: []const u8,
     /// Generated lazily when the client JS is requested (HTTP GET /_bun/client/*.js),
     /// which is only needed when a hard-reload is performed.
@@ -170,31 +200,17 @@ pub const RouteBundle = struct {
         /// imports has to be traced to discover if possible failures still
         /// exist.
         possible_bundling_failures,
-        /// Loading the module at runtime had a failure.
+        /// Loading the module at runtime had a failure. The error can be
+        /// cleared by editing any file in the same hot-reloading boundary.
         evaluation_failure,
         /// Calling the request function may error, but that error will not be
-        /// at fault of bundling.
+        /// at fault of bundling, nor would re-bundling change anything.
         loaded,
     };
 };
 
-pub const DeferredRequest = struct {
-    next: ?*DeferredRequest,
-    bundle: RouteBundle.Index,
-    data: Data,
-
-    const Data = union(enum) {
-        server_handler: bun.JSC.API.SavedRequest,
-        /// onJsRequestWithBundle
-        js_payload: *Response,
-
-        const Tag = @typeInfo(Data).Union.tag_type.?;
-    };
-};
-
 /// DevServer is stored on the heap, storing its allocator.
-// TODO: change the error set to JSOrMemoryError!*DevServer
-pub fn init(options: Options) !*DevServer {
+pub fn init(options: Options) bun.JSOOM!*DevServer {
     const allocator = bun.default_allocator;
     bun.analytics.Features.kit_dev +|= 1;
 
@@ -221,8 +237,7 @@ pub fn init(options: Options) !*DevServer {
         .server_fetch_function_callback = .{},
         .server_register_update_callback = .{},
         .generation = 0,
-        .graph_safety_lock = .{},
-        .log = Log.init(allocator),
+        .graph_safety_lock = bun.DebugThreadLock.unlocked,
         .dump_dir = dump_dir,
         .framework = options.framework,
         .watch_state = .{ .raw = 0 },
@@ -237,19 +252,26 @@ pub fn init(options: Options) !*DevServer {
         .server_graph = IncrementalGraph(.server).empty,
         .incremental_result = IncrementalResult.empty,
         .route_lookup = .{},
+        .route_bundles = .{},
+        .current_bundle = null,
+        .current_bundle_requests = .{},
+        .next_bundle = .{
+            .route_queue = .{},
+            .watch_event = false,
+            .requests = .{},
+        },
+
+        .log = bun.logger.Log.init(allocator),
 
         .server_bundler = undefined,
         .client_bundler = undefined,
         .ssr_bundler = undefined,
-
         .bun_watcher = undefined,
         .watch_events = undefined,
-
         .configuration_hash_key = undefined,
-
         .router = undefined,
-        .route_bundles = .{},
     });
+    const global = dev.vm.global;
     errdefer allocator.destroy(dev);
 
     assert(dev.server_graph.owner() == dev);
@@ -259,11 +281,16 @@ pub fn init(options: Options) !*DevServer {
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
 
-    const fs = try bun.fs.FileSystem.init(options.root);
+    const generic_action = "initializing development server";
+    const fs = bun.fs.FileSystem.init(options.root) catch |err|
+        return global.throwZigError(err, generic_action);
 
-    dev.bun_watcher = try Watcher.init(DevServer, dev, fs, bun.default_allocator);
+    dev.bun_watcher = Watcher.init(DevServer, dev, fs, bun.default_allocator) catch |err|
+        return global.throwZigError(err, "while initializing file watcher for development server");
+
     errdefer dev.bun_watcher.deinit(false);
-    try dev.bun_watcher.start();
+    dev.bun_watcher.start() catch |err|
+        return global.throwZigError(err, "while initializing file watcher thread for development server");
 
     dev.server_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     dev.client_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
@@ -273,31 +300,33 @@ pub fn init(options: Options) !*DevServer {
         .{ .aligned = HotReloadTask.initEmpty(dev) },
     };
 
-    try dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_bundler);
+    dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_bundler) catch |err|
+        return global.throwZigError(err, generic_action);
     dev.client_bundler.options.dev_server = dev;
-    try dev.framework.initBundler(allocator, &dev.log, .development, .client, &dev.client_bundler);
+    dev.framework.initBundler(allocator, &dev.log, .development, .client, &dev.client_bundler) catch |err|
+        return global.throwZigError(err, generic_action);
     dev.server_bundler.options.dev_server = dev;
     if (separate_ssr_graph) {
-        try dev.framework.initBundler(allocator, &dev.log, .development, .ssr, &dev.ssr_bundler);
+        dev.framework.initBundler(allocator, &dev.log, .development, .ssr, &dev.ssr_bundler) catch |err|
+            return global.throwZigError(err, generic_action);
         dev.ssr_bundler.options.dev_server = dev;
     }
 
-    dev.framework = dev.framework.resolve(&dev.server_bundler.resolver, &dev.client_bundler.resolver) catch {
-        Output.errGeneric("Failed to resolve all imports required by the framework", .{});
-        return error.FrameworkInitialization;
+    dev.framework = dev.framework.resolve(&dev.server_bundler.resolver, &dev.client_bundler.resolver, options.arena) catch {
+        return global.throwValue2(dev.log.toJSAggregateError(global, "Framework is missing required files!"));
     };
 
     errdefer dev.route_lookup.clearAndFree(allocator);
     // errdefer dev.client_graph.deinit(allocator);
     // errdefer dev.server_graph.deinit(allocator);
 
-    dev.vm.global = @ptrCast(dev.vm.global);
-
     dev.configuration_hash_key = hash_key: {
         var hash = std.hash.Wyhash.init(128);
 
         if (bun.Environment.isDebug) {
-            const stat = try bun.sys.stat(try bun.selfExePath()).unwrap();
+            const stat = bun.sys.stat(bun.selfExePath() catch |e|
+                Output.panic("unhandled {}", .{e})).unwrap() catch |e|
+                Output.panic("unhandled {}", .{e});
             bun.writeAnyToHasher(&hash, stat.mtime());
             hash.update(bake.getHmrRuntime(.client));
             hash.update(bake.getHmrRuntime(.server));
@@ -342,9 +371,9 @@ pub fn init(options: Options) !*DevServer {
         assert(try dev.client_graph.insertStale(rfr.import_source, false) == IncrementalGraph(.client).react_refresh_index);
     }
 
-    try dev.initServerRuntime();
+    dev.initServerRuntime();
 
-    // Initialize the router
+    // Initialize FrameworkRouter
     dev.router = router: {
         var types = try std.ArrayListUnmanaged(FrameworkRouter.Type).initCapacity(allocator, options.framework.file_system_router_types.len);
         errdefer types.deinit(allocator);
@@ -363,6 +392,7 @@ pub fn init(options: Options) !*DevServer {
                 .ignore_dirs = fsr.ignore_dirs,
                 .extensions = fsr.extensions,
                 .style = fsr.style,
+                .allow_layouts = fsr.allow_layouts,
                 .server_file = toOpaqueFileId(.server, server_file),
                 .client_file = if (fsr.entry_client) |client|
                     toOpaqueFileId(.client, try dev.client_graph.insertStale(client, false)).toOptional()
@@ -390,7 +420,7 @@ pub fn init(options: Options) !*DevServer {
     return dev;
 }
 
-fn initServerRuntime(dev: *DevServer) !void {
+fn initServerRuntime(dev: *DevServer) void {
     const runtime = bun.String.static(bun.bake.getHmrRuntime(.server));
 
     const interface = c.BakeLoadInitialServerCode(
@@ -404,7 +434,7 @@ fn initServerRuntime(dev: *DevServer) !void {
 
     if (!interface.isObject())
         @panic("Internal assertion failure: expected interface from HMR runtime to be an object");
-    const fetch_function: JSValue = interface.get(dev.vm.global, "handleRequest") orelse
+    const fetch_function = interface.get(dev.vm.global, "handleRequest") orelse
         @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
     bun.assert(fetch_function.isCallable(dev.vm.jsc));
     dev.server_fetch_function_callback = JSC.Strong.create(fetch_function, dev.vm.global);
@@ -536,56 +566,79 @@ fn ensureRouteIsBundled(
     req: *Request,
     resp: *Response,
 ) bun.OOM!void {
-    const bundle_index = if (dev.router.routePtr(route_index).bundle.unwrap()) |bundle_index|
+    const route_bundle_index = if (dev.router.routePtr(route_index).bundle.unwrap()) |bundle_index|
         bundle_index
     else
         try dev.insertRouteBundle(route_index);
 
-    switch (dev.routeBundlePtr(bundle_index).server_state) {
+    switch (dev.routeBundlePtr(route_bundle_index).server_state) {
         .unqueued => {
-            const server_file_names = dev.server_graph.bundled_files.keys();
-            const client_file_names = dev.client_graph.bundled_files.keys();
-
-            var sfa = std.heap.stackFallback(4096, dev.allocator);
-            const temp_alloc = sfa.get();
-
-            var entry_points = std.ArrayList(BakeEntryPoint).init(temp_alloc);
-            defer entry_points.deinit();
-
-            // Build a list of all files that have not yet been bundled.
-            var route = dev.router.routePtr(route_index);
-            const router_type = dev.router.typePtr(route.type);
-            try dev.appendOpaqueEntryPoint(server_file_names, &entry_points, .server, router_type.server_file);
-            try dev.appendOpaqueEntryPoint(client_file_names, &entry_points, .client, router_type.client_file);
-            try dev.appendOpaqueEntryPoint(server_file_names, &entry_points, .server, route.file_page);
-            try dev.appendOpaqueEntryPoint(server_file_names, &entry_points, .server, route.file_layout);
-            while (route.parent.unwrap()) |parent_index| {
-                route = dev.router.routePtr(parent_index);
-                try dev.appendOpaqueEntryPoint(server_file_names, &entry_points, .server, route.file_layout);
+            try dev.next_bundle.requests.ensureUnusedCapacity(dev.allocator, 1);
+            if (dev.current_bundle != null) {
+                try dev.next_bundle.route_queue.ensureUnusedCapacity(dev.allocator, 1);
             }
 
-            if (entry_points.items.len == 0) {
-                @panic("TODO: trace graph for possible errors, so DevServer knows what state this should go to");
-            }
+            const deferred: DeferredRequest = .{
+                .route_bundle_index = route_bundle_index,
+                .data = switch (kind) {
+                    .js_payload => .{ .js_payload = resp },
+                    .server_handler => .{
+                        .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp) orelse return)
+                            .save(dev.vm.global, req, resp),
+                    },
+                },
+            };
+            errdefer @compileError("cannot error since the request is already stored");
 
-            const route_bundle = dev.routeBundlePtr(bundle_index);
-            if (dev.bundle(entry_points.items)) |_| {
-                route_bundle.server_state = .loaded;
-            } else |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
-                error.BuildFailed => assert(route_bundle.server_state == .possible_bundling_failures),
-                error.ServerLoadFailed => route_bundle.server_state = .evaluation_failure,
+            dev.next_bundle.requests.appendAssumeCapacity(deferred);
+            if (dev.current_bundle != null) {
+                dev.next_bundle.route_queue.putAssumeCapacity(route_bundle_index, {});
+            } else {
+                var sfa = std.heap.stackFallback(4096, dev.allocator);
+                const temp_alloc = sfa.get();
+
+                var entry_points: BakeEntryPoints = BakeEntryPoints.empty;
+                defer entry_points.deinit(temp_alloc);
+
+                dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_index) catch bun.outOfMemory();
+
+                if (entry_points.set.count() == 0) {
+                    @panic("TODO: trace graph for possible errors, so DevServer knows what state this should go to");
+                }
+
+                dev.startAsyncBundle(entry_points) catch |err| {
+                    if (dev.log.hasAny()) {
+                        dev.log.print(Output.errorWriter()) catch {};
+                        Output.flush();
+                    }
+                    Output.panic("Fatal error while initializing bundle job: {}", .{err});
+                };
+
+                dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
             }
+            return;
         },
         .bundling => {
-            const prepared = dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp) orelse
-                return;
-            _ = prepared;
-            @panic("TODO: Async Bundler");
+            bun.assert(dev.current_bundle != null);
+            try dev.current_bundle_requests.ensureUnusedCapacity(dev.allocator, 1);
+
+            const deferred: DeferredRequest = .{
+                .route_bundle_index = route_bundle_index,
+                .data = switch (kind) {
+                    .js_payload => .{ .js_payload = resp },
+                    .server_handler => .{
+                        .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp) orelse return)
+                            .save(dev.vm.global, req, resp),
+                    },
+                },
+            };
+
+            dev.current_bundle_requests.appendAssumeCapacity(deferred);
+            return;
         },
         else => {},
     }
-    switch (dev.routeBundlePtr(bundle_index).server_state) {
+    switch (dev.routeBundlePtr(route_bundle_index).server_state) {
         .unqueued => unreachable,
         .bundling => @panic("TODO: Async Bundler"),
         .possible_bundling_failures => {
@@ -599,14 +652,14 @@ fn ensureRouteIsBundled(
                 });
                 return;
             } else {
-                dev.routeBundlePtr(bundle_index).server_state = .loaded;
+                dev.routeBundlePtr(route_bundle_index).server_state = .loaded;
             }
         },
         .evaluation_failure => {
             resp.corked(sendSerializedFailures, .{
                 dev,
                 resp,
-                (&(dev.routeBundlePtr(bundle_index).evaluate_failure orelse @panic("missing error")))[0..1],
+                (&(dev.routeBundlePtr(route_bundle_index).evaluate_failure orelse @panic("missing error")))[0..1],
                 .evaluation,
             });
             return;
@@ -615,8 +668,25 @@ fn ensureRouteIsBundled(
     }
 
     switch (kind) {
-        .server_handler => dev.onRequestWithBundle(bundle_index, .{ .stack = req }, resp),
-        .js_payload => dev.onJsRequestWithBundle(bundle_index, resp),
+        .server_handler => dev.onRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
+        .js_payload => dev.onJsRequestWithBundle(route_bundle_index, resp),
+    }
+}
+
+fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *BakeEntryPoints, alloc: Allocator, route_index: Route.Index) bun.OOM!void {
+    const server_file_names = dev.server_graph.bundled_files.keys();
+    const client_file_names = dev.client_graph.bundled_files.keys();
+
+    // Build a list of all files that have not yet been bundled.
+    var route = dev.router.routePtr(route_index);
+    const router_type = dev.router.typePtr(route.type);
+    try dev.appendOpaqueEntryPoint(server_file_names, entry_points, alloc, .server, router_type.server_file);
+    try dev.appendOpaqueEntryPoint(client_file_names, entry_points, alloc, .client, router_type.client_file);
+    try dev.appendOpaqueEntryPoint(server_file_names, entry_points, alloc, .server, route.file_page);
+    try dev.appendOpaqueEntryPoint(server_file_names, entry_points, alloc, .server, route.file_layout);
+    while (route.parent.unwrap()) |parent_index| {
+        route = dev.router.routePtr(parent_index);
+        try dev.appendOpaqueEntryPoint(server_file_names, entry_points, alloc, .server, route.file_layout);
     }
 }
 
@@ -742,25 +812,26 @@ const BundleError = error{
     ServerLoadFailed,
 };
 
-fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
-    defer dev.emitVisualizerMessageIfNeeded() catch bun.outOfMemory();
+const DeferredRequest = struct {
+    route_bundle_index: RouteBundle.Index,
+    data: Data,
 
-    assert(files.len > 0);
+    const Data = union(enum) {
+        server_handler: bun.JSC.API.SavedRequest,
+        js_payload: *Response,
 
-    const bundle_file_list = bun.Output.Scoped(.bundle_file_list, false);
+        const Tag = @typeInfo(Data).Union.tag_type.?;
+    };
+};
 
-    if (bundle_file_list.isVisible()) {
-        bundle_file_list.log("Start bundle {d} files", .{files.len});
-        for (files) |f| {
-            bundle_file_list.log("- {s} (.{s})", .{ f.path, @tagName(f.graph) });
-        }
-    }
+fn startAsyncBundle(dev: *DevServer, files: BakeEntryPoints) !void {
+    assert(dev.current_bundle == null);
+    assert(files.set.count() > 0);
 
     var heap = try ThreadlocalArena.init();
-    defer heap.deinit();
-
+    errdefer heap.deinit();
     const allocator = heap.allocator();
-    var ast_memory_allocator = try allocator.create(bun.JSAst.ASTMemoryAllocator);
+    const ast_memory_allocator = try allocator.create(bun.JSAst.ASTMemoryAllocator);
     ast_memory_allocator.* = .{ .allocator = allocator };
     ast_memory_allocator.reset();
     ast_memory_allocator.push();
@@ -772,10 +843,7 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
         bun.todoPanic(@src(), "support non-server components build", .{});
     }
 
-    var timer = if (Environment.enable_logs) std.time.Timer.start() catch unreachable;
-
-    dev.graph_safety_lock.lock();
-    defer dev.graph_safety_lock.unlock();
+    const timer = if (Environment.enable_logs) std.time.Timer.start() catch unreachable;
 
     const bv2 = try BundleV2.init(
         &dev.server_bundler,
@@ -785,123 +853,33 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
             .ssr_bundler = &dev.ssr_bundler,
         } else @panic("TODO: support non-server components"),
         allocator,
-        JSC.AnyEventLoop.init(allocator),
+        .{ .js = dev.vm.eventLoop() },
         false, // reloading is handled separately
         JSC.WorkPool.get(),
         heap,
     );
     bv2.bun_watcher = dev.bun_watcher;
-    // this.plugins = completion.plugins;
+    bv2.asynchronous = true;
 
-    defer {
-        if (bv2.graph.pool.pool.threadpool_context == @as(?*anyopaque, @ptrCast(bv2.graph.pool))) {
-            bv2.graph.pool.pool.threadpool_context = null;
-        }
-        ast_memory_allocator.pop();
-        bv2.deinit();
-    }
-
-    dev.client_graph.reset();
-    dev.server_graph.reset();
-
-    const bundle_result = bv2.runFromBakeDevServer(files) catch |err| {
-        bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-        bv2.bundler.log.print(Output.errorWriter()) catch {};
-
-        Output.warn("BundleV2.runFromBakeDevServer returned error.{s}", .{@errorName(err)});
-
-        return;
-    };
-
-    bv2.bundler.log.print(Output.errorWriter()) catch {};
-
-    try dev.finalizeBundle(bv2, bundle_result);
-
-    try dev.client_graph.ensureStaleBitCapacity(false);
-    try dev.server_graph.ensureStaleBitCapacity(false);
-
-    dev.generation +%= 1;
-    if (Environment.enable_logs) {
-        debug.log("Bundle Round {d}: {d} server, {d} client, {d} ms", .{
-            dev.generation,
-            dev.server_graph.current_chunk_parts.items.len,
-            dev.client_graph.current_chunk_parts.items.len,
-            @divFloor(timer.read(), std.time.ns_per_ms),
-        });
-    }
-
-    const is_first_server_chunk = !dev.server_fetch_function_callback.has();
-
-    if (dev.server_graph.current_chunk_len > 0) {
-        const server_bundle = try dev.server_graph.takeBundle(
-            if (is_first_server_chunk) .initial_response else .hmr_chunk,
-            "",
-        );
-        defer dev.allocator.free(server_bundle);
-
-        const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.createLatin1(server_bundle)) catch |err| {
-            // No user code has been evaluated yet, since everything is to
-            // be wrapped in a function clousure. This means that the likely
-            // error is going to be a syntax error, or other mistake in the
-            // bundler.
-            dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
-            @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
-        };
-        const errors = dev.server_register_update_callback.get().?.call(
-            dev.vm.global,
-            dev.vm.global.toJSValue(),
-            &.{
-                server_modules,
-                dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_added.items),
-                dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_removed.items),
-            },
-        ) catch |err| {
-            // One module replacement error should NOT prevent follow-up
-            // module replacements to fail. It is the HMR runtime's
-            // responsibility to collect all module load errors, and
-            // bubble them up.
-            dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
-            @panic("Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime.");
-        };
-        _ = errors; // TODO:
-    }
-
-    const css_chunks = bundle_result.cssChunks();
-    if ((dev.client_graph.current_chunk_len > 0 or
-        css_chunks.len > 0) and
-        dev.numSubscribers(HmrSocket.global_topic) > 0)
     {
-        var sfb2 = std.heap.stackFallback(65536, bun.default_allocator);
-        var payload = std.ArrayList(u8).initCapacity(sfb2.get(), 65536) catch
-            unreachable; // enough space
-        defer payload.deinit();
-        payload.appendAssumeCapacity(MessageId.hot_update.char());
-        const w = payload.writer();
+        dev.graph_safety_lock.lock();
+        defer dev.graph_safety_lock.unlock();
 
-        const css_values = dev.css_files.values();
-        try w.writeInt(u32, @intCast(css_chunks.len), .little);
-        const sources = bv2.graph.input_files.items(.source);
-        for (css_chunks) |chunk| {
-            const abs_path = sources[chunk.entry_point.source_index].path.text;
-
-            try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&bun.hash(abs_path)), .lower));
-
-            const css_data = css_values[chunk.entry_point.entry_point_id];
-            try w.writeInt(u32, @intCast(css_data.len), .little);
-            try w.writeAll(css_data);
-        }
-
-        if (dev.client_graph.current_chunk_len > 0)
-            try dev.client_graph.takeBundleToList(.hmr_chunk, &payload, "");
-
-        dev.publish(HmrSocket.global_topic, payload.items, .binary);
+        dev.client_graph.reset();
+        dev.server_graph.reset();
     }
 
-    if (dev.incremental_result.failures_added.items.len > 0) {
-        dev.bundles_since_last_error = 0;
-        return error.BuildFailed;
-    }
+    const start_data = try bv2.startFromBakeDevServer(files);
+
+    dev.current_bundle = .{
+        .bv2 = bv2,
+        .timer = timer,
+        .start_data = start_data,
+    };
+    const old_current_requests = dev.current_bundle_requests;
+    bun.assert(old_current_requests.items.len == 0);
+    dev.current_bundle_requests = dev.next_bundle.requests;
+    dev.next_bundle.requests = old_current_requests;
 }
 
 fn indexFailures(dev: *DevServer) !void {
@@ -1120,11 +1098,18 @@ pub const HotUpdateContext = struct {
 };
 
 /// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
+/// This function does not recover DevServer state if it fails (allocation failure)
 pub fn finalizeBundle(
     dev: *DevServer,
     bv2: *bun.bundle_v2.BundleV2,
     result: bun.bundle_v2.BakeBundleOutput,
-) !void {
+) bun.OOM!void {
+    const current_bundle = &dev.current_bundle.?;
+
+    dev.graph_safety_lock.lock();
+    defer dev.graph_safety_lock.unlock();
+    defer dev.emitVisualizerMessageIfNeeded() catch {};
+
     const js_chunk = result.jsPseudoChunk();
     const input_file_sources = bv2.graph.input_files.items(.source);
     const import_records = bv2.graph.ast.items(.import_records);
@@ -1169,7 +1154,7 @@ pub fn finalizeBundle(
             .client => try dev.client_graph.receiveChunk(&ctx, index, compile_result.code(), .js, false),
         }
     }
-    for (result.cssChunks(), result.css_file_list.metas) |*chunk, metadata| {
+    for (result.cssChunks(), result.css_file_list.values()) |*chunk, metadata| {
         const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
 
         const code = try chunk.intermediate_output.code(
@@ -1219,7 +1204,7 @@ pub fn finalizeBundle(
             .client => try dev.client_graph.processChunkDependencies(&ctx, part_range.source_index, bv2.graph.allocator),
         }
     }
-    for (result.cssChunks(), result.css_file_list.metas) |*chunk, metadata| {
+    for (result.cssChunks(), result.css_file_list.values()) |*chunk, metadata| {
         const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
         // TODO: index css deps
         _ = index; // autofix
@@ -1228,6 +1213,106 @@ pub fn finalizeBundle(
 
     // Index all failed files now that the incremental graph has been updated.
     try dev.indexFailures();
+
+    try dev.client_graph.ensureStaleBitCapacity(false);
+    try dev.server_graph.ensureStaleBitCapacity(false);
+
+    dev.generation +%= 1;
+    if (Environment.enable_logs) {
+        debug.log("Bundle Round {d}: {d} server, {d} client, {d} ms", .{
+            dev.generation,
+            dev.server_graph.current_chunk_parts.items.len,
+            dev.client_graph.current_chunk_parts.items.len,
+            @divFloor(current_bundle.timer.read(), std.time.ns_per_ms),
+        });
+    }
+
+    const is_first_server_chunk = !dev.server_fetch_function_callback.has();
+
+    if (dev.server_graph.current_chunk_len > 0) {
+        const server_bundle = try dev.server_graph.takeBundle(
+            if (is_first_server_chunk) .initial_response else .hmr_chunk,
+            "",
+        );
+        defer dev.allocator.free(server_bundle);
+
+        const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.createLatin1(server_bundle)) catch |err| {
+            // No user code has been evaluated yet, since everything is to
+            // be wrapped in a function clousure. This means that the likely
+            // error is going to be a syntax error, or other mistake in the
+            // bundler.
+            dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
+            @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
+        };
+        const errors = dev.server_register_update_callback.get().?.call(
+            dev.vm.global,
+            dev.vm.global.toJSValue(),
+            &.{
+                server_modules,
+                dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_added.items),
+                dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_removed.items),
+            },
+        ) catch |err| {
+            // One module replacement error should NOT prevent follow-up
+            // module replacements to fail. It is the HMR runtime's
+            // responsibility to collect all module load errors, and
+            // bubble them up.
+            dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
+            @panic("Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime.");
+        };
+        _ = errors; // TODO:
+    }
+
+    const css_chunks = result.cssChunks();
+    if ((dev.client_graph.current_chunk_len > 0 or
+        css_chunks.len > 0) and
+        dev.numSubscribers(HmrSocket.global_topic) > 0)
+    {
+        var sfb2 = std.heap.stackFallback(65536, bun.default_allocator);
+        var payload = std.ArrayList(u8).initCapacity(sfb2.get(), 65536) catch
+            unreachable; // enough space
+        defer payload.deinit();
+        payload.appendAssumeCapacity(MessageId.hot_update.char());
+        const w = payload.writer();
+
+        const css_values = dev.css_files.values();
+        try w.writeInt(u32, @intCast(css_chunks.len), .little);
+        const sources = bv2.graph.input_files.items(.source);
+        for (css_chunks) |chunk| {
+            const abs_path = sources[chunk.entry_point.source_index].path.text;
+
+            try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&bun.hash(abs_path)), .lower));
+
+            const css_data = css_values[chunk.entry_point.entry_point_id];
+            try w.writeInt(u32, @intCast(css_data.len), .little);
+            try w.writeAll(css_data);
+        }
+
+        if (dev.client_graph.current_chunk_len > 0)
+            try dev.client_graph.takeBundleToList(.hmr_chunk, &payload, "");
+
+        dev.publish(HmrSocket.global_topic, payload.items, .binary);
+    }
+
+    if (dev.incremental_result.failures_added.items.len > 0) {
+        dev.bundles_since_last_error = 0;
+
+        @panic("TODO: error.BuildFailure");
+    }
+
+    // Release the lock because the underlying handler may acquire one.
+    dev.graph_safety_lock.unlock();
+    defer dev.graph_safety_lock.lock();
+
+    for (dev.current_bundle_requests.items) |req| {
+        const rb = dev.routeBundlePtr(req.route_bundle_index);
+        rb.server_state = .loaded;
+
+        switch (req.data) {
+            .server_handler => |saved| dev.onRequestWithBundle(req.route_bundle_index, .{ .saved = saved }, saved.response.TCP),
+            .js_payload => |resp| dev.onJsRequestWithBundle(req.route_bundle_index, resp),
+        }
+    }
 }
 
 fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u8) !u31 {
@@ -1285,7 +1370,8 @@ pub fn isFileCached(dev: *DevServer, path: []const u8, side: bake.Graph) ?CacheE
 fn appendOpaqueEntryPoint(
     dev: *DevServer,
     file_names: [][]const u8,
-    entry_points: *std.ArrayList(BakeEntryPoint),
+    entry_points: *BakeEntryPoints,
+    alloc: Allocator,
     comptime side: bake.Side,
     optional_id: anytype,
 ) !void {
@@ -1300,13 +1386,7 @@ fn appendOpaqueEntryPoint(
         .server => dev.server_graph.stale_files.isSet(file_index.get()),
         .client => dev.client_graph.stale_files.isSet(file_index.get()),
     }) {
-        try entry_points.append(.{
-            .path = file_names[file_index.get()],
-            .graph = switch (side) {
-                .server => .server,
-                .client => .client,
-            },
-        });
+        try entry_points.appendJs(alloc, file_names[file_index.get()], side.graph());
     }
 }
 
@@ -2285,7 +2365,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             );
         }
 
-        pub fn invalidate(g: *@This(), paths: []const []const u8, out_paths: *std.ArrayList(BakeEntryPoint)) !void {
+        pub fn invalidate(g: *@This(), paths: []const []const u8, out_paths: *BakeEntryPoints) !void {
             g.owner().graph_safety_lock.assertLocked();
             const values = g.bundled_files.values();
             for (paths) |path| {
@@ -2303,21 +2383,22 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         // the bundler gets confused and bundles both sides without
                         // knowledge of the boundary between them.
                         if (data.flags.kind == .css)
-                            try out_paths.append(BakeEntryPoint.initCss(path))
+                            try out_paths.appendCss(path)
                         else if (!data.flags.is_hmr_root)
-                            try out_paths.append(BakeEntryPoint.init(path, .client));
+                            try out_paths.appendJs(path, .client);
                     },
                     .server => {
                         if (data.is_rsc)
-                            try out_paths.append(BakeEntryPoint.init(path, .server));
+                            try out_paths.appendJs(path, .server);
                         if (data.is_ssr and !data.is_client_component_boundary)
-                            try out_paths.append(BakeEntryPoint.init(path, .ssr));
+                            try out_paths.appendJs(path, .ssr);
                     },
                 }
             }
         }
 
         fn reset(g: *@This()) void {
+            g.owner().graph_safety_lock.assertLocked();
             g.current_chunk_len = 0;
             g.current_chunk_parts.clearRetainingCapacity();
             if (side == .client) g.current_css_files.clearRetainingCapacity();
@@ -3363,9 +3444,11 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
     var sfb = std.heap.stackFallback(4096, bun.default_allocator);
     var temp_alloc = sfb.get();
 
-    // pre-allocate a few files worth of strings. it is unlikely but supported
-    // to change more than 8 files in the same bundling round.
-    var files = std.ArrayList(BakeEntryPoint).initCapacity(temp_alloc, 8) catch unreachable;
+    {
+        @panic("regressed");
+    }
+
+    var files = std.ArrayList().initCapacity(temp_alloc, 8) catch unreachable;
     defer files.deinit();
 
     {
@@ -3398,7 +3481,7 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
         dev.incremental_result.delete_client_files_later.clearRetainingCapacity();
     }
 
-    dev.bundle(files.items) catch |err| {
+    dev.bundleOld(files.items) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
         return;
     };
@@ -3816,7 +3899,7 @@ const Output = bun.Output;
 
 const Bundler = bun.bundler.Bundler;
 const BundleV2 = bun.bundle_v2.BundleV2;
-const BakeEntryPoint = bun.bundle_v2.BakeEntryPoint;
+const BakeEntryPoints = bun.bundle_v2.BakeEntryPoints;
 
 const Define = bun.options.Define;
 const OutputFile = bun.options.OutputFile;

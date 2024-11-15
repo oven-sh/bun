@@ -2026,13 +2026,6 @@ pub const AnyEventLoop = union(enum) {
 
     pub const Task = AnyTaskWithExtraContext;
 
-    pub fn fromJSC(
-        this: *AnyEventLoop,
-        jsc: *EventLoop,
-    ) void {
-        this.* = .{ .js = jsc };
-    }
-
     pub fn wakeup(this: *AnyEventLoop) void {
         this.loop().wakeup();
     }

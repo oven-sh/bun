@@ -889,26 +889,42 @@ pub const JSBundler = struct {
             globalObject: *JSC.JSGlobalObject,
         ) JSValue {
             if (this.called_defer) {
-                globalObject.throw("can't call .defer() more than once within an onLoad plugin", .{});
+                globalObject.throw("Can't call .defer() more than once within an onLoad plugin", .{});
                 return .undefined;
             }
+
             this.called_defer = true;
 
-            _ = this.parse_task.ctx.graph.deferred_pending.fetchAdd(1, .acq_rel);
-            _ = @atomicRmw(usize, &this.parse_task.ctx.graph.parse_pending, .Sub, 1, .acq_rel);
+            // _ = this.parse_task.ctx.graph.deferred_pending.fetchAdd(1, .acq_rel);
+            // _ = @atomicRmw(usize, &this.parse_task.ctx.graph.parse_pending, .Sub, 1, .acq_rel);
 
-            debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s}) parse_pending={d} deferred_pending={d}", .{
-                @intFromPtr(this),
-                this.path,
-                @atomicLoad(
-                    usize,
-                    &this.parse_task.ctx.graph.parse_pending,
-                    .monotonic,
-                ),
-                this.parse_task.ctx.graph.deferred_pending.load(.monotonic),
-            });
+            // debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s}) parse_pending={d} deferred_pending={d}", .{
+            //     @intFromPtr(this),
+            //     this.path,
+            //     @atomicLoad(
+            //         usize,
+            //         &this.parse_task.ctx.graph.parse_pending,
+            //         .monotonic,
+            //     ),
+            //     this.parse_task.ctx.graph.deferred_pending.load(.monotonic),
+            // });
 
-            defer this.parse_task.ctx.loop().wakeup();
+            // Notify the bundler thread about the deferral. This will decrement
+            switch (this.parse_task.ctx.loop().*) {
+                .js => |jsc_event_loop| {
+                    jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this.parse_task.ctx, BundleV2.onNotifyDefer));
+                },
+                .mini => |*mini| {
+                    mini.enqueueTaskConcurrentWithExtraCtx(
+                        Load,
+                        BundleV2,
+                        this,
+                        BundleV2.onNotifyDeferMini,
+                        .task,
+                    );
+                },
+            }
+
             const promise: JSValue = if (this.completion) |c| c.plugins.?.appendDeferPromise() else return .undefined;
             return promise;
         }
@@ -1364,3 +1380,4 @@ pub const BuildArtifact = struct {
 };
 
 const Output = bun.Output;
+const BundleV2 = bun.bundle_v2.BundleV2;

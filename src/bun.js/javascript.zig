@@ -4182,16 +4182,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 };
             }
 
-            pub fn append(this: *HotReloadTask, path: []const u8, id: u32) void {
+            pub fn append(this: *HotReloadTask, id: u32) void {
                 if (this.count == 8) {
                     this.enqueue();
                     this.count = 0;
                 }
 
                 this.hashes[this.count] = id;
-                // TODO(@paperdave/bake): this allocation is terrible and must be removed
-                if (Ctx == bun.bake.DevServer)
-                    this.paths[this.count] = default_allocator.dupe(u8, path) catch bun.outOfMemory();
                 this.count += 1;
             }
 
@@ -4386,7 +4383,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             debug("File changed: {s}", .{fs.relativeTo(file_path)});
 
                         if (event.op.write or event.op.delete or event.op.rename) {
-                            current_task.append(file_path, current_hash);
+                            current_task.append(current_hash);
                         }
 
                         // TODO: delete events?
@@ -4474,7 +4471,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                                 if (hash == file_hash) {
                                                     if (file_descriptors[entry_id] != .zero) {
                                                         if (prev_entry_id != entry_id) {
-                                                            current_task.append(file_paths[entry_id], hashes[entry_id]);
+                                                            current_task.append(hashes[entry_id]);
                                                             ctx.removeAtIndex(
                                                                 @as(u16, @truncate(entry_id)),
                                                                 0,

@@ -12,7 +12,7 @@ pub const api_name = "app";
 
 /// Zig version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub const UserOptions = struct {
-    arena: std.heap.ArenaAllocator.State,
+    arena: std.heap.ArenaAllocator,
     allocations: StringRefList,
 
     root: []const u8,
@@ -20,7 +20,7 @@ pub const UserOptions = struct {
     bundler_options: SplitBundlerOptions,
 
     pub fn deinit(options: *UserOptions) void {
-        options.arena.promote(bun.default_allocator).deinit();
+        options.arena.deinit();
         options.allocations.free();
     }
 
@@ -61,7 +61,7 @@ pub const UserOptions = struct {
             };
 
         return .{
-            .arena = arena.state,
+            .arena = arena,
             .allocations = allocations,
             .root = root,
             .framework = framework,
@@ -159,7 +159,8 @@ pub const Framework = struct {
                     .ignore_underscores = true,
                     .ignore_dirs = &.{ "node_modules", ".git" },
                     .extensions = &.{ ".tsx", ".jsx" },
-                    .style = .@"nextjs-pages-ui",
+                    .style = .nextjs_pages,
+                    .allow_layouts = true,
                 },
             }),
             // .static_routers = try arena.dupe([]const u8, &.{"public"}),
@@ -189,6 +190,7 @@ pub const Framework = struct {
         ignore_dirs: []const []const u8,
         extensions: []const []const u8,
         style: FrameworkRouter.Style,
+        allow_layouts: bool,
     };
 
     const BuiltInModule = union(enum) {
@@ -209,11 +211,12 @@ pub const Framework = struct {
         import_source: []const u8 = "react-refresh/runtime",
     };
 
-    /// Given a Framework configuration, this returns another one with all modules resolved.
+    /// Given a Framework configuration, this returns another one with all paths resolved.
+    /// New memory allocated into provided arena.
     ///
     /// All resolution errors will happen before returning error.ModuleNotFound
-    /// Details written into `r.log`
-    pub fn resolve(f: Framework, server: *bun.resolver.Resolver, client: *bun.resolver.Resolver) !Framework {
+    /// Errors written into `r.log`
+    pub fn resolve(f: Framework, server: *bun.resolver.Resolver, client: *bun.resolver.Resolver, arena: Allocator) !Framework {
         var clone = f;
         var had_errors: bool = false;
 
@@ -227,8 +230,7 @@ pub const Framework = struct {
         }
 
         for (clone.file_system_router_types) |*fsr| {
-            // TODO: unonwned memory
-            fsr.root = bun.path.joinAbs(server.fs.top_level_dir, .auto, fsr.root);
+            fsr.root = try arena.dupe(u8, bun.path.joinAbs(server.fs.top_level_dir, .auto, fsr.root));
             if (fsr.entry_client) |*entry_client| f.resolveHelper(client, entry_client, &had_errors, "client side entrypoint");
             f.resolveHelper(client, &fsr.entry_server, &had_errors, "server side entrypoint");
         }
@@ -385,6 +387,7 @@ pub const Framework = struct {
 
             var it = array.arrayIterator(global);
             var i: usize = 0;
+            errdefer for (file_system_router_types[0..i]) |*fsr| fsr.style.deinit();
             while (it.next()) |fsr_opts| : (i += 1) {
                 const root = try getOptionalString(fsr_opts, global, "root", refs, arena) orelse {
                     return global.throwInvalidArguments2("'fileSystemRouterTypes[{d}]' is missing 'root'", .{i});
@@ -395,14 +398,12 @@ pub const Framework = struct {
                 const client_entry_point = try getOptionalString(fsr_opts, global, "clientEntryPoint", refs, arena);
                 const prefix = try getOptionalString(fsr_opts, global, "prefix", refs, arena) orelse "/";
                 const ignore_underscores = try fsr_opts.getBooleanStrict(global, "ignoreUnderscores") orelse false;
+                const layouts = try fsr_opts.getBooleanStrict(global, "layouts") orelse false;
 
-                const style = try validators.validateStringEnum(
-                    FrameworkRouter.Style,
-                    global,
-                    try opts.getOptional(global, "style", JSValue) orelse .undefined,
-                    "style",
-                    .{},
-                );
+                var style = try FrameworkRouter.Style.fromJS(try fsr_opts.get2(global, "style") orelse {
+                    return global.throwInvalidArguments2("'fileSystemRouterTypes[{d}]' is missing 'style'", .{i});
+                }, global);
+                errdefer style.deinit();
 
                 const extensions: []const []const u8 = if (try fsr_opts.get2(global, "extensions")) |exts_js| exts: {
                     if (exts_js.isString()) {
@@ -448,11 +449,13 @@ pub const Framework = struct {
                     .ignore_underscores = ignore_underscores,
                     .extensions = extensions,
                     .ignore_dirs = ignore_dirs,
+                    .allow_layouts = layouts,
                 };
             }
 
             break :brk file_system_router_types;
         };
+        errdefer for (file_system_router_types) |*fsr| fsr.style.deinit();
 
         const framework: Framework = .{
             .file_system_router_types = file_system_router_types,
@@ -587,6 +590,13 @@ pub const Mode = enum {
 pub const Side = enum(u1) {
     client,
     server,
+
+    pub fn graph(s: Side) Graph {
+        return switch (s) {
+            .client => .client,
+            .server => .server,
+        };
+    }
 };
 pub const Graph = enum(u2) {
     client,

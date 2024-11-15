@@ -3074,6 +3074,11 @@ pub const JSGlobalObject = opaque {
         return unwrapped;
     }
 
+    pub fn unwrapZigErrorToThrownException(label: []const u8, err: anytype) bun.JSError {
+        _ = label; // autofix
+        _ = err; // autofix
+    }
+
     pub fn RemoveError(T: type) type {
         return switch (@typeInfo(T)) {
             .ErrorSet => bun.JSC.JSValue,
@@ -3390,6 +3395,7 @@ pub const JSGlobalObject = opaque {
         return this.vm().throwError2(this, value);
     }
 
+    /// Deprecated, prefer throwZigError
     pub fn throwError(
         this: *JSGlobalObject,
         err: anyerror,
@@ -3400,6 +3406,17 @@ pub const JSGlobalObject = opaque {
         const err_value = str.toErrorInstance(this);
         this.vm().throwError(this, err_value);
         this.bunVM().allocator.free(ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
+    }
+
+    pub fn throwZigError(this: *JSGlobalObject, err: anyerror, action_being_taken: [:0]const u8) JSError {
+        if (err == error.OutOfMemory) {
+            this.throwOutOfMemory();
+            return error.JSError;
+        }
+        return this.throwValue2(this.createErrorInstance("{s} while {s}", .{
+            @errorName(err),
+            action_being_taken,
+        }));
     }
 
     pub fn handleError(

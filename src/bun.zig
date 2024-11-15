@@ -1646,26 +1646,15 @@ pub fn DebugOnlyDisabler(comptime Type: type) type {
 
 const FailingAllocator = struct {
     fn alloc(_: *anyopaque, _: usize, _: u8, _: usize) ?[*]u8 {
-        if (comptime Environment.allow_assert) {
-            unreachablePanic("FailingAllocator should never be reached. This means some memory was not defined", .{});
-        }
-        return null;
+        @panic("assertion failure: called FailingAllocator.alloc");
     }
 
     fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
-        if (comptime Environment.allow_assert) {
-            unreachablePanic("FailingAllocator should never be reached. This means some memory was not defined", .{});
-        }
-        return false;
+        @panic("assertion failure: called FailingAllocator.resize");
     }
 
-    fn free(
-        _: *anyopaque,
-        _: []u8,
-        _: u8,
-        _: usize,
-    ) void {
-        unreachable;
+    fn free(_: *anyopaque, _: []u8, _: u8, _: usize) void {
+        @panic("assertion failure: called FailingAllocator.free");
     }
 };
 
@@ -3875,7 +3864,12 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
 pub const DebugThreadLock = if (Environment.allow_assert)
     struct {
         owning_thread: ?std.Thread.Id = null,
-        locked_at: crash_handler.StoredTrace = crash_handler.StoredTrace.empty,
+        locked_at: crash_handler.StoredTrace,
+
+        pub const unlocked: DebugThreadLock = .{
+            .owning_thread = null,
+            .locked_at = crash_handler.StoredTrace.empty,
+        };
 
         pub fn lock(impl: *@This()) void {
             if (impl.owning_thread) |thread| {
@@ -3889,19 +3883,29 @@ pub const DebugThreadLock = if (Environment.allow_assert)
 
         pub fn unlock(impl: *@This()) void {
             impl.assertLocked();
-            impl.* = .{};
+            impl.* = unlocked;
         }
 
         pub fn assertLocked(impl: *const @This()) void {
             assert(impl.owning_thread != null); // not locked
             assert(impl.owning_thread == std.Thread.getCurrentId());
         }
+
+        pub fn initLocked() @This() {
+            var impl = DebugThreadLock.unlocked;
+            impl.lock();
+            return impl;
+        }
     }
 else
     struct {
+        pub const unlocked: @This() = .{};
         pub fn lock(_: *@This()) void {}
         pub fn unlock(_: *@This()) void {}
         pub fn assertLocked(_: *const @This()) void {}
+        pub fn initLocked() @This() {
+            return .{};
+        }
     };
 
 pub const bytecode_extension = ".jsc";

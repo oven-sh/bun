@@ -6601,11 +6601,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.destroy();
         }
 
-        pub fn init(config: ServerConfig, global: *JSGlobalObject) bun.JSOOM!*ThisServer {
+        pub fn init(config: *ServerConfig, global: *JSGlobalObject) bun.JSOOM!*ThisServer {
             const base_url = try bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/"));
             errdefer bun.default_allocator.free(base_url);
 
-            const dev_server = if (bun.FeatureFlags.bake) if (config.bake) |bake_options| dev_server: {
+            const dev_server = if (bun.FeatureFlags.bake) if (config.bake) |*bake_options| dev_server: {
                 bun.Output.warn(
                     \\Be advised that Bun Bake is highly experimental, and its API
                     \\will have breaking changes. Join the <magenta>#bake<r> Discord
@@ -6616,6 +6616,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 bun.Output.flush();
 
                 break :dev_server bun.bake.DevServer.init(.{
+                    .arena = bake_options.arena.allocator(),
                     .root = bake_options.root,
                     .framework = bake_options.framework,
                     .vm = global.bunVM(),
@@ -6628,7 +6629,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             var server = ThisServer.new(.{
                 .globalThis = global,
-                .config = config,
+                .config = config.*,
                 .base_url_string_for_joining = base_url,
                 .vm = JSC.VirtualMachine.get(),
                 .allocator = Arena.getThreadlocalDefault(),
@@ -6636,12 +6637,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             });
 
             if (RequestContext.pool == null) {
-                RequestContext.pool = try server.allocator.create(RequestContext.RequestContextStackAllocator);
-                RequestContext.pool.?.* = RequestContext.RequestContextStackAllocator.init(
-                    if (comptime bun.heap_breakdown.enabled)
-                        bun.typedAllocator(RequestContext)
-                    else
-                        bun.default_allocator,
+                RequestContext.pool = bun.create(
+                    server.allocator,
+                    RequestContext.RequestContextStackAllocator,
+                    RequestContext.RequestContextStackAllocator.init(bun.typedAllocator(RequestContext)),
                 );
             }
 
@@ -6990,7 +6989,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 req: *uws.Request,
                 resp: *App.Response,
             ) SavedRequest {
-                _ = resp; // autofix
                 // By saving a request, all information from `req` must be
                 // copied since the provided uws.Request will be re-used for
                 // future requests (stack allocated).
@@ -7000,7 +6998,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     .js_request = JSC.Strong.create(prepared.js_request, global),
                     .request = prepared.request_object,
                     .ctx = AnyRequestContext.init(prepared.ctx),
-                    .response = uws.AnyResponse,
+                    .response = uws.AnyResponse.init(resp),
                 };
             }
         };
@@ -7360,6 +7358,7 @@ pub const SavedRequest = struct {
     js_request: JSC.Strong,
     request: *Request,
     ctx: AnyRequestContext,
+    response: uws.AnyResponse,
 
     pub const Union = union(enum) {
         stack: *uws.Request,

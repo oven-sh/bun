@@ -115,6 +115,7 @@ extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* 
   auto scope = DECLARE_THROW_SCOPE(vm);
 
   String string = virtualPathName.toWTFString();
+  
   JSC::JSString* key = JSC::jsString(vm, string);
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(DevSourceProvider::create(

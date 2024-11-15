@@ -3144,6 +3144,14 @@ pub const AnyResponse = union(enum) {
     SSL: *NewApp(true).Response,
     TCP: *NewApp(false).Response,
 
+    pub fn init(response: anytype) AnyResponse {
+        return switch (@TypeOf(response)) {
+            *NewApp(true).Response => .{ .SSL = response },
+            *NewApp(false).Response => .{ .TCP = response },
+            else => @compileError(unreachable),
+        };
+    }
+
     pub fn timeout(this: AnyResponse, seconds: u8) void {
         switch (this) {
             .SSL => |resp| resp.timeout(seconds),

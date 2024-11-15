@@ -2,6 +2,9 @@
 const log = bun.Output.scoped(.production, false);
 
 pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
+    {
+        @panic("Regressed");
+    }
     Output.warn(
         \\Be advised that Bun Bake is highly experimental, and its API
         \\will have breaking changes. Join the <magenta>#bake<r> Discord
@@ -188,7 +191,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     // these share pointers right now, so setting NODE_ENV == production on one should affect all
     bun.assert(server_bundler.env == client_bundler.env);
 
-    framework.* = framework.resolve(&server_bundler.resolver, &client_bundler.resolver) catch {
+    framework.* = framework.resolve(&server_bundler.resolver, &client_bundler.resolver, allocator) catch {
         Output.errGeneric("Failed to resolve all imports required by the framework", .{});
         bun.Global.crash();
     };
@@ -226,6 +229,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             .ignore_dirs = fsr.ignore_dirs,
             .extensions = fsr.extensions,
             .style = fsr.style,
+            .allow_layouts = fsr.allow_layouts,
             .server_file = try path_map.getFileIdForRouter(fsr.entry_server, FrameworkRouter.Route.Index.init(@intCast(i)), .page),
             .client_file = if (fsr.entry_client) |client|
                 (try path_map.getClientFile(client)).toOptional()

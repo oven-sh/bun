@@ -3361,7 +3361,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                         },
                     };
 
-                    var server = try ServerType.init(config, globalObject);
+                    var server = try ServerType.init(&config, globalObject);
                     if (globalObject.hasException()) {
                         return .zero;
                     }

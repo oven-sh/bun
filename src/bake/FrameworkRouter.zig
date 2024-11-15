@@ -83,6 +83,7 @@ pub const Type = struct {
     ignore_dirs: []const []const u8 = &.{ ".git", "node_modules" },
     extensions: []const []const u8,
     style: Style,
+    allow_layouts: bool,
     /// `FrameworkRouter` itself does not use this value.
     client_file: OpaqueFileId.Optional,
     /// `FrameworkRouter` itself does not use this value.
@@ -389,36 +390,68 @@ pub const ParsedPattern = struct {
     };
 };
 
-pub const Style = enum {
-    @"nextjs-pages-ui",
-    @"nextjs-pages-routes",
-    @"nextjs-app-ui",
-    @"nextjs-app-routes",
-    javascript_defined,
+pub const Style = union(enum) {
+    nextjs_pages,
+    nextjs_app_ui,
+    nextjs_app_routes,
+    javascript_defined: JSC.Strong,
+
+    pub const map = bun.ComptimeStringMap(Style, .{
+        .{ "nextjs-pages", .nextjs_pages },
+        .{ "nextjs-app-ui", .nextjs_app_ui },
+        .{ "nextjs-app-routes", .nextjs_app_routes },
+    });
+    pub const error_message = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
+
+    pub fn fromJS(value: JSValue, global: *JSC.JSGlobalObject) !Style {
+        if (value.isString()) {
+            const bun_string = try value.toBunString2(global);
+            var sfa = std.heap.stackFallback(4096, bun.default_allocator);
+            const utf8 = bun_string.toUTF8(sfa.get());
+            defer utf8.deinit();
+            if (map.get(utf8.slice())) |style| {
+                return style;
+            }
+        } else if (value.isCallable(global.vm())) {
+            return .{ .javascript_defined = JSC.Strong.create(value, global) };
+        }
+
+        return global.throwInvalidArguments2(error_message, .{});
+    }
+
+    pub fn deinit(style: *Style) void {
+        switch (style.*) {
+            .javascript_defined => |*strong| strong.deinit(),
+            else => {},
+        }
+    }
 
     pub const UiOrRoutes = enum { ui, routes };
     const NextRoutingConvention = enum { app, pages };
 
-    pub fn parse(style: Style, file_path: []const u8, ext: []const u8, log: *TinyLog, arena: Allocator) !?ParsedPattern {
+    pub fn parse(style: Style, file_path: []const u8, ext: []const u8, log: *TinyLog, allow_layouts: bool, arena: Allocator) !?ParsedPattern {
         bun.assert(file_path[0] == '/');
 
         return switch (style) {
-            .@"nextjs-pages-ui" => parseNextJsPages(file_path, ext, log, arena, .ui),
-            .@"nextjs-pages-routes" => parseNextJsPages(file_path, ext, log, arena, .routes),
-            .@"nextjs-app-ui" => parseNextJsApp(file_path, ext, log, arena, .ui),
-            .@"nextjs-app-routes" => parseNextJsApp(file_path, ext, log, arena, .routes),
+            .nextjs_pages => parseNextJsPages(file_path, ext, log, allow_layouts, arena),
+            .nextjs_app_ui => parseNextJsApp(file_path, ext, log, allow_layouts, arena, .ui),
+            .nextjs_app_routes => parseNextJsApp(file_path, ext, log, allow_layouts, arena, .routes),
+
+            // The strategy for this should be to collect a list of candidates,
+            // then batch-call the javascript handler and collect all results.
+            // This will avoid most of the back-and-forth native<->js overhead.
             .javascript_defined => @panic("TODO: customizable Style"),
         };
     }
 
     /// Implements the pages router parser from Next.js:
     /// https://nextjs.org/docs/getting-started/project-structure#pages-routing-conventions
-    pub fn parseNextJsPages(file_path_raw: []const u8, ext: []const u8, log: *TinyLog, arena: Allocator, extract: UiOrRoutes) !?ParsedPattern {
+    pub fn parseNextJsPages(file_path_raw: []const u8, ext: []const u8, log: *TinyLog, allow_layouts: bool, arena: Allocator) !?ParsedPattern {
         var file_path = file_path_raw[0 .. file_path_raw.len - ext.len];
         var kind: ParsedPattern.Kind = .page;
         if (strings.hasSuffixComptime(file_path, "/index")) {
             file_path.len -= "/index".len;
-        } else if (extract == .ui and strings.hasSuffixComptime(file_path, "/_layout")) {
+        } else if (allow_layouts and strings.hasSuffixComptime(file_path, "/_layout")) {
             file_path.len -= "/_layout".len;
             kind = .layout;
         }
@@ -439,6 +472,7 @@ pub const Style = enum {
         file_path_raw: []const u8,
         ext: []const u8,
         log: *TinyLog,
+        allow_layouts: bool,
         arena: Allocator,
         comptime extract: UiOrRoutes,
     ) !?ParsedPattern {
@@ -467,6 +501,8 @@ pub const Style = enum {
             },
         }).get(basename) orelse
             return null;
+
+        if (kind == .layout and !allow_layouts) return null;
 
         const dirname = bun.path.dirname(without_ext, .posix);
         if (dirname.len <= 1) return .{
@@ -817,12 +853,12 @@ pub fn scan(
     ty: Type.Index,
     r: *Resolver,
     ctx: InsertionContext,
-) !void {
+) bun.OOM!void {
     const t = &fw.types[ty.get()];
     bun.assert(!strings.hasSuffixComptime(t.abs_root, "/"));
     bun.assert(std.fs.path.isAbsolute(t.abs_root));
-    const root_info = try r.readDirInfo(t.abs_root) orelse
-        return error.RootDirMissing;
+    const root_info = r.readDirInfoIgnoreError(t.abs_root) orelse
+        return;
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
     try fw.scanInner(alloc, t, ty, r, root_info, &arena_state, ctx);
@@ -837,7 +873,7 @@ fn scanInner(
     dir_info: *const DirInfo,
     arena_state: *std.heap.ArenaAllocator,
     ctx: InsertionContext,
-) !void {
+) bun.OOM!void {
     const fs = r.fs;
     const fs_impl = &fs.fs;
 
@@ -882,8 +918,11 @@ fn scanInner(
                     rel_path = rel_path_buf[0 .. rel_path.len + 1];
                     var log = TinyLog.empty;
                     defer _ = arena_state.reset(.retain_capacity);
-                    const parsed = (t.style.parse(rel_path, ext, &log, arena_state.allocator()) catch
+                    const parsed = (t.style.parse(rel_path, ext, &log, t.allow_layouts, arena_state.allocator()) catch
                         @panic("TODO: propagate error message")) orelse continue :outer;
+
+                    if (parsed.kind == .page and t.ignore_underscores and bun.strings.hasPrefixComptime(base, "_"))
+                        continue :outer;
 
                     var static_total_len: usize = 0;
                     var param_count: usize = 0;
@@ -903,9 +942,6 @@ fn scanInner(
                     if (param_count > 64) {
                         @panic("TODO: propagate error for more than 64 params");
                     }
-
-                    if (parsed.kind == .page and t.ignore_underscores and bun.strings.hasPrefixComptime(base, "_"))
-                        continue :outer;
 
                     const result = switch (param_count > 0) {
                         inline else => |has_dynamic_comptime| result: {
@@ -982,13 +1018,8 @@ pub const JSFrameworkRouter = struct {
             return global.throwInvalidArguments2("Missing options.root", .{});
         defer root.deinit();
 
-        const style = try validators.validateStringEnum(
-            Style,
-            global,
-            try opts.getOptional(global, "style", JSValue) orelse .undefined,
-            "style",
-            .{},
-        );
+        var style = try Style.fromJS(try opts.getOptional(global, "style", JSValue) orelse .undefined, global);
+        errdefer style.deinit();
 
         const abs_root = try bun.default_allocator.dupe(u8, bun.strings.withoutTrailingSlash(
             bun.path.joinAbs(bun.fs.FileSystem.instance.top_level_dir, .auto, root.slice()),
@@ -1000,6 +1031,7 @@ pub const JSFrameworkRouter = struct {
             .ignore_underscores = false,
             .extensions = &.{ ".tsx", ".ts", ".jsx", ".js" },
             .style = style,
+            .allow_layouts = true,
             // Unused by JSFrameworkRouter
             .client_file = undefined,
             .server_file = undefined,
@@ -1119,14 +1151,11 @@ pub const JSFrameworkRouter = struct {
         const style_js, const filepath_js = frame.argumentsAsArray(2);
         const filepath = try filepath_js.toSlice2(global, alloc);
         defer filepath.deinit();
-        const style_string = try style_js.toSlice2(global, alloc);
-        defer style_string.deinit();
-
-        const style = std.meta.stringToEnum(Style, style_string.slice()) orelse
-            return global.throwInvalidArguments2("unknown router style {}", .{bun.fmt.quote(style_string.slice())});
+        var style = try Style.fromJS(style_js, global);
+        errdefer style.deinit();
 
         var log = TinyLog.empty;
-        const parsed = style.parse(filepath.slice(), std.fs.path.extension(filepath.slice()), &log, alloc) catch |err| switch (err) {
+        const parsed = style.parse(filepath.slice(), std.fs.path.extension(filepath.slice()), &log, true, alloc) catch |err| switch (err) {
             error.InvalidRoutePattern => {
                 global.throw("{s} ({d}:{d})", .{ log.msg.slice(), log.cursor_at, log.cursor_len });
                 return error.JSError;

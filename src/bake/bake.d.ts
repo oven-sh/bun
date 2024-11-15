@@ -255,6 +255,7 @@ declare module "bun" {
        * Do not traverse into directories and files that start with an `_`.  Do
        * not index pages that start with an `_`. Does not prevent stuff like
        * `_layout.tsx` from being recognized.
+       * @default false
        */
       ignoreUnderscores?: boolean;
       /**

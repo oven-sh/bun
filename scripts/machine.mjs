@@ -363,9 +363,9 @@ export const aws = {
       } else if (distro === "alpine") {
         owner = "538276064493";
         name = `alpine-${distroVersion || "*"}.*-${arch === "aarch64" ? "aarch64" : "x86_64"}-uefi-cloudinit-*`;
-      } else if (distro === "rhel") {
-        owner = "309956199498";
-        name = `RHEL-${distroVersion || "*"}*_HVM-*-${arch === "aarch64" ? "arm64" : "x86_64"}-*-GP3`;
+      } else if (distro === "centos") {
+        owner = "aws-marketplace";
+        name = `CentOS-Stream-ec2-${distroVersion || "*"}-*.${arch === "aarch64" ? "aarch64" : "x86_64"}-*`;
       }
     } else if (os === "windows") {
       if (!distro || distro === "server") {
@@ -699,6 +699,7 @@ function getCloudInit(cloudInit) {
       break;
     case "amazonlinux":
     case "rhel":
+    case "centos":
       sftpPath = "/usr/libexec/openssh/sftp-server";
       break;
   }
@@ -741,7 +742,7 @@ function getUsername(distro) {
     return "administrator";
   }
 
-  if (/alpine/i.test(distro)) {
+  if (/alpine|centos/i.test(distro)) {
     return "root";
   }
 
@@ -753,11 +754,7 @@ function getUsername(distro) {
     return "ubuntu";
   }
 
-  if (/amazon|amzn|al\d+/i.test(distro)) {
-    return "ec2-user";
-  }
-
-  if (/rhel/i.test(distro)) {
+  if (/amazon|amzn|al\d+|rhel/i.test(distro)) {
     return "ec2-user";
   }
 

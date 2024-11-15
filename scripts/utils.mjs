@@ -117,6 +117,7 @@ export function setEnv(name, value) {
  * @property {number} [timeout]
  * @property {Record<string, string | undefined>} [env]
  * @property {string} [stdin]
+ * @property {boolean} [privileged]
  */
 
 /**
@@ -153,15 +154,62 @@ export function $(strings, ...values) {
   return result;
 }
 
+/** @type {string[] | undefined} */
+let priviledgedCommand;
+
+/**
+ * @param {string[]} command
+ * @param {SpawnOptions} options
+ */
+function parseCommand(command, options) {
+  if (options?.privileged) {
+    return [...getPrivilegedCommand(), ...command];
+  }
+  return command;
+}
+
+/**
+ * @returns {string[]}
+ */
+function getPrivilegedCommand() {
+  if (typeof priviledgedCommand !== "undefined") {
+    return priviledgedCommand;
+  }
+
+  if (isWindows) {
+    return (priviledgedCommand = []);
+  }
+
+  const sudo = ["sudo"];
+  const { error: sudoError } = spawnSync([...sudo, "true"]);
+  if (!sudoError) {
+    return (priviledgedCommand = sudo);
+  }
+
+  const su = ["su", "-s", "sh", "root", "-c"];
+  const { error: suError } = spawnSync([...su, "true"]);
+  if (!suError) {
+    return (priviledgedCommand = su);
+  }
+
+  const doas = ["doas", "-u", "root"];
+  const { error: doasError } = spawnSync([...doas, "true"]);
+  if (!doasError) {
+    return (priviledgedCommand = doas);
+  }
+
+  return (priviledgedCommand = []);
+}
+
 /**
  * @param {string[]} command
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
 export async function spawn(command, options = {}) {
-  debugLog("$", ...command);
+  const [cmd, ...args] = parseCommand(command, options);
+  debugLog("$", cmd, ...args);
 
-  const [cmd, ...args] = command;
   const stdin = options["stdin"];
   const spawnOptions = {
     cwd: options["cwd"] ?? process.cwd(),
@@ -260,9 +308,9 @@ export async function spawnSafe(command, options) {
  * @returns {SpawnResult}
  */
 export function spawnSync(command, options = {}) {
-  debugLog("$", ...command);
+  const [cmd, ...args] = parseCommand(command, options);
+  debugLog("$", cmd, ...args);
 
-  const [cmd, ...args] = command;
   const spawnOptions = {
     cwd: options["cwd"] ?? process.cwd(),
     timeout: options["timeout"] ?? undefined,

@@ -506,7 +506,16 @@ install_common_software() {
 		install_packages \
 			"https://dl.fedoraproject.org/pub/epel/epel-release-latest-$rhel_version.noarch.rpm"
 		;;
+	centos)
+		install_packages \
+			epel-release
+		;;
 	esac
+
+	crb="$(which crb)"
+	if [ -f "$crb" ]; then
+		execute "$crb" enable
+	fi
 
 	install_packages \
 		bash \

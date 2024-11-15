@@ -632,7 +632,7 @@ function parseTestStdout(stdout, testPath) {
           const removeStart = lines.length - skipCount;
           const removeCount = skipCount - 2;
           const omitLine = `${getAnsi("gray")}... omitted ${removeCount} tests ...${getAnsi("reset")}`;
-          lines = lines.toSpliced?.(removeStart, removeCount, omitLine);
+          lines.splice(removeStart, removeCount, omitLine);
         }
         skipCount = 0;
       }

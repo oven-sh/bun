@@ -72,7 +72,7 @@ export async function doAgent(action) {
         }
       `;
       writeFile(servicePath, service, { mode: 0o755 });
-      await spawnSafe(["rc-update", "add", "buildkite-agent", "default"]);
+      await spawnSafe(["rc-update", "add", "buildkite-agent", "default"], { stdio: "inherit", privileged: true });
     }
 
     if (isSystemd()) {
@@ -99,8 +99,8 @@ export async function doAgent(action) {
         WantedBy=multi-user.target
       `;
       writeFile(servicePath, service);
-      await spawnSafe(["systemctl", "daemon-reload"]);
-      await spawnSafe(["systemctl", "enable", "buildkite-agent"]);
+      await spawnSafe(["systemctl", "daemon-reload"], { stdio: "inherit", privileged: true });
+      await spawnSafe(["systemctl", "enable", "buildkite-agent"], { stdio: "inherit", privileged: true });
     }
   }
 
@@ -115,7 +115,10 @@ export async function doAgent(action) {
       return;
     }
 
-    await spawn([tailscale, "up", "--ssh", "--accept-risk=all", `--authkey=${authKey}`], { stdio: "inherit" });
+    await spawn([tailscale, "up", "--ssh", "--accept-risk=all", `--authkey=${authKey}`], {
+      stdio: "inherit",
+      privileged: true,
+    });
   }
 
   async function start() {

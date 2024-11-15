@@ -555,7 +555,7 @@ function getPipeline(options) {
   return {
     priority: getPriority(),
     steps: [
-      ...buildPlatforms.map(platform => {
+      ...buildPlatforms.flatMap(platform => {
         const { os, arch, abi, baseline } = platform;
         const tests = testPlatforms.filter(
           testPlatform =>
@@ -597,11 +597,17 @@ function getPipeline(options) {
           steps.push(getTestBunStep(platform));
         }
 
-        return {
-          key: getTargetKey(platform),
-          group: getTargetLabel(platform),
-          steps,
-        };
+        if (!steps.length) {
+          return [];
+        }
+
+        return [
+          {
+            key: getTargetKey(platform),
+            group: getTargetLabel(platform),
+            steps,
+          },
+        ];
       }),
     ],
   };

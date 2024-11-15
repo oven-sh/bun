@@ -26,9 +26,12 @@ if(RELEASE)
   list(APPEND LOLHTML_BUILD_ARGS --release)
 endif()
 
-# The encoded escape sequences are intentional. They're how you delimit multiple arguments in a single environment variable.
-# Also add rust optimization flag for smaller binary size, but not huge speed penalty.
-set(RUSTFLAGS "-Cpanic=abort-Cdebuginfo=0-Cforce-unwind-tables=no-Copt-level=s")
+# Windows requires unwind tables, apparently.
+if (NOT WIN32)
+  # The encoded escape sequences are intentional. They're how you delimit multiple arguments in a single environment variable.
+  # Also add rust optimization flag for smaller binary size, but not huge speed penalty.
+  set(RUSTFLAGS "-Cpanic=abort-Cdebuginfo=0-Cforce-unwind-tables=no-Copt-level=s")
+endif()
 
 register_command(
   TARGET

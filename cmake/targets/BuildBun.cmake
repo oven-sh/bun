@@ -951,7 +951,6 @@ else()
     -Wl,-z,norelro
     -Wl,-z,combreloc
     -Wl,--no-eh-frame-hdr
-    -Wl,--no-unwind-tables
     -Wl,--sort-section=name
     -Wl,--hash-style=gnu
     -Wl,--build-id=sha1  # Better for debugging than default

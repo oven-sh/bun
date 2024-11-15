@@ -249,8 +249,19 @@ export const aws = {
    */
   async createImage(options) {
     const flags = aws.getFlags(options);
-    const { ImageId } = await aws.spawn($`ec2 create-image ${flags}`);
-    return ImageId;
+    try {
+      const { ImageId } = await aws.spawn($`ec2 create-image ${flags}`);
+      return ImageId;
+    } catch (error) {
+      const match = /already in use by AMI (ami-[a-z0-9]+)/i.exec(inspect(error));
+      if (!match) {
+        throw error;
+      }
+      const [, existingImageId] = match;
+      await aws.spawn($`ec2 deregister-image --image-id ${existingImageId}`);
+      const { ImageId } = await aws.spawn($`ec2 create-image ${flags}`);
+      return ImageId;
+    }
   },
 
   /**

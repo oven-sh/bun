@@ -32,13 +32,14 @@ import {
  * @property {string} [buildId]
  * @property {boolean} [buildImages]
  * @property {boolean} [publishImages]
+ * @property {boolean} [skipTests]
  */
 
 /**
  * @param {PipelineOptions} options
  */
 function getPipeline(options) {
-  const { buildId, buildImages, publishImages } = options;
+  const { buildId, buildImages, publishImages, skipTests } = options;
 
   /**
    * Helpers
@@ -559,69 +560,76 @@ function getPipeline(options) {
     { os: "windows", arch: "x64", baseline: true, release: "2019" },
   ];
 
+  const imagePlatforms = new Map(
+    [...buildPlatforms, ...testPlatforms]
+      .filter(platform => buildImages && isUsingNewAgent(platform))
+      .map(platform => [getImageKey(platform), platform]),
+  );
+
   /**
-   * @type {Map<string, Platform>}
+   * @type {Step[]}
    */
-  const imagePlatforms = new Map();
+  const steps = [];
+
+  if (imagePlatforms.length) {
+    steps.push({
+      group: ":docker:",
+      steps: [...imagePlatforms.values()].map(platform => getBuildImageStep(platform)),
+    });
+  }
+
+  for (const platform of buildPlatforms) {
+    const { os, arch, abi, baseline } = platform;
+
+    /** @type {Step[]} */
+    const platformSteps = [];
+
+    if (buildImages || !buildId) {
+      platformSteps.push(
+        getBuildVendorStep(platform),
+        getBuildCppStep(platform),
+        getBuildZigStep(platform),
+        getBuildBunStep(platform),
+      );
+    }
+
+    if (!skipTests) {
+      platformSteps.push(
+        ...testPlatforms
+          .filter(
+            testPlatform =>
+              testPlatform.os === os &&
+              testPlatform.arch === arch &&
+              testPlatform.abi === abi &&
+              testPlatform.baseline === baseline,
+          )
+          .map(testPlatform => getTestBunStep(testPlatform)),
+      );
+    }
+
+    if (!platformSteps.length) {
+      continue;
+    }
+
+    if (imagePlatforms.has(getImageKey(platform))) {
+      for (const step of platformSteps) {
+        if (step.agents?.["image-name"]) {
+          step.depends_on ??= [];
+          step.depends_on.push(`${getImageKey(platform)}-build-image`);
+        }
+      }
+    }
+
+    steps.push({
+      key: getTargetKey(platform),
+      group: getTargetLabel(platform),
+      steps: platformSteps,
+    });
+  }
 
   return {
     priority: getPriority(),
-    steps: [
-      ...buildPlatforms.flatMap(platform => {
-        const { os, arch, abi, distro, baseline } = platform;
-        const tests = testPlatforms.filter(
-          testPlatform =>
-            testPlatform.os === os &&
-            testPlatform.arch === arch &&
-            testPlatform.abi === abi &&
-            testPlatform.baseline === baseline,
-        );
-
-        /** @type {Step[]} */
-        const steps = [];
-
-        if (buildImages && isUsingNewAgent(platform) && !imagePlatforms.has(getImageKey(platform))) {
-          steps.push(getBuildImageStep(platform));
-          imagePlatforms.set(getImageKey(platform), platform);
-        }
-
-        if (buildImages || !buildId) {
-          const buildSteps = [getBuildVendorStep(platform), getBuildCppStep(platform), getBuildZigStep(platform)];
-          if (buildImages) {
-            steps.push(
-              ...buildSteps.map(step => {
-                if (step.agents?.["image-name"]) {
-                  return {
-                    ...step,
-                    depends_on: [`${getImageKey(platform)}-build-image`],
-                  };
-                }
-                return step;
-              }),
-            );
-          } else {
-            steps.push(...buildSteps);
-          }
-          steps.push(getBuildBunStep(platform));
-        }
-
-        for (const platform of tests) {
-          steps.push(getTestBunStep(platform));
-        }
-
-        if (!steps.length) {
-          return [];
-        }
-
-        return [
-          {
-            key: getTargetKey(platform),
-            group: getTargetLabel(platform),
-            steps,
-          },
-        ];
-      }),
-    ],
+    steps,
   };
 }
 
@@ -728,6 +736,17 @@ async function main() {
     }
   }
 
+  console.log("Checking if tests should be skipped...");
+  let skipTests;
+  {
+    const message = getCommitMessage();
+    const match = /\[(skip tests?|tests? skip|no tests?|tests? no)\]/i.exec(message);
+    if (match) {
+      console.log(" - Yes, because commit message contains:", match[1]);
+      skipTests = true;
+    }
+  }
+
   console.log("Checking if build is a named release...");
   let buildRelease;
   {
@@ -745,6 +764,7 @@ async function main() {
     buildId: lastBuild && skipBuild && !forceBuild ? lastBuild.id : undefined,
     buildImages,
     publishImages,
+    skipTests,
   });
 
   const content = toYaml(pipeline);

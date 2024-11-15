@@ -369,26 +369,42 @@ async function main() {
     console.log(" - No build found");
   }
 
-  console.log("Checking changed files...");
-  const baseRef = isFork() ? `${getRepositoryOwner()}:${getCommit()}` : getCommit();
-  console.log(" - Base Ref:", baseRef);
-  const headRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
-  console.log(" - Head Ref:", headRef);
-
-  const changedFiles = await getChangedFiles(undefined, baseRef, headRef);
-  if (changedFiles) {
-    if (changedFiles.length) {
-      changedFiles.forEach(filename => console.log(` - ${filename}`));
-    } else {
-      console.log(" - No changed files");
+  
+  let changedFiles;
+  if (!isFork()) {
+    console.log("Checking changed files...");
+    const baseRef = getCommit();
+    console.log(" - Base Ref:", baseRef);
+    const headRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
+    console.log(" - Head Ref:", headRef);
+  
+    changedFiles = await getChangedFiles(undefined, baseRef, headRef);
+    if (changedFiles) {
+      if (changedFiles.length) {
+        changedFiles.forEach(filename => console.log(` - ${filename}`));
+      } else {
+        console.log(" - No changed files");
+      }
     }
   }
 
   const isDocumentationFile = filename => /^(\.vscode|\.github|bench|docs|examples)|\.(md)$/i.test(filename);
   const isTestFile = filename => /^test/i.test(filename) || /runner\.node\.mjs$/i.test(filename);
 
-  console.log("Checking if CI should be skipped...");
+  console.log("Checking if CI should be forced...");
+  let forceBuild;
   {
+    const message = getCommitMessage();
+    const match = /\[(force ci|ci force|ci force build)\]/i.exec(message);
+    if (match) {
+      const [, reason] = match;
+      console.log(" - Yes, because commit message contains:", reason);
+      forceBuild = true;
+    }
+  }
+
+  console.log("Checking if CI should be skipped...");
+  if (!forceBuild) {
     const message = getCommitMessage();
     const match = /\[(skip ci|no ci|ci skip|ci no)\]/i.exec(message);
     if (match) {
@@ -396,15 +412,15 @@ async function main() {
       console.log(" - Yes, because commit message contains:", reason);
       return;
     }
-  }
-  if (changedFiles && changedFiles.every(filename => isDocumentationFile(filename))) {
-    console.log(" - Yes, because all changed files are documentation");
-    return;
+    if (changedFiles && changedFiles.every(filename => isDocumentationFile(filename))) {
+      console.log(" - Yes, because all changed files are documentation");
+      return;
+    }
   }
 
   console.log("Checking if build should be skipped...");
   let skipBuild;
-  {
+  if (!forceBuild) {
     const message = getCommitMessage();
     const match = /\[(only tests?|tests? only|skip build|no build|build skip|build no)\]/i.exec(message);
     if (match) {
@@ -412,10 +428,10 @@ async function main() {
       console.log(" - Yes, because commit message contains:", reason);
       skipBuild = true;
     }
-  }
-  if (changedFiles && changedFiles.every(filename => isTestFile(filename) || isDocumentationFile(filename))) {
-    console.log(" - Yes, because all changed files are tests or documentation");
-    skipBuild = true;
+    if (changedFiles && changedFiles.every(filename => isTestFile(filename) || isDocumentationFile(filename))) {
+      console.log(" - Yes, because all changed files are tests or documentation");
+      skipBuild = true;
+    }
   }
 
   console.log("Checking if build is a named release...");
@@ -431,7 +447,7 @@ async function main() {
   }
 
   console.log("Generating pipeline...");
-  const pipeline = getPipeline(lastBuild && skipBuild ? lastBuild.id : undefined);
+  const pipeline = getPipeline(lastBuild && skipBuild && !forceBuild ? lastBuild.id : undefined);
   const content = toYaml(pipeline);
   const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
   writeFileSync(contentPath, content);

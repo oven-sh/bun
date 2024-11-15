@@ -344,8 +344,8 @@ function getPipeline(options) {
     const action = publish ? "publish-image" : "create-image";
     const depends_on = publish ? ["publish-image"] : undefined;
     return {
-      key: `${getImageKey(platform)}-build-image`,
-      label: `${getImageLabel(platform)} - build-image`,
+      key: `${getImageKey(platform)}-${action}`,
+      label: `${getImageLabel(platform)} - ${action}`,
       agents: {
         queue: "build-image",
       },

@@ -498,24 +498,30 @@ function getPipeline(options) {
   /**
    * @typedef Input
    * @property {string} key
-   * @property {string} prompt
+   * @property {string} input
    * @property {string[]} [depends_on]
    * @property {SelectField[]} fields
    */
 
   /**
-   * @param {Platform[]} platforms
+   * @param {Platform[]} imagePlatforms
    * @returns {Input}
    */
-  const getPublishImageInput = platforms => {
+  const getReleaseVerificationInput = imagePlatforms => {
     return {
-      key: "publish-image",
-      prompt: "Should the build images be published?",
+      key: "verify-release",
+      input: "Release Verification",
       multiple: true,
-      fields: platforms.map(platform => ({
-        label: getImageLabel(platform),
-        value: getImageKey(platform),
-      })),
+      fields: [
+        {
+          key: "publish-image",
+          select: "Should the build images be published?",
+          options: imagePlatforms.map(platform => ({
+            label: getImageLabel(platform),
+            value: getImageKey(platform),
+          })),
+        },
+      ],
     };
   };
 
@@ -599,7 +605,7 @@ function getPipeline(options) {
       }),
       ...(buildImages
         ? [
-            getPublishImageInput(Array.from(imagePlatforms.values())),
+            getReleaseVerificationInput(Array.from(imagePlatforms.values())),
             ...Array.from(imagePlatforms.values()).map(platform => getBuildImageStep(platform, true)),
           ]
         : []),

@@ -510,11 +510,11 @@ function getPipeline(options) {
     return {
       key: "verify-release",
       input: "Release Verification",
-      multiple: true,
       fields: [
         {
           key: "publish-image",
           select: "Should the build images be published?",
+          multiple: true,
           options: imagePlatforms.map(platform => ({
             label: getImageLabel(platform),
             value: getImageKey(platform),

@@ -1646,15 +1646,26 @@ pub fn DebugOnlyDisabler(comptime Type: type) type {
 
 const FailingAllocator = struct {
     fn alloc(_: *anyopaque, _: usize, _: u8, _: usize) ?[*]u8 {
-        @panic("assertion failure: called FailingAllocator.alloc");
+        if (comptime Environment.allow_assert) {
+            unreachablePanic("FailingAllocator should never be reached. This means some memory was not defined", .{});
+        }
+        return null;
     }
 
     fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
-        @panic("assertion failure: called FailingAllocator.resize");
+        if (comptime Environment.allow_assert) {
+            unreachablePanic("FailingAllocator should never be reached. This means some memory was not defined", .{});
+        }
+        return false;
     }
 
-    fn free(_: *anyopaque, _: []u8, _: u8, _: usize) void {
-        @panic("assertion failure: called FailingAllocator.free");
+    fn free(
+        _: *anyopaque,
+        _: []u8,
+        _: u8,
+        _: usize,
+    ) void {
+        unreachable;
     }
 };
 

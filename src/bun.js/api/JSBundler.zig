@@ -895,19 +895,7 @@ pub const JSBundler = struct {
 
             this.called_defer = true;
 
-            // _ = this.parse_task.ctx.graph.deferred_pending.fetchAdd(1, .acq_rel);
-            // _ = @atomicRmw(usize, &this.parse_task.ctx.graph.parse_pending, .Sub, 1, .acq_rel);
-
-            // debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s}) parse_pending={d} deferred_pending={d}", .{
-            //     @intFromPtr(this),
-            //     this.path,
-            //     @atomicLoad(
-            //         usize,
-            //         &this.parse_task.ctx.graph.parse_pending,
-            //         .monotonic,
-            //     ),
-            //     this.parse_task.ctx.graph.deferred_pending.load(.monotonic),
-            // });
+            debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s})", .{ @intFromPtr(this), this.path });
 
             // Notify the bundler thread about the deferral. This will decrement
             switch (this.parse_task.ctx.loop().*) {

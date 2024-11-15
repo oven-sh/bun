@@ -322,7 +322,7 @@ const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 
 /// Bake needs to specify which graph (client/server/ssr) each entry point is.
 /// File paths are always absolute paths. Files may be bundled for multiple
-/// targets.  From DevServer, CSS entrypoints must be told up front that they
+/// targets. From DevServer, CSS entrypoints must be told up front that they
 /// are CSS.
 pub const BakeEntryPoints = struct {
     set: bun.StringArrayHashMapUnmanaged(Flags),
@@ -616,6 +616,8 @@ pub const BundleV2 = struct {
     }
 
     fn isDone(this: *BundleV2) bool {
+        this.thread_lock.assertLocked();
+
         if (this.graph.pending_items == 0) {
             if (this.graph.drainDeferredTasks(this)) {
                 return false;
@@ -1017,7 +1019,7 @@ pub const BundleV2 = struct {
                 files: BakeEntryPoints,
                 css_data: *std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
             },
-            .bake_production => BakeEntryPoints,
+            .bake_production => bake.production.EntryPointMap,
         },
     ) !ThreadPoolLib.Batch {
         var batch = ThreadPoolLib.Batch{};
@@ -1056,7 +1058,7 @@ pub const BundleV2 = struct {
             // Setup entry points
             const num_entry_points = switch (variant) {
                 .normal => data.len,
-                .bake_production => data.set.count(),
+                .bake_production => data.files.count(),
                 .dev_server => data.files.set.count(),
             };
 
@@ -1072,24 +1074,31 @@ pub const BundleV2 = struct {
                         _ = try this.enqueueEntryItem(null, &batch, resolved, true, this.bundler.options.target);
                     }
                 },
-                inline .dev_server, .bake_production => |tag| {
-                    const set = switch (tag) {
-                        .dev_server => data.files.set,
-                        .bake_production => data.set,
-                        else => @compileError(unreachable),
-                    };
-                    for (set.keys(), set.values()) |abs_path, flags| {
+                .dev_server => {
+                    for (data.files.set.keys(), data.files.set.values()) |abs_path, flags| {
                         const resolved = this.bundler.resolveEntryPoint(abs_path) catch
                             continue;
 
                         if (flags.client) brk: {
                             const source_index = try this.enqueueEntryItem(null, &batch, resolved, true, .browser) orelse break :brk;
-                            if (tag == .dev_server and flags.css) {
+                            if (flags.css) {
                                 try data.css_data.putNoClobber(this.graph.allocator, Index.init(source_index), .{ .imported_on_server = false });
                             }
                         }
                         if (flags.server) _ = try this.enqueueEntryItem(null, &batch, resolved, true, this.bundler.options.target);
                         if (flags.ssr) _ = try this.enqueueEntryItem(null, &batch, resolved, true, .bake_server_components_ssr);
+                    }
+                },
+                .bake_production => {
+                    for (data.files.keys()) |key| {
+                        const resolved = this.bundler.resolveEntryPoint(key.absPath()) catch
+                            continue;
+
+                        // TODO: wrap client files so the exports arent preserved.
+                        _ = try this.enqueueEntryItem(null, &batch, resolved, true, switch (key.side) {
+                            .client => .browser,
+                            .server => this.bundler.options.target,
+                        }) orelse continue;
                     }
                 },
             }
@@ -1434,15 +1443,12 @@ pub const BundleV2 = struct {
     }
 
     pub fn generateFromBakeProductionCLI(
-        entry_points: BakeEntryPoints,
+        entry_points: bake.production.EntryPointMap,
         server_bundler: *ThisBundler,
         kit_options: BakeOptions,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
     ) !std.ArrayList(options.OutputFile) {
-        {
-            @panic("regressed behavior");
-        }
         var this = try BundleV2.init(server_bundler, kit_options, allocator, event_loop, false, null, null);
         this.unique_key = generateUniqueKey();
 
@@ -2931,7 +2937,7 @@ pub const BundleV2 = struct {
                         ssr_source.path = this.pathWithPrettyInitialized(ssr_source.path, .bake_server_components_ssr) catch bun.outOfMemory();
                         const ssr_index = this.enqueueParseTask2(
                             ssr_source,
-                            input_file_loaders[result.source.index.get()],
+                            this.graph.input_files.items(.loader)[result.source.index.get()],
                             .bake_server_components_ssr,
                         ) catch bun.outOfMemory();
 
@@ -2943,7 +2949,7 @@ pub const BundleV2 = struct {
                         server_source.path = this.pathWithPrettyInitialized(server_source.path, this.bundler.options.target) catch bun.outOfMemory();
                         const server_index = this.enqueueParseTask2(
                             server_source,
-                            input_file_loaders[result.source.index.get()],
+                            this.graph.input_files.items(.loader)[result.source.index.get()],
                             .bake_server_components_ssr,
                         ) catch bun.outOfMemory();
 

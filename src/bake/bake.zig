@@ -417,8 +417,18 @@ pub const Framework = struct {
                         var i_2: usize = 0;
                         const extensions = try arena.alloc([]const u8, len);
                         while (it_2.next()) |array_item| : (i_2 += 1) {
-                            // TODO: remove/add the prefix `.`, throw error if specifying '*' as an array item instead of as root
-                            extensions[i_2] = refs.track(try array_item.toSlice2(global, arena));
+                            const slice = refs.track(try array_item.toSlice2(global, arena));
+                            if (bun.strings.eqlComptime(slice, "*"))
+                                return global.throwInvalidArguments2("'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array.", .{});
+
+                            if (slice.len == 0) {
+                                return global.throwInvalidArguments2("'extensions' cannot include \"\" as an extension.", .{});
+                            }
+
+                            extensions[i_2] = if (slice[0] == '.')
+                                slice
+                            else
+                                try std.mem.concat(arena, u8, &.{ ".", slice });
                         }
                         break :exts extensions;
                     }

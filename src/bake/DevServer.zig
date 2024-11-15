@@ -494,7 +494,8 @@ pub fn deinit(dev: *DevServer) void {
     if (dev.has_pre_crash_handler)
         bun.crash_handler.removePreCrashHandler(dev);
     allocator.destroy(dev);
-    bun.todoPanic(@src(), "bake.DevServer.deinit()", .{});
+    if (bun.Environment.isDebug)
+        bun.todoPanic(@src(), "bake.DevServer.deinit()", .{});
 }
 
 fn onJsRequest(dev: *DevServer, req: *Request, resp: *Response) void {
@@ -720,7 +721,7 @@ fn onRequestWithBundle(
             // routerTypeMain
             router_type.server_file_string.get() orelse str: {
                 const name = dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, router_type.server_file).get()];
-                const str = bun.String.createUTF8(name);
+                const str = bun.String.createUTF8(dev.relativePath(name));
                 defer str.deref();
                 const js = str.toJS(dev.vm.global);
                 router_type.server_file_string = JSC.Strong.create(js, dev.vm.global);
@@ -753,7 +754,7 @@ fn onRequestWithBundle(
                 break :arr arr;
             },
             // clientId
-            route_bundle.cached_client_bundle_url.get() orelse str: {
+            if (router_type.client_file != .none) route_bundle.cached_client_bundle_url.get() orelse str: {
                 const id = std.crypto.random.int(u64);
                 dev.route_js_payloads.put(dev.allocator, id, route_bundle.route) catch bun.outOfMemory();
                 const str = bun.String.createFormat(client_prefix ++ "/route.{}.js", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&id))}) catch bun.outOfMemory();
@@ -761,7 +762,7 @@ fn onRequestWithBundle(
                 const js = str.toJS(dev.vm.global);
                 route_bundle.cached_client_bundle_url = JSC.Strong.create(js, dev.vm.global);
                 break :str js;
-            },
+            } else .null,
             // styles
             route_bundle.cached_css_file_array.get() orelse arr: {
                 const js = dev.generateCssList(route_bundle) catch bun.outOfMemory();
@@ -938,13 +939,12 @@ fn indexFailures(dev: *DevServer) !void {
             }
         }
 
-        {
-            @panic("TODO: revive");
+        for (dev.incremental_result.routes_affected.items) |route_index| {
+            _ = route_index; // autofix
+            // const route = &dev.route_bundles[route_index.get()];
+            // route.server_state = .possible_bundling_failures;
+            @panic("todo");
         }
-        // for (dev.incremental_result.routes_affected.items) |route_index| {
-        //     const route = &dev.routes[route_index.get()];
-        //     route.server_state = .possible_bundling_failures;
-        // }
 
         dev.publish(HmrSocket.global_topic, payload.items, .binary);
     } else if (dev.incremental_result.failures_removed.items.len > 0) {
@@ -1525,6 +1525,9 @@ pub fn handleParseTaskFailure(
     abs_path: []const u8,
     log: *Log,
 ) bun.OOM!void {
+    dev.graph_safety_lock.lock();
+    defer dev.graph_safety_lock.unlock();
+
     // Print each error only once
     Output.prettyErrorln("<red><b>Errors while bundling '{s}':<r>", .{
         dev.relativePath(abs_path),

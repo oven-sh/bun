@@ -8541,7 +8541,7 @@ pub const AnyServer = packed struct {
     }
 
     pub fn publish(this: AnyServer, topic: []const u8, message: []const u8, opcode: uws.Opcode, compress: bool) bool {
-       return switch (this.ptr.tag()) {
+        return switch (this.ptr.tag()) {
             Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).app.?.publish(topic, message, opcode, compress),
             Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).app.?.publish(topic, message, opcode, compress),
             Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).app.?.publish(topic, message, opcode, compress),
@@ -8559,7 +8559,7 @@ pub const AnyServer = packed struct {
         comptime extra_arg_count: usize,
         extra_args: [extra_arg_count]JSValue,
     ) void {
-         return switch (this.ptr.tag()) {
+        return switch (this.ptr.tag()) {
             Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).onRequestFromSaved(req, resp, callback, extra_arg_count, extra_args),
             Ptr.case(HTTPSServer) => @panic("TODO: https"),
             Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).onRequestFromSaved(req, resp, callback, extra_arg_count, extra_args),
@@ -8568,7 +8568,7 @@ pub const AnyServer = packed struct {
         };
     }
     pub fn numSubscribers(this: AnyServer, topic: []const u8) u32 {
-       return switch (this.ptr.tag()) {
+        return switch (this.ptr.tag()) {
             Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).app.?.numSubscribers(topic),
             Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).app.?.numSubscribers(topic),
             Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).app.?.numSubscribers(topic),

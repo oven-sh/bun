@@ -27,7 +27,8 @@ if(RELEASE)
 endif()
 
 # The encoded escape sequences are intentional. They're how you delimit multiple arguments in a single environment variable.
-set(RUSTFLAGS "-Cpanic=abort-Cdebuginfo=0-Cforce-unwind-tables=no")
+# Also add rust optimization flag for smaller binary size, but not huge speed penalty.
+set(RUSTFLAGS "-Cpanic=abort-Cdebuginfo=0-Cforce-unwind-tables=no-Copt-level=s")
 
 register_command(
   TARGET

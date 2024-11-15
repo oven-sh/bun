@@ -1065,7 +1065,11 @@ async function main() {
       process.on(event, () => {
         if (!closing) {
           closing = true;
-          machine.close().finally(() => process.exit(1));
+          machine.close().finally(() => {
+            if (event !== "beforeExit") {
+              process.exit(1);
+            }
+          });
         }
       });
     }

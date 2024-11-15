@@ -14,7 +14,6 @@ import {
   getChangedFiles,
   getCommit,
   getCommitMessage,
-  getEnv,
   getLastSuccessfulBuild,
   getMainBranch,
   getRepositoryOwner,

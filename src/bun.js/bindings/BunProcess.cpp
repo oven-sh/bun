@@ -30,7 +30,7 @@
 #include <JavaScriptCore/ConsoleMessage.h>
 #include <JavaScriptCore/ScriptArguments.h>
 #include "wtf-bindings.h"
-
+#include <webcore/SerializedScriptValue.h>
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/OrdinalNumber.h"
@@ -885,23 +885,30 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
                 Vector<JSC::Strong<JSC::Unknown>> argumentsVector;
                 for (size_t i = 0; i < args.size(); ++i)
                     argumentsVector.append(JSC::Strong<JSC::Unknown>(vm, args.at(i)));
+
+                if (exception.isCell()) {
+                    if (auto* error = jsDynamicCast<JSC::ErrorInstance*>(exception)) {
+                        auto stackTrace = error->stackTrace();
+
+                        if (stackTrace->size() > 0) {
+                            const JSC::StackFrame& frame = stackTrace->at(0);
+                            String fileName = frame.sourceURL(vm);
+
+                            // append strong
+                            argumentsVector.append(JSC::Strong<JSC::Unknown>(vm, jsString(vm, fileName)));
+
+                            // // Debug log to check if fileName was appended
+                            // printf("Debug: Appended fileName: %s\n", fileName.utf8().data());
+                        }
+
+                        // error->materializeErrorInfoIfNeeded(vm);
+                        // auto source_url = error->sourceURL();
+                        // fprintf(stderr, "errr: %s\n", source_url.utf8().data());
+                    }
+                }
+
                 Ref<ScriptArguments> arguments = ScriptArguments::create(globalObject, WTFMove(argumentsVector));
                 client->logWithLevel(globalObject, WTFMove(arguments), JSC::MessageLevel::Error);
-
-                if (auto* exception = jsDynamicCast<JSC::Exception*>(args.at(0))) {
-                    auto stackTrace = exception->stack();
-                    if (stackTrace.size() > 0) {
-                        const JSC::StackFrame& frame = stackTrace.at(0);
-                        String fileName = frame.sourceURL(vm);
-
-                        client->printConsoleMessageWithArguments(JSC::MessageSource::JS, JSC::MessageType::Log, JSC::MessageLevel::Error, globalObject, WTFMove(arguments));
-                    }
-
-                    // String fileName = exception->get_source_url();
-                    // int lineNumber = exception->get_line_number();
-                    // int columnNumber = exception->get_column_number();
-                    // client->printConsoleMessageWithArguments(JSC::MessageSource::JS, JSC::MessageType::Log, JSC::MessageLevel::Error, globalObject, WTFMove(arguments));
-                }
             }
         }
 

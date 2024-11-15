@@ -517,6 +517,8 @@ function getPipeline(options) {
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
+    { os: "windows", arch: "x64", distro: "server", release: "2019" },
+    { os: "windows", arch: "x64", baseline: true, distro: "server", release: "2019" },
   ];
 
   /**

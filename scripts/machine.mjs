@@ -4,7 +4,6 @@ import { inspect, parseArgs } from "node:util";
 import {
   $,
   getBootstrapVersion,
-  getBuildMetadata,
   getBuildNumber,
   getSecret,
   isCI,
@@ -1034,14 +1033,6 @@ async function main() {
 
   const { cloud, detached, bootstrap, ci, os, arch, distro, distroVersion } = options;
   const name = `${os}-${arch}-${distro}-${distroVersion}`;
-
-  if (isCI && command === "publish-image") {
-    const metadata = await getBuildMetadata("publish-image");
-    if (!metadata || !metadata.includes(name)) {
-      console.log(`Skipping because "${name}" is not present in build metadata: "publish-image"`);
-      return;
-    }
-  }
 
   let bootstrapPath, agentPath;
   if (bootstrap) {

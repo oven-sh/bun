@@ -32,13 +32,14 @@ import {
  * @typedef PipelineOptions
  * @property {string} [buildId]
  * @property {boolean} [buildImages]
+ * @property {boolean} [publishImages]
  */
 
 /**
  * @param {PipelineOptions} options
  */
 function getPipeline(options) {
-  const { buildId, buildImages } = options;
+  const { buildId, buildImages, publishImages } = options;
 
   /**
    * Helpers
@@ -239,7 +240,7 @@ function getPipeline(options) {
       };
     }
     let image = `${os}-${arch}-${distro}-${release}`;
-    if (buildImages) {
+    if (buildImages && !publishImages) {
       image += `-build-${getBuildNumber()}`;
     } else {
       image += `-v${getBootstrapVersion()}`;
@@ -336,24 +337,20 @@ function getPipeline(options) {
 
   /**
    * @param {Platform} platform
-   * @param {boolean} [publish]
    * @returns {Step}
    */
-  const getBuildImageStep = (platform, publish) => {
+  const getBuildImageStep = platform => {
     const { os, arch, distro, release } = platform;
-    const key = publish ? "publish-image" : "build-image";
-    const action = publish ? "publish-image" : "create-image";
-    const depends_on = publish ? ["publish-image"] : undefined;
+    const action = publishImages ? "publish-image" : "create-image";
     return {
-      key: `${getImageKey(platform)}-${key}`,
-      label: `${getImageLabel(platform)} - ${key}`,
+      key: `${getImageKey(platform)}-build-image`,
+      label: `${getImageLabel(platform)} - build-image`,
       agents: {
         queue: "build-image",
       },
       env: {
         DEBUG: "1",
       },
-      depends_on,
       command: `node ./scripts/machine.mjs ${action} --ci --cloud=aws --os=${os} --arch=${arch} --distro=${distro} --distro-version=${release}`,
     };
   };
@@ -482,50 +479,6 @@ function getPipeline(options) {
   };
 
   /**
-   * Input
-   */
-
-  /**
-   * @typedef SelectField
-   * @property {string} key
-   * @property {{label: string, value: string}[]} options
-   * @property {string} [default]
-   * @property {string} [hint]
-   * @property {boolean} [required]
-   * @property {boolean} [multiple]
-   */
-
-  /**
-   * @typedef Input
-   * @property {string} key
-   * @property {string} input
-   * @property {string[]} [depends_on]
-   * @property {SelectField[]} fields
-   */
-
-  /**
-   * @param {Platform[]} imagePlatforms
-   * @returns {Input}
-   */
-  const getReleaseVerificationInput = imagePlatforms => {
-    return {
-      key: "verify-release",
-      input: "Release Verification",
-      fields: [
-        {
-          key: "publish-image",
-          select: "Should the build images be published?",
-          multiple: true,
-          options: imagePlatforms.map(platform => ({
-            label: getImageLabel(platform),
-            value: getImageKey(platform),
-          })),
-        },
-      ],
-    };
-  };
-
-  /**
    * Config
    */
 
@@ -603,12 +556,6 @@ function getPipeline(options) {
           steps,
         };
       }),
-      ...(buildImages
-        ? [
-            getReleaseVerificationInput(Array.from(imagePlatforms.values())),
-            ...Array.from(imagePlatforms.values()).map(platform => getBuildImageStep(platform, true)),
-          ]
-        : []),
     ],
   };
 }
@@ -687,6 +634,19 @@ async function main() {
     }
   }
 
+  console.log("Checking if CI should publish images...");
+  let publishImages;
+  {
+    const message = getCommitMessage();
+    const match = /\[(publish images?|images? publish)\]/i.exec(message);
+    if (match) {
+      const [, reason] = match;
+      console.log(" - Yes, because commit message contains:", reason);
+      publishImages = true;
+      buildImages = true;
+    }
+  }
+
   console.log("Checking if build should be skipped...");
   let skipBuild;
   if (!forceBuild) {
@@ -719,6 +679,7 @@ async function main() {
   const pipeline = getPipeline({
     buildId: lastBuild && skipBuild && !forceBuild ? lastBuild.id : undefined,
     buildImages,
+    publishImages,
   });
 
   const content = toYaml(pipeline);

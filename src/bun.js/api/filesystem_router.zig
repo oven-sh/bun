@@ -238,7 +238,7 @@ pub const FileSystemRouter = struct {
     }
 
     pub fn bustDirCache(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) void {
-        bustDirCacheRecursive(this, globalThis, strings.withoutTrailingSlashWindowsPath(input_path));
+        bustDirCacheRecursive(this, globalThis, strings.withoutTrailingSlashWindowsPath(this.router.config.dir));
     }
 
     pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {

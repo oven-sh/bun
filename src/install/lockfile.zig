@@ -1233,8 +1233,9 @@ pub const Printer = struct {
 
         var lockfile = try allocator.create(Lockfile);
 
+        PackageManager.allocatePackageManager();
         // TODO remove the need for manager when migrating from package-lock.json
-        const manager = &PackageManager.instance;
+        const manager = PackageManager.get();
 
         const load_from_disk = lockfile.loadFromDisk(manager, allocator, log, lockfile_path, false);
         switch (load_from_disk) {
@@ -1623,7 +1624,7 @@ pub const Printer = struct {
                 } else {
                     // just print installed packages for the current workspace
                     var workspace_package_id: DependencyID = 0;
-                    if (PackageManager.instance.workspace_name_hash) |workspace_name_hash| {
+                    if (PackageManager.get().workspace_name_hash) |workspace_name_hash| {
                         for (resolutions_list[0].begin()..resolutions_list[0].end()) |dep_id| {
                             const dep = dependencies_buffer[dep_id];
                             if (dep.behavior.isWorkspace() and dep.name_hash == workspace_name_hash) {
@@ -1729,7 +1730,7 @@ pub const Printer = struct {
 
                         {
                             const fmt = comptime Output.prettyFmt("<r> <d>- <r><b>{s}<r>\n", enable_ansi_colors);
-                            var manager = &bun.PackageManager.instance;
+                            const manager = PackageManager.get();
 
                             if (manager.track_installed_bin == .pending) {
                                 if (iterator.next() catch null) |bin_name| {
@@ -3846,7 +3847,7 @@ pub const Package = extern struct {
 
                                 var workspace = Package{};
 
-                                const json = PackageManager.instance.workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
+                                const json = PackageManager.get().workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
 
                                 try workspace.parseWithJSON(
                                     to_lockfile,
@@ -4793,7 +4794,7 @@ pub const Package = extern struct {
                         total_dependencies_count += try processWorkspaceNamesArray(
                             &workspace_names,
                             allocator,
-                            &PackageManager.instance.workspace_package_json_cache,
+                            &PackageManager.get().workspace_package_json_cache,
                             log,
                             arr,
                             &source,
@@ -4817,7 +4818,7 @@ pub const Package = extern struct {
                                     total_dependencies_count += try processWorkspaceNamesArray(
                                         &workspace_names,
                                         allocator,
-                                        &PackageManager.instance.workspace_package_json_cache,
+                                        &PackageManager.get().workspace_package_json_cache,
                                         log,
                                         packages_query.data.e_array,
                                         &source,
@@ -5709,7 +5710,7 @@ const Buffers = struct {
     ) !void {
         const buffers = lockfile.buffers;
         inline for (sizes.names) |name| {
-            if (PackageManager.instance.options.log_level.isVerbose()) {
+            if (PackageManager.get().options.log_level.isVerbose()) {
                 Output.prettyErrorln("Saving {d} {s}", .{ @field(buffers, name).items.len, name });
             }
 
@@ -5822,7 +5823,7 @@ const Buffers = struct {
             if (comptime Type == @TypeOf(this.dependencies)) {
                 external_dependency_list_ = try readArray(stream, allocator, std.ArrayListUnmanaged(Dependency.External));
 
-                if (PackageManager.instance.options.log_level.isVerbose()) {
+                if (PackageManager.get().options.log_level.isVerbose()) {
                     Output.prettyErrorln("Loaded {d} {s}", .{ external_dependency_list_.items.len, name });
                 }
             } else if (comptime Type == @TypeOf(this.trees)) {
@@ -5836,7 +5837,7 @@ const Buffers = struct {
                 }
             } else {
                 @field(this, name) = try readArray(stream, allocator, Type);
-                if (PackageManager.instance.options.log_level.isVerbose()) {
+                if (PackageManager.get().options.log_level.isVerbose()) {
                     Output.prettyErrorln("Loaded {d} {s}", .{ @field(this, name).items.len, name });
                 }
             }

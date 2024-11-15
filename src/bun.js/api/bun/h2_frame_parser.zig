@@ -290,7 +290,7 @@ const SingleValueHeaders = bun.ComptimeStringMap(void, .{
     .{"x-content-type-options"},
 });
 
-fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
     var settings: FullSettingsPayload = .{};
 
@@ -325,7 +325,7 @@ fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
     }
 }
 
-fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const args_list = callframe.arguments(1);
     if (args_list.len < 1) {
         globalObject.throw("Expected settings to be a object", .{});
@@ -427,7 +427,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
     return .undefined;
 }
 
-fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     var settings: FullSettingsPayload = .{};
     const args_list = callframe.arguments(1);
 
@@ -593,8 +593,7 @@ const Handlers = struct {
         };
 
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-            globalObject.throwInvalidArguments("Expected \"handlers\" to be an object", .{});
-            return error.JSError;
+            return globalObject.throwInvalidArguments2("Expected \"handlers\" to be an object", .{});
         }
 
         const pairs = .{
@@ -2338,7 +2337,7 @@ pub const H2FrameParser = struct {
         return DirectWriterStruct{ .writer = this };
     }
 
-    pub fn setEncoding(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn setEncoding(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -2354,23 +2353,20 @@ pub const H2FrameParser = struct {
         return .undefined;
     }
 
-    pub fn loadSettingsFromJSValue(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, options: JSC.JSValue) bool {
+    pub fn loadSettingsFromJSValue(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, options: JSC.JSValue) bun.JSError!void {
         if (options.isEmptyOrUndefinedOrNull() or !options.isObject()) {
-            globalObject.throw("Expected settings to be a object", .{});
-            return false;
+            return globalObject.throw2("Expected settings to be a object", .{});
         }
 
         if (options.get(globalObject, "headerTableSize")) |headerTableSize| {
             if (headerTableSize.isNumber()) {
                 const headerTableSizeValue = headerTableSize.toInt32();
                 if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
-                    globalObject.throw("Expected headerTableSize to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return globalObject.throw2("Expected headerTableSize to be a number between 0 and 2^32-1", .{});
                 }
                 this.localSettings.headerTableSize = @intCast(headerTableSizeValue);
             } else if (!headerTableSize.isEmptyOrUndefinedOrNull()) {
-                globalObject.throw("Expected headerTableSize to be a number", .{});
-                return false;
+                return globalObject.throw2("Expected headerTableSize to be a number", .{});
             }
         }
 
@@ -2378,8 +2374,7 @@ pub const H2FrameParser = struct {
             if (enablePush.isBoolean()) {
                 this.localSettings.enablePush = if (enablePush.asBoolean()) 1 else 0;
             } else if (!enablePush.isEmptyOrUndefinedOrNull()) {
-                globalObject.throw("Expected enablePush to be a boolean", .{});
-                return false;
+                return globalObject.throw2("Expected enablePush to be a boolean", .{});
             }
         }
 
@@ -2387,13 +2382,11 @@ pub const H2FrameParser = struct {
             if (initialWindowSize.isNumber()) {
                 const initialWindowSizeValue = initialWindowSize.toInt32();
                 if (initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
-                    globalObject.throw("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return globalObject.throw2("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
                 }
                 this.localSettings.initialWindowSize = @intCast(initialWindowSizeValue);
             } else if (!initialWindowSize.isEmptyOrUndefinedOrNull()) {
-                globalObject.throw("Expected initialWindowSize to be a number", .{});
-                return false;
+                return globalObject.throw2("Expected initialWindowSize to be a number", .{});
             }
         }
 
@@ -2401,13 +2394,11 @@ pub const H2FrameParser = struct {
             if (maxFrameSize.isNumber()) {
                 const maxFrameSizeValue = maxFrameSize.toInt32();
                 if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
-                    globalObject.throw("Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{});
-                    return false;
+                    return globalObject.throw2("Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{});
                 }
                 this.localSettings.maxFrameSize = @intCast(maxFrameSizeValue);
             } else if (!maxFrameSize.isEmptyOrUndefinedOrNull()) {
-                globalObject.throw("Expected maxFrameSize to be a number", .{});
-                return false;
+                return globalObject.throw2("Expected maxFrameSize to be a number", .{});
             }
         }
 
@@ -2415,13 +2406,11 @@ pub const H2FrameParser = struct {
             if (maxConcurrentStreams.isNumber()) {
                 const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
                 if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
-                    globalObject.throw("Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return globalObject.throw2("Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{});
                 }
                 this.localSettings.maxConcurrentStreams = @intCast(maxConcurrentStreamsValue);
             } else if (!maxConcurrentStreams.isEmptyOrUndefinedOrNull()) {
-                globalObject.throw("Expected maxConcurrentStreams to be a number", .{});
-                return false;
+                return globalObject.throw2("Expected maxConcurrentStreams to be a number", .{});
             }
         }
 
@@ -2429,13 +2418,11 @@ pub const H2FrameParser = struct {
             if (maxHeaderListSize.isNumber()) {
                 const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
                 if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
-                    globalObject.throw("Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return globalObject.throw2("Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{});
                 }
                 this.localSettings.maxHeaderListSize = @intCast(maxHeaderListSizeValue);
             } else if (!maxHeaderListSize.isEmptyOrUndefinedOrNull()) {
-                globalObject.throw("Expected maxHeaderListSize to be a number", .{});
-                return false;
+                return globalObject.throw2("Expected maxHeaderListSize to be a number", .{});
             }
         }
 
@@ -2443,19 +2430,17 @@ pub const H2FrameParser = struct {
             if (maxHeaderSize.isNumber()) {
                 const maxHeaderSizeValue = maxHeaderSize.toInt32();
                 if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
-                    globalObject.throw("Expected maxHeaderSize to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return globalObject.throw2("Expected maxHeaderSize to be a number between 0 and 2^32-1", .{});
                 }
                 this.localSettings.maxHeaderListSize = @intCast(maxHeaderSizeValue);
             } else if (!maxHeaderSize.isEmptyOrUndefinedOrNull()) {
-                globalObject.throw("Expected maxHeaderSize to be a number", .{});
-                return false;
+                return globalObject.throw2("Expected maxHeaderSize to be a number", .{});
             }
         }
-        return true;
+        return;
     }
 
-    pub fn updateSettings(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn updateSettings(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -2465,15 +2450,12 @@ pub const H2FrameParser = struct {
 
         const options = args_list.ptr[0];
 
-        if (this.loadSettingsFromJSValue(globalObject, options)) {
-            this.setSettings(this.localSettings);
-            return .undefined;
-        }
-
-        return .zero;
+        try this.loadSettingsFromJSValue(globalObject, options);
+        this.setSettings(this.localSettings);
+        return .undefined;
     }
 
-    pub fn getCurrentState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn getCurrentState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         var result = JSValue.createEmptyObject(globalObject, 9);
         result.put(globalObject, JSC.ZigString.static("effectiveLocalWindowSize"), JSC.JSValue.jsNumber(this.windowSize));
@@ -2489,7 +2471,7 @@ pub const H2FrameParser = struct {
         result.put(globalObject, JSC.ZigString.static("outboundQueueSize"), JSC.JSValue.jsNumber(this.outboundQueueSize));
         return result;
     }
-    pub fn goaway(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn goaway(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(3);
         if (args_list.len < 1) {
@@ -2540,7 +2522,7 @@ pub const H2FrameParser = struct {
         return .undefined;
     }
 
-    pub fn ping(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn ping(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -2564,7 +2546,7 @@ pub const H2FrameParser = struct {
         return .zero;
     }
 
-    pub fn getEndAfterHeaders(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn getEndAfterHeaders(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -2592,7 +2574,7 @@ pub const H2FrameParser = struct {
         return JSC.JSValue.jsBoolean(stream.endAfterHeaders);
     }
 
-    pub fn isStreamAborted(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn isStreamAborted(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -2623,7 +2605,7 @@ pub const H2FrameParser = struct {
         // closed with cancel = aborted
         return JSC.JSValue.jsBoolean(stream.state == .CLOSED and stream.rstCode == @intFromEnum(ErrorCode.CANCEL));
     }
-    pub fn getStreamState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn getStreamState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -2660,7 +2642,7 @@ pub const H2FrameParser = struct {
         return state;
     }
 
-    pub fn setStreamPriority(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn setStreamPriority(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(2);
         if (args_list.len < 2) {
@@ -2759,7 +2741,7 @@ pub const H2FrameParser = struct {
         }
         return JSC.JSValue.jsBoolean(true);
     }
-    pub fn rstStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn rstStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(2);
         if (args_list.len < 2) {
@@ -2824,7 +2806,7 @@ pub const H2FrameParser = struct {
         return (this.writeBuffer.len + this.queuedDataSize) / 1024 / 1024;
     }
     // get memory in bytes
-    pub fn getBufferSize(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn getBufferSize(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         return JSC.JSValue.jsNumber(this.writeBuffer.len + this.queuedDataSize);
     }
@@ -2916,7 +2898,7 @@ pub const H2FrameParser = struct {
             }
         }
     }
-    pub fn noTrailers(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn noTrailers(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -2957,7 +2939,7 @@ pub const H2FrameParser = struct {
         return .undefined;
     }
 
-    pub fn sendTrailers(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn sendTrailers(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(3);
         if (args_list.len < 3) {
@@ -3111,7 +3093,7 @@ pub const H2FrameParser = struct {
         this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
         return .undefined;
     }
-    pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         const args = callframe.argumentsUndef(5);
         const stream_arg, const data_arg, const encoding_arg, const close_arg, const callback_arg = args.ptr;
@@ -3188,11 +3170,11 @@ pub const H2FrameParser = struct {
         return stream_id;
     }
 
-    pub fn hasNativeRead(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn hasNativeRead(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         return JSC.JSValue.jsBoolean(this.native_socket == .tcp or this.native_socket == .tls);
     }
 
-    pub fn getNextStream(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn getNextStream(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
 
         const id = this.getNextStreamID();
@@ -3203,7 +3185,7 @@ pub const H2FrameParser = struct {
         return JSC.JSValue.jsNumber(id);
     }
 
-    pub fn getStreamContext(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn getStreamContext(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -3225,7 +3207,7 @@ pub const H2FrameParser = struct {
         return stream.jsContext.get() orelse .undefined;
     }
 
-    pub fn setStreamContext(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn setStreamContext(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(2);
         if (args_list.len < 2) {
@@ -3252,7 +3234,7 @@ pub const H2FrameParser = struct {
         return .undefined;
     }
 
-    pub fn getAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn getAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
         const array = JSC.JSValue.createEmptyArray(globalObject, this.streams.count());
@@ -3265,7 +3247,7 @@ pub const H2FrameParser = struct {
         }
         return array;
     }
-    pub fn emitAbortToAllStreams(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn emitAbortToAllStreams(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
         var it = StreamResumableIterator.init(this);
         while (it.next()) |stream| {
@@ -3285,7 +3267,7 @@ pub const H2FrameParser = struct {
         }
         return .undefined;
     }
-    pub fn emitErrorToAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn emitErrorToAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
         const args_list = callframe.arguments(1);
@@ -3311,13 +3293,13 @@ pub const H2FrameParser = struct {
         return .undefined;
     }
 
-    pub fn flushFromJS(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn flushFromJS(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
 
         return JSC.JSValue.jsNumber(this.flush());
     }
 
-    pub fn request(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn request(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
 
         const args_list = callframe.arguments(5);
@@ -3658,7 +3640,7 @@ pub const H2FrameParser = struct {
         return JSC.JSValue.jsNumber(stream_id);
     }
 
-    pub fn read(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn read(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -3700,7 +3682,7 @@ pub const H2FrameParser = struct {
         this.detachNativeSocket();
     }
 
-    pub fn setNativeSocketFromJS(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn setNativeSocketFromJS(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -3752,28 +3734,26 @@ pub const H2FrameParser = struct {
         }
     }
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*H2FrameParser {
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*H2FrameParser {
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
-            globalObject.throw("Expected 1 argument", .{});
-            return null;
+            return globalObject.throw2("Expected 1 argument", .{});
         }
 
         const options = args_list.ptr[0];
         if (options.isEmptyOrUndefinedOrNull() or options.isBoolean() or !options.isObject()) {
-            globalObject.throwInvalidArguments("expected options as argument", .{});
-            return null;
+            return globalObject.throwInvalidArguments2("expected options as argument", .{});
         }
 
         const context_obj = options.get(globalObject, "context") orelse {
-            globalObject.throw("Expected \"context\" option", .{});
-            return null;
+            return globalObject.throw2("Expected \"context\" option", .{});
         };
         var handler_js = JSC.JSValue.zero;
         if (options.get(globalObject, "handlers")) |handlers_| {
             handler_js = handlers_;
         }
-        var handlers = Handlers.fromJS(globalObject, handler_js) catch return null;
+        var handlers = try Handlers.fromJS(globalObject, handler_js);
+        errdefer handlers.deinit();
 
         var this = brk: {
             if (ENABLE_ALLOCATOR_POOL) {
@@ -3813,6 +3793,8 @@ pub const H2FrameParser = struct {
                 });
             }
         };
+        errdefer this.deinit();
+
         // check if socket is provided, and if it is a valid native socket
         if (options.get(globalObject, "native")) |socket_js| {
             if (JSTLSSocket.fromJS(socket_js)) |socket| {
@@ -3837,11 +3819,7 @@ pub const H2FrameParser = struct {
         }
         if (options.get(globalObject, "settings")) |settings_js| {
             if (!settings_js.isEmptyOrUndefinedOrNull()) {
-                if (!this.loadSettingsFromJSValue(globalObject, settings_js)) {
-                    this.deinit();
-                    handlers.deinit();
-                    return null;
-                }
+                try this.loadSettingsFromJSValue(globalObject, settings_js);
 
                 if (settings_js.get(globalObject, "maxOutstandingPings")) |max_pings| {
                     if (max_pings.isNumber()) {
@@ -3890,7 +3868,7 @@ pub const H2FrameParser = struct {
         }
         return this;
     }
-    pub fn detachFromJS(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn detachFromJS(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
         this.detach(false);
         return .undefined;

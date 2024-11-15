@@ -977,10 +977,10 @@ pub const FormData = struct {
         }
     }
 
-    pub fn jsFunctionFromMultipartData(
+    pub fn fromMultipartData(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
         const args_ = callframe.arguments(2);
@@ -1038,6 +1038,7 @@ pub const FormData = struct {
     }
 
     comptime {
+        const jsFunctionFromMultipartData = JSC.toJSHostFunction(fromMultipartData);
         if (!JSC.is_bindgen)
             @export(jsFunctionFromMultipartData, .{ .name = "FormData__jsFunctionFromMultipartData" });
     }

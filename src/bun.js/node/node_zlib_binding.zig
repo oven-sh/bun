@@ -7,7 +7,7 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const validators = @import("./util/validators.zig");
 
-pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(2).ptr;
 
     const data: ZigString.Slice = blk: {
@@ -59,7 +59,7 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
 
 pub fn CompressionStream(comptime T: type) type {
     return struct {
-        pub fn write(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+        pub fn write(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.argumentsUndef(7).slice();
 
             if (arguments.len != 7) {
@@ -151,7 +151,7 @@ pub fn CompressionStream(comptime T: type) type {
             if (this.pending_close) _ = this._close();
         }
 
-        pub fn writeSync(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+        pub fn writeSync(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.argumentsUndef(7).slice();
 
             if (arguments.len != 7) {
@@ -201,7 +201,7 @@ pub fn CompressionStream(comptime T: type) type {
             //
 
             this.stream.doWork();
-            if (this.checkError(globalThis) catch return .zero) {
+            if (try this.checkError(globalThis)) {
                 this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
                 this.write_in_progress = false;
             }
@@ -210,17 +210,17 @@ pub fn CompressionStream(comptime T: type) type {
             return .undefined;
         }
 
-        pub fn reset(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+        pub fn reset(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             _ = callframe;
 
             const err = this.stream.reset();
             if (err.isError()) {
-                this.emitError(globalThis, err) catch return .zero;
+                try this.emitError(globalThis, err);
             }
             return .undefined;
         }
 
-        pub fn close(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+        pub fn close(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             _ = globalThis;
             _ = callframe;
             this._close();
@@ -321,23 +321,23 @@ pub const SNativeZlib = struct {
     closed: bool = false,
     task: JSC.WorkPoolTask = .{ .callback = undefined },
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*@This() {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*@This() {
         const arguments = callframe.argumentsUndef(4).ptr;
 
         var mode = arguments[0];
         if (!mode.isNumber()) {
             _ = globalThis.throwInvalidArgumentTypeValue("mode", "number", mode);
-            return null;
+            return error.JSError;
         }
         const mode_double = mode.asNumber();
         if (@mod(mode_double, 1.0) != 0.0) {
             _ = globalThis.throwInvalidArgumentTypeValue("mode", "integer", mode);
-            return null;
+            return error.JSError;
         }
         const mode_int: i64 = @intFromFloat(mode_double);
         if (mode_int < 1 or mode_int > 7) {
             _ = globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 1, .max = 7 });
-            return null;
+            return error.JSError;
         }
 
         const ptr = SNativeZlib.new(.{
@@ -355,7 +355,7 @@ pub const SNativeZlib = struct {
     //     return @sizeOf(SNativeZlib) + internal_state_size;
     // }
 
-    pub fn init(this: *SNativeZlib, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn init(this: *SNativeZlib, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(7).slice();
 
         if (arguments.len != 7) {
@@ -363,13 +363,13 @@ pub const SNativeZlib = struct {
             return .zero;
         }
 
-        const windowBits = validators.validateInt32(globalThis, arguments[0], "windowBits", .{}, null, null) catch return .zero;
-        const level = validators.validateInt32(globalThis, arguments[1], "level", .{}, null, null) catch return .zero;
-        const memLevel = validators.validateInt32(globalThis, arguments[2], "memLevel", .{}, null, null) catch return .zero;
-        const strategy = validators.validateInt32(globalThis, arguments[3], "strategy", .{}, null, null) catch return .zero;
+        const windowBits = try validators.validateInt32(globalThis, arguments[0], "windowBits", .{}, null, null);
+        const level = try validators.validateInt32(globalThis, arguments[1], "level", .{}, null, null);
+        const memLevel = try validators.validateInt32(globalThis, arguments[2], "memLevel", .{}, null, null);
+        const strategy = try validators.validateInt32(globalThis, arguments[3], "strategy", .{}, null, null);
         // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
         const writeResult = arguments[4].asArrayBuffer(globalThis).?.asU32().ptr;
-        const writeCallback = validators.validateFunction(globalThis, arguments[5], "writeCallback", .{}) catch return .zero;
+        const writeCallback = try validators.validateFunction(globalThis, arguments[5], "writeCallback", .{});
         const dictionary = if (arguments[6].isUndefined()) null else arguments[6].asArrayBuffer(globalThis).?.byteSlice();
 
         this.write_result = writeResult;
@@ -380,7 +380,7 @@ pub const SNativeZlib = struct {
         return .undefined;
     }
 
-    pub fn params(this: *SNativeZlib, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn params(this: *SNativeZlib, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(2).slice();
 
         if (arguments.len != 2) {
@@ -388,12 +388,12 @@ pub const SNativeZlib = struct {
             return .zero;
         }
 
-        const level = validators.validateInt32(globalThis, arguments[0], "level", .{}, null, null) catch return .zero;
-        const strategy = validators.validateInt32(globalThis, arguments[1], "strategy", .{}, null, null) catch return .zero;
+        const level = try validators.validateInt32(globalThis, arguments[0], "level", .{}, null, null);
+        const strategy = try validators.validateInt32(globalThis, arguments[1], "strategy", .{}, null, null);
 
         const err = this.stream.setParams(level, strategy);
         if (err.isError()) {
-            this.emitError(globalThis, err) catch return .zero;
+            try this.emitError(globalThis, err);
         }
         return .undefined;
     }
@@ -681,23 +681,23 @@ pub const SNativeBrotli = struct {
         .callback = undefined,
     },
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*@This() {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*@This() {
         const arguments = callframe.argumentsUndef(1).ptr;
 
         var mode = arguments[0];
         if (!mode.isNumber()) {
             _ = globalThis.throwInvalidArgumentTypeValue("mode", "number", mode);
-            return null;
+            return error.JSError;
         }
         const mode_double = mode.asNumber();
         if (@mod(mode_double, 1.0) != 0.0) {
             _ = globalThis.throwInvalidArgumentTypeValue("mode", "integer", mode);
-            return null;
+            return error.JSError;
         }
         const mode_int: i64 = @intFromFloat(mode_double);
         if (mode_int < 8 or mode_int > 9) {
             _ = globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 8, .max = 9 });
-            return null;
+            return error.JSError;
         }
 
         const ptr = @This().new(.{
@@ -719,7 +719,7 @@ pub const SNativeBrotli = struct {
         };
     }
 
-    pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(3).slice();
         if (arguments.len != 3) {
             globalThis.ERR_MISSING_ARGS("init(params, writeResult, writeCallback)", .{}).throw();
@@ -728,13 +728,13 @@ pub const SNativeBrotli = struct {
 
         // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
         const writeResult = arguments[1].asArrayBuffer(globalThis).?.asU32().ptr;
-        const writeCallback = validators.validateFunction(globalThis, arguments[2], "writeCallback", .{}) catch return .zero;
+        const writeCallback = try validators.validateFunction(globalThis, arguments[2], "writeCallback", .{});
         this.write_result = writeResult;
         this.write_callback.set(globalThis, writeCallback);
 
         var err = this.stream.init();
         if (err.isError()) {
-            this.emitError(globalThis, err) catch return .zero;
+            try this.emitError(globalThis, err);
             return JSC.jsBoolean(false);
         }
 
@@ -747,14 +747,14 @@ pub const SNativeBrotli = struct {
             }
             err = this.stream.setParams(@intCast(i), d);
             if (err.isError()) {
-                // this.emitError(globalThis, err) catch return .zero; //XXX: onerror isn't set yet
+                // try this.emitError(globalThis, err); //XXX: onerror isn't set yet
                 return JSC.jsBoolean(false);
             }
         }
         return JSC.jsBoolean(true);
     }
 
-    pub fn params(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn params(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         _ = this;
         _ = globalThis;
         _ = callframe;

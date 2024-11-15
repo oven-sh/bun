@@ -509,39 +509,39 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (try object.getOptional(globalThis, "autoImportJSX", bool)) |flag| {
+    if (try object.getBooleanLoose(globalThis, "autoImportJSX")) |flag| {
         transpiler.runtime.auto_import_jsx = flag;
     }
 
-    if (try object.getOptional(globalThis, "allowBunRuntime", bool)) |flag| {
+    if (try object.getBooleanLoose(globalThis, "allowBunRuntime")) |flag| {
         transpiler.runtime.allow_runtime = flag;
     }
 
-    if (try object.getOptional(globalThis, "inline", bool)) |flag| {
+    if (try object.getBooleanLoose(globalThis, "inline")) |flag| {
         transpiler.runtime.inlining = flag;
     }
 
-    if (try object.getOptional(globalThis, "minifyWhitespace", bool)) |flag| {
+    if (try object.getBooleanLoose(globalThis, "minifyWhitespace")) |flag| {
         transpiler.minify_whitespace = flag;
     }
 
-    if (try object.getOptional(globalThis, "deadCodeElimination", bool)) |flag| {
+    if (try object.getBooleanLoose(globalThis, "deadCodeElimination")) |flag| {
         transpiler.dead_code_elimination = flag;
     }
 
-    if (object.getTruthy(globalThis, "minify")) |hot| {
-        if (hot.isBoolean()) {
-            transpiler.minify_whitespace = hot.coerce(bool, globalThis);
+    if (object.getTruthy(globalThis, "minify")) |minify| {
+        if (minify.isBoolean()) {
+            transpiler.minify_whitespace = minify.coerce(bool, globalThis);
             transpiler.minify_syntax = transpiler.minify_whitespace;
             transpiler.minify_identifiers = transpiler.minify_syntax;
-        } else if (hot.isObject()) {
-            if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
+        } else if (minify.isObject()) {
+            if (try minify.getBooleanLoose(globalThis, "whitespace")) |whitespace| {
                 transpiler.minify_whitespace = whitespace;
             }
-            if (try hot.getOptional(globalThis, "syntax", bool)) |syntax| {
+            if (try minify.getBooleanLoose(globalThis, "syntax")) |syntax| {
                 transpiler.minify_syntax = syntax;
             }
-            if (try hot.getOptional(globalThis, "identifiers", bool)) |syntax| {
+            if (try minify.getBooleanLoose(globalThis, "identifiers")) |syntax| {
                 transpiler.minify_identifiers = syntax;
             }
         } else {
@@ -572,12 +572,12 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     }
 
     var tree_shaking: ?bool = null;
-    if (try object.getOptional(globalThis, "treeShaking", bool)) |treeShaking| {
+    if (try object.getBooleanLoose(globalThis, "treeShaking")) |treeShaking| {
         tree_shaking = treeShaking;
     }
 
     var trim_unused_imports: ?bool = null;
-    if (try object.getOptional(globalThis, "trimUnusedImports", bool)) |trimUnusedImports| {
+    if (try object.getBooleanLoose(globalThis, "trimUnusedImports")) |trimUnusedImports| {
         trim_unused_imports = trimUnusedImports;
     }
 
@@ -724,10 +724,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     return transpiler;
 }
 
-pub fn constructor(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) ?*Transpiler {
+pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Transpiler {
     var temp = bun.ArenaAllocator.init(getAllocator(globalThis));
     const arguments = callframe.arguments(3);
     var args = JSC.Node.ArgumentsSlice.init(
@@ -737,31 +734,21 @@ pub fn constructor(
 
     defer temp.deinit();
     const transpiler_options: TranspilerOptions = if (arguments.len > 0)
-        transformOptionsFromJSC(globalThis, temp.allocator(), &args) catch |err| switch (err) {
-            error.JSError => return null,
-            error.OutOfMemory => {
-                globalThis.throwOutOfMemory();
-                return null;
-            },
-        }
+        try transformOptionsFromJSC(globalThis, temp.allocator(), &args)
     else
         TranspilerOptions{ .log = logger.Log.init(getAllocator(globalThis)) };
 
     if (globalThis.hasException()) {
-        return null;
+        return error.JSError;
     }
 
     const allocator = getAllocator(globalThis);
 
     if ((transpiler_options.log.warnings + transpiler_options.log.errors) > 0) {
-        globalThis.throwValue(
-            transpiler_options.log.toJS(globalThis.ptr(), allocator, "Failed to create transpiler"),
-        );
-
-        return null;
+        return globalThis.throwValue2(transpiler_options.log.toJS(globalThis.ptr(), allocator, "Failed to create transpiler"));
     }
 
-    var log = allocator.create(logger.Log) catch unreachable;
+    var log = try allocator.create(logger.Log);
     log.* = transpiler_options.log;
     var bundler = Bundler.Bundler.init(
         allocator,
@@ -770,30 +757,22 @@ pub fn constructor(
         JavaScript.VirtualMachine.get().bundler.env,
     ) catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            globalThis.throwValue(
-                log.toJS(globalThis.ptr(), allocator, "Failed to create transpiler"),
-            );
-
-            return null;
+            return globalThis.throwValue2(log.toJS(globalThis.ptr(), allocator, "Failed to create transpiler"));
         }
 
         globalThis.throwError(err, "Error creating transpiler");
-        return null;
+        return error.JSError;
     };
     bundler.options.no_macros = transpiler_options.no_macros;
     bundler.configureLinkerWithAutoJSX(false);
     bundler.options.env.behavior = .disable;
     bundler.configureDefines() catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            globalThis.throwValue(
-                log.toJS(globalThis.ptr(), allocator, "Failed to load define"),
-            );
-
-            return null;
+            return globalThis.throwValue2(log.toJS(globalThis.ptr(), allocator, "Failed to load define"));
         }
 
         globalThis.throwError(err, "Failed to load define");
-        return null;
+        return error.JSError;
     };
 
     if (transpiler_options.macro_map.count() > 0) {
@@ -820,7 +799,7 @@ pub fn constructor(
     bundler.options.hot_module_reloading = transpiler_options.runtime.hot_module_reloading;
     bundler.options.react_fast_refresh = false;
 
-    const transpiler = allocator.create(Transpiler) catch unreachable;
+    const transpiler = try allocator.create(Transpiler);
     transpiler.* = Transpiler{
         .transpiler_options = transpiler_options,
         .bundler = bundler,
@@ -878,7 +857,7 @@ pub fn scan(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
     const arguments = callframe.arguments(3);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
@@ -899,7 +878,7 @@ pub fn scan(
     const loader: ?Loader = brk: {
         if (args.next()) |arg| {
             args.eat();
-            break :brk Loader.fromJS(globalThis, arg) catch return .zero;
+            break :brk try Loader.fromJS(globalThis, arg);
         }
 
         break :brk null;
@@ -959,7 +938,7 @@ pub fn transform(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
     const arguments = callframe.arguments(3);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
@@ -979,7 +958,7 @@ pub fn transform(
     const loader: ?Loader = brk: {
         if (args.next()) |arg| {
             args.eat();
-            break :brk Loader.fromJS(globalThis, arg) catch return .zero;
+            break :brk try Loader.fromJS(globalThis, arg);
         }
 
         break :brk null;
@@ -1008,7 +987,7 @@ pub fn transformSync(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
     const arguments = callframe.arguments(3);
 
@@ -1036,7 +1015,7 @@ pub fn transformSync(
         if (args.next()) |arg| {
             args.eat();
             if (arg.isNumber() or arg.isString()) {
-                break :brk Loader.fromJS(globalThis, arg) catch return .zero;
+                break :brk try Loader.fromJS(globalThis, arg);
             }
 
             if (arg.isObject()) {
@@ -1185,7 +1164,7 @@ pub fn scanImports(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(2);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.deinit();
@@ -1207,7 +1186,7 @@ pub fn scanImports(
 
     var loader: Loader = this.transpiler_options.default_loader;
     if (args.next()) |arg| {
-        if (Loader.fromJS(globalThis, arg) catch return .zero) |_loader| {
+        if (try Loader.fromJS(globalThis, arg)) |_loader| {
             loader = _loader;
         }
         args.eat();

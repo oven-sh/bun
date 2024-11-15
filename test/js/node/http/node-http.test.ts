@@ -2390,3 +2390,7 @@ it("must set headersSent to true after headers are sent when using chunk encoded
     server.close();
   }
 });
+
+it("should work when sending https.request with agent:false", () => {
+  https.request("https://example.com/", { agent: false }).end();
+});

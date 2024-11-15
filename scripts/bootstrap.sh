@@ -653,9 +653,12 @@ install_build_essentials() {
 			xz \
 			pkg-config \
 			golang
-		if ! [ "$distro" = "rhel" ]; then
+		case "$distro" in
+		rhel) ;;
+		*)
 			install_packages ninja-build
-		fi
+			;;
+		esac
 		;;
 	brew)
 		install_packages \

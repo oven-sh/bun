@@ -939,7 +939,6 @@ else()
     -fno-pic
     -static-libstdc++
     -static-libgcc
-    -Wl,--exclude-libs=libgcc_eh.a
     -Wl,-no-pie
     -Wl,-icf=safe
     -Wl,--as-needed

@@ -254,6 +254,7 @@ void NapiRefSelfDeletingWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, voi
 
 void NapiRef::ref()
 {
+    NAPI_LOG("ref %p %u -> %u", this, refCount, refCount + 1);
     ++refCount;
     if (refCount == 1 && !weakValueRef.isClear()) {
         auto& vm = globalObject.get()->vm();
@@ -269,6 +270,7 @@ void NapiRef::ref()
 
 void NapiRef::unref()
 {
+    NAPI_LOG("unref %p %u -> %u", this, refCount, refCount - 1);
     bool clear = refCount == 1;
     refCount = refCount > 0 ? refCount - 1 : 0;
     if (clear) {
@@ -280,6 +282,7 @@ void NapiRef::unref()
 
 void NapiRef::clear()
 {
+    NAPI_LOG("ref clear %p", this);
     finalizer.call(env, nativeObject);
     globalObject.clear();
     weakValueRef.clear();

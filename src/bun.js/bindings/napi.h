@@ -14,6 +14,7 @@
 #include "napi_handle_scope.h"
 #include "napi_finalizer.h"
 #include "wtf/Assertions.h"
+#include "napi_macros.h"
 
 #include <list>
 #include <unordered_set>
@@ -497,6 +498,7 @@ public:
 
     ~NapiRef()
     {
+        NAPI_LOG("destruct napi ref %p", this);
         if (boundCleanup) {
             boundCleanup->deactivate(env);
             boundCleanup = nullptr;

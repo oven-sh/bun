@@ -593,8 +593,7 @@ const Handlers = struct {
         };
 
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-            globalObject.throwInvalidArguments("Expected \"handlers\" to be an object", .{});
-            return error.JSError;
+            return globalObject.throwInvalidArguments2("Expected \"handlers\" to be an object", .{});
         }
 
         const pairs = .{
@@ -2354,23 +2353,20 @@ pub const H2FrameParser = struct {
         return .undefined;
     }
 
-    pub fn loadSettingsFromJSValue(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, options: JSC.JSValue) bool {
+    pub fn loadSettingsFromJSValue(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, options: JSC.JSValue) bun.JSError!void {
         if (options.isEmptyOrUndefinedOrNull() or !options.isObject()) {
-            globalObject.throw("Expected settings to be a object", .{});
-            return false;
+            return globalObject.throw2("Expected settings to be a object", .{});
         }
 
         if (options.get(globalObject, "headerTableSize")) |headerTableSize| {
             if (headerTableSize.isNumber()) {
                 const headerTableSizeValue = headerTableSize.toInt32();
                 if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
-                    globalObject.throw("Expected headerTableSize to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return globalObject.throw2("Expected headerTableSize to be a number between 0 and 2^32-1", .{});
                 }
                 this.localSettings.headerTableSize = @intCast(headerTableSizeValue);
             } else if (!headerTableSize.isEmptyOrUndefinedOrNull()) {
-                globalObject.throw("Expected headerTableSize to be a number", .{});
-                return false;
+                return globalObject.throw2("Expected headerTableSize to be a number", .{});
             }
         }
 
@@ -2378,8 +2374,7 @@ pub const H2FrameParser = struct {
             if (enablePush.isBoolean()) {
                 this.localSettings.enablePush = if (enablePush.asBoolean()) 1 else 0;
             } else if (!enablePush.isEmptyOrUndefinedOrNull()) {
-                globalObject.throw("Expected enablePush to be a boolean", .{});
-                return false;
+                return globalObject.throw2("Expected enablePush to be a boolean", .{});
             }
         }
 
@@ -2387,13 +2382,11 @@ pub const H2FrameParser = struct {
             if (initialWindowSize.isNumber()) {
                 const initialWindowSizeValue = initialWindowSize.toInt32();
                 if (initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
-                    globalObject.throw("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return globalObject.throw2("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
                 }
                 this.localSettings.initialWindowSize = @intCast(initialWindowSizeValue);
             } else if (!initialWindowSize.isEmptyOrUndefinedOrNull()) {
-                globalObject.throw("Expected initialWindowSize to be a number", .{});
-                return false;
+                return globalObject.throw2("Expected initialWindowSize to be a number", .{});
             }
         }
 
@@ -2401,13 +2394,11 @@ pub const H2FrameParser = struct {
             if (maxFrameSize.isNumber()) {
                 const maxFrameSizeValue = maxFrameSize.toInt32();
                 if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
-                    globalObject.throw("Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{});
-                    return false;
+                    return globalObject.throw2("Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{});
                 }
                 this.localSettings.maxFrameSize = @intCast(maxFrameSizeValue);
             } else if (!maxFrameSize.isEmptyOrUndefinedOrNull()) {
-                globalObject.throw("Expected maxFrameSize to be a number", .{});
-                return false;
+                return globalObject.throw2("Expected maxFrameSize to be a number", .{});
             }
         }
 
@@ -2415,13 +2406,11 @@ pub const H2FrameParser = struct {
             if (maxConcurrentStreams.isNumber()) {
                 const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
                 if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
-                    globalObject.throw("Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return globalObject.throw2("Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{});
                 }
                 this.localSettings.maxConcurrentStreams = @intCast(maxConcurrentStreamsValue);
             } else if (!maxConcurrentStreams.isEmptyOrUndefinedOrNull()) {
-                globalObject.throw("Expected maxConcurrentStreams to be a number", .{});
-                return false;
+                return globalObject.throw2("Expected maxConcurrentStreams to be a number", .{});
             }
         }
 
@@ -2429,13 +2418,11 @@ pub const H2FrameParser = struct {
             if (maxHeaderListSize.isNumber()) {
                 const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
                 if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
-                    globalObject.throw("Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return globalObject.throw2("Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{});
                 }
                 this.localSettings.maxHeaderListSize = @intCast(maxHeaderListSizeValue);
             } else if (!maxHeaderListSize.isEmptyOrUndefinedOrNull()) {
-                globalObject.throw("Expected maxHeaderListSize to be a number", .{});
-                return false;
+                return globalObject.throw2("Expected maxHeaderListSize to be a number", .{});
             }
         }
 
@@ -2443,16 +2430,14 @@ pub const H2FrameParser = struct {
             if (maxHeaderSize.isNumber()) {
                 const maxHeaderSizeValue = maxHeaderSize.toInt32();
                 if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
-                    globalObject.throw("Expected maxHeaderSize to be a number between 0 and 2^32-1", .{});
-                    return false;
+                    return globalObject.throw2("Expected maxHeaderSize to be a number between 0 and 2^32-1", .{});
                 }
                 this.localSettings.maxHeaderListSize = @intCast(maxHeaderSizeValue);
             } else if (!maxHeaderSize.isEmptyOrUndefinedOrNull()) {
-                globalObject.throw("Expected maxHeaderSize to be a number", .{});
-                return false;
+                return globalObject.throw2("Expected maxHeaderSize to be a number", .{});
             }
         }
-        return true;
+        return;
     }
 
     pub fn updateSettings(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -2465,12 +2450,9 @@ pub const H2FrameParser = struct {
 
         const options = args_list.ptr[0];
 
-        if (this.loadSettingsFromJSValue(globalObject, options)) {
-            this.setSettings(this.localSettings);
-            return .undefined;
-        }
-
-        return .zero;
+        try this.loadSettingsFromJSValue(globalObject, options);
+        this.setSettings(this.localSettings);
+        return .undefined;
     }
 
     pub fn getCurrentState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
@@ -3752,28 +3734,26 @@ pub const H2FrameParser = struct {
         }
     }
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*H2FrameParser {
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*H2FrameParser {
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
-            globalObject.throw("Expected 1 argument", .{});
-            return null;
+            return globalObject.throw2("Expected 1 argument", .{});
         }
 
         const options = args_list.ptr[0];
         if (options.isEmptyOrUndefinedOrNull() or options.isBoolean() or !options.isObject()) {
-            globalObject.throwInvalidArguments("expected options as argument", .{});
-            return null;
+            return globalObject.throwInvalidArguments2("expected options as argument", .{});
         }
 
         const context_obj = options.get(globalObject, "context") orelse {
-            globalObject.throw("Expected \"context\" option", .{});
-            return null;
+            return globalObject.throw2("Expected \"context\" option", .{});
         };
         var handler_js = JSC.JSValue.zero;
         if (options.get(globalObject, "handlers")) |handlers_| {
             handler_js = handlers_;
         }
-        var handlers = Handlers.fromJS(globalObject, handler_js) catch return null;
+        var handlers = try Handlers.fromJS(globalObject, handler_js);
+        errdefer handlers.deinit();
 
         var this = brk: {
             if (ENABLE_ALLOCATOR_POOL) {
@@ -3813,6 +3793,8 @@ pub const H2FrameParser = struct {
                 });
             }
         };
+        errdefer this.deinit();
+
         // check if socket is provided, and if it is a valid native socket
         if (options.get(globalObject, "native")) |socket_js| {
             if (JSTLSSocket.fromJS(socket_js)) |socket| {
@@ -3837,11 +3819,7 @@ pub const H2FrameParser = struct {
         }
         if (options.get(globalObject, "settings")) |settings_js| {
             if (!settings_js.isEmptyOrUndefinedOrNull()) {
-                if (!this.loadSettingsFromJSValue(globalObject, settings_js)) {
-                    this.deinit();
-                    handlers.deinit();
-                    return null;
-                }
+                try this.loadSettingsFromJSValue(globalObject, settings_js);
 
                 if (settings_js.get(globalObject, "maxOutstandingPings")) |max_pings| {
                     if (max_pings.isNumber()) {

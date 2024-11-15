@@ -3324,6 +3324,16 @@ pub const JSGlobalObject = opaque {
             this.vm().throwError(this, instance);
     }
 
+    pub fn throw2(
+        this: *JSGlobalObject,
+        comptime fmt: [:0]const u8,
+        args: anytype,
+    ) JSError {
+        const instance = this.createErrorInstance(fmt, args);
+        bun.assert(instance != .zero);
+        return this.vm().throwError2(this, instance);
+    }
+
     pub fn throwPretty(
         this: *JSGlobalObject,
         comptime fmt: [:0]const u8,

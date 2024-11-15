@@ -404,10 +404,9 @@ pub const PostgresSQLQuery = struct {
         });
     }
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*PostgresSQLQuery {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*PostgresSQLQuery {
         _ = callframe;
-        globalThis.throw("PostgresSQLQuery cannot be constructed directly", .{});
-        return null;
+        return globalThis.throw2("PostgresSQLQuery cannot be constructed directly", .{});
     }
 
     pub fn estimatedSize(this: *PostgresSQLQuery) usize {
@@ -1213,10 +1212,9 @@ pub const PostgresSQLConnection = struct {
         }
     }
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*PostgresSQLConnection {
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*PostgresSQLConnection {
         _ = callframe;
-        globalObject.throw("PostgresSQLConnection cannot be constructed directly", .{});
-        return null;
+        return globalObject.throw2("PostgresSQLConnection cannot be constructed directly", .{});
     }
 
     comptime {

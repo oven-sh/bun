@@ -110,7 +110,14 @@ else()
   find_llvm_command(CMAKE_AR llvm-ar)
   if (LINUX)
     # On Linux, strip ends up being more useful for us.
-    find_llvm_command(CMAKE_STRIP strip)
+    find_command(
+      VARIABLE
+        CMAKE_STRIP
+      COMMAND
+        strip
+      REQUIRED
+        ON
+    )
   else()
     find_llvm_command(CMAKE_STRIP llvm-strip)
   endif()

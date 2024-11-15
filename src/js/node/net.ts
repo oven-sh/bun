@@ -1201,11 +1201,23 @@ class Server extends EventEmitter {
 
         hostname = options.host;
         exclusive = options.exclusive === true;
-        const path = options.path;
+        path = options.path;
         port = options.port;
+
+        const isLinux = process.platform === "linux";
+
 
         if (!Number.isSafeInteger(port) || port < 0) {
           if (path) {
+            const isAbstractPath = path.startsWith("\0");
+            if (isLinux && isAbstractPath && (options.writableAll || options.readableAll)) {
+              const message = `The argument 'options' can not set readableAll or writableAll to true when path is abstract unix socket. Received ${JSON.stringify(options)}`;
+
+              const error = new TypeError(message);
+              error.code = "ERR_INVALID_ARG_VALUE";
+              throw error;
+            }
+
             hostname = path;
             port = undefined;
           } else {
@@ -1232,7 +1244,7 @@ class Server extends EventEmitter {
         // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
         // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
 
-        if (typeof port.callback === "function") onListen = port?.callback;
+        if (typeof options.callback === "function") onListen = options?.callback;
       } else if (!Number.isSafeInteger(port) || port < 0) {
         port = 0;
       }

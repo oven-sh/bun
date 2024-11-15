@@ -108,7 +108,7 @@ function getPipeline(options) {
    * @property {Arch} arch
    * @property {Abi} [abi]
    * @property {boolean} [baseline]
-   * @property {string} distro
+   * @property {string} [distro]
    * @property {string} release
    */
 
@@ -119,7 +119,10 @@ function getPipeline(options) {
   const getPlatformKey = platform => {
     const { os, arch, abi, baseline, distro, release } = platform;
     const target = getTargetKey({ os, arch, abi, baseline });
-    return `${target}-${distro}-${release.replace(/\./g, "")}`;
+    if (distro) {
+      return `${target}-${distro}-${release.replace(/\./g, "")}`;
+    }
+    return `${target}-${release.replace(/\./g, "")}`;
   };
 
   /**
@@ -141,7 +144,10 @@ function getPipeline(options) {
    */
   const getImageKey = platform => {
     const { os, arch, distro, release } = platform;
-    return `${os}-${arch}-${distro}-${release.replace(/\./g, "")}`;
+    if (distro) {
+      return `${os}-${arch}-${distro}-${release.replace(/\./g, "")}`;
+    }
+    return `${os}-${arch}-${release.replace(/\./g, "")}`;
   };
 
   /**
@@ -238,7 +244,12 @@ function getPipeline(options) {
         release,
       };
     }
-    let image = `${os}-${arch}-${distro}-${release}`;
+    let image;
+    if (distro) {
+      image = `${os}-${arch}-${distro}-${release}`;
+    } else {
+      image = `${os}-${arch}-${release}`;
+    }
     if (buildImages && !publishImages) {
       image += `-build-${getBuildNumber()}`;
     } else {
@@ -485,26 +496,26 @@ function getPipeline(options) {
    * @type {Platform[]}
    */
   const buildPlatforms = [
-    { os: "darwin", arch: "aarch64", distro: "macos", release: "14" },
-    { os: "darwin", arch: "x64", distro: "macos", release: "14" },
+    { os: "darwin", arch: "aarch64", release: "14" },
+    { os: "darwin", arch: "x64", release: "14" },
     { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
     { os: "linux", arch: "x64", distro: "debian", release: "11" },
     { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
-    { os: "windows", arch: "x64", distro: "server", release: "2019" },
-    { os: "windows", arch: "x64", baseline: true, distro: "server", release: "2019" },
+    { os: "windows", arch: "x64", release: "2019" },
+    { os: "windows", arch: "x64", baseline: true, release: "2019" },
   ];
 
   /**
    * @type {Platform[]}
    */
   const testPlatforms = [
-    { os: "darwin", arch: "aarch64", distro: "macos", release: "14" },
-    { os: "darwin", arch: "aarch64", distro: "macos", release: "13" },
-    { os: "darwin", arch: "x64", distro: "macos", release: "14" },
-    { os: "darwin", arch: "x64", distro: "macos", release: "13" },
+    { os: "darwin", arch: "aarch64", release: "14" },
+    { os: "darwin", arch: "aarch64", release: "13" },
+    { os: "darwin", arch: "x64", release: "14" },
+    { os: "darwin", arch: "x64", release: "13" },
     { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
     { os: "linux", arch: "x64", distro: "debian", release: "12" },
     { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12" },
@@ -517,8 +528,8 @@ function getPipeline(options) {
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
-    { os: "windows", arch: "x64", distro: "server", release: "2019" },
-    { os: "windows", arch: "x64", baseline: true, distro: "server", release: "2019" },
+    { os: "windows", arch: "x64", release: "2019" },
+    { os: "windows", arch: "x64", baseline: true, release: "2019" },
   ];
 
   /**

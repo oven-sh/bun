@@ -556,7 +556,7 @@ function getPipeline(options) {
     priority: getPriority(),
     steps: [
       ...buildPlatforms.flatMap(platform => {
-        const { os, arch, abi, baseline } = platform;
+        const { os, arch, abi, distro, baseline } = platform;
         const tests = testPlatforms.filter(
           testPlatform =>
             testPlatform.os === os &&
@@ -568,7 +568,7 @@ function getPipeline(options) {
         /** @type {Step[]} */
         const steps = [];
 
-        if (buildImages && !imagePlatforms.has(getImageKey(platform))) {
+        if (buildImages && os === "linux" && distro !== "ubuntu" && !imagePlatforms.has(getImageKey(platform))) {
           steps.push(getBuildImageStep(platform));
           imagePlatforms.set(getImageKey(platform), platform);
         }

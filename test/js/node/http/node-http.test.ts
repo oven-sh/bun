@@ -2390,3 +2390,13 @@ it("must set headersSent to true after headers are sent when using chunk encoded
     server.close();
   }
 });
+
+it("should work when sending https.request with agent:false", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const client = https.request("https://example.com/", { agent: false });
+  client.on("error", reject);
+  client.on("close", resolve);
+  client.end();
+  await promise;
+});
+

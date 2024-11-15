@@ -4,6 +4,8 @@
 #include <js_native_api.h>
 #include <stdlib.h>  // abort()
 
+#include <js_native_api_types.h>
+
 // Empty value so that macros here are able to return NULL or void
 #define NODE_API_RETVAL_NOTHING  // Intentionally blank #define
 
@@ -128,5 +130,7 @@ static inline void add_last_status(napi_env env,
                                    napi_value return_value);
 
 #include "common-inl.h"
+
+typedef node_api_nogc_env node_api_basic_env;
 
 #endif  // JS_NATIVE_API_COMMON_H_

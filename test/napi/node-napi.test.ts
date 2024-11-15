@@ -4,8 +4,8 @@ import { bunEnv, bunExe } from "harness";
 import { join, dirname } from "path";
 import os from "node:os";
 
-const jsNativeApiRoot = join(__dirname, "node-napi-tests/test/js-native-api");
-const nodeApiRoot = join(__dirname, "node-napi-tests/test/node-api");
+const jsNativeApiRoot = join(__dirname, "node-napi-tests", "test", "js-native-api");
+const nodeApiRoot = join(__dirname, "node-napi-tests", "test", "node-api");
 
 const jsNativeApiTests = Array.from(new Glob("**/*.js").scanSync(jsNativeApiRoot));
 const nodeApiTests = Array.from(new Glob("**/*.js").scanSync(nodeApiRoot));
@@ -50,10 +50,20 @@ const failingNodeApiTests = [
   "test_worker_terminate/test.js",
 ];
 
+if (process.platform == "win32") {
+  for (const i in failingJsNativeApiTests) {
+    failingJsNativeApiTests[i] = failingJsNativeApiTests[i].replaceAll("/", "\\");
+  }
+  for (const i in failingNodeApiTests) {
+    failingNodeApiTests[i] = failingNodeApiTests[i].replaceAll("/", "\\");
+  }
+}
+
 beforeAll(async () => {
   const directories = jsNativeApiTests
+    .filter(t => !failingJsNativeApiTests.includes(t))
     .map(t => join(jsNativeApiRoot, t))
-    .concat(nodeApiTests.map(t => join(nodeApiRoot, t)))
+    .concat(nodeApiTests.filter(t => !failingNodeApiTests.includes(t)).map(t => join(nodeApiRoot, t)))
     .map(t => dirname(t));
   const uniqueDirectories = Array.from(new Set(directories));
 
@@ -64,7 +74,7 @@ beforeAll(async () => {
       stderr: "pipe",
       stdout: "ignore",
       stdin: "inherit",
-      env: bunEnv,
+      env: { ...bunEnv, npm_config_target: "v23.2.0" },
     });
     await process.exited;
     if (process.exitCode !== 0) {

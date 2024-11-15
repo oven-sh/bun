@@ -428,9 +428,9 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
 }
 
 extern fn Bun__Process__queueNextTick1(*JSC.ZigGlobalObject, JSC.JSValue, JSC.JSValue) void;
-extern fn Bun__queueFinishNapiFinalizers(?*JSC.JSGlobalObject) callconv(.C) bool;
+extern fn Bun__queueFinishNapiFinalizers(?*JSC.JSGlobalObject) bool;
 
-pub export fn Bun__isNapiFinalizerQueueEmpty(globalObject: *JSGlobalObject) callconv(JSC.conv) bool {
+pub export fn Bun__isNapiFinalizerQueueEmpty(globalObject: *JSGlobalObject) bool {
     return globalObject.bunVM().eventLoop().napi_finalizer_queue.count == 0;
 }
 

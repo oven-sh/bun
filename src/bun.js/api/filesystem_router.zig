@@ -49,17 +49,15 @@ pub const FileSystemRouter = struct {
 
     pub usingnamespace JSC.Codegen.JSFileSystemRouter;
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*FileSystemRouter {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*FileSystemRouter {
         const argument_ = callframe.arguments(1);
         if (argument_.len == 0) {
-            globalThis.throwInvalidArguments("Expected object", .{});
-            return null;
+            return globalThis.throwInvalidArguments2("Expected object", .{});
         }
 
         const argument = argument_.ptr[0];
         if (argument.isEmptyOrUndefinedOrNull() or !argument.isObject()) {
-            globalThis.throwInvalidArguments("Expected object", .{});
-            return null;
+            return globalThis.throwInvalidArguments2("Expected object", .{});
         }
         var vm = globalThis.bunVM();
 
@@ -71,18 +69,15 @@ pub const FileSystemRouter = struct {
         var out_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
         if (argument.get(globalThis, "style")) |style_val| {
             if (!style_val.getZigString(globalThis).eqlComptime("nextjs")) {
-                globalThis.throwInvalidArguments("Only 'nextjs' style is currently implemented", .{});
-                return null;
+                return globalThis.throwInvalidArguments2("Only 'nextjs' style is currently implemented", .{});
             }
         } else {
-            globalThis.throwInvalidArguments("Expected 'style' option (ex: \"style\": \"nextjs\")", .{});
-            return null;
+            return globalThis.throwInvalidArguments2("Expected 'style' option (ex: \"style\": \"nextjs\")", .{});
         }
 
         if (argument.get(globalThis, "dir")) |dir| {
             if (!dir.isString()) {
-                globalThis.throwInvalidArguments("Expected dir to be a string", .{});
-                return null;
+                return globalThis.throwInvalidArguments2("Expected dir to be a string", .{});
             }
             const root_dir_path_ = dir.toSlice(globalThis, globalThis.allocator());
             if (!(root_dir_path_.len == 0 or strings.eqlComptime(root_dir_path_.slice(), "."))) {
@@ -97,8 +92,7 @@ pub const FileSystemRouter = struct {
             }
         } else {
             // dir is not optional
-            globalThis.throwInvalidArguments("Expected dir to be a string", .{});
-            return null;
+            return globalThis.throwInvalidArguments2("Expected dir to be a string", .{});
         }
         var arena = globalThis.allocator().create(bun.ArenaAllocator) catch unreachable;
         arena.* = bun.ArenaAllocator.init(globalThis.allocator());
@@ -106,22 +100,20 @@ pub const FileSystemRouter = struct {
         var extensions = std.ArrayList(string).init(allocator);
         if (argument.get(globalThis, "fileExtensions")) |file_extensions| {
             if (!file_extensions.jsType().isArray()) {
-                globalThis.throwInvalidArguments("Expected fileExtensions to be an Array", .{});
                 origin_str.deinit();
                 arena.deinit();
                 globalThis.allocator().destroy(arena);
-                return null;
+                return globalThis.throwInvalidArguments2("Expected fileExtensions to be an Array", .{});
             }
 
             var iter = file_extensions.arrayIterator(globalThis);
             extensions.ensureTotalCapacityPrecise(iter.len) catch unreachable;
             while (iter.next()) |val| {
                 if (!val.isString()) {
-                    globalThis.throwInvalidArguments("Expected fileExtensions to be an Array of strings", .{});
                     origin_str.deinit();
                     arena.deinit();
                     globalThis.allocator().destroy(arena);
-                    return null;
+                    return globalThis.throwInvalidArguments2("Expected fileExtensions to be an Array of strings", .{});
                 }
                 if (val.getLength(globalThis) == 0) continue;
                 extensions.appendAssumeCapacity((val.toSlice(globalThis, allocator).clone(allocator) catch unreachable).slice()[1..]);
@@ -130,11 +122,10 @@ pub const FileSystemRouter = struct {
 
         if (argument.getTruthy(globalThis, "assetPrefix")) |asset_prefix| {
             if (!asset_prefix.isString()) {
-                globalThis.throwInvalidArguments("Expected assetPrefix to be a string", .{});
                 origin_str.deinit();
                 arena.deinit();
                 globalThis.allocator().destroy(arena);
-                return null;
+                return globalThis.throwInvalidArguments2("Expected assetPrefix to be a string", .{});
             }
 
             asset_prefix_slice = asset_prefix.toSlice(globalThis, allocator).clone(allocator) catch unreachable;
@@ -147,17 +138,15 @@ pub const FileSystemRouter = struct {
         const path_to_use = (root_dir_path.cloneWithTrailingSlash(allocator) catch unreachable).slice();
 
         const root_dir_info = vm.bundler.resolver.readDirInfo(path_to_use) catch {
-            globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return null;
+            return globalThis.throwValue2(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
         } orelse {
-            globalThis.throw("Unable to find directory: {s}", .{root_dir_path.slice()});
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return null;
+            return globalThis.throw2("Unable to find directory: {s}", .{root_dir_path.slice()});
         };
 
         var router = Router.init(vm.bundler.fs, allocator, .{
@@ -167,29 +156,26 @@ pub const FileSystemRouter = struct {
         }) catch unreachable;
 
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.bundler.resolver, router.config.dir) catch {
-            globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return null;
+            return globalThis.throwValue2(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         };
 
         if (argument.get(globalThis, "origin")) |origin| {
             if (!origin.isString()) {
-                globalThis.throwInvalidArguments("Expected origin to be a string", .{});
                 arena.deinit();
                 globalThis.allocator().destroy(arena);
-                return null;
+                return globalThis.throwInvalidArguments2("Expected origin to be a string", .{});
             }
             origin_str = origin.toSlice(globalThis, globalThis.allocator());
         }
 
         if (log.errors + log.warnings > 0) {
-            globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return null;
+            return globalThis.throwValue2(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         }
 
         var fs_router = globalThis.allocator().create(FileSystemRouter) catch unreachable;

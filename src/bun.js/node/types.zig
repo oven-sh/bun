@@ -1746,10 +1746,9 @@ pub fn StatType(comptime Big: bool) type {
             };
         }
 
-        pub fn constructor(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) ?*This {
+        pub fn constructor(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!*This {
             if (Big) {
-                globalObject.throwInvalidArguments("BigIntStats is not a constructor", .{});
-                return null;
+                return globalObject.throwInvalidArguments2("BigIntStats is not a constructor", .{});
             }
 
             // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
@@ -1852,9 +1851,8 @@ pub const Dirent = struct {
     pub usingnamespace JSC.Codegen.JSDirent;
     pub usingnamespace bun.New(@This());
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) ?*Dirent {
-        globalObject.throw("Dirent is not a constructor", .{});
-        return null;
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Dirent {
+        return globalObject.throw2("Dirent is not a constructor", .{});
     }
 
     pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {

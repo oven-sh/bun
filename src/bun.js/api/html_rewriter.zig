@@ -48,7 +48,7 @@ pub const HTMLRewriter = struct {
 
     pub usingnamespace JSC.Codegen.JSHTMLRewriter;
 
-    pub fn constructor(_: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*HTMLRewriter {
+    pub fn constructor(_: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*HTMLRewriter {
         const rewriter = bun.default_allocator.create(HTMLRewriter) catch bun.outOfMemory();
         rewriter.* = HTMLRewriter{
             .builder = LOLHTML.HTMLRewriter.Builder.init(),
@@ -198,7 +198,8 @@ pub const HTMLRewriter = struct {
         };
 
         if (kind != .other) {
-            if (JSC.WebCore.Body.extract(global, response_value)) |body_value| {
+            {
+                const body_value = JSC.WebCore.Body.extract(global, response_value) catch return .zero;
                 const resp = bun.new(Response, Response{
                     .init = .{
                         .status_code = 200,

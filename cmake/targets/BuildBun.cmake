@@ -852,6 +852,7 @@ elseif(APPLE)
     -dead_strip_dylibs
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
+    -Wl,-map,${bun}.linker-map
   )
 else()
   # Try to use lld-16 if available, otherwise fallback to lld
@@ -946,6 +947,7 @@ else()
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro
+    -Wl,-Map=${bun}.linker-map
   )
 endif()
 
@@ -1183,6 +1185,12 @@ if(NOT BUN_CPP_ONLY)
     elseif(APPLE)
       list(APPEND bunFiles ${bun}.dSYM)
     endif()
+
+    if(APPLE OR LINUX)
+      list(APPEND bunFiles ${bun}.linker-map)
+    endif()
+
+
     register_command(
       TARGET
         ${bun}

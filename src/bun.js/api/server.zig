@@ -94,7 +94,8 @@ const BlobFileContentResult = struct {
     data: [:0]const u8,
 
     fn init(comptime fieldname: []const u8, js_obj: JSC.JSValue, global: *JSC.JSGlobalObject) bun.JSError!?BlobFileContentResult {
-        if (JSC.WebCore.Body.Value.fromJS(global, js_obj)) |body| {
+        {
+            const body = try JSC.WebCore.Body.Value.fromJS(global, js_obj);
             if (body == .Blob and body.Blob.store != null and body.Blob.store.?.data == .file) {
                 var fs: JSC.Node.NodeFS = .{};
                 const read = fs.readFileWithOptions(.{ .path = body.Blob.store.?.data.file.pathlike }, .sync, .null_terminated);
@@ -4817,9 +4818,8 @@ pub const ServerWebSocket = struct {
         return uws.WebSocketBehavior.Wrap(ServerType, @This(), ssl).apply(opts);
     }
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*ServerWebSocket {
-        globalObject.throw("Cannot construct ServerWebSocket", .{});
-        return null;
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*ServerWebSocket {
+        return globalObject.throw2("Cannot construct ServerWebSocket", .{});
     }
 
     pub fn finalize(this: *ServerWebSocket) void {
@@ -5852,9 +5852,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub usingnamespace NamespaceType;
         pub usingnamespace bun.New(@This());
 
-        pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*ThisServer {
-            globalThis.throw("Server() is not a constructor", .{});
-            return null;
+        pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*ThisServer {
+            return globalThis.throw("Server() is not a constructor", .{});
         }
 
         extern fn JSSocketAddress__create(global: *JSC.JSGlobalObject, ip: JSValue, port: i32, is_ipv6: bool) JSValue;

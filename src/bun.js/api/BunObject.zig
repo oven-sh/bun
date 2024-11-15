@@ -2624,24 +2624,21 @@ pub const Crypto = struct {
         }
 
         // Bun.CryptoHasher(algorithm, hmacKey?: string | Buffer)
-        pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*CryptoHasher {
+        pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*CryptoHasher {
             const arguments = callframe.arguments(2);
             if (arguments.len == 0) {
-                globalThis.throwInvalidArguments("Expected an algorithm name as an argument", .{});
-                return null;
+                return globalThis.throwInvalidArguments2("Expected an algorithm name as an argument", .{});
             }
 
             const algorithm_name = arguments.ptr[0];
             if (algorithm_name.isEmptyOrUndefinedOrNull() or !algorithm_name.isString()) {
-                globalThis.throwInvalidArguments("algorithm must be a string", .{});
-                return null;
+                return globalThis.throwInvalidArguments2("algorithm must be a string", .{});
             }
 
             const algorithm = algorithm_name.getZigString(globalThis);
 
             if (algorithm.len == 0) {
-                globalThis.throwInvalidArguments("Invalid algorithm name", .{});
-                return null;
+                return globalThis.throwInvalidArguments2("Invalid algorithm name", .{});
             }
 
             const hmac_value = arguments.ptr[1];
@@ -2654,18 +2651,16 @@ pub const Crypto = struct {
 
             if (!hmac_value.isEmptyOrUndefinedOrNull()) {
                 hmac_key = JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, hmac_value) orelse {
-                    globalThis.throwInvalidArguments("key must be a string or buffer", .{});
-                    return null;
+                    return globalThis.throwInvalidArguments2("key must be a string or buffer", .{});
                 };
             }
 
             return CryptoHasher.new(brk: {
                 if (hmac_key) |*key| {
-                    const chosen_algorithm = algorithm_name.toEnumFromMap(globalThis, "algorithm", EVP.Algorithm, EVP.Algorithm.map) catch return null;
+                    const chosen_algorithm = try algorithm_name.toEnumFromMap(globalThis, "algorithm", EVP.Algorithm, EVP.Algorithm.map);
                     if (chosen_algorithm == .ripemd160) {
                         // crashes at runtime.
-                        globalThis.throw("ripemd160 is not supported", .{});
-                        return null;
+                        return globalThis.throw2("ripemd160 is not supported", .{});
                     }
 
                     break :brk .{
@@ -2675,20 +2670,20 @@ pub const Crypto = struct {
                                 if (err != 0) {
                                     const instance = createCryptoError(globalThis, err);
                                     BoringSSL.ERR_clear_error();
-                                    globalThis.throwValue(instance);
+                                    return globalThis.throwValue2(instance);
                                 } else {
                                     globalThis.throwTODO("HMAC is not supported for this algorithm yet");
+                                    return error.JSError;
                                 }
                             }
-                            return null;
+                            return error.JSError;
                         },
                     };
                 }
 
                 break :brk .{
                     .evp = EVP.byName(algorithm, globalThis) orelse return CryptoHasherZig.constructor(algorithm) orelse {
-                        globalThis.throwInvalidArguments("Unsupported algorithm {any}", .{algorithm});
-                        return null;
+                        return globalThis.throwInvalidArguments2("Unsupported algorithm {any}", .{algorithm});
                     },
                 };
             });
@@ -3159,9 +3154,8 @@ pub const Crypto = struct {
                 }
             }
 
-            pub fn constructor(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*@This() {
-                const this = bun.default_allocator.create(@This()) catch return null;
-
+            pub fn constructor(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*@This() {
+                const this = try bun.default_allocator.create(@This());
                 this.* = .{ .hashing = Hasher.init() };
                 return this;
             }

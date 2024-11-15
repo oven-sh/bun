@@ -843,9 +843,8 @@ pub const Listener = struct {
         onCreate(false, socket);
     }
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*Listener {
-        globalObject.throw("Cannot construct Listener", .{});
-        return null;
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Listener {
+        return globalObject.throw2("Cannot construct Listener", .{});
     }
 
     pub fn onNamePipeCreated(comptime ssl: bool, listener: *Listener) *NewSocket(ssl) {
@@ -1452,10 +1451,10 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*This {
-            globalObject.throw("Cannot construct Socket", .{});
-            return null;
+        pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*This {
+            return globalObject.throw2("Cannot construct Socket", .{});
         }
+
         pub fn resumeFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
 

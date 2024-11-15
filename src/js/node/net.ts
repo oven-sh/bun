@@ -1201,7 +1201,7 @@ class Server extends EventEmitter {
 
         hostname = options.host;
         exclusive = options.exclusive === true;
-        const path = options.path;
+        path = options.path;
         port = options.port;
 
         if (!Number.isSafeInteger(port) || port < 0) {
@@ -1232,7 +1232,7 @@ class Server extends EventEmitter {
         // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
         // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
 
-        if (typeof port.callback === "function") onListen = port?.callback;
+        if (typeof options.callback === "function") onListen = options?.callback;
       } else if (!Number.isSafeInteger(port) || port < 0) {
         port = 0;
       }

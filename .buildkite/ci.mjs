@@ -228,6 +228,18 @@ function getPipeline(options) {
    */
 
   /**
+   * @param {Platform} platform
+   * @returns {boolean}
+   */
+  const isUsingNewAgent = platform => {
+    const { os, distro } = platform;
+    if (os === "linux" && distro !== "ubuntu") {
+      return true;
+    }
+    return false;
+  };
+
+  /**
    * @param {"v1" | "v2"} version
    * @param {Platform} platform
    * @param {string} [instanceType]
@@ -274,7 +286,7 @@ function getPipeline(options) {
    */
   const getBuildAgent = target => {
     const { os, arch, abi } = target;
-    if (abi === "musl") {
+    if (isUsingNewAgent(target)) {
       const instanceType = arch === "aarch64" ? "c8g.8xlarge" : "c7i.8xlarge";
       return getEmphemeralAgent("v2", target, instanceType);
     }
@@ -306,8 +318,8 @@ function getPipeline(options) {
    * @returns {Agent}
    */
   const getTestAgent = platform => {
-    const { os, arch, release, distro } = platform;
-    if (os === "linux" && distro !== "ubuntu") {
+    const { os, arch, release } = platform;
+    if (isUsingNewAgent(platform)) {
       const instanceType = arch === "aarch64" ? "t4g.large" : "t3.large";
       return getEmphemeralAgent("v2", platform, instanceType);
     }
@@ -568,7 +580,7 @@ function getPipeline(options) {
         /** @type {Step[]} */
         const steps = [];
 
-        if (buildImages && os === "linux" && distro !== "ubuntu" && !imagePlatforms.has(getImageKey(platform))) {
+        if (buildImages && isUsingNewAgent(platform) && !imagePlatforms.has(getImageKey(platform))) {
           steps.push(getBuildImageStep(platform));
           imagePlatforms.set(getImageKey(platform), platform);
         }

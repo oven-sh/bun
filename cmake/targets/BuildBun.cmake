@@ -1114,7 +1114,7 @@ if(NOT BUN_CPP_ONLY)
       COMMAND
         ${CMAKE_STRIP}
           ${bunExe}
-          $(CMAKE_STRIP_FLAGS)
+          ${CMAKE_STRIP_FLAGS}
           --strip-all
           --strip-debug
           --discard-all

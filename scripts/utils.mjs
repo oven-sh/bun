@@ -1834,6 +1834,7 @@ export async function getCloud() {
     return "google";
   }
 }
+
 /**
  * @param {string | Record<Cloud, string>} name
  * @param {Cloud} [cloud]
@@ -1879,6 +1880,22 @@ export function getCloudMetadataTag(tag, cloud) {
   };
 
   return getCloudMetadata(metadata, cloud);
+}
+
+/**
+ * @param {string} name
+ * @returns {Promise<string | undefined>}
+ */
+export async function getBuildMetadata(name) {
+  if (isBuildkite) {
+    const { error, stdout } = await spawn(["buildkite-agent", "meta-data", "get", name]);
+    if (!error) {
+      const value = stdout.trim();
+      if (value) {
+        return value;
+      }
+    }
+  }
 }
 
 /**

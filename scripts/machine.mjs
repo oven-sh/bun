@@ -4,6 +4,7 @@ import { inspect, parseArgs } from "node:util";
 import {
   $,
   getBootstrapVersion,
+  getBuildMetadata,
   getBuildNumber,
   getSecret,
   isCI,
@@ -1031,7 +1032,16 @@ async function main() {
     sshKeys: getSshKeys(),
   };
 
-  const { cloud, detached, bootstrap, ci, os } = options;
+  const { cloud, detached, bootstrap, ci, os, arch, distro, distroVersion } = options;
+  const name = `${os}-${arch}-${distro}-${distroVersion}`;
+
+  if (isCI && command === "publish-image") {
+    const metadata = await getBuildMetadata("publish-image");
+    if (!metadata || !metadata.includes(name)) {
+      console.log(`Skipping because "${name}" is not present in build metadata: "publish-image"`);
+      return;
+    }
+  }
 
   let bootstrapPath, agentPath;
   if (bootstrap) {
@@ -1099,7 +1109,6 @@ async function main() {
     }
 
     if (command === "create-image" || command === "publish-image") {
-      const { os, arch, distro, distroVersion } = options;
       let suffix;
       if (command === "publish-image") {
         suffix = `v${getBootstrapVersion()}`;
@@ -1108,10 +1117,10 @@ async function main() {
       } else {
         suffix = `draft-${Date.now()}`;
       }
-      const name = `${os}-${arch}-${distro}-${distroVersion}-${suffix}`;
+      const label = `${name}-${suffix}`;
       await startGroup("Creating image...", async () => {
-        console.log("Creating image:", name);
-        const result = await machine.snapshot(name);
+        console.log("Creating image:", label);
+        const result = await machine.snapshot(label);
         console.log("Created image:", result);
       });
     }

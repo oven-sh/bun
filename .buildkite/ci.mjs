@@ -337,11 +337,13 @@ function getPipeline(options) {
 
   /**
    * @param {Platform} platform
+   * @param {boolean} [publish]
    * @returns {Step}
    */
-  const getBuildImageStep = platform => {
+  const getBuildImageStep = (platform, publish) => {
     const { os, arch, distro, release } = platform;
-    const action = isMainBranch() || getEnv("PUBLISH_IMAGES", false) === "true" ? "publish-image" : "create-image";
+    const action = publish ? "publish-image" : "create-image";
+    const depends_on = publish ? ["publish-image"] : undefined;
     return {
       key: `${getImageKey(platform)}-build-image`,
       label: `${getImageLabel(platform)} - build-image`,
@@ -351,6 +353,7 @@ function getPipeline(options) {
       env: {
         DEBUG: "1",
       },
+      depends_on,
       command: `node ./scripts/machine.mjs ${action} --ci --cloud=aws --os=${os} --arch=${arch} --distro=${distro} --distro-version=${release}`,
     };
   };
@@ -510,8 +513,8 @@ function getPipeline(options) {
       prompt: "Should the build images be published?",
       multiple: true,
       fields: platforms.map(platform => ({
-        label: getPlatformLabel(platform),
-        value: getPlatformKey(platform),
+        label: getImageLabel(platform),
+        value: getImageKey(platform),
       })),
     };
   };
@@ -594,6 +597,12 @@ function getPipeline(options) {
           steps,
         };
       }),
+      ...(buildImages
+        ? [
+            getPublishImageInput(Array.from(imagePlatforms.values())),
+            ...Array.from(imagePlatforms.values()).map(platform => getBuildImageStep(platform, true)),
+          ]
+        : []),
     ],
   };
 }

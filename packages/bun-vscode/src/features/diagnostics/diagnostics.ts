@@ -1,8 +1,17 @@
+import * as os from "node:os";
 import * as util from "node:util";
 import * as vscode from "vscode";
 import { decodeSerializedError, type DeserializedFailure } from "../../../../../src/bake/client/error-serialization";
 import { DataViewReader } from "../../../../../src/bake/client/reader";
 import { MessageId } from "../../../../../src/bake/generated";
+import {
+  DAP,
+  DebugAdapter,
+  getAvailablePort,
+  getRandomId,
+  TCPSocketSignal,
+  UnixSignal,
+} from "../../../../bun-debug-adapter-protocol";
 import { ReconnectingWebSocket } from "./ws";
 
 function parseDiagnostics(view: DataView) {
@@ -35,6 +44,74 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
   const diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
   context.subscriptions.push(diagnosticCollection);
 
+  const rootSocketPromise = (async () => {
+    let signal: UnixSignal | TCPSocketSignal;
+
+    if (os.platform() !== "win32") {
+      signal = new UnixSignal();
+    } else {
+      signal = new TCPSocketSignal(await getAvailablePort());
+    }
+
+    const url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
+
+    signal.on("Signal.received", async () => {
+      const adapter = new DebugAdapter();
+
+      (
+        [
+          "Adapter.error",
+          "Adapter.event",
+          "Adapter.response",
+          "Inspector.error",
+          "Inspector.event",
+          "Inspector.response",
+        ] as const
+      ).forEach(e => {
+        adapter.on(e, event => {
+          console.log(e, JSON.stringify(event as DAP.EventMap[keyof DAP.EventMap]));
+        });
+      });
+
+      const ok = await adapter.start(url);
+
+      if (!ok) {
+        await vscode.window.showErrorMessage("Failed to start Bun debug adapter");
+        return;
+      }
+
+      adapter.initialize({
+        // TODO: Should we be generating this ID? What's it supposed to be?
+        adapterID: "bun-vsc-terminal-debug-adapter",
+      });
+    });
+
+    context.environmentVariableCollection.append("BUN_INSPECT", `${url}?wait=1`);
+    context.environmentVariableCollection.append("BUN_INSPECT_NOTIFY", signal.url);
+    context.environmentVariableCollection.append("BUN_HIDE_INSPECTOR_MESSAGE", "1");
+
+    return {
+      close: () => signal.close(),
+    };
+  })();
+
+  context.subscriptions.push({
+    dispose() {
+      void rootSocketPromise.then(s => s.close());
+    },
+  });
+
+  // context.subscriptions.push(
+  //   vscode.window.onDidOpenTerminal(async terminal => {
+  //     await terminal.processId;
+  //     terminal.sendText("export BUN_INSPECT=myValue");
+  //   }),
+  // );
+
+  // context.subscriptions.push(createWSClient().disposable);
+}
+
+function createWSClient() {
   const handlers: Record<number, (view: DataView) => void> = {
     [MessageId.version]: view => {
       console.log("HMR Version:", Buffer.from(view.buffer.slice(1)).toString("ascii"));
@@ -84,9 +161,12 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
     ws.binaryType = "arraybuffer";
   });
 
-  context.subscriptions.push({
-    dispose() {
-      socket.close();
+  return {
+    socket,
+    disposable: {
+      dispose() {
+        socket.close();
+      },
     },
-  });
+  };
 }

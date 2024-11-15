@@ -25,6 +25,10 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+#include <JavaScriptCore/ConsoleClient.h>
+#include <JavaScriptCore/ConsoleMessage.h>
+#include <JavaScriptCore/ScriptArguments.h>
 #include "wtf-bindings.h"
 
 #include "ProcessBindingTTYWrap.h"
@@ -876,6 +880,16 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
         wrapped.emit(uncaughtExceptionIdent, args);
     } else {
+        if (globalObject->inspectable()) {
+            if (auto* client = globalObject->inspectorController().consoleClient().get()) {
+                Vector<JSC::Strong<JSC::Unknown>> argumentsVector;
+                for (size_t i = 0; i < args.size(); ++i)
+                    argumentsVector.append(JSC::Strong<JSC::Unknown>(vm, args.at(i)));
+                Ref<ScriptArguments> arguments = ScriptArguments::create(globalObject, WTFMove(argumentsVector));
+                client->logWithLevel(globalObject, WTFMove(arguments), JSC::MessageLevel::Error);
+            }
+        }
+
         return false;
     }
 

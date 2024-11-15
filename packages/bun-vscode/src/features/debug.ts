@@ -92,9 +92,18 @@ function debugFileCommand(resource?: vscode.Uri) {
   if (path) debugCommand(path);
 }
 
-export async function createTerminalDebugSession(terminal: vscode.Terminal) {
-  const { creationOptions } = terminal;
+async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
+  if (!getConfig("debugTerminal.enabled")) return;
+
+  const { name, creationOptions } = terminal;
+  if (name !== "JavaScript Debug Terminal") {
+    return;
+  }
+
   const { env } = creationOptions as vscode.TerminalOptions;
+  if (env["BUN_INSPECT"]) {
+    return;
+  }
 
   const session = new TerminalDebugSession();
   await session.initialize();
@@ -113,24 +122,6 @@ export async function createTerminalDebugSession(terminal: vscode.Terminal) {
       "BUN_INSPECT_NOTIFY": signal.url,
     },
   });
-
-  return { debug, session };
-}
-
-async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
-  if (!getConfig("debugTerminal.enabled")) return;
-
-  const { name, creationOptions } = terminal;
-  if (name !== "JavaScript Debug Terminal") {
-    return;
-  }
-
-  const { env } = creationOptions as vscode.TerminalOptions;
-  if (env["BUN_INSPECT"]) {
-    return;
-  }
-
-  const { debug } = await createTerminalDebugSession(terminal);
 
   debug.show();
 

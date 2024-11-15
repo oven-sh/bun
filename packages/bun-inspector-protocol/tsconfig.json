@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "lib": ["ESNext"],
-    "module": "ESNext",
+    "module": "NodeNext",
     "target": "ESNext",
     "moduleResolution": "NodeNext",
     "moduleDetection": "force",
@@ -12,7 +12,7 @@
     "forceConsistentCasingInFileNames": true,
     "inlineSourceMap": true,
     "allowJs": true,
-    "outDir": "dist",
+    "outDir": "dist"
   },
   "include": [".", "../bun-types/index.d.ts"]
 }

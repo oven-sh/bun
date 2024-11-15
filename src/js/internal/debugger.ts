@@ -1,4 +1,4 @@
-import type { ServerWebSocket, Socket, SocketHandler, WebSocketHandler, Server as WebSocketServer } from "bun";
+import type { ServerWebSocket, Socket, WebSocketHandler, Server as WebSocketServer } from "bun";
 const enum FramerState {
   WaitingForLength,
   WaitingForMessage,
@@ -149,7 +149,7 @@ export default function (
   }
 }
 
-function unescapeUnixSocketUrl(href) {
+function unescapeUnixSocketUrl(href: string) {
   if (href.startsWith("unix://%2F")) {
     return decodeURIComponent(href.substring("unix://".length));
   }

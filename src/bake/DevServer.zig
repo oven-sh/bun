@@ -578,7 +578,7 @@ fn ensureRouteIsBundled(
             }
         },
         .bundling => {
-            const prepared = dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp) orelse
+            const prepared = dev.server.?.ptr.as(bun.JSC.API.DebugHTTPServer).prepareJsRequestContext(req, resp) orelse
                 return;
             _ = prepared;
             @panic("TODO: Async Bundler");

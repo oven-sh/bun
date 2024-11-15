@@ -5859,7 +5859,7 @@ pub const NodeHTTPResponse = struct {
         return true;
     }
 
-    pub fn dumpRequestBody(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn dumpRequestBody(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         _ = globalObject; // autofix
         _ = callframe; // autofix
         if (this.buffered_request_body_data_during_pause.len > 0) {
@@ -5981,14 +5981,14 @@ pub const NodeHTTPResponse = struct {
         return JSC.JSValue.jsNumber(this.response.getBufferedAmount());
     }
 
-    pub fn jsRef(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsRef(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (!this.isDone()) {
             this.js_ref.ref(globalObject.bunVM());
         }
         return .undefined;
     }
 
-    pub fn jsUnref(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsUnref(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (!this.isDone()) {
             this.js_ref.unref(globalObject.bunVM());
         }
@@ -6019,7 +6019,7 @@ pub const NodeHTTPResponse = struct {
         response: *anyopaque,
     ) void;
 
-    pub fn writeHead(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn writeHead(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(3).slice();
 
         if (this.isDone()) {
@@ -6158,7 +6158,7 @@ pub const NodeHTTPResponse = struct {
         this.handleAbortOrTimeout(.timeout);
     }
 
-    pub fn doPause(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn doPause(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         _ = globalObject; // autofix
         _ = callframe; // autofix
         if (this.finished or this.aborted) {
@@ -6173,7 +6173,7 @@ pub const NodeHTTPResponse = struct {
         return .true;
     }
 
-    pub fn drainRequestBody(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn drainRequestBody(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         _ = callframe; // autofix
         return this.drainBufferedRequestBodyFromPause(globalObject) orelse .undefined;
     }
@@ -6187,7 +6187,7 @@ pub const NodeHTTPResponse = struct {
         return null;
     }
 
-    pub fn doResume(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn doResume(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         _ = callframe; // autofix
         if (this.finished or this.aborted) {
             return .false;
@@ -6219,6 +6219,9 @@ pub const NodeHTTPResponse = struct {
         this.markRequestAsDoneIfNecessary();
     }
 
+    pub fn Bun__NodeHTTPRequest__onResolve__Internal(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        return Bun__NodeHTTPRequest__onResolve(globalObject, callframe);
+    }
     pub export fn Bun__NodeHTTPRequest__onResolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         log("onResolve", .{});
         const arguments = callframe.arguments(2).slice();
@@ -6241,7 +6244,9 @@ pub const NodeHTTPResponse = struct {
 
         return .undefined;
     }
-
+    pub fn Bun__NodeHTTPRequest__onReject__Internal(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        return Bun__NodeHTTPRequest__onReject(globalObject, callframe);
+    }
     pub export fn Bun__NodeHTTPRequest__onReject(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2).slice();
         const err = arguments[0];
@@ -6274,7 +6279,7 @@ pub const NodeHTTPResponse = struct {
         this.onAbortedCallback.deinit();
     }
 
-    pub fn abort(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn abort(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         _ = globalObject; // autofix
         _ = callframe; // autofix
         if (this.isDone()) {
@@ -6578,13 +6583,13 @@ pub const NodeHTTPResponse = struct {
         return true;
     }
 
-    pub fn write(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn write(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(3).slice();
 
         return writeOrEnd(this, globalObject, arguments, false);
     }
 
-    pub fn end(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn end(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(3).slice();
         return writeOrEnd(this, globalObject, arguments, true);
     }
@@ -6610,7 +6615,7 @@ pub const NodeHTTPResponse = struct {
         this.response.timeout(@intCast(@min(seconds.to(c_uint), 255)));
     }
 
-    pub fn cork(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn cork(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(1).slice();
         if (arguments.len == 0 or !arguments[0].isCallable(globalObject.vm())) {
             return globalObject.throwInvalidArgumentTypeValue("cork", "function", arguments[0]);
@@ -6749,7 +6754,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         extern fn JSSocketAddress__create(global: *JSC.JSGlobalObject, ip: JSValue, port: i32, is_ipv6: bool) JSValue;
 
-        pub fn requestIP(this: *ThisServer, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+        pub fn requestIP(this: *ThisServer, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments(1).slice();
             if (arguments.len < 1 or arguments[0].isEmptyOrUndefinedOrNull()) {
                 globalObject.throwNotEnoughArguments("requestIP", 1, 0);
@@ -6783,7 +6788,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             );
         }
 
-        pub fn timeout(this: *ThisServer, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+        pub fn timeout(this: *ThisServer, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments(2).slice();
             if (arguments.len < 2 or arguments[0].isEmptyOrUndefinedOrNull()) {
                 globalObject.throwNotEnoughArguments("timeout", 2, arguments.len);
@@ -6820,7 +6825,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.config.idleTimeout = @truncate(@min(seconds, 255));
         }
 
-        pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue) JSValue {
+        pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue) bun.JSError!JSValue {
             if (this.config.websocket == null)
                 return JSValue.jsNumber(0);
 
@@ -7893,7 +7898,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                                 const strong_self = node_response.getThisValue();
                                 node_response.promise = strong_promise;
                                 strong_promise = .{};
-                                result._then(globalThis, strong_self, NodeHTTPResponse.Bun__NodeHTTPRequest__onResolve, NodeHTTPResponse.Bun__NodeHTTPRequest__onReject);
+                                result._then(globalThis, strong_self, NodeHTTPResponse.Bun__NodeHTTPRequest__onResolve__Internal, NodeHTTPResponse.Bun__NodeHTTPRequest__onReject__Internal);
                                 is_async = true;
                             }
 
@@ -8481,7 +8486,7 @@ pub const HTTPServer = NewServer(JSC.Codegen.JSHTTPServer, false, false);
 pub const HTTPSServer = NewServer(JSC.Codegen.JSHTTPSServer, true, false);
 pub const DebugHTTPServer = NewServer(JSC.Codegen.JSDebugHTTPServer, false, true);
 pub const DebugHTTPSServer = NewServer(JSC.Codegen.JSDebugHTTPSServer, true, true);
-const AnyServer = packed struct {
+pub const AnyServer = packed struct {
     ptr: Ptr,
 
     const Ptr = bun.TaggedPointerUnion(.{
@@ -8536,8 +8541,12 @@ const AnyServer = packed struct {
     }
 
     pub fn publish(this: AnyServer, topic: []const u8, message: []const u8, opcode: uws.Opcode, compress: bool) bool {
-        return switch (this) {
-            inline else => |server| server.app.?.publish(topic, message, opcode, compress),
+       return switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).app.?.publish(topic, message, opcode, compress),
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).app.?.publish(topic, message, opcode, compress),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).app.?.publish(topic, message, opcode, compress),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).app.?.publish(topic, message, opcode, compress),
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }
 
@@ -8550,16 +8559,21 @@ const AnyServer = packed struct {
         comptime extra_arg_count: usize,
         extra_args: [extra_arg_count]JSValue,
     ) void {
-        return switch (this) {
-            inline else => |server| server.onRequestFromSaved(req, resp, callback, extra_arg_count, extra_args),
-            .HTTPSServer => @panic("TODO: https"),
-            .DebugHTTPSServer => @panic("TODO: https"),
+         return switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).onRequestFromSaved(req, resp, callback, extra_arg_count, extra_args),
+            Ptr.case(HTTPSServer) => @panic("TODO: https"),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).onRequestFromSaved(req, resp, callback, extra_arg_count, extra_args),
+            Ptr.case(DebugHTTPSServer) => @panic("TODO: https"),
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }
-
     pub fn numSubscribers(this: AnyServer, topic: []const u8) u32 {
-        return switch (this) {
-            inline else => |server| server.app.?.numSubscribers(topic),
+       return switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).app.?.numSubscribers(topic),
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).app.?.numSubscribers(topic),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).app.?.numSubscribers(topic),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).app.?.numSubscribers(topic),
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }
 };

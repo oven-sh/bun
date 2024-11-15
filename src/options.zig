@@ -2190,14 +2190,8 @@ pub const OutputFile = struct {
                 ) catch |err| {
                     Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
                 };
-
-                var build_output = bun.new(JSC.API.BuildArtifact, .{
-                    .blob = JSC.WebCore.Blob.initWithStore(file_blob, globalObject),
-                    .hash = this.hash,
-                    .loader = this.input_loader,
-                    .output_kind = this.output_kind,
-                    .path = bun.default_allocator.dupe(u8, copy.pathname) catch @panic("Failed to allocate path"),
-                });
+                const source_file = if (this.output_kind != .@"entry-point") "" else bun.default_allocator.dupe(u8, this.src_path.text) catch @panic("Failed to allocate source_path");
+                var build_output = bun.new(JSC.API.BuildArtifact, .{ .blob = JSC.WebCore.Blob.initWithStore(file_blob, globalObject), .hash = this.hash, .loader = this.input_loader, .output_kind = this.output_kind, .source_file = source_file, .path = bun.default_allocator.dupe(u8, copy.pathname) catch @panic("Failed to allocate path") });
 
                 break :brk build_output.toJS(globalObject);
             },
@@ -2214,12 +2208,13 @@ pub const OutputFile = struct {
                 ) catch |err| {
                     Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
                 };
-
+                const source_file = if (this.output_kind != .@"entry-point") "" else bun.default_allocator.dupe(u8, this.src_path.text) catch @panic("Failed to allocate source_path");
                 build_output.* = JSC.API.BuildArtifact{
                     .blob = JSC.WebCore.Blob.initWithStore(file_blob, globalObject),
                     .hash = this.hash,
                     .loader = this.input_loader,
                     .output_kind = this.output_kind,
+                    .source_file = source_file,
                     .path = bun.default_allocator.dupe(u8, path_to_use) catch @panic("Failed to allocate path"),
                 };
 
@@ -2237,11 +2232,13 @@ pub const OutputFile = struct {
                 blob.size = @as(JSC.WebCore.Blob.SizeType, @truncate(buffer.bytes.len));
 
                 var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
+                const source_file = if (this.output_kind != .@"entry-point") "" else bun.default_allocator.dupe(u8, this.src_path.text) catch @panic("Failed to allocate source_path");
                 build_output.* = JSC.API.BuildArtifact{
                     .blob = blob,
                     .hash = this.hash,
                     .loader = this.input_loader,
                     .output_kind = this.output_kind,
+                    .source_file = source_file,
                     .path = owned_pathname orelse bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable,
                 };
                 break :brk build_output.toJS(globalObject);

@@ -50,6 +50,7 @@ export default [
       loader: { getter: "getLoader", cache: true },
       type: { getter: "getMimeType", cache: true },
       kind: { getter: "getOutputKind", cache: true },
+      sourcefile: { getter: "getSourceFile", cache: true },
     },
   }),
 ];

@@ -616,8 +616,7 @@ const Handlers = struct {
         inline for (pairs) |pair| {
             if (opts.getTruthy(globalObject, pair.@"1")) |callback_value| {
                 if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
-                    globalObject.throwInvalidArguments("Expected \"{s}\" callback to be a function", .{pair[1]});
-                    return error.JSError;
+                    return globalObject.throwInvalidArguments2("Expected \"{s}\" callback to be a function", .{pair[1]});
                 }
 
                 @field(handlers, pair.@"0") = callback_value;
@@ -626,8 +625,7 @@ const Handlers = struct {
 
         if (opts.fastGet(globalObject, .@"error")) |callback_value| {
             if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
-                globalObject.throwInvalidArguments("Expected \"error\" callback to be a function", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments2("Expected \"error\" callback to be a function", .{});
             }
 
             handlers.onError = callback_value;
@@ -635,19 +633,16 @@ const Handlers = struct {
 
         // onWrite is required for duplex support or if more than 1 parser is attached to the same socket (unliked)
         if (handlers.onWrite == .zero) {
-            globalObject.throwInvalidArguments("Expected at least \"write\" callback", .{});
-            return error.JSError;
+            return globalObject.throwInvalidArguments2("Expected at least \"write\" callback", .{});
         }
 
         if (opts.getTruthy(globalObject, "binaryType")) |binary_type_value| {
             if (!binary_type_value.isString()) {
-                globalObject.throwInvalidArguments("Expected \"binaryType\" to be a string", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments2("Expected \"binaryType\" to be a string", .{});
             }
 
-            handlers.binary_type = BinaryType.fromJSValue(globalObject, binary_type_value) orelse {
-                globalObject.throwInvalidArguments("Expected 'binaryType' to be 'ArrayBuffer', 'Uint8Array', or 'Buffer'", .{});
-                return error.JSError;
+            handlers.binary_type = try BinaryType.fromJSValue(globalObject, binary_type_value) orelse {
+                return globalObject.throwInvalidArguments2("Expected 'binaryType' to be 'ArrayBuffer', 'Uint8Array', or 'Buffer'", .{});
             };
         }
 

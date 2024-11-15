@@ -1100,9 +1100,7 @@ pub const DOMFormData = opaque {
         DOMFormData__toQueryString(this, ctx, &Wrapper.run);
     }
 
-    pub fn fromJS(
-        value: JSValue,
-    ) ?*DOMFormData {
+    pub fn fromJS(value: JSValue) ?*DOMFormData {
         return shim.cppFn("fromJS", .{
             value,
         });
@@ -5181,6 +5179,7 @@ pub const JSValue = enum(i64) {
         });
     }
 
+    /// Deprecated: replace with 'toBunString2'
     pub inline fn getZigString(this: JSValue, global: *JSGlobalObject) ZigString {
         var str = ZigString.init("");
         this.toZigString(&str, global);

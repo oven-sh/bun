@@ -308,7 +308,7 @@ pub const Version = struct {
     literal: String = .{},
     value: Value = .{ .uninitialized = {} },
 
-    pub fn toJS(dep: *const Version, buf: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(dep: *const Version, buf: []const u8, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         const object = JSC.JSValue.createEmptyObject(globalThis, 2);
         object.put(globalThis, "type", bun.String.static(@tagName(dep.tag)).toJS(globalThis));
 
@@ -332,15 +332,8 @@ pub const Version = struct {
             },
             .npm => {
                 object.put(globalThis, "name", dep.value.npm.name.toJS(buf, globalThis));
-                var version_str = bun.String.createFormat("{}", .{dep.value.npm.version.fmt(buf)}) catch {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                };
-                object.put(
-                    globalThis,
-                    "version",
-                    version_str.transferToJS(globalThis),
-                );
+                var version_str = try bun.String.createFormat("{}", .{dep.value.npm.version.fmt(buf)});
+                object.put(globalThis, "version", version_str.transferToJS(globalThis));
                 object.put(globalThis, "alias", JSC.JSValue.jsBoolean(dep.value.npm.is_alias));
             },
             .symlink => {
@@ -362,7 +355,7 @@ pub const Version = struct {
             },
             else => {
                 globalThis.throwTODO("Unsupported dependency type");
-                return .zero;
+                return error.JSError;
             },
         }
 
@@ -1237,7 +1230,7 @@ pub fn parseWithTag(
 pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(2).slice();
     if (arguments.len == 1) {
-        return bun.install.PackageManager.UpdateRequest.fromJS(globalThis, arguments[0]);
+        return try bun.install.PackageManager.UpdateRequest.fromJS(globalThis, arguments[0]);
     }
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
@@ -1277,16 +1270,14 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 
     const dep: Version = Dependency.parse(allocator, SlicedString.init(buf, alias).value(), null, buf, &sliced, &log) orelse {
         if (log.msgs.items.len > 0) {
-            globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
-            return .zero;
+            return globalThis.throwValue2(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
         }
 
         return .undefined;
     };
 
     if (log.msgs.items.len > 0) {
-        globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
-        return .zero;
+        return globalThis.throwValue2(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
     }
     log.deinit();
 

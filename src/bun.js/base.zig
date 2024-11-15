@@ -1417,9 +1417,9 @@ pub const BinaryType = enum(u4) {
         return Map.get(input);
     }
 
-    pub fn fromJSValue(globalThis: *JSC.JSGlobalObject, input: JSValue) ?BinaryType {
+    pub fn fromJSValue(globalThis: *JSC.JSGlobalObject, input: JSValue) bun.JSError!?BinaryType {
         if (input.isString()) {
-            return Map.getWithEql(input.getZigString(globalThis), ZigString.eqlComptime);
+            return Map.getWithEql(try input.toBunString2(globalThis), bun.String.eqlComptime);
         }
 
         return null;

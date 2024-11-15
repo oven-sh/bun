@@ -1941,15 +1941,14 @@ pub const Fetch = struct {
     }
 
     const StringOrURL = struct {
-        pub fn fromJS(value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) ?bun.String {
+        pub fn fromJS(value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!?bun.String {
             if (value.isString()) {
-                return bun.String.tryFromJS(value, globalThis);
+                return try bun.String.fromJS2(value, globalThis);
             }
 
             const out = JSC.URL.hrefFromJS(value, globalThis);
-            if (out.tag == .Dead) {
-                return null;
-            }
+            if (globalThis.hasException()) return error.JSError;
+            if (out.tag == .Dead) return null;
             return out;
         }
     };
@@ -1972,6 +1971,7 @@ pub const Fetch = struct {
         // used to clean up dynamically allocated memory on error (a poor man's errdefer)
         var is_error = false;
         var allocator = memory_reporter.wrap(bun.default_allocator);
+        errdefer bun.default_allocator.destroy(memory_reporter);
         defer {
             memory_reporter.report(globalThis.vm());
 
@@ -2084,7 +2084,7 @@ pub const Fetch = struct {
             break :brk null;
         };
         // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
-        const url_str_optional = if (first_arg.as(Request) == null) StringOrURL.fromJS(first_arg, globalThis) else null;
+        const url_str_optional = if (first_arg.as(Request) == null) try StringOrURL.fromJS(first_arg, globalThis) else null;
         if (globalThis.hasException()) {
             is_error = true;
             return .zero;

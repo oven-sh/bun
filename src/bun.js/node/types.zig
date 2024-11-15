@@ -370,15 +370,15 @@ pub const BlobOrStringOrBuffer = union(enum) {
         return .{ .string_or_buffer = StringOrBuffer.fromJS(global, allocator, value) orelse return null };
     }
 
-    pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?BlobOrStringOrBuffer {
+    pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) bun.JSError!?BlobOrStringOrBuffer {
         return fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, false);
     }
 
-    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, is_async: bool) ?BlobOrStringOrBuffer {
+    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, is_async: bool) bun.JSError!?BlobOrStringOrBuffer {
         return fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(global, allocator, value, encoding_value, is_async, false);
     }
 
-    pub fn fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, is_async: bool, allow_request_response: bool) ?BlobOrStringOrBuffer {
+    pub fn fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, is_async: bool, allow_request_response: bool) bun.JSError!?BlobOrStringOrBuffer {
         switch (value.jsType()) {
             .DOMWrapper => {
                 if (value.as(JSC.WebCore.Blob)) |blob| {
@@ -397,8 +397,7 @@ pub const BlobOrStringOrBuffer = union(enum) {
                             return .{ .blob = any_blob.toBlob(global) };
                         }
 
-                        global.throwInvalidArguments("Only buffered Request/Response bodies are supported for now.", .{});
-                        return null;
+                        return global.throwInvalidArguments2("Only buffered Request/Response bodies are supported for now.", .{});
                     }
 
                     if (value.as(JSC.WebCore.Response)) |response| {
@@ -410,8 +409,7 @@ pub const BlobOrStringOrBuffer = union(enum) {
                             return .{ .blob = any_blob.toBlob(global) };
                         }
 
-                        global.throwInvalidArguments("Only buffered Request/Response bodies are supported for now.", .{});
-                        return null;
+                        return global.throwInvalidArguments2("Only buffered Request/Response bodies are supported for now.", .{});
                     }
                 }
             },
@@ -453,14 +451,14 @@ pub const StringOrBuffer = union(enum) {
         }
     }
 
-    pub fn fromJSToOwnedSlice(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue, allocator: std.mem.Allocator) ![]u8 {
+    pub fn fromJSToOwnedSlice(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue, allocator: std.mem.Allocator) bun.JSError![]u8 {
         if (value.asArrayBuffer(globalObject)) |array_buffer| {
             defer globalObject.vm().reportExtraMemory(array_buffer.len);
 
             return try allocator.dupe(u8, array_buffer.byteSlice());
         }
 
-        const str = bun.String.tryFromJS(value, globalObject) orelse return error.JSError;
+        const str = try bun.String.fromJS2(value, globalObject);
         defer str.deref();
 
         const result = try str.toOwnedSlice(allocator);
@@ -692,7 +690,7 @@ pub const Encoding = enum(u8) {
     }
 
     pub fn fromJSWithDefaultOnEmpty(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, default: Encoding) bun.JSError!?Encoding {
-        const str = bun.String.tryFromJS(value, globalObject) orelse return error.JSError;
+        const str = try bun.String.fromJS2(value, globalObject);
         defer str.deref();
         if (str.isEmpty()) {
             return default;
@@ -1106,8 +1104,7 @@ pub const VectorArrayBuffer = struct {
 
     pub fn fromJS(globalObject: *JSC.JSGlobalObject, val: JSC.JSValue, allocator: std.mem.Allocator) bun.JSError!VectorArrayBuffer {
         if (!val.jsType().isArrayLike()) {
-            globalObject.throwInvalidArguments("Expected ArrayBufferView[]", .{});
-            return error.JSError;
+            return globalObject.throwInvalidArguments2("Expected ArrayBufferView[]", .{});
         }
 
         var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
@@ -1119,13 +1116,11 @@ pub const VectorArrayBuffer = struct {
             const element = val.getIndex(globalObject, @as(u32, @truncate(i)));
 
             if (!element.isCell()) {
-                globalObject.throwInvalidArguments("Expected ArrayBufferView[]", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments2("Expected ArrayBufferView[]", .{});
             }
 
             const array_buffer = element.asArrayBuffer(globalObject) orelse {
-                globalObject.throwInvalidArguments("Expected ArrayBufferView[]", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments2("Expected ArrayBufferView[]", .{});
             };
 
             const buf = array_buffer.byteSlice();
@@ -1479,13 +1474,11 @@ pub const FileSystemFlags = enum(Mode) {
         if (jsType.isStringLike()) {
             const str = val.getZigString(ctx);
             if (str.isEmpty()) {
-                ctx.throwInvalidArguments("Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{});
-                return error.JSError;
+                return ctx.throwInvalidArguments2("Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{});
             }
             // it's definitely wrong when the string is super long
             else if (str.len > 12) {
-                ctx.throwInvalidArguments("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
-                return error.JSError;
+                return ctx.throwInvalidArguments2("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             }
 
             const flags = brk: {
@@ -1509,8 +1502,7 @@ pub const FileSystemFlags = enum(Mode) {
 
                 break :brk map.getWithEql(str, JSC.ZigString.eqlComptime);
             } orelse {
-                ctx.throwInvalidArguments("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
-                return error.JSError;
+                return ctx.throwInvalidArguments2("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             };
 
             return @as(FileSystemFlags, @enumFromInt(@as(Mode, @intCast(flags))));

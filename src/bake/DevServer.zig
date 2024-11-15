@@ -216,7 +216,7 @@ pub const RouteBundle = struct {
 /// DevServer is stored on the heap, storing its allocator.
 pub fn init(options: Options) bun.JSOOM!*DevServer {
     const allocator = bun.default_allocator;
-    bun.analytics.Features.kit_dev +|= 1;
+    bun.analytics.Features.dev_server +|= 1;
 
     var dump_dir = if (bun.FeatureFlags.bake_debugging_features)
         if (options.dump_sources) |dir|

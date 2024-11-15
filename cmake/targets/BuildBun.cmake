@@ -971,6 +971,9 @@ else()
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.dyn)
   set(BUN_LINKER_LDS_PATH ${CWD}/src/linker.lds)
   target_link_options(${bun} PUBLIC
+    -Bsymbolics-functions
+    -rdynamic
+    -Wl,--dynamic-list=${BUN_SYMBOLS_PATH}
     -Wl,--version-script=${BUN_LINKER_LDS_PATH}
   )
   set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_LINKER_LDS_PATH})

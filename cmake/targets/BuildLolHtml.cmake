@@ -26,6 +26,9 @@ if(RELEASE)
   list(APPEND LOLHTML_BUILD_ARGS --release)
 endif()
 
+# The encoded escape sequences are intentional. They're how you delimit multiple arguments in a single environment variable.
+set(RUSTFLAGS "-C panic=abort-C debuginfo=0-C force-unwind-tables=no")
+
 register_command(
   TARGET
     lolhtml
@@ -37,6 +40,11 @@ register_command(
       ${LOLHTML_BUILD_ARGS}
   ARTIFACTS
     ${LOLHTML_LIBRARY}
+  ENVIRONMENT
+    CARGO_TERM_COLOR=always
+    CARGO_TERM_VERBOSE=true
+    CARGO_TERM_DIAGNOSTIC=true
+    CARGO_ENCODED_RUSTFLAGS="${RUSTFLAGS}"
 )
 
 target_link_libraries(${bun} PRIVATE ${LOLHTML_LIBRARY})

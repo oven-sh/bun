@@ -2001,6 +2001,13 @@ const napi_functions_to_export = .{
     napi_unref_threadsafe_function,
     napi_unwrap,
     napi_wrap,
+
+    // -- node-api
+    node_api_create_syntax_error,
+    node_api_symbol_for,
+    node_api_throw_syntax_error,
+    node_api_create_external_string_latin1,
+    node_api_create_external_string_utf16,
 };
 
 pub fn fixDeadCodeElimination() void {

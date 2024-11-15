@@ -40,6 +40,30 @@ function parseDiagnostics(view: DataView) {
   return errors;
 }
 
+function findOriginalLineAndColumn(runtimeObjects: JSC.Runtime.RemoteObject[]) {
+  for (const runtimeObject of runtimeObjects) {
+    if (runtimeObject.type !== "object" || runtimeObject.subtype !== "error" || !runtimeObject.preview?.properties) {
+      continue;
+    }
+
+    const properties = runtimeObject.preview.properties;
+
+    const originalLine = properties.find(prop => prop.name === "originalLine" && prop.type === "number")?.value;
+    const originalColumn = properties.find(prop => prop.name === "originalColumn" && prop.type === "number")?.value;
+
+    if (originalLine === undefined || originalColumn === undefined) {
+      continue;
+    }
+
+    return {
+      originalLine: parseInt(originalLine, 10),
+      originalColumn: parseInt(originalColumn, 10),
+    };
+  }
+
+  return null;
+}
+
 export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
   const diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
   context.subscriptions.push(diagnosticCollection);
@@ -58,14 +82,24 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
     signal.on("Signal.received", async () => {
       const adapter = new DebugAdapter();
 
-      // {"method":"Console.messageAdded","params":{"message":{"source":"console-api","level":"log","text":"Cool","type":"log","line":2,"column":14,"url":"/Users/ali/code/bun/packages/bun-vscode/example/print.ts","repeatCount":1,"timestamp":1731629954.001148,"parameters":[{"type":"string","value":"Cool"}],"stackTrace":{"callFrames":[{"functionName":"","url":"/Users/ali/code/bun/packages/bun-vscode/example/print.ts","scriptId":"3","lineNumber":2,"columnNumber":14}],"parentStackTrace":{"callFrames":[{"functionName":"setInterval","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0},{"functionName":"module code","url":"/Users/ali/code/bun/packages/bun-vscode/example/print.ts","scriptId":"3","lineNumber":1,"columnNumber":12},{"functionName":"moduleEvaluation","url":"","scriptId":"2","lineNumber":1,"columnNumber":11},{"functionName":"moduleEvaluation","url":"","scriptId":"2","lineNumber":1,"columnNumber":11},{"functionName":"","url":"","scriptId":"2","lineNumber":2,"columnNumber":1}],"topCallFrameIsBoundary":true,"parentStackTrace":{"callFrames":[{"functionName":"enqueueJob","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0}],"topCallFrameIsBoundary":true,"parentStackTrace":{"callFrames":[{"functionName":"enqueueJob","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0}],"topCallFrameIsBoundary":true,"parentStackTrace":{"callFrames":[{"functionName":"enqueueJob","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0}],"topCallFrameIsBoundary":true,"parentStackTrace":{"callFrames":[{"functionName":"enqueueJob","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0}],"topCallFrameIsBoundary":true,"parentStackTrace":{"callFrames":[{"functionName":"enqueueJob","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0}],"topCallFrameIsBoundary":true,"parentStackTrace":{"callFrames":[{"functionName":"enqueueJob","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0}],"topCallFrameIsBoundary":true,"parentStackTrace":{"callFrames":[{"functionName":"enqueueJob","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0}],"topCallFrameIsBoundary":true,"parentStackTrace":{"callFrames":[{"functionName":"enqueueJob","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0}],"topCallFrameIsBoundary":true,"parentStackTrace":{"callFrames":[{"functionName":"enqueueJob","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0}],"topCallFrameIsBoundary":true,"parentStackTrace":{"callFrames":[{"functionName":"enqueueJob","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0}],"topCallFrameIsBoundary":true,"parentStackTrace":{"callFrames":[{"functionName":"enqueueJob","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0},{"functionName":"then","url":"","scriptId":"2","lineNumber":1,"columnNumber":11},{"functionName":"requestFetch","url":"","scriptId":"2","lineNumber":1,"columnNumber":11},{"functionName":"","url":"","scriptId":"2","lineNumber":11,"columnNumber":43},{"functionName":"","url":"","scriptId":"2","lineNumber":11,"columnNumber":37},{"functionName":"requestInstantiate","url":"","scriptId":"2","lineNumber":1,"columnNumber":11},{"functionName":"requestSatisfyUtil","url":"","scriptId":"2","lineNumber":1,"columnNumber":11},{"functionName":"","url":"","scriptId":"2","lineNumber":11,"columnNumber":83}],"topCallFrameIsBoundary":true,"parentStackTrace":{"callFrames":[{"functionName":"enqueueJob","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0}],"topCallFrameIsBoundary":true,"parentStackTrace":{"callFrames":[{"functionName":"enqueueJob","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0}],"topCallFrameIsBoundary":true,"parentStackTrace":{"callFrames":[{"functionName":"enqueueJob","url":"[native code]","scriptId":"0","lineNumber":0,"columnNumber":0},{"functionName":"then","url":"","scriptId":"2","lineNumber":1,"columnNumber":11},{"functionName":"requestFetch","url":"","scriptId":"2","lineNumber":1,"columnNumber":11},{"functionName":"","url":"","scriptId":"2","lineNumber":11,"columnNumber":43},{"functionName":"","url":"","scriptId":"2","lineNumber":11,"columnNumber":37},{"functionName":"requestInstantiate","url":"","scriptId":"2","lineNumber":1,"columnNumber":11},{"functionName":"requestSatisfyUtil","url":"","scriptId":"2","lineNumber":1,"columnNumber":11},{"functionName":"requestSatisfy","url":"","scriptId":"2","lineNumber":1,"columnNumber":11},{"functionName":"","url":"","scriptId":"2","lineNumber":2,"columnNumber":1},{"functionName":"loadModule","url":"","scriptId":"2","lineNumber":1,"columnNumber":17},{"functionName":"","url":"","scriptId":"2","lineNumber":2,"columnNumber":1},{"functionName":"loadAndEvaluateModule","url":"","scriptId":"2","lineNumber":1,"columnNumber":17}],"topCallFrameIsBoundary":true}}}}}}}}}}}}}}}}}}}
+      // {"source":"console-api","level":"error","text":"Error: broken","type":"log","line":0,"column":0,"url":"","repeatCount":1,"timestamp":1731690211.278788,"parameters":[{"type":"object","objectId":"{\\"injectedScriptId\\":1,\\"id\\":1}","subtype":"error","className":"Error","description":"Error: broken","preview":{"type":"object","description":"Error: broken","lossless":false,"subtype":"error","overflow":true,"properties":[{"name":"message","type":"string","value":"broken"},{"name":"originalLine","type":"number","value":"2"},{"name":"originalColumn","type":"number","value":"18"},{"name":"line","type":"number","value":"2"},{"name":"column","type":"number","value":"13"}]}},{"type":"string","value":"uncaughtException"}],"stackTrace":{"callFrames":[]}}
       adapter.on("Inspector.event", event => {
+        console.log(JSON.stringify(event));
+
         if (event.method === "Console.messageAdded") {
           const errorData = (event.params as JSC.EventMap["Console.messageAdded"]).message;
 
           console.log(JSON.stringify(errorData, null, 2));
 
-          if (errorData.line === undefined || errorData.column === undefined) {
+          if (errorData.parameters === undefined || errorData.url === undefined) {
+            return;
+          }
+
+          const lineAndCol = findOriginalLineAndColumn(errorData.parameters);
+
+          console.log(JSON.stringify(lineAndCol, null, 2));
+
+          if (!lineAndCol) {
             return;
           }
 
@@ -76,8 +110,8 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
           const message = errorData.text;
 
           const range = new vscode.Range(
-            new vscode.Position(errorData.line, errorData.column),
-            new vscode.Position(errorData.line, errorData.column + 1),
+            new vscode.Position(lineAndCol.originalLine, lineAndCol.originalColumn),
+            new vscode.Position(lineAndCol.originalLine, lineAndCol.originalColumn + 1),
           );
 
           const diagnostic = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Error);

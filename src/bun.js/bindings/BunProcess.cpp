@@ -887,6 +887,21 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
                     argumentsVector.append(JSC::Strong<JSC::Unknown>(vm, args.at(i)));
                 Ref<ScriptArguments> arguments = ScriptArguments::create(globalObject, WTFMove(argumentsVector));
                 client->logWithLevel(globalObject, WTFMove(arguments), JSC::MessageLevel::Error);
+
+                if (auto* exception = jsDynamicCast<JSC::Exception*>(args.at(0))) {
+                    auto stackTrace = exception->stack();
+                    if (stackTrace.size() > 0) {
+                        const JSC::StackFrame& frame = stackTrace.at(0);
+                        String fileName = frame.sourceURL(vm);
+
+                        client->printConsoleMessageWithArguments(JSC::MessageSource::JS, JSC::MessageType::Log, JSC::MessageLevel::Error, globalObject, WTFMove(arguments));
+                    }
+
+                    // String fileName = exception->get_source_url();
+                    // int lineNumber = exception->get_line_number();
+                    // int columnNumber = exception->get_column_number();
+                    // client->printConsoleMessageWithArguments(JSC::MessageSource::JS, JSC::MessageType::Log, JSC::MessageLevel::Error, globalObject, WTFMove(arguments));
+                }
             }
         }
 

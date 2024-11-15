@@ -486,15 +486,32 @@ function getPipeline(options) {
    * @type {Platform[]}
    */
   const buildPlatforms = [
+    { os: "darwin", arch: "aarch64", distro: "macos", release: "14" },
+    { os: "darwin", arch: "x64", distro: "macos", release: "14" },
+    { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
+    { os: "linux", arch: "x64", distro: "debian", release: "11" },
+    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
+    { os: "windows", arch: "x64", distro: "server", release: "2019" },
+    { os: "windows", arch: "x64", baseline: true, distro: "server", release: "2019" },
   ];
 
   /**
    * @type {Platform[]}
    */
   const testPlatforms = [
+    { os: "darwin", arch: "aarch64", distro: "macos", release: "14" },
+    { os: "darwin", arch: "aarch64", distro: "macos", release: "13" },
+    { os: "darwin", arch: "x64", distro: "macos", release: "14" },
+    { os: "darwin", arch: "x64", distro: "macos", release: "13" },
+    { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
+    { os: "linux", arch: "x64", distro: "debian", release: "12" },
+    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
+    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
+    { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
+    { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },

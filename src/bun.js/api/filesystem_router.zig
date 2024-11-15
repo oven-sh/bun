@@ -226,15 +226,12 @@ pub const FileSystemRouter = struct {
                         const full_path = vm.bundler.fs.abs(&abs_parts_con);
                         bustDirCacheRecursive(this, globalThis, full_path);
                         _ = vm.bundler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(full_path));
-
                     }
                 }
             }
         }
 
-
         _ = vm.bundler.resolver.bustDirCache(path);
-
     }
 
     pub fn bustDirCache(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) void {
@@ -242,7 +239,6 @@ pub const FileSystemRouter = struct {
     }
 
     pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-
         const this_value = callframe.this();
 
         var arena = globalThis.allocator().create(bun.ArenaAllocator) catch unreachable;

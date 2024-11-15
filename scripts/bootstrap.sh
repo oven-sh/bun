@@ -614,13 +614,13 @@ install_cmake() {
 		;;
 	linux-*)
 		sh="$(require sh)"
-		release="3.30.5"
+		cmake_version="3.30.5"
 		case "$arch" in
 		x64)
-			url="https://github.com/Kitware/CMake/releases/download/v$release/cmake-$release-linux-x86_64.sh"
+			url="https://github.com/Kitware/CMake/releases/download/v$cmake_version/cmake-$cmake_version-linux-x86_64.sh"
 			;;
 		aarch64)
-			url="https://github.com/Kitware/CMake/releases/download/v$release/cmake-$release-linux-aarch64.sh"
+			url="https://github.com/Kitware/CMake/releases/download/v$cmake_version/cmake-$cmake_version-linux-aarch64.sh"
 			;;
 		esac
 		script=$(download_file "$url")

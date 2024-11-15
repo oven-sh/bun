@@ -247,17 +247,15 @@ check_operating_system() {
 	case "$os" in
 	linux)
 		ldd="$(which ldd)"
-		awk="$(which awk)"
-		if [ -f "$ldd" ] && [ -f "$awk" ]; then
+		if [ -f "$ldd" ]; then
 			ldd_version="$($ldd --version 2>&1)"
+			abi_version="$(echo "$ldd_version" | grep -o -E '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1)"
 			case "$ldd_version" in
 			*musl*)
 				abi="musl"
-				abi_version="$(echo "$ldd_version" | "$awk" 'NR==2{print $NF}')"
 				;;
-			*GLIBC*)
+			*GNU* | *GLIBC*)
 				abi="gnu"
-				abi_version="$(echo "$ldd_version" | "$awk" 'NR==1{print $NF}')"
 				;;
 			esac
 		fi

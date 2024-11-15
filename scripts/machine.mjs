@@ -1141,24 +1141,28 @@ async function main() {
     }
 
     if (agentPath) {
+      const tmpPath = "/tmp/agent.mjs";
       const remotePath = "/var/lib/buildkite-agent/agent.mjs";
       await startGroup("Installing agent...", async () => {
-        await machine.upload(agentPath, remotePath);
-        const command = ["node", remotePath, "install"];
-        {
-          const { stdout } = await machine.spawn(["node", "-v"]);
-          const version = parseInt(stdout.trim().replace(/^v/, ""));
-          if (isNaN(version) || version < 18) {
-            command.splice(0, 1, "bun");
-          }
-        }
+        await machine.upload(agentPath, tmpPath);
+        const command = [];
         {
           const { exitCode } = await machine.spawn(["sudo", "echo", "1"], { stdio: "ignore" });
           if (exitCode === 0) {
             command.unshift("sudo");
           }
         }
-        await machine.spawnSafe(command, { stdio: "inherit" });
+        await machine.spawnSafe([...command, "cp", tmpPath, remotePath]);
+        {
+          const { stdout } = await machine.spawn(["node", "-v"]);
+          const version = parseInt(stdout.trim().replace(/^v/, ""));
+          if (isNaN(version) || version < 20) {
+            command.push("bun");
+          } else {
+            command.push("node");
+          }
+        }
+        await machine.spawnSafe([...command, remotePath, "install"], { stdio: "inherit" });
       });
     }
 

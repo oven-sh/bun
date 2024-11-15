@@ -108,7 +108,19 @@ else()
   find_llvm_command(CMAKE_CXX_COMPILER clang++)
   find_llvm_command(CMAKE_LINKER llvm-link)
   find_llvm_command(CMAKE_AR llvm-ar)
-  find_llvm_command(CMAKE_STRIP llvm-strip)
+  if (LINUX)
+    # On Linux, strip ends up being more useful for us.
+    find_command(
+      VARIABLE
+        CMAKE_STRIP
+      COMMAND
+        strip
+      REQUIRED
+        ON
+    )
+  else()
+    find_llvm_command(CMAKE_STRIP llvm-strip)
+  endif()
   find_llvm_command(CMAKE_RANLIB llvm-ranlib)
   if(APPLE)
     find_llvm_command(CMAKE_DSYMUTIL dsymutil)

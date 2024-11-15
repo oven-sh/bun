@@ -560,6 +560,20 @@ function getPipeline(options) {
     { os: "windows", arch: "x64", baseline: true, release: "2019" },
   ];
 
+  console.log({ buildImages });
+  console.log(
+    "All platforms:",
+    [...buildPlatforms, ...testPlatforms].map(platform => getPlatformKey(platform)),
+  );
+  console.log(
+    "New agents:",
+    [...buildPlatforms, ...testPlatforms].filter(platform => isUsingNewAgent(platform)),
+  );
+  console.log(
+    "Image keys:",
+    [...buildPlatforms, ...testPlatforms].map(platform => getImageKey(platform)),
+  );
+
   const imagePlatforms = new Map(
     [...buildPlatforms, ...testPlatforms]
       .filter(platform => buildImages && isUsingNewAgent(platform))
@@ -781,10 +795,10 @@ async function main() {
   if (isBuildkite) {
     console.log("Setting canary revision...");
     const canaryRevision = buildRelease ? 0 : await getCanaryRevision();
-    await spawnSafe(["buildkite-agent", "meta-data", "set", "canary", `${canaryRevision}`]);
+    await spawnSafe(["buildkite-agent", "meta-data", "set", "canary", `${canaryRevision}`], { stdio: "inherit" });
 
     console.log("Uploading pipeline...");
-    await spawnSafe(["buildkite-agent", "pipeline", "upload", contentPath]);
+    await spawnSafe(["buildkite-agent", "pipeline", "upload", contentPath], { stdio: "inherit" });
   }
 }
 

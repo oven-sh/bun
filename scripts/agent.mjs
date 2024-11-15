@@ -20,6 +20,7 @@ import {
   getEnv,
   writeFile,
   spawnSafe,
+  spawn,
 } from "./utils.mjs";
 import { parseArgs } from "node:util";
 
@@ -103,8 +104,26 @@ export async function doAgent(action) {
     }
   }
 
+  async function startTailscale() {
+    const tailscale = which("tailscale");
+    if (!tailscale) {
+      return;
+    }
+
+    const authKey = await getCloudMetadataTag("tailscale:authkey");
+    if (!authKey) {
+      return;
+    }
+
+    await spawn([tailscale, "up", "--ssh", "--accept-risk=all", `--authkey=${authKey}`], { stdio: "inherit" });
+  }
+
   async function start() {
     const cloud = await getCloud();
+
+    if (cloud) {
+      startTailscale(); // Should not block starting the agent
+    }
 
     let token = getEnv("BUILDKITE_AGENT_TOKEN", false);
     if (!token && cloud) {

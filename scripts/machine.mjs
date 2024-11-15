@@ -286,7 +286,16 @@ export const aws = {
    * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/wait/image-available.html
    */
   async waitImage(action, ...imageIds) {
-    await aws.spawn($`ec2 wait ${action} --image-ids ${imageIds}`);
+    while (true) {
+      try {
+        await aws.spawn($`ec2 wait ${action} --image-ids ${imageIds}`);
+        return;
+      } catch (error) {
+        if (!/max attempts exceeded/i.test(inspect(error))) {
+          throw error;
+        }
+      }
+    }
   },
 
   /**

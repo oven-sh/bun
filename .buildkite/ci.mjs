@@ -341,11 +341,12 @@ function getPipeline(options) {
    */
   const getBuildImageStep = (platform, publish) => {
     const { os, arch, distro, release } = platform;
+    const key = publish ? "publish-image" : "build-image";
     const action = publish ? "publish-image" : "create-image";
     const depends_on = publish ? ["publish-image"] : undefined;
     return {
-      key: `${getImageKey(platform)}-${action}`,
-      label: `${getImageLabel(platform)} - ${action}`,
+      key: `${getImageKey(platform)}-${key}`,
+      label: `${getImageLabel(platform)} - ${key}`,
       agents: {
         queue: "build-image",
       },

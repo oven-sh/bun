@@ -16,7 +16,6 @@ import {
   getCommitMessage,
   getLastSuccessfulBuild,
   getMainBranch,
-  getRepositoryOwner,
   getTargetBranch,
   isBuildkite,
   isFork,

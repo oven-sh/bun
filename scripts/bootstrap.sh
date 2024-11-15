@@ -556,7 +556,6 @@ install_nodejs() {
 	apt)
 		bash="$(require bash)"
 		script="$(download_file "https://deb.nodesource.com/setup_$(nodejs_version).x")"
-		sudo "$bash" "$script" 2>/dev/null
 		execute_sudo "$bash" "$script"
 		;;
 	esac

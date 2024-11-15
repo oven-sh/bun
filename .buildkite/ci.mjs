@@ -234,7 +234,7 @@ function getPipeline(options) {
    */
   const isUsingNewAgent = platform => {
     const { os, distro } = platform;
-    if (os === "linux" && distro !== "ubuntu") {
+    if (os === "linux") {
       return true;
     }
     return false;

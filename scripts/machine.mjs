@@ -1141,7 +1141,7 @@ async function main() {
     }
 
     if (agentPath) {
-      const remotePath = "/tmp/agent.mjs";
+      const remotePath = "/var/lib/buildkite-agent/agent.mjs";
       await startGroup("Installing agent...", async () => {
         await machine.upload(agentPath, remotePath);
         const command = ["node", remotePath, "install"];

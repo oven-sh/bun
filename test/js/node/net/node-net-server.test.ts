@@ -3,6 +3,7 @@ import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { tmpdir } from "os";
 import { join } from "path";
+import { unlinkSync } from "../fs/export-star-from";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
@@ -570,21 +571,23 @@ describe("net.createServer events", () => {
     const server = createServer();
     const socketPath = join(tmpdir(), "test-unix-socket");
 
-
-    server.listen({ path: socketPath });
-
-
-    const address = server.address() as string;
-    expect(address).toBe(socketPath);
-
-    const client = await Bun.connect({
-      unix: socketPath,
-      socket: {
-        data() {},
-      }
+    await new Promise<void>(resolve => {
+      server.listen({ path: socketPath }, () => resolve());
     });
 
-    client.end();
-    server.close();
+    try {
+      const address = server.address() as string;
+      expect(address).toBe(socketPath);
+
+      const client = await Bun.connect({
+        unix: socketPath,
+        socket: {
+          data() {},
+        },
+      });
+      client.end();
+    } finally {
+      server.close();
+    }
   });
 });

@@ -177,7 +177,8 @@ public:
 
     bool inGC() const
     {
-        return m_globalObject->vm().heap.mutatorState() == JSC::MutatorState::Sweeping;
+        JSC::VM& vm = m_globalObject->vm();
+        return vm.isCollectorBusyOnCurrentThread();
     }
 
     void checkGC() const
@@ -189,13 +190,18 @@ public:
             m_napiModule.nm_version);
     }
 
+    bool isVMTerminating() const
+    {
+        return m_globalObject->vm().hasTerminationRequest();
+    }
+
     void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)
     {
         if (!finalize_cb) {
             return;
         }
 
-        if (mustDeferFinalizers()) {
+        if (mustDeferFinalizers() && inGC()) {
             napi_internal_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
         } else {
             finalize_cb(this, data, finalize_hint);
@@ -210,7 +216,7 @@ public:
     {
         // Even when we'd normally have to defer the finalizer, if this is happening during the VM's last chance to finalize,
         // we can't defer the finalizer and have to call it now.
-        return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL && !m_globalObject->vm().hasTerminationRequest();
+        return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL && !isVMTerminating();
     }
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
@@ -449,7 +455,6 @@ public:
         , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
         , finalizer(WTFMove(finalizer))
         , refCount(count)
-        , defer(env->mustDeferFinalizers())
     {
     }
 
@@ -492,7 +497,7 @@ public:
 
     void callFinalizer()
     {
-        finalizer.call(env, nativeObject, !defer || !env->inGC());
+        finalizer.call(env, nativeObject, !env->mustDeferFinalizers() || !env->inGC());
         finalizer.clear();
     }
 
@@ -518,7 +523,6 @@ public:
     const napi_env__::BoundFinalizer* boundCleanup = nullptr;
     void* nativeObject = nullptr;
     uint32_t refCount = 0;
-    bool defer = false;
     bool releaseOnWeaken = false;
 
 private:

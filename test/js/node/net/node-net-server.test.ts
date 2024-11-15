@@ -565,4 +565,26 @@ describe("net.createServer events", () => {
       }).catch(closeAndFail);
     });
   });
+
+  it("#8374", async () => {
+    const server = createServer();
+    const socketPath = join(tmpdir(), "test-unix-socket");
+
+
+    server.listen({ path: socketPath });
+
+
+    const address = server.address() as string;
+    expect(address).toBe(socketPath);
+
+    const client = await Bun.connect({
+      unix: socketPath,
+      socket: {
+        data() {},
+      }
+    });
+
+    client.end();
+    server.close();
+  });
 });

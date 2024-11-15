@@ -930,7 +930,7 @@ export function getBuildUrl() {
  */
 export function getBuildLabel() {
   if (isBuildkite) {
-    const label = getEnv("BUILDKITE_GROUP_LABEL", false) || getEnv("BUILDKITE_LABEL", false);
+    const label = getEnv("BUILDKITE_LABEL", false) || getEnv("BUILDKITE_GROUP_LABEL", false);
     if (label) {
       return label;
     }

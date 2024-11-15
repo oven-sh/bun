@@ -39,7 +39,7 @@ import {
 } from "./utils.mjs";
 import { userInfo } from "node:os";
 
-const cwd = dirname(import.meta.dirname);
+const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
 const spawnTimeout = 5_000;
@@ -232,7 +232,7 @@ async function runTests() {
         if (testRunner === "bun") {
           await runTest(title, () => spawnBunTest(execPath, testPath, { cwd: vendorPath }));
         } else {
-          const testRunnerPath = join(import.meta.dirname, "..", "test", "runners", `${testRunner}.ts`);
+          const testRunnerPath = join(cwd, "test", "runners", `${testRunner}.ts`);
           if (!existsSync(testRunnerPath)) {
             throw new Error(`Unsupported test runner: ${testRunner}`);
           }
@@ -632,7 +632,7 @@ function parseTestStdout(stdout, testPath) {
           const removeStart = lines.length - skipCount;
           const removeCount = skipCount - 2;
           const omitLine = `${getAnsi("gray")}... omitted ${removeCount} tests ...${getAnsi("reset")}`;
-          lines = lines.toSpliced(removeStart, removeCount, omitLine);
+          lines = lines.toSpliced?.(removeStart, removeCount, omitLine);
         }
         skipCount = 0;
       }

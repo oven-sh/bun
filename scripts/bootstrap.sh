@@ -535,32 +535,40 @@ install_common_software() {
 	install_buildkite
 }
 
-install_nodejs() {
-	version="${1:-"22"}"
-
+nodejs_version_exact() {
+	# https://unofficial-builds.nodejs.org/download/release/
 	if ! [ "$abi" = "musl" ] && [ -n "$abi_version" ] && ! [ "$(compare_version "$abi_version" "2.27")" = "1" ]; then
-		version="16"
+		print "16.9.1"
+	else
+		print "22.9.0"
 	fi
+}
 
+nodejs_version() {
+	echo "$(nodejs_version_exact)" | cut -d. -f1
+}
+
+install_nodejs() {
 	case "$pm" in
 	dnf | yum)
 		bash="$(require bash)"
-		script=$(download_file "https://rpm.nodesource.com/setup_$version.x")
+		script=$(download_file "https://rpm.nodesource.com/setup_$(nodejs_version).x")
 		execute_sudo "$bash" "$script"
 		;;
 	apt)
 		bash="$(require bash)"
-		script="$(download_file "https://deb.nodesource.com/setup_$version.x")"
+		script="$(download_file "https://deb.nodesource.com/setup_$(nodejs_version).x")"
 		sudo "$bash" "$script" 2>/dev/null
 		execute_sudo "$bash" "$script"
 		;;
 	esac
 
-	install_packages nodejs
-
 	case "$pm" in
 	apk)
-		install_packages npm
+		install_packages nodejs npm
+		;;
+	*)
+		install_packages nodejs
 		;;
 	esac
 }

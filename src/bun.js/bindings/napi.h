@@ -84,10 +84,10 @@ public:
 
         while (!m_asyncCleanupHooks.empty()) {
             auto [function, data, handle] = m_asyncCleanupHooks.back();
-            m_asyncCleanupHooks.pop_back();
             ASSERT(function != nullptr);
             function(handle, data);
             delete handle;
+            m_asyncCleanupHooks.pop_back();
         }
 
         for (const BoundFinalizer& boundFinalizer : m_finalizers) {

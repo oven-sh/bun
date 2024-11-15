@@ -223,7 +223,7 @@ pub const FileSystemRouter = struct {
                         }
 
                         var abs_parts_con = [_]string{ entry.dir, entry.base() };
-                        const full_path = vm.bundler.fs.abs(&abs_parts_con);;
+                        const full_path = vm.bundler.fs.abs(&abs_parts_con);
                         bustDirCacheRecursive(this, globalThis, full_path);
                         _ = vm.bundler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(full_path));
 

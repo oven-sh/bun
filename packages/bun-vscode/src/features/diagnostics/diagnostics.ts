@@ -83,42 +83,73 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
       const adapter = new DebugAdapter();
       diagnosticCollection.clear();
 
-      adapter.on("Inspector.event", event => {
-        if (event.method === "Console.messageAdded") {
-          const errorData = (event.params as JSC.EventMap["Console.messageAdded"]).message;
+      let coverageInterval: ReturnType<typeof setInterval> | null = null;
 
-          if (errorData.parameters === undefined || errorData.url === undefined) {
-            return;
-          }
-
-          const lineAndCol = findOriginalLineAndColumn(errorData.parameters);
-
-          if (!lineAndCol) {
-            return;
-          }
-
-          const uri = vscode.Uri.file(errorData.url);
-
-          const diagnostics: vscode.Diagnostic[] = [];
-
-          const message = errorData.text;
-
-          const range = new vscode.Range(
-            new vscode.Position(lineAndCol.originalLine - 1, lineAndCol.originalColumn - 1),
-            new vscode.Position(lineAndCol.originalLine - 1, lineAndCol.originalColumn),
-          );
-
-          const diagnostic = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Error);
-
-          diagnostics.push(diagnostic);
-
-          diagnosticCollection.set(uri, diagnostics);
+      adapter.on("Debugger.scriptParsed", async event => {
+        if (coverageInterval) {
+          clearInterval(coverageInterval);
         }
+
+        const reportCoverage = async () => {
+          const response = await adapter
+            .send("Runtime.getBasicBlocks", {
+              sourceID: event.scriptId,
+            })
+            .catch(e => {
+              console.log(JSON.stringify(e));
+              return null;
+            });
+
+          if (!response) {
+            return;
+          }
+
+          const { basicBlocks } = response;
+
+          console.log("Basic blocks:", JSON.stringify(basicBlocks));
+        };
+
+        await reportCoverage();
+
+        coverageInterval = setInterval(reportCoverage, 1000);
       });
 
-      signal.on("Signal.closed", () => {
-        setTimeout(() => console.log("CLOSING!"), 500);
+      adapter.on("Console.messageAdded", params => {
+        if (params.message.parameters === undefined || params.message.url === undefined) {
+          return;
+        }
+
+        const lineAndCol = findOriginalLineAndColumn(params.message.parameters);
+
+        if (!lineAndCol) {
+          return;
+        }
+
+        const uri = vscode.Uri.file(params.message.url);
+
+        const diagnostics: vscode.Diagnostic[] = [];
+
+        const message = params.message.text;
+
+        const range = new vscode.Range(
+          new vscode.Position(lineAndCol.originalLine - 1, lineAndCol.originalColumn - 1),
+          new vscode.Position(lineAndCol.originalLine - 1, lineAndCol.originalColumn),
+        );
+
+        const diagnostic = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Error);
+
+        diagnostics.push(diagnostic);
+
+        diagnosticCollection.set(uri, diagnostics);
+      });
+
+      signal.once("Signal.closed", () => {
         adapter.close();
+        adapter.removeAllListeners();
+
+        if (coverageInterval) {
+          clearInterval(coverageInterval);
+        }
       });
 
       const ok = await adapter.start(url);
@@ -131,6 +162,7 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
       adapter.initialize({
         // TODO: Should we be generating this ID? What's it supposed to be?
         adapterID: "bun-vsc-terminal-debug-adapter",
+        // enableControlFlowProfiler: true,
       });
     });
 

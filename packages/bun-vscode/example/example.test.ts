@@ -1,8 +1,21 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 describe("example", () => {
-  test.only("Cool", () => {
-    expect(1).toBe(1);
+  test("The", async () => {
+    const s = await new Promise<ReturnType<(typeof Bun)["serve"]>>(resolve => {
+      const s = Bun.serve({
+        port: 3000,
+        fetch: async () => {
+          console.log("FETCHE!!");
+          resolve(s);
+          return Response.json("cool");
+        },
+      });
+    });
+
+    await Bun.sleep(100);
+
+    s.stop(true);
   });
 
   test("it works", () => {
@@ -29,4 +42,8 @@ describe("example", () => {
       };
     }).toThrow();
   });
+});
+
+afterEach(async () => {
+  await Bun.sleep(3000);
 });

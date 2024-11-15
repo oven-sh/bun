@@ -105,6 +105,7 @@ const capabilities: DAP.Capabilities = {
 
 type InitializeRequest = DAP.InitializeRequest & {
   supportsConfigurationDoneRequest?: boolean;
+  enableControlFlowProfiler?: boolean;
 };
 
 type LaunchRequest = DAP.LaunchRequest & {
@@ -443,6 +444,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.send("Inspector.enable");
     this.send("Runtime.enable");
     this.send("Console.enable");
+    if (request.enableControlFlowProfiler) {
+      this.send("Runtime.enableControlFlowProfiler");
+    }
     this.send("Debugger.enable").catch(error => {
       const { message } = unknownToError(error);
       if (message !== "Debugger domain already enabled") {

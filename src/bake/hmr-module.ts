@@ -84,35 +84,36 @@ function initImportMeta(m: HotModule): ImportMeta {
  * present, or is something a user is able to dynamically specify.
  */
 export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T> {
-  let module = registry.get(key);
-  if (module) {
+  let mod = registry.get(key);
+  if (mod) {
     // Preserve failures until they are re-saved.
-    if (module._state == State.Error) throw module._cached_failure;
+    if (mod._state == State.Error) throw mod._cached_failure;
 
-    return module;
+    return mod;
   }
-  module = new HotModule(key);
+  mod = new HotModule(key);
   const load = input_graph[key];
   if (!load) {
     if (type == LoadModuleType.AssertPresent) {
       throw new Error(
-        `Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun Kit's bundler.`,
+        `Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun's bundler.`,
       );
     } else {
       throw new Error(
-        `Failed to resolve dynamic import '${key}'. In Bun Kit, all imports must be statically known at compile time so that the bundler can trace everything.`,
+        `Failed to resolve dynamic import '${key}'. In Bun Bake, all imports must be statically known at compile time so that the bundler can trace everything.`,
       );
     }
   }
   try {
-    registry.set(key, module);
-    load(module);
+    registry.set(key, mod);
+    load(mod);
   } catch (err) {
-    module._cached_failure = err;
-    module._state = State.Error;
+    console.error(err);
+    mod._cached_failure = err;
+    mod._state = State.Error;
     throw err;
   }
-  return module;
+  return mod;
 }
 
 export const getModule = registry.get.bind(registry);
@@ -169,16 +170,14 @@ if (side === "client") {
     refreshRuntime = loadModule(refresh, LoadModuleType.AssertPresent).exports;
     refreshRuntime.injectIntoGlobalHook(window);
   }
-}
 
-// TODO: Remove this after `react-server-dom-bun` is uploaded
-globalThis.__webpack_require__ = (id: string) => {
-  if (side == "server" && config.separateSSRGraph && !id.startsWith("ssr:")) {
-    return loadModule("ssr:" + id, LoadModuleType.UserDynamic).exports;
-  } else {
-    return loadModule(id, LoadModuleType.UserDynamic).exports;
-  }
-};
+  const server_module = new HotModule("bun:bake/client");
+  server_module.__esModule = true;
+  server_module.exports = {
+    bundleRouteForDevelopment: async () => {},
+  };
+  registry.set(server_module.id, server_module);
+}
 
 runtimeHelpers.__name(HotModule.prototype.importSync, "<HMR runtime> importSync");
 runtimeHelpers.__name(HotModule.prototype.require, "<HMR runtime> require");

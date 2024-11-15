@@ -453,7 +453,7 @@ pub const TablePrinter = struct {
                 value = row_value.getOwn(this.globalObject, col.name) orelse JSValue.zero;
             }
 
-            if (value.isEmpty()) {
+            if (value == .zero) {
                 try writer.writeByteNTimes(' ', col.width + (PADDING * 2));
             } else {
                 const len: u32 = this.getWidthForValue(value);
@@ -705,14 +705,14 @@ pub const FormatOptions = struct {
                     }
                 }
             }
-            if (try arg1.getOptional(globalThis, "colors", bool)) |opt| {
+            if (try arg1.getBooleanLoose(globalThis, "colors")) |opt| {
                 formatOptions.enable_colors = opt;
             }
-            if (try arg1.getOptional(globalThis, "sorted", bool)) |opt| {
+            if (try arg1.getBooleanLoose(globalThis, "sorted")) |opt| {
                 formatOptions.ordered_properties = opt;
             }
 
-            if (try arg1.getOptional(globalThis, "compact", bool)) |opt| {
+            if (try arg1.getBooleanLoose(globalThis, "compact")) |opt| {
                 formatOptions.single_line = opt;
             }
         } else {
@@ -972,7 +972,7 @@ pub const Formatter = struct {
     // For detecting circular references
     pub const Visited = struct {
         const ObjectPool = @import("../pool.zig").ObjectPool;
-        pub const Map = std.AutoHashMap(JSValue.Type, void);
+        pub const Map = std.AutoHashMap(JSValue, void);
         pub const Pool = ObjectPool(
             Map,
             struct {
@@ -1662,8 +1662,8 @@ pub const Formatter = struct {
                     this.writer.writeAll(" ") catch unreachable;
                 }
                 if (!is_iterator) {
-                    const key = JSC.JSObject.getIndex(nextValue, globalObject, 0);
-                    const value = JSC.JSObject.getIndex(nextValue, globalObject, 1);
+                    const key = nextValue.getIndex(globalObject, 0);
+                    const value = nextValue.getIndex(globalObject, 1);
 
                     if (!single_line) {
                         this.formatter.writeIndent(Writer, this.writer) catch unreachable;
@@ -1949,7 +1949,7 @@ pub const Formatter = struct {
                 this.map = this.map_node.?.data;
             }
 
-            const entry = this.map.getOrPut(@intFromEnum(value)) catch unreachable;
+            const entry = this.map.getOrPut(value) catch unreachable;
             if (entry.found_existing) {
                 writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                 return;
@@ -1958,7 +1958,7 @@ pub const Formatter = struct {
 
         defer {
             if (comptime Format.canHaveCircularReferences()) {
-                _ = this.map.remove(@intFromEnum(value));
+                _ = this.map.remove(value);
             }
         }
 
@@ -2259,7 +2259,7 @@ pub const Formatter = struct {
                             this.addForNewLine(2);
                         }
 
-                        if (element.isEmpty()) {
+                        if (element == .zero) {
                             empty_start = 0;
                             break :first;
                         }
@@ -2278,7 +2278,7 @@ pub const Formatter = struct {
 
                     while (i < len) : (i += 1) {
                         const element = value.getDirectIndex(this.globalThis, i);
-                        if (element.isEmpty()) {
+                        if (element == .zero) {
                             if (empty_start == null) {
                                 empty_start = i;
                             }
@@ -3001,7 +3001,7 @@ pub const Formatter = struct {
 
                                                 var j: usize = 0;
                                                 while (j < length) : (j += 1) {
-                                                    const child = JSC.JSObject.getIndex(children, this.globalThis, @as(u32, @intCast(j)));
+                                                    const child = children.getIndex(this.globalThis, @as(u32, @intCast(j)));
                                                     this.format(Tag.getAdvanced(child, this.globalThis, .{ .hide_global = true }), Writer, writer_, child, this.globalThis, enable_ansi_colors);
                                                     if (j + 1 < length) {
                                                         writer.writeAll("\n");

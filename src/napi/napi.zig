@@ -67,8 +67,8 @@ pub const Ref = opaque {
 pub const NapiHandleScope = opaque {
     pub extern fn NapiHandleScope__open(globalObject: *JSC.JSGlobalObject, escapable: bool) ?*NapiHandleScope;
     pub extern fn NapiHandleScope__close(globalObject: *JSC.JSGlobalObject, current: ?*NapiHandleScope) void;
-    extern fn NapiHandleScope__append(globalObject: *JSC.JSGlobalObject, value: JSC.JSValueReprInt) void;
-    extern fn NapiHandleScope__escape(handleScope: *NapiHandleScope, value: JSC.JSValueReprInt) bool;
+    extern fn NapiHandleScope__append(globalObject: *JSC.JSGlobalObject, value: JSValue) void;
+    extern fn NapiHandleScope__escape(handleScope: *NapiHandleScope, value: JSValue) bool;
 
     /// Create a new handle scope in the given environment, or return null if creating one now is
     /// unsafe (i.e. inside a finalizer)
@@ -86,14 +86,14 @@ pub const NapiHandleScope = opaque {
     /// callbacks, as the value must remain alive as long as the handle scope is active, even if the
     /// native module doesn't keep it visible on the stack.
     pub fn append(env: napi_env, value: JSC.JSValue) void {
-        NapiHandleScope__append(env, @intFromEnum(value));
+        NapiHandleScope__append(env, value);
     }
 
     /// Move a value from the current handle scope (which must be escapable) to the reserved escape
     /// slot in the parent handle scope, allowing that value to outlive the current handle scope.
     /// Returns an error if escape() has already been called on this handle scope.
     pub fn escape(self: *NapiHandleScope, value: JSC.JSValue) error{EscapeCalledTwice}!void {
-        if (!NapiHandleScope__escape(self, @intFromEnum(value))) {
+        if (!NapiHandleScope__escape(self, value)) {
             return error.EscapeCalledTwice;
         }
     }
@@ -106,7 +106,7 @@ pub const napi_deferred = *JSC.JSPromise.Strong;
 
 /// To ensure napi_values are not collected prematurely after being returned into a native module,
 /// you must use these functions rather than convert between napi_value and JSC.JSValue directly
-pub const napi_value = enum(JSC.JSValueReprInt) {
+pub const napi_value = enum(i64) {
     _,
 
     pub fn set(
@@ -617,7 +617,7 @@ pub export fn napi_set_element(env: napi_env, object_: napi_value, index: c_uint
     if (!object.jsType().isIndexable()) {
         return .array_expected;
     }
-    if (value.isEmpty())
+    if (value == .zero)
         return invalidArg();
     JSC.C.JSObjectSetPropertyAtIndex(env.ref(), object.asObjectRef(), index, value.asObjectRef(), TODO_EXCEPTION);
     return .ok;
@@ -1004,7 +1004,7 @@ pub export fn napi_is_promise(_: napi_env, value_: napi_value, is_promise_: ?*bo
         return invalidArg();
     };
 
-    if (value.isEmpty()) {
+    if (value == .zero) {
         return invalidArg();
     }
 

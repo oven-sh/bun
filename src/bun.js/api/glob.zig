@@ -314,26 +314,21 @@ fn makeGlobWalker(
     return globWalker;
 }
 
-pub fn constructor(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) ?*Glob {
+pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Glob {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
-    const pat_arg = arguments.nextEat() orelse {
-        globalThis.throw("Glob.constructor: expected 1 arguments, got 0", .{});
-        return null;
+    const pat_arg: JSValue = arguments.nextEat() orelse {
+        return globalThis.throw2("Glob.constructor: expected 1 arguments, got 0", .{});
     };
 
     if (!pat_arg.isString()) {
-        globalThis.throw("Glob.constructor: first argument is not a string", .{});
-        return null;
+        return globalThis.throw2("Glob.constructor: first argument is not a string", .{});
     }
 
-    const pat_str: []u8 = @constCast((pat_arg.toSliceClone(globalThis) orelse return null).slice());
+    const pat_str: []u8 = @constCast((pat_arg.toSliceClone(globalThis) orelse return error.JSError).slice());
 
     const all_ascii = isAllAscii(pat_str);
 
@@ -341,16 +336,10 @@ pub fn constructor(
     glob.* = .{ .pattern = pat_str, .is_ascii = all_ascii };
 
     if (!all_ascii) {
-        var codepoints = std.ArrayList(u32).initCapacity(alloc, glob.pattern.len * 2) catch {
-            globalThis.throwOutOfMemory();
-            return null;
-        };
+        var codepoints = try std.ArrayList(u32).initCapacity(alloc, glob.pattern.len * 2);
         errdefer codepoints.deinit();
 
-        convertUtf8(&codepoints, glob.pattern) catch {
-            globalThis.throwOutOfMemory();
-            return null;
-        };
+        try convertUtf8(&codepoints, glob.pattern);
 
         glob.pattern_codepoints = codepoints;
     }
@@ -384,7 +373,7 @@ fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void 
     _ = has_pending_activity.fetchSub(1, .seq_cst);
 }
 
-pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
@@ -408,7 +397,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     return task.promise.value();
 }
 
-pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
@@ -438,7 +427,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
     return matchedPaths;
 }
 
-pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const alloc = getAllocator(globalThis);
     var arena = Arena.init(alloc);
     defer arena.deinit();

@@ -219,7 +219,7 @@ pub const UpgradedDuplex = struct {
     fn onReceivedData(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         log("onReceivedData", .{});
 
         const function = callframe.callee();
@@ -269,7 +269,7 @@ pub const UpgradedDuplex = struct {
     fn onWritable(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         log("onWritable", .{});
 
         _ = globalObject;
@@ -291,7 +291,7 @@ pub const UpgradedDuplex = struct {
     fn onCloseJS(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         log("onCloseJS", .{});
 
         _ = globalObject;
@@ -3540,7 +3540,7 @@ pub fn NewApp(comptime ssl: bool) type {
         pub fn constructorFailed(app: *ThisApp) bool {
             return uws_constructor_failed(ssl_flag, app);
         }
-        pub fn num_subscribers(app: *ThisApp, topic: []const u8) c_uint {
+        pub fn numSubscribers(app: *ThisApp, topic: []const u8) u32 {
             return uws_num_subscribers(ssl_flag, @as(*uws_app_t, @ptrCast(app)), topic.ptr, topic.len);
         }
         pub fn publish(app: *ThisApp, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {

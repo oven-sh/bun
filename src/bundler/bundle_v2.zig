@@ -324,10 +324,8 @@ const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 pub const BakeEntryPoint = struct {
     path: []const u8,
     graph: bake.Graph,
-
     css: bool = false,
     client_wrapped: bool = false,
-    route_index: bake.DevServer.Route.Index.Optional = .none,
 
     pub fn init(path: []const u8, graph: bake.Graph) BakeEntryPoint {
         return .{ .path = path, .graph = graph };
@@ -337,7 +335,7 @@ pub const BakeEntryPoint = struct {
         return .{ .path = path, .graph = graph, .client_wrapped = true };
     }
 
-    pub fn route(path: []const u8, index: bake.DevServer.Route.Index) BakeEntryPoint {
+    pub fn route(path: []const u8, index: bake.DevServer.RouteBundle.Index) BakeEntryPoint {
         return .{
             .path = path,
             .graph = .server,
@@ -349,7 +347,23 @@ pub const BakeEntryPoint = struct {
         return .{ .path = path, .graph = .client, .css = true };
     }
 };
+fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, top_level_dir: string, allocator: std.mem.Allocator) !Fs.Path {
+    // TODO: outbase
+    var buf: bun.PathBuffer = undefined;
+    const rel = bun.path.relativePlatform(top_level_dir, path.text, .loose, false);
+    var path_clone = path;
 
+    // stack-allocated temporary is not leaked because dupeAlloc on the path will
+    // move .pretty into the heap. that function also fixes some slash issues.
+    if (target == .bake_server_components_ssr) {
+        // the SSR graph needs different pretty names or else HMR mode will
+        // confuse the two modules.
+        path_clone.pretty = std.fmt.bufPrint(&buf, "ssr:{s}", .{rel}) catch buf[0..];
+    } else {
+        path_clone.pretty = rel;
+    }
+    return path_clone.dupeAllocFixPretty(allocator);
+}
 pub const BundleV2 = struct {
     bundler: *Bundler,
     /// When Server Component is enabled, this is used for the client bundles
@@ -1009,10 +1023,6 @@ pub const BundleV2 = struct {
 
                         try this.graph.entry_points.append(this.graph.allocator, Index.source(source_index));
 
-                        if (entry_point.route_index.unwrap()) |route_index| {
-                            _ = try this.bundler.options.dev_server.?.server_graph.insertStaleExtra(resolved.path_pair.primary.text, false, true, route_index);
-                        }
-
                         if (entry_point.css) {
                             try data.css_data.putNoClobber(this.graph.allocator, Index.init(source_index), .{ .imported_on_server = false });
                         }
@@ -1068,16 +1078,14 @@ pub const BundleV2 = struct {
     }
 
     /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
-    /// at the same time in one pass over the SBC list.
-    ///
-    ///
+    /// at the same time in one pass over the SCB list.
     pub fn processServerComponentManifestFiles(this: *BundleV2) OOM!void {
         // If a server components is not configured, do nothing
         const fw = this.framework orelse return;
         const sc = fw.server_components orelse return;
 
-        if (this.graph.kit_referenced_client_data) bun.todoPanic(@src(), "implement generation for 'bun:bake/client'", .{});
-        if (!this.graph.kit_referenced_server_data) return;
+        if (!this.graph.kit_referenced_server_data and
+            !this.graph.kit_referenced_client_data) return;
 
         const alloc = this.graph.allocator;
 
@@ -1146,7 +1154,7 @@ pub const BundleV2 = struct {
                         .key = server.newExpr(E.String{ .data = server_key_string }),
                         .value = server.newExpr(E.Object{
                             .properties = try G.Property.List.fromSlice(alloc, &.{
-                                .{ .key = id_string, .value = ssr_path },
+                                .{ .key = id_string, .value = client_path },
                                 .{ .key = name_string, .value = export_name },
                                 .{ .key = chunks_string, .value = empty_array },
                             }),
@@ -1157,14 +1165,14 @@ pub const BundleV2 = struct {
                         .value = server.newExpr(E.Object{
                             .properties = try G.Property.List.fromSlice(alloc, &.{
                                 .{ .key = name_string, .value = export_name },
-                                .{ .key = specifier_string, .value = client_path },
+                                .{ .key = specifier_string, .value = ssr_path },
                             }),
                         }),
                     };
                 }
 
                 try client_manifest_props.append(alloc, .{
-                    .key = ssr_path,
+                    .key = client_path,
                     .value = server.newExpr(E.Object{
                         .properties = G.Property.List.init(client_manifest_items),
                     }),
@@ -1259,8 +1267,8 @@ pub const BundleV2 = struct {
             .source = source,
             .loader = loader,
             .side_effects = switch (loader) {
-                .text, .json, .toml, .file => _resolver.SideEffects.no_side_effects__pure_data,
-                else => _resolver.SideEffects.has_side_effects,
+                .text, .json, .toml, .file => .no_side_effects__pure_data,
+                else => .has_side_effects,
             },
         }) catch bun.outOfMemory();
         var task = this.graph.allocator.create(ParseTask) catch bun.outOfMemory();
@@ -1604,7 +1612,6 @@ pub const BundleV2 = struct {
             bundler.options.entry_points = config.entry_points.keys();
             bundler.options.jsx = config.jsx;
             bundler.options.no_macros = config.no_macros;
-            bundler.options.server_components = config.server_components.client.items.len > 0 or config.server_components.server.items.len > 0;
             bundler.options.loaders = try options.loadersFromTransformOptions(allocator, config.loaders, config.target);
             bundler.options.entry_naming = config.names.entry_point.data;
             bundler.options.chunk_naming = config.names.chunk.data;
@@ -2274,25 +2281,7 @@ pub const BundleV2 = struct {
     }
 
     fn pathWithPrettyInitialized(this: *BundleV2, path: Fs.Path, target: options.Target) !Fs.Path {
-        if (path.pretty.ptr != path.text.ptr) {
-            // TODO(@paperdave): there is a high chance this dupe is no longer required
-            return path.dupeAlloc(this.graph.allocator);
-        }
-
-        // TODO: outbase
-        var buf: bun.PathBuffer = undefined;
-        const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-        var path_clone = path;
-        // stack-allocated temporary is not leaked because dupeAlloc on the path will
-        // move .pretty into the heap. that function also fixes some slash issues.
-        if (target == .bake_server_components_ssr) {
-            // the SSR graph needs different pretty names or else HMR mode will
-            // confuse the two modules.
-            path_clone.pretty = std.fmt.bufPrint(&buf, "ssr:{s}", .{rel}) catch buf[0..];
-        } else {
-            path_clone.pretty = rel;
-        }
-        return path_clone.dupeAllocFixPretty(this.graph.allocator);
+        return genericPathWithPrettyInitialized(path, target, this.bundler.fs.top_level_dir, this.graph.allocator);
     }
 
     fn reserveSourceIndexesForBake(this: *BundleV2) !void {
@@ -5016,6 +5005,10 @@ pub const LinkerContext = struct {
     /// Used by Bake to extract []CompileResult before it is joined
     dev_server: ?*bun.bake.DevServer = null,
     framework: ?*const bake.Framework = null,
+
+    fn pathWithPrettyInitialized(this: *LinkerContext, path: Fs.Path) !Fs.Path {
+        return genericPathWithPrettyInitialized(path, this.options.target, this.resolver.fs.top_level_dir, this.graph.allocator);
+    }
 
     pub const LinkerOptions = struct {
         output_format: options.Format = .esm,
@@ -9581,13 +9574,17 @@ pub const LinkerContext = struct {
         if (chunk.content == .javascript) {
             const sources = c.parse_graph.input_files.items(.source);
             for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
-                const source: Logger.Source = sources[part_range.source_index.get()];
+                const source: *Logger.Source = &sources[part_range.source_index.get()];
 
                 const file_path = brk: {
                     if (source.path.isFile()) {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
+                        if (source.path.text.ptr == source.path.pretty.ptr) {
+                            source.path = c.pathWithPrettyInitialized(source.path) catch bun.outOfMemory();
+                        }
                         source.path.assertPrettyIsValid();
+
                         break :brk source.path.pretty;
                     } else {
                         // If this isn't in the "file" namespace, just use the full path text

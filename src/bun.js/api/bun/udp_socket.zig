@@ -370,7 +370,7 @@ pub const UDPSocket = struct {
         return true;
     }
 
-    pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
+    pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         if (this.closed) {
             globalThis.throw("Socket is closed", .{});
             return .zero;
@@ -460,7 +460,7 @@ pub const UDPSocket = struct {
         this: *This,
         globalThis: *JSGlobalObject,
         callframe: *CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         if (this.closed) {
             globalThis.throw("Socket is closed", .{});
             return .zero;
@@ -563,7 +563,7 @@ pub const UDPSocket = struct {
         address: JSValue,
     };
 
-    pub fn ref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn ref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         if (!this.closed) {
             this.poll_ref.ref(globalThis.bunVM());
         }
@@ -571,7 +571,7 @@ pub const UDPSocket = struct {
         return .undefined;
     }
 
-    pub fn unref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn unref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.poll_ref.unref(globalThis.bunVM());
 
         return .undefined;
@@ -581,13 +581,13 @@ pub const UDPSocket = struct {
         this: *This,
         _: *JSGlobalObject,
         _: *CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         if (!this.closed) this.socket.close();
 
         return .undefined;
     }
 
-    pub fn reload(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
+    pub fn reload(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         const args = callframe.arguments(1);
 
         if (args.len < 1) {
@@ -693,7 +693,7 @@ pub const UDPSocket = struct {
         this.destroy();
     }
 
-    pub fn jsConnect(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsConnect(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callFrame.arguments(2);
 
         const this = callFrame.this().as(UDPSocket) orelse {
@@ -743,7 +743,7 @@ pub const UDPSocket = struct {
         return .undefined;
     }
 
-    pub fn jsDisconnect(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsDisconnect(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const this = callFrame.this().as(UDPSocket) orelse {
             globalObject.throwInvalidArguments("Expected UDPSocket as 'this'", .{});
             return .zero;

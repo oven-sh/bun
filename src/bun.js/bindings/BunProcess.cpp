@@ -114,7 +114,6 @@ JSC_DECLARE_CUSTOM_GETTER(Process_getPID);
 JSC_DECLARE_CUSTOM_GETTER(Process_getPPID);
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*));
-static bool processIsExiting = false;
 
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
@@ -235,7 +234,7 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
-
+    static bool processIsExiting = false;
     if (processIsExiting)
         return;
     processIsExiting = true;
@@ -656,45 +655,51 @@ struct SignalHandleValue {
 };
 static HashMap<int, SignalHandleValue>* signalToContextIdsMap = nullptr;
 
-static const NeverDestroyed<String> signalNames[] = {
-    MAKE_STATIC_STRING_IMPL("SIGHUP"),
-    MAKE_STATIC_STRING_IMPL("SIGINT"),
-    MAKE_STATIC_STRING_IMPL("SIGQUIT"),
-    MAKE_STATIC_STRING_IMPL("SIGILL"),
-    MAKE_STATIC_STRING_IMPL("SIGTRAP"),
-    MAKE_STATIC_STRING_IMPL("SIGABRT"),
-    MAKE_STATIC_STRING_IMPL("SIGIOT"),
-    MAKE_STATIC_STRING_IMPL("SIGBUS"),
-    MAKE_STATIC_STRING_IMPL("SIGFPE"),
-    MAKE_STATIC_STRING_IMPL("SIGKILL"),
-    MAKE_STATIC_STRING_IMPL("SIGUSR1"),
-    MAKE_STATIC_STRING_IMPL("SIGSEGV"),
-    MAKE_STATIC_STRING_IMPL("SIGUSR2"),
-    MAKE_STATIC_STRING_IMPL("SIGPIPE"),
-    MAKE_STATIC_STRING_IMPL("SIGALRM"),
-    MAKE_STATIC_STRING_IMPL("SIGTERM"),
-    MAKE_STATIC_STRING_IMPL("SIGCHLD"),
-    MAKE_STATIC_STRING_IMPL("SIGCONT"),
-    MAKE_STATIC_STRING_IMPL("SIGSTOP"),
-    MAKE_STATIC_STRING_IMPL("SIGTSTP"),
-    MAKE_STATIC_STRING_IMPL("SIGTTIN"),
-    MAKE_STATIC_STRING_IMPL("SIGTTOU"),
-    MAKE_STATIC_STRING_IMPL("SIGURG"),
-    MAKE_STATIC_STRING_IMPL("SIGXCPU"),
-    MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
-    MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
-    MAKE_STATIC_STRING_IMPL("SIGPROF"),
-    MAKE_STATIC_STRING_IMPL("SIGWINCH"),
-    MAKE_STATIC_STRING_IMPL("SIGIO"),
-    MAKE_STATIC_STRING_IMPL("SIGINFO"),
-    MAKE_STATIC_STRING_IMPL("SIGSYS"),
-};
+static const NeverDestroyed<String>* getSignalNames()
+{
+    static const NeverDestroyed<String> signalNames[] = {
+        MAKE_STATIC_STRING_IMPL("SIGHUP"),
+        MAKE_STATIC_STRING_IMPL("SIGINT"),
+        MAKE_STATIC_STRING_IMPL("SIGQUIT"),
+        MAKE_STATIC_STRING_IMPL("SIGILL"),
+        MAKE_STATIC_STRING_IMPL("SIGTRAP"),
+        MAKE_STATIC_STRING_IMPL("SIGABRT"),
+        MAKE_STATIC_STRING_IMPL("SIGIOT"),
+        MAKE_STATIC_STRING_IMPL("SIGBUS"),
+        MAKE_STATIC_STRING_IMPL("SIGFPE"),
+        MAKE_STATIC_STRING_IMPL("SIGKILL"),
+        MAKE_STATIC_STRING_IMPL("SIGUSR1"),
+        MAKE_STATIC_STRING_IMPL("SIGSEGV"),
+        MAKE_STATIC_STRING_IMPL("SIGUSR2"),
+        MAKE_STATIC_STRING_IMPL("SIGPIPE"),
+        MAKE_STATIC_STRING_IMPL("SIGALRM"),
+        MAKE_STATIC_STRING_IMPL("SIGTERM"),
+        MAKE_STATIC_STRING_IMPL("SIGCHLD"),
+        MAKE_STATIC_STRING_IMPL("SIGCONT"),
+        MAKE_STATIC_STRING_IMPL("SIGSTOP"),
+        MAKE_STATIC_STRING_IMPL("SIGTSTP"),
+        MAKE_STATIC_STRING_IMPL("SIGTTIN"),
+        MAKE_STATIC_STRING_IMPL("SIGTTOU"),
+        MAKE_STATIC_STRING_IMPL("SIGURG"),
+        MAKE_STATIC_STRING_IMPL("SIGXCPU"),
+        MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
+        MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
+        MAKE_STATIC_STRING_IMPL("SIGPROF"),
+        MAKE_STATIC_STRING_IMPL("SIGWINCH"),
+        MAKE_STATIC_STRING_IMPL("SIGIO"),
+        MAKE_STATIC_STRING_IMPL("SIGINFO"),
+        MAKE_STATIC_STRING_IMPL("SIGSYS"),
+    };
+
+    return signalNames;
+}
 
 static void loadSignalNumberMap()
 {
 
     static std::once_flag signalNameToNumberMapOnceFlag;
     std::call_once(signalNameToNumberMapOnceFlag, [] {
+        auto signalNames = getSignalNames();
         signalNameToNumberMap = new HashMap<String, int>();
         signalNameToNumberMap->reserveInitialCapacity(31);
 #if OS(WINDOWS)
@@ -932,6 +937,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         loadSignalNumberMap();
         static std::once_flag signalNumberToNameMapOnceFlag;
         std::call_once(signalNumberToNameMapOnceFlag, [] {
+            auto signalNames = getSignalNames();
             signalNumberToNameMap = new HashMap<int, String>();
             signalNumberToNameMap->reserveInitialCapacity(31);
             signalNumberToNameMap->add(SIGHUP, signalNames[0]);

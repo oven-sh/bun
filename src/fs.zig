@@ -189,13 +189,13 @@ pub const FileSystem = struct {
                 const name = try strings.StringOrTinyString.initAppendIfNeeded(
                     name_slice,
                     *FileSystem.FilenameStore,
-                    &FileSystem.FilenameStore.instance,
+                    FileSystem.FilenameStore.instance,
                 );
 
                 const name_lowercased = try strings.StringOrTinyString.initLowerCaseAppendIfNeeded(
                     name_slice,
                     *FileSystem.FilenameStore,
-                    &FileSystem.FilenameStore.instance,
+                    FileSystem.FilenameStore.instance,
                 );
 
                 break :brk EntryStore.instance.append(.{

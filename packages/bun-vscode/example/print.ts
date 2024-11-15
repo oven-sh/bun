@@ -1,12 +1,8 @@
 setInterval(() => {
-    console.log("Cool");
-
-    if (Math.random() > 0.5) {
-        throw new Error("broken");
-    }
+  throw new Error("broken");
 }, 500);
 
-console.log("Cool");
+// console.log("Cool");
 
 // process.on("uncaughtException", (e) => {
 //     if (e instanceof SyntaxError) {

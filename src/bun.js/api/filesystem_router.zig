@@ -20,10 +20,9 @@ const JSError = Base.JSError;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
-
 const To = Base.To;
 const Request = WebCore.Request;
-
+const Environment = bun.Environment;
 const URLPath = @import("../../http/url_path.zig");
 const URL = @import("../../url.zig").URL;
 const Log = bun.logger;
@@ -197,9 +196,12 @@ pub const FileSystemRouter = struct {
         return fs_router;
     }
 
-
+    threadlocal var win32_normalized_dir_info_cache_buf: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined;
     pub fn bustDirCacheRecursive(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, path: []const u8) void {
         var vm = globalThis.bunVM();
+        if (comptime Environment.isWindows) {
+            path = vm.bundler.resolver.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, path);
+        }
 
         const root_dir_info = vm.bundler.resolver.readDirInfo(path) catch {
             return;
@@ -210,7 +212,6 @@ pub const FileSystemRouter = struct {
                 var iter = entries.data.iterator();
                 outer: while (iter.next()) |entry_ptr| {
                     const entry = entry_ptr.value_ptr.*;
-
                     if (entry.base()[0] == '.') {
                         continue :outer;
                     }
@@ -222,18 +223,22 @@ pub const FileSystemRouter = struct {
                         }
 
                         var abs_parts_con = [_]string{ entry.dir, entry.base() };
-                        const full_path = vm.bundler.fs.abs(&abs_parts_con);
-                        _ = vm.bundler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(full_path));
+                        const full_path = vm.bundler.fs.abs(&abs_parts_con);;
                         bustDirCacheRecursive(this, globalThis, full_path);
+                        _ = vm.bundler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(full_path));
+
                     }
                 }
             }
         }
-        _ = vm.bundler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(path));
+
+
+        _ = vm.bundler.resolver.bustDirCache(path);
+
     }
 
     pub fn bustDirCache(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) void {
-        bustDirCacheRecursive(this, globalThis, this.router.config.dir);
+        bustDirCacheRecursive(this, globalThis, strings.withoutTrailingSlashWindowsPath(input_path));
     }
 
     pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {

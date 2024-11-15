@@ -40,6 +40,22 @@ struct napi_async_cleanup_hook_handle__ {
     }
 };
 
+#define NAPI_PERISH(...)                                                      \
+    do {                                                                      \
+        WTFReportError(__FILE__, __LINE__, __PRETTY_FUNCTION__, __VA_ARGS__); \
+        WTFReportBacktrace();                                                 \
+        WTFCrash();                                                           \
+    } while (0)
+
+#define NAPI_RELEASE_ASSERT(assertion, ...)                                                                         \
+    do {                                                                                                            \
+        if (UNLIKELY(!(assertion))) {                                                                               \
+            WTFReportAssertionFailureWithMessage(__FILE__, __LINE__, __PRETTY_FUNCTION__, #assertion, __VA_ARGS__); \
+            WTFReportBacktrace();                                                                                   \
+            WTFCrash();                                                                                             \
+        }                                                                                                           \
+    } while (0)
+
 // Named this way so we can manipulate napi_env values directly (since napi_env is defined as a pointer to struct napi_env__)
 struct napi_env__ {
 public:
@@ -112,9 +128,7 @@ public:
     void addCleanupHook(void (*function)(void*), void* data)
     {
         for (const auto& [existing_function, existing_data] : m_cleanupHooks) {
-            if (UNLIKELY(function == existing_function && data == existing_data)) {
-                RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Attempted to add a duplicate NAPI environment cleanup hook");
-            }
+            NAPI_RELEASE_ASSERT(function != existing_function || data != existing_data, "Attempted to add a duplicate NAPI environment cleanup hook");
         }
 
         m_cleanupHooks.emplace_back(function, data);
@@ -129,15 +143,13 @@ public:
             }
         }
 
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Attempted to remove a NAPI environment cleanup hook that had never been added");
+        NAPI_PERISH("Attempted to remove a NAPI environment cleanup hook that had never been added");
     }
 
     napi_async_cleanup_hook_handle addAsyncCleanupHook(napi_async_cleanup_hook function, void* data)
     {
         for (const auto& [existing_function, existing_data, existing_handle] : m_asyncCleanupHooks) {
-            if (UNLIKELY(function == existing_function && data == existing_data)) {
-                RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Attempted to add a duplicate async NAPI environment cleanup hook");
-            }
+            NAPI_RELEASE_ASSERT(function != existing_function || data != existing_data, "Attempted to add a duplicate async NAPI environment cleanup hook");
         }
 
         auto iter = m_asyncCleanupHooks.emplace(m_asyncCleanupHooks.end(), function, data);
@@ -155,18 +167,16 @@ public:
             }
         }
 
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Attempted to remove an async NAPI environment cleanup hook that had never been added");
+        NAPI_PERISH("Attempted to remove an async NAPI environment cleanup hook that had never been added");
     }
 
     void checkGC()
     {
-        if (UNLIKELY(m_globalObject->vm().heap.mutatorState() == JSC::MutatorState::Sweeping || m_inCleanup)) {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE(
-                "Attempted to call a non-GC-safe function inside a NAPI finalizer from a NAPI module with version %d.\n"
-                "Finalizers must not create new objects during garbage collection. Use the `node_api_post_finalizer` function\n"
-                "inside the finalizer to defer the code to the next event loop tick.\n",
-                m_napiModule.nm_version);
-        }
+        NAPI_RELEASE_ASSERT(m_globalObject->vm().heap.mutatorState() != JSC::MutatorState::Sweeping,
+            "Attempted to call a non-GC-safe function inside a NAPI finalizer from a NAPI module with version %d.\n"
+            "Finalizers must not create new objects during garbage collection. Use the `node_api_post_finalizer` function\n"
+            "inside the finalizer to defer the code to the next event loop tick.\n",
+            m_napiModule.nm_version);
     }
 
     void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)

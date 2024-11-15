@@ -1878,6 +1878,28 @@ pub const AnyRequestContext = struct {
             else => @panic("Unexpected AnyRequestContext tag"),
         }
     }
+
+    pub fn deref(self: AnyRequestContext) void {
+        if (self.tagged_pointer.isNull()) {
+            return;
+        }
+
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                self.tagged_pointer.as(HTTPServer.RequestContext).deref();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                self.tagged_pointer.as(HTTPSServer.RequestContext).deref();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                self.tagged_pointer.as(DebugHTTPServer.RequestContext).deref();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                self.tagged_pointer.as(DebugHTTPSServer.RequestContext).deref();
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
+        }
+    }
 };
 
 // This is defined separately partially to work-around an LLVM debugger bug.
@@ -2176,7 +2198,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     ctx.end("", ctx.shouldCloseConnection());
                     return;
                 }
-                // avoid writing the status again and missmatching the content-length
+                // avoid writing the status again and mismatching the content-length
                 if (ctx.flags.has_written_status) {
                     ctx.end("", ctx.shouldCloseConnection());
                     return;
@@ -6615,15 +6637,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 , .{});
                 bun.Output.flush();
 
-                break :dev_server bun.bake.DevServer.init(.{
+                break :dev_server try bun.bake.DevServer.init(.{
                     .arena = bake_options.arena.allocator(),
                     .root = bake_options.root,
                     .framework = bake_options.framework,
                     .vm = global.bunVM(),
-                }) catch |err| {
-                    global.throwError(err, "while initializing Bun Dev Server");
-                    return error.JSError;
-                };
+                });
             } else null else null;
             errdefer if (dev_server) |d| d.deinit();
 
@@ -7359,6 +7378,11 @@ pub const SavedRequest = struct {
     request: *Request,
     ctx: AnyRequestContext,
     response: uws.AnyResponse,
+
+    pub fn deinit(sr: *SavedRequest) void {
+        sr.js_request.deinit();
+        sr.ctx.deref();
+    }
 
     pub const Union = union(enum) {
         stack: *uws.Request,

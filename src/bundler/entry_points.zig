@@ -182,10 +182,10 @@ pub const ServerEntryPoint = struct {
                     \\        var server = globalThis[hmrSymbol];
                     \\        if (server) {{
                     \\           server.reload(def);
-                    \\           console.debug(`Reloaded ${{server.development ? 'development ' : ''}}server ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
+                    \\           console.debug(`Reloaded ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                     \\        }} else {{
                     \\           server = globalThis[hmrSymbol] = Bun.serve(def);
-                    \\           console.debug(`Started ${{server.development ? 'development ' : ''}}server ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
+                    \\           console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                     \\        }}
                     \\      }}
                     \\   }}, reportError);
@@ -193,10 +193,10 @@ pub const ServerEntryPoint = struct {
                     \\   var server = globalThis[hmrSymbol];
                     \\   if (server) {{
                     \\      server.reload(entryNamespace.default);
-                    \\      console.debug(`Reloaded ${{server.development ? 'development ' : ''}}server ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
+                    \\      console.debug(`Reloaded ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                     \\   }} else {{
                     \\      server = globalThis[hmrSymbol] = Bun.serve(entryNamespace.default);
-                    \\      console.debug(`Started ${{server.development ? 'development ' : ''}}server ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
+                    \\      console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                     \\   }}
                     \\}}
                     \\
@@ -215,12 +215,12 @@ pub const ServerEntryPoint = struct {
                 \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
                 \\      if (typeof entryNamespace?.default?.fetch === 'function')  {{
                 \\        const server = Bun.serve(entryNamespace.default);
-                \\        console.debug(`Started ${{server.development ? 'development ' : ''}}server ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
+                \\        console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                 \\      }}
                 \\   }}, reportError);
                 \\}} else if (typeof entryNamespace?.default?.fetch === 'function' || entryNamespace?.default?.app != null) {{
                 \\   const server = Bun.serve(entryNamespace.default);
-                \\   console.debug(`Started ${{server.development ? 'development ' : ''}}server ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
+                \\   console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                 \\}}
                 \\
             ,

@@ -3,7 +3,7 @@ const log = bun.Output.scoped(.production, false);
 
 pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     {
-        @panic("Regressed");
+        @panic("regressed");
     }
     Output.warn(
         \\Be advised that Bun Bake is highly experimental, and its API
@@ -589,8 +589,7 @@ export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specif
 const ProductionPathMap = struct {
     allocator: std.mem.Allocator,
 
-    entry_points: std.ArrayListUnmanaged(BakeEntryPoint),
-    route_files: bun.StringArrayHashMapUnmanaged(void),
+    entry_points: BakeEntryPoints,
     /// OpaqueFileId -> index into output_files
     out_index_map: []u32,
     /// index into output_files -> key to load them in JavaScript
@@ -606,25 +605,22 @@ const ProductionPathMap = struct {
     }
 
     pub fn getFileIdForRouter(ctx: *ProductionPathMap, abs_path: []const u8, _: FrameworkRouter.Route.Index, _: FrameworkRouter.Route.FileKind) !FrameworkRouter.OpaqueFileId {
-        const gop = try ctx.route_files.getOrPut(ctx.allocator, abs_path);
+        const gop = try ctx.entry_points.set.getOrPut(ctx.allocator, abs_path);
         if (!gop.found_existing) {
-            const dupe = try ctx.allocator.dupe(u8, abs_path);
-            try ctx.entry_points.append(ctx.allocator, BakeEntryPoint.init(dupe, .server));
-            gop.key_ptr.* = dupe;
-            gop.value_ptr.* = {};
+            gop.key_ptr.* = try ctx.allocator.dupe(u8, abs_path);
+            gop.value_ptr.* = .{};
         }
+        gop.value_ptr.server = true;
         return FrameworkRouter.OpaqueFileId.init(@intCast(gop.index));
     }
 
     pub fn getClientFile(ctx: *ProductionPathMap, abs_path: []const u8) !FrameworkRouter.OpaqueFileId {
-        // Bug: if server and client reference the same file, it is impossible to know which side it was already queued for, leading to a missing output file.
-        const gop = try ctx.route_files.getOrPut(ctx.allocator, abs_path);
+        const gop = try ctx.entry_points.set.getOrPut(ctx.allocator, abs_path);
         if (!gop.found_existing) {
-            const dupe = try ctx.allocator.dupe(u8, abs_path);
-            try ctx.entry_points.append(ctx.allocator, BakeEntryPoint.initClientWrapped(dupe, .client));
-            gop.key_ptr.* = dupe;
-            gop.value_ptr.* = {};
+            gop.key_ptr.* = try ctx.allocator.dupe(u8, abs_path);
+            gop.value_ptr.* = .{};
         }
+        gop.value_ptr.client = true;
         return FrameworkRouter.OpaqueFileId.init(@intCast(gop.index));
     }
 };
@@ -639,7 +635,7 @@ const std = @import("std");
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Output = bun.Output;
-const BakeEntryPoint = bun.bundle_v2.BakeEntryPoint;
+const BakeEntryPoints = bun.bundle_v2.BakeEntryPoints;
 const OutputFile = bun.options.OutputFile;
 
 const bake = bun.bake;

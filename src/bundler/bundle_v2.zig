@@ -335,6 +335,8 @@ pub const BakeEntryPoints = struct {
         ssr: bool = false,
         /// When this is set, also set .client = true
         css: bool = false,
+        // /// Indicates the file might have been deleted.
+        // potentially_deleted: bool = false,
 
         unused: enum(u4) { unused = 0 } = .unused,
     };

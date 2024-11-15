@@ -88,7 +88,7 @@ directory_watchers: DirectoryWatchStore,
 /// once. Memory is reused by swapping between these two. These items are
 /// aligned to cache lines to reduce contention, since these structures are
 /// carefully passed between two threads.
-watch_events: [2]HotReloadTask.Aligned,
+watch_events: [2]HotReloadEvent.Aligned,
 /// 0  - no watch
 /// 1  - has fired additional watch
 /// 2+ - new events available, watcher is waiting on bundler to finish
@@ -121,6 +121,10 @@ current_bundle: ?struct {
     start_data: bun.bundle_v2.BakeBundleStart,
     /// Started when the bundle was queued
     timer: std.time.Timer,
+    /// If any files in this bundle were due to hot-reloading, some extra work
+    /// must be done to inform clients to reload routes. When this is false,
+    /// all entry points do not have bundles yet.
+    had_reload_event: bool,
 },
 /// This is not stored in `current_bundle` so that its memory can be reused when
 /// there is no active bundle. After the bundle finishes, these requests will
@@ -133,9 +137,9 @@ current_bundle_requests: ArrayListUnmanaged(DeferredRequest),
 next_bundle: struct {
     /// A list of `RouteBundle`s which have active requests to bundle it.
     route_queue: AutoArrayHashMapUnmanaged(RouteBundle.Index, void),
-    /// If a watch event exists and should be drained. The information
+    /// If a reload event exists and should be drained. The information
     /// for this watch event is in one of the `watch_events`
-    watch_event: bool,
+    reload_event: ?*HotReloadEvent,
     /// The list of requests that are blocked on this bundle.
     requests: ArrayListUnmanaged(DeferredRequest),
 },
@@ -257,7 +261,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .current_bundle_requests = .{},
         .next_bundle = .{
             .route_queue = .{},
-            .watch_event = false,
+            .reload_event = null,
             .requests = .{},
         },
 
@@ -296,8 +300,8 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.client_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     dev.ssr_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     dev.watch_events = .{
-        .{ .aligned = HotReloadTask.initEmpty(dev) },
-        .{ .aligned = HotReloadTask.initEmpty(dev) },
+        .{ .aligned = HotReloadEvent.initEmpty(dev) },
+        .{ .aligned = HotReloadEvent.initEmpty(dev) },
     };
 
     dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_bundler) catch |err|
@@ -606,7 +610,11 @@ fn ensureRouteIsBundled(
                     @panic("TODO: trace graph for possible errors, so DevServer knows what state this should go to");
                 }
 
-                dev.startAsyncBundle(entry_points) catch |err| {
+                dev.startAsyncBundle(
+                    entry_points,
+                    false,
+                    std.time.Timer.start() catch @panic("timers unsupported"),
+                ) catch |err| {
                     if (dev.log.hasAny()) {
                         dev.log.print(Output.errorWriter()) catch {};
                         Output.flush();
@@ -824,9 +832,17 @@ const DeferredRequest = struct {
     };
 };
 
-fn startAsyncBundle(dev: *DevServer, files: BakeEntryPoints) !void {
+fn startAsyncBundle(
+    dev: *DevServer,
+    entry_points: BakeEntryPoints,
+    had_reload_event: bool,
+    timer: std.time.Timer,
+) bun.OOM!void {
     assert(dev.current_bundle == null);
-    assert(files.set.count() > 0);
+    assert(entry_points.set.count() > 0);
+    assert(!dev.log.hasAny());
+
+    dev.incremental_result.reset();
 
     var heap = try ThreadlocalArena.init();
     errdefer heap.deinit();
@@ -842,8 +858,6 @@ fn startAsyncBundle(dev: *DevServer, files: BakeEntryPoints) !void {
         // would be incorrect to even try to run a build.
         bun.todoPanic(@src(), "support non-server components build", .{});
     }
-
-    const timer = if (Environment.enable_logs) std.time.Timer.start() catch unreachable;
 
     const bv2 = try BundleV2.init(
         &dev.server_bundler,
@@ -869,12 +883,13 @@ fn startAsyncBundle(dev: *DevServer, files: BakeEntryPoints) !void {
         dev.server_graph.reset();
     }
 
-    const start_data = try bv2.startFromBakeDevServer(files);
+    const start_data = try bv2.startFromBakeDevServer(entry_points);
 
     dev.current_bundle = .{
         .bv2 = bv2,
         .timer = timer,
         .start_data = start_data,
+        .had_reload_event = had_reload_event,
     };
     const old_current_requests = dev.current_bundle_requests;
     bun.assert(old_current_requests.items.len == 0);
@@ -1108,7 +1123,6 @@ pub fn finalizeBundle(
 
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
-    defer dev.emitVisualizerMessageIfNeeded() catch {};
 
     const js_chunk = result.jsPseudoChunk();
     const input_file_sources = bv2.graph.input_files.items(.source);
@@ -1297,7 +1311,150 @@ pub fn finalizeBundle(
     if (dev.incremental_result.failures_added.items.len > 0) {
         dev.bundles_since_last_error = 0;
 
-        @panic("TODO: error.BuildFailure");
+        for (dev.current_bundle_requests.items) |*req| {
+            const rb = dev.routeBundlePtr(req.route_bundle_index);
+            rb.server_state = .possible_bundling_failures;
+
+            const resp: *Response = switch (req.data) {
+                .server_handler => |*saved| brk: {
+                    const resp = saved.response.TCP;
+                    saved.deinit();
+                    break :brk resp;
+                },
+                .js_payload => |resp| resp,
+            };
+
+            resp.corked(sendSerializedFailures, .{
+                dev,
+                resp,
+                dev.bundling_failures.keys(),
+                .bundler,
+            });
+        }
+
+        return;
+    }
+
+    // This list of routes affected excludes client code. This means changing
+    // a client component wont count as a route to trigger a reload on.
+    //
+    // A second trace is required to determine what routes had changed bundles,
+    // since changing a layout affects all child routes. Additionally, routes
+    // that do not have a bundle will not be cleared (as there is nothing to
+    // clear for those)
+    if (current_bundle.had_reload_event and
+        dev.incremental_result.routes_affected.items.len > 0)
+    {
+        var sfa2 = std.heap.stackFallback(4096, bv2.graph.allocator);
+        const temp_alloc = sfa2.get();
+
+        // A bit-set is used to avoid duplicate entries. This is not a problem
+        // with `dev.incremental_result.routes_affected`
+        var second_trace_result = try DynamicBitSetUnmanaged.initEmpty(temp_alloc, dev.route_bundles.items.len);
+        for (dev.incremental_result.routes_affected.items) |request| {
+            const route = dev.router.routePtr(request.route_index);
+            if (route.bundle.unwrap()) |id| second_trace_result.set(id.get());
+            if (request.should_recurse_when_visiting) {
+                markAllRouteChildren(&dev.router, &second_trace_result, request.route_index);
+            }
+        }
+
+        var sfa3 = std.heap.stackFallback(65536, bun.default_allocator);
+        var payload = std.ArrayList(u8).initCapacity(sfa3.get(), 65536) catch
+            unreachable; // enough space
+        defer payload.deinit();
+        payload.appendAssumeCapacity(MessageId.route_update.char());
+        const w = payload.writer();
+        const count = second_trace_result.count();
+        assert(count > 0);
+        try w.writeInt(u32, @intCast(count), .little);
+
+        var it = second_trace_result.iterator(.{ .kind = .set });
+        while (it.next()) |bundled_route_index| {
+            try w.writeInt(u32, @intCast(bundled_route_index), .little);
+            const pattern = dev.route_bundles.items[bundled_route_index].full_pattern;
+            try w.writeInt(u32, @intCast(pattern.len), .little);
+            try w.writeAll(pattern);
+        }
+
+        // Notify
+        dev.publish(HmrSocket.global_topic, payload.items, .binary);
+    }
+
+    // When client component roots get updated, the `client_components_affected`
+    // list contains the server side versions of these roots. These roots are
+    // traced to the routes so that the client-side bundles can be properly
+    // invalidated.
+    if (dev.incremental_result.client_components_affected.items.len > 0) {
+        dev.incremental_result.routes_affected.clearRetainingCapacity();
+        dev.server_graph.affected_by_trace.setAll(false);
+
+        var sfa_state = std.heap.stackFallback(4096, dev.allocator);
+        const temp_alloc = sfa_state.get();
+        dev.server_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(temp_alloc, dev.server_graph.bundled_files.count());
+        defer dev.server_graph.affected_by_trace.deinit(temp_alloc);
+
+        for (dev.incremental_result.client_components_affected.items) |index| {
+            try dev.server_graph.traceDependencies(index, .no_stop);
+        }
+
+        // TODO:
+        // for (dev.incremental_result.routes_affected.items) |route| {
+        //     // Free old bundles
+        //     if (dev.routes[route.get()].client_bundle) |old| {
+        //         dev.allocator.free(old);
+        //     }
+        //     dev.routes[route.get()].client_bundle = null;
+        // }
+    }
+
+    // TODO: improve this visual feedback
+    if (dev.bundling_failures.count() == 0) {
+        if (current_bundle.had_reload_event) {
+            const clear_terminal = !debug.isVisible();
+            if (clear_terminal) {
+                Output.disableBuffering();
+                Output.resetTerminalAll();
+                Output.enableBuffering();
+            }
+
+            dev.bundles_since_last_error += 1;
+            if (dev.bundles_since_last_error > 1) {
+                Output.prettyError("<cyan>[x{d}]<r> ", .{dev.bundles_since_last_error});
+            }
+        } else {
+            dev.bundles_since_last_error = 1;
+        }
+
+        Output.prettyError("<green>{s} in {d}ms<r>", .{
+            if (current_bundle.had_reload_event) "Reloaded" else "Bundled route",
+            @divFloor(current_bundle.timer.read(), std.time.ns_per_ms),
+        });
+
+        // Compute a file name to display
+        const file_name: ?[]const u8, const total_count: usize = if (current_bundle.had_reload_event)
+            .{ null, 0 }
+        else first_route_file_name: {
+            const opaque_id = dev.router.routePtr(
+                dev.routeBundlePtr(dev.current_bundle_requests.items[0].route_bundle_index)
+                    .route,
+            ).file_page.unwrap() orelse
+                break :first_route_file_name .{ null, 0 };
+            const server_index = fromOpaqueFileId(.server, opaque_id);
+
+            break :first_route_file_name .{
+                dev.relativePath(dev.server_graph.bundled_files.keys()[server_index.get()]),
+                0,
+            };
+        };
+        if (file_name) |name| {
+            Output.prettyError("<d>:<r> {s}", .{name});
+            if (total_count > 1) {
+                Output.prettyError(" <d>+ {d} more<r>", .{total_count - 1});
+            }
+        }
+        Output.prettyError("\n", .{});
+        Output.flush();
     }
 
     // Release the lock because the underlying handler may acquire one.
@@ -1312,6 +1469,43 @@ pub fn finalizeBundle(
             .server_handler => |saved| dev.onRequestWithBundle(req.route_bundle_index, .{ .saved = saved }, saved.response.TCP),
             .js_payload => |resp| dev.onJsRequestWithBundle(req.route_bundle_index, resp),
         }
+    }
+
+    // Clear the current bundle
+    dev.log.deinit(); // TODO: rename this clearAndFree, the log is still valid!
+
+    dev.current_bundle = null;
+    dev.current_bundle_requests.clearRetainingCapacity();
+    dev.emitVisualizerMessageIfNeeded() catch {};
+
+    // If there were pending requests, begin another bundle.
+    if (dev.next_bundle.reload_event != null or dev.next_bundle.requests.items.len > 0) {
+        var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+        const temp_alloc = sfb.get();
+        var entry_points: BakeEntryPoints = BakeEntryPoints.empty;
+        defer entry_points.deinit(temp_alloc);
+
+        if (dev.next_bundle.reload_event) |event| {
+            event.processFileList(dev, &entry_points, temp_alloc);
+
+            if (dev.watch_state.swap(0, .seq_cst) > 1) {
+                @panic("TODO: un-regress watcher atomics hell");
+            }
+        }
+
+        for (dev.next_bundle.route_queue.keys()) |route_bundle_index| {
+            const rb = dev.routeBundlePtr(route_bundle_index);
+            rb.server_state = .bundling;
+            dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, rb.route) catch bun.outOfMemory();
+        }
+
+        dev.startAsyncBundle(
+            entry_points,
+            dev.next_bundle.reload_event != null,
+            std.time.Timer.start() catch @panic("timers unsupported"),
+        ) catch bun.outOfMemory();
+
+        dev.next_bundle.route_queue.clearRetainingCapacity();
     }
 }
 
@@ -1350,6 +1544,9 @@ const CacheEntry = struct {
 };
 
 pub fn isFileCached(dev: *DevServer, path: []const u8, side: bake.Graph) ?CacheEntry {
+    dev.graph_safety_lock.lock();
+    defer dev.graph_safety_lock.unlock();
+
     switch (side) {
         inline else => |side_comptime| {
             const g = switch (side_comptime) {
@@ -1881,7 +2078,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             const client_graph = &g.owner().client_graph;
                             const client_index = client_graph.getFileIndex(gop.key_ptr.*) orelse
                                 Output.panic("Client graph's SCB was already deleted", .{});
-                            try dev.incremental_result.delete_client_files_later.append(g.owner().allocator, client_index);
+                            client_graph.disconnectAndDeleteFile(client_index);
                             gop.value_ptr.is_client_component_boundary = false;
 
                             try dev.incremental_result.client_components_removed.append(dev.allocator, file_index);
@@ -2365,7 +2562,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             );
         }
 
-        pub fn invalidate(g: *@This(), paths: []const []const u8, out_paths: *BakeEntryPoints) !void {
+        pub fn invalidate(g: *@This(), paths: []const []const u8, entry_points: *BakeEntryPoints, alloc: Allocator) !void {
             g.owner().graph_safety_lock.assertLocked();
             const values = g.bundled_files.values();
             for (paths) |path| {
@@ -2383,15 +2580,15 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         // the bundler gets confused and bundles both sides without
                         // knowledge of the boundary between them.
                         if (data.flags.kind == .css)
-                            try out_paths.appendCss(path)
+                            try entry_points.appendCss(alloc, path)
                         else if (!data.flags.is_hmr_root)
-                            try out_paths.appendJs(path, .client);
+                            try entry_points.appendJs(alloc, path, .client);
                     },
                     .server => {
                         if (data.is_rsc)
-                            try out_paths.appendJs(path, .server);
+                            try entry_points.appendJs(alloc, path, .server);
                         if (data.is_ssr and !data.is_client_component_boundary)
-                            try out_paths.appendJs(path, .ssr);
+                            try entry_points.appendJs(alloc, path, .ssr);
                     },
                 }
             }
@@ -2532,8 +2729,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
             }
 
-            // TODO: it is infeasible to do this since FrameworkRouter contains file indices
-            // to the server graph
+            // TODO: it is infeasible to swapRemove a file since FrameworkRouter
+            // contains file indices to the server graph. This logic is disabled
+            // until it can properly handle not releasing a file referenced by
+            // a route.
             {
                 return;
             }
@@ -3427,162 +3626,32 @@ const c = struct {
 };
 
 /// Called on DevServer thread via HotReloadTask
-pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
-    defer reload_task.files.clearRetainingCapacity();
-
-    const changed_file_paths = reload_task.files.keys();
-    // TODO: check for .delete and remove items from graph. this has to be done
-    // with care because some editors save by deleting and recreating the file.
-    // delete events are not to be trusted at face value. also, merging of
-    // events can cause .write and .delete to be true at the same time.
-    const changed_file_attributes = reload_task.files.values();
-    _ = changed_file_attributes;
-
-    var timer = std.time.Timer.start() catch
-        @panic("timers unsupported");
+pub fn startReloadBundle(dev: *DevServer, event: *HotReloadEvent) bun.OOM!void {
+    defer event.files.clearRetainingCapacity();
 
     var sfb = std.heap.stackFallback(4096, bun.default_allocator);
-    var temp_alloc = sfb.get();
+    const temp_alloc = sfb.get();
+    var entry_points: BakeEntryPoints = BakeEntryPoints.empty;
+    defer entry_points.deinit(temp_alloc);
 
-    {
-        @panic("regressed");
-    }
-
-    var files = std.ArrayList().initCapacity(temp_alloc, 8) catch unreachable;
-    defer files.deinit();
-
-    {
-        dev.graph_safety_lock.lock();
-        defer dev.graph_safety_lock.unlock();
-
-        inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
-            g.invalidate(changed_file_paths, &files) catch bun.outOfMemory();
-        }
-    }
-
-    if (files.items.len == 0) {
-        Output.debugWarn("nothing to bundle?? this is a bug?", .{});
+    event.processFileList(dev, &entry_points, temp_alloc);
+    if (entry_points.set.count() == 0) {
+        Output.debugWarn("nothing to bundle. watcher may potentially be watching too many files.", .{});
         return;
     }
 
-    dev.incremental_result.reset();
-    defer {
-        // Remove files last to start, to avoid issues where removing a file
-        // invalidates the last file index.
-        std.sort.pdq(
-            IncrementalGraph(.client).FileIndex,
-            dev.incremental_result.delete_client_files_later.items,
-            {},
-            IncrementalGraph(.client).FileIndex.sortFnDesc,
-        );
-        for (dev.incremental_result.delete_client_files_later.items) |client_index| {
-            dev.client_graph.disconnectAndDeleteFile(client_index);
-        }
-        dev.incremental_result.delete_client_files_later.clearRetainingCapacity();
-    }
-
-    dev.bundleOld(files.items) catch |err| {
+    dev.startAsyncBundle(
+        entry_points,
+        true,
+        event.timer,
+    ) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
         return;
     };
 
-    dev.graph_safety_lock.lock();
-    defer dev.graph_safety_lock.unlock();
+    // dev.graph_safety_lock.lock();
+    // defer dev.graph_safety_lock.unlock();
 
-    // This list of routes affected excludes client code. This means changing
-    // a client component wont count as a route to trigger a reload on.
-    //
-    // A second trace is required to determine what routes had changed bundles,
-    // since changing a layout affects all child routes. Additionally, routes
-    // that do not have a bundle will not be cleared (as there is nothing to
-    // clear for those)
-    if (dev.incremental_result.routes_affected.items.len > 0) {
-        // re-use some earlier stack memory
-        files.clearAndFree();
-        sfb = std.heap.stackFallback(4096, bun.default_allocator);
-        temp_alloc = sfb.get();
-
-        // A bit-set is used to avoid duplicate entries. This is not a problem
-        // with `dev.incremental_result.routes_affected`
-        var second_trace_result = try DynamicBitSetUnmanaged.initEmpty(temp_alloc, dev.route_bundles.items.len);
-        for (dev.incremental_result.routes_affected.items) |request| {
-            const route = dev.router.routePtr(request.route_index);
-            if (route.bundle.unwrap()) |id| second_trace_result.set(id.get());
-            if (request.should_recurse_when_visiting) {
-                markAllRouteChildren(&dev.router, &second_trace_result, request.route_index);
-            }
-        }
-
-        var sfb2 = std.heap.stackFallback(65536, bun.default_allocator);
-        var payload = std.ArrayList(u8).initCapacity(sfb2.get(), 65536) catch
-            unreachable; // enough space
-        defer payload.deinit();
-        payload.appendAssumeCapacity(MessageId.route_update.char());
-        const w = payload.writer();
-        const count = second_trace_result.count();
-        assert(count > 0);
-        try w.writeInt(u32, @intCast(count), .little);
-
-        var it = second_trace_result.iterator(.{ .kind = .set });
-        while (it.next()) |bundled_route_index| {
-            try w.writeInt(u32, @intCast(bundled_route_index), .little);
-            const pattern = dev.route_bundles.items[bundled_route_index].full_pattern;
-            try w.writeInt(u32, @intCast(pattern.len), .little);
-            try w.writeAll(pattern);
-        }
-
-        // Notify
-        dev.publish(HmrSocket.global_topic, payload.items, .binary);
-    }
-
-    // When client component roots get updated, the `client_components_affected`
-    // list contains the server side versions of these roots. These roots are
-    // traced to the routes so that the client-side bundles can be properly
-    // invalidated.
-    if (dev.incremental_result.client_components_affected.items.len > 0) {
-        dev.incremental_result.routes_affected.clearRetainingCapacity();
-        dev.server_graph.affected_by_trace.setAll(false);
-
-        var sfa_state = std.heap.stackFallback(65536, dev.allocator);
-        const sfa = sfa_state.get();
-        dev.server_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.server_graph.bundled_files.count());
-        defer dev.server_graph.affected_by_trace.deinit(sfa);
-
-        for (dev.incremental_result.client_components_affected.items) |index| {
-            try dev.server_graph.traceDependencies(index, .no_stop);
-        }
-
-        // TODO:
-        // for (dev.incremental_result.routes_affected.items) |route| {
-        //     // Free old bundles
-        //     if (dev.routes[route.get()].client_bundle) |old| {
-        //         dev.allocator.free(old);
-        //     }
-        //     dev.routes[route.get()].client_bundle = null;
-        // }
-    }
-
-    // TODO: improve this visual feedback
-    if (dev.bundling_failures.count() == 0) {
-        const clear_terminal = !debug.isVisible();
-        if (clear_terminal) {
-            Output.flush();
-            Output.disableBuffering();
-            Output.resetTerminalAll();
-        }
-
-        dev.bundles_since_last_error += 1;
-        if (dev.bundles_since_last_error > 1) {
-            Output.prettyError("<cyan>[x{d}]<r> ", .{dev.bundles_since_last_error});
-        }
-
-        Output.prettyError("<green>Reloaded in {d}ms<r><d>:<r> {s}", .{ @divFloor(timer.read(), std.time.ns_per_ms), dev.relativePath(changed_file_paths[0]) });
-        if (changed_file_paths.len > 1) {
-            Output.prettyError(" <d>+ {d} more<r>", .{files.items.len - 1});
-        }
-        Output.prettyError("\n", .{});
-        Output.flush();
-    } else {}
 }
 
 fn markAllRouteChildren(router: *FrameworkRouter, bits: *DynamicBitSetUnmanaged, route_index: Route.Index) void {
@@ -3595,19 +3664,21 @@ fn markAllRouteChildren(router: *FrameworkRouter, bits: *DynamicBitSetUnmanaged,
     }
 }
 
-pub const HotReloadTask = struct {
+/// This task informs the DevServer's thread about new files to be bundled.
+pub const HotReloadEvent = struct {
     /// Align to cache lines to reduce contention.
-    const Aligned = struct { aligned: HotReloadTask align(std.atomic.cache_line) };
+    const Aligned = struct { aligned: HotReloadEvent align(std.atomic.cache_line) };
 
     dev: *DevServer,
     concurrent_task: JSC.ConcurrentTask = undefined,
 
     files: bun.StringArrayHashMapUnmanaged(Watcher.Event.Op),
+    timer: std.time.Timer = undefined,
 
     /// I am sorry.
     state: std.atomic.Value(u32),
 
-    pub fn initEmpty(dev: *DevServer) HotReloadTask {
+    pub fn initEmpty(dev: *DevServer) HotReloadEvent {
         return .{
             .dev = dev,
             .files = .{},
@@ -3616,12 +3687,12 @@ pub const HotReloadTask = struct {
     }
 
     pub fn append(
-        task: *HotReloadTask,
+        event: *HotReloadEvent,
         allocator: Allocator,
         file_path: []const u8,
         op: Watcher.Event.Op,
     ) void {
-        const gop = task.files.getOrPut(allocator, file_path) catch bun.outOfMemory();
+        const gop = event.files.getOrPut(allocator, file_path) catch bun.outOfMemory();
         if (gop.found_existing) {
             gop.value_ptr.* = gop.value_ptr.merge(op);
         } else {
@@ -3629,7 +3700,32 @@ pub const HotReloadTask = struct {
         }
     }
 
-    pub fn run(initial: *HotReloadTask) void {
+    /// Invalidates items in IncrementalGraph, appending all new items to `entry_points`
+    pub fn processFileList(
+        event: *HotReloadEvent,
+        dev: *DevServer,
+        entry_points: *BakeEntryPoints,
+        alloc: Allocator,
+    ) void {
+        const changed_file_paths = event.files.keys();
+        // TODO: check for .delete and remove items from graph. this has to be done
+        // with care because some editors save by deleting and recreating the file.
+        // delete events are not to be trusted at face value. also, merging of
+        // events can cause .write and .delete to be true at the same time.
+        const changed_file_attributes = event.files.values();
+        _ = changed_file_attributes;
+
+        {
+            dev.graph_safety_lock.lock();
+            defer dev.graph_safety_lock.unlock();
+
+            inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
+                g.invalidate(changed_file_paths, entry_points, alloc) catch bun.outOfMemory();
+            }
+        }
+    }
+
+    pub fn run(initial: *HotReloadEvent) void {
         debug.log("HMR Task start", .{});
         defer debug.log("HMR Task end", .{});
 
@@ -3641,11 +3737,17 @@ pub const HotReloadTask = struct {
             assert(initial.state.load(.seq_cst) == 0);
         }
 
-        // const start_timestamp = std.time.nanoTimestamp();
-        dev.reload(initial) catch bun.outOfMemory();
+        if (dev.current_bundle != null) {
+            dev.next_bundle.reload_event = initial;
+            return;
+        }
+        dev.startReloadBundle(initial) catch bun.outOfMemory();
 
         // if there was a pending run, do it now
         if (dev.watch_state.swap(0, .seq_cst) > 1) {
+            {
+                @panic("TODO: un-regress");
+            }
             // debug.log("dual event fire", .{});
             const current = if (initial == &dev.watch_events[0].aligned)
                 &dev.watch_events[1].aligned
@@ -3653,7 +3755,7 @@ pub const HotReloadTask = struct {
                 &dev.watch_events[0].aligned;
             if (current.state.swap(1, .seq_cst) == 0) {
                 // debug.log("case 1 (run now)", .{});
-                dev.reload(current) catch bun.outOfMemory();
+                dev.startReloadBundle(current) catch bun.outOfMemory();
                 current.state.store(0, .seq_cst);
             } else {
                 // Watcher will emit an event since it reads watch_state 0
@@ -3678,12 +3780,14 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
     // It was not written by an expert.
 
     // Get a Hot reload task pointer
-    var ev: *HotReloadTask = &dev.watch_events[dev.watch_current].aligned;
+    var ev: *HotReloadEvent = &dev.watch_events[dev.watch_current].aligned;
     if (ev.state.swap(1, .seq_cst) == 1) {
         debug.log("work got stolen, must guarantee the other is free", .{});
         dev.watch_current +%= 1;
         ev = &dev.watch_events[dev.watch_current].aligned;
         bun.assert(ev.state.swap(1, .seq_cst) == 0);
+    } else {
+        ev.timer = std.time.Timer.start() catch unreachable;
     }
     defer {
         // Submit the Hot reload task for bundling
@@ -3725,8 +3829,7 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
             },
             .directory => {
                 // bust the directory cache since this directory has changed
-                // TODO: correctly solve https://github.com/oven-sh/bun/issues/14913
-                _ = dev.server_bundler.resolver.bustDirCache(bun.strings.withoutTrailingSlash(file_path));
+                _ = dev.server_bundler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(file_path));
 
                 // if a directory watch exists for resolution
                 // failures, check those now.

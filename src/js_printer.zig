@@ -4590,6 +4590,10 @@ fn NewPrinter(
                     p.printExpr(s.value, .lowest, ExprFlag.ExprResultIsUnused());
                     p.printSemicolonAfterStatement();
                 },
+                .s_lazy_export => |s| {
+                    Output.debugWarn("Fuck", .{});
+                    p.printExpr(.{ .data = s, .loc = stmt.loc }, .comma, .{});
+                },
                 else => |tag| {
                     Output.panic("Unexpected tag in printStmt: .{s}", .{@tagName(tag)});
                 },

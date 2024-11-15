@@ -27,7 +27,7 @@ if(RELEASE)
 endif()
 
 # The encoded escape sequences are intentional. They're how you delimit multiple arguments in a single environment variable.
-set(RUSTFLAGS "-C panic=abort-C debuginfo=0-C force-unwind-tables=no")
+set(RUSTFLAGS "-C panic=abort-Cdebuginfo=0-Cforce-unwind-tables=no")
 
 register_command(
   TARGET

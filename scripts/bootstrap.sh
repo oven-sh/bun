@@ -202,32 +202,9 @@ check_operating_system() {
 
 	case "$os" in
 	linux)
-		ldd="$(which ldd)"
-		awk="$(which awk)"
-		if [ -f "$ldd" ] && [ -f "$awk" ]; then
-			ldd_version="$($ldd --version 2>&1)"
-			case "$ldd_version" in
-			*musl*)
-				abi="musl"
-				abi_version="$(echo "$ldd_version" | "$awk" 'NR==2{print $NF}')"
-				;;
-			*GLIBC*)
-				abi="gnu"
-				abi_version="$(echo "$ldd_version" | "$awk" 'NR==1{print $NF}')"
-				;;
-			esac
-		fi
-		;;
-	esac
-
-	if [ -n "$abi" ]; then
-		print "ABI: $abi $abi_version"
-	fi
-
-	case "$os" in
-	linux)
 		if [ -f "/etc/alpine-release" ]; then
 			distro="alpine"
+			abi="musl"
 			alpine="$(cat /etc/alpine-release)"
 			if [ "$alpine" ~ "_" ]; then
 				release="$(echo "$alpine" | cut -d_ -f1)-edge"
@@ -266,6 +243,30 @@ check_operating_system() {
 	if [ -n "$distro" ]; then
 		print "Distribution: $distro $release"
 	fi
+
+	case "$os" in
+	linux)
+		ldd="$(which ldd)"
+		awk="$(which awk)"
+		if [ -f "$ldd" ] && [ -f "$awk" ]; then
+			ldd_version="$($ldd --version 2>&1)"
+			case "$ldd_version" in
+			*musl*)
+				abi="musl"
+				abi_version="$(echo "$ldd_version" | "$awk" 'NR==2{print $NF}')"
+				;;
+			*GLIBC*)
+				abi="gnu"
+				abi_version="$(echo "$ldd_version" | "$awk" 'NR==1{print $NF}')"
+				;;
+			esac
+		fi
+
+		if [ -n "$abi" ]; then
+			print "ABI: $abi $abi_version"
+		fi
+		;;
+	esac
 }
 
 check_inside_docker() {
@@ -328,13 +329,7 @@ check_package_manager() {
 	print "Updating package manager..."
 	case "$pm" in
 	apt)
-		lock_paths="/var/lib/apt/lists/lock /var/cache/apt/archives/lock"
-		for lock_path in $lock_paths; do
-			if [ -f "$lock_path" ]; then
-				execute_sudo rm -f "$lock_path"
-			fi
-		done
-		package_manager update -y
+		DEBIAN_FRONTEND=noninteractive package_manager update -y
 		;;
 	apk)
 		package_manager update
@@ -377,10 +372,30 @@ check_user() {
 package_manager() {
 	case "$pm" in
 	apt)
+		# if [ -f "/var/lib/apt/lists/lock" ]; then
+		# 	print "Cleaning up apt lock..."
+		# 	execute_sudo rm -f /var/lib/apt/lists/lock
+		# 	execute_sudo rm -rf /var/lib/apt/lists/partial
+		# 	execute_sudo mkdir -p /var/lib/apt/lists/partial
+		# 	execute_sudo rm -f /var/cache/apt/archives/lock
+		# 	execute_sudo rm -rf /var/lib/apt/lists
+		# 	execute_sudo rm -f /var/lib/dpkg/lock*
+		# 	execute_sudo dpkg --configure -a
+		# 	execute_sudo apt-get clean
+		# fi
 		DEBIAN_FRONTEND=noninteractive execute_sudo apt-get "$@"
 		;;
 	dnf)
-		execute_sudo dnf "$@"
+		case "$distro" in
+		rhel)
+			execute_sudo dnf \
+				--disableplugin=subscription-manager \
+				"$@"
+			;;
+		*)
+			execute_sudo dnf "$@"
+			;;
+		esac
 		;;
 	yum)
 		execute_sudo yum "$@"
@@ -496,6 +511,11 @@ install_common_software() {
 		install_packages \
 			tar
 		;;
+	rhel)
+		rhel_version="$(execute rpm -E %rhel)"
+		install_packages \
+			"https://dl.fedoraproject.org/pub/epel/epel-release-latest-$rhel_version.noarch.rpm"
+		;;
 	esac
 
 	install_packages \
@@ -518,7 +538,7 @@ install_common_software() {
 install_nodejs() {
 	version="${1:-"22"}"
 
-	if [ "$abi" = "gnu" ] && ! [ "$(compare_version "$abi_version" "2.27")" = "1" ]; then
+	if ! [ "$abi" = "musl" ] && [ -n "$abi_version" ] && ! [ "$(compare_version "$abi_version" "2.27")" = "1" ]; then
 		version="16"
 	fi
 
@@ -531,6 +551,7 @@ install_nodejs() {
 	apt)
 		bash="$(require bash)"
 		script="$(download_file "https://deb.nodesource.com/setup_$version.x")"
+		sudo "$bash" "$script" 2>/dev/null
 		execute_sudo "$bash" "$script"
 		;;
 	esac
@@ -628,11 +649,13 @@ install_build_essentials() {
 		;;
 	dnf | yum)
 		install_packages \
-			ninja-build \
 			gcc-c++ \
 			xz \
 			pkg-config \
 			golang
+		if ! [ "$distro" = "rhel" ]; then
+			install_packages ninja-build
+		fi
 		;;
 	brew)
 		install_packages \

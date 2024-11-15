@@ -340,8 +340,8 @@ export const aws = {
         owner = "amazon";
         name = `debian-${distroVersion || "*"}-${arch === "aarch64" ? "arm64" : "amd64"}-*`;
       } else if (distro === "ubuntu") {
-        owner = "amazon";
-        name = `ubuntu/images/hvm-ssd/ubuntu-*-${distroVersion || "*"}-${arch === "aarch64" ? "arm64" : "amd64"}-server-*`;
+        owner = "099720109477";
+        name = `ubuntu/images/hvm-ssd*/ubuntu-*-${distroVersion || "*"}-${arch === "aarch64" ? "arm64" : "amd64"}-server-*`;
       } else if (distro === "amazonlinux") {
         owner = "amazon";
         if (distroVersion === "1") {
@@ -354,6 +354,9 @@ export const aws = {
       } else if (distro === "alpine") {
         owner = "538276064493";
         name = `alpine-${distroVersion || "*"}.*-${arch === "aarch64" ? "aarch64" : "x86_64"}-uefi-cloudinit-*`;
+      } else if (distro === "rhel") {
+        owner = "309956199498";
+        name = `RHEL-${distroVersion || "*"}*_HVM-*-${arch === "aarch64" ? "arm64" : "x86_64"}-*-GP3`;
       }
     } else if (os === "windows") {
       if (!distro || distro === "server") {
@@ -685,7 +688,8 @@ function getCloudInit(cloudInit) {
     case "alpine":
       sftpPath = "/usr/lib/ssh/sftp-server";
       break;
-    case "amazon":
+    case "amazonlinux":
+    case "rhel":
       sftpPath = "/usr/libexec/openssh/sftp-server";
       break;
   }
@@ -741,6 +745,10 @@ function getUsername(distro) {
   }
 
   if (/amazon|amzn|al\d+/i.test(distro)) {
+    return "ec2-user";
+  }
+
+  if (/rhel/i.test(distro)) {
     return "ec2-user";
   }
 
@@ -1137,9 +1145,18 @@ async function main() {
       await startGroup("Installing agent...", async () => {
         await machine.upload(agentPath, remotePath);
         const command = ["node", remotePath, "install"];
-        const { exitCode } = await machine.spawn(["sudo", "echo", "1"], { stdio: "ignore" });
-        if (exitCode === 0) {
-          command.unshift("sudo");
+        {
+          const { stdout } = await machine.spawn(["node", "-v"]);
+          const version = parseInt(stdout.trim().replace(/^v/, ""));
+          if (isNaN(version) || version < 18) {
+            command.splice(0, 1, "bun");
+          }
+        }
+        {
+          const { exitCode } = await machine.spawn(["sudo", "echo", "1"], { stdio: "ignore" });
+          if (exitCode === 0) {
+            command.unshift("sudo");
+          }
         }
         await machine.spawnSafe(command, { stdio: "inherit" });
       });

@@ -306,8 +306,8 @@ function getPipeline(options) {
    * @returns {Agent}
    */
   const getTestAgent = platform => {
-    const { os, arch, release, abi } = platform;
-    if (abi === "musl") {
+    const { os, arch, release, distro } = platform;
+    if (os === "linux" && distro !== "ubuntu") {
       const instanceType = arch === "aarch64" ? "t4g.large" : "t3.large";
       return getEmphemeralAgent("v2", platform, instanceType);
     }
@@ -517,17 +517,32 @@ function getPipeline(options) {
     { os: "darwin", arch: "x64", release: "14" },
     { os: "darwin", arch: "x64", release: "13" },
     { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
+    { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
+    { os: "linux", arch: "aarch64", distro: "debian", release: "10" },
     { os: "linux", arch: "x64", distro: "debian", release: "12" },
+    { os: "linux", arch: "x64", distro: "debian", release: "11" },
+    { os: "linux", arch: "x64", distro: "debian", release: "10" },
     { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12" },
+    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
+    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "10" },
     { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
-    { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
+    { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "20.04" },
+    { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023" },
+    { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2" },
+    { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023" },
+    { os: "linux", arch: "x64", distro: "amazonlinux", release: "2" },
+    { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023" },
+    { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2" },
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
+    { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.17" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
+    { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.17" },
     { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
+    { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.17" },
     { os: "windows", arch: "x64", release: "2019" },
     { os: "windows", arch: "x64", baseline: true, release: "2019" },
   ];

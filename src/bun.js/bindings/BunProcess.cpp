@@ -18,6 +18,11 @@
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
+#include "JavaScriptCore/ScriptCallStackFactory.h"
+#include "JavaScriptCore/ConsoleMessage.h"
+#include "JavaScriptCore/InspectorConsoleAgent.h"
+#include "JavaScriptCore/JSGlobalObjectDebuggable.h"
+#include <JavaScriptCore/StackFrame.h>
 #include <sys/stat.h>
 #include "ConsoleObject.h"
 #include <JavaScriptCore/GetterSetter.h>
@@ -880,37 +885,36 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
         wrapped.emit(uncaughtExceptionIdent, args);
     } else {
-        if (globalObject->inspectable()) {
-            if (auto* client = globalObject->inspectorController().consoleClient().get()) {
-                Vector<JSC::Strong<JSC::Unknown>> argumentsVector;
-                for (size_t i = 0; i < args.size(); ++i)
-                    argumentsVector.append(JSC::Strong<JSC::Unknown>(vm, args.at(i)));
+        //     if (globalObject->inspectable()) {
+        //         if (auto* client = globalObject->inspectorController().consoleClient().get()) {
+        //             if (auto* errorInstance = jsDynamicCast<JSC::ErrorInstance*>(exception)) {
+        //                 Vector<Inspector::ScriptCallFrame> frames;
+        //                 if (auto* stack = errorInstance->stackTrace()) {
+        //                     for (auto& frame : *stack) {
+        //                         LineColumn lineColumn = frame.computeLineAndColumn();
+        //                         frames.append(Inspector::ScriptCallFrame {
 
-                if (exception.isCell()) {
-                    if (auto* error = jsDynamicCast<JSC::ErrorInstance*>(exception)) {
-                        auto stackTrace = error->stackTrace();
+        //                             frame.functionName(vm),
+        //                             frame.sourceURL(vm),
+        //                             frame.sourceID(),
+        //                             lineColumn });
+        //                     }
 
-                        if (stackTrace->size() > 0) {
-                            const JSC::StackFrame& frame = stackTrace->at(0);
-                            String fileName = frame.sourceURL(vm);
+        //                     Vector<JSC::Strong<Unknown>> arguments;
+        //                     arguments.append({ vm, errorInstance });
 
-                            // append strong
-                            argumentsVector.append(JSC::Strong<JSC::Unknown>(vm, jsString(vm, fileName)));
+        //                     Vector<Inspector::ScriptArguments> args;
+        //                     args.append(Inspector::ScriptArguments::create(globalObject, WTFMove(arguments)));
 
-                            // // Debug log to check if fileName was appended
-                            // printf("Debug: Appended fileName: %s\n", fileName.utf8().data());
-                        }
+        //                     JSC::JSGlobalObjectDebuggable& id = globalObject->inspectorController();
+        //                 }
+        //             }
 
-                        // error->materializeErrorInfoIfNeeded(vm);
-                        // auto source_url = error->sourceURL();
-                        // fprintf(stderr, "errr: %s\n", source_url.utf8().data());
-                    }
-                }
+        //             // client->logWithLevel(globalObject, WTFMove(arguments), JSC::MessageLevel::Error);
 
-                Ref<ScriptArguments> arguments = ScriptArguments::create(globalObject, WTFMove(argumentsVector));
-                client->logWithLevel(globalObject, WTFMove(arguments), JSC::MessageLevel::Error);
-            }
-        }
+        //             // client->printConsoleMessageWithArguments(JSC::MessageSource::JS, JSC::MessageType::Log, JSC::MessageLevel::Error, globalObject, WTFMove(arguments));
+        //         }
+        //     }
 
         return false;
     }

@@ -48,8 +48,8 @@ function findOriginalLineAndColumn(runtimeObjects: JSC.Runtime.RemoteObject[]) {
 
     const properties = runtimeObject.preview.properties;
 
-    const originalLine = properties.find(prop => prop.name === "originalLine" && prop.type === "number")?.value;
-    const originalColumn = properties.find(prop => prop.name === "originalColumn" && prop.type === "number")?.value;
+    const originalLine = properties.find(prop => prop.name === "line" && prop.type === "number")?.value;
+    const originalColumn = properties.find(prop => prop.name === "column" && prop.type === "number")?.value;
 
     if (originalLine === undefined || originalColumn === undefined) {
       continue;
@@ -81,6 +81,7 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
 
     signal.on("Signal.received", async () => {
       const adapter = new DebugAdapter();
+      diagnosticCollection.clear();
 
       // {"source":"console-api","level":"error","text":"Error: broken","type":"log","line":0,"column":0,"url":"","repeatCount":1,"timestamp":1731690211.278788,"parameters":[{"type":"object","objectId":"{\\"injectedScriptId\\":1,\\"id\\":1}","subtype":"error","className":"Error","description":"Error: broken","preview":{"type":"object","description":"Error: broken","lossless":false,"subtype":"error","overflow":true,"properties":[{"name":"message","type":"string","value":"broken"},{"name":"originalLine","type":"number","value":"2"},{"name":"originalColumn","type":"number","value":"18"},{"name":"line","type":"number","value":"2"},{"name":"column","type":"number","value":"13"}]}},{"type":"string","value":"uncaughtException"}],"stackTrace":{"callFrames":[]}}
       adapter.on("Inspector.event", event => {
@@ -110,8 +111,8 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
           const message = errorData.text;
 
           const range = new vscode.Range(
-            new vscode.Position(lineAndCol.originalLine, lineAndCol.originalColumn),
-            new vscode.Position(lineAndCol.originalLine, lineAndCol.originalColumn + 1),
+            new vscode.Position(lineAndCol.originalLine - 1, lineAndCol.originalColumn - 1),
+            new vscode.Position(lineAndCol.originalLine - 1, lineAndCol.originalColumn),
           );
 
           const diagnostic = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Error);
@@ -120,6 +121,11 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
 
           diagnosticCollection.set(uri, diagnostics);
         }
+      });
+
+      signal.on("Signal.closed", () => {
+        setTimeout(() => console.log("CLOSING!"), 500);
+        adapter.close();
       });
 
       const ok = await adapter.start(url);

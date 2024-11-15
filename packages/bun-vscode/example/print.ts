@@ -1,17 +1,7 @@
-setInterval(() => {
-  throw new Error("broken");
-}, 500);
+process.on("uncaughtException", e => {
+  console.error(e);
+});
 
-// console.log("Cool");
+await Bun.sleep(1000);
 
-// process.on("uncaughtException", (e) => {
-//     if (e instanceof SyntaxError) {
-//         return;
-//     }
-
-//     console.warn(e);
-
-//     setImmediate(() => {
-//         process.exit(1);
-//     });
-// });
+throw new Error("Lol");

@@ -83,22 +83,15 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
       const adapter = new DebugAdapter();
       diagnosticCollection.clear();
 
-      // {"source":"console-api","level":"error","text":"Error: broken","type":"log","line":0,"column":0,"url":"","repeatCount":1,"timestamp":1731690211.278788,"parameters":[{"type":"object","objectId":"{\\"injectedScriptId\\":1,\\"id\\":1}","subtype":"error","className":"Error","description":"Error: broken","preview":{"type":"object","description":"Error: broken","lossless":false,"subtype":"error","overflow":true,"properties":[{"name":"message","type":"string","value":"broken"},{"name":"originalLine","type":"number","value":"2"},{"name":"originalColumn","type":"number","value":"18"},{"name":"line","type":"number","value":"2"},{"name":"column","type":"number","value":"13"}]}},{"type":"string","value":"uncaughtException"}],"stackTrace":{"callFrames":[]}}
       adapter.on("Inspector.event", event => {
-        console.log(JSON.stringify(event));
-
         if (event.method === "Console.messageAdded") {
           const errorData = (event.params as JSC.EventMap["Console.messageAdded"]).message;
-
-          console.log(JSON.stringify(errorData, null, 2));
 
           if (errorData.parameters === undefined || errorData.url === undefined) {
             return;
           }
 
           const lineAndCol = findOriginalLineAndColumn(errorData.parameters);
-
-          console.log(JSON.stringify(lineAndCol, null, 2));
 
           if (!lineAndCol) {
             return;

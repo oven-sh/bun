@@ -3947,10 +3947,7 @@ pub const Blob = struct {
         }
     }
 
-    pub fn constructor(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) ?*Blob {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Blob {
         const allocator = bun.default_allocator;
         var blob: Blob = undefined;
         var arguments = callframe.arguments(2);
@@ -3964,12 +3961,11 @@ pub const Blob = struct {
             else => {
                 blob = get(globalThis, args[0], false, true) catch |err| {
                     if (err == error.InvalidArguments) {
-                        globalThis.throwInvalidArguments("new Blob() expects an Array", .{});
-                        return null;
+                        return globalThis.throwInvalidArguments2("new Blob() expects an Array", .{});
                     }
                     if (!globalThis.hasException())
                         globalThis.throwOutOfMemory();
-                    return null;
+                    return error.JSError;
                 };
 
                 if (args.len > 1) {

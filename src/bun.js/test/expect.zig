@@ -422,12 +422,8 @@ pub const Expect = struct {
         }
     }
 
-    pub fn constructor(
-        globalThis: *JSGlobalObject,
-        _: *CallFrame,
-    ) ?*Expect {
-        globalThis.throw("expect() cannot be called with new", .{});
-        return null;
+    pub fn constructor(globalThis: *JSGlobalObject, _: *CallFrame) bun.JSError!*Expect {
+        return globalThis.throw2("expect() cannot be called with new", .{});
     }
 
     // pass here has a leading underscore to avoid name collision with the pass variable in other functions

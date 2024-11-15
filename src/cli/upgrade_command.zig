@@ -188,7 +188,7 @@ pub const UpgradeCommand = struct {
         var header_entries: Headers.Entries = .{};
         const accept = Headers.Kv{
             .name = Api.StringPointer{ .offset = 0, .length = @as(u32, @intCast("Accept".len)) },
-            .value = Api.StringPointer{ .offset = @as(u32, @intCast("Accept".len)), .length = @as(u32, @intCast("application/vnd.github.v3+json".len)) },
+            .value = Api.StringPointer{ .offset = @as(u32, @intCast("Accept".len)), .length = @as(u32, @intCast("application/vnd.github+json".len)) },
         };
         try header_entries.append(allocator, accept);
         defer if (comptime silent) header_entries.deinit(allocator);

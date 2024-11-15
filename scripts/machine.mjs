@@ -46,7 +46,11 @@ const docker = {
     const { stdout } = await spawnSafe(["docker", "run", "--rm", "--platform", platformString, "-d", id, ...command]);
     const containerId = stdout.trim();
 
-    const exec = async command => {
+    const spawn = async command => {
+      return spawn(["docker", "exec", containerId, ...command]);
+    };
+
+    const spawnSafe = async command => {
       return spawnSafe(["docker", "exec", containerId, ...command]);
     };
 
@@ -67,7 +71,8 @@ const docker = {
     };
 
     return {
-      exec,
+      spawn,
+      spawnSafe,
       attach,
       close: kill,
       [Symbol.asyncDispose]: kill,
@@ -459,14 +464,19 @@ export const aws = {
       return { hostname: PublicIpAddress, username, identityPaths };
     };
 
-    const exec = async (command, options) => {
+    const spawn = async (command, options) => {
       const connectOptions = await connect();
       return spawnSsh({ ...connectOptions, command }, options);
     };
 
+    const spawnSafe = async (command, options) => {
+      const connectOptions = await connect();
+      return spawnSshSafe({ ...connectOptions, command }, options);
+    };
+
     const attach = async () => {
       const connectOptions = await connect();
-      await spawnSsh({ ...connectOptions });
+      await spawnSshSafe({ ...connectOptions });
     };
 
     const upload = async (source, destination) => {
@@ -498,7 +508,8 @@ export const aws = {
       get publicIp() {
         return PublicIpAddress;
       },
-      exec,
+      spawn,
+      spawnSafe,
       upload,
       attach,
       snapshot,
@@ -543,14 +554,19 @@ const google = {
       throw new Error(`Failed to find public IP for instance: ${id}`);
     };
 
-    const exec = command => {
+    const spawn = command => {
       const hostname = publicIp();
       return spawnSsh({ hostname, username, command });
     };
 
+    const spawnSafe = command => {
+      const hostname = publicIp();
+      return spawnSshSafe({ hostname, username, command });
+    };
+
     const attach = async () => {
       const hostname = publicIp();
-      await spawnSsh({ hostname, username });
+      await spawnSshSafe({ hostname, username });
     };
 
     const terminate = async () => {
@@ -558,7 +574,8 @@ const google = {
     };
 
     return {
-      exec,
+      spawn,
+      spawnSafe,
       attach,
       close: terminate,
       [Symbol.asyncDispose]: terminate,
@@ -830,10 +847,10 @@ function getSshKeys() {
 /**
  * @param {SshOptions} options
  * @param {object} [spawnOptions]
- * @returns {Promise<void>}
+ * @returns {Promise<import("./utils.mjs").SpawnResult>}
  */
 async function spawnSsh(options, spawnOptions = {}) {
-  const { hostname, port, username, identityPaths, command, retries = 1 } = options;
+  const { hostname, port, username, identityPaths, command } = options;
   await waitForPort({ hostname, port: port || 22 });
 
   const ssh = ["ssh", hostname, "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"];
@@ -851,22 +868,34 @@ async function spawnSsh(options, spawnOptions = {}) {
     ssh.push(...command);
   }
 
-  let cause;
-  for (let i = 0; i < retries; i++) {
-    const result = await spawn(ssh, { stdio, ...spawnOptions });
-    const { exitCode, stderr } = result;
-    if (exitCode === 0) {
-      return;
-    }
+  return spawn(ssh, { stdio, ...spawnOptions });
+}
 
-    cause = stderr.trim() || undefined;
-    if (/bad configuration option/i.test(stderr)) {
-      break;
-    }
-    await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+/**
+ * @param {SshOptions} options
+ * @param {object} [spawnOptions]
+ * @returns {Promise<import("./utils.mjs").SpawnResult>}
+ */
+async function spawnSshSafe(options, spawnOptions = {}) {
+  const { hostname, port, username, identityPaths, command } = options;
+  await waitForPort({ hostname, port: port || 22 });
+
+  const ssh = ["ssh", hostname, "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"];
+  if (port) {
+    ssh.push("-p", port);
+  }
+  if (username) {
+    ssh.push("-l", username);
+  }
+  if (identityPaths) {
+    ssh.push(...identityPaths.flatMap(path => ["-i", path]));
+  }
+  const stdio = command ? "pipe" : "inherit";
+  if (command) {
+    ssh.push(...command);
   }
 
-  throw new Error(`SSH failed: ${username}@${hostname}`, { cause });
+  return spawnSafe(ssh, { stdio, ...spawnOptions });
 }
 
 /**
@@ -947,7 +976,8 @@ function getCloud(name) {
  * @property {string} instanceType
  * @property {string} region
  * @property {string} [publicIp]
- * @property {(command: string[]) => Promise<SpawnResult>} exec
+ * @property {(command: string[]) => Promise<SpawnResult>} spawn
+ * @property {(command: string[]) => Promise<SpawnResult>} spawnSafe
  * @property {(source: string, destination: string) => Promise<void>} upload
  * @property {() => Promise<void>} attach
  * @property {() => Promise<string>} snapshot
@@ -1090,7 +1120,7 @@ async function main() {
   try {
     await startGroup("Connecting...", async () => {
       const command = os === "windows" ? ["cmd", "/c", "ver"] : ["uname", "-a"];
-      await machine.exec(command, { stdio: "inherit" });
+      await machine.spawnSafe(command, { stdio: "inherit" });
     });
 
     if (bootstrapPath) {
@@ -1098,7 +1128,7 @@ async function main() {
       const args = ci ? ["--ci"] : [];
       await startGroup("Running bootstrap...", async () => {
         await machine.upload(bootstrapPath, remotePath);
-        await machine.exec(["sh", remotePath, ...args], { stdio: "inherit" });
+        await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });
       });
     }
 
@@ -1106,7 +1136,12 @@ async function main() {
       const remotePath = "/tmp/agent.mjs";
       await startGroup("Installing agent...", async () => {
         await machine.upload(agentPath, remotePath);
-        await machine.exec(["node", remotePath, "install"], { stdio: "inherit" });
+        const command = ["node", remotePath, "install"];
+        const { exitCode } = await machine.spawn(["sudo", "echo", "1"], { stdio: "ignore" });
+        if (exitCode === 0) {
+          command.unshift("sudo");
+        }
+        await machine.spawnSafe(command, { stdio: "inherit" });
       });
     }
 

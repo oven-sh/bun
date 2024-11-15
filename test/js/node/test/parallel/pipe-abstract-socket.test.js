@@ -12,47 +12,56 @@ if (!isLinux) {
 } else {
   describe("Abstract Unix socket tests", () => {
     const path = "\0abstract";
-    const expectedErrorMessage = "can not set readableAll or writableAllt to true when path is abstract unix socket";
+    const expectedErrorMessage = "The argument 'options' can not set readableAll or writableAll to true when path is abstract unix socket. Received";
 
     test("throws when setting readableAll to true", () => {
+      const options = {
+        path,
+        readableAll: true,
+      };
+
       expect(() => {
         const server = net.createServer(jest.fn());
-        server.listen({
-          path,
-          readableAll: true,
-        });
+        server.listen(options);
       }).toThrow(
         expect.objectContaining({
-          message: expect.any(String),
+          message: `${expectedErrorMessage} ${JSON.stringify(options)}`,
+          code: "ERR_INVALID_ARG_VALUE",
         }),
       );
     });
 
     test("throws when setting writableAll to true", () => {
+      const options = {
+        path,
+        writableAll: true,
+      } ;
+
       expect(() => {
         const server = net.createServer(jest.fn());
-        server.listen({
-          path,
-          writableAll: true,
-        });
+        server.listen(options);
       }).toThrow(
         expect.objectContaining({
-          message: expect.any(String),
+          message: `${expectedErrorMessage} ${JSON.stringify(options)}`,
+          code: "ERR_INVALID_ARG_VALUE",
         }),
       );
     });
 
     test("throws when setting both readableAll and writableAll to true", () => {
+      const options = {
+        path,
+        readableAll: true,
+        writableAll: true,
+      };
+
       expect(() => {
         const server = net.createServer(jest.fn());
-        server.listen({
-          path,
-          readableAll: true,
-          writableAll: true,
-        });
+        server.listen(options);
       }).toThrow(
         expect.objectContaining({
-          message: expect.any(String),
+          message: `${expectedErrorMessage} ${JSON.stringify(options)}`,
+          code: "ERR_INVALID_ARG_VALUE",
         }),
       );
     });

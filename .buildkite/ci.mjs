@@ -560,20 +560,6 @@ function getPipeline(options) {
     { os: "windows", arch: "x64", baseline: true, release: "2019" },
   ];
 
-  console.log({ buildImages });
-  console.log(
-    "All platforms:",
-    [...buildPlatforms, ...testPlatforms].map(platform => getPlatformKey(platform)),
-  );
-  console.log(
-    "New agents:",
-    [...buildPlatforms, ...testPlatforms].filter(platform => isUsingNewAgent(platform)),
-  );
-  console.log(
-    "Image keys:",
-    [...buildPlatforms, ...testPlatforms].map(platform => getImageKey(platform)),
-  );
-
   const imagePlatforms = new Map(
     [...buildPlatforms, ...testPlatforms]
       .filter(platform => buildImages && isUsingNewAgent(platform))
@@ -585,7 +571,7 @@ function getPipeline(options) {
    */
   const steps = [];
 
-  if (imagePlatforms.length) {
+  if (imagePlatforms.size) {
     steps.push({
       group: ":docker:",
       steps: [...imagePlatforms.values()].map(platform => getBuildImageStep(platform)),

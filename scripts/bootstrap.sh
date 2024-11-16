@@ -124,9 +124,20 @@ append_to_file() {
 	done
 }
 
+ensure_profile() {
+	case "$pm" in
+		brew) echo >> $home/.zprofile ;;
+		apt) echo >> $home/.profile ;;
+		dnf) echo >> $home/.profile ;;
+		yum) echo >> $home/.profile ;;
+		apk) echo >> $home/.profile ;;
+	esac
+}
+
 append_to_profile() {
+	ensure_profile
 	content="$1"
-	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
+	profiles=".profile .zprofile .bash_profile .bashrc .zshrc .ashrc"
 	for profile in $profiles; do
 		file="$home/$profile"
 		if [ "$ci" = "1" ] || [ -f "$file" ]; then
@@ -866,7 +877,7 @@ create_buildkite_user() {
 		execute_sudo mkdir -p "$path"
 		execute_sudo chown -R "$user:$group" "$path"
 	done
-	
+
 	files="/var/run/buildkite-agent/buildkite-agent.pid"
 	for file in $files; do
 		execute_sudo touch "$file"
@@ -963,6 +974,7 @@ install_chrome_dependencies() {
 
 raise_file_descriptor_limit() {
 	ulimit -n 262144
+	append_to_profile "ulimit -n 262144"
 }
 
 main() {

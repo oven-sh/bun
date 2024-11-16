@@ -10,11 +10,13 @@ import {
 import { SourceMap } from "../../../../bun-debug-adapter-protocol/src/debugger/sourcemap";
 import type { JSC } from "../../../../bun-inspector-protocol";
 
-function findOriginalLineAndColumn(runtimeObjects: JSC.Runtime.RemoteObject[]) {
-  for (const obj of runtimeObjects) {
-    if (obj.type !== "object" || obj.subtype !== "error" || !obj.preview?.properties) continue;
+function findOriginalLineAndColumn(remoteObjects: JSC.Runtime.RemoteObject[]) {
+  for (const remoteObject of remoteObjects) {
+    if (remoteObject.type !== "object" || remoteObject.subtype !== "error" || !remoteObject.preview?.properties) {
+      continue;
+    }
 
-    const properties = obj.preview.properties;
+    const properties = remoteObject.preview.properties;
     const originalLine = properties.find(prop => prop.name === "originalLine" && prop.type === "number")?.value;
     const originalColumn = properties.find(prop => prop.name === "originalColumn" && prop.type === "number")?.value;
 
@@ -97,6 +99,7 @@ class CoverageReporter {
     for (const interval of this.coverageIntervalMap.values()) {
       clearInterval(interval);
     }
+
     this.coverageIntervalMap.clear();
   }
 
@@ -235,6 +238,9 @@ class BunDiagnosticsManager {
     };
 
     this.signal.once("Signal.closed", dispose);
+
+    // might as well push it to the subscriptions array
+    // in case the user restarts extension host or something lol
     this.context.subscriptions.push({ dispose });
 
     const ok = await debugAdapter.start(this.urlBunShouldListenOn);

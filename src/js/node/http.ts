@@ -2195,9 +2195,8 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
 
   const req = this.req;
   const shouldEmitClose = req && req.emit && !this[finishedSymbol];
-
   if (!this.headersSent) {
-    var data = this[firstWriteSymbol];
+    let data = this[firstWriteSymbol];
     if (chunk) {
       if (data) {
         if (encoding) {
@@ -2205,9 +2204,13 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
         }
 
         data = new Blob([data, chunk]);
+      } else {
+        data = chunk;
       }
     } else if (!data) {
       data = undefined;
+    } else {
+      data = new Blob([data]);
     }
 
     this[firstWriteSymbol] = undefined;

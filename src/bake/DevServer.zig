@@ -63,7 +63,7 @@ route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, Rou
 css_files: AutoArrayHashMapUnmanaged(u64, []const u8),
 /// JS files are accessible via `/_bun/client/route.<hex key>.js`
 /// These are randomly generated to avoid possible browser caching of old assets.
-route_js_payloads: AutoArrayHashMapUnmanaged(u64, Route.Index),
+route_js_payloads: AutoArrayHashMapUnmanaged(u64, Route.Index.Optional),
 // /// Assets are accessible via `/_bun/asset/<key>`
 // assets: bun.StringArrayHashMapUnmanaged(u64, Asset),
 /// All bundling failures are stored until a file is saved and rebuilt.
@@ -512,7 +512,7 @@ pub fn deinit(dev: *DevServer) void {
 }
 
 fn onJsRequest(dev: *DevServer, req: *Request, resp: *Response) void {
-    const route_bundle = route: {
+    const maybe_route_bundle = route: {
         const route_id = req.parameter(0);
         if (!bun.strings.hasSuffixComptime(route_id, ".js"))
             return req.setYield(true);
@@ -524,7 +524,11 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: *Response) void {
             return req.setYield(true);
     };
 
-    dev.ensureRouteIsBundled(route_bundle, .js_payload, req, resp) catch bun.outOfMemory();
+    if (maybe_route_bundle.unwrap()) |route_bundle| {
+        dev.ensureRouteIsBundled(route_bundle, .js_payload, req, resp) catch bun.outOfMemory();
+    } else {
+        @panic("TODO: generate client bundle with no source files");
+    }
 }
 
 fn onAssetRequest(dev: *DevServer, req: *Request, resp: *Response) void {
@@ -778,15 +782,21 @@ fn onRequestWithBundle(
                 break :arr arr;
             },
             // clientId
-            if (router_type.client_file != .none) route_bundle.cached_client_bundle_url.get() orelse str: {
-                const id = std.crypto.random.int(u64);
-                dev.route_js_payloads.put(dev.allocator, id, route_bundle.route) catch bun.outOfMemory();
+            route_bundle.cached_client_bundle_url.get() orelse str: {
+                const id, const route_index: RouteBundle.Index = if (router_type.client_file != .none)
+                    .{ std.crypto.random.int(u64), route_bundle.route }
+                else
+                    // When there is no framework-provided client code, generate
+                    // a JS file so that the hot-reloading code can reload the
+                    // page on server-side changes and show errors in-browser.
+                    .{ 0, .none };
+                dev.route_js_payloads.put(dev.allocator, id, route_index) catch bun.outOfMemory();
                 const str = bun.String.createFormat(client_prefix ++ "/route.{}.js", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&id))}) catch bun.outOfMemory();
                 defer str.deref();
                 const js = str.toJS(dev.vm.global);
                 route_bundle.cached_client_bundle_url = JSC.Strong.create(js, dev.vm.global);
                 break :str js;
-            } else .null,
+            },
             // styles
             route_bundle.cached_css_file_array.get() orelse arr: {
                 const js = dev.generateCssList(route_bundle) catch bun.outOfMemory();

@@ -961,6 +961,10 @@ install_chrome_dependencies() {
 	esac
 }
 
+raise_file_descriptor_limit() {
+	ulimit -n 262144
+}
+
 main() {
 	check_features "$@"
 	check_operating_system
@@ -971,6 +975,7 @@ main() {
 	install_common_software
 	install_build_essentials
 	install_chrome_dependencies
+ 	raise_file_descriptor_limit
 }
 
 main "$@"

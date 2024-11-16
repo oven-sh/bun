@@ -260,6 +260,8 @@ describe("spawn()", () => {
     if (isWindows) {
       expect(shellPath).not.toBeEmpty();
     } else {
+      console.log('USER', process.env.USER);
+      console.log('SHELL', process.env.SHELL);
       expect(fs.existsSync(shellPath), `${shellPath} does not exist`).toBe(true);
     }
   });

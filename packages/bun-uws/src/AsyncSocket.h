@@ -99,13 +99,13 @@ public:
 
     /* Experimental pause */
     us_socket_t *pause() {
-        if (!us_socket_is_closed(SSL, (us_socket_t *) this)) setEvents(0);
+        us_socket_pause(SSL, (us_socket_t *) this);
         return (us_socket_t *) this;
     }
 
     /* Experimental resume */
     us_socket_t *resume() {
-        if (!us_socket_is_closed(SSL, (us_socket_t *) this)) setEvents(1);
+        us_socket_resume(SSL, (us_socket_t *) this);
         return (us_socket_t *) this;
     }
 

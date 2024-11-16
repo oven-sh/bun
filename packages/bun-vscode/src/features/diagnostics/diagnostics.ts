@@ -67,6 +67,7 @@ class CoverageReporter {
     for (const interval of this.coverageIntervalMap.values()) {
       clearInterval(interval);
     }
+
     this.coverageIntervalMap.clear();
   }
 
@@ -130,27 +131,111 @@ class CoverageReporter {
       this.decorations.add(decorationType);
     }
   }
+
+  dispose() {
+    this.clearDecorations();
+    this.clearIntervals();
+  }
 }
 
-async function setupDebugAdapter(
-  signal: UnixSignal | TCPSocketSignal,
-  url: string,
-  coverageReporter: CoverageReporter,
-  diagnosticCollection: vscode.DiagnosticCollection,
-) {
-  const adapter = new DebugAdapter();
+class BunDiagnosticsManager {
+  private diagnosticCollection: vscode.DiagnosticCollection;
+  private coverageReporter: CoverageReporter;
+  private debugAdapter: DebugAdapter | null = null;
+  private signal: UnixSignal | TCPSocketSignal;
+  private urlBunShouldListenOn: string;
 
-  adapter.on("Debugger.scriptParsed", async event => {
-    const { scriptSource } = await adapter.send("Debugger.getScriptSource", {
+  public static async initialize(context: vscode.ExtensionContext) {
+    const urlBunShouldListenOn = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
+    const signal = os.platform() !== "win32" ? new UnixSignal() : new TCPSocketSignal(await getAvailablePort());
+
+    context.environmentVariableCollection.append("BUN_INSPECT", `${urlBunShouldListenOn}?wait=1`);
+    context.environmentVariableCollection.append("BUN_INSPECT_NOTIFY", signal.url);
+    context.environmentVariableCollection.append("BUN_HIDE_INSPECTOR_MESSAGE", "1");
+
+    return new BunDiagnosticsManager(context, {
+      urlBunShouldListenOn,
+      signal,
+    });
+  }
+
+  private constructor(
+    context: vscode.ExtensionContext,
+    options: {
+      urlBunShouldListenOn: string;
+      signal: UnixSignal | TCPSocketSignal;
+    },
+  ) {
+    this.urlBunShouldListenOn = options.urlBunShouldListenOn;
+    this.signal = options.signal;
+    this.diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
+    this.coverageReporter = new CoverageReporter(this.diagnosticCollection);
+
+    this.signal.on("Signal.received", () => this.handleNewConnection());
+
+    context.subscriptions.push(this.diagnosticCollection, this.coverageReporter, {
+      dispose: () => {
+        this.signal.close();
+        this.signal.removeAllListeners();
+        this.coverageReporter.dispose();
+      },
+    });
+  }
+
+  private async handleNewConnection() {
+    this.coverageReporter.clearDecorations();
+    await this.setupDebugAdapter();
+  }
+
+  private async setupDebugAdapter() {
+    this.debugAdapter = new DebugAdapter();
+
+    this.debugAdapter.on("Debugger.scriptParsed", async event => {
+      await this.handleScriptParsed(event);
+    });
+
+    this.debugAdapter.on("Console.messageAdded", params => {
+      this.handleConsoleMessage(params);
+    });
+
+    this.signal.once("Signal.closed", () => {
+      if (!this.debugAdapter) {
+        return;
+      }
+
+      this.debugAdapter.close();
+      this.debugAdapter.removeAllListeners();
+      this.coverageReporter.clearIntervals();
+    });
+
+    const ok = await this.debugAdapter.start(this.urlBunShouldListenOn);
+    if (!ok) {
+      await vscode.window.showErrorMessage("Failed to start Bun debug adapter");
+      return;
+    }
+
+    this.debugAdapter.initialize({
+      adapterID: "bun-vsc-terminal-debug-adapter",
+      enableControlFlowProfiler: true,
+    });
+  }
+
+  private async handleScriptParsed(event: JSC.Debugger.ScriptParsedEvent) {
+    if (!this.debugAdapter || !event.sourceMapURL) return;
+
+    const { scriptSource } = await this.debugAdapter.send("Debugger.getScriptSource", {
       scriptId: event.scriptId,
     });
 
-    if (!event.sourceMapURL) return;
+    await this.coverageReporter.createCoverageReportingTimer(
+      this.debugAdapter,
+      event,
+      scriptSource,
+      event.sourceMapURL,
+    );
+  }
 
-    await coverageReporter.createCoverageReportingTimer(adapter, event, scriptSource, event.sourceMapURL);
-  });
-
-  adapter.on("Console.messageAdded", params => {
+  private handleConsoleMessage(params: JSC.Console.MessageAddedEvent) {
     if (!params.message.parameters || !params.message.url) return;
 
     const lineAndCol = findOriginalLineAndColumn(params.message.parameters);
@@ -163,51 +248,10 @@ async function setupDebugAdapter(
     );
 
     const diagnostic = new vscode.Diagnostic(range, params.message.text, vscode.DiagnosticSeverity.Error);
-    diagnosticCollection.set(uri, [diagnostic]);
-  });
-
-  signal.once("Signal.closed", () => {
-    adapter.close();
-    adapter.removeAllListeners();
-    coverageReporter.clearIntervals();
-  });
-
-  const ok = await adapter.start(url);
-  if (!ok) {
-    await vscode.window.showErrorMessage("Failed to start Bun debug adapter");
-    return;
+    this.diagnosticCollection.set(uri, [diagnostic]);
   }
-
-  adapter.initialize({
-    adapterID: "bun-vsc-terminal-debug-adapter",
-    enableControlFlowProfiler: true,
-  });
 }
 
 export async function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
-  const diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
-  const coverageReporter = new CoverageReporter(diagnosticCollection);
-
-  context.subscriptions.push(diagnosticCollection);
-
-  // The url that Bun's inspector should listen on
-  const urlBunShouldListenOn = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
-
-  const signal = os.platform() !== "win32" ? new UnixSignal() : new TCPSocketSignal(await getAvailablePort());
-
-  signal.on("Signal.received", async () => {
-    // On new connection from Bun, clear all decorations and setup the debug adapter
-    coverageReporter.clearDecorations();
-    await setupDebugAdapter(signal, urlBunShouldListenOn, coverageReporter, diagnosticCollection);
-  });
-
-  context.environmentVariableCollection.append("BUN_INSPECT", `${urlBunShouldListenOn}?wait=1`);
-  context.environmentVariableCollection.append("BUN_INSPECT_NOTIFY", signal.url);
-  context.environmentVariableCollection.append("BUN_HIDE_INSPECTOR_MESSAGE", "1");
-
-  context.subscriptions.push({
-    dispose() {
-      signal.close();
-    },
-  });
+  await BunDiagnosticsManager.initialize(context);
 }

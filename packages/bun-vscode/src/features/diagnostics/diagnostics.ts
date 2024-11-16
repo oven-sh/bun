@@ -112,6 +112,7 @@ class CoverageReporter {
     const existingTimer = this.coverageIntervalMap.get(event.scriptId);
     if (existingTimer) clearInterval(existingTimer);
 
+    // TODO: Move source map handling to nativeland
     const map = sourceMapURL ? SourceMap(sourceMapURL) : null;
     const uri = vscode.Uri.file(event.url);
 
@@ -130,10 +131,9 @@ class CoverageReporter {
       return this.reportCoverage(adapter, event, uri, offsetToPos);
     };
 
+    await report();
     const timer = setInterval(report, 1000);
     this.coverageIntervalMap.set(event.scriptId, timer);
-
-    await report();
   }
 
   private async reportCoverage(

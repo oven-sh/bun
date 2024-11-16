@@ -19,9 +19,9 @@ describe("example", () => {
   });
 
   if (Math) {
-    1;
+    console.log("Wow, what a surprise. this was called");
   } else {
-    2;
+    console.log("wtf?");
   }
 
   test("it works", () => {

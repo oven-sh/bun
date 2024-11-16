@@ -11,6 +11,7 @@ import {
   TCPSocketSignal,
   UnixSignal,
 } from "../../../../bun-debug-adapter-protocol";
+import { SourceMap } from "../../../../bun-debug-adapter-protocol/src/debugger/sourcemap";
 import type { JSC } from "../../../../bun-inspector-protocol";
 import { ReconnectingWebSocket } from "./ws";
 
@@ -48,8 +49,8 @@ function findOriginalLineAndColumn(runtimeObjects: JSC.Runtime.RemoteObject[]) {
 
     const properties = runtimeObject.preview.properties;
 
-    const originalLine = properties.find(prop => prop.name === "line" && prop.type === "number")?.value;
-    const originalColumn = properties.find(prop => prop.name === "column" && prop.type === "number")?.value;
+    const originalLine = properties.find(prop => prop.name === "originalLine" && prop.type === "number")?.value;
+    const originalColumn = properties.find(prop => prop.name === "originalColumn" && prop.type === "number")?.value;
 
     if (originalLine === undefined || originalColumn === undefined) {
       continue;
@@ -64,8 +65,30 @@ function findOriginalLineAndColumn(runtimeObjects: JSC.Runtime.RemoteObject[]) {
   return null;
 }
 
+function byteOffsetToPosition(text: string, offset: number) {
+  const lines = text.split("\n");
+  let line = 0;
+  let column = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const lineLength = lines[i].length;
+
+    if (offset < lineLength) {
+      line = i;
+      column = offset;
+      break;
+    }
+
+    offset -= lineLength + 1;
+  }
+
+  return { line, column };
+}
+
 export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
   const diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
+  const decorations = new Set<{ dispose(): void }>();
+
   context.subscriptions.push(diagnosticCollection);
 
   const rootSocketPromise = (async () => {
@@ -80,8 +103,11 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
     const url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
 
     signal.on("Signal.received", async () => {
+      for (const decoration of decorations) {
+        decoration.dispose();
+      }
+
       const adapter = new DebugAdapter();
-      const decorations = new Set<{ dispose(): void }>();
 
       const coverageIntervalMap = new Map<string, ReturnType<typeof setInterval>>();
 
@@ -95,13 +121,21 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
           scriptId: event.scriptId,
         });
 
-        const file = await vscode.workspace.openTextDocument({
-          language: "javascript",
-          content: scriptSource,
-        });
+        const map = SourceMap(event.sourceMapURL);
+        const uri = vscode.Uri.file(event.url);
 
-        const uri = file.uri;
-        // const uri = vscode.Uri.file(event.url);
+        const transpiledOffsetToOriginalPosition = (offset: number) => {
+          const { line, column } = byteOffsetToPosition(scriptSource, offset);
+
+          console.log(JSON.stringify({ line, column }));
+
+          const original = map.originalLocation({
+            line: line,
+            column: column,
+          });
+
+          return new vscode.Position(original.line, original.column);
+        };
 
         console.log(JSON.stringify(event));
 
@@ -138,8 +172,10 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
 
             // Must use .startOffset and .endOffset (which are byte offsets) to get the range. This does not include the line so we must calculate that ourselves.
 
-            const start = file.positionAt(block.startOffset);
-            const end = file.positionAt(block.endOffset);
+            const file = await vscode.workspace.openTextDocument(uri);
+
+            const start = transpiledOffsetToOriginalPosition(block.startOffset);
+            const end = transpiledOffsetToOriginalPosition(block.endOffset);
 
             if (end.character === file.getText().length) {
               continue;

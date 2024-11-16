@@ -3920,13 +3920,21 @@ pub const PackageManager = struct {
 
         cache_path_buf[package_name.len] = std.fs.path.sep;
 
-        return this.getCacheDirectory().readLink(
-            cache_path,
-            buf,
-        ) catch |err| {
+        const cache_dir = bun.toFD(this.getCacheDirectory());
+
+        if (comptime Environment.isWindows) {
+            var path_buf: bun.PathBuffer = undefined;
+            const joined = bun.path.joinAbsStringBufZ(this.cache_directory_path, &path_buf, &[_]string{cache_path}, .windows);
+            return bun.sys.readlink(joined, buf).unwrap() catch |err| {
+                _ = bun.sys.unlink(joined);
+                return err;
+            };
+        }
+
+        return bun.sys.readlinkat(cache_dir, cache_path, buf).unwrap() catch |err| {
             // if we run into an error, delete the symlink
             // so that we don't repeatedly try to read it
-            std.posix.unlinkat(this.getCacheDirectory().fd, cache_path, 0) catch {};
+            _ = bun.sys.unlinkat(cache_dir, cache_path);
             return err;
         };
     }

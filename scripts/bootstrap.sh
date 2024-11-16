@@ -564,6 +564,16 @@ install_nodejs() {
 	case "$pm" in
 	apk)
 		install_packages nodejs npm
+
+		# headersUrl=$(bun --print 'process.release.headersUrl') # TODO:
+		headersUrl="https://nodejs.org/download/release/v22.6.0/node-v22.6.0-headers.tar.gz"
+		nodeVersion=$(echo $headersUrl | cut -d'/' -f6)
+		headersFile="node-$nodeVersion-headers.tar.gz"
+		headersFolder="node-$nodeVersion"
+		wget $headersUrl
+		tar -xzf $headersFile
+		cp -R $PWD/$headersFolder/* /usr
+		rm -r $headersFolder $headersFile
 		;;
 	*)
 		install_packages nodejs

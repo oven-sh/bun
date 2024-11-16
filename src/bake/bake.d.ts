@@ -265,8 +265,9 @@ declare module "bun" {
       /**
        * Extensions to match on.
        * '*' - any extension
+       * @default (set of all valid JavaScript/TypeScript extensions)
        */
-      extensions: string[] | "*";
+      extensions?: string[] | "*";
       /**
        * 'nextjs-app' builds routes out of directories with `page.tsx` and `layout.tsx`
        * 'nextjs-pages' builds routes out of any `.tsx` file and layouts with `_layout.tsx`.

@@ -180,7 +180,7 @@ function getPrivilegedCommand() {
     return (priviledgedCommand = []);
   }
 
-  const sudo = ["sudo"];
+  const sudo = ["sudo", "-n"];
   const { error: sudoError } = spawnSync([...sudo, "true"]);
   if (!sudoError) {
     return (priviledgedCommand = sudo);

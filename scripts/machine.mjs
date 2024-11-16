@@ -332,17 +332,6 @@ export const aws = {
   async getBaseImage(options) {
     const { os, arch, distro, distroVersion } = options;
 
-    const label = `${os}-${arch}-${distro}-${distroVersion || "*"}`;
-    const ownedImages = await aws.describeImages({
-      "owner-alias": "self",
-      "name": label,
-    });
-
-    if (ownedImages.length) {
-      const [image] = ownedImages;
-      return aws.getAvailableImage(image);
-    }
-
     let name, owner;
     if (os === "linux") {
       if (!distro || distro === "debian") {

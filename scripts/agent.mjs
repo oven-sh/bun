@@ -20,16 +20,15 @@ import {
   getEnv,
   writeFile,
   spawnSafe,
-  spawn,
 } from "./utils.mjs";
 import { parseArgs } from "node:util";
 
 /**
  * @param {"install" | "start"} action
  */
-export async function doAgent(action) {
+async function doBuildkiteAgent(action) {
   const username = "buildkite-agent";
-  const command = which("buildkite-agent") || "buildkite-agent";
+  const command = which("buildkite-agent", { required: true });
 
   let homePath, cachePath, logsPath, agentLogPath, pidPath;
   if (isWindows) {
@@ -40,10 +39,6 @@ export async function doAgent(action) {
     logsPath = "/var/log/buildkite-agent";
     agentLogPath = join(logsPath, "buildkite-agent.log");
     pidPath = join(logsPath, "buildkite-agent.pid");
-  }
-
-  function escape(string) {
-    return JSON.stringify(string);
   }
 
   async function install() {
@@ -104,29 +99,8 @@ export async function doAgent(action) {
     }
   }
 
-  async function startTailscale() {
-    const tailscale = which("tailscale");
-    if (!tailscale) {
-      return;
-    }
-
-    const authKey = await getCloudMetadataTag("tailscale:authkey");
-    if (!authKey) {
-      return;
-    }
-
-    await spawn([tailscale, "up", "--ssh", "--accept-risk=all", `--authkey=${authKey}`], {
-      stdio: "inherit",
-      privileged: true,
-    });
-  }
-
   async function start() {
     const cloud = await getCloud();
-
-    if (cloud) {
-      startTailscale(); // Should not block starting the agent
-    }
 
     let token = getEnv("BUILDKITE_AGENT_TOKEN", false);
     if (!token && cloud) {
@@ -220,31 +194,35 @@ export async function doAgent(action) {
 /**
  * @returns {boolean}
  */
-export function isSystemd() {
+function isSystemd() {
   return !!which("systemctl");
 }
 
 /**
  * @returns {boolean}
  */
-export function isOpenRc() {
+function isOpenRc() {
   return !!which("rc-service");
 }
 
-export async function main() {
+function escape(string) {
+  return JSON.stringify(string);
+}
+
+async function main() {
   const { positionals: args } = parseArgs({
     allowPositionals: true,
   });
 
   if (!args.length || args.includes("install")) {
     console.log("Installing agent...");
-    await doAgent("install");
+    await doBuildkiteAgent("install");
     console.log("Agent installed.");
   }
 
   if (args.includes("start")) {
     console.log("Starting agent...");
-    await doAgent("start");
+    await doBuildkiteAgent("start");
     console.log("Agent started.");
   }
 }

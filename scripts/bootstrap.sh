@@ -34,14 +34,14 @@ execute_sudo() {
 	if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then
 		execute "$@"
 	else
-		execute sudo "$@"
+		execute sudo -n "$@"
 	fi
 }
 
 execute_as_user() {
 	if [ "$sudo" = "1" ] || [ "$can_sudo" = "1" ]; then
 		if [ -f "$(which sudo)" ]; then
-			execute sudo -u "$user" /bin/sh -c "$*"
+			execute sudo -n -u "$user" /bin/sh -c "$*"
 		elif [ -f "$(which doas)" ]; then
 			execute doas -u "$user" /bin/sh -c "$*"
 		elif [ -f "$(which su)" ]; then
@@ -361,7 +361,7 @@ check_user() {
 	if [ -f "$id" ] && [ "$($id -u)" = "0" ]; then
 		sudo=1
 		print "Sudo: enabled"
-	elif [ -f "$(which sudo)" ] && [ "$(sudo echo 1 2>/dev/null)" = "1" ]; then
+	elif [ -f "$(which sudo)" ] && [ "$(sudo -n echo 1 2>/dev/null)" = "1" ]; then
 		can_sudo=1
 		print "Sudo: can be used"
 	fi
@@ -370,7 +370,7 @@ check_user() {
 package_manager() {
 	case "$pm" in
 	apt)
-		while ! sudo apt-get update -y; do
+		while ! sudo -n apt-get update -y; do
 			sleep 1
 		done
 		DEBIAN_FRONTEND=noninteractive execute_sudo apt-get "$@"

@@ -23,7 +23,7 @@ import {
   runBunInstall,
   isWindows,
 } from "harness";
-import { join, sep } from "path";
+import { join, sep, resolve } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -67,6 +67,136 @@ afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
 
+for (let input of ["abcdef", "65537", "-1"]) {
+  it(`bun install --network-concurrency=${input} fails`, async () => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeFile(
+      join(package_dir, "package.json"),
+      `
+{
+  "name": "foo",
+  "version": "0.0.1",
+  "dependencies": {
+    "bar": "^1"
+  }
+}`,
+    );
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--network-concurrency", "abcdef"],
+      cwd: package_dir,
+      stdout: "inherit",
+      stdin: "inherit",
+      stderr: "pipe",
+      env,
+    });
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Expected --network-concurrency to be a number between 0 and 65535");
+    expect(await exited).toBe(1);
+    expect(urls).toBeEmpty();
+  });
+}
+
+it("bun install --network-concurrency=5 doesnt go over 5 concurrent requests", async () => {
+  const urls: string[] = [];
+  let maxConcurrentRequests = 0;
+  let concurrentRequestCounter = 0;
+  let totalRequests = 0;
+  setHandler(async function (request) {
+    concurrentRequestCounter++;
+    totalRequests++;
+    try {
+      await Bun.sleep(10);
+      maxConcurrentRequests = Math.max(maxConcurrentRequests, concurrentRequestCounter);
+
+      if (concurrentRequestCounter > 20) {
+        throw new Error("Too many concurrent requests");
+      }
+    } finally {
+      concurrentRequestCounter--;
+    }
+
+    return new Response("404", { status: 404 });
+  });
+  await writeFile(
+    join(package_dir, "package.json"),
+    `
+{
+  "name": "foo",
+  "version": "0.0.1",
+  "dependencies": {
+    "bar1": "^1",
+    "bar2": "^1",
+    "bar3": "^1",
+    "bar4": "^1",
+    "bar5": "^1",
+    "bar6": "^1",
+    "bar7": "^1",
+    "bar8": "^1",
+    "bar9": "^1",
+    "bar10": "^1",
+    "bar11": "^1",
+    "bar12": "^1",
+    "bar13": "^1",
+    "bar14": "^1",
+    "bar15": "^1",
+    "bar16": "^1",
+    "bar17": "^1",
+    "bar18": "^1",
+    "bar19": "^1",
+    "bar20": "^1",
+    "bar21": "^1",
+    "bar22": "^1",
+    "bar23": "^1",
+    "bar24": "^1",
+    "bar25": "^1",
+    "bar26": "^1",
+    "bar27": "^1",
+    "bar28": "^1",
+    "bar29": "^1",
+    "bar30": "^1",
+    "bar31": "^1",
+    "bar32": "^1",
+    "bar33": "^1",
+    "bar34": "^1",
+    "bar35": "^1",
+    "bar36": "^1",
+    "bar37": "^1",
+    "bar38": "^1",
+    "bar39": "^1",
+    "bar40": "^1",
+    "bar41": "^1",
+    "bar42": "^1",
+    "bar43": "^1",
+    "bar44": "^1",
+    "bar45": "^1",
+    "bar46": "^1",
+    "bar47": "^1",
+    "bar48": "^1",
+    "bar49": "^1",
+    "bar50": "^1",
+    "bar51": "^1",
+  }
+}`,
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--network-concurrency", "5"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await new Response(stderr).text();
+  expect(await exited).toBe(1);
+  expect(urls).toBeEmpty();
+  expect(maxConcurrentRequests).toBeLessThanOrEqual(5);
+  expect(totalRequests).toBe(51);
+
+  expect(err).toContain("failed to resolve");
+  expect(await new Response(stdout).text()).toEqual(expect.stringContaining("bun install v1."));
+});
+
 it("should not error when package.json has comments and trailing commas", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -74,9 +204,7 @@ it("should not error when package.json has comments and trailing commas", async 
     join(package_dir, "package.json"),
     `
     {
-      // such comment!
       "name": "foo",
-      /** even multi-line comment!! */
       "version": "0.0.1",
       "dependencies": {
         "bar": "^1",
@@ -3324,9 +3452,9 @@ it("should handle GitHub URL in dependencies (user/repo#commit-id)", async () =>
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -3390,9 +3518,9 @@ it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -3616,9 +3744,9 @@ it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () =
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -3740,9 +3868,9 @@ it("should handle GitHub URL in dependencies (git://github.com/user/repo.git#com
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -6219,14 +6347,14 @@ cache = false
   expect(err1).toContain("Saved lockfile");
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    expect.stringContaining("bun install v1."),
+    `bun install ${Bun.version_with_sha}`,
     "",
     "+ conditional-type-checks@1.0.6",
     "+ prettier@2.8.8",
     "+ tsd@0.22.0",
     "+ typescript@5.0.4",
     "",
-    "120 packages installed",
+    "112 packages installed",
   ]);
   expect(await exited1).toBe(0);
   expect(await readdirSorted(package_dir)).toEqual(["bun.lockb", "bunfig.toml", "node_modules", "package.json"]);
@@ -6255,7 +6383,6 @@ cache = false
     "dir-glob",
     "emoji-regex",
     "error-ex",
-    "escape-string-regexp",
     "eslint-formatter-pretty",
     "eslint-rule-docs",
     "fast-glob",

@@ -47,6 +47,7 @@ export default [
   ["ERR_SOCKET_BAD_PORT", RangeError, "RangeError"],
   ["ERR_IPC_ONE_PIPE", Error, "Error"],
   ["ERR_UNKNOWN_CREDENTIAL", Error, "Error"],
+  ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],
@@ -54,6 +55,9 @@ export default [
   ["ERR_STREAM_WRAP", Error, "Error"],
   ["ERR_BORINGSSL", Error, "Error"],
 
+  //NET
+  ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION", Error, "Error"],
+  ["ERR_SOCKET_CLOSED", Error, "Error"],
   //HTTP2
   ["ERR_INVALID_HTTP_TOKEN", TypeError, "TypeError"],
   ["ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED", TypeError, "TypeError"],

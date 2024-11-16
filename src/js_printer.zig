@@ -82,9 +82,9 @@ pub fn writeModuleId(comptime Writer: type, writer: Writer, module_id: u32) void
 
 pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, comptime ascii_only: bool) bool {
     if (c <= last_ascii) {
-        return c >= first_ascii and c != '\\' and c != '"';
+        return c >= first_ascii and c != '\\' and c != '"' and c != '\'' and c != '`' and c != '$';
     } else {
-        return !ascii_only and c != 0xFEFF and (c < first_high_surrogate or c > last_low_surrogate);
+        return !ascii_only and c != 0xFEFF and c != 0x2028 and c != 0x2029 and (c < first_high_surrogate or c > last_low_surrogate);
     }
 }
 
@@ -95,9 +95,8 @@ pub fn bestQuoteCharForString(comptime Type: type, str: []const Type, allow_back
     var single_cost: usize = 0;
     var double_cost: usize = 0;
     var backtick_cost: usize = 0;
-    var char: u8 = 0;
     var i: usize = 0;
-    while (i < str.len) {
+    while (i < @min(str.len, 1024)) {
         switch (str[i]) {
             '\'' => {
                 single_cost += 1;
@@ -108,10 +107,9 @@ pub fn bestQuoteCharForString(comptime Type: type, str: []const Type, allow_back
             '`' => {
                 backtick_cost += 1;
             },
-            '\r', '\n' => {
-                if (allow_backtick) {
-                    return '`';
-                }
+            '\n' => {
+                single_cost += 1;
+                double_cost += 1;
             },
             '\\' => {
                 i += 1;
@@ -126,18 +124,13 @@ pub fn bestQuoteCharForString(comptime Type: type, str: []const Type, allow_back
         i += 1;
     }
 
-    char = '"';
-    if (double_cost > single_cost) {
-        char = '\'';
-
-        if (single_cost > backtick_cost and allow_backtick) {
-            char = '`';
-        }
-    } else if (double_cost > backtick_cost and allow_backtick) {
-        char = '`';
+    if (allow_backtick and backtick_cost < @min(single_cost, double_cost)) {
+        return '`';
     }
-
-    return char;
+    if (single_cost < double_cost) {
+        return '\'';
+    }
+    return '"';
 }
 
 const Whitespacer = struct {
@@ -170,11 +163,11 @@ fn ws(comptime str: []const u8) Whitespacer {
     return .{ .normal = Static.with, .minify = Static.without };
 }
 
-pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize {
+pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, comptime quote_char: u8) usize {
     var remaining = input;
     var len: usize = 2; // for quotes
 
-    while (strings.indexOfNeedsEscape(remaining)) |i| {
+    while (strings.indexOfNeedsEscape(remaining, quote_char)) |i| {
         len += i;
         remaining = remaining[i..];
         const char_len = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
@@ -212,110 +205,179 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     return bytes;
 }
 
-pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
-    try bytes.growIfNeeded(estimateLengthForJSON(text, ascii_only));
-    try bytes.appendChar('"');
+pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
+    const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
     var i: usize = 0;
     const n: usize = text.len;
     while (i < n) {
-        const width = strings.wtf8ByteSequenceLengthWithInvalid(text[i]);
+        const width = switch (comptime encoding) {
+            .latin1, .ascii => 1,
+            .utf8 => strings.wtf8ByteSequenceLengthWithInvalid(text[i]),
+            .utf16 => 1,
+        };
         const clamped_width = @min(@as(usize, width), n -| i);
-        const c = strings.decodeWTF8RuneT(
-            &switch (clamped_width) {
-                // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
-                1 => .{ text[i], 0, 0, 0 },
-                2 => text[i..][0..2].* ++ .{ 0, 0 },
-                3 => text[i..][0..3].* ++ .{0},
-                4 => text[i..][0..4].*,
-                else => unreachable,
+        const c = switch (encoding) {
+            .utf8 => strings.decodeWTF8RuneT(
+                &switch (clamped_width) {
+                    // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
+                    1 => .{ text[i], 0, 0, 0 },
+                    2 => text[i..][0..2].* ++ .{ 0, 0 },
+                    3 => text[i..][0..3].* ++ .{0},
+                    4 => text[i..][0..4].*,
+                    else => unreachable,
+                },
+                width,
+                i32,
+                0,
+            ),
+            .ascii => brk: {
+                std.debug.assert(text[i] <= 0x7F);
+                break :brk text[i];
             },
-            width,
-            i32,
-            0,
-        );
+            .latin1 => brk: {
+                if (text[i] <= 0x7F) break :brk text[i];
+                break :brk strings.latin1ToCodepointAssumeNotASCII(text[i], i32);
+            },
+            .utf16 => brk: {
+                // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
+                // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
+                // eg: "\u{10334}" will convert to "\uD800\uDF34" without this.
+                break :brk @as(i32, text[i]);
+            },
+        };
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
             const remain = text[i + clamped_width ..];
-            if (strings.indexOfNeedsEscape(remain)) |j| {
-                const text_chunk = text[i .. i + clamped_width];
-                try bytes.appendSlice(text_chunk);
-                i += clamped_width;
-                try bytes.appendSlice(remain[0..j]);
-                i += j;
-                continue;
-            } else {
-                try bytes.appendSlice(text[i..]);
-                i = n;
-                break;
+
+            switch (encoding) {
+                .ascii, .utf8 => {
+                    if (strings.indexOfNeedsEscape(remain, quote_char)) |j| {
+                        const text_chunk = text[i .. i + clamped_width];
+                        try writer.writeAll(text_chunk);
+                        i += clamped_width;
+                        try writer.writeAll(remain[0..j]);
+                        i += j;
+                    } else {
+                        try writer.writeAll(text[i..]);
+                        i = n;
+                        break;
+                    }
+                },
+                .latin1, .utf16 => {
+                    var codepoint_bytes: [4]u8 = undefined;
+                    const codepoint_len = strings.encodeWTF8Rune(codepoint_bytes[0..4], c);
+                    try writer.writeAll(codepoint_bytes[0..codepoint_len]);
+                    i += clamped_width;
+                },
             }
+            continue;
         }
         switch (c) {
             0x07 => {
-                try bytes.appendSlice("\\x07");
+                try writer.writeAll("\\x07");
                 i += 1;
             },
             0x08 => {
-                try bytes.appendSlice("\\b");
+                try writer.writeAll("\\b");
                 i += 1;
             },
             0x0C => {
-                try bytes.appendSlice("\\f");
+                try writer.writeAll("\\f");
                 i += 1;
             },
             '\n' => {
-                try bytes.appendSlice("\\n");
+                if (quote_char == '`') {
+                    try writer.writeAll("\n");
+                } else {
+                    try writer.writeAll("\\n");
+                }
                 i += 1;
             },
             std.ascii.control_code.cr => {
-                try bytes.appendSlice("\\r");
+                try writer.writeAll("\\r");
                 i += 1;
             },
             // \v
             std.ascii.control_code.vt => {
-                try bytes.appendSlice("\\v");
+                try writer.writeAll("\\v");
                 i += 1;
             },
             // "\\"
             '\\' => {
-                try bytes.appendSlice("\\\\");
+                try writer.writeAll("\\\\");
                 i += 1;
             },
             '"' => {
-                try bytes.appendSlice("\\\"");
+                if (quote_char == '"') {
+                    try writer.writeAll("\\\"");
+                } else {
+                    try writer.writeAll("\"");
+                }
+                i += 1;
+            },
+            '\'' => {
+                if (quote_char == '\'') {
+                    try writer.writeAll("\\'");
+                } else {
+                    try writer.writeAll("'");
+                }
+                i += 1;
+            },
+            '`' => {
+                if (quote_char == '`') {
+                    try writer.writeAll("\\`");
+                } else {
+                    try writer.writeAll("`");
+                }
+                i += 1;
+            },
+            '$' => {
+                if (quote_char == '`') {
+                    const remain = text[i + clamped_width ..];
+                    if (remain.len > 0 and remain[0] == '{') {
+                        try writer.writeAll("\\$");
+                    } else {
+                        try writer.writeAll("$");
+                    }
+                } else {
+                    try writer.writeAll("$");
+                }
                 i += 1;
             },
 
             '\t' => {
-                try bytes.appendSlice("\\t");
+                try writer.writeAll("\\t");
                 i += 1;
             },
 
             else => {
                 i += @as(usize, width);
 
-                if (c < 0xFFFF) {
+                if (c < 0xFF and !json) {
                     const k = @as(usize, @intCast(c));
-                    bytes.ensureUnusedCapacity(6) catch unreachable;
-                    const old = bytes.list.items.len;
-                    bytes.list.items.len += 6;
 
-                    bytes.list.items[old .. old + 6].ptr[0..6].* = [_]u8{
+                    try writer.writeAll(&[_]u8{
+                        '\\',
+                        'x',
+                        hex_chars[(k >> 4) & 0xF],
+                        hex_chars[k & 0xF],
+                    });
+                } else if (c < 0xFFFF) {
+                    const k = @as(usize, @intCast(c));
+
+                    try writer.writeAll(&[_]u8{
                         '\\',
                         'u',
                         hex_chars[(k >> 12) & 0xF],
                         hex_chars[(k >> 8) & 0xF],
                         hex_chars[(k >> 4) & 0xF],
                         hex_chars[k & 0xF],
-                    };
+                    });
                 } else {
-                    bytes.ensureUnusedCapacity(12) catch unreachable;
-                    const old = bytes.list.items.len;
-                    bytes.list.items.len += 12;
-
                     const k = c - 0x10000;
                     const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
                     const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
 
-                    bytes.list.items[old .. old + 12][0..12].* = [_]u8{
+                    try writer.writeAll(&[_]u8{
                         '\\',
                         'u',
                         hex_chars[lo >> 12],
@@ -328,139 +390,24 @@ pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime asci
                         hex_chars[(hi >> 8) & 15],
                         hex_chars[(hi >> 4) & 15],
                         hex_chars[hi & 15],
-                    };
+                    });
                 }
             },
         }
     }
+}
+pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
+    const writer = bytes.writer();
+
+    try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
+    try bytes.appendChar('"');
+    try writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, true, .utf8);
     bytes.appendChar('"') catch unreachable;
 }
 
 pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
     try writer.writeAll("\"");
-    var text = input;
-    const end = text.ptr + text.len;
-    if (comptime encoding == .utf16) {
-        @compileError("not implemented yet");
-    }
-
-    while (text.ptr != end) {
-        const width = if (comptime encoding == .latin1 or encoding == .ascii)
-            1
-        else
-            strings.wtf8ByteSequenceLengthWithInvalid(text[0]);
-
-        const c: i32 = if (comptime encoding == .utf8)
-            strings.decodeWTF8RuneT(text.ptr[0..4], width, i32, 0)
-        else brk: {
-            const char = text[0];
-            if (char <= 0x7F) {
-                break :brk char;
-            } else break :brk strings.latin1ToCodepointAssumeNotASCII(char, i32);
-        };
-        if (canPrintWithoutEscape(i32, c, false)) {
-            const remain = text[width..];
-            if (encoding != .utf8 and width > 0) {
-                var codepoint_bytes: [4]u8 = undefined;
-                std.mem.writeInt(i32, &codepoint_bytes, c, .little);
-                try writer.writeAll(
-                    codepoint_bytes[0..strings.encodeWTF8Rune(codepoint_bytes[0..4], c)],
-                );
-            } else if (encoding == .utf8) {
-                try writer.writeAll(text[0..width]);
-            }
-
-            if (strings.indexOfNeedsEscape(remain)) |j| {
-                try writer.writeAll(remain[0..j]);
-                text = remain[j..];
-                continue;
-            } else {
-                try writer.writeAll(remain);
-                break;
-            }
-        }
-        switch (c) {
-            // Special-case the bell character since it may cause dumping this file to
-            // the terminal to make a sound, which is undesirable. Note that we can't
-            // use an octal literal to print this shorter since octal literals are not
-            // allowed in strict mode (or in template strings).
-            0x07 => {
-                try writer.writeAll("\\x07");
-                text = text[1..];
-            },
-            0x08 => {
-                try writer.writeAll("\\b");
-                text = text[1..];
-            },
-            0x0C => {
-                try writer.writeAll("\\f");
-                text = text[1..];
-            },
-            '\n' => {
-                try writer.writeAll("\\n");
-                text = text[1..];
-            },
-            std.ascii.control_code.cr => {
-                try writer.writeAll("\\r");
-                text = text[1..];
-            },
-            // \v
-            std.ascii.control_code.vt => {
-                try writer.writeAll("\\v");
-                text = text[1..];
-            },
-            // "\\"
-            '\\' => {
-                try writer.writeAll("\\\\");
-                text = text[1..];
-            },
-            '"' => {
-                try writer.writeAll("\\\"");
-                text = text[1..];
-            },
-
-            '\t' => {
-                try writer.writeAll("\\t");
-                text = text[1..];
-            },
-
-            else => {
-                text = text[@as(usize, width)..];
-
-                if (c < 0xFFFF) {
-                    const k = @as(usize, @intCast(c));
-
-                    try writer.writeAll(&[_]u8{
-                        '\\',
-                        'u',
-                        hex_chars[(k >> 12) & 0xF],
-                        hex_chars[(k >> 8) & 0xF],
-                        hex_chars[(k >> 4) & 0xF],
-                        hex_chars[k & 0xF],
-                    });
-                } else {
-                    const k = c - 0x10000;
-                    const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
-                    const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
-
-                    try writer.writeAll(&[_]u8{
-                        '\\',
-                        'u',
-                        hex_chars[lo >> 12],
-                        hex_chars[(lo >> 8) & 15],
-                        hex_chars[(lo >> 4) & 15],
-                        hex_chars[lo & 15],
-                        '\\',
-                        'u',
-                        hex_chars[hi >> 12],
-                        hex_chars[(hi >> 8) & 15],
-                        hex_chars[(hi >> 4) & 15],
-                        hex_chars[hi & 15],
-                    });
-                }
-            },
-        }
-    }
+    try writePreQuotedString(input, Writer, writer, '"', false, true, encoding);
     try writer.writeAll("\"");
 }
 
@@ -1427,7 +1374,7 @@ fn NewPrinter(
                 p.printSpaceBeforeIdentifier();
                 p.printIdentifier(alias);
             } else {
-                p.printQuotedUTF8(alias, false);
+                p.printStringLiteralUTF8(alias, false);
             }
         }
 
@@ -1641,228 +1588,25 @@ fn NewPrinter(
             p.fmt("{d}", .{float}) catch {};
         }
 
-        pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8) void {
-            var i: usize = 0;
-            const n: usize = text.len;
+        pub fn printStringCharactersUTF8(e: *Printer, text: []const u8, quote: u8) void {
+            const writer = e.writer.stdWriter();
+            (switch (quote) {
+                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', ascii_only, false, .utf8),
+                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, false, .utf8),
+                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', ascii_only, false, .utf8),
+                else => unreachable,
+            }) catch |err| switch (err) {};
+        }
+        pub fn printStringCharactersUTF16(e: *Printer, text: []const u16, quote: u8) void {
+            const slice = std.mem.sliceAsBytes(text);
 
-            outer: while (i < n) {
-                const CodeUnitType = u32;
-
-                const c: CodeUnitType = text[i];
-                i += 1;
-
-                switch (c) {
-
-                    // Special-case the null character since it may mess with code written in C
-                    // that treats null characters as the end of the string.
-                    0x00 => {
-                        // We don't want "\x001" to be written as "\01"
-                        if (i < n and text[i] >= '0' and text[i] <= '9') {
-                            e.print("\\x00");
-                        } else {
-                            e.print("\\0");
-                        }
-                    },
-
-                    // Special-case the bell character since it may cause dumping this file to
-                    // the terminal to make a sound, which is undesirable. Note that we can't
-                    // use an octal literal to print this shorter since octal literals are not
-                    // allowed in strict mode (or in template strings).
-                    0x07 => {
-                        e.print("\\x07");
-                    },
-                    0x08 => {
-                        if (quote == '`')
-                            e.print(0x08)
-                        else
-                            e.print("\\b");
-                    },
-                    0x0C => {
-                        if (quote == '`')
-                            e.print(0x000C)
-                        else
-                            e.print("\\f");
-                    },
-                    '\t' => {
-                        if (quote == '`')
-                            e.print("\t")
-                        else
-                            e.print("\\t");
-                    },
-                    '\n' => {
-                        if (quote == '`') {
-                            e.print('\n');
-                        } else {
-                            e.print("\\n");
-                        }
-                    },
-                    // we never print \r un-escaped
-                    std.ascii.control_code.cr => {
-                        e.print("\\r");
-                    },
-                    // \v
-                    std.ascii.control_code.vt => {
-                        if (quote == '`') {
-                            e.print(std.ascii.control_code.vt);
-                        } else {
-                            e.print("\\v");
-                        }
-                    },
-                    // "\\"
-                    '\\' => {
-                        e.print("\\\\");
-                    },
-
-                    '\'' => {
-                        if (quote == '\'') {
-                            e.print('\\');
-                        }
-                        e.print("'");
-                    },
-
-                    '"' => {
-                        if (quote == '"') {
-                            e.print('\\');
-                        }
-
-                        e.print("\"");
-                    },
-                    '`' => {
-                        if (quote == '`') {
-                            e.print('\\');
-                        }
-
-                        e.print("`");
-                    },
-                    '$' => {
-                        if (quote == '`' and i < n and text[i] == '{') {
-                            e.print('\\');
-                        }
-
-                        e.print('$');
-                    },
-                    0x2028 => {
-                        e.print("\\u2028");
-                    },
-                    0x2029 => {
-                        e.print("\\u2029");
-                    },
-                    0xFEFF => {
-                        e.print("\\uFEFF");
-                    },
-
-                    else => {
-                        switch (c) {
-                            first_ascii...last_ascii => {
-                                e.print(@as(u8, @intCast(c)));
-
-                                // Fast path for printing long UTF-16 template literals
-                                // this only applies to template literal strings
-                                // but we print a template literal if there is a \n or a \r
-                                // which is often if the string is long and UTF-16
-                                if (quote == '`') {
-                                    const remain = text[i..];
-                                    if (remain.len > 1 and remain[0] < last_ascii and remain[0] > first_ascii and
-                                        remain[0] != '$' and
-                                        remain[0] != '\\' and
-                                        remain[0] != '`')
-                                    {
-                                        if (strings.@"nextUTF16NonASCIIOr$`\\"([]const u16, remain)) |count_| {
-                                            if (count_ == 0)
-                                                unreachable; // conditional above checks this
-
-                                            const len = count_ - 1;
-                                            i += len;
-                                            var ptr = e.writer.reserve(len) catch unreachable;
-                                            const to_copy = ptr[0..len];
-
-                                            strings.copyU16IntoU8(to_copy, []const u16, remain[0..len]);
-                                            e.writer.advance(len);
-                                            continue :outer;
-                                        } else {
-                                            const count = @as(u32, @truncate(remain.len));
-                                            var ptr = e.writer.reserve(count) catch unreachable;
-                                            const to_copy = ptr[0..count];
-                                            strings.copyU16IntoU8(to_copy, []const u16, remain);
-                                            e.writer.advance(count);
-                                            i += count;
-                                        }
-                                    }
-                                }
-                            },
-                            first_high_surrogate...last_high_surrogate => {
-
-                                // Is there a next character?
-
-                                if (i < n) {
-                                    const c2: CodeUnitType = text[i];
-
-                                    if (c2 >= first_low_surrogate and c2 <= last_low_surrogate) {
-                                        i += 1;
-
-                                        // Escape this character if UTF-8 isn't allowed
-                                        if (ascii_only_always_on_unless_minifying) {
-                                            var ptr = e.writer.reserve(12) catch unreachable;
-                                            ptr[0..12].* = [_]u8{
-                                                '\\', 'u', hex_chars[c >> 12],  hex_chars[(c >> 8) & 15],  hex_chars[(c >> 4) & 15],  hex_chars[c & 15],
-                                                '\\', 'u', hex_chars[c2 >> 12], hex_chars[(c2 >> 8) & 15], hex_chars[(c2 >> 4) & 15], hex_chars[c2 & 15],
-                                            };
-                                            e.writer.advance(12);
-
-                                            continue;
-                                            // Otherwise, encode to UTF-8
-                                        }
-
-                                        const r: CodeUnitType = 0x10000 + (((c & 0x03ff) << 10) | (c2 & 0x03ff));
-
-                                        var ptr = e.writer.reserve(4) catch unreachable;
-                                        e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, r));
-                                        continue;
-                                    }
-                                }
-
-                                // Write an unpaired high surrogate
-                                var ptr = e.writer.reserve(6) catch unreachable;
-                                ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                e.writer.advance(6);
-                            },
-                            // Is this an unpaired low surrogate or four-digit hex escape?
-                            first_low_surrogate...last_low_surrogate => {
-                                // Write an unpaired high surrogate
-                                var ptr = e.writer.reserve(6) catch unreachable;
-                                ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                e.writer.advance(6);
-                            },
-                            else => {
-                                if (ascii_only_always_on_unless_minifying) {
-                                    if (c > 0xFF) {
-                                        var ptr = e.writer.reserve(6) catch unreachable;
-                                        // Write an unpaired high surrogate
-                                        ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                        e.writer.advance(6);
-                                    } else {
-                                        // Can this be a two-digit hex escape?
-                                        var ptr = e.writer.reserve(4) catch unreachable;
-                                        ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
-                                        e.writer.advance(4);
-                                    }
-                                } else {
-                                    // chars < 255 as two digit hex escape
-                                    if (c <= 0xFF) {
-                                        var ptr = e.writer.reserve(4) catch unreachable;
-                                        ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
-                                        e.writer.advance(4);
-                                        continue;
-                                    }
-
-                                    var ptr = e.writer.reserve(4) catch return;
-                                    e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, c));
-                                }
-                            },
-                        }
-                    },
-                }
-            }
+            const writer = e.writer.stdWriter();
+            (switch (quote) {
+                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', ascii_only, false, .utf16),
+                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', ascii_only, false, .utf16),
+                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', ascii_only, false, .utf16),
+                else => unreachable,
+            }) catch |err| switch (err) {};
         }
 
         pub fn isUnboundEvalIdentifier(p: *Printer, value: Expr) bool {
@@ -1884,9 +1628,9 @@ fn NewPrinter(
         }
 
         pub fn printRequireError(p: *Printer, text: string) void {
-            p.print("(()=>{throw new Error(`Cannot require module ");
-            p.printQuotedUTF8(text, false);
-            p.print("`);})()");
+            p.print("(()=>{throw new Error(\"Cannot require module \"+");
+            p.printStringLiteralUTF8(text, false);
+            p.print(");})()");
         }
 
         pub inline fn importRecord(
@@ -2009,9 +1753,7 @@ fn NewPrinter(
                     p.print(".require(");
                     {
                         const path = input_files[record.source_index.get()].path;
-                        p.print('"');
-                        p.printUTF8StringEscapedQuotes(path.pretty, '"');
-                        p.print('"');
+                        p.printStringLiteralUTF8(path.pretty, false);
                     }
                     p.print(")");
                 } else if (!meta.was_unwrapped_require) {
@@ -2084,9 +1826,7 @@ fn NewPrinter(
                         p.print(".require(");
                     {
                         const path = record.path;
-                        p.print('"');
-                        p.printUTF8StringEscapedQuotes(path.pretty, '"');
-                        p.print('"');
+                        p.printStringLiteralUTF8(path.pretty, false);
                     }
                     p.print(")");
                     return;
@@ -2156,14 +1896,22 @@ fn NewPrinter(
             p.printWhitespacer(ws("/* @__PURE__ */ "));
         }
 
-        pub fn printQuotedUTF8(p: *Printer, str: string, allow_backtick: bool) void {
+        pub fn printStringLiteralEString(p: *Printer, str: *E.String, allow_backtick: bool) void {
+            const quote = bestQuoteCharForEString(str, allow_backtick);
+            p.print(quote);
+            p.printStringCharactersEString(str, quote);
+            p.print(quote);
+        }
+        pub fn printStringLiteralUTF8(p: *Printer, str: string, allow_backtick: bool) void {
+            if (Environment.allow_assert) std.debug.assert(std.unicode.wtf8ValidateSlice(str));
+
             const quote = if (comptime !is_json)
                 bestQuoteCharForString(u8, str, allow_backtick)
             else
                 '"';
 
             p.print(quote);
-            p.print(str);
+            p.printStringCharactersUTF8(str, quote);
             p.print(quote);
         }
 
@@ -2179,9 +1927,10 @@ fn NewPrinter(
             const name = p.renamer.nameForSymbol(item.name.ref.?);
 
             if (comptime as == .import) {
-                p.printClauseAlias(item.alias);
-
-                if (!strings.eql(name, item.alias)) {
+                if (strings.eql(name, item.alias)) {
+                    p.printIdentifier(name);
+                } else {
+                    p.printClauseAlias(item.alias);
                     p.print(" as ");
                     p.addSourceMapping(item.alias_loc);
                     p.printIdentifier(name);
@@ -2205,16 +1954,6 @@ fn NewPrinter(
                 }
             } else {
                 @compileError("Unknown as");
-            }
-        }
-
-        pub inline fn canPrintIdentifier(_: *Printer, name: string) bool {
-            if (comptime is_json) return false;
-
-            if (comptime ascii_only or ascii_only_always_on_unless_minifying) {
-                return js_lexer.isLatin1Identifier(string, name);
-            } else {
-                return js_lexer.isIdentifier(name);
             }
         }
 
@@ -2414,12 +2153,12 @@ fn NewPrinter(
                                     p.printSymbol(p.options.commonjs_named_exports_ref);
                                 }
 
-                                if (p.canPrintIdentifier(key)) {
+                                if (js_lexer.isIdentifier(key)) {
                                     p.print(".");
                                     p.print(key);
                                 } else {
                                     p.print("[");
-                                    p.printPossiblyEscapedIdentifierString(key, true);
+                                    p.printStringLiteralUTF8(key, false);
                                     p.print("]");
                                 }
                             } else {
@@ -2602,7 +2341,7 @@ fn NewPrinter(
                     }
 
                     p.print("(");
-                    p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    p.printStringLiteralUTF8(p.importRecord(e.import_record_index).path.text, true);
                     p.print(")");
 
                     if (wrap) {
@@ -2694,7 +2433,7 @@ fn NewPrinter(
                         flags,
                     );
 
-                    if (p.canPrintIdentifier(e.name)) {
+                    if (js_lexer.isIdentifier(e.name)) {
                         if (isOptionalChain) {
                             p.print("?.");
                         } else {
@@ -2715,10 +2454,7 @@ fn NewPrinter(
                             p.print("[");
                         }
 
-                        p.printPossiblyEscapedIdentifierString(
-                            e.name,
-                            true,
-                        );
+                        p.printStringLiteralUTF8(e.name, false);
 
                         p.print("]");
                     }
@@ -2953,7 +2689,7 @@ fn NewPrinter(
                             p.indent();
                         }
 
-                        if (e.is_single_line) {
+                        if (e.is_single_line and !is_json) {
                             p.printSpace();
                         } else {
                             p.printNewline();
@@ -2965,7 +2701,7 @@ fn NewPrinter(
                             for (props[1..]) |property| {
                                 p.print(",");
 
-                                if (e.is_single_line) {
+                                if (e.is_single_line and !is_json) {
                                     p.printSpace();
                                 } else {
                                     p.printNewline();
@@ -2975,12 +2711,12 @@ fn NewPrinter(
                             }
                         }
 
-                        if (!e.is_single_line) {
+                        if (e.is_single_line and !is_json) {
+                            p.printSpace();
+                        } else {
                             p.unindent();
                             p.printNewline();
                             p.printIndent();
-                        } else {
-                            p.printSpace();
                         }
                     }
                     if (e.close_brace_loc.start > expr.loc.start) {
@@ -3011,20 +2747,12 @@ fn NewPrinter(
                     // If this was originally a template literal, print it as one as long as we're not minifying
                     if (e.prefer_template and !p.options.minify_syntax) {
                         p.print("`");
-                        p.printStringContent(e, '`');
+                        p.printStringCharactersEString(e, '`');
                         p.print("`");
                         return;
                     }
 
-                    const c = bestQuoteCharForEString(e, true);
-
-                    p.print(c);
-                    p.printStringContent(e, c);
-                    p.print(c);
-                },
-                .e_utf8_string => |e| {
-                    p.addSourceMapping(expr.loc);
-                    quoteForJSONBuffer(e.data, p.writer.getMutableBuffer(), ascii_only) catch bun.outOfMemory();
+                    p.printStringLiteralEString(e, true);
                 },
                 .e_template => |e| {
                     if (e.tag) |tag| {
@@ -3047,7 +2775,7 @@ fn NewPrinter(
                         .cooked => |*cooked| {
                             if (cooked.isPresent()) {
                                 cooked.resolveRopeIfNeeded(p.options.allocator);
-                                p.printStringContent(cooked, '`');
+                                p.printStringCharactersEString(cooked, '`');
                             }
                         },
                     }
@@ -3061,7 +2789,7 @@ fn NewPrinter(
                             .cooked => |*cooked| {
                                 if (cooked.isPresent()) {
                                     cooked.resolveRopeIfNeeded(p.options.allocator);
-                                    p.printStringContent(cooked, '`');
+                                    p.printStringCharactersEString(cooked, '`');
                                 }
                             },
                         }
@@ -3166,7 +2894,7 @@ fn NewPrinter(
                             p.addSourceMapping(expr.loc);
                             p.printSymbol(namespace.namespace_ref);
                             const alias = namespace.alias;
-                            if (p.canPrintIdentifier(alias)) {
+                            if (js_lexer.isIdentifier(alias)) {
                                 p.print(".");
                                 // TODO: addSourceMappingForName
                                 p.printIdentifier(alias);
@@ -3174,7 +2902,7 @@ fn NewPrinter(
                                 p.print("[");
                                 // TODO: addSourceMappingForName
                                 // p.addSourceMappingForName(alias);
-                                p.printPossiblyEscapedIdentifierString(alias, true);
+                                p.printStringLiteralUTF8(alias, false);
                                 p.print("]");
                             }
 
@@ -3355,94 +3083,16 @@ fn NewPrinter(
             }
         }
 
-        pub inline fn printDotThenSuffix(
-            p: *Printer,
-        ) void {
+        pub inline fn printDotThenSuffix(p: *Printer) void {
             p.print(")");
         }
 
         // This assumes the string has already been quoted.
-        pub fn printStringContent(p: *Printer, str: *const E.String, c: u8) void {
+        pub fn printStringCharactersEString(p: *Printer, str: *const E.String, c: u8) void {
             if (!str.isUTF8()) {
-                // its already quoted for us!
-                p.printQuotedUTF16(str.slice16(), c);
+                p.printStringCharactersUTF16(str.slice16(), c);
             } else {
-                p.printUTF8StringEscapedQuotes(str.data, c);
-            }
-        }
-
-        // Add one outer branch so the inner loop does fewer branches
-        pub fn printUTF8StringEscapedQuotes(p: *Printer, str: string, c: u8) void {
-            switch (c) {
-                '`' => _printUTF8StringEscapedQuotes(p, str, '`'),
-                '"' => _printUTF8StringEscapedQuotes(p, str, '"'),
-                '\'' => _printUTF8StringEscapedQuotes(p, str, '\''),
-                else => unreachable,
-            }
-        }
-
-        pub fn _printUTF8StringEscapedQuotes(p: *Printer, str: string, comptime c: u8) void {
-            var utf8 = str;
-            var i: usize = 0;
-            // Walk the string searching for quote characters
-            // Escape any we find
-            // Skip over already-escaped strings
-            var len = utf8.len;
-            while (i < len) {
-                switch (utf8[i]) {
-                    '\\' => i += 2,
-                    '$' => {
-                        if (comptime c == '`') {
-                            p.print(utf8[0..i]);
-                            p.print("\\$");
-                            utf8 = utf8[i + 1 ..];
-                            len = utf8.len;
-                            i = 0;
-                        } else {
-                            i += 1;
-                        }
-                    },
-                    c => {
-                        p.print(utf8[0..i]);
-                        p.print("\\" ++ &[_]u8{c});
-                        utf8 = utf8[i + 1 ..];
-                        len = utf8.len;
-                        i = 0;
-                    },
-
-                    else => i += 1,
-                }
-            }
-            if (utf8.len > 0) {
-                p.print(utf8);
-            }
-        }
-
-        fn printBindingIdentifierName(p: *Printer, name: string, name_loc: logger.Loc) void {
-            p.addSourceMapping(name_loc);
-
-            if (comptime !is_json and ascii_only) {
-                const quote = bestQuoteCharForString(u8, name, false);
-                p.print(quote);
-                p.printQuotedIdentifier(name);
-                p.print(quote);
-            } else {
-                p.printQuotedUTF8(name, false);
-            }
-        }
-
-        fn printPossiblyEscapedIdentifierString(p: *Printer, name: string, allow_backtick: bool) void {
-            if (comptime !ascii_only or is_json) {
-                p.printQuotedUTF8(name, allow_backtick);
-            } else {
-                const quote = if (comptime !is_json)
-                    bestQuoteCharForString(u8, name, allow_backtick)
-                else
-                    '"';
-
-                p.print(quote);
-                p.printQuotedIdentifier(name);
-                p.print(quote);
+                p.printStringCharactersUTF8(str.data, c);
             }
         }
 
@@ -3456,12 +3106,12 @@ fn NewPrinter(
             // that means the namespace alias is empty
             if (namespace.alias.len == 0) return;
 
-            if (p.canPrintIdentifier(namespace.alias)) {
+            if (js_lexer.isIdentifier(namespace.alias)) {
                 p.print(".");
                 p.printIdentifier(namespace.alias);
             } else {
                 p.print("[");
-                p.printPossiblyEscapedIdentifierString(namespace.alias, true);
+                p.printStringLiteralUTF8(namespace.alias, false);
                 p.print("]");
             }
         }
@@ -3687,11 +3337,11 @@ fn NewPrinter(
                         // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
                         // "=" and ":" are not valid
                         // So we need to check
-                        if (p.canPrintIdentifier(key.data)) {
-                            p.print(key.data);
+                        if (!is_json and js_lexer.isIdentifier(key.data)) {
+                            p.printIdentifier(key.data);
                         } else {
                             allow_shorthand = false;
-                            p.printBindingIdentifierName(key.data, logger.Loc.Empty);
+                            p.printStringLiteralEString(key, false);
                         }
 
                         // Use a shorthand property if the names are the same
@@ -3728,7 +3378,7 @@ fn NewPrinter(
                                 else => {},
                             }
                         }
-                    } else if (p.canPrintIdentifierUTF16(key.slice16())) {
+                    } else if (!is_json and p.canPrintIdentifierUTF16(key.slice16())) {
                         p.printSpaceBeforeIdentifier();
                         p.printIdentifierUTF16(key.slice16()) catch unreachable;
 
@@ -3771,7 +3421,7 @@ fn NewPrinter(
                     } else {
                         const c = bestQuoteCharForString(u16, key.slice16(), false);
                         p.print(c);
-                        p.printQuotedUTF16(key.slice16(), c);
+                        p.printStringCharactersUTF16(key.slice16(), c);
                         p.print(c);
                     }
                 },
@@ -3929,7 +3579,7 @@ fn NewPrinter(
                                             //              ^
                                             // That needs to be:
                                             //          "aria-label": ariaLabel,
-                                            if (p.canPrintIdentifier(str.data)) {
+                                            if (js_lexer.isIdentifier(str.data)) {
                                                 p.printIdentifier(str.data);
 
                                                 // Use a shorthand property if the names are the same
@@ -3943,7 +3593,7 @@ fn NewPrinter(
                                                     else => {},
                                                 }
                                             } else {
-                                                p.printPossiblyEscapedIdentifierString(str.data, false);
+                                                p.printStringLiteralUTF8(str.data, false);
                                             }
                                         } else if (p.canPrintIdentifierUTF16(str.slice16())) {
                                             p.printSpaceBeforeIdentifier();
@@ -4633,9 +4283,9 @@ fn NewPrinter(
                                 },
 
                                 .auto_onimportcss, .facade_onimportcss => {
-                                    p.print("globalThis.document?.dispatchEvent(new CustomEvent(\"onimportcss\", {detail: \"");
-                                    p.print(record.path.text);
-                                    p.print("\"}));\n");
+                                    p.print("globalThis.document?.dispatchEvent(new CustomEvent(\"onimportcss\", {detail: ");
+                                    p.printStringLiteralUTF8(record.path.text, false);
+                                    p.print("}));\n");
 
                                     // If they actually use the code, then we emit a facade that just echos whatever they write
                                     if (s.default_name) |name| {
@@ -4886,7 +4536,7 @@ fn NewPrinter(
 
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
-                    p.printQuotedUTF8(s.value, false);
+                    p.printStringLiteralUTF8(s.value, false);
                     p.printSemicolonAfterStatement();
                 },
                 .s_break => |s| {
@@ -4957,13 +4607,13 @@ fn NewPrinter(
             const quote = bestQuoteCharForString(u8, import_record.path.text, false);
             if (import_record.print_namespace_in_path and !import_record.path.isFile()) {
                 p.print(quote);
-                p.print(import_record.path.namespace);
+                p.printStringCharactersUTF8(import_record.path.namespace, quote);
                 p.print(":");
-                p.printIdentifier(import_record.path.text);
+                p.printStringCharactersUTF8(import_record.path.text, quote);
                 p.print(quote);
             } else {
                 p.print(quote);
-                p.printIdentifier(import_record.path.text);
+                p.printStringCharactersUTF8(import_record.path.text, quote);
                 p.print(quote);
             }
         }
@@ -5107,7 +4757,7 @@ fn NewPrinter(
             p.print("Object.defineProperty(");
             p.printModuleExportSymbol();
             p.print(",");
-            p.printQuotedUTF8(name, true);
+            p.printStringLiteralUTF8(name, true);
 
             p.printWhitespacer(ws(",{get: () => ("));
             p.printLoadFromBundle(import_record_index);
@@ -5124,7 +4774,7 @@ fn NewPrinter(
             p.print("Object.defineProperty(");
             p.printModuleExportSymbol();
             p.print(",");
-            p.printQuotedUTF8(name, true);
+            p.printStringLiteralUTF8(name, true);
             p.print(",{get: () => ");
             p.printIdentifier(identifier);
             p.print(", enumerable: true, configurable: true})");
@@ -5377,13 +5027,13 @@ fn NewPrinter(
 
         pub fn printIdentifier(p: *Printer, identifier: string) void {
             if (comptime ascii_only) {
-                p.printQuotedIdentifier(identifier);
+                p.printIdentifierAsciiOnly(identifier);
             } else {
                 p.print(identifier);
             }
         }
 
-        fn printQuotedIdentifier(p: *Printer, identifier: string) void {
+        fn printIdentifierAsciiOnly(p: *Printer, identifier: string) void {
             var ascii_start: usize = 0;
             var is_ascii = false;
             var iter = CodepointIterator.init(identifier);
@@ -5610,6 +5260,14 @@ pub fn NewWriter(
             return .{
                 .ctx = ctx,
             };
+        }
+
+        pub fn stdWriter(self: *Self) std.io.Writer(*Self, error{}, stdWriterWrite) {
+            return .{ .context = self };
+        }
+        pub fn stdWriterWrite(self: *Self, bytes: []const u8) error{}!usize {
+            self.print([]const u8, bytes);
+            return bytes.len;
         }
 
         pub fn isCopyFileRangeSupported() bool {
@@ -6335,9 +5993,7 @@ pub fn printWithWriterAndPlatform(
     if (opts.module_type == .internal_bake_dev) {
         printer.indent();
         printer.printIndent();
-        printer.print('"');
-        printer.printUTF8StringEscapedQuotes(source.path.pretty, '"');
-        printer.print('"');
+        printer.printStringLiteralUTF8(source.path.pretty, false);
         printer.printFunc(parts[0].stmts[0].data.s_expr.value.data.e_function.func);
         printer.print(",\n");
     } else {

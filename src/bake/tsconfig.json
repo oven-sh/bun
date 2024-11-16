@@ -12,10 +12,11 @@
     "downlevelIteration": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "jsx": "react",
     "paths": {
-      "bun-framework-rsc/*": ["./bun-framework-rsc/*"]
-    }
+      "bun-framework-react/*": ["./bun-framework-react/*"]
+    },
+    "jsx": "react-jsx",
+    "types": ["react/experimental"]
   },
   "include": ["**/*.ts", "**/*.tsx"]
 }

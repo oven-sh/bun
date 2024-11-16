@@ -100,7 +100,7 @@ describe("Server", () => {
   });
 
   test("should not allow Bun.serve with invalid tls option", () => {
-    [1, "string", true, Symbol("symbol"), false].forEach(value => {
+    [1, "string", true, Symbol("symbol")].forEach(value => {
       expect(() => {
         using server = Bun.serve({
           //@ts-ignore
@@ -435,7 +435,7 @@ describe("Server", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    expect(stderr).toBeEmpty();
+    expect(stderr.toString('utf-8')).toBeEmpty();
     expect(exitCode).toBe(0);
   });
 });

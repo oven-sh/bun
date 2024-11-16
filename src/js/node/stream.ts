@@ -5441,8 +5441,7 @@ function createNativeStreamReadable(Readable) {
     ptr.onClose = this[_onClose].bind(this);
     ptr.onDrain = this[_onDrain].bind(this);
   }
-  NativeReadable.prototype = {};
-  ObjectSetPrototypeOf(NativeReadable.prototype, Readable.prototype);
+  $toClass(NativeReadable, "NativeReadable", Readable);
 
   NativeReadable.prototype[_onClose] = function () {
     this.push(null);
@@ -5657,8 +5656,7 @@ function NativeWritable(pathOrFdOrSink, options = {}) {
 
   this[_pathOrFdOrSink] = pathOrFdOrSink;
 }
-Object.setPrototypeOf(NativeWritable, Writable);
-NativeWritable.prototype = Object.create(Writable.prototype);
+$toClass(NativeWritable, "NativeWritable", Writable);
 
 // These are confusingly two different fns for construct which initially were the same thing because
 // `_construct` is part of the lifecycle of Writable and is not called lazily,

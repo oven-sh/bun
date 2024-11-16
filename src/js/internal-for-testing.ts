@@ -113,6 +113,7 @@ export const npm_manifest_test_helpers = $zig("npm.zig", "PackageManifest.bindin
 };
 
 // Like npm-package-arg, sort of https://www.npmjs.com/package/npm-package-arg
+export type Dependency = any;
 export const npa: (name: string) => Dependency = $newZigFunction("dependency.zig", "fromJS", 1);
 
 export const npmTag: (
@@ -141,3 +142,10 @@ export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunc
   "jsFunctionIsModuleResolveFilenameSlowPathEnabled",
   0,
 );
+
+export const frameworkRouterInternals = $zig("FrameworkRouter.zig", "JSFrameworkRouter.getBindings") as {
+  parseRoutePattern: () => void;
+  FrameworkRouter: {
+    new(): any;
+  };
+};

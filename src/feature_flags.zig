@@ -13,9 +13,6 @@ pub const jsx_runtime_is_cjs = true;
 
 pub const tracing = true;
 
-/// Disabled due to bugs
-pub const minify_javascript_string_length = false;
-
 // TODO: remove this flag, it should use bun.Output.scoped
 pub const verbose_watcher = false;
 
@@ -160,6 +157,9 @@ pub fn isLibdeflateEnabled() bool {
 
 /// Enable Bun Kit's experimental bundler tools
 pub const bake = env.is_canary or env.isDebug;
+
+/// Additional debugging features for Bake, such as the incremental visualizer.
+pub const bake_debugging_features = bake and (env.is_canary or env.isDebug);
 
 /// Enable --server-components
 pub const cli_server_components = bake;

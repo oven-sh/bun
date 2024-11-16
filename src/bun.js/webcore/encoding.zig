@@ -23,13 +23,11 @@ const Properties = @import("../base.zig").Properties;
 const castObj = @import("../base.zig").castObj;
 const getAllocator = @import("../base.zig").getAllocator;
 
-const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
 const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
-const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 
 const VirtualMachine = JSC.VirtualMachine;
@@ -197,7 +195,7 @@ pub const TextEncoder = struct {
             return .undefined;
         }
 
-        if (array.isEmpty()) {
+        if (array == .zero) {
             array = JSC.JSValue.createUninitializedUint8Array(globalThis, length);
             array.ensureStillAlive();
             @memcpy(array.asArrayBuffer(globalThis).?.ptr[0..length], buf_to_use[0..length]);
@@ -418,11 +416,11 @@ pub const TextEncoderStreamEncoder = struct {
         this.destroy();
     }
 
-    pub fn constructor(_: *JSGlobalObject, _: *JSC.CallFrame) ?*TextEncoderStreamEncoder {
+    pub fn constructor(_: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*TextEncoderStreamEncoder {
         return TextEncoderStreamEncoder.new(.{});
     }
 
-    pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
+    pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callFrame.arguments(1).slice();
         if (arguments.len == 0) {
             globalObject.throwNotEnoughArguments("TextEncoderStreamEncoder.encode", 1, arguments.len);
@@ -592,7 +590,7 @@ pub const TextEncoderStreamEncoder = struct {
         }
     }
 
-    pub fn flush(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn flush(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         return flushBody(this, globalObject);
     }
 
@@ -642,25 +640,7 @@ pub const TextDecoder = struct {
     ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.ignore_bom);
     }
-    // pub fn setIgnoreBOM(
-    //     this: *TextDecoder,
-    //     _: *JSC.JSGlobalObject,
-    // )  JSC.JSValue {
-    //     this.ignore_bom = JSValue.fromRef(this.ignore_bom).toBoolean();
-    //     return true;
-    // }
 
-    // pub fn setFatal(
-    //     this: *TextDecoder,
-    //     _: js.JSContextRef,
-    //     _: js.JSValueRef,
-    //     _: js.JSStringRef,
-    //     value: JSC.C.JSValueRef,
-    //     _: js.ExceptionRef,
-    // ) bool {
-    //     this.fatal = JSValue.fromRef(value).toBoolean();
-    //     return true;
-    // }
     pub fn getFatal(
         this: *TextDecoder,
         _: *JSC.JSGlobalObject,
@@ -780,7 +760,7 @@ pub const TextDecoder = struct {
         return .{ output, saw_error };
     }
 
-    pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments(2).slice();
 
         const input_slice = input_slice: {
@@ -923,10 +903,7 @@ pub const TextDecoder = struct {
         }
     }
 
-    pub fn constructor(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) ?*TextDecoder {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*TextDecoder {
         var args_ = callframe.arguments(2);
         var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
@@ -941,31 +918,27 @@ pub const TextDecoder = struct {
                 if (EncodingLabel.which(str.slice())) |label| {
                     decoder.encoding = label;
                 } else {
-                    globalThis.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()});
-                    return null;
+                    return globalThis.throwInvalidArguments2("Unsupported encoding label \"{s}\"", .{str.slice()});
                 }
             } else if (arguments[0].isUndefined()) {
                 // default to utf-8
                 decoder.encoding = EncodingLabel.@"UTF-8";
             } else {
-                globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
-                return null;
+                return globalThis.throwInvalidArguments2("TextDecoder(encoding) label is invalid", .{});
             }
 
             if (arguments.len >= 2) {
                 const options = arguments[1];
 
                 if (!options.isObject()) {
-                    globalThis.throwInvalidArguments("TextDecoder(options) is invalid", .{});
-                    return null;
+                    return globalThis.throwInvalidArguments2("TextDecoder(options) is invalid", .{});
                 }
 
                 if (options.get(globalThis, "fatal")) |fatal| {
                     if (fatal.isBoolean()) {
                         decoder.fatal = fatal.asBoolean();
                     } else {
-                        globalThis.throwInvalidArguments("TextDecoder(options) fatal is invalid. Expected boolean value", .{});
-                        return null;
+                        return globalThis.throwInvalidArguments2("TextDecoder(options) fatal is invalid. Expected boolean value", .{});
                     }
                 }
 
@@ -973,8 +946,7 @@ pub const TextDecoder = struct {
                     if (ignoreBOM.isBoolean()) {
                         decoder.ignore_bom = ignoreBOM.asBoolean();
                     } else {
-                        globalThis.throwInvalidArguments("TextDecoder(options) ignoreBOM is invalid. Expected boolean value", .{});
-                        return null;
+                        return globalThis.throwInvalidArguments2("TextDecoder(options) ignoreBOM is invalid. Expected boolean value", .{});
                     }
                 }
             }
@@ -1039,27 +1011,27 @@ pub const Encoder = struct {
     }
     export fn Bun__encoding__constructFromLatin1(globalObject: *JSGlobalObject, input: [*]const u8, len: usize, encoding: u8) JSValue {
         const slice = switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
-            .hex => constructFromU8(input, len, .hex),
-            .ascii => constructFromU8(input, len, .ascii),
-            .base64url => constructFromU8(input, len, .base64url),
-            .utf16le => constructFromU8(input, len, .utf16le),
-            .ucs2 => constructFromU8(input, len, .utf16le),
-            .utf8 => constructFromU8(input, len, .utf8),
-            .base64 => constructFromU8(input, len, .base64),
+            .hex => constructFromU8(input, len, bun.default_allocator, .hex),
+            .ascii => constructFromU8(input, len, bun.default_allocator, .ascii),
+            .base64url => constructFromU8(input, len, bun.default_allocator, .base64url),
+            .utf16le => constructFromU8(input, len, bun.default_allocator, .utf16le),
+            .ucs2 => constructFromU8(input, len, bun.default_allocator, .utf16le),
+            .utf8 => constructFromU8(input, len, bun.default_allocator, .utf8),
+            .base64 => constructFromU8(input, len, bun.default_allocator, .base64),
             else => unreachable,
         };
         return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize, encoding: u8) JSValue {
         const slice = switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
-            .base64 => constructFromU16(input, len, .base64),
-            .hex => constructFromU16(input, len, .hex),
-            .base64url => constructFromU16(input, len, .base64url),
-            .utf16le => constructFromU16(input, len, .utf16le),
-            .ucs2 => constructFromU16(input, len, .utf16le),
-            .utf8 => constructFromU16(input, len, .utf8),
-            .ascii => constructFromU16(input, len, .ascii),
-            .latin1 => constructFromU16(input, len, .latin1),
+            .base64 => constructFromU16(input, len, bun.default_allocator, .base64),
+            .hex => constructFromU16(input, len, bun.default_allocator, .hex),
+            .base64url => constructFromU16(input, len, bun.default_allocator, .base64url),
+            .utf16le => constructFromU16(input, len, bun.default_allocator, .utf16le),
+            .ucs2 => constructFromU16(input, len, bun.default_allocator, .utf16le),
+            .utf8 => constructFromU16(input, len, bun.default_allocator, .utf8),
+            .ascii => constructFromU16(input, len, bun.default_allocator, .ascii),
+            .latin1 => constructFromU16(input, len, bun.default_allocator, .latin1),
             else => unreachable,
         };
         return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
@@ -1261,6 +1233,71 @@ pub const Encoder = struct {
         }
     }
 
+    /// Assumes `input` is not owned memory.
+    ///
+    /// Can be run on non-JavaScript threads.
+    ///
+    /// This is like toString(), but it returns a WTFString instead of a JSString*.
+    pub fn toWTFString(input: []const u8, encoding: JSC.Node.Encoding) bun.String {
+        if (input.len == 0)
+            return bun.String.empty;
+
+        switch (encoding) {
+            .ascii => {
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len);
+                strings.copyLatin1IntoASCII(chars, input);
+                return str;
+            },
+            .latin1 => {
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len);
+                @memcpy(chars, input);
+                return str;
+            },
+            .buffer, .utf8 => {
+                const converted = strings.toUTF16Alloc(bun.default_allocator, input, false, false) catch return bun.String.dead;
+                if (converted) |utf16| {
+                    return bun.String.createExternalGloballyAllocated(.utf16, utf16);
+                }
+
+                // If we get here, it means we can safely assume the string is 100% ASCII characters
+                // For this, we rely on WebKit to manage the memory.
+                return bun.String.createLatin1(input);
+            },
+            .ucs2, .utf16le => {
+                // Avoid incomplete characters
+                if (input.len / 2 == 0) return bun.String.empty;
+
+                const output, const chars = bun.String.createUninitialized(.utf16, input.len / 2);
+                var output_bytes = std.mem.sliceAsBytes(chars);
+                output_bytes[output_bytes.len - 1] = 0;
+
+                @memcpy(output_bytes, input[0..output_bytes.len]);
+                return output;
+            },
+
+            .hex => {
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len * 2);
+
+                const wrote = strings.encodeBytesToHex(chars, input);
+                bun.assert(wrote == chars.len);
+                return str;
+            },
+
+            .base64url => {
+                const out, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
+                _ = bun.base64.encodeURLSafe(chars, input);
+                return out;
+            },
+
+            .base64 => {
+                const to_len = bun.base64.encodeLen(input);
+                const to = bun.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
+                const wrote = bun.base64.encode(to, input);
+                return bun.String.createExternalGloballyAllocated(.latin1, to[0..wrote]);
+            },
+        }
+    }
+
     pub fn writeU8(input: [*]const u8, len: usize, to_ptr: [*]u8, to_len: usize, comptime encoding: JSC.Node.Encoding) !usize {
         if (len == 0 or to_len == 0)
             return 0;
@@ -1440,18 +1477,16 @@ pub const Encoder = struct {
         }
     }
 
-    pub fn constructFrom(comptime T: type, input: []const T, comptime encoding: JSC.Node.Encoding) []u8 {
+    pub fn constructFrom(comptime T: type, input: []const T, allocator: std.mem.Allocator, comptime encoding: JSC.Node.Encoding) []u8 {
         return switch (comptime T) {
-            u16 => constructFromU16(input.ptr, input.len, encoding),
-            u8 => constructFromU8(input.ptr, input.len, encoding),
+            u16 => constructFromU16(input.ptr, input.len, allocator, encoding),
+            u8 => constructFromU8(input.ptr, input.len, allocator, encoding),
             else => @compileError("Unsupported type for constructFrom: " ++ @typeName(T)),
         };
     }
 
-    pub fn constructFromU8(input: [*]const u8, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
+    pub fn constructFromU8(input: [*]const u8, len: usize, allocator: std.mem.Allocator, comptime encoding: JSC.Node.Encoding) []u8 {
         if (len == 0) return &[_]u8{};
-
-        const allocator = bun.default_allocator;
 
         switch (comptime encoding) {
             .buffer => {
@@ -1500,10 +1535,8 @@ pub const Encoder = struct {
         }
     }
 
-    pub fn constructFromU16(input: [*]const u16, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
+    pub fn constructFromU16(input: [*]const u16, len: usize, allocator: std.mem.Allocator, comptime encoding: JSC.Node.Encoding) []u8 {
         if (len == 0) return &[_]u8{};
-
-        const allocator = bun.default_allocator;
 
         switch (comptime encoding) {
             .utf8 => {
@@ -1532,7 +1565,7 @@ pub const Encoder = struct {
                 // shouldn't really happen though
                 const transcoded = strings.toUTF8Alloc(allocator, input[0..len]) catch return &[_]u8{};
                 defer allocator.free(transcoded);
-                return constructFromU8(transcoded.ptr, transcoded.len, encoding);
+                return constructFromU8(transcoded.ptr, transcoded.len, allocator, encoding);
             },
         }
     }

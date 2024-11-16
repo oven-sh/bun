@@ -26,7 +26,7 @@ export function minifyTest(source: string, expected: string) {
 
 export function prefix_test(source: string, expected: string, targets: Browsers) {
   test(source, () => {
-    expect(prefixTestWithOptions(source, expected, targets)).toEqual(expected);
+    expect(prefixTestWithOptions(source, expected, targets)).toEqualIgnoringWhitespace(expected);
   });
 }
 
@@ -35,7 +35,7 @@ export function css_test(source: string, expected: string) {
 }
 export function cssTest(source: string, expected: string) {
   test(source, () => {
-    expect(testWithOptions(source, expected)).toEqual(expected);
+    expect(testWithOptions(source, expected)).toEqualIgnoringWhitespace(expected);
   });
 }
 

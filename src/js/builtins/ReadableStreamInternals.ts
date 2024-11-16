@@ -331,7 +331,10 @@ export function pipeToDoReadWrite(pipeState) {
           pipeState.pendingReadPromiseCapability.resolve.$call(undefined, canWrite);
           if (!canWrite) return;
 
-          pipeState.pendingWritePromise = $writableStreamDefaultWriterWrite(pipeState.writer, result.value);
+          pipeState.pendingWritePromise = $writableStreamDefaultWriterWrite(pipeState.writer, result.value).$then(
+            undefined,
+            () => {},
+          );
         },
         e => {
           pipeState.pendingReadPromiseCapability.resolve.$call(undefined, false);
@@ -396,7 +399,7 @@ export function pipeToClosingMustBePropagatedForward(pipeState) {
     action();
     return;
   }
-  $getByIdDirectPrivate(pipeState.reader, "closedPromiseCapability").promise.$then(action, undefined);
+  $getByIdDirectPrivate(pipeState.reader, "closedPromiseCapability").promise.$then(action, () => {});
 }
 
 export function pipeToClosingMustBePropagatedBackward(pipeState) {
@@ -1367,20 +1370,18 @@ export function readableStreamError(stream, error) {
 
   if (!reader) return;
 
+  $getByIdDirectPrivate(reader, "closedPromiseCapability").reject.$call(undefined, error);
+  const promise = $getByIdDirectPrivate(reader, "closedPromiseCapability").promise;
+  $markPromiseAsHandled(promise);
+
   if ($isReadableStreamDefaultReader(reader)) {
-    const requests = $getByIdDirectPrivate(reader, "readRequests");
-    $putByIdDirectPrivate(reader, "readRequests", $createFIFO());
-    for (var request = requests.shift(); request; request = requests.shift()) $rejectPromise(request, error);
+    $readableStreamDefaultReaderErrorReadRequests(reader, error);
   } else {
     $assert($isReadableStreamBYOBReader(reader));
     const requests = $getByIdDirectPrivate(reader, "readIntoRequests");
     $putByIdDirectPrivate(reader, "readIntoRequests", $createFIFO());
     for (var request = requests.shift(); request; request = requests.shift()) $rejectPromise(request, error);
   }
-
-  $getByIdDirectPrivate(reader, "closedPromiseCapability").reject.$call(undefined, error);
-  const promise = $getByIdDirectPrivate(reader, "closedPromiseCapability").promise;
-  $markPromiseAsHandled(promise);
 }
 
 export function readableStreamDefaultControllerShouldCallPull(controller) {
@@ -1609,6 +1610,15 @@ export function isReadableStreamDisturbed(stream) {
 }
 
 $visibility = "Private";
+export function readableStreamDefaultReaderRelease(reader) {
+  $readableStreamReaderGenericRelease(reader);
+  $readableStreamDefaultReaderErrorReadRequests(
+    reader,
+    $ERR_STREAM_RELEASE_LOCK("Stream reader cancelled via releaseLock()"),
+  );
+}
+
+$visibility = "Private";
 export function readableStreamReaderGenericRelease(reader) {
   $assert(!!$getByIdDirectPrivate(reader, "ownerReadableStream"));
   $assert($getByIdDirectPrivate($getByIdDirectPrivate(reader, "ownerReadableStream"), "reader") === reader);
@@ -1616,11 +1626,11 @@ export function readableStreamReaderGenericRelease(reader) {
   if ($getByIdDirectPrivate($getByIdDirectPrivate(reader, "ownerReadableStream"), "state") === $streamReadable)
     $getByIdDirectPrivate(reader, "closedPromiseCapability").reject.$call(
       undefined,
-      $makeTypeError("releasing lock of reader whose stream is still in readable state"),
+      $ERR_STREAM_RELEASE_LOCK("Stream reader cancelled via releaseLock()"),
     );
   else
     $putByIdDirectPrivate(reader, "closedPromiseCapability", {
-      promise: $newHandledRejectedPromise($makeTypeError("reader released lock")),
+      promise: $newHandledRejectedPromise($ERR_STREAM_RELEASE_LOCK("Stream reader cancelled via releaseLock()")),
     });
 
   const promise = $getByIdDirectPrivate(reader, "closedPromiseCapability").promise;
@@ -1634,6 +1644,12 @@ export function readableStreamReaderGenericRelease(reader) {
   }
   $putByIdDirectPrivate(stream, "reader", undefined);
   $putByIdDirectPrivate(reader, "ownerReadableStream", undefined);
+}
+
+export function readableStreamDefaultReaderErrorReadRequests(reader, error) {
+  const requests = $getByIdDirectPrivate(reader, "readRequests");
+  $putByIdDirectPrivate(reader, "readRequests", $createFIFO());
+  for (var request = requests.shift(); request; request = requests.shift()) $rejectPromise(request, error);
 }
 
 export function readableStreamDefaultControllerCanCloseOrEnqueue(controller) {
@@ -1703,10 +1719,7 @@ export function readableStreamFromAsyncIterator(target, fn) {
             return;
           }
 
-          if (
-            $isPromise(promise) &&
-            ($getPromiseInternalField(promise, $promiseFieldFlags) & $promiseStateMask) === $promiseStateFulfilled
-          ) {
+          if ($isPromise(promise) && $isPromiseResolved(promise)) {
             clearImmediate(immediateTask);
             ({ value, done } = $getPromiseInternalField(promise, $promiseFieldReactionsOrResult));
             $assert(!$isPromise(value), "Expected a value, not a promise");

@@ -91,11 +91,7 @@ pub const AbsoluteFontWeight = union(enum) {
     }
 
     pub fn eql(lhs: *const AbsoluteFontWeight, rhs: *const AbsoluteFontWeight) bool {
-        return switch (lhs.*) {
-            .weight => lhs.weight == rhs.weight,
-            .normal => rhs.* == .normal,
-            .bold => rhs.* == .bold,
-        };
+        return css.implementEql(@This(), lhs, rhs);
     }
 };
 
@@ -178,7 +174,7 @@ pub const FontStretch = union(enum) {
     }
 
     pub fn eql(lhs: *const FontStretch, rhs: *const FontStretch) bool {
-        return lhs.keyword == rhs.keyword and lhs.percentage.v == rhs.percentage.v;
+        return css.implementEql(@This(), lhs, rhs);
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {

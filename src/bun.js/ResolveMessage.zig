@@ -18,12 +18,8 @@ pub const ResolveMessage = struct {
 
     pub usingnamespace JSC.Codegen.JSResolveMessage;
 
-    pub fn constructor(
-        globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) ?*ResolveMessage {
-        globalThis.throw("ResolveMessage is not constructable", .{});
-        return null;
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*ResolveMessage {
+        return globalThis.throw2("ResolveMessage is not constructable", .{});
     }
 
     pub fn getCode(this: *ResolveMessage, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -69,22 +65,22 @@ pub const ResolveMessage = struct {
         switch (err) {
             error.ModuleNotFound => {
                 if (strings.eqlComptime(referrer, "bun:main")) {
-                    return try std.fmt.allocPrint(allocator, "Module not found \"{s}\"", .{specifier});
+                    return try std.fmt.allocPrint(allocator, "Module not found '{s}'", .{specifier});
                 }
                 if (Resolver.isPackagePath(specifier) and !strings.containsChar(specifier, '/')) {
-                    return try std.fmt.allocPrint(allocator, "Cannot find package \"{s}\" from \"{s}\"", .{ specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "Cannot find package '{s}' from '{s}'", .{ specifier, referrer });
                 } else {
-                    return try std.fmt.allocPrint(allocator, "Cannot find module \"{s}\" from \"{s}\"", .{ specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "Cannot find module '{s}' from '{s}'", .{ specifier, referrer });
                 }
             },
             error.InvalidDataURL => {
-                return try std.fmt.allocPrint(allocator, "Cannot resolve invalid data URL \"{s}\" from \"{s}\"", .{ specifier, referrer });
+                return try std.fmt.allocPrint(allocator, "Cannot resolve invalid data URL '{s}' from '{s}'", .{ specifier, referrer });
             },
             else => {
                 if (Resolver.isPackagePath(specifier)) {
-                    return try std.fmt.allocPrint(allocator, "{s} while resolving package \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "{s} while resolving package '{s}' from '{s}'", .{ @errorName(err), specifier, referrer });
                 } else {
-                    return try std.fmt.allocPrint(allocator, "{s} while resolving \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "{s} while resolving '{s}' from '{s}'", .{ @errorName(err), specifier, referrer });
                 }
             },
         }
@@ -111,7 +107,7 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return this.toStringFn(globalThis);
     }
 
@@ -119,7 +115,7 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const args_ = callframe.arguments(1);
         const args = args_.ptr[0..args_.len];
         if (args.len > 0) {
@@ -140,7 +136,7 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         var object = JSC.JSValue.createEmptyObject(globalThis, 7);
         object.put(globalThis, ZigString.static("name"), bun.String.static("ResolveMessage").toJS(globalThis));
         object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));

@@ -397,18 +397,7 @@ it("should link dependency without crashing", async () => {
   expect(await new Response(stdout1).text()).toContain(`Success! Registered "${link_name}"`);
   expect(await exited1).toBe(0);
 
-  const {
-    stdout: stdout2,
-    stderr: stderr2,
-    exited: exited2,
-  } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
+  const { out: stdout2, err: stderr2, exited: exited2 } = await runBunInstall(env, package_dir);
   const err2 = await new Response(stderr2).text();
   expect(err2.split(/\r?\n/)).toEqual(["Saved lockfile", ""]);
   const out2 = await new Response(stdout2).text();

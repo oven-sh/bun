@@ -291,6 +291,10 @@ pub const Angle = union(Tag) {
     pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
         return css.implementHash(@This(), this, hasher);
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A CSS [`<angle-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-angle-percentage) value.

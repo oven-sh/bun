@@ -24,13 +24,11 @@ const Properties = @import("../base.zig").Properties;
 const castObj = @import("../base.zig").castObj;
 const getAllocator = @import("../base.zig").getAllocator;
 
-const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
-const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 const NullableAllocator = bun.NullableAllocator;
 const DataURL = @import("../../resolver/data_url.zig").DataURL;
@@ -262,7 +260,7 @@ pub const Response = struct {
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const this_value = callframe.this();
         const cloned = this.clone(globalThis);
         if (globalThis.hasException()) {
@@ -365,7 +363,7 @@ pub const Response = struct {
     pub fn constructJSON(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args_list = callframe.arguments(2);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
@@ -433,7 +431,7 @@ pub const Response = struct {
     pub fn constructRedirect(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         var args_list = callframe.arguments(4);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
@@ -495,7 +493,7 @@ pub const Response = struct {
     pub fn constructError(
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const response = bun.new(
             Response,
             Response{
@@ -511,76 +509,42 @@ pub const Response = struct {
         return response.toJS(globalThis);
     }
 
-    pub fn constructor(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) ?*Response {
-        const args_list = brk: {
-            var args = callframe.arguments(2);
-            if (args.len > 1 and args.ptr[1].isEmptyOrUndefinedOrNull()) {
-                args.len = 1;
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Response {
+        const arguments = callframe.argumentsAsArray(2);
+
+        var init: Init = (brk: {
+            if (arguments[1].isUndefinedOrNull()) {
+                break :brk Init{
+                    .status_code = 200,
+                    .headers = null,
+                };
             }
-            break :brk args;
-        };
-
-        const arguments = args_list.ptr[0..args_list.len];
-
-        var init: Init = @as(?Init, brk: {
-            switch (arguments.len) {
-                0 => {
-                    break :brk Init{
-                        .status_code = 200,
-                        .headers = null,
-                    };
-                },
-                1 => {
-                    break :brk Init{
-                        .status_code = 200,
-                        .headers = null,
-                    };
-                },
-                else => {
-                    if (arguments[1].isObject()) {
-                        break :brk Init.init(globalThis, arguments[1]) catch null;
-                    }
-
-                    if (!globalThis.hasException()) {
-                        globalThis.throwInvalidArguments("new Response() requires a Response-like object in the 2nd argument", .{});
-                    }
-
-                    break :brk null;
-                },
+            if (arguments[1].isObject()) {
+                break :brk try Init.init(globalThis, arguments[1]) orelse unreachable;
             }
-            unreachable;
-        }) orelse return null;
+            if (!globalThis.hasException()) {
+                return globalThis.throwInvalidArguments2("Failed to construct 'Response': The provided body value is not of type 'ResponseInit'", .{});
+            }
+            return error.JSError;
+        });
+        errdefer init.deinit(bun.default_allocator);
 
         if (globalThis.hasException()) {
-            init.deinit(bun.default_allocator);
-            return null;
+            return error.JSError;
         }
 
         var body: Body = brk: {
-            switch (arguments.len) {
-                0 => {
-                    break :brk Body{
-                        .value = Body.Value{ .Null = {} },
-                    };
-                },
-                else => {
-                    break :brk Body.extract(globalThis, arguments[0]);
-                },
+            if (arguments[0].isUndefinedOrNull()) {
+                break :brk Body{
+                    .value = Body.Value{ .Null = {} },
+                };
             }
-            unreachable;
-        } orelse {
-            init.deinit(bun.default_allocator);
-
-            return null;
+            break :brk try Body.extract(globalThis, arguments[0]);
         };
+        errdefer body.deinit(bun.default_allocator);
 
         if (globalThis.hasException()) {
-            body.deinit(bun.default_allocator);
-            init.deinit(bun.default_allocator);
-            return null;
+            return error.JSError;
         }
 
         var response = bun.new(Response, Response{
@@ -618,7 +582,7 @@ pub const Response = struct {
             return that;
         }
 
-        pub fn init(globalThis: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
+        pub fn init(globalThis: *JSGlobalObject, response_init: JSC.JSValue) bun.JSError!?Init {
             var result = Init{ .status_code = 200 };
             errdefer {
                 result.deinit(bun.default_allocator);
@@ -799,13 +763,6 @@ pub const Fetch = struct {
         );
         break :brk errors;
     };
-
-    comptime {
-        if (!JSC.is_bindgen) {
-            _ = Bun__fetch;
-            _ = Bun__fetchPreconnect;
-        }
-    }
 
     pub const FetchTasklet = struct {
         const log = Output.scoped(.FetchTasklet, false);
@@ -1928,10 +1885,14 @@ pub const Fetch = struct {
         return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
     }
 
-    pub export fn Bun__fetchPreconnect(
+    comptime {
+        const Bun__fetchPreconnect = JSC.toJSHostFunction(Bun__fetchPreconnect_);
+        @export(Bun__fetchPreconnect, .{ .name = "Bun__fetchPreconnect" });
+    }
+    pub fn Bun__fetchPreconnect_(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(1).slice();
 
         if (arguments.len < 1) {
@@ -1939,7 +1900,7 @@ pub const Fetch = struct {
             return .zero;
         }
 
-        var url_str = JSC.URL.hrefFromJS(arguments[0], globalObject);
+        var url_str = try JSC.URL.hrefFromJS(arguments[0], globalObject);
         defer url_str.deref();
 
         if (globalObject.hasException()) {
@@ -1980,41 +1941,37 @@ pub const Fetch = struct {
     }
 
     const StringOrURL = struct {
-        pub fn fromJS(value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) ?bun.String {
+        pub fn fromJS(value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!?bun.String {
             if (value.isString()) {
-                return bun.String.tryFromJS(value, globalThis);
+                return try bun.String.fromJS2(value, globalThis);
             }
 
-            const out = JSC.URL.hrefFromJS(value, globalThis);
-            if (out.tag == .Dead) {
-                return null;
-            }
+            const out = try JSC.URL.hrefFromJS(value, globalThis);
+            if (out.tag == .Dead) return null;
             return out;
         }
     };
 
-    pub export fn Bun__fetch(
+    comptime {
+        const Bun__fetch = JSC.toJSHostFunction(Bun__fetch_);
+        @export(Bun__fetch, .{ .name = "Bun__fetch" });
+    }
+    pub fn Bun__fetch_(
         ctx: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
         const globalThis = ctx.ptr();
         const arguments = callframe.arguments(2);
         bun.Analytics.Features.fetch += 1;
         const vm = JSC.VirtualMachine.get();
 
-        var exception_val = [_]JSC.C.JSValueRef{null};
-        const exception: JSC.C.ExceptionRef = &exception_val;
         var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch bun.outOfMemory();
         // used to clean up dynamically allocated memory on error (a poor man's errdefer)
         var is_error = false;
         var allocator = memory_reporter.wrap(bun.default_allocator);
+        errdefer bun.default_allocator.destroy(memory_reporter);
         defer {
-            if (exception.* != null) {
-                is_error = true;
-                ctx.throwValue(JSC.JSValue.c(exception.*));
-            }
-
             memory_reporter.report(globalThis.vm());
 
             if (is_error) bun.default_allocator.destroy(memory_reporter);
@@ -2077,10 +2034,6 @@ pub const Fetch = struct {
                 sig.unref();
             }
 
-            if (!is_error and globalThis.hasException()) {
-                is_error = true;
-            }
-
             unix_socket_path.deinit();
 
             allocator.free(url_proxy_buffer);
@@ -2126,7 +2079,7 @@ pub const Fetch = struct {
             break :brk null;
         };
         // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
-        const url_str_optional = if (first_arg.as(Request) == null) StringOrURL.fromJS(first_arg, globalThis) else null;
+        const url_str_optional = if (first_arg.as(Request) == null) try StringOrURL.fromJS(first_arg, globalThis) else null;
         if (globalThis.hasException()) {
             is_error = true;
             return .zero;
@@ -2150,9 +2103,7 @@ pub const Fetch = struct {
             if (request_init_object) |request_init| {
                 if (request_init.fastGet(globalThis, .url)) |url_| {
                     if (!url_.isUndefined()) {
-                        if (bun.String.tryFromJS(url_, globalThis)) |str| {
-                            break :extract_url str;
-                        }
+                        break :extract_url try bun.String.fromJS2(url_, globalThis);
                     }
                 }
             }
@@ -2319,20 +2270,13 @@ pub const Fetch = struct {
                                 return .zero;
                             }
 
-                            if (SSLConfig.inJS(vm, globalThis, tls, exception)) |config| {
-                                if (exception.* != null) {
-                                    is_error = true;
-                                    return .zero;
-                                }
-
+                            if (SSLConfig.fromJS(vm, globalThis, tls) catch {
+                                is_error = true;
+                                return .zero;
+                            }) |config| {
                                 const ssl_config_object = bun.default_allocator.create(SSLConfig) catch bun.outOfMemory();
                                 ssl_config_object.* = config;
                                 break :extract_ssl_config ssl_config_object;
-                            }
-
-                            if (exception.* != null) {
-                                is_error = true;
-                                return .zero;
                             }
                         }
                     }
@@ -2506,7 +2450,7 @@ pub const Fetch = struct {
                 if (objects_to_try[i] != .zero) {
                     if (objects_to_try[i].get(globalThis, "proxy")) |proxy_arg| {
                         if (proxy_arg.isString() and proxy_arg.getLength(ctx) > 0) {
-                            var href = JSC.URL.hrefFromJS(proxy_arg, globalThis);
+                            var href = try JSC.URL.hrefFromJS(proxy_arg, globalThis);
                             if (href.tag == .Dead) {
                                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
                                 is_error = true;
@@ -2598,10 +2542,8 @@ pub const Fetch = struct {
             if (options_object) |options| {
                 if (options.fastGet(globalThis, .body)) |body__| {
                     if (!body__.isUndefined()) {
-                        if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
-                            var body_value = body_const;
-                            break :extract_body body_value.useAsAnyBlob();
-                        }
+                        var body_value = try Body.Value.fromJS(ctx.ptr(), body__);
+                        break :extract_body body_value.useAsAnyBlob();
                     }
                 }
 
@@ -2624,10 +2566,8 @@ pub const Fetch = struct {
             if (request_init_object) |req| {
                 if (req.fastGet(globalThis, .body)) |body__| {
                     if (!body__.isUndefined()) {
-                        if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
-                            var body_value = body_const;
-                            break :extract_body body_value.useAsAnyBlob();
-                        }
+                        var body_value = try Body.Value.fromJS(ctx.ptr(), body__);
+                        break :extract_body body_value.useAsAnyBlob();
                     }
                 }
             }

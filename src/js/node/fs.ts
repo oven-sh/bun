@@ -877,7 +877,7 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
   $assert(overridden_fs);
   this[kFs] = overridden_fs;
 }
-ReadStream.prototype = Object.create(NativeReadable.prototype);
+$toClass(ReadStream, "ReadStream", NativeReadable);
 
 ReadStream.prototype._construct = function (callback) {
   if (NativeReadablePrototype._construct) {
@@ -1185,7 +1185,8 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
 });
 
 const NativeWritable = Stream.NativeWritable;
-const WriteStreamPrototype = (WriteStream.prototype = Object.create(NativeWritable.prototype));
+$toClass(WriteStream, "WriteStream", NativeWritable);
+const WriteStreamPrototype = WriteStream.prototype;
 
 Object.defineProperties(WriteStreamPrototype, {
   autoClose: {

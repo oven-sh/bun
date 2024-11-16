@@ -826,7 +826,6 @@ pub const FileSystem = struct {
             }
             return file_limit;
         }
-        }
 
         var _entries_option_map: *EntriesOption.Map = undefined;
         var _entries_option_map_loaded: bool = false;

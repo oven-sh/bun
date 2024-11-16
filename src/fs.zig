@@ -818,9 +818,9 @@ pub const FileSystem = struct {
                     var new_limit = std.mem.zeroes(std.posix.rlimit);
                     new_limit.cur = @max(limit.max, 163840);
                     new_limit.max = @max(limit.max, 163840);
-                    file_limit = new_limit.max;
 
                     std.posix.setrlimit(resource, new_limit) catch break :blk;
+                    file_limit = new_limit.max;
                     Limit.handles = file_limit;
                 }
             }

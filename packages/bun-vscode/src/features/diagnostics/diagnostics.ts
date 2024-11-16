@@ -162,7 +162,7 @@ class CoverageReporter {
       if (currentCount > 2) {
         const range = new vscode.Range(start, end);
         const decorationType = vscode.window.createTextEditorDecorationType({
-          backgroundColor: "rgba(99, 245, 66, 0.08)",
+          backgroundColor: "rgba(79, 250, 123, 0.08)",
         });
 
         const editor = vscode.window.visibleTextEditors.find(

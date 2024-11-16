@@ -2376,14 +2376,14 @@ pub const Crypto = struct {
                 };
             }
 
-            const owned_password = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.default_allocator) catch |err| {
-                if (err != error.JSError and !globalObject.hasException()) globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
+            const owned_password = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.default_allocator) catch {
+                if (!globalObject.hasException()) globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
                 return error.JSError;
             };
 
-            const owned_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[1], bun.default_allocator) catch |err| {
+            const owned_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[1], bun.default_allocator) catch {
                 bun.default_allocator.free(owned_password);
-                if (err != error.JSError and !globalObject.hasException()) globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
+                if (!globalObject.hasException()) globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
                 return error.JSError;
             };
 

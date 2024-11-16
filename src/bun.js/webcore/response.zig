@@ -1900,7 +1900,7 @@ pub const Fetch = struct {
             return .zero;
         }
 
-        var url_str = JSC.URL.hrefFromJS(arguments[0], globalObject);
+        var url_str = try JSC.URL.hrefFromJS(arguments[0], globalObject);
         defer url_str.deref();
 
         if (globalObject.hasException()) {
@@ -1946,8 +1946,7 @@ pub const Fetch = struct {
                 return try bun.String.fromJS2(value, globalThis);
             }
 
-            const out = JSC.URL.hrefFromJS(value, globalThis);
-            if (globalThis.hasException()) return error.JSError;
+            const out = try JSC.URL.hrefFromJS(value, globalThis);
             if (out.tag == .Dead) return null;
             return out;
         }
@@ -2035,10 +2034,6 @@ pub const Fetch = struct {
                 sig.unref();
             }
 
-            if (!is_error and globalThis.hasException()) {
-                is_error = true;
-            }
-
             unix_socket_path.deinit();
 
             allocator.free(url_proxy_buffer);
@@ -2108,9 +2103,7 @@ pub const Fetch = struct {
             if (request_init_object) |request_init| {
                 if (request_init.fastGet(globalThis, .url)) |url_| {
                     if (!url_.isUndefined()) {
-                        if (bun.String.tryFromJS(url_, globalThis)) |str| {
-                            break :extract_url str;
-                        }
+                        break :extract_url try bun.String.fromJS2(url_, globalThis);
                     }
                 }
             }
@@ -2457,7 +2450,7 @@ pub const Fetch = struct {
                 if (objects_to_try[i] != .zero) {
                     if (objects_to_try[i].get(globalThis, "proxy")) |proxy_arg| {
                         if (proxy_arg.isString() and proxy_arg.getLength(ctx) > 0) {
-                            var href = JSC.URL.hrefFromJS(proxy_arg, globalThis);
+                            var href = try JSC.URL.hrefFromJS(proxy_arg, globalThis);
                             if (href.tag == .Dead) {
                                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
                                 is_error = true;

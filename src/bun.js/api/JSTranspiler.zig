@@ -945,12 +945,12 @@ pub fn transform(
     defer args.arena.deinit();
     const code_arg = args.next() orelse {
         globalThis.throwInvalidArgumentType("transform", "code", "string or Uint8Array");
-        return .zero;
+        return error.JSError;
     };
 
-    var code = JSC.Node.StringOrBuffer.fromJSWithEncodingMaybeAsync(globalThis, bun.default_allocator, code_arg, .utf8, true) orelse {
+    var code = try JSC.Node.StringOrBuffer.fromJSWithEncodingMaybeAsync(globalThis, bun.default_allocator, code_arg, .utf8, true) orelse {
         globalThis.throwInvalidArgumentType("transform", "code", "string or Uint8Array");
-        return .zero;
+        return error.JSError;
     };
     errdefer code.deinit();
 
@@ -977,7 +977,7 @@ pub fn transform(
             code_arg.unprotect();
         }
         globalThis.throwOutOfMemory();
-        return .zero;
+        return error.JSError;
     };
     task.schedule();
     return task.promise.value();

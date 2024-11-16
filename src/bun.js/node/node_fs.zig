@@ -2701,7 +2701,7 @@ pub const Arguments = struct {
                 }
             }
 
-            const data = StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, arguments.will_be_async) orelse {
+            const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, arguments.will_be_async) orelse {
                 return ctx.throwInvalidArguments2("data must be a string or TypedArray", .{});
             };
 

@@ -2212,7 +2212,9 @@ fn NewSocket(comptime ssl: bool) type {
             const buffer: JSC.Node.StringOrBuffer = if (data_value.isUndefined())
                 JSC.Node.StringOrBuffer.empty
             else
-                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false) orelse {
+                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false) catch {
+                    return .fail;
+                } orelse {
                     if (!globalObject.hasException()) {
                         _ = globalObject.throwInvalidArgumentTypeValue("data", "string, buffer, or blob", data_value);
                     }

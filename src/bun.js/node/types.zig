@@ -416,7 +416,7 @@ pub const BlobOrStringOrBuffer = union(enum) {
             else => {},
         }
 
-        return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async) orelse return null };
+        return .{ .string_or_buffer = try StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async) orelse return null };
     }
 };
 
@@ -577,11 +577,11 @@ pub const StringOrBuffer = union(enum) {
         return fromJSMaybeAsync(global, allocator, value, false);
     }
 
-    pub fn fromJSWithEncoding(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding) ?StringOrBuffer {
+    pub fn fromJSWithEncoding(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding) bun.JSError!?StringOrBuffer {
         return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, false);
     }
 
-    pub fn fromJSWithEncodingMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding, is_async: bool) ?StringOrBuffer {
+    pub fn fromJSWithEncodingMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding, is_async: bool) bun.JSError!?StringOrBuffer {
         if (value.isCell() and value.jsType().isTypedArray()) {
             return StringOrBuffer{
                 .buffer = Buffer.fromTypedArray(global, value),
@@ -592,7 +592,7 @@ pub const StringOrBuffer = union(enum) {
             return fromJSMaybeAsync(global, allocator, value, is_async);
         }
 
-        var str = bun.String.tryFromJS(value, global) orelse return null;
+        var str = try bun.String.fromJS2(value, global);
         defer str.deref();
         if (str.isEmpty()) {
             return fromJSMaybeAsync(global, allocator, value, is_async);
@@ -606,7 +606,7 @@ pub const StringOrBuffer = union(enum) {
         };
     }
 
-    pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?StringOrBuffer {
+    pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) bun.JSError!?StringOrBuffer {
         const encoding: Encoding = brk: {
             if (!encoding_value.isCell())
                 break :brk .utf8;
@@ -616,7 +616,7 @@ pub const StringOrBuffer = union(enum) {
         return fromJSWithEncoding(global, allocator, value, encoding);
     }
 
-    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, maybe_async: bool) ?StringOrBuffer {
+    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, maybe_async: bool) bun.JSError!?StringOrBuffer {
         const encoding: Encoding = brk: {
             if (!encoding_value.isCell())
                 break :brk .utf8;

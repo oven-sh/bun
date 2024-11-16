@@ -522,7 +522,6 @@ ${Object.keys(opts)
 
 describe("auto-install", () => {
   test("symlinks (and junctions) are created correctly in the install cache", async () => {
-    console.log(packageDir);
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "--print", "require('is-number')"],
       cwd: packageDir,
@@ -540,7 +539,7 @@ describe("auto-install", () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
 
-    expect(await readlink(join(packageDir, ".bun-cache", "is-number", "2.0.0@@localhost@@@1"))).toBe(
+    expect(resolve(await readlink(join(packageDir, ".bun-cache", "is-number", "2.0.0@@localhost@@@1")))).toBe(
       join(packageDir, ".bun-cache", "is-number@2.0.0@@localhost@@@1"),
     );
   });

@@ -9993,7 +9993,7 @@ pub const PackageManager = struct {
                 lockfile.packages.items(.name)[this.package_id].slice(this.version_buf);
         }
 
-        pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) JSC.JSValue {
+        pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) bun.JSError!JSC.JSValue {
             var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
             var stack = std.heap.stackFallback(1024, arena.allocator());
@@ -10029,25 +10029,22 @@ pub const PackageManager = struct {
             var array = Array{};
 
             const update_requests = parseWithError(allocator, &log, all_positionals.items, &array, .add, false) catch {
-                globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
-                return .zero;
+                return globalThis.throwValue2(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
             };
             if (update_requests.len == 0) return .undefined;
 
             if (log.msgs.items.len > 0) {
-                globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
-                return .zero;
+                return globalThis.throwValue2(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
             }
 
             if (update_requests[0].failed) {
-                globalThis.throw("Failed to parse dependencies", .{});
-                return .zero;
+                return globalThis.throw2("Failed to parse dependencies", .{});
             }
 
             var object = JSC.JSValue.createEmptyObject(globalThis, 2);
             var name_str = bun.String.init(update_requests[0].name);
             object.put(globalThis, "name", name_str.transferToJS(globalThis));
-            object.put(globalThis, "version", update_requests[0].version.toJS(update_requests[0].version_buf, globalThis));
+            object.put(globalThis, "version", try update_requests[0].version.toJS(update_requests[0].version_buf, globalThis));
             return object;
         }
 

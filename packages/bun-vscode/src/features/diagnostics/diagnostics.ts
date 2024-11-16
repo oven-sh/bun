@@ -46,13 +46,11 @@ function byteOffsetToPosition(text: string, offset: number) {
   return { line: lines.length - 1, column: lines[lines.length - 1].length };
 }
 
-class CoverageReporter {
+class EditorStateManager {
   private decorations = new Set<vscode.TextEditorDecorationType>();
   private diagnosticCollection: vscode.DiagnosticCollection;
-  private coverageIntervalMap = new Map<string, NodeJS.Timer>();
-  private executionCounts = new Map<string, number>();
 
-  constructor(diagnosticCollection: vscode.DiagnosticCollection) {
+  public constructor(diagnosticCollection: vscode.DiagnosticCollection) {
     this.diagnosticCollection = diagnosticCollection;
   }
 
@@ -64,11 +62,41 @@ class CoverageReporter {
     this.decorations.clear();
   }
 
+  clearDiagnostics() {
+    this.diagnosticCollection.clear();
+  }
+
+  clearAll() {
+    this.clearDecorations();
+    this.clearDiagnostics();
+  }
+
+  addDecoration(decoration: vscode.TextEditorDecorationType) {
+    this.decorations.add(decoration);
+  }
+
+  setDiagnostic(uri: vscode.Uri, diagnostic: vscode.Diagnostic) {
+    this.diagnosticCollection.set(uri, [diagnostic]);
+  }
+
+  dispose() {
+    this.clearAll();
+  }
+}
+
+class CoverageReporter {
+  private coverageIntervalMap = new Map<string, NodeJS.Timer>();
+  private executionCounts = new Map<string, number>();
+  private editorState: EditorStateManager;
+
+  constructor(editorState: EditorStateManager) {
+    this.editorState = editorState;
+  }
+
   clearIntervals() {
     for (const interval of this.coverageIntervalMap.values()) {
       clearInterval(interval);
     }
-
     this.coverageIntervalMap.clear();
   }
 
@@ -76,19 +104,24 @@ class CoverageReporter {
     adapter: DebugAdapter,
     event: JSC.Debugger.ScriptParsedEvent,
     scriptSource: string,
-    sourceMapURL: string,
+    sourceMapURL: string | undefined,
   ) {
     const existingTimer = this.coverageIntervalMap.get(event.scriptId);
     if (existingTimer) clearInterval(existingTimer);
 
-    const map = SourceMap(sourceMapURL);
+    const map = sourceMapURL ? SourceMap(sourceMapURL) : null;
     const uri = vscode.Uri.file(event.url);
 
     const report = () => {
       return this.reportCoverage(adapter, event, uri, (offset: number) => {
-        const { line, column } = byteOffsetToPosition(scriptSource, offset);
-        const original = map.originalLocation({ line, column });
-        return new vscode.Position(original.line, original.column);
+        if (map) {
+          const { line, column } = byteOffsetToPosition(scriptSource, offset);
+          const original = map.originalLocation({ line, column });
+          return new vscode.Position(original.line, original.column);
+        } else {
+          const { line, column } = byteOffsetToPosition(scriptSource, offset);
+          return new vscode.Position(line, column);
+        }
       });
     };
 
@@ -112,11 +145,7 @@ class CoverageReporter {
 
     if (!response) return;
 
-    this.diagnosticCollection.clear();
-    this.clearDecorations();
-
-    const editor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
-    if (!editor) return;
+    this.editorState.clearAll();
 
     for (const block of response.basicBlocks) {
       if (!block.hasExecuted) continue;
@@ -124,48 +153,53 @@ class CoverageReporter {
       const start = transpiledOffsetToOriginalPosition(block.startOffset);
       const end = transpiledOffsetToOriginalPosition(block.endOffset);
 
-      if (end.character === editor.document.getText().length) continue;
+      if (end.character === uri.fsPath.length) continue;
 
       const rangeKey = `${event.scriptId}:${block.startOffset}-${block.endOffset}`;
       const currentCount = (this.executionCounts.get(rangeKey) ?? 0) + 1;
       this.executionCounts.set(rangeKey, currentCount);
 
-      // If the block has been executed more than once, we want to highlight it
-      // There's basically a "bug" in webkit (which is now grandfathered behaviour I guess)
-      // where it will report the range as executed if it was only syntactically evaluated.
-      if (currentCount > 1) {
+      if (currentCount > 2) {
         const range = new vscode.Range(start, end);
         const decorationType = vscode.window.createTextEditorDecorationType({
-          backgroundColor: "rgba(255, 0, 0, 0.1)",
+          backgroundColor: "rgba(255, 0, 0, 0.05)",
         });
 
-        editor.setDecorations(decorationType, [{ range }]);
-        this.decorations.add(decorationType);
+        const editor = vscode.window.visibleTextEditors.find(
+          editor => editor.document.uri.toString() === uri.toString(),
+        );
+
+        if (editor) {
+          editor.setDecorations(decorationType, [{ range }]);
+          this.editorState.addDecoration(decorationType);
+        }
       }
     }
   }
 
   dispose() {
-    this.clearDecorations();
     this.clearIntervals();
     this.executionCounts.clear();
   }
 }
 
 class BunDiagnosticsManager {
-  private diagnosticCollection: vscode.DiagnosticCollection;
-  private coverageReporter: CoverageReporter;
-  private debugAdapter: DebugAdapter | null = null;
+  private editorState: EditorStateManager;
   private signal: UnixSignal | TCPSocketSignal;
   private urlBunShouldListenOn: string;
+  private context: vscode.ExtensionContext;
+
+  public get signalUrl() {
+    return this.signal.url;
+  }
+
+  public get bunInspectUrl() {
+    return this.urlBunShouldListenOn;
+  }
 
   public static async initialize(context: vscode.ExtensionContext) {
     const urlBunShouldListenOn = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
     const signal = os.platform() !== "win32" ? new UnixSignal() : new TCPSocketSignal(await getAvailablePort());
-
-    context.environmentVariableCollection.append("BUN_INSPECT", `${urlBunShouldListenOn}?wait=1`);
-    context.environmentVariableCollection.append("BUN_INSPECT_NOTIFY", signal.url);
-    context.environmentVariableCollection.append("BUN_HIDE_INSPECTOR_MESSAGE", "1");
 
     return new BunDiagnosticsManager(context, {
       urlBunShouldListenOn,
@@ -173,80 +207,56 @@ class BunDiagnosticsManager {
     });
   }
 
-  private constructor(
-    context: vscode.ExtensionContext,
-    options: {
-      urlBunShouldListenOn: string;
-      signal: UnixSignal | TCPSocketSignal;
-    },
-  ) {
-    this.urlBunShouldListenOn = options.urlBunShouldListenOn;
-    this.signal = options.signal;
-    this.diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
-    this.coverageReporter = new CoverageReporter(this.diagnosticCollection);
-
-    this.signal.on("Signal.received", () => this.handleNewConnection());
-
-    context.subscriptions.push(this.diagnosticCollection, this.coverageReporter, {
-      dispose: () => {
-        this.signal.close();
-        this.signal.removeAllListeners();
-        this.coverageReporter.dispose();
-      },
-    });
-  }
-
+  /**
+   * Called when Bun pings BUN_INSPECT_NOTIFY (indicating a program has started).
+   */
   private async handleNewConnection() {
-    this.coverageReporter.clearDecorations();
-    await this.setupDebugAdapter();
+    // Clear all diagnostics and decorations so the editor is clean
+    this.editorState.clearAll();
+
+    await this.setupDebugAdapter(new DebugAdapter(), new CoverageReporter(this.editorState));
   }
 
-  private async setupDebugAdapter() {
-    this.debugAdapter = new DebugAdapter();
-
-    this.debugAdapter.on("Debugger.scriptParsed", async event => {
-      await this.handleScriptParsed(event);
+  private async setupDebugAdapter(debugAdapter: DebugAdapter, coverageReporter: CoverageReporter) {
+    debugAdapter.on("Debugger.scriptParsed", async event => {
+      await this.handleScriptParsed(debugAdapter, event, coverageReporter);
     });
 
-    this.debugAdapter.on("Console.messageAdded", params => {
+    debugAdapter.on("Console.messageAdded", params => {
       this.handleConsoleMessage(params);
     });
 
-    this.signal.once("Signal.closed", () => {
-      if (!this.debugAdapter) {
-        return;
-      }
+    const dispose = () => {
+      debugAdapter.close();
+      debugAdapter.removeAllListeners();
+      coverageReporter.dispose();
+    };
 
-      this.debugAdapter.close();
-      this.debugAdapter.removeAllListeners();
-      this.coverageReporter.clearIntervals();
-    });
+    this.signal.once("Signal.closed", dispose);
+    this.context.subscriptions.push({ dispose });
 
-    const ok = await this.debugAdapter.start(this.urlBunShouldListenOn);
+    const ok = await debugAdapter.start(this.urlBunShouldListenOn);
     if (!ok) {
       await vscode.window.showErrorMessage("Failed to start Bun debug adapter");
       return;
     }
 
-    this.debugAdapter.initialize({
+    debugAdapter.initialize({
       adapterID: "bun-vsc-terminal-debug-adapter",
       enableControlFlowProfiler: true,
     });
   }
 
-  private async handleScriptParsed(event: JSC.Debugger.ScriptParsedEvent) {
-    if (!this.debugAdapter || !event.sourceMapURL) return;
-
-    const { scriptSource } = await this.debugAdapter.send("Debugger.getScriptSource", {
+  private async handleScriptParsed(
+    debugAdapter: DebugAdapter,
+    event: JSC.Debugger.ScriptParsedEvent,
+    coverageReporter: CoverageReporter,
+  ) {
+    const { scriptSource } = await debugAdapter.send("Debugger.getScriptSource", {
       scriptId: event.scriptId,
     });
 
-    await this.coverageReporter.createCoverageReportingTimer(
-      this.debugAdapter,
-      event,
-      scriptSource,
-      event.sourceMapURL,
-    );
+    await coverageReporter.createCoverageReportingTimer(debugAdapter, event, scriptSource, event.sourceMapURL);
   }
 
   private handleConsoleMessage(params: JSC.Console.MessageAddedEvent) {
@@ -262,10 +272,36 @@ class BunDiagnosticsManager {
     );
 
     const diagnostic = new vscode.Diagnostic(range, params.message.text, vscode.DiagnosticSeverity.Error);
-    this.diagnosticCollection.set(uri, [diagnostic]);
+    this.editorState.setDiagnostic(uri, diagnostic);
+  }
+
+  private constructor(
+    context: vscode.ExtensionContext,
+    options: {
+      urlBunShouldListenOn: string;
+      signal: UnixSignal | TCPSocketSignal;
+    },
+  ) {
+    this.urlBunShouldListenOn = options.urlBunShouldListenOn;
+    this.signal = options.signal;
+    this.editorState = new EditorStateManager(vscode.languages.createDiagnosticCollection("BunDiagnostics"));
+    this.context = context;
+
+    this.signal.on("Signal.received", () => this.handleNewConnection());
+
+    context.subscriptions.push(this.editorState, {
+      dispose: () => {
+        this.signal.close();
+        this.signal.removeAllListeners();
+      },
+    });
   }
 }
 
 export async function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
-  await BunDiagnosticsManager.initialize(context);
+  const manager = await BunDiagnosticsManager.initialize(context);
+
+  context.environmentVariableCollection.append("BUN_INSPECT", `${manager.bunInspectUrl}?wait=1`);
+  context.environmentVariableCollection.append("BUN_INSPECT_NOTIFY", manager.signalUrl);
+  context.environmentVariableCollection.append("BUN_HIDE_INSPECTOR_MESSAGE", "1");
 }

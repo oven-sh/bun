@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test";
+// @bun
+const { afterEach, describe, expect, test } = Bun.jest(import.meta.path);
 
 describe("example", () => {
   test("The", async () => {
-    const s = await new Promise<ReturnType<(typeof Bun)["serve"]>>(resolve => {
+    const s = await new Promise(resolve => {
       const s = Bun.serve({
         port: 3000,
         fetch: async () => {

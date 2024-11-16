@@ -52,8 +52,8 @@ class EditorStateManager {
   private decorations = new Set<vscode.TextEditorDecorationType>();
   private diagnosticCollection: vscode.DiagnosticCollection;
 
-  public constructor(diagnosticCollection: vscode.DiagnosticCollection) {
-    this.diagnosticCollection = diagnosticCollection;
+  public constructor() {
+    this.diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
   }
 
   clearDecorations() {
@@ -283,6 +283,15 @@ class BunDiagnosticsManager {
     this.editorState.setDiagnostic(uri, diagnostic);
   }
 
+  public dispose() {
+    return vscode.Disposable.from(this.editorState, {
+      dispose: () => {
+        this.signal.close();
+        this.signal.removeAllListeners();
+      },
+    });
+  }
+
   private constructor(
     context: vscode.ExtensionContext,
     options: {
@@ -291,18 +300,11 @@ class BunDiagnosticsManager {
     },
   ) {
     this.urlBunShouldListenOn = options.urlBunShouldListenOn;
+    this.editorState = new EditorStateManager();
     this.signal = options.signal;
-    this.editorState = new EditorStateManager(vscode.languages.createDiagnosticCollection("BunDiagnostics"));
     this.context = context;
 
     this.signal.on("Signal.received", () => this.handleNewConnection());
-
-    context.subscriptions.push(this.editorState, {
-      dispose: () => {
-        this.signal.close();
-        this.signal.removeAllListeners();
-      },
-    });
   }
 }
 
@@ -312,4 +314,6 @@ export async function registerDiagnosticsSocket(context: vscode.ExtensionContext
   context.environmentVariableCollection.append("BUN_INSPECT", `${manager.bunInspectUrl}?wait=1`);
   context.environmentVariableCollection.append("BUN_INSPECT_NOTIFY", manager.signalUrl);
   context.environmentVariableCollection.append("BUN_HIDE_INSPECTOR_MESSAGE", "1");
+
+  context.subscriptions.push(manager);
 }

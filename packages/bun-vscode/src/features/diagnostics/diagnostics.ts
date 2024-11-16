@@ -84,15 +84,18 @@ class CoverageReporter {
     const map = SourceMap(sourceMapURL);
     const uri = vscode.Uri.file(event.url);
 
-    const transpiledOffsetToOriginalPosition = (offset: number): vscode.Position => {
-      const { line, column } = byteOffsetToPosition(scriptSource, offset);
-      const original = map.originalLocation({ line, column });
-      return new vscode.Position(original.line, original.column);
+    const report = () => {
+      return this.reportCoverage(adapter, event, uri, (offset: number) => {
+        const { line, column } = byteOffsetToPosition(scriptSource, offset);
+        const original = map.originalLocation({ line, column });
+        return new vscode.Position(original.line, original.column);
+      });
     };
 
-    const timer = setInterval(() => this.reportCoverage(adapter, event, uri, transpiledOffsetToOriginalPosition), 1000);
-
+    const timer = setInterval(report, 1000);
     this.coverageIntervalMap.set(event.scriptId, timer);
+
+    await report();
   }
 
   private async reportCoverage(

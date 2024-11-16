@@ -50,6 +50,7 @@ class CoverageReporter {
   private decorations = new Set<vscode.TextEditorDecorationType>();
   private diagnosticCollection: vscode.DiagnosticCollection;
   private coverageIntervalMap = new Map<string, NodeJS.Timer>();
+  private executionCounts = new Map<string, number>();
 
   constructor(diagnosticCollection: vscode.DiagnosticCollection) {
     this.diagnosticCollection = diagnosticCollection;
@@ -122,19 +123,29 @@ class CoverageReporter {
 
       if (end.character === editor.document.getText().length) continue;
 
-      const range = new vscode.Range(start, end);
-      const decorationType = vscode.window.createTextEditorDecorationType({
-        backgroundColor: "rgba(255, 0, 0, 0.1)",
-      });
+      const rangeKey = `${event.scriptId}:${block.startOffset}-${block.endOffset}`;
+      const currentCount = (this.executionCounts.get(rangeKey) ?? 0) + 1;
+      this.executionCounts.set(rangeKey, currentCount);
 
-      editor.setDecorations(decorationType, [{ range }]);
-      this.decorations.add(decorationType);
+      // If the block has been executed more than once, we want to highlight it
+      // There's basically a "bug" in webkit (which is now grandfathered behaviour I guess)
+      // where it will report the range as executed if it was only syntactically evaluated.
+      if (currentCount > 1) {
+        const range = new vscode.Range(start, end);
+        const decorationType = vscode.window.createTextEditorDecorationType({
+          backgroundColor: "rgba(255, 0, 0, 0.1)",
+        });
+
+        editor.setDecorations(decorationType, [{ range }]);
+        this.decorations.add(decorationType);
+      }
     }
   }
 
   dispose() {
     this.clearDecorations();
     this.clearIntervals();
+    this.executionCounts.clear();
   }
 }
 

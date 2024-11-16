@@ -2979,6 +2979,7 @@ pub const BundleV2 = struct {
                 if (process_log) {
                     if (this.bundler.options.dev_server) |dev_server| {
                         dev_server.handleParseTaskFailure(
+                            err.err,
                             err.target.bakeGraph(),
                             this.graph.input_files.items(.source)[err.source_index.get()].path.text,
                             &err.log,
@@ -3777,6 +3778,7 @@ pub const ParseTask = struct {
                                 "File not found {}",
                                 .{bun.fmt.quote(file_path.text)},
                             ) catch {};
+                            return error.FileNotFound;
                         },
                         else => {
                             log.addErrorFmt(

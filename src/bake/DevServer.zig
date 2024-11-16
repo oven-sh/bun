@@ -84,18 +84,7 @@ server_register_update_callback: JSC.Strong,
 // Watching
 bun_watcher: *JSC.Watcher,
 directory_watchers: DirectoryWatchStore,
-/// Only two hot-reload tasks exist ever, since only one bundle may be active at
-/// once. Memory is reused by swapping between these two. These items are
-/// aligned to cache lines to reduce contention, since these structures are
-/// carefully passed between two threads.
-watch_events: [2]HotReloadEvent.Aligned,
-/// 0  - no watch
-/// 1  - has fired additional watch
-/// 2+ - new events available, watcher is waiting on bundler to finish
-watch_state: std.atomic.Value(u32),
-/// Which event is the watcher holding on to. This is not atomic because only
-/// the watcher thread uses this value.
-watch_current: u1 = 0,
+watcher_atomics: WatcherAtomics,
 
 /// Number of bundles that have been executed. This is currently not read, but
 /// will be used later to determine when to invoke graph garbage collection.
@@ -244,8 +233,6 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .graph_safety_lock = bun.DebugThreadLock.unlocked,
         .dump_dir = dump_dir,
         .framework = options.framework,
-        .watch_state = .{ .raw = 0 },
-        .watch_current = 0,
         .emit_visualizer_events = 0,
         .has_pre_crash_handler = options.dump_state_on_crash,
         .css_files = .{},
@@ -271,9 +258,9 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .client_bundler = undefined,
         .ssr_bundler = undefined,
         .bun_watcher = undefined,
-        .watch_events = undefined,
         .configuration_hash_key = undefined,
         .router = undefined,
+        .watcher_atomics = undefined,
     });
     const global = dev.vm.global;
     errdefer allocator.destroy(dev);
@@ -299,10 +286,8 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.server_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     dev.client_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     dev.ssr_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
-    dev.watch_events = .{
-        .{ .aligned = HotReloadEvent.initEmpty(dev) },
-        .{ .aligned = HotReloadEvent.initEmpty(dev) },
-    };
+
+    dev.watcher_atomics = WatcherAtomics.init(dev);
 
     dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_bundler) catch |err|
         return global.throwZigError(err, generic_action);
@@ -338,9 +323,28 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             hash.update(bun.Environment.git_sha_short);
         }
 
-        // TODO: hash router types
-        // hash.update(dev.framework.entry_client);
-        // hash.update(dev.framework.entry_server);
+        for (dev.framework.file_system_router_types) |fsr| {
+            bun.writeAnyToHasher(&hash, fsr.allow_layouts);
+            bun.writeAnyToHasher(&hash, fsr.ignore_underscores);
+            hash.update(fsr.entry_server);
+            hash.update(&.{0});
+            hash.update(fsr.entry_client orelse "");
+            hash.update(&.{0});
+            hash.update(fsr.prefix);
+            hash.update(&.{0});
+            hash.update(fsr.root);
+            hash.update(&.{0});
+            for (fsr.extensions) |ext| {
+                hash.update(ext);
+                hash.update(&.{0});
+            }
+            hash.update(&.{0});
+            for (fsr.ignore_dirs) |dir| {
+                hash.update(dir);
+                hash.update(&.{0});
+            }
+            hash.update(&.{0});
+        }
 
         if (dev.framework.server_components) |sc| {
             bun.writeAnyToHasher(&hash, true);
@@ -364,7 +368,16 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             bun.writeAnyToHasher(&hash, false);
         }
 
-        // TODO: dev.framework.built_in_modules
+        for (dev.framework.built_in_modules.keys(), dev.framework.built_in_modules.values()) |k, v| {
+            hash.update(k);
+            hash.update(&.{0});
+            bun.writeAnyToHasher(&hash, std.meta.activeTag(v));
+            hash.update(switch (v) {
+                inline else => |data| data,
+            });
+            hash.update(&.{0});
+        }
+        hash.update(&.{0});
 
         break :hash_key std.fmt.bytesToHex(std.mem.asBytes(&hash.final()), .lower);
     };
@@ -414,7 +427,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         break :router try FrameworkRouter.initEmpty(types.items, allocator);
     };
 
-    // TODO: move pre-bundling to be one tick after server startup.
+    // TODO: move scanning to be one tick after server startup.
     // this way the line saying the server is ready shows quicker
     try dev.scanInitialRoutes();
 
@@ -576,104 +589,115 @@ fn ensureRouteIsBundled(
     else
         try dev.insertRouteBundle(route_index);
 
-    switch (dev.routeBundlePtr(route_bundle_index).server_state) {
-        .unqueued => {
-            try dev.next_bundle.requests.ensureUnusedCapacity(dev.allocator, 1);
-            if (dev.current_bundle != null) {
-                try dev.next_bundle.route_queue.ensureUnusedCapacity(dev.allocator, 1);
-            }
-
-            const deferred: DeferredRequest = .{
-                .route_bundle_index = route_bundle_index,
-                .data = switch (kind) {
-                    .js_payload => .{ .js_payload = resp },
-                    .server_handler => .{
-                        .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp) orelse return)
-                            .save(dev.vm.global, req, resp),
-                    },
-                },
-            };
-            errdefer @compileError("cannot error since the request is already stored");
-
-            dev.next_bundle.requests.appendAssumeCapacity(deferred);
-            if (dev.current_bundle != null) {
-                dev.next_bundle.route_queue.putAssumeCapacity(route_bundle_index, {});
-            } else {
-                var sfa = std.heap.stackFallback(4096, dev.allocator);
-                const temp_alloc = sfa.get();
-
-                var entry_points: BakeEntryPoints = BakeEntryPoints.empty;
-                defer entry_points.deinit(temp_alloc);
-
-                dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_index) catch bun.outOfMemory();
-
-                if (entry_points.set.count() == 0) {
-                    @panic("TODO: trace graph for possible errors, so DevServer knows what state this should go to");
+    // TODO: Zig 0.14 gets labelled continue:
+    // - Remove the `while`
+    // - Move the code after this switch into `.loaded =>`
+    // - Replace `break` with `continue :sw .loaded`
+    // - Replace `continue` with `continue :sw <state>`
+    while (true) {
+        switch (dev.routeBundlePtr(route_bundle_index).server_state) {
+            .unqueued => {
+                try dev.next_bundle.requests.ensureUnusedCapacity(dev.allocator, 1);
+                if (dev.current_bundle != null) {
+                    try dev.next_bundle.route_queue.ensureUnusedCapacity(dev.allocator, 1);
                 }
 
-                dev.startAsyncBundle(
-                    entry_points,
-                    false,
-                    std.time.Timer.start() catch @panic("timers unsupported"),
-                ) catch |err| {
-                    if (dev.log.hasAny()) {
-                        dev.log.print(Output.errorWriter()) catch {};
-                        Output.flush();
+                const deferred: DeferredRequest = .{
+                    .route_bundle_index = route_bundle_index,
+                    .data = switch (kind) {
+                        .js_payload => .{ .js_payload = resp },
+                        .server_handler => .{
+                            .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp) orelse return)
+                                .save(dev.vm.global, req, resp),
+                        },
+                    },
+                };
+                errdefer @compileError("cannot error since the request is already stored");
+
+                dev.next_bundle.requests.appendAssumeCapacity(deferred);
+                if (dev.current_bundle != null) {
+                    dev.next_bundle.route_queue.putAssumeCapacity(route_bundle_index, {});
+                } else {
+                    var sfa = std.heap.stackFallback(4096, dev.allocator);
+                    const temp_alloc = sfa.get();
+
+                    var entry_points: BakeEntryPoints = BakeEntryPoints.empty;
+                    defer entry_points.deinit(temp_alloc);
+
+                    dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_index) catch bun.outOfMemory();
+
+                    if (entry_points.set.count() == 0) {
+                        if (dev.bundling_failures.count() > 0) {
+                            dev.routeBundlePtr(route_bundle_index).server_state = .possible_bundling_failures;
+                        } else {
+                            dev.routeBundlePtr(route_bundle_index).server_state = .loaded;
+                        }
+                        continue;
                     }
-                    Output.panic("Fatal error while initializing bundle job: {}", .{err});
+
+                    dev.startAsyncBundle(
+                        entry_points,
+                        false,
+                        std.time.Timer.start() catch @panic("timers unsupported"),
+                    ) catch |err| {
+                        if (dev.log.hasAny()) {
+                            dev.log.print(Output.errorWriter()) catch {};
+                            Output.flush();
+                        }
+                        Output.panic("Fatal error while initializing bundle job: {}", .{err});
+                    };
+
+                    dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
+                }
+                return;
+            },
+            .bundling => {
+                bun.assert(dev.current_bundle != null);
+                try dev.current_bundle_requests.ensureUnusedCapacity(dev.allocator, 1);
+
+                const deferred: DeferredRequest = .{
+                    .route_bundle_index = route_bundle_index,
+                    .data = switch (kind) {
+                        .js_payload => .{ .js_payload = resp },
+                        .server_handler => .{
+                            .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp) orelse return)
+                                .save(dev.vm.global, req, resp),
+                        },
+                    },
                 };
 
-                dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
-            }
-            return;
-        },
-        .bundling => {
-            bun.assert(dev.current_bundle != null);
-            try dev.current_bundle_requests.ensureUnusedCapacity(dev.allocator, 1);
-
-            const deferred: DeferredRequest = .{
-                .route_bundle_index = route_bundle_index,
-                .data = switch (kind) {
-                    .js_payload => .{ .js_payload = resp },
-                    .server_handler => .{
-                        .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp) orelse return)
-                            .save(dev.vm.global, req, resp),
-                    },
-                },
-            };
-
-            dev.current_bundle_requests.appendAssumeCapacity(deferred);
-            return;
-        },
-        else => {},
-    }
-    switch (dev.routeBundlePtr(route_bundle_index).server_state) {
-        .unqueued => unreachable,
-        .bundling => @panic("TODO: Async Bundler"),
-        .possible_bundling_failures => {
-            // TODO: perform a graph trace to find just the errors that are needed
-            if (dev.bundling_failures.count() > 0) {
+                dev.current_bundle_requests.appendAssumeCapacity(deferred);
+                return;
+            },
+            .possible_bundling_failures => {
+                // TODO: perform a graph trace to find just the errors that are needed
+                if (dev.bundling_failures.count() > 0) {
+                    resp.corked(sendSerializedFailures, .{
+                        dev,
+                        resp,
+                        dev.bundling_failures.keys(),
+                        .bundler,
+                    });
+                    return;
+                } else {
+                    dev.routeBundlePtr(route_bundle_index).server_state = .loaded;
+                    break;
+                }
+            },
+            .evaluation_failure => {
                 resp.corked(sendSerializedFailures, .{
                     dev,
                     resp,
-                    dev.bundling_failures.keys(),
-                    .bundler,
+                    (&(dev.routeBundlePtr(route_bundle_index).evaluate_failure orelse @panic("missing error")))[0..1],
+                    .evaluation,
                 });
                 return;
-            } else {
-                dev.routeBundlePtr(route_bundle_index).server_state = .loaded;
-            }
-        },
-        .evaluation_failure => {
-            resp.corked(sendSerializedFailures, .{
-                dev,
-                resp,
-                (&(dev.routeBundlePtr(route_bundle_index).evaluate_failure orelse @panic("missing error")))[0..1],
-                .evaluation,
-            });
-            return;
-        },
-        .loaded => {},
+            },
+            .loaded => break,
+        }
+
+        // this error is here to make sure the above is explicit and we are not looping accidentally
+        @compileError("all branches above should `return`, `break` or `continue`");
     }
 
     switch (kind) {
@@ -939,11 +963,12 @@ fn indexFailures(dev: *DevServer) !void {
             }
         }
 
-        for (dev.incremental_result.routes_affected.items) |route_index| {
-            _ = route_index; // autofix
-            // const route = &dev.route_bundles[route_index.get()];
-            // route.server_state = .possible_bundling_failures;
-            @panic("todo");
+        for (dev.incremental_result.routes_affected.items) |entry| {
+            if (dev.router.routePtr(entry.route_index).bundle.unwrap()) |index| {
+                dev.routeBundlePtr(index).server_state = .possible_bundling_failures;
+            }
+            if (entry.should_recurse_when_visiting)
+                dev.markAllRouteChildrenFailed(entry.route_index);
         }
 
         dev.publish(HmrSocket.global_topic, payload.items, .binary);
@@ -1472,7 +1497,7 @@ pub fn finalizeBundle(
     }
 
     // Clear the current bundle
-    dev.log.deinit(); // TODO: rename this clearAndFree, the log is still valid!
+    dev.log.clearAndFree();
 
     dev.current_bundle = null;
     dev.current_bundle_requests.clearRetainingCapacity();
@@ -1488,8 +1513,9 @@ pub fn finalizeBundle(
         if (dev.next_bundle.reload_event) |event| {
             event.processFileList(dev, &entry_points, temp_alloc);
 
-            if (dev.watch_state.swap(0, .seq_cst) > 1) {
-                @panic("TODO: un-regress watcher atomics hell");
+            if (dev.watcher_atomics.recycleEventFromDevServer(event)) |second| {
+                second.processFileList(dev, &entry_points, temp_alloc);
+                dev.watcher_atomics.recycleSecondEventFromDevServer(second);
             }
         }
 
@@ -1506,6 +1532,7 @@ pub fn finalizeBundle(
         ) catch bun.outOfMemory();
 
         dev.next_bundle.route_queue.clearRetainingCapacity();
+        dev.next_bundle.reload_event = null;
     }
 }
 
@@ -1521,6 +1548,7 @@ fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u
 
 pub fn handleParseTaskFailure(
     dev: *DevServer,
+    err: anyerror,
     graph: bake.Graph,
     abs_path: []const u8,
     log: *Log,
@@ -1528,18 +1556,27 @@ pub fn handleParseTaskFailure(
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
 
-    // Print each error only once
-    Output.prettyErrorln("<red><b>Errors while bundling '{s}':<r>", .{
-        dev.relativePath(abs_path),
-    });
-    Output.flush();
-    log.print(Output.errorWriter()) catch {};
+    if (err == error.FileNotFound) {
+        // Special-case files being deleted. Note that if a
+        // file never existed, resolution would fail first.
+        switch (graph) {
+            .server, .ssr => try dev.server_graph.onFileDeleted(abs_path, log),
+            .client => try dev.client_graph.onFileDeleted(abs_path, log),
+        }
+    } else {
+        // Print each error only once
+        Output.prettyErrorln("<red><b>Errors while bundling '{s}':<r>", .{
+            dev.relativePath(abs_path),
+        });
+        Output.flush();
+        log.print(Output.errorWriter()) catch {};
 
-    return switch (graph) {
-        .server => dev.server_graph.insertFailure(abs_path, log, false),
-        .ssr => dev.server_graph.insertFailure(abs_path, log, true),
-        .client => dev.client_graph.insertFailure(abs_path, log, false),
-    };
+        switch (graph) {
+            .server => try dev.server_graph.insertFailure(abs_path, log, false),
+            .ssr => try dev.server_graph.insertFailure(abs_path, log, true),
+            .client => try dev.client_graph.insertFailure(abs_path, log, false),
+        }
+    }
 }
 
 const CacheEntry = struct {
@@ -2552,6 +2589,17 @@ pub fn IncrementalGraph(side: bake.Side) type {
             }
         }
 
+        pub fn onFileDeleted(g: *@This(), abs_path: []const u8, log: *const Log) !void {
+            const index = g.getFileIndex(abs_path) orelse return;
+
+            if (g.first_dep.items[index.get()] == .none) {
+                g.disconnectAndDeleteFile(index);
+            } else {
+                // Keep the file so others may refer to it, but mark as failed.
+                try g.insertFailure(abs_path, log, false);
+            }
+        }
+
         pub fn ensureStaleBitCapacity(g: *@This(), are_new_files_stale: bool) !void {
             try g.stale_files.resize(
                 g.owner().allocator,
@@ -2714,8 +2762,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
         }
 
         fn disconnectAndDeleteFile(g: *@This(), file_index: FileIndex) void {
-            const last = FileIndex.init(@intCast(g.bundled_files.count() - 1));
-
             bun.assert(g.bundled_files.count() > 1); // never remove all files
             bun.assert(g.first_dep.items[file_index.get()] == .none); // must have no dependencies
 
@@ -2729,51 +2775,21 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                     g.disconnectEdgeFromDependencyList(edge_index);
                     g.freeEdge(edge_index);
+
+                    // TODO: a flag to this function which is queues all
+                    // direct importers to rebuild themselves, which will
+                    // display the bundling errors.
                 }
             }
+
+            const keys = g.bundled_files.keys();
+
+            g.owner().allocator.free(keys[file_index.get()]);
+            keys[file_index.get()] = ""; // cannot be `undefined` as it may be read by hashmap logic
 
             // TODO: it is infeasible to swapRemove a file since FrameworkRouter
-            // contains file indices to the server graph. This logic is disabled
-            // until it can properly handle not releasing a file referenced by
-            // a route.
-            {
-                return;
-            }
-
-            g.bundled_files.swapRemoveAt(file_index.get());
-
-            // Move out-of-line data from `last` to replace `file_index`
-            _ = g.first_dep.swapRemove(file_index.get());
-            _ = g.first_import.swapRemove(file_index.get());
-
-            if (file_index != last) {
-                g.stale_files.setValue(file_index.get(), g.stale_files.isSet(last.get()));
-
-                // This set is not always initialized, so ignore if it's empty
-                if (g.affected_by_trace.bit_length > 0) {
-                    g.affected_by_trace.setValue(file_index.get(), g.affected_by_trace.isSet(last.get()));
-                }
-
-                // Adjust all referenced edges to point to the new file
-                {
-                    var it: ?EdgeIndex = g.first_import.items[file_index.get()].unwrap();
-                    while (it) |edge_index| {
-                        const dep = &g.edges.items[edge_index.get()];
-                        it = dep.next_import.unwrap();
-                        assert(dep.dependency == last);
-                        dep.dependency = file_index;
-                    }
-                }
-                {
-                    var it: ?EdgeIndex = g.first_dep.items[file_index.get()].unwrap();
-                    while (it) |edge_index| {
-                        const dep = &g.edges.items[edge_index.get()];
-                        it = dep.next_dependency.unwrap();
-                        assert(dep.imported == last);
-                        dep.imported = file_index;
-                    }
-                }
-            }
+            // contains file indices to the server graph. Instead, `file_index`
+            // should go in a free-list for use by new files.
         }
 
         fn newEdge(g: *@This(), edge: Edge) !EdgeIndex {
@@ -3320,10 +3336,13 @@ pub const SerializedFailure = struct {
     fn writeLogData(data: bun.logger.Data, w: Writer) !void {
         try writeString32(data.text, w);
         if (data.location) |loc| {
-            assert(loc.line >= 0); // one based and not negative
+            if (loc.line < 0) {
+                try w.writeInt(u32, 0, .little);
+                return;
+            }
             assert(loc.column >= 0); // zero based and not negative
 
-            try w.writeInt(u32, @intCast(loc.line), .little);
+            try w.writeInt(i32, @intCast(loc.line), .little);
             try w.writeInt(u32, @intCast(loc.column), .little);
             try w.writeInt(u32, @intCast(loc.length), .little);
 
@@ -3651,10 +3670,6 @@ pub fn startReloadBundle(dev: *DevServer, event: *HotReloadEvent) bun.OOM!void {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
         return;
     };
-
-    // dev.graph_safety_lock.lock();
-    // defer dev.graph_safety_lock.unlock();
-
 }
 
 fn markAllRouteChildren(router: *FrameworkRouter, bits: *DynamicBitSetUnmanaged, route_index: Route.Index) void {
@@ -3667,25 +3682,43 @@ fn markAllRouteChildren(router: *FrameworkRouter, bits: *DynamicBitSetUnmanaged,
     }
 }
 
+fn markAllRouteChildrenFailed(dev: *DevServer, route_index: Route.Index) void {
+    var next = dev.router.routePtr(route_index).first_child.unwrap();
+    while (next) |child_index| {
+        const route = dev.router.routePtr(child_index);
+        if (route.bundle.unwrap()) |index| {
+            dev.routeBundlePtr(index).server_state = .possible_bundling_failures;
+        }
+        markAllRouteChildrenFailed(dev, child_index);
+        next = route.next_sibling.unwrap();
+    }
+}
+
 /// This task informs the DevServer's thread about new files to be bundled.
 pub const HotReloadEvent = struct {
-    /// Align to cache lines to reduce contention.
+    /// Align to cache lines to eliminate contention.
     const Aligned = struct { aligned: HotReloadEvent align(std.atomic.cache_line) };
 
-    dev: *DevServer,
-    concurrent_task: JSC.ConcurrentTask = undefined,
-
+    owner: *DevServer,
+    /// Initialized in WatcherAtomics.watcherReleaseAndSubmitEvent
+    concurrent_task: JSC.ConcurrentTask,
+    /// The watcher is not able to peek into the incremental graph to know what
+    /// files to invalidate, so the watch events are de-duplicated and passed
+    /// along.
     files: bun.StringArrayHashMapUnmanaged(Watcher.Event.Op),
-    timer: std.time.Timer = undefined,
+    /// Initialized by the WatcherAtomics.watcherAcquireEvent
+    timer: std.time.Timer,
+    /// This event may be referenced by either DevServer or Watcher thread.
+    /// 1 if referenced, 0 if unreferenced; see WatcherAtomics
+    contention_indicator: std.atomic.Value(u32),
 
-    /// I am sorry.
-    state: std.atomic.Value(u32),
-
-    pub fn initEmpty(dev: *DevServer) HotReloadEvent {
+    pub fn initEmpty(owner: *DevServer) HotReloadEvent {
         return .{
-            .dev = dev,
+            .owner = owner,
+            .concurrent_task = undefined,
             .files = .{},
-            .state = .{ .raw = 0 },
+            .timer = undefined,
+            .contention_indicator = std.atomic.Value(u32).init(0),
         };
     }
 
@@ -3728,87 +3761,224 @@ pub const HotReloadEvent = struct {
         }
     }
 
-    pub fn run(initial: *HotReloadEvent) void {
+    pub fn run(first: *HotReloadEvent) void {
         debug.log("HMR Task start", .{});
         defer debug.log("HMR Task end", .{});
 
-        // TODO: audit the atomics with this reloading strategy
-        // It was not written by an expert.
-
-        const dev = initial.dev;
+        const dev = first.owner;
         if (Environment.allow_assert) {
-            assert(initial.state.load(.seq_cst) == 0);
+            assert(first.contention_indicator.load(.seq_cst) == 0);
         }
 
         if (dev.current_bundle != null) {
-            dev.next_bundle.reload_event = initial;
+            dev.next_bundle.reload_event = first;
             return;
         }
-        dev.startReloadBundle(initial) catch bun.outOfMemory();
 
-        // if there was a pending run, do it now
-        if (dev.watch_state.swap(0, .seq_cst) > 1) {
-            {
-                @panic("TODO: un-regress");
-            }
-            // debug.log("dual event fire", .{});
-            const current = if (initial == &dev.watch_events[0].aligned)
-                &dev.watch_events[1].aligned
-            else
-                &dev.watch_events[0].aligned;
-            if (current.state.swap(1, .seq_cst) == 0) {
-                // debug.log("case 1 (run now)", .{});
-                dev.startReloadBundle(current) catch bun.outOfMemory();
-                current.state.store(0, .seq_cst);
+        // defer event.files.clearRetainingCapacity();
+
+        var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+        const temp_alloc = sfb.get();
+        var entry_points: BakeEntryPoints = BakeEntryPoints.empty;
+        defer entry_points.deinit(temp_alloc);
+
+        first.processFileList(dev, &entry_points, temp_alloc);
+        const timer = first.timer;
+
+        if (dev.watcher_atomics.recycleEventFromDevServer(first)) |second| {
+            second.processFileList(dev, &entry_points, temp_alloc);
+            dev.watcher_atomics.recycleSecondEventFromDevServer(second);
+        }
+
+        if (entry_points.set.count() == 0) {
+            Output.debugWarn("nothing to bundle. watcher may potentially be watching too many files.", .{});
+            return;
+        }
+
+        dev.startAsyncBundle(
+            entry_points,
+            true,
+            timer,
+        ) catch |err| {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            return;
+        };
+    }
+};
+
+/// All code working with atomics to communicate watcher is in this struct. It
+/// attempts to recycle as much memory as possible since files are very
+/// frequently updated.
+const WatcherAtomics = struct {
+    const log = Output.scoped(.DevServerWatchAtomics, true);
+
+    /// Only two hot-reload tasks exist ever, since only one bundle may be active at
+    /// once. Memory is reused by swapping between these two. These items are
+    /// aligned to cache lines to reduce contention, since these structures are
+    /// carefully passed between two threads.
+    events: [2]HotReloadEvent.Aligned align(std.atomic.cache_line),
+    /// 0  - no watch
+    /// 1  - has fired additional watch
+    /// 2+ - new events available, watcher is waiting on bundler to finish
+    watcher_events_emitted: std.atomic.Value(u32),
+    /// Which event is the watcher holding on to.
+    /// This is not atomic because only the watcher thread uses this value.
+    current: u1 align(std.atomic.cache_line),
+
+    watcher_has_event: std.debug.SafetyLock,
+    dev_server_has_event: std.debug.SafetyLock,
+
+    pub fn init(dev: *DevServer) WatcherAtomics {
+        return .{
+            .events = .{
+                .{ .aligned = HotReloadEvent.initEmpty(dev) },
+                .{ .aligned = HotReloadEvent.initEmpty(dev) },
+            },
+            .current = 0,
+            .watcher_events_emitted = std.atomic.Value(u32).init(0),
+            .watcher_has_event = .{},
+            .dev_server_has_event = .{},
+        };
+    }
+
+    /// Atomically get a *HotReloadEvent that is not used by the DevServer thread
+    /// Call `watcherRelease` when it is filled with files.
+    fn watcherAcquireEvent(state: *WatcherAtomics) *HotReloadEvent {
+        state.watcher_has_event.lock();
+
+        var ev: *HotReloadEvent = &state.events[state.current].aligned;
+        switch (ev.contention_indicator.swap(1, .seq_cst)) {
+            0 => {
+                // New event, initialize the timer if it is empty.
+                if (ev.files.count() == 0)
+                    ev.timer = std.time.Timer.start() catch unreachable;
+            },
+            1 => {
+                // @branchHint(.unlikely);
+                // DevServer stole this event. Unlikely but possible when
+                // the user is saving very heavily (10-30 times per second)
+                state.current +%= 1;
+                ev = &state.events[state.current].aligned;
+                if (Environment.allow_assert) {
+                    bun.assert(ev.contention_indicator.swap(1, .seq_cst) == 0);
+                }
+            },
+            else => unreachable,
+        }
+
+        ev.owner.bun_watcher.thread_lock.assertLocked();
+
+        return ev;
+    }
+
+    /// Release the pointer from `watcherAcquireHotReloadEvent`, submitting
+    /// the event if it contains new files.
+    fn watcherReleaseAndSubmitEvent(state: *WatcherAtomics, ev: *HotReloadEvent) void {
+        state.watcher_has_event.unlock();
+        ev.owner.bun_watcher.thread_lock.assertLocked();
+
+        if (ev.files.count() > 0) {
+            // @branchHint(.likely);
+            // There are files to be processed, increment this count first.
+            const prev_count = state.watcher_events_emitted.fetchAdd(1, .seq_cst);
+
+            if (prev_count == 0) {
+                // @branchHint(.likely);
+                // Submit a task to the DevServer, notifying it that there is
+                // work to do. The watcher will move to the other event.
+                ev.concurrent_task = .{
+                    .auto_delete = false,
+                    .next = null,
+                    .task = JSC.Task.init(ev),
+                };
+                ev.contention_indicator.store(0, .seq_cst);
+                ev.owner.vm.event_loop.enqueueTaskConcurrent(&ev.concurrent_task);
+                state.current +%= 1;
             } else {
-                // Watcher will emit an event since it reads watch_state 0
-                // debug.log("case 2 (run later)", .{});
+                // DevServer thread has already notified once. Sending
+                // a second task would give ownership of both events to
+                // them. Instead, DevServer will steal this item since
+                // it can observe `watcher_events_emitted >= 2`.
+                ev.contention_indicator.store(0, .seq_cst);
             }
+        } else {
+            ev.contention_indicator.store(0, .seq_cst);
+        }
+
+        if (Environment.allow_assert) {
+            bun.assert(ev.contention_indicator.load(.monotonic) == 0); // always must be reset
+        }
+    }
+
+    /// Called by DevServer after it receives a task callback. If this returns
+    /// another event, that event must be recycled with `recycleSecondEventFromDevServer`
+    fn recycleEventFromDevServer(state: *WatcherAtomics, first_event: *HotReloadEvent) ?*HotReloadEvent {
+        first_event.files.clearRetainingCapacity();
+        first_event.timer = undefined;
+
+        // Reset the watch count to zero, while detecting if
+        // the other watch event was submitted.
+        if (state.watcher_events_emitted.swap(0, .seq_cst) >= 2) {
+            // Cannot use `state.current` because it will contend with the watcher.
+            // Since there are are two events, one pointer comparison suffices
+            const other_event = if (first_event == &state.events[0].aligned)
+                &state.events[1].aligned
+            else
+                &state.events[0].aligned;
+
+            switch (other_event.contention_indicator.swap(1, .seq_cst)) {
+                0 => {
+                    // DevServer holds the event now.
+                    state.dev_server_has_event.lock();
+                    return other_event;
+                },
+                1 => {
+                    // The watcher is currently using this event.
+                    // `watcher_events_emitted` is already zero, so it will
+                    // always submit.
+
+                    // Not 100% confident in this logic, but the only way
+                    // to hit this is by saving extremely frequently, and
+                    // a followup save will just trigger the reload.
+                    return null;
+                },
+                else => unreachable,
+            }
+        }
+
+        // If a watch callback had already acquired the event, that is fine as
+        // it will now read 0 when deciding if to submit the task.
+        return null;
+    }
+
+    fn recycleSecondEventFromDevServer(state: *WatcherAtomics, second_event: *HotReloadEvent) void {
+        second_event.files.clearRetainingCapacity();
+        second_event.timer = undefined;
+
+        state.dev_server_has_event.unlock();
+        if (Environment.allow_assert) {
+            const result = second_event.contention_indicator.swap(0, .seq_cst);
+            bun.assert(result == 1);
+        } else {
+            second_event.contention_indicator.store(0, .seq_cst);
         }
     }
 };
 
 /// Called on watcher's thread; Access to dev-server state restricted.
 pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?[:0]u8, watchlist: Watcher.ItemList) void {
+    _ = changed_files;
+
     debug.log("onFileUpdate start", .{});
     defer debug.log("onFileUpdate end", .{});
 
-    _ = changed_files;
     const slice = watchlist.slice();
     const file_paths = slice.items(.file_path);
     const counts = slice.items(.count);
     const kinds = slice.items(.kind);
 
-    // TODO: audit the atomics with this reloading strategy
-    // It was not written by an expert.
-
-    // Get a Hot reload task pointer
-    var ev: *HotReloadEvent = &dev.watch_events[dev.watch_current].aligned;
-    if (ev.state.swap(1, .seq_cst) == 1) {
-        debug.log("work got stolen, must guarantee the other is free", .{});
-        dev.watch_current +%= 1;
-        ev = &dev.watch_events[dev.watch_current].aligned;
-        bun.assert(ev.state.swap(1, .seq_cst) == 0);
-    } else {
-        ev.timer = std.time.Timer.start() catch unreachable;
-    }
-    defer {
-        // Submit the Hot reload task for bundling
-        if (ev.files.entries.len > 0) {
-            const prev_state = dev.watch_state.fetchAdd(1, .seq_cst);
-            ev.state.store(0, .seq_cst);
-            debug.log("prev_state={d}", .{prev_state});
-            if (prev_state == 0) {
-                ev.concurrent_task = .{ .auto_delete = false, .next = null, .task = JSC.Task.init(ev) };
-                dev.vm.event_loop.enqueueTaskConcurrent(&ev.concurrent_task);
-                dev.watch_current +%= 1;
-            } else {
-                // DevServer thread is notified.
-            }
-        } else {
-            ev.state.store(0, .seq_cst);
-        }
-    }
+    const ev = dev.watcher_atomics.watcherAcquireEvent();
+    defer dev.watcher_atomics.watcherReleaseAndSubmitEvent(ev);
 
     defer dev.bun_watcher.flushEvictions();
 

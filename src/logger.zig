@@ -838,6 +838,9 @@ pub const Log = struct {
         self.msgs.clearAndFree();
     }
 
+    // TODO: remove `deinit` because it does not de-initialize the log; it clears it
+    pub const clearAndFree = deinit;
+
     pub fn addVerboseWithNotes(log: *Log, source: ?*const Source, loc: Loc, text: string, notes: []Data) OOM!void {
         @setCold(true);
         if (!Kind.shouldPrint(.verbose, log.level)) return;

@@ -15,25 +15,7 @@ import {
 } from "../../../../bun-debug-adapter-protocol";
 import { SourceMap } from "../../../../bun-debug-adapter-protocol/src/debugger/sourcemap";
 import type { JSC } from "../../../../bun-inspector-protocol";
-import { ReconnectingWebSocket } from "./ws";
 
-// Types
-interface OriginalPosition {
-  originalLine: number;
-  originalColumn: number;
-}
-
-interface TextPosition {
-  line: number;
-  column: number;
-}
-
-interface WSClient {
-  socket: ReconnectingWebSocket;
-  disposable: { dispose(): void };
-}
-
-// Diagnostic Parsing
 function parseDiagnostics(view: DataView): Map<number, DeserializedFailure> {
   const reader = new DataViewReader(view, 1);
   const errors = new Map<number, DeserializedFailure>();
@@ -54,8 +36,7 @@ function parseDiagnostics(view: DataView): Map<number, DeserializedFailure> {
   return errors;
 }
 
-// Source Position Utilities
-function findOriginalLineAndColumn(runtimeObjects: JSC.Runtime.RemoteObject[]): OriginalPosition | null {
+function findOriginalLineAndColumn(runtimeObjects: JSC.Runtime.RemoteObject[]) {
   for (const obj of runtimeObjects) {
     if (obj.type !== "object" || obj.subtype !== "error" || !obj.preview?.properties) continue;
 
@@ -70,25 +51,27 @@ function findOriginalLineAndColumn(runtimeObjects: JSC.Runtime.RemoteObject[]): 
       };
     }
   }
+
   return null;
 }
 
-function byteOffsetToPosition(text: string, offset: number): TextPosition {
+function byteOffsetToPosition(text: string, offset: number) {
   const lines = text.split("\n");
   let remainingOffset = offset;
 
   for (let i = 0; i < lines.length; i++) {
     const lineLength = lines[i].length;
+
     if (remainingOffset <= lineLength) {
       return { line: i, column: remainingOffset };
     }
+
     remainingOffset -= lineLength + 1;
   }
 
   return { line: lines.length - 1, column: lines[lines.length - 1].length };
 }
 
-// Coverage Reporting
 class CoverageReporter {
   private decorations = new Set<vscode.TextEditorDecorationType>();
   private diagnosticCollection: vscode.DiagnosticCollection;
@@ -102,6 +85,7 @@ class CoverageReporter {
     for (const decoration of this.decorations) {
       decoration.dispose();
     }
+
     this.decorations.clear();
   }
 
@@ -131,9 +115,8 @@ class CoverageReporter {
     };
 
     const timer = setInterval(() => this.reportCoverage(adapter, event, uri, transpiledOffsetToOriginalPosition), 1000);
-    this.coverageIntervalMap.set(event.scriptId, timer);
 
-    await this.reportCoverage(adapter, event, uri, transpiledOffsetToOriginalPosition);
+    this.coverageIntervalMap.set(event.scriptId, timer);
   }
 
   private async reportCoverage(
@@ -175,14 +158,12 @@ class CoverageReporter {
   }
 }
 
-// Debug Adapter Setup
 async function setupDebugAdapter(
   signal: UnixSignal | TCPSocketSignal,
   url: string,
   coverageReporter: CoverageReporter,
   diagnosticCollection: vscode.DiagnosticCollection,
 ) {
-  coverageReporter.clearDecorations();
   const adapter = new DebugAdapter();
 
   adapter.on("Debugger.scriptParsed", async event => {
@@ -229,37 +210,30 @@ async function setupDebugAdapter(
   });
 }
 
-function setupEnvironmentVariables(
-  context: vscode.ExtensionContext,
-  url: string,
-  signal: UnixSignal | TCPSocketSignal,
-) {
-  context.environmentVariableCollection.append("BUN_INSPECT", `${url}?wait=1`);
-  context.environmentVariableCollection.append("BUN_INSPECT_NOTIFY", signal.url);
-  context.environmentVariableCollection.append("BUN_HIDE_INSPECTOR_MESSAGE", "1");
-}
-
-function setupDisposables(context: vscode.ExtensionContext, signal: UnixSignal | TCPSocketSignal) {
-  context.subscriptions.push({
-    dispose() {
-      signal.close();
-    },
-  });
-}
-
-// Main Extension Registration
 export async function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
   const diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
   const coverageReporter = new CoverageReporter(diagnosticCollection);
 
   context.subscriptions.push(diagnosticCollection);
 
+  // The url that Bun's inspector should listen on
+  const urlBunShouldListenOn = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
+
   const signal = os.platform() !== "win32" ? new UnixSignal() : new TCPSocketSignal(await getAvailablePort());
 
-  const url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
+  signal.on("Signal.received", async () => {
+    // On new connection from Bun, clear all decorations and setup the debug adapter
+    coverageReporter.clearDecorations();
+    await setupDebugAdapter(signal, urlBunShouldListenOn, coverageReporter, diagnosticCollection);
+  });
 
-  signal.on("Signal.received", () => setupDebugAdapter(signal, url, coverageReporter, diagnosticCollection));
+  context.environmentVariableCollection.append("BUN_INSPECT", `${urlBunShouldListenOn}?wait=1`);
+  context.environmentVariableCollection.append("BUN_INSPECT_NOTIFY", signal.url);
+  context.environmentVariableCollection.append("BUN_HIDE_INSPECTOR_MESSAGE", "1");
 
-  setupEnvironmentVariables(context, url, signal);
-  setupDisposables(context, signal);
+  context.subscriptions.push({
+    dispose() {
+      signal.close();
+    },
+  });
 }

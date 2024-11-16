@@ -512,7 +512,7 @@ pub fn deinit(dev: *DevServer) void {
 }
 
 fn onJsRequest(dev: *DevServer, req: *Request, resp: *Response) void {
-    const maybe_route_bundle = route: {
+    const maybe_route = route: {
         const route_id = req.parameter(0);
         if (!bun.strings.hasSuffixComptime(route_id, ".js"))
             return req.setYield(true);
@@ -524,8 +524,8 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: *Response) void {
             return req.setYield(true);
     };
 
-    if (maybe_route_bundle.unwrap()) |route_bundle| {
-        dev.ensureRouteIsBundled(route_bundle, .js_payload, req, resp) catch bun.outOfMemory();
+    if (maybe_route.unwrap()) |route| {
+        dev.ensureRouteIsBundled(route, .js_payload, req, resp) catch bun.outOfMemory();
     } else {
         @panic("TODO: generate client bundle with no source files");
     }
@@ -783,8 +783,8 @@ fn onRequestWithBundle(
             },
             // clientId
             route_bundle.cached_client_bundle_url.get() orelse str: {
-                const id, const route_index: RouteBundle.Index = if (router_type.client_file != .none)
-                    .{ std.crypto.random.int(u64), route_bundle.route }
+                const id, const route_index: Route.Index.Optional = if (router_type.client_file != .none)
+                    .{ std.crypto.random.int(u64), route_bundle.route.toOptional() }
                 else
                     // When there is no framework-provided client code, generate
                     // a JS file so that the hot-reloading code can reload the

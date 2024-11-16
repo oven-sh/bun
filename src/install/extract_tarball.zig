@@ -565,11 +565,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         } else {
             var index_dir = bun.MakePath.makeOpenPath(cache_dir, name, .{}) catch break :create_index;
             defer index_dir.close();
-            index_dir.symLink(
-                final_path,
-                dest_name,
-                .{ .is_directory = true },
-            ) catch break :create_index;
+
+            bun.sys.symlinkat(final_path, bun.toFD(index_dir), dest_name).unwrap() catch break :create_index;
         }
     }
 

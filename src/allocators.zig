@@ -469,11 +469,10 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         const Self = @This();
         const Overflow = OverflowList(ValueType, count / 4);
 
-        const TRAILING_SLASH_CHAR = if(Environment.isWindows)
+        const TRAILING_SLASH_CHAR = if (Environment.isWindows)
             "\\"
         else
             "/";
-
 
         index: IndexMap,
         overflow_list: Overflow = Overflow{},

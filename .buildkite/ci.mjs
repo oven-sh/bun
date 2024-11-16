@@ -470,7 +470,7 @@ function getPipeline(options) {
     if (os === "darwin") {
       parallelism = 2;
     } else {
-      parallelism = 5;
+      parallelism = 10;
     }
     let depends;
     let env;

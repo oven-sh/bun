@@ -550,12 +550,12 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 break :create_index;
             };
 
-            const dest_buf: bun.PathBuffer = undefined;
+            var dest_buf: bun.PathBuffer = undefined;
             const dest_path = bun.path.joinAbsStringBufZ(
                 // only set once, should be fine to read not on main thread
-                this.package_manager.caceh_directory_path,
+                this.package_manager.cache_directory_path,
                 &dest_buf,
-                &.{ name, dest_name },
+                &[_]string{ name, dest_name },
                 .windows,
             );
 

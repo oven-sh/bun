@@ -81,14 +81,29 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
 
     signal.on("Signal.received", async () => {
       const adapter = new DebugAdapter();
-      diagnosticCollection.clear();
+      const decorations = new Set<{ dispose(): void }>();
 
-      let coverageInterval: ReturnType<typeof setInterval> | null = null;
+      const coverageIntervalMap = new Map<string, ReturnType<typeof setInterval>>();
 
       adapter.on("Debugger.scriptParsed", async event => {
-        if (coverageInterval) {
-          clearInterval(coverageInterval);
+        const existingTimer = coverageIntervalMap.get(event.scriptId);
+        if (existingTimer) {
+          clearInterval(existingTimer);
         }
+
+        const { scriptSource } = await adapter.send("Debugger.getScriptSource", {
+          scriptId: event.scriptId,
+        });
+
+        const file = await vscode.workspace.openTextDocument({
+          language: "javascript",
+          content: scriptSource,
+        });
+
+        const uri = file.uri;
+        // const uri = vscode.Uri.file(event.url);
+
+        console.log(JSON.stringify(event));
 
         const reportCoverage = async () => {
           const response = await adapter
@@ -96,22 +111,65 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
               sourceID: event.scriptId,
             })
             .catch(e => {
-              console.log(JSON.stringify(e));
+              console.log(JSON.stringify(e.message));
               return null;
             });
+
+          diagnosticCollection.clear();
 
           if (!response) {
             return;
           }
 
+          for (const decoration of decorations) {
+            decoration.dispose();
+          }
+
+          decorations.clear();
+
           const { basicBlocks } = response;
 
-          console.log("Basic blocks:", JSON.stringify(basicBlocks));
+          blocks: for (const block of basicBlocks) {
+            if (!block.hasExecuted) {
+              continue blocks;
+            }
+
+            // Show to side of vscode that the .startOffset and .endOffset characters had executed IF .hasExecuted is true
+
+            // Must use .startOffset and .endOffset (which are byte offsets) to get the range. This does not include the line so we must calculate that ourselves.
+
+            const start = file.positionAt(block.startOffset);
+            const end = file.positionAt(block.endOffset);
+
+            if (end.character === file.getText().length) {
+              continue;
+            }
+
+            // show on side of editor (like by the line a little block of color) that this line ran (using vscode decoration)
+
+            const range = new vscode.Range(start, end);
+
+            console.log(file.getText(range));
+
+            const decorationType = vscode.window.createTextEditorDecorationType({
+              backgroundColor: "rgba(255, 0, 0, 0.1)",
+            });
+
+            const editorForURI = vscode.window.visibleTextEditors.find(
+              editor => editor.document.uri.toString() === uri.toString(),
+            );
+
+            if (editorForURI) {
+              editorForURI.setDecorations(decorationType, [{ range }]);
+              decorations.add(decorationType);
+            }
+          }
         };
 
         await reportCoverage();
 
-        coverageInterval = setInterval(reportCoverage, 1000);
+        const timer = setInterval(reportCoverage, 1000);
+        coverageIntervalMap.set(event.scriptId, timer);
       });
 
       adapter.on("Console.messageAdded", params => {
@@ -147,8 +205,8 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
         adapter.close();
         adapter.removeAllListeners();
 
-        if (coverageInterval) {
-          clearInterval(coverageInterval);
+        for (const interval of coverageIntervalMap.values()) {
+          clearInterval(interval);
         }
       });
 
@@ -162,7 +220,7 @@ export function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
       adapter.initialize({
         // TODO: Should we be generating this ID? What's it supposed to be?
         adapterID: "bun-vsc-terminal-debug-adapter",
-        // enableControlFlowProfiler: true,
+        enableControlFlowProfiler: true,
       });
     });
 

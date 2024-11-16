@@ -17,5 +17,5 @@
     "allowJs": true,
     "outDir": "dist"
   },
-  "include": ["src", "scripts", "../bun-types/index.d.ts", "../bun-inspector-protocol/src"]
+  "include": ["src", "scripts", "../bun-types/index.d.ts", "../bun-inspector-protocol/**/*.{ts,tsx}"]
 }

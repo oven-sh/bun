@@ -18,6 +18,12 @@ describe("example", () => {
     s.stop(true);
   });
 
+  if (Math) {
+    1;
+  } else {
+    2;
+  }
+
   test("it works", () => {
     expect(1).toBe(1);
     expect(1).not.toBe(2);

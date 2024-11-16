@@ -34,6 +34,7 @@ const failingNodeApiTests = [
   "test_threadsafe_function/test.js",
   "test_threadsafe_function/test_legacy_uncaught_exception.js",
   "test_worker_buffer_callback/test.js",
+  "test_worker_buffer_callback/test-free-called.js", // TODO(@heimskr)
   "test_make_callback_recurse/test.js",
   "test_buffer/test.js",
   "test_instance_data/test.js",

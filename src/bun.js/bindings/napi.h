@@ -72,12 +72,6 @@ public:
         delete[] filename;
     }
 
-    void finishFinalizers()
-    {
-        m_isFinishingFinalizers = true;
-        m_isFinishingFinalizers = false;
-    }
-
     void cleanup()
     {
         while (!m_cleanupHooks.empty()) {

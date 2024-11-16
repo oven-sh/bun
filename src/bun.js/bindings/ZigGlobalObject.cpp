@@ -4328,13 +4328,6 @@ napi_env GlobalObject::makeNapiEnvForFFI()
     return out;
 }
 
-void GlobalObject::finishNapiFinalizers()
-{
-    for (const auto& env : m_napiEnvs) {
-        env->finishFinalizers();
-    }
-}
-
 extern "C" bool Bun__isNapiFinalizerQueueEmpty(const JSGlobalObject*);
 
 bool GlobalObject::hasNapiFinalizers() const

@@ -841,6 +841,7 @@ create_buildkite_user() {
 	user="buildkite-agent"
 	group="$user"
 	home="/var/lib/buildkite-agent"
+ 	sh="$(require sh)"
 
 	case "$distro" in
 	amzn)
@@ -854,6 +855,7 @@ create_buildkite_user() {
 		execute_sudo useradd "$user" \
 			--system \
 			--no-create-home \
+			--shell "$sh" \
 			--home-dir "$home"
 	fi
 

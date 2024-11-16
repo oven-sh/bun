@@ -1,12 +1,6 @@
 import * as os from "node:os";
 import * as vscode from "vscode";
 import {
-  decodeSerializedError,
-  type BundlerMessage,
-  type DeserializedFailure,
-} from "../../../../../src/bake/client/error-serialization";
-import { DataViewReader } from "../../../../../src/bake/client/reader";
-import {
   DebugAdapter,
   getAvailablePort,
   getRandomId,
@@ -15,26 +9,6 @@ import {
 } from "../../../../bun-debug-adapter-protocol";
 import { SourceMap } from "../../../../bun-debug-adapter-protocol/src/debugger/sourcemap";
 import type { JSC } from "../../../../bun-inspector-protocol";
-
-function parseDiagnostics(view: DataView): Map<number, DeserializedFailure> {
-  const reader = new DataViewReader(view, 1);
-  const errors = new Map<number, DeserializedFailure>();
-
-  const removedCount = reader.u32();
-  for (let i = 0; i < removedCount; i++) {
-    errors.delete(reader.u32());
-  }
-
-  while (reader.hasMoreData()) {
-    const owner = reader.u32();
-    const file = reader.string32() || null;
-    const messageCount = reader.u32();
-    const messages = Array.from({ length: messageCount }, () => decodeSerializedError(reader)) as BundlerMessage[];
-    errors.set(owner, { file, messages });
-  }
-
-  return errors;
-}
 
 function findOriginalLineAndColumn(runtimeObjects: JSC.Runtime.RemoteObject[]) {
   for (const obj of runtimeObjects) {

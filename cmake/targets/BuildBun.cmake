@@ -895,18 +895,6 @@ if(LINUX)
     )
   endif()
 
-  if(NOT ABI STREQUAL "musl")
-    target_link_options(${bun} PUBLIC
-      -static-libstdc++
-      -static-libgcc
-    )
-  else()
-    target_link_options(${bun} PUBLIC
-      -lstdc++
-      -lgcc
-    )
-  endif()
-
   target_link_options(${bun} PUBLIC
     --ld-path=${LLD_PROGRAM}
     -fno-pic

@@ -2112,15 +2112,22 @@ ServerResponse.prototype = ServerResponsePrototype;
 $setPrototypeDirect.$call(ServerResponse, Stream);
 
 const ServerResponse_writeDeprecated = function _write(chunk, encoding, callback) {
+  if ($isCallable(encoding)) {
+    callback = encoding;
+    encoding = undefined;
+  }
+  if (!$isCallable(callback)) {
+    callback = undefined;
+  }
   if (this[firstWriteSymbol] === undefined && !this.headersSent) {
     this[firstWriteSymbol] = chunk;
-    callback();
+    if (callback) callback();
     return;
   }
 
   ensureReadableStreamController.$call(this, controller => {
     controller.write(chunk);
-    callback();
+    if (callback) callback();
   });
 };
 

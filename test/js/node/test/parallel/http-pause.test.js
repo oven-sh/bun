@@ -35,10 +35,8 @@ for (let expectedServer of [
 
   test(`HTTP pause and resume (${expectedServer.length})`, async () => {
     const server = http.createServer((req, res) => {
-      console.error("pause server request");
       req.pause();
       setTimeout(() => {
-        console.error("resume server request");
         req.resume();
         req.setEncoding("utf8");
         req.on("data", chunk => {
@@ -63,16 +61,13 @@ for (let expectedServer of [
               port: server.address().port,
             },
             res => {
-              console.error("pause client response");
               res.pause();
               setTimeout(() => {
-                console.error("resume client response");
                 res.resume();
                 res.on("data", chunk => {
                   resultClient += chunk;
                 });
                 res.on("end", () => {
-                  console.error(resultClient);
                   server.close();
                   resolve();
                 });

@@ -630,6 +630,17 @@ function getPipeline(options) {
     });
   }
 
+  if (isMainBranch() && !isFork()) {
+    steps.push({
+      label: ":github:",
+      agents: {
+        queue: "test-darwin",
+      },
+      depends_on: buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
+      command: ".buildkite/scripts/upload-release.sh",
+    });
+  }
+
   return {
     priority: getPriority(),
     steps,

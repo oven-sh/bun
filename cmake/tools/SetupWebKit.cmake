@@ -63,7 +63,7 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
-if(IS_MUSL)
+if(ABI STREQUAL "musl")
   set(WEBKIT_SUFFIX "-musl")
 endif()
 

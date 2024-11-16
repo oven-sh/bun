@@ -23,7 +23,7 @@ import {
   runBunInstall,
   isWindows,
 } from "harness";
-import { join, sep } from "path";
+import { join, sep, resolve } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -3452,9 +3452,9 @@ it("should handle GitHub URL in dependencies (user/repo#commit-id)", async () =>
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -3518,9 +3518,9 @@ it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -3744,9 +3744,9 @@ it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () =
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -3868,9 +3868,9 @@ it("should handle GitHub URL in dependencies (git://github.com/user/repo.git#com
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",

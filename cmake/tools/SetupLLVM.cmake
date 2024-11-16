@@ -4,7 +4,7 @@ if(NOT ENABLE_LLVM)
   return()
 endif()
 
-if(CMAKE_HOST_WIN32 OR CMAKE_HOST_APPLE OR IS_MUSL)
+if(CMAKE_HOST_WIN32 OR CMAKE_HOST_APPLE OR ABI STREQUAL "musl")
   set(DEFAULT_LLVM_VERSION "18.1.8")
 else()
   set(DEFAULT_LLVM_VERSION "16.0.6")
@@ -52,6 +52,7 @@ if(UNIX)
       /usr/lib/llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}/bin
       /usr/lib/llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}/bin
       /usr/lib/llvm-${LLVM_VERSION_MAJOR}/bin
+      /usr/lib/llvm${LLVM_VERSION_MAJOR}/bin
     )
   endif()
 endif()
@@ -108,8 +109,23 @@ else()
   find_llvm_command(CMAKE_CXX_COMPILER clang++)
   find_llvm_command(CMAKE_LINKER llvm-link)
   find_llvm_command(CMAKE_AR llvm-ar)
-  find_llvm_command(CMAKE_STRIP llvm-strip)
+  if (LINUX)
+    # On Linux, strip ends up being more useful for us.
+    find_command(
+      VARIABLE
+        CMAKE_STRIP
+      COMMAND
+        strip
+      REQUIRED
+        ON
+    )
+  else()
+    find_llvm_command(CMAKE_STRIP llvm-strip)
+  endif()
   find_llvm_command(CMAKE_RANLIB llvm-ranlib)
+  if(LINUX)
+    find_llvm_command(LLD_PROGRAM ld.lld)
+  endif()
   if(APPLE)
     find_llvm_command(CMAKE_DSYMUTIL dsymutil)
   endif()

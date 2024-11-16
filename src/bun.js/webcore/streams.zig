@@ -526,7 +526,7 @@ pub const StreamStart = union(Tag) {
         }
     }
 
-    pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) StreamStart {
+    pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) bun.JSError!StreamStart {
         if (value.isEmptyOrUndefinedOrNull() or !value.isObject()) {
             return .{ .empty = {} };
         }
@@ -543,7 +543,7 @@ pub const StreamStart = union(Tag) {
         globalThis: *JSGlobalObject,
         value: JSValue,
         comptime tag: Tag,
-    ) StreamStart {
+    ) bun.JSError!StreamStart {
         if (value.isEmptyOrUndefinedOrNull() or !value.isObject()) {
             return .{ .empty = {} };
         }
@@ -1917,11 +1917,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             if (comptime @hasField(StreamStart, name_)) {
                 return this.sink.start(
                     if (callframe.argumentsCount() > 0)
-                        StreamStart.fromJSWithTag(
-                            globalThis,
-                            callframe.argument(0),
-                            comptime @field(StreamStart, name_),
-                        )
+                        try StreamStart.fromJSWithTag(globalThis, callframe.argument(0), comptime @field(StreamStart, name_))
                     else
                         StreamStart{ .empty = {} },
                 ).toJS(globalThis);
@@ -1929,7 +1925,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             return this.sink.start(
                 if (callframe.argumentsCount() > 0)
-                    StreamStart.fromJS(globalThis, callframe.argument(0))
+                    try StreamStart.fromJS(globalThis, callframe.argument(0))
                 else
                     StreamStart{ .empty = {} },
             ).toJS(globalThis);

@@ -1100,9 +1100,7 @@ pub const DOMFormData = opaque {
         DOMFormData__toQueryString(this, ctx, &Wrapper.run);
     }
 
-    pub fn fromJS(
-        value: JSValue,
-    ) ?*DOMFormData {
+    pub fn fromJS(value: JSValue) ?*DOMFormData {
         return shim.cppFn("fromJS", .{
             value,
         });
@@ -5181,6 +5179,7 @@ pub const JSValue = enum(i64) {
         });
     }
 
+    /// Deprecated: replace with 'toBunString2'
     pub inline fn getZigString(this: JSValue, global: *JSGlobalObject) ZigString {
         var str = ZigString.init("");
         this.toZigString(&str, global);
@@ -7072,14 +7071,18 @@ pub const URL = opaque {
 
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result
     /// If it fails, the tag is marked Dead
-    pub fn hrefFromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) String {
+    pub fn hrefFromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
         JSC.markBinding(@src());
-        return URL__getHrefFromJS(value, globalObject);
+        const result = URL__getHrefFromJS(value, globalObject);
+        if (globalObject.hasException()) return error.JSError;
+        return result;
     }
 
-    pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) ?*URL {
+    pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!?*URL {
         JSC.markBinding(@src());
-        return URL__fromJS(value, globalObject);
+        const result = URL__fromJS(value, globalObject);
+        if (globalObject.hasException()) return error.JSError;
+        return result;
     }
 
     pub fn fromUTF8(input: []const u8) ?*URL {

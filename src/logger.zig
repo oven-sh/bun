@@ -658,8 +658,7 @@ pub const Log = struct {
             }
 
             if (!value.isString()) {
-                globalThis.throwInvalidArguments("Expected logLevel to be a string", .{});
-                return error.JSError;
+                return globalThis.throwInvalidArguments2("Expected logLevel to be a string", .{});
             }
 
             return Map.fromJS(globalThis, value);

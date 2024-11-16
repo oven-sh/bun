@@ -48,6 +48,142 @@ declare module "bun" {
   function which(command: string, options?: { PATH?: string; cwd?: string }): string | null;
 
   /**
+   * Convert a string to camelCase.
+   *
+   * @param str The string to convert to camelCase
+   * @returns The camelCased string
+   *
+   * @example
+   * ```ts
+   * import { camelCase } from "bun";
+   *
+   * camelCase("foo-bar"); // "fooBar"
+   * camelCase("foo_bar"); // "fooBar"
+   * camelCase("Foo Bar"); // "fooBar"
+   * ```
+   */
+  function camelCase(str: string): string;
+
+  /**
+   * Convert a string to Capital Case.
+   *
+   * @param str The string to convert to Capital Case
+   * @returns The Capital Cased string
+   *
+   * @example
+   * ```ts
+   * import { capitalCase } from "bun";
+   *
+   * capitalCase("foo-bar"); // "Foo Bar"
+   * capitalCase("foo_bar"); // "Foo Bar"
+   * capitalCase("fooBar"); // "Foo Bar"
+   * ```
+   */
+  function capitalCase(str: string): string;
+
+  /**
+   * Convert a string to CONSTANT_CASE.
+   *
+   * @param str The string to convert to CONSTANT_CASE
+   * @returns The CONSTANT_CASED string
+   *
+   * @example
+   * ```ts
+   * import { constantCase } from "bun";
+   *
+   * constantCase("foo-bar"); // "FOO_BAR"
+   * constantCase("foo_bar"); // "FOO_BAR"
+   * constantCase("fooBar"); // "FOO_BAR"
+   * ```
+   */
+  function constantCase(str: string): string;
+
+  /**
+   * Convert a string to dot.case.
+   *
+   * @param str The string to convert to dot.case
+   * @returns The dot.cased string
+   *
+   * @example
+   * ```ts
+   * import { dotCase } from "bun";
+   *
+   * dotCase("foo-bar"); // "foo.bar"
+   * dotCase("foo_bar"); // "foo.bar"
+   * dotCase("fooBar"); // "foo.bar"
+   * ```
+   */
+  function dotCase(str: string): string;
+
+  /**
+   * Convert a string to kebab-case.
+   *
+   * @param str The string to convert to kebab-case
+   * @returns The kebab-cased string
+   *
+   * @example
+   * ```ts
+   * import { kebabCase } from "bun";
+   *
+   * kebabCase("foo-bar"); // "foo-bar"
+   * kebabCase("foo_bar"); // "foo-bar"
+   * kebabCase("fooBar"); // "foo-bar"
+   * ```
+   */
+  function kebabCase(str: string): string;
+
+  /**
+   * Convert a string to PascalCase.
+   *
+   * @param str The string to convert to PascalCase
+   * @returns The PascalCased string
+   *
+   * @example
+   * ```ts
+   * import { pascalCase } from "bun";
+   *
+   * pascalCase("foo-bar"); // "FooBar"
+   * pascalCase("foo_bar"); // "FooBar"
+   * pascalCase("fooBar"); // "FooBar"
+   * ```
+   */
+  function pascalCase(str: string): string;
+
+  /**
+   * Convert a string to snake_case.
+   *
+   * @param str The string to convert to snake_case
+   * @returns The snake_cased string
+   *
+   * @example
+   * ```ts
+   * import { snakeCase } from "bun";
+   *
+   * snakeCase("foo-bar"); // "foo_bar"
+   * snakeCase("foo_bar"); // "foo_bar"
+   * snakeCase("fooBar"); // "foo_bar"
+   * ```
+   */
+  function snakeCase(str: string): string;
+
+  /**
+   * Convert a string to Train-Case.
+   *
+   * @param str The string to convert to Train-Case
+   * @returns The Train-Cased string
+   *
+   * @example
+   * ```ts
+   * import { trainCase } from "bun";
+   *
+   * trainCase("foo-bar"); // "Foo-Bar"
+   * trainCase("foo_bar"); // "Foo-Bar"
+   * trainCase("fooBar"); // "Foo-Bar"
+   * ```
+   */
+  function trainCase(str: string): string;
+
+  /**
    * Get the column count of a string as it would be displayed in a terminal.
    * Supports ANSI escape codes, emoji, and wide characters.
    *

@@ -590,6 +590,9 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1
     argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
+    camelCase                                      BunObject_callback_camelCase                                        DontDelete|Function 1
+    capitalCase                                    BunObject_callback_capitalCase                                      DontDelete|Function 1
+    constantCase                                   BunObject_callback_constantCase                                     DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 3
     connect                                        BunObject_callback_connect                                          DontDelete|Function 1
     cwd                                            BunObject_getter_wrap_cwd                                           DontEnum|DontDelete|PropertyCallback
@@ -597,6 +600,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
     deflateSync                                    BunObject_callback_deflateSync                                        DontDelete|Function 1
+    dotCase                                        BunObject_callback_dotCase                                          DontDelete|Function 1
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
     enableANSIColors                               BunObject_getter_wrap_enableANSIColors                              DontDelete|PropertyCallback
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
@@ -614,6 +618,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     inspect                                        BunObject_getter_wrap_inspect                                       DontDelete|PropertyCallback
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
+    kebabCase                                      BunObject_callback_kebabCase                                        DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1
     udpSocket                                        BunObject_callback_udpSocket                                          DontDelete|Function 1
     main                                           BunObject_getter_wrap_main                                          DontDelete|PropertyCallback
@@ -623,6 +628,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     origin                                         BunObject_getter_wrap_origin                                        DontDelete|PropertyCallback
     version_with_sha                               constructBunVersionWithSha                                          ReadOnly|DontDelete|PropertyCallback
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback
+    pascalCase                                     BunObject_callback_pascalCase                                       DontDelete|Function 1
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
@@ -645,12 +651,14 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1
     sleep                                          functionBunSleep                                                    DontDelete|Function 1
     sleepSync                                      BunObject_callback_sleepSync                                        DontDelete|Function 1
+    snakeCase                                      BunObject_callback_snakeCase                                        DontDelete|Function 1
     spawn                                          BunObject_callback_spawn                                            DontDelete|Function 1
     spawnSync                                      BunObject_callback_spawnSync                                        DontDelete|Function 1
     stderr                                         BunObject_getter_wrap_stderr                                        DontDelete|PropertyCallback
     stdin                                          BunObject_getter_wrap_stdin                                         DontDelete|PropertyCallback
     stdout                                         BunObject_getter_wrap_stdout                                        DontDelete|PropertyCallback
     stringWidth                                    BunObject_callback_stringWidth                                      DontDelete|Function 2
+    trainCase                                      BunObject_callback_trainCase                                        DontDelete|Function 1
     unsafe                                         BunObject_getter_wrap_unsafe                                        DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1

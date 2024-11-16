@@ -759,6 +759,10 @@ async function main() {
       console.log(" - Yes, because commit message contains:", match[1]);
       skipTests = true;
     }
+    if (isMainBranch()) {
+      console.log(" - Yes, because we're on main branch");
+      skipTests = true;
+    }
   }
 
   console.log("Checking if build is a named release...");

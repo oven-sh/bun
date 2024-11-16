@@ -39,7 +39,7 @@ const ScanOpts = struct {
     follow_symlinks: bool,
     error_on_broken_symlinks: bool,
 
-    fn parseCWD(globalThis: *JSGlobalObject, allocator: std.mem.Allocator, cwdVal: JSC.JSValue, absolute: bool, comptime fnName: string) ?[]const u8 {
+    fn parseCWD(globalThis: *JSGlobalObject, allocator: std.mem.Allocator, cwdVal: JSC.JSValue, absolute: bool, comptime fnName: string) bun.JSError![]const u8 {
         const cwd_str_raw = cwdVal.toSlice(globalThis, allocator);
         if (cwd_str_raw.len == 0) return "";
 
@@ -48,7 +48,7 @@ const ScanOpts = struct {
             if (ResolvePath.Platform.auto.isAbsolute(cwd_str_raw.slice())) {
                 const cwd_str = cwd_str_raw.clone(allocator) catch {
                     globalThis.throwOutOfMemory();
-                    return null;
+                    return error.JSError;
                 };
                 break :cwd_str cwd_str.ptr[0..cwd_str.len];
             }
@@ -59,7 +59,7 @@ const ScanOpts = struct {
                 const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{cwd_str_raw.slice()}, .auto);
                 break :cwd_str allocator.dupe(u8, cwd_str) catch {
                     globalThis.throwOutOfMemory();
-                    return null;
+                    return error.JSError;
                 };
             }
 
@@ -69,8 +69,7 @@ const ScanOpts = struct {
                 .result => |cwd| cwd,
                 .err => |err| {
                     const errJs = err.toJSC(globalThis);
-                    globalThis.throwValue(errJs);
-                    return null;
+                    return globalThis.throwValue2(errJs);
                 },
             };
 
@@ -81,19 +80,18 @@ const ScanOpts = struct {
 
             break :cwd_str allocator.dupe(u8, cwd_str) catch {
                 globalThis.throwOutOfMemory();
-                return null;
+                return error.JSError;
             };
         };
 
         if (cwd_str.len > bun.MAX_PATH_BYTES) {
-            globalThis.throw("{s}: invalid `cwd`, longer than {d} bytes", .{ fnName, bun.MAX_PATH_BYTES });
-            return null;
+            return globalThis.throw2("{s}: invalid `cwd`, longer than {d} bytes", .{ fnName, bun.MAX_PATH_BYTES });
         }
 
         return cwd_str;
     }
 
-    fn fromJS(globalThis: *JSGlobalObject, arguments: *ArgumentsSlice, comptime fnName: []const u8, arena: *Arena) ?ScanOpts {
+    fn fromJS(globalThis: *JSGlobalObject, arguments: *ArgumentsSlice, comptime fnName: []const u8, arena: *Arena) bun.JSError!?ScanOpts {
         const optsObj: JSValue = arguments.nextEat() orelse return null;
         var out: ScanOpts = .{
             .cwd = null,
@@ -106,13 +104,11 @@ const ScanOpts = struct {
         if (optsObj.isUndefinedOrNull()) return out;
         if (!optsObj.isObject()) {
             if (optsObj.isString()) {
-                if (parseCWD(globalThis, arena.allocator(), optsObj, out.absolute, fnName)) |result| {
+                {
+                    const result = try parseCWD(globalThis, arena.allocator(), optsObj, out.absolute, fnName);
                     if (result.len > 0) {
                         out.cwd = result;
                     }
-                } else {
-                    // error
-                    return null;
                 }
                 return out;
             }
@@ -142,13 +138,11 @@ const ScanOpts = struct {
                 return null;
             }
 
-            if (parseCWD(globalThis, arena.allocator(), cwdVal, out.absolute, fnName)) |result| {
+            {
+                const result = try parseCWD(globalThis, arena.allocator(), cwdVal, out.absolute, fnName);
                 if (result.len > 0) {
                     out.cwd = result;
                 }
-            } else {
-                // error
-                return null;
             }
         }
 
@@ -248,8 +242,8 @@ fn makeGlobWalker(
     comptime fnName: []const u8,
     alloc: Allocator,
     arena: *Arena,
-) ?*GlobWalker {
-    const matchOpts = ScanOpts.fromJS(globalThis, arguments, fnName, arena) orelse return null;
+) bun.JSError!?*GlobWalker {
+    const matchOpts = try ScanOpts.fromJS(globalThis, arguments, fnName, arena) orelse return null;
     const cwd = matchOpts.cwd;
     const dot = matchOpts.dot;
     const absolute = matchOpts.absolute;
@@ -260,7 +254,7 @@ fn makeGlobWalker(
     if (cwd != null) {
         var globWalker = alloc.create(GlobWalker) catch {
             globalThis.throwOutOfMemory();
-            return null;
+            return error.JSError;
         };
 
         globWalker.* = .{};
@@ -276,11 +270,10 @@ fn makeGlobWalker(
             only_files,
         ) catch {
             globalThis.throwOutOfMemory();
-            return null;
+            return error.JSError;
         }) {
             .err => |err| {
-                globalThis.throwValue(err.toJSC(globalThis));
-                return null;
+                return globalThis.throwValue2(err.toJSC(globalThis));
             },
             else => {},
         }
@@ -288,7 +281,7 @@ fn makeGlobWalker(
     }
     var globWalker = alloc.create(GlobWalker) catch {
         globalThis.throwOutOfMemory();
-        return null;
+        return error.JSError;
     };
 
     globWalker.* = .{};
@@ -302,11 +295,10 @@ fn makeGlobWalker(
         only_files,
     ) catch {
         globalThis.throwOutOfMemory();
-        return null;
+        return error.JSError;
     }) {
         .err => |err| {
-            globalThis.throwValue(err.toJSC(globalThis));
-            return null;
+            return globalThis.throwValue2(err.toJSC(globalThis));
         },
         else => {},
     }
@@ -381,7 +373,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
-    const globWalker = this.makeGlobWalker(globalThis, &arguments, "scan", alloc, &arena) orelse {
+    const globWalker = try this.makeGlobWalker(globalThis, &arguments, "scan", alloc, &arena) orelse {
         arena.deinit();
         return .undefined;
     };
@@ -390,7 +382,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     var task = WalkTask.create(globalThis, alloc, globWalker, &this.has_pending_activity) catch {
         decrPendingActivityFlag(&this.has_pending_activity);
         globalThis.throwOutOfMemory();
-        return .undefined;
+        return error.JSError;
     };
     task.schedule();
 
@@ -405,7 +397,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
-    var globWalker = this.makeGlobWalker(globalThis, &arguments, "scanSync", alloc, &arena) orelse {
+    var globWalker = try this.makeGlobWalker(globalThis, &arguments, "scanSync", alloc, &arena) orelse {
         arena.deinit();
         return .undefined;
     };
@@ -413,11 +405,10 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
 
     switch (globWalker.walk() catch {
         globalThis.throwOutOfMemory();
-        return .undefined;
+        return error.JSError;
     }) {
         .err => |err| {
-            globalThis.throwValue(err.toJSC(globalThis));
-            return JSValue.undefined;
+            return globalThis.throwValue2(err.toJSC(globalThis));
         },
         .result => {},
     }

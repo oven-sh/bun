@@ -714,14 +714,15 @@ pub const String = extern struct {
         }
     }
 
-    pub fn fromJSRef(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) String {
+    pub fn fromJSRef(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
         JSC.markBinding(@src());
 
         var out: String = String.dead;
         if (BunString__fromJSRef(globalObject, value, &out)) {
             return out;
         } else {
-            return String.dead;
+            bun.assert(globalObject.hasException());
+            return error.JSError;
         }
     }
 

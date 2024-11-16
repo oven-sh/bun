@@ -3920,13 +3920,21 @@ pub const PackageManager = struct {
 
         cache_path_buf[package_name.len] = std.fs.path.sep;
 
-        return this.getCacheDirectory().readLink(
-            cache_path,
-            buf,
-        ) catch |err| {
+        const cache_dir = bun.toFD(this.getCacheDirectory());
+
+        if (comptime Environment.isWindows) {
+            var path_buf: bun.PathBuffer = undefined;
+            const joined = bun.path.joinAbsStringBufZ(this.cache_directory_path, &path_buf, &[_]string{cache_path}, .windows);
+            return bun.sys.readlink(joined, buf).unwrap() catch |err| {
+                _ = bun.sys.unlink(joined);
+                return err;
+            };
+        }
+
+        return bun.sys.readlinkat(cache_dir, cache_path, buf).unwrap() catch |err| {
             // if we run into an error, delete the symlink
             // so that we don't repeatedly try to read it
-            std.posix.unlinkat(this.getCacheDirectory().fd, cache_path, 0) catch {};
+            _ = bun.sys.unlinkat(cache_dir, cache_path);
             return err;
         };
     }
@@ -9993,7 +10001,7 @@ pub const PackageManager = struct {
                 lockfile.packages.items(.name)[this.package_id].slice(this.version_buf);
         }
 
-        pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) JSC.JSValue {
+        pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) bun.JSError!JSC.JSValue {
             var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
             var stack = std.heap.stackFallback(1024, arena.allocator());
@@ -10029,25 +10037,22 @@ pub const PackageManager = struct {
             var array = Array{};
 
             const update_requests = parseWithError(allocator, &log, all_positionals.items, &array, .add, false) catch {
-                globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
-                return .zero;
+                return globalThis.throwValue2(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
             };
             if (update_requests.len == 0) return .undefined;
 
             if (log.msgs.items.len > 0) {
-                globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
-                return .zero;
+                return globalThis.throwValue2(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
             }
 
             if (update_requests[0].failed) {
-                globalThis.throw("Failed to parse dependencies", .{});
-                return .zero;
+                return globalThis.throw2("Failed to parse dependencies", .{});
             }
 
             var object = JSC.JSValue.createEmptyObject(globalThis, 2);
             var name_str = bun.String.init(update_requests[0].name);
             object.put(globalThis, "name", name_str.transferToJS(globalThis));
-            object.put(globalThis, "version", update_requests[0].version.toJS(update_requests[0].version_buf, globalThis));
+            object.put(globalThis, "version", try update_requests[0].version.toJS(update_requests[0].version_buf, globalThis));
             return object;
         }
 

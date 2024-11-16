@@ -44,10 +44,7 @@ fn pbkdf2(
 ) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(5);
 
-    const data = PBKDF2.fromJS(globalThis, arguments.slice(), true) orelse {
-        assert(globalThis.hasException());
-        return .zero;
-    };
+    const data = try PBKDF2.fromJS(globalThis, arguments.slice(), true);
 
     const job = PBKDF2.Job.create(JSC.VirtualMachine.get(), globalThis, &data);
     return job.promise.value();
@@ -59,10 +56,7 @@ fn pbkdf2Sync(
 ) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(5);
 
-    var data = PBKDF2.fromJS(globalThis, arguments.slice(), false) orelse {
-        assert(globalThis.hasException());
-        return .zero;
-    };
+    var data = try PBKDF2.fromJS(globalThis, arguments.slice(), false);
     defer data.deinit();
     var out_arraybuffer = JSC.JSValue.createBufferFromLength(globalThis, @intCast(data.length));
     if (out_arraybuffer == .zero or globalThis.hasException()) {

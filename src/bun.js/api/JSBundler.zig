@@ -81,9 +81,7 @@ pub const JSBundler = struct {
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
-        const FromJSError = OOM || JSError;
-
-        pub fn fromJS(globalThis: *JSC.JSGlobalObject, config: JSC.JSValue, plugins: *?*Plugin, allocator: std.mem.Allocator) FromJSError!Config {
+        pub fn fromJS(globalThis: *JSC.JSGlobalObject, config: JSC.JSValue, plugins: *?*Plugin, allocator: std.mem.Allocator) JSError!Config {
             var this = Config{
                 .entry_points = bun.StringSet.init(allocator),
                 .external = bun.StringSet.init(allocator),
@@ -120,24 +118,20 @@ pub const JSBundler = struct {
                 var i: usize = 0;
                 while (iter.next()) |plugin| : (i += 1) {
                     if (!plugin.isObject()) {
-                        globalThis.throwInvalidArguments("Expected plugin to be an object", .{});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("Expected plugin to be an object", .{});
                     }
 
-                    if (plugin.getOptional(globalThis, "name", ZigString.Slice) catch null) |slice| {
+                    if (try plugin.getOptional(globalThis, "name", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (slice.len == 0) {
-                            globalThis.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
-                            return error.JSError;
+                            return globalThis.throwInvalidArguments2("Expected plugin to have a non-empty name", .{});
                         }
                     } else {
-                        globalThis.throwInvalidArguments("Expected plugin to have a name", .{});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("Expected plugin to have a name", .{});
                     }
 
-                    const function = (plugin.getFunction(globalThis, "setup") catch null) orelse {
-                        globalThis.throwInvalidArguments("Expected plugin to have a setup() function", .{});
-                        return error.JSError;
+                    const function = try plugin.getFunction(globalThis, "setup") orelse {
+                        return globalThis.throwInvalidArguments2("Expected plugin to have a setup() function", .{});
                     };
 
                     var bun_plugins: *Plugin = plugins.* orelse brk: {
@@ -165,16 +159,14 @@ pub const JSBundler = struct {
                                     plugin_result = val;
                                 },
                                 .rejected => |err| {
-                                    globalThis.throwValue(err);
-                                    return error.JSError;
+                                    return globalThis.throwValue2(err);
                                 },
                             }
                         }
                     }
 
                     if (plugin_result.toError()) |err| {
-                        globalThis.throwValue(err);
-                        return error.JSError;
+                        return globalThis.throwValue2(err);
                     } else if (globalThis.hasException()) {
                         return error.JSError;
                     }
@@ -201,8 +193,7 @@ pub const JSBundler = struct {
                 this.target = target;
 
                 if (target != .bun and this.bytecode) {
-                    globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
-                    return error.JSError;
+                    return globalThis.throwInvalidArguments2("target must be 'bun' when bytecode is true", .{});
                 }
             }
 
@@ -248,8 +239,7 @@ pub const JSBundler = struct {
                 this.format = format;
 
                 if (this.bytecode and format != .cjs) {
-                    globalThis.throwInvalidArguments("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
-                    return error.JSError;
+                    return globalThis.throwInvalidArguments2("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
                 }
             }
 
@@ -274,8 +264,7 @@ pub const JSBundler = struct {
                         this.minify.identifiers = syntax;
                     }
                 } else {
-                    globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
-                    return error.JSError;
+                    return globalThis.throwInvalidArguments2("Expected minify to be a boolean or an object", .{});
                 }
             }
 
@@ -283,15 +272,13 @@ pub const JSBundler = struct {
                 var iter = entry_points.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
                     var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                        globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("Expected entrypoints to be an array of strings", .{});
                     };
                     defer slice.deinit();
                     try this.entry_points.insert(slice.slice());
                 }
             } else {
-                globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
-                return error.JSError;
+                return globalThis.throwInvalidArguments2("Expected entrypoints to be an array of strings", .{});
             }
 
             if (try config.getBooleanLoose(globalThis, "emitDCEAnnotations")) |flag| {
@@ -313,15 +300,13 @@ pub const JSBundler = struct {
                     var iter = conditions_value.arrayIterator(globalThis);
                     while (iter.next()) |entry_point| {
                         var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                            globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
-                            return error.JSError;
+                            return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
                         };
                         defer slice.deinit();
                         try this.conditions.insert(slice.slice());
                     }
                 } else {
-                    globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
-                    return error.JSError;
+                    return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
                 }
             }
 
@@ -360,8 +345,7 @@ pub const JSBundler = struct {
                 var iter = externals.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
                     var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                        globalThis.throwInvalidArguments("Expected external to be an array of strings", .{});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("Expected external to be an array of strings", .{});
                     };
                     defer slice.deinit();
                     try this.external.insert(slice.slice());
@@ -372,8 +356,7 @@ pub const JSBundler = struct {
                 var iter = drops.arrayIterator(globalThis);
                 while (iter.next()) |entry| {
                     var slice = entry.toSliceOrNull(globalThis) orelse {
-                        globalThis.throwInvalidArguments("Expected drop to be an array of strings", .{});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("Expected drop to be an array of strings", .{});
                     };
                     defer slice.deinit();
                     try this.drop.insert(slice.slice());
@@ -430,15 +413,13 @@ pub const JSBundler = struct {
                         this.names.asset.data = this.names.owned_asset.list.items;
                     }
                 } else {
-                    globalThis.throwInvalidArguments("Expected naming to be a string or an object", .{});
-                    return error.JSError;
+                    return globalThis.throwInvalidArguments2("Expected naming to be a string or an object", .{});
                 }
             }
 
             if (try config.getOwnObject(globalThis, "define")) |define| {
                 if (!define.isObject()) {
-                    globalThis.throwInvalidArguments("define must be an object", .{});
-                    return error.JSError;
+                    return globalThis.throwInvalidArguments2("define must be an object", .{});
                 }
 
                 var define_iter = JSC.JSPropertyIterator(.{
@@ -452,8 +433,7 @@ pub const JSBundler = struct {
                     const value_type = property_value.jsType();
 
                     if (!value_type.isStringLike()) {
-                        globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("define \"{s}\" must be a JSON string", .{prop});
                     }
 
                     var val = JSC.ZigString.init("");
@@ -487,8 +467,7 @@ pub const JSBundler = struct {
 
                 while (loader_iter.next()) |prop| {
                     if (!prop.hasPrefixComptime(".") or prop.length() < 2) {
-                        globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("loader property names must be file extensions, such as '.txt'", .{});
                     }
 
                     loader_values[loader_iter.i] = try loader_iter.value.toEnumFromMap(

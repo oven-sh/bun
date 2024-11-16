@@ -469,6 +469,12 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         const Self = @This();
         const Overflow = OverflowList(ValueType, count / 4);
 
+        const TRAILING_SLASH_CHAR = if(Environment.isWindows)
+            "\\"
+        else
+            "/";
+
+
         index: IndexMap,
         overflow_list: Overflow = Overflow{},
         allocator: Allocator,
@@ -498,7 +504,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
 
         pub fn getOrPut(self: *Self, denormalized_key: []const u8) !Result {
-            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
+            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, TRAILING_SLASH_CHAR) else denormalized_key;
             const _key = bun.hash(key);
 
             self.mutex.lock();
@@ -526,7 +532,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
 
         pub fn get(self: *Self, denormalized_key: []const u8) ?*ValueType {
-            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
+            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, TRAILING_SLASH_CHAR) else denormalized_key;
             const _key = bun.hash(key);
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -588,7 +594,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             defer self.mutex.unlock();
 
             const key = if (comptime remove_trailing_slashes)
-                std.mem.trimRight(u8, denormalized_key, "/")
+                std.mem.trimRight(u8, denormalized_key, TRAILING_SLASH_CHAR)
             else
                 denormalized_key;
 

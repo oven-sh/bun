@@ -320,63 +320,6 @@ pub const ThreadPool = struct {
 
 const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 
-/// Bake needs to specify which graph (client/server/ssr) each entry point is.
-/// File paths are always absolute paths. Files may be bundled for multiple
-/// targets. From DevServer, CSS entrypoints must be told up front that they
-/// are CSS.
-pub const BakeEntryPoints = struct {
-    set: bun.StringArrayHashMapUnmanaged(Flags),
-
-    pub const empty: BakeEntryPoints = .{ .set = .{} };
-
-    const Flags = packed struct(u8) {
-        client: bool = false,
-        server: bool = false,
-        ssr: bool = false,
-        /// When this is set, also set .client = true
-        css: bool = false,
-        // /// Indicates the file might have been deleted.
-        // potentially_deleted: bool = false,
-
-        unused: enum(u4) { unused = 0 } = .unused,
-    };
-
-    pub fn deinit(entry_points: *BakeEntryPoints, allocator: std.mem.Allocator) void {
-        entry_points.set.deinit(allocator);
-    }
-
-    pub fn appendJs(
-        entry_points: *BakeEntryPoints,
-        allocator: std.mem.Allocator,
-        abs_path: []const u8,
-        side: bake.Graph,
-    ) !void {
-        return entry_points.append(allocator, abs_path, switch (side) {
-            .server => .{ .server = true },
-            .client => .{ .client = true },
-            .ssr => .{ .ssr = true },
-        });
-    }
-
-    pub fn appendCss(entry_points: *BakeEntryPoints, allocator: std.mem.Allocator, abs_path: []const u8) !void {
-        return entry_points.append(allocator, abs_path, .{
-            .client = true,
-            .css = true,
-        });
-    }
-
-    /// Deduplictes requests to bundle the same file twice.
-    pub fn append(entry_points: *BakeEntryPoints, allocator: std.mem.Allocator, abs_path: []const u8, flags: Flags) !void {
-        const gop = try entry_points.set.getOrPut(allocator, abs_path);
-        if (gop.found_existing) {
-            const T = @typeInfo(Flags).Struct.backing_integer.?;
-            gop.value_ptr.* = @bitCast(@as(T, @bitCast(gop.value_ptr.*)) | @as(T, @bitCast(flags)));
-        } else {
-            gop.value_ptr.* = flags;
-        }
-    }
-};
-
 fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, top_level_dir: string, allocator: std.mem.Allocator) !Fs.Path {
     // TODO: outbase
     var buf: bun.PathBuffer = undefined;
@@ -1016,7 +959,7 @@ pub const BundleV2 = struct {
         data: switch (variant) {
             .normal => []const []const u8,
             .dev_server => struct {
-                files: BakeEntryPoints,
+                files: bake.DevServer.EntryPointList,
                 css_data: *std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
             },
             .bake_production => bake.production.EntryPointMap,
@@ -2110,7 +2053,7 @@ pub const BundleV2 = struct {
     }
 
     /// Dev Server uses this instead to run a subset of the bundler, and to run it asynchronously.
-    pub fn startFromBakeDevServer(this: *BundleV2, bake_entry_points: BakeEntryPoints) !BakeBundleStart {
+    pub fn startFromBakeDevServer(this: *BundleV2, bake_entry_points: bake.DevServer.EntryPointList) !BakeBundleStart {
         this.unique_key = generateUniqueKey();
 
         this.graph.heap.helpCatchMemoryIssues();

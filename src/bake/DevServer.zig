@@ -625,7 +625,7 @@ fn ensureRouteIsBundled(
                     var sfa = std.heap.stackFallback(4096, dev.allocator);
                     const temp_alloc = sfa.get();
 
-                    var entry_points: BakeEntryPoints = BakeEntryPoints.empty;
+                    var entry_points: EntryPointList = EntryPointList.empty;
                     defer entry_points.deinit(temp_alloc);
 
                     dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_index) catch bun.outOfMemory();
@@ -710,7 +710,7 @@ fn ensureRouteIsBundled(
     }
 }
 
-fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *BakeEntryPoints, alloc: Allocator, route_index: Route.Index) bun.OOM!void {
+fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointList, alloc: Allocator, route_index: Route.Index) bun.OOM!void {
     const server_file_names = dev.server_graph.bundled_files.keys();
     const client_file_names = dev.client_graph.bundled_files.keys();
 
@@ -869,7 +869,7 @@ const DeferredRequest = struct {
 
 fn startAsyncBundle(
     dev: *DevServer,
-    entry_points: BakeEntryPoints,
+    entry_points: EntryPointList,
     had_reload_event: bool,
     timer: std.time.Timer,
 ) bun.OOM!void {
@@ -1517,7 +1517,7 @@ pub fn finalizeBundle(
     if (dev.next_bundle.reload_event != null or dev.next_bundle.requests.items.len > 0) {
         var sfb = std.heap.stackFallback(4096, bun.default_allocator);
         const temp_alloc = sfb.get();
-        var entry_points: BakeEntryPoints = BakeEntryPoints.empty;
+        var entry_points: EntryPointList = EntryPointList.empty;
         defer entry_points.deinit(temp_alloc);
 
         if (dev.next_bundle.reload_event) |event| {
@@ -1617,7 +1617,7 @@ pub fn isFileCached(dev: *DevServer, path: []const u8, side: bake.Graph) ?CacheE
 fn appendOpaqueEntryPoint(
     dev: *DevServer,
     file_names: [][]const u8,
-    entry_points: *BakeEntryPoints,
+    entry_points: *EntryPointList,
     alloc: Allocator,
     comptime side: bake.Side,
     optional_id: anytype,
@@ -2623,7 +2623,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             );
         }
 
-        pub fn invalidate(g: *@This(), paths: []const []const u8, entry_points: *BakeEntryPoints, alloc: Allocator) !void {
+        pub fn invalidate(g: *@This(), paths: []const []const u8, entry_points: *EntryPointList, alloc: Allocator) !void {
             g.owner().graph_safety_lock.assertLocked();
             const values = g.bundled_files.values();
             for (paths) |path| {
@@ -3663,7 +3663,7 @@ pub fn startReloadBundle(dev: *DevServer, event: *HotReloadEvent) bun.OOM!void {
 
     var sfb = std.heap.stackFallback(4096, bun.default_allocator);
     const temp_alloc = sfb.get();
-    var entry_points: BakeEntryPoints = BakeEntryPoints.empty;
+    var entry_points: EntryPointList = EntryPointList.empty;
     defer entry_points.deinit(temp_alloc);
 
     event.processFileList(dev, &entry_points, temp_alloc);
@@ -3750,7 +3750,7 @@ pub const HotReloadEvent = struct {
     pub fn processFileList(
         event: *HotReloadEvent,
         dev: *DevServer,
-        entry_points: *BakeEntryPoints,
+        entry_points: *EntryPointList,
         alloc: Allocator,
     ) void {
         const changed_file_paths = event.files.keys();
@@ -3789,7 +3789,7 @@ pub const HotReloadEvent = struct {
 
         var sfb = std.heap.stackFallback(4096, bun.default_allocator);
         const temp_alloc = sfb.get();
-        var entry_points: BakeEntryPoints = BakeEntryPoints.empty;
+        var entry_points: EntryPointList = EntryPointList.empty;
         defer entry_points.deinit(temp_alloc);
 
         first.processFileList(dev, &entry_points, temp_alloc);
@@ -4157,11 +4157,66 @@ fn dumpStateDueToCrash(dev: *DevServer) !void {
     Output.note("Dumped incremental bundler graph to {}", .{bun.fmt.quote(filepath)});
 }
 
-// const RouteIndexAndRecurseFlag = packed struct(u32) {
-const RouteIndexAndRecurseFlag = struct {
+const RouteIndexAndRecurseFlag = packed struct(u32) {
     route_index: Route.Index,
     /// Set true for layout
     should_recurse_when_visiting: bool,
+};
+
+/// Bake needs to specify which graph (client/server/ssr) each entry point is.
+/// File paths are always absolute paths. Files may be bundled for multiple
+/// targets.
+pub const EntryPointList = struct {
+    set: bun.StringArrayHashMapUnmanaged(Flags),
+
+    pub const empty: EntryPointList = .{ .set = .{} };
+
+    const Flags = packed struct(u8) {
+        client: bool = false,
+        server: bool = false,
+        ssr: bool = false,
+        /// When this is set, also set .client = true
+        css: bool = false,
+        // /// Indicates the file might have been deleted.
+        // potentially_deleted: bool = false,
+
+        unused: enum(u4) { unused = 0 } = .unused,
+    };
+
+    pub fn deinit(entry_points: *EntryPointList, allocator: std.mem.Allocator) void {
+        entry_points.set.deinit(allocator);
+    }
+
+    pub fn appendJs(
+        entry_points: *EntryPointList,
+        allocator: std.mem.Allocator,
+        abs_path: []const u8,
+        side: bake.Graph,
+    ) !void {
+        return entry_points.append(allocator, abs_path, switch (side) {
+            .server => .{ .server = true },
+            .client => .{ .client = true },
+            .ssr => .{ .ssr = true },
+        });
+    }
+
+    pub fn appendCss(entry_points: *EntryPointList, allocator: std.mem.Allocator, abs_path: []const u8) !void {
+        return entry_points.append(allocator, abs_path, .{
+            .client = true,
+            .css = true,
+        });
+    }
+
+    /// Deduplictes requests to bundle the same file twice.
+    pub fn append(entry_points: *EntryPointList, allocator: std.mem.Allocator, abs_path: []const u8, flags: Flags) !void {
+        const gop = try entry_points.set.getOrPut(allocator, abs_path);
+        if (gop.found_existing) {
+            const T = @typeInfo(Flags).Struct.backing_integer.?;
+            gop.value_ptr.* = @bitCast(@as(T, @bitCast(gop.value_ptr.*)) | @as(T, @bitCast(flags)));
+        } else {
+            gop.value_ptr.* = flags;
+        }
+    }
 };
 
 const std = @import("std");
@@ -4185,7 +4240,6 @@ const Output = bun.Output;
 
 const Bundler = bun.bundler.Bundler;
 const BundleV2 = bun.bundle_v2.BundleV2;
-const BakeEntryPoints = bun.bundle_v2.BakeEntryPoints;
 
 const Define = bun.options.Define;
 const OutputFile = bun.options.OutputFile;

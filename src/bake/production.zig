@@ -694,7 +694,6 @@ const std = @import("std");
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Output = bun.Output;
-const BakeEntryPoints = bun.bundle_v2.BakeEntryPoints;
 const OutputFile = bun.options.OutputFile;
 
 const bake = bun.bake;

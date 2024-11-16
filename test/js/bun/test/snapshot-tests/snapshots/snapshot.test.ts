@@ -1,4 +1,6 @@
+import { $ } from "bun";
 import { expect, it, test } from "bun:test";
+import { bunExe, tempDirWithFiles } from "harness";
 
 function test1000000(arg1: any, arg218718132: any) {}
 
@@ -163,4 +165,41 @@ test("most types", () => {
 
 it("should work with expect.anything()", () => {
   // expect({ a: 0 }).toMatchSnapshot({ a: expect.anything() });
+});
+
+test("snapshot doesn't grow", async () => {
+  const dir = tempDirWithFiles("snapshot-doesnt-grow", {
+    "snapshot.test.ts": `
+      it("don't grow forever", async () => {
+        expect(\`\\$\`).toMatchSnapshot();
+        expect(\`\\\${}\`).toMatchSnapshot();
+        expect(\`æ™\n\r!!!!*5897yhduN\\"\\'\\\`Il\`).toMatchSnapshot();
+      });
+    `,
+  });
+  // pass once
+  await $`cd ${dir} && ${bunExe()} test snapshot.test.ts`;
+  const first_snapshot_value = await Bun.file(dir + "/__snapshots__/snapshot.test.ts.snap").text();
+  // pass subsequent times and make no changes
+  await $`cd ${dir} && ${bunExe()} test snapshot.test.ts`;
+  expect(await Bun.file(dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(first_snapshot_value);
+  await $`cd ${dir} && ${bunExe()} test snapshot.test.ts`;
+  expect(await Bun.file(dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(first_snapshot_value);
+
+  // fail after a change, do not modify snapshot output
+  await Bun.write(
+    dir + "/snapshot.test.ts",
+    `
+      it("don't grow forever", async () => {
+        expect(\`\\$\`).toMatchSnapshot();
+        expect(\`\\\$\`).toMatchSnapshot();
+        expect(\`æ™\n\r!!!!*5897yhduN\\"\\'\\\`Il\`).toMatchSnapshot();
+      });
+    `,
+  );
+
+  expect((await $`cd ${dir} && ${bunExe()} test snapshot.test.ts`.nothrow()).exitCode).not.toBe(0);
+  expect(await Bun.file(dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(first_snapshot_value);
+  expect((await $`cd ${dir} && ${bunExe()} test snapshot.test.ts`.nothrow()).exitCode).not.toBe(0);
+  expect(await Bun.file(dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(first_snapshot_value);
 });

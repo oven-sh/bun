@@ -84,13 +84,15 @@ pub const Snapshots = struct {
         var pretty_value = try MutableString.init(this.allocator, 0);
         try value.jestSnapshotPrettyFormat(&pretty_value, globalObject);
 
-        const serialized_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + pretty_value.list.items.len + "`;\n".len;
-        try this.file_buf.ensureUnusedCapacity(serialized_length);
-        this.file_buf.appendSliceAssumeCapacity("\nexports[`");
-        this.file_buf.appendSliceAssumeCapacity(name_with_counter);
-        this.file_buf.appendSliceAssumeCapacity("`] = `");
-        this.file_buf.appendSliceAssumeCapacity(pretty_value.list.items);
-        this.file_buf.appendSliceAssumeCapacity("`;\n");
+        const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + pretty_value.list.items.len + "`;\n".len;
+        try this.file_buf.ensureUnusedCapacity(estimated_length + 10);
+        try this.file_buf.writer().print(
+            "\nexports[`{}`] = `{}`;\n",
+            .{
+                strings.formatEscapes(name_with_counter, .{ .quote_char = '`' }),
+                strings.formatEscapes(pretty_value.list.items, .{ .quote_char = '`' }),
+            },
+        );
 
         this.added += 1;
         try this.values.put(name_hash, pretty_value.toOwnedSlice());

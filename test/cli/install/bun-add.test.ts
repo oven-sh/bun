@@ -2,7 +2,7 @@ import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
-import { join, relative } from "path";
+import { join, relative, resolve } from "path";
 import {
   check_npm_auth_type,
   dummyAfterAll,

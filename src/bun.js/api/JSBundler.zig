@@ -1110,7 +1110,7 @@ pub const BuildArtifact = struct {
     hash: u64 = std.math.maxInt(u64),
     output_kind: OutputKind,
     sourcemap: JSC.Strong = .{},
-    source_file: []const u8 = "",
+    entrypoint: []const u8 = "",
 
     pub const OutputKind = enum {
         chunk,
@@ -1129,7 +1129,7 @@ pub const BuildArtifact = struct {
         this.sourcemap.deinit();
 
         bun.default_allocator.free(this.path);
-        bun.default_allocator.free(this.source_file);
+        bun.default_allocator.free(this.entrypoint);
     }
 
     pub fn getText(
@@ -1203,12 +1203,12 @@ pub const BuildArtifact = struct {
         return ZigString.init(out).toJS(globalThis);
     }
 
-    pub fn getSourceFile(
+    pub fn getEntryPoint(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
     ) JSValue {
-        if (this.source_file.len == 0) return JSC.JSValue.jsNull();
-        return ZigString.fromUTF8(this.source_file).toJS(globalThis);
+        if (this.entrypoint.len == 0) return JSC.JSValue.jsNull();
+        return ZigString.fromUTF8(this.entrypoint).toJS(globalThis);
     }
 
     pub fn getSize(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) JSValue {
@@ -1340,18 +1340,18 @@ pub const BuildArtifact = struct {
                 try formatter.writeIndent(Writer, writer);
                 try writer.writeAll(
                     comptime Output.prettyFmt(
-                        "<r>sourcefile<r>: ",
+                        "<r>entrypoint<r>: ",
                         enable_ansi_colors,
                     ),
                 );
 
-                if (this.source_file.len != 0) {
+                if (this.entrypoint.len != 0) {
                     try writer.print(
                         comptime Output.prettyFmt(
                             "<green>\"{s}\"<r>",
                             enable_ansi_colors,
                         ),
-                        .{this.source_file},
+                        .{this.entrypoint},
                     );
                 } else {
                     try writer.writeAll(

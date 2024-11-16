@@ -56,7 +56,7 @@ describe("Bun.build", () => {
 
     expect(build.outputs).toHaveLength(2);
     expect(build.outputs[0].kind).toBe("entry-point");
-    expect(build.outputs[0].sourcefile).toEqual(entrypoint);
+    expect(build.outputs[0].entrypoint).toEqual(entrypoint);
     expect(await build.outputs[0].text()).not.toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
   });
 
@@ -85,7 +85,7 @@ describe("Bun.build", () => {
 
     expect(build.outputs).toHaveLength(2);
     expect(build.outputs[0].kind).toBe("entry-point");
-    expect(build.outputs[0].sourcefile).toEqual(entrypoint);
+    expect(build.outputs[0].entrypoint).toEqual(entrypoint);
     expect(build.outputs[1].kind).toBe("bytecode");
     expect([build.outputs[0].path]).toRun("world\n");
   });
@@ -255,7 +255,7 @@ describe("Bun.build", () => {
     expect(blob.kind).toBe("entry-point");
     expect(blob.loader).toBe("jsx");
     expect(blob.sourcemap).toBe(null);
-    expect(blob.sourcefile).toEqual(entrypoint);
+    expect(blob.entrypoint).toEqual(entrypoint);
     Bun.gc(true);
   });
 
@@ -280,7 +280,7 @@ describe("Bun.build", () => {
     expect(blob.hash).toBeTruthy();
     expect(blob.hash).toMatchSnapshot("hash");
     expect(blob.kind).toBe("entry-point");
-    expect(blob.sourcefile).toEqual(entrypoint);
+    expect(blob.entrypoint).toEqual(entrypoint);
     expect(blob.loader).toBe("jsx");
     expect(blob.sourcemap).toBe(null);
     Bun.gc(true);
@@ -305,7 +305,7 @@ describe("Bun.build", () => {
     expect(blob.hash).toMatchSnapshot("hash index.js");
     expect(blob.kind).toBe("entry-point");
     expect(blob.loader).toBe("jsx");
-    expect(blob.sourcefile).toEqual(entrypoint);
+    expect(blob.entrypoint).toEqual(entrypoint);
     expect(blob.sourcemap).toBe(map);
 
     expect(map.type).toBe("application/json;charset=utf-8");
@@ -314,7 +314,7 @@ describe("Bun.build", () => {
     expect(map.hash).toBeTruthy();
     expect(map.hash).toMatchSnapshot("hash index.js.map");
     expect(map.kind).toBe("sourcemap");
-    expect(map.sourcefile).toBe(null);
+    expect(map.entrypoint).toBe(null);
     expect(map.loader).toBe("file");
     expect(map.sourcemap).toBe(null);
     Bun.gc(true);
@@ -559,9 +559,9 @@ describe("Bun.build", () => {
     expect(await bundle.outputs[0].text()).toBe("var o=/*@__PURE__*/console.log(1);export{o as OUT};\n");
   });
 
-  test("multiple entries have sourcefiles", async () => {
+  test("multiple entries have entrypoints", async () => {
     Bun.gc(true);
-    const fixture = tempDirWithFiles("build-entries-have-sourcefiles", {
+    const fixture = tempDirWithFiles("build-entries-have-entrypoints", {
       "entry1.ts": `
         import { bar } from './bar'
         export const entry1 = () => {
@@ -593,8 +593,8 @@ describe("Bun.build", () => {
       sourcemap: "external",
     });
 
-    const entry1Output = [...build.outputs].find(item => item.sourcefile == entry1);
-    const entry2Output = [...build.outputs].find(item => item.sourcefile == entry2);
+    const entry1Output = [...build.outputs].find(item => item.entrypoint == entry1);
+    const entry2Output = [...build.outputs].find(item => item.entrypoint == entry2);
 
     expect(entry1Output).toBeObject();
     expect(entry2Output).toBeObject();
@@ -604,7 +604,7 @@ describe("Bun.build", () => {
 
     for (const output of build.outputs) {
       if (output.kind != "entry-point") {
-        expect(output?.sourcefile).toBe(null);
+        expect(output?.entrypoint).toBe(null);
       }
     }
     Bun.gc(true);

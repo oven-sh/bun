@@ -20,7 +20,7 @@ interface Message {
   result?: any;
 }
 
-class InspectorSession {
+export class InspectorSession {
   private messageCallbacks: Map<number, (result: any) => void>;
   private eventListeners: Map<string, ((params: any) => void)[]>;
   private nextId: number;
@@ -98,9 +98,9 @@ interface TestInfo {
   stderr: string[];
 }
 
-class JUnitReporter {
+export class JUnitReporter {
   private session: InspectorSession;
-  private testSuites: Map<string, JUnitTestSuite>;
+  testSuites: Map<string, JUnitTestSuite>;
   private tests: Map<number, TestInfo>;
   private currentTest: TestInfo | null = null;
 
@@ -182,9 +182,6 @@ class JUnitReporter {
     if (test.stdout.length > 0) {
       testCase.systemOut = test.stdout.join("\n");
     }
-    if (test.stderr.length > 0) {
-      testCase.systemErr = test.stderr.join("\n");
-    }
 
     if (params.status === "fail") {
       suite.failures++;
@@ -193,8 +190,13 @@ class JUnitReporter {
         type: "AssertionError",
         content: test.stderr.join("\n") || "No error details available",
       };
+      test.stderr = [];
     } else if (params.status === "skip" || params.status === "todo") {
       suite.skipped++;
+    }
+
+    if (test.stderr.length > 0) {
+      testCase.systemErr = test.stderr.join("\n");
     }
 
     suite.testCases.push(testCase);
@@ -245,21 +247,17 @@ class JUnitReporter {
     xml += "<testsuites>\n";
 
     for (const suite of this.testSuites.values()) {
-      const totalTime = suite.testCases.reduce((sum, test) => sum + test.time, 0);
-      suite.time = totalTime;
-
       xml += `  <testsuite name="${escapeXml(suite.name)}" `;
       xml += `tests="${suite.tests}" `;
       xml += `failures="${suite.failures}" `;
       xml += `errors="${suite.errors}" `;
       xml += `skipped="${suite.skipped}" `;
-      xml += `time="${suite.time}" `;
+
       xml += `timestamp="${suite.timestamp}">\n`;
 
       for (const testCase of suite.testCases) {
         xml += `    <testcase classname="${escapeXml(testCase.classname)}" `;
         xml += `name="${escapeXml(testCase.name)}" `;
-        xml += `time="${testCase.time}">\n`;
 
         if (testCase.failure) {
           xml += `      <failure message="${escapeXml(testCase.failure.message)}" `;
@@ -296,7 +294,10 @@ function escapeXml(str: string): string {
     .replace(/'/g, "&apos;");
 }
 
-async function connect(address: string): Promise<Socket<{ onData: (socket: Socket<any>, data: Buffer) => void }>> {
+export async function connect(
+  address: string,
+  onClose?: () => void,
+): Promise<Socket<{ onData: (socket: Socket<any>, data: Buffer) => void }>> {
   const { promise, resolve } = Promise.withResolvers<Socket<{ onData: (socket: Socket<any>, data: Buffer) => void }>>();
 
   var listener = listen<{ onData: (socket: Socket<any>, data: Buffer) => void }>({
@@ -313,39 +314,46 @@ async function connect(address: string): Promise<Socket<{ onData: (socket: Socke
       error(socket, error) {
         console.error(error);
       },
+      close(socket) {
+        if (onClose) {
+          onClose();
+        }
+      },
     },
   });
 
   return await promise;
 }
 
-// Main execution
-const address = process.argv[2];
-if (!address) {
-  throw new Error("Please provide the inspector address as an argument");
-}
-
-let reporter: JUnitReporter;
-let session: InspectorSession;
-
-const socket = await connect(address);
-const framer = new SocketFramer((message: string) => {
-  session.onMessage(message);
-});
-
-session = new InspectorSession();
-session.socket = socket;
-session.framer = framer;
-socket.data = {
-  onData: framer.onData.bind(framer),
-};
-
-reporter = new JUnitReporter(session);
-
-// Handle process exit
-process.on("exit", () => {
-  if (reporter) {
-    const report = reporter.generateReport();
-    console.log(report);
+if (import.meta.main) {
+  // Main execution
+  const address = process.argv[2];
+  if (!address) {
+    throw new Error("Please provide the inspector address as an argument");
   }
-});
+
+  let reporter: JUnitReporter;
+  let session: InspectorSession;
+
+  const socket = await connect(address);
+  const framer = new SocketFramer((message: string) => {
+    session.onMessage(message);
+  });
+
+  session = new InspectorSession();
+  session.socket = socket;
+  session.framer = framer;
+  socket.data = {
+    onData: framer.onData.bind(framer),
+  };
+
+  reporter = new JUnitReporter(session);
+
+  // Handle process exit
+  process.on("exit", () => {
+    if (reporter) {
+      const report = reporter.generateReport();
+      console.log(report);
+    }
+  });
+}

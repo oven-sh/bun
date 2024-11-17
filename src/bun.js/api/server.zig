@@ -768,7 +768,7 @@ pub const ServerConfig = struct {
             result.reject_unauthorized = @intFromBool(vm.getTLSRejectUnauthorized());
 
             // Required
-            if (obj.getTruthy(global, "keyFile")) |key_file_name| {
+            if (try obj.getTruthy(global, "keyFile")) |key_file_name| {
                 var sliced = key_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
@@ -781,7 +781,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (obj.getTruthy(global, "key")) |js_obj| {
+            if (try obj.getTruthy(global, "key")) |js_obj| {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
@@ -862,7 +862,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (obj.getTruthy(global, "certFile")) |cert_file_name| {
+            if (try obj.getTruthy(global, "certFile")) |cert_file_name| {
                 var sliced = cert_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
@@ -875,7 +875,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (obj.getTruthy(global, "ALPNProtocols")) |protocols| {
+            if (try obj.getTruthy(global, "ALPNProtocols")) |protocols| {
                 if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), protocols)) |sb| {
                     defer sb.deinit();
                     const sliced = sb.slice();
@@ -891,7 +891,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (obj.getTruthy(global, "cert")) |js_obj| {
+            if (try obj.getTruthy(global, "cert")) |js_obj| {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
@@ -972,7 +972,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (obj.getTruthy(global, "requestCert")) |request_cert| {
+            if (try obj.getTruthy(global, "requestCert")) |request_cert| {
                 if (request_cert.isBoolean()) {
                     result.request_cert = if (request_cert.asBoolean()) 1 else 0;
                     any = true;
@@ -981,7 +981,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (obj.getTruthy(global, "rejectUnauthorized")) |reject_unauthorized| {
+            if (try obj.getTruthy(global, "rejectUnauthorized")) |reject_unauthorized| {
                 if (reject_unauthorized.isBoolean()) {
                     result.reject_unauthorized = if (reject_unauthorized.asBoolean()) 1 else 0;
                     any = true;
@@ -990,7 +990,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (obj.getTruthy(global, "ciphers")) |ssl_ciphers| {
+            if (try obj.getTruthy(global, "ciphers")) |ssl_ciphers| {
                 var sliced = ssl_ciphers.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
@@ -1000,7 +1000,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (obj.getTruthy(global, "serverName") orelse obj.getTruthy(global, "servername")) |server_name| {
+            if (try obj.getTruthy(global, "serverName") orelse try obj.getTruthy(global, "servername")) |server_name| {
                 var sliced = server_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
@@ -1010,7 +1010,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (obj.getTruthy(global, "ca")) |js_obj| {
+            if (try obj.getTruthy(global, "ca")) |js_obj| {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
@@ -1091,7 +1091,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (obj.getTruthy(global, "caFile")) |ca_file_name| {
+            if (try obj.getTruthy(global, "caFile")) |ca_file_name| {
                 var sliced = ca_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
@@ -1103,25 +1103,25 @@ pub const ServerConfig = struct {
             }
             // Optional
             if (any) {
-                if (obj.getTruthy(global, "secureOptions")) |secure_options| {
+                if (try obj.getTruthy(global, "secureOptions")) |secure_options| {
                     if (secure_options.isNumber()) {
                         result.secure_options = secure_options.toU32();
                     }
                 }
 
-                if (obj.getTruthy(global, "clientRenegotiationLimit")) |client_renegotiation_limit| {
+                if (try obj.getTruthy(global, "clientRenegotiationLimit")) |client_renegotiation_limit| {
                     if (client_renegotiation_limit.isNumber()) {
                         result.client_renegotiation_limit = client_renegotiation_limit.toU32();
                     }
                 }
 
-                if (obj.getTruthy(global, "clientRenegotiationWindow")) |client_renegotiation_window| {
+                if (try obj.getTruthy(global, "clientRenegotiationWindow")) |client_renegotiation_window| {
                     if (client_renegotiation_window.isNumber()) {
                         result.client_renegotiation_window = client_renegotiation_window.toU32();
                     }
                 }
 
-                if (obj.getTruthy(global, "dhParamsFile")) |dh_params_file_name| {
+                if (try obj.getTruthy(global, "dhParamsFile")) |dh_params_file_name| {
                     var sliced = dh_params_file_name.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
@@ -1132,7 +1132,7 @@ pub const ServerConfig = struct {
                     }
                 }
 
-                if (obj.getTruthy(global, "passphrase")) |passphrase| {
+                if (try obj.getTruthy(global, "passphrase")) |passphrase| {
                     var sliced = passphrase.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
@@ -1279,7 +1279,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (arg.getTruthy(global, "webSocket") orelse arg.getTruthy(global, "websocket")) |websocket_object| {
+            if (try arg.getTruthy(global, "webSocket") orelse try arg.getTruthy(global, "websocket")) |websocket_object| {
                 if (!websocket_object.isObject()) {
                     global.throwInvalidArguments("Expected websocket to be an object", .{});
                     if (args.ssl_config) |*conf| {
@@ -1293,7 +1293,7 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (arg.getTruthy(global, "port")) |port_| {
+            if (try arg.getTruthy(global, "port")) |port_| {
                 args.address.tcp.port = @as(
                     u16,
                     @intCast(@min(
@@ -1305,7 +1305,7 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (arg.getTruthy(global, "baseURI")) |baseURI| {
+            if (try arg.getTruthy(global, "baseURI")) |baseURI| {
                 var sliced = baseURI.toSlice(global, bun.default_allocator);
 
                 if (sliced.len > 0) {
@@ -1315,7 +1315,7 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (arg.getTruthy(global, "hostname") orelse arg.getTruthy(global, "host")) |host| {
+            if (try arg.getTruthy(global, "hostname") orelse try arg.getTruthy(global, "host")) |host| {
                 const host_str = host.toSlice(
                     global,
                     bun.default_allocator,
@@ -1329,7 +1329,7 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (arg.getTruthy(global, "unix")) |unix| {
+            if (try arg.getTruthy(global, "unix")) |unix| {
                 const unix_str = unix.toSlice(
                     global,
                     bun.default_allocator,
@@ -1370,7 +1370,7 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (arg.getTruthy(global, "app")) |bake_args_js| {
+            if (try arg.getTruthy(global, "app")) |bake_args_js| {
                 if (!bun.FeatureFlags.bake) {
                     return global.throwInvalidArguments2("To use the experimental \"app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
                 }
@@ -1399,14 +1399,14 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (arg.getTruthy(global, "maxRequestBodySize")) |max_request_body_size| {
+            if (try arg.getTruthy(global, "maxRequestBodySize")) |max_request_body_size| {
                 if (max_request_body_size.isNumber()) {
                     args.max_request_body_size = @as(u64, @intCast(@max(0, max_request_body_size.toInt64())));
                 }
             }
             if (global.hasException()) return error.JSError;
 
-            if (arg.getTruthyComptime(global, "error")) |onError| {
+            if (try arg.getTruthyComptime(global, "error")) |onError| {
                 if (!onError.isCallable(global.vm())) {
                     global.throwInvalidArguments("Expected error to be a function", .{});
                     return error.JSError;
@@ -1417,7 +1417,7 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (arg.getTruthy(global, "fetch")) |onRequest_| {
+            if (try arg.getTruthy(global, "fetch")) |onRequest_| {
                 if (!onRequest_.isCallable(global.vm())) {
                     global.throwInvalidArguments("Expected fetch() to be a function", .{});
                     return error.JSError;
@@ -1433,7 +1433,7 @@ pub const ServerConfig = struct {
                 if (global.hasException()) return error.JSError;
             }
 
-            if (arg.getTruthy(global, "tls")) |tls| {
+            if (try arg.getTruthy(global, "tls")) |tls| {
                 if (tls.isFalsey()) {
                     args.ssl_config = null;
                 } else if (tls.jsType().isArray()) {
@@ -4159,7 +4159,7 @@ pub const WebSocketServer = struct {
 
             var valid = false;
 
-            if (object.getTruthyComptime(globalObject, "message")) |message_| {
+            if (try object.getTruthyComptime(globalObject, "message")) |message_| {
                 if (!message_.isCallable(vm)) {
                     return globalObject.throwInvalidArguments2("websocket expects a function for the message option", .{});
                 }
@@ -4169,7 +4169,7 @@ pub const WebSocketServer = struct {
                 valid = true;
             }
 
-            if (object.getTruthy(globalObject, "open")) |open_| {
+            if (try object.getTruthy(globalObject, "open")) |open_| {
                 if (!open_.isCallable(vm)) {
                     return globalObject.throwInvalidArguments2("websocket expects a function for the open option", .{});
                 }
@@ -4179,7 +4179,7 @@ pub const WebSocketServer = struct {
                 valid = true;
             }
 
-            if (object.getTruthy(globalObject, "close")) |close_| {
+            if (try object.getTruthy(globalObject, "close")) |close_| {
                 if (!close_.isCallable(vm)) {
                     return globalObject.throwInvalidArguments2("websocket expects a function for the close option", .{});
                 }
@@ -4189,7 +4189,7 @@ pub const WebSocketServer = struct {
                 valid = true;
             }
 
-            if (object.getTruthy(globalObject, "drain")) |drain_| {
+            if (try object.getTruthy(globalObject, "drain")) |drain_| {
                 if (!drain_.isCallable(vm)) {
                     return globalObject.throwInvalidArguments2("websocket expects a function for the drain option", .{});
                 }
@@ -4199,7 +4199,7 @@ pub const WebSocketServer = struct {
                 valid = true;
             }
 
-            if (object.getTruthy(globalObject, "onError")) |onError_| {
+            if (try object.getTruthy(globalObject, "onError")) |onError_| {
                 if (!onError_.isCallable(vm)) {
                     return globalObject.throwInvalidArguments2("websocket expects a function for the onError option", .{});
                 }
@@ -4208,7 +4208,7 @@ pub const WebSocketServer = struct {
                 onError.ensureStillAlive();
             }
 
-            if (object.getTruthy(globalObject, "ping")) |cb| {
+            if (try object.getTruthy(globalObject, "ping")) |cb| {
                 if (!cb.isCallable(vm)) {
                     return globalObject.throwInvalidArguments2("websocket expects a function for the ping option", .{});
                 }
@@ -4217,7 +4217,7 @@ pub const WebSocketServer = struct {
                 valid = true;
             }
 
-            if (object.getTruthy(globalObject, "pong")) |cb| {
+            if (try object.getTruthy(globalObject, "pong")) |cb| {
                 if (!cb.isCallable(vm)) {
                     return globalObject.throwInvalidArguments2("websocket expects a function for the pong option", .{});
                 }
@@ -4324,7 +4324,7 @@ pub const WebSocketServer = struct {
                     break :getter;
                 }
 
-                if (per_message_deflate.getTruthy(globalObject, "compress")) |compression| {
+                if (try per_message_deflate.getTruthy(globalObject, "compress")) |compression| {
                     if (compression.isBoolean()) {
                         server.compression |= if (compression.toBoolean()) uws.SHARED_COMPRESSOR else 0;
                     } else if (compression.isString()) {
@@ -4336,7 +4336,7 @@ pub const WebSocketServer = struct {
                     }
                 }
 
-                if (per_message_deflate.getTruthy(globalObject, "decompress")) |compression| {
+                if (try per_message_deflate.getTruthy(globalObject, "decompress")) |compression| {
                     if (compression.isBoolean()) {
                         server.compression |= if (compression.toBoolean()) uws.SHARED_DECOMPRESSOR else 0;
                     } else if (compression.isString()) {

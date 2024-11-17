@@ -687,7 +687,7 @@ pub const FormatOptions = struct {
         const arg1 = arguments[0];
 
         if (arg1.isObject()) {
-            if (arg1.getTruthy(globalThis, "depth")) |opt| {
+            if (try arg1.getTruthy(globalThis, "depth")) |opt| {
                 if (opt.isInt32()) {
                     const arg = opt.toInt32();
                     if (arg < 0) {

@@ -1,76 +1,87 @@
 const kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
 const kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
 
-function defineCustomPromisify(target, callback) {
+function defineCustomPromisify(target: Function, callback: Function) {
   Object.defineProperty(target, kCustomPromisifiedSymbol, {
     value: callback,
-    __proto__: null,
+    writable: true,
     configurable: true,
   });
-
   return callback;
 }
 
-function defineCustomPromisifyArgs(target, args) {
+function defineCustomPromisifyArgs(target: Function, args: string[]) {
   Object.defineProperty(target, kCustomPromisifyArgsSymbol, {
-    __proto__: null,
     value: args,
     enumerable: false,
+    writable: true,
+    configurable: true,
   });
   return args;
 }
 
-var promisify = function promisify(original) {
+function promisify(original: Function) {
   if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
+
   const custom = original[kCustomPromisifiedSymbol];
   if (custom) {
     if (typeof custom !== "function") {
       throw new TypeError('The "util.promisify.custom" argument must be of type Function');
     }
-    // ensure that we don't create another promisified function wrapper
     return defineCustomPromisify(custom, custom);
   }
 
   const callbackArgs = original[kCustomPromisifyArgsSymbol];
+  const isTimer = original === setTimeout || original === setInterval;
 
-  function fn(...originalArgs) {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    try {
+  if (isTimer) {
+    function timerFn(timeout: number, ...rest: any[]) {
+      return new Promise(resolve => {
+        original.$apply(null, [() => resolve(rest[0]), timeout, ...rest]);
+      });
+    }
+    Object.setPrototypeOf(timerFn, Object.getPrototypeOf(original));
+    defineCustomPromisify(timerFn, timerFn);
+    return Object.defineProperties(timerFn, Object.getOwnPropertyDescriptors(original));
+  }
+
+  function fn(this: unknown, ...args: any[]) {
+    return new Promise((resolve, reject) => {
       original.$apply(this, [
-        ...originalArgs,
-        function (err, ...values) {
-          if (err) {
-            return reject(err);
+        ...args,
+        (err: Error | null, ...values: any[]) => {
+          if (err) return reject(err);
+
+          if (callbackArgs === undefined || values.length === 0) {
+            resolve(values[0]);
+            return;
           }
 
-          if (callbackArgs !== undefined && values.length > 0) {
-            if (!Array.isArray(callbackArgs)) {
-              throw new TypeError('The "customPromisifyArgs" argument must be of type Array');
-            }
-            if (callbackArgs.length !== values.length) {
-              throw new Error("Mismatched length in promisify callback args");
-            }
-            const result = {};
-            for (let i = 0; i < callbackArgs.length; i++) {
-              result[callbackArgs[i]] = values[i];
-            }
-            resolve(result);
-          } else {
-            resolve(values[0]);
+          if (!Array.isArray(callbackArgs)) {
+            throw new TypeError('The "customPromisifyArgs" argument must be of type Array');
           }
+
+          const result: Record<string, any> = {};
+          const len = Math.min(callbackArgs.length, values.length);
+          for (let i = 0; i < len; i++) {
+            result[callbackArgs[i]] = values[i];
+          }
+          resolve(result);
         },
       ]);
-    } catch (err) {
-      reject(err);
-    }
-
-    return promise;
+    });
   }
+
   Object.setPrototypeOf(fn, Object.getPrototypeOf(original));
   defineCustomPromisify(fn, fn);
   return Object.defineProperties(fn, Object.getOwnPropertyDescriptors(original));
-};
-promisify.custom = kCustomPromisifiedSymbol;
+}
+
+Object.defineProperty(promisify, "custom", {
+  value: kCustomPromisifiedSymbol,
+  enumerable: true,
+  configurable: true,
+});
 
 export default {
   defineCustomPromisify,

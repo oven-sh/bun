@@ -1638,8 +1638,37 @@
           "parameters": [
             {
               "name": "message",
-              "$ref": "Console.ConsoleMessage",
-              "description": "Source of the error"
+              "type": "string",
+              "description": "string associated with the error"
+            },
+            {
+              "name": "name",
+              "type": "string",
+              "description": "If an Error instance, the error.name property"
+            },
+            {
+              "name": "urls",
+              "type": "array",
+              "description": "Array of URLs associated with the error",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "lineColumns",
+              "type": "array",
+              "description": "Line, column pairs associated with the error. Already sourcemapped.",
+              "items": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "sourceLines",
+              "type": "array",
+              "description": "Source code preview associated with the error for up to 5 lines before the error, relative to the first non-internal stack frame.",
+              "items": {
+                "type": "string"
+              }
             }
           ]
         }
@@ -2978,7 +3007,7 @@
     },
     {
       "domain": "TestReporter",
-      "description": "TestReporter domain allows reporting of lifecycle events.",
+      "description": "TestReporter domain allows reporting of test-related events.",
       "debuggableTypes": ["itml", "javascript"],
       "targetTypes": ["itml", "javascript"],
       "types": [
@@ -3010,7 +3039,14 @@
             {
               "name": "scriptId",
               "$ref": "Debugger.ScriptId",
-              "description": "Unique identifier of the script that started the test."
+              "description": "Unique identifier of the script the test is in. Available when the debugger is attached.",
+              "optional": true
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "description": "url of the script the test is in. Available when the debugger is not attached.",
+              "optional": true
             },
             {
               "name": "line",
@@ -3050,7 +3086,7 @@
             },
             {
               "name": "elapsed",
-              "type": "number",
+              "type": "integer",
               "description": "Elapsed time in milliseconds since the test started."
             }
           ]

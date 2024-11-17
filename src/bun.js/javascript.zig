@@ -1491,7 +1491,7 @@ pub const VirtualMachine = struct {
 
         pub const Handle = opaque {
             extern "c" fn Bun__LifecycleAgentReportReload(agent: *Handle) void;
-            extern "c" fn Bun__LifecycleAgentReportError(agent: *Handle, error_value: JSC.JSValue) void;
+            extern "c" fn Bun__LifecycleAgentReportError(agent: *Handle, exception: *JSC.ZigException) void;
             extern "c" fn Bun__LifecycleAgentPreventExit(agent: *Handle) void;
             extern "c" fn Bun__LifecycleAgentStopPreventingExit(agent: *Handle) void;
 
@@ -1508,9 +1508,9 @@ pub const VirtualMachine = struct {
                 Bun__LifecycleAgentReportReload(this);
             }
 
-            pub fn reportError(this: *Handle, error_value: JSC.JSValue) void {
+            pub fn reportError(this: *Handle, exception: *JSC.ZigException) void {
                 debug("reportError", .{});
-                Bun__LifecycleAgentReportError(this, error_value);
+                Bun__LifecycleAgentReportError(this, exception);
             }
         };
 
@@ -1534,9 +1534,9 @@ pub const VirtualMachine = struct {
             }
         }
 
-        pub fn reportError(this: *LifecycleAgent, error_value: JSC.JSValue) void {
+        pub fn reportError(this: *LifecycleAgent, exception: *JSC.ZigException) void {
             if (this.handle) |handle| {
-                handle.reportError(error_value);
+                handle.reportError(exception);
             }
         }
 
@@ -1547,7 +1547,7 @@ pub const VirtualMachine = struct {
 
     pub const Debugger = struct {
         path_or_port: ?[]const u8 = null,
-        unix: []const u8 = "",
+        from_environment_variable: []const u8 = "",
         script_execution_context_id: u32 = 0,
         next_debugger_id: u64 = 1,
         poll_ref: Async.KeepAlive = .{},
@@ -1561,7 +1561,7 @@ pub const VirtualMachine = struct {
 
         extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
         extern "C" fn Bun__ensureDebugger(u32, bool) void;
-        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String) void;
+        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String, i32) void;
         var futex_atomic: std.atomic.Value(u32) = undefined;
 
         pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
@@ -1639,14 +1639,14 @@ pub const VirtualMachine = struct {
             var this = VirtualMachine.get();
             const debugger = other_vm.debugger.?;
 
-            if (debugger.unix.len > 0) {
-                var url = bun.String.createUTF8(debugger.unix);
-                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
+            if (debugger.from_environment_variable.len > 0) {
+                var url = bun.String.createUTF8(debugger.from_environment_variable);
+                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 1);
             }
 
             if (debugger.path_or_port) |path_or_port| {
                 var url = bun.String.createUTF8(path_or_port);
-                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
+                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 0);
             }
 
             this.global.handleRejectedPromises();
@@ -1976,7 +1976,7 @@ pub const VirtualMachine = struct {
                 if (unix.len > 0) {
                     this.debugger = Debugger{
                         .path_or_port = null,
-                        .unix = unix,
+                        .from_environment_variable = unix,
                         .wait_for_connection = wait_for_connection,
                         .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
                     };
@@ -1985,7 +1985,7 @@ pub const VirtualMachine = struct {
             .enable => {
                 this.debugger = Debugger{
                     .path_or_port = debugger.enable.path_or_port,
-                    .unix = unix,
+                    .from_environment_variable = unix,
                     .wait_for_connection = wait_for_connection or debugger.enable.wait_for_connection,
                     .set_breakpoint_on_first_line = set_breakpoint_on_first_line or debugger.enable.set_breakpoint_on_first_line,
                 };
@@ -3637,6 +3637,12 @@ pub const VirtualMachine = struct {
         const prev_had_errors = this.had_errors;
         this.had_errors = true;
         defer this.had_errors = prev_had_errors;
+
+        if (allow_side_effects) {
+            if (this.debugger) |*debugger| {
+                debugger.lifecycle_reporter_agent.reportError(exception);
+            }
+        }
 
         defer if (allow_side_effects and Output.is_github_action)
             printGithubAnnotation(exception);

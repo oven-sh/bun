@@ -1441,9 +1441,25 @@ export namespace JSC {
      */
     export type ErrorEvent = {
       /**
-       * Source of the error
+       * string associated with the error
        */
-      message: Console.ConsoleMessage;
+      message: string;
+      /**
+       * If an Error instance, the error.name property
+       */
+      name: string;
+      /**
+       * Array of URLs associated with the error
+       */
+      urls: string[];
+      /**
+       * Line, column pairs associated with the error. Already sourcemapped.
+       */
+      lineColumns: number[];
+      /**
+       * Source code preview associated with the error for up to 5 lines before the error, relative to the first non-internal stack frame.
+       */
+      sourceLines: string[];
     };
     /**
      * Enables LifecycleReporter domain events.
@@ -2502,9 +2518,13 @@ export namespace JSC {
        */
       id: number;
       /**
-       * Unique identifier of the script that started the test.
+       * Unique identifier of the script the test is in. Available when the debugger is attached.
        */
-      scriptId: Debugger.ScriptId;
+      scriptId?: Debugger.ScriptId | undefined;
+      /**
+       * url of the script the test is in. Available when the debugger is not attached.
+       */
+      url?: string | undefined;
       /**
        * Line number in the script that started the test.
        */
@@ -2564,190 +2584,190 @@ export namespace JSC {
     export type DisableResponse = {};
   }
   export type EventMap = {
-    "Console.heapSnapshot": Console.HeapSnapshotEvent;
     "Console.messageAdded": Console.MessageAddedEvent;
     "Console.messageRepeatCountUpdated": Console.MessageRepeatCountUpdatedEvent;
     "Console.messagesCleared": Console.MessagesClearedEvent;
-    "Debugger.breakpointResolved": Debugger.BreakpointResolvedEvent;
-    "Debugger.didSampleProbe": Debugger.DidSampleProbeEvent;
+    "Console.heapSnapshot": Console.HeapSnapshotEvent;
     "Debugger.globalObjectCleared": Debugger.GlobalObjectClearedEvent;
-    "Debugger.paused": Debugger.PausedEvent;
-    "Debugger.playBreakpointActionSound": Debugger.PlayBreakpointActionSoundEvent;
-    "Debugger.resumed": Debugger.ResumedEvent;
-    "Debugger.scriptFailedToParse": Debugger.ScriptFailedToParseEvent;
     "Debugger.scriptParsed": Debugger.ScriptParsedEvent;
+    "Debugger.scriptFailedToParse": Debugger.ScriptFailedToParseEvent;
+    "Debugger.breakpointResolved": Debugger.BreakpointResolvedEvent;
+    "Debugger.paused": Debugger.PausedEvent;
+    "Debugger.resumed": Debugger.ResumedEvent;
+    "Debugger.didSampleProbe": Debugger.DidSampleProbeEvent;
+    "Debugger.playBreakpointActionSound": Debugger.PlayBreakpointActionSoundEvent;
     "Heap.garbageCollected": Heap.GarbageCollectedEvent;
-    "Heap.trackingComplete": Heap.TrackingCompleteEvent;
     "Heap.trackingStart": Heap.TrackingStartEvent;
+    "Heap.trackingComplete": Heap.TrackingCompleteEvent;
     "Inspector.evaluateForTestInFrontend": Inspector.EvaluateForTestInFrontendEvent;
     "Inspector.inspect": Inspector.InspectEvent;
-    "LifecycleReporter.error": LifecycleReporter.ErrorEvent;
     "LifecycleReporter.reload": LifecycleReporter.ReloadEvent;
+    "LifecycleReporter.error": LifecycleReporter.ErrorEvent;
     "Runtime.executionContextCreated": Runtime.ExecutionContextCreatedEvent;
-    "ScriptProfiler.trackingComplete": ScriptProfiler.TrackingCompleteEvent;
     "ScriptProfiler.trackingStart": ScriptProfiler.TrackingStartEvent;
     "ScriptProfiler.trackingUpdate": ScriptProfiler.TrackingUpdateEvent;
-    "TestReporter.end": TestReporter.EndEvent;
+    "ScriptProfiler.trackingComplete": ScriptProfiler.TrackingCompleteEvent;
     "TestReporter.found": TestReporter.FoundEvent;
     "TestReporter.start": TestReporter.StartEvent;
+    "TestReporter.end": TestReporter.EndEvent;
   };
   export type RequestMap = {
-    "Audit.run": Audit.RunRequest;
     "Audit.setup": Audit.SetupRequest;
+    "Audit.run": Audit.RunRequest;
     "Audit.teardown": Audit.TeardownRequest;
-    "Console.clearMessages": Console.ClearMessagesRequest;
-    "Console.disable": Console.DisableRequest;
     "Console.enable": Console.EnableRequest;
-    "Console.getLoggingChannels": Console.GetLoggingChannelsRequest;
+    "Console.disable": Console.DisableRequest;
+    "Console.clearMessages": Console.ClearMessagesRequest;
     "Console.setConsoleClearAPIEnabled": Console.SetConsoleClearAPIEnabledRequest;
+    "Console.getLoggingChannels": Console.GetLoggingChannelsRequest;
     "Console.setLoggingChannelLevel": Console.SetLoggingChannelLevelRequest;
-    "Debugger.addSymbolicBreakpoint": Debugger.AddSymbolicBreakpointRequest;
-    "Debugger.continueToLocation": Debugger.ContinueToLocationRequest;
-    "Debugger.continueUntilNextRunLoop": Debugger.ContinueUntilNextRunLoopRequest;
-    "Debugger.disable": Debugger.DisableRequest;
     "Debugger.enable": Debugger.EnableRequest;
-    "Debugger.evaluateOnCallFrame": Debugger.EvaluateOnCallFrameRequest;
-    "Debugger.getBreakpointLocations": Debugger.GetBreakpointLocationsRequest;
-    "Debugger.getFunctionDetails": Debugger.GetFunctionDetailsRequest;
-    "Debugger.getScriptSource": Debugger.GetScriptSourceRequest;
-    "Debugger.pause": Debugger.PauseRequest;
+    "Debugger.disable": Debugger.DisableRequest;
+    "Debugger.setAsyncStackTraceDepth": Debugger.SetAsyncStackTraceDepthRequest;
+    "Debugger.setBreakpointsActive": Debugger.SetBreakpointsActiveRequest;
+    "Debugger.setBreakpointByUrl": Debugger.SetBreakpointByUrlRequest;
+    "Debugger.setBreakpoint": Debugger.SetBreakpointRequest;
     "Debugger.removeBreakpoint": Debugger.RemoveBreakpointRequest;
+    "Debugger.addSymbolicBreakpoint": Debugger.AddSymbolicBreakpointRequest;
     "Debugger.removeSymbolicBreakpoint": Debugger.RemoveSymbolicBreakpointRequest;
+    "Debugger.continueUntilNextRunLoop": Debugger.ContinueUntilNextRunLoopRequest;
+    "Debugger.continueToLocation": Debugger.ContinueToLocationRequest;
+    "Debugger.stepNext": Debugger.StepNextRequest;
+    "Debugger.stepOver": Debugger.StepOverRequest;
+    "Debugger.stepInto": Debugger.StepIntoRequest;
+    "Debugger.stepOut": Debugger.StepOutRequest;
+    "Debugger.pause": Debugger.PauseRequest;
     "Debugger.resume": Debugger.ResumeRequest;
     "Debugger.searchInContent": Debugger.SearchInContentRequest;
-    "Debugger.setAsyncStackTraceDepth": Debugger.SetAsyncStackTraceDepthRequest;
-    "Debugger.setBlackboxBreakpointEvaluations": Debugger.SetBlackboxBreakpointEvaluationsRequest;
-    "Debugger.setBreakpoint": Debugger.SetBreakpointRequest;
-    "Debugger.setBreakpointByUrl": Debugger.SetBreakpointByUrlRequest;
-    "Debugger.setBreakpointsActive": Debugger.SetBreakpointsActiveRequest;
-    "Debugger.setPauseForInternalScripts": Debugger.SetPauseForInternalScriptsRequest;
-    "Debugger.setPauseOnAssertions": Debugger.SetPauseOnAssertionsRequest;
+    "Debugger.getScriptSource": Debugger.GetScriptSourceRequest;
+    "Debugger.getFunctionDetails": Debugger.GetFunctionDetailsRequest;
+    "Debugger.getBreakpointLocations": Debugger.GetBreakpointLocationsRequest;
     "Debugger.setPauseOnDebuggerStatements": Debugger.SetPauseOnDebuggerStatementsRequest;
     "Debugger.setPauseOnExceptions": Debugger.SetPauseOnExceptionsRequest;
+    "Debugger.setPauseOnAssertions": Debugger.SetPauseOnAssertionsRequest;
     "Debugger.setPauseOnMicrotasks": Debugger.SetPauseOnMicrotasksRequest;
+    "Debugger.setPauseForInternalScripts": Debugger.SetPauseForInternalScriptsRequest;
+    "Debugger.evaluateOnCallFrame": Debugger.EvaluateOnCallFrameRequest;
     "Debugger.setShouldBlackboxURL": Debugger.SetShouldBlackboxURLRequest;
-    "Debugger.stepInto": Debugger.StepIntoRequest;
-    "Debugger.stepNext": Debugger.StepNextRequest;
-    "Debugger.stepOut": Debugger.StepOutRequest;
-    "Debugger.stepOver": Debugger.StepOverRequest;
-    "Heap.disable": Heap.DisableRequest;
+    "Debugger.setBlackboxBreakpointEvaluations": Debugger.SetBlackboxBreakpointEvaluationsRequest;
     "Heap.enable": Heap.EnableRequest;
+    "Heap.disable": Heap.DisableRequest;
     "Heap.gc": Heap.GcRequest;
-    "Heap.getPreview": Heap.GetPreviewRequest;
-    "Heap.getRemoteObject": Heap.GetRemoteObjectRequest;
     "Heap.snapshot": Heap.SnapshotRequest;
     "Heap.startTracking": Heap.StartTrackingRequest;
     "Heap.stopTracking": Heap.StopTrackingRequest;
-    "Inspector.disable": Inspector.DisableRequest;
+    "Heap.getPreview": Heap.GetPreviewRequest;
+    "Heap.getRemoteObject": Heap.GetRemoteObjectRequest;
     "Inspector.enable": Inspector.EnableRequest;
+    "Inspector.disable": Inspector.DisableRequest;
     "Inspector.initialized": Inspector.InitializedRequest;
-    "LifecycleReporter.disable": LifecycleReporter.DisableRequest;
     "LifecycleReporter.enable": LifecycleReporter.EnableRequest;
+    "LifecycleReporter.disable": LifecycleReporter.DisableRequest;
     "LifecycleReporter.preventExit": LifecycleReporter.PreventExitRequest;
     "LifecycleReporter.stopPreventingExit": LifecycleReporter.StopPreventingExitRequest;
+    "Runtime.parse": Runtime.ParseRequest;
+    "Runtime.evaluate": Runtime.EvaluateRequest;
     "Runtime.awaitPromise": Runtime.AwaitPromiseRequest;
     "Runtime.callFunctionOn": Runtime.CallFunctionOnRequest;
-    "Runtime.disable": Runtime.DisableRequest;
-    "Runtime.disableControlFlowProfiler": Runtime.DisableControlFlowProfilerRequest;
-    "Runtime.disableTypeProfiler": Runtime.DisableTypeProfilerRequest;
-    "Runtime.enable": Runtime.EnableRequest;
-    "Runtime.enableControlFlowProfiler": Runtime.EnableControlFlowProfilerRequest;
-    "Runtime.enableTypeProfiler": Runtime.EnableTypeProfilerRequest;
-    "Runtime.evaluate": Runtime.EvaluateRequest;
-    "Runtime.getBasicBlocks": Runtime.GetBasicBlocksRequest;
-    "Runtime.getCollectionEntries": Runtime.GetCollectionEntriesRequest;
-    "Runtime.getDisplayableProperties": Runtime.GetDisplayablePropertiesRequest;
     "Runtime.getPreview": Runtime.GetPreviewRequest;
     "Runtime.getProperties": Runtime.GetPropertiesRequest;
-    "Runtime.getRuntimeTypesForVariablesAtOffsets": Runtime.GetRuntimeTypesForVariablesAtOffsetsRequest;
-    "Runtime.parse": Runtime.ParseRequest;
-    "Runtime.releaseObject": Runtime.ReleaseObjectRequest;
-    "Runtime.releaseObjectGroup": Runtime.ReleaseObjectGroupRequest;
+    "Runtime.getDisplayableProperties": Runtime.GetDisplayablePropertiesRequest;
+    "Runtime.getCollectionEntries": Runtime.GetCollectionEntriesRequest;
     "Runtime.saveResult": Runtime.SaveResultRequest;
     "Runtime.setSavedResultAlias": Runtime.SetSavedResultAliasRequest;
+    "Runtime.releaseObject": Runtime.ReleaseObjectRequest;
+    "Runtime.releaseObjectGroup": Runtime.ReleaseObjectGroupRequest;
+    "Runtime.enable": Runtime.EnableRequest;
+    "Runtime.disable": Runtime.DisableRequest;
+    "Runtime.getRuntimeTypesForVariablesAtOffsets": Runtime.GetRuntimeTypesForVariablesAtOffsetsRequest;
+    "Runtime.enableTypeProfiler": Runtime.EnableTypeProfilerRequest;
+    "Runtime.disableTypeProfiler": Runtime.DisableTypeProfilerRequest;
+    "Runtime.enableControlFlowProfiler": Runtime.EnableControlFlowProfilerRequest;
+    "Runtime.disableControlFlowProfiler": Runtime.DisableControlFlowProfilerRequest;
+    "Runtime.getBasicBlocks": Runtime.GetBasicBlocksRequest;
     "ScriptProfiler.startTracking": ScriptProfiler.StartTrackingRequest;
     "ScriptProfiler.stopTracking": ScriptProfiler.StopTrackingRequest;
-    "TestReporter.disable": TestReporter.DisableRequest;
     "TestReporter.enable": TestReporter.EnableRequest;
+    "TestReporter.disable": TestReporter.DisableRequest;
   };
   export type ResponseMap = {
-    "Audit.run": Audit.RunResponse;
     "Audit.setup": Audit.SetupResponse;
+    "Audit.run": Audit.RunResponse;
     "Audit.teardown": Audit.TeardownResponse;
-    "Console.clearMessages": Console.ClearMessagesResponse;
-    "Console.disable": Console.DisableResponse;
     "Console.enable": Console.EnableResponse;
-    "Console.getLoggingChannels": Console.GetLoggingChannelsResponse;
+    "Console.disable": Console.DisableResponse;
+    "Console.clearMessages": Console.ClearMessagesResponse;
     "Console.setConsoleClearAPIEnabled": Console.SetConsoleClearAPIEnabledResponse;
+    "Console.getLoggingChannels": Console.GetLoggingChannelsResponse;
     "Console.setLoggingChannelLevel": Console.SetLoggingChannelLevelResponse;
-    "Debugger.addSymbolicBreakpoint": Debugger.AddSymbolicBreakpointResponse;
-    "Debugger.continueToLocation": Debugger.ContinueToLocationResponse;
-    "Debugger.continueUntilNextRunLoop": Debugger.ContinueUntilNextRunLoopResponse;
-    "Debugger.disable": Debugger.DisableResponse;
     "Debugger.enable": Debugger.EnableResponse;
-    "Debugger.evaluateOnCallFrame": Debugger.EvaluateOnCallFrameResponse;
-    "Debugger.getBreakpointLocations": Debugger.GetBreakpointLocationsResponse;
-    "Debugger.getFunctionDetails": Debugger.GetFunctionDetailsResponse;
-    "Debugger.getScriptSource": Debugger.GetScriptSourceResponse;
-    "Debugger.pause": Debugger.PauseResponse;
+    "Debugger.disable": Debugger.DisableResponse;
+    "Debugger.setAsyncStackTraceDepth": Debugger.SetAsyncStackTraceDepthResponse;
+    "Debugger.setBreakpointsActive": Debugger.SetBreakpointsActiveResponse;
+    "Debugger.setBreakpointByUrl": Debugger.SetBreakpointByUrlResponse;
+    "Debugger.setBreakpoint": Debugger.SetBreakpointResponse;
     "Debugger.removeBreakpoint": Debugger.RemoveBreakpointResponse;
+    "Debugger.addSymbolicBreakpoint": Debugger.AddSymbolicBreakpointResponse;
     "Debugger.removeSymbolicBreakpoint": Debugger.RemoveSymbolicBreakpointResponse;
+    "Debugger.continueUntilNextRunLoop": Debugger.ContinueUntilNextRunLoopResponse;
+    "Debugger.continueToLocation": Debugger.ContinueToLocationResponse;
+    "Debugger.stepNext": Debugger.StepNextResponse;
+    "Debugger.stepOver": Debugger.StepOverResponse;
+    "Debugger.stepInto": Debugger.StepIntoResponse;
+    "Debugger.stepOut": Debugger.StepOutResponse;
+    "Debugger.pause": Debugger.PauseResponse;
     "Debugger.resume": Debugger.ResumeResponse;
     "Debugger.searchInContent": Debugger.SearchInContentResponse;
-    "Debugger.setAsyncStackTraceDepth": Debugger.SetAsyncStackTraceDepthResponse;
-    "Debugger.setBlackboxBreakpointEvaluations": Debugger.SetBlackboxBreakpointEvaluationsResponse;
-    "Debugger.setBreakpoint": Debugger.SetBreakpointResponse;
-    "Debugger.setBreakpointByUrl": Debugger.SetBreakpointByUrlResponse;
-    "Debugger.setBreakpointsActive": Debugger.SetBreakpointsActiveResponse;
-    "Debugger.setPauseForInternalScripts": Debugger.SetPauseForInternalScriptsResponse;
-    "Debugger.setPauseOnAssertions": Debugger.SetPauseOnAssertionsResponse;
+    "Debugger.getScriptSource": Debugger.GetScriptSourceResponse;
+    "Debugger.getFunctionDetails": Debugger.GetFunctionDetailsResponse;
+    "Debugger.getBreakpointLocations": Debugger.GetBreakpointLocationsResponse;
     "Debugger.setPauseOnDebuggerStatements": Debugger.SetPauseOnDebuggerStatementsResponse;
     "Debugger.setPauseOnExceptions": Debugger.SetPauseOnExceptionsResponse;
+    "Debugger.setPauseOnAssertions": Debugger.SetPauseOnAssertionsResponse;
     "Debugger.setPauseOnMicrotasks": Debugger.SetPauseOnMicrotasksResponse;
+    "Debugger.setPauseForInternalScripts": Debugger.SetPauseForInternalScriptsResponse;
+    "Debugger.evaluateOnCallFrame": Debugger.EvaluateOnCallFrameResponse;
     "Debugger.setShouldBlackboxURL": Debugger.SetShouldBlackboxURLResponse;
-    "Debugger.stepInto": Debugger.StepIntoResponse;
-    "Debugger.stepNext": Debugger.StepNextResponse;
-    "Debugger.stepOut": Debugger.StepOutResponse;
-    "Debugger.stepOver": Debugger.StepOverResponse;
-    "Heap.disable": Heap.DisableResponse;
+    "Debugger.setBlackboxBreakpointEvaluations": Debugger.SetBlackboxBreakpointEvaluationsResponse;
     "Heap.enable": Heap.EnableResponse;
+    "Heap.disable": Heap.DisableResponse;
     "Heap.gc": Heap.GcResponse;
-    "Heap.getPreview": Heap.GetPreviewResponse;
-    "Heap.getRemoteObject": Heap.GetRemoteObjectResponse;
     "Heap.snapshot": Heap.SnapshotResponse;
     "Heap.startTracking": Heap.StartTrackingResponse;
     "Heap.stopTracking": Heap.StopTrackingResponse;
-    "Inspector.disable": Inspector.DisableResponse;
+    "Heap.getPreview": Heap.GetPreviewResponse;
+    "Heap.getRemoteObject": Heap.GetRemoteObjectResponse;
     "Inspector.enable": Inspector.EnableResponse;
+    "Inspector.disable": Inspector.DisableResponse;
     "Inspector.initialized": Inspector.InitializedResponse;
-    "LifecycleReporter.disable": LifecycleReporter.DisableResponse;
     "LifecycleReporter.enable": LifecycleReporter.EnableResponse;
+    "LifecycleReporter.disable": LifecycleReporter.DisableResponse;
     "LifecycleReporter.preventExit": LifecycleReporter.PreventExitResponse;
     "LifecycleReporter.stopPreventingExit": LifecycleReporter.StopPreventingExitResponse;
+    "Runtime.parse": Runtime.ParseResponse;
+    "Runtime.evaluate": Runtime.EvaluateResponse;
     "Runtime.awaitPromise": Runtime.AwaitPromiseResponse;
     "Runtime.callFunctionOn": Runtime.CallFunctionOnResponse;
-    "Runtime.disable": Runtime.DisableResponse;
-    "Runtime.disableControlFlowProfiler": Runtime.DisableControlFlowProfilerResponse;
-    "Runtime.disableTypeProfiler": Runtime.DisableTypeProfilerResponse;
-    "Runtime.enable": Runtime.EnableResponse;
-    "Runtime.enableControlFlowProfiler": Runtime.EnableControlFlowProfilerResponse;
-    "Runtime.enableTypeProfiler": Runtime.EnableTypeProfilerResponse;
-    "Runtime.evaluate": Runtime.EvaluateResponse;
-    "Runtime.getBasicBlocks": Runtime.GetBasicBlocksResponse;
-    "Runtime.getCollectionEntries": Runtime.GetCollectionEntriesResponse;
-    "Runtime.getDisplayableProperties": Runtime.GetDisplayablePropertiesResponse;
     "Runtime.getPreview": Runtime.GetPreviewResponse;
     "Runtime.getProperties": Runtime.GetPropertiesResponse;
-    "Runtime.getRuntimeTypesForVariablesAtOffsets": Runtime.GetRuntimeTypesForVariablesAtOffsetsResponse;
-    "Runtime.parse": Runtime.ParseResponse;
-    "Runtime.releaseObject": Runtime.ReleaseObjectResponse;
-    "Runtime.releaseObjectGroup": Runtime.ReleaseObjectGroupResponse;
+    "Runtime.getDisplayableProperties": Runtime.GetDisplayablePropertiesResponse;
+    "Runtime.getCollectionEntries": Runtime.GetCollectionEntriesResponse;
     "Runtime.saveResult": Runtime.SaveResultResponse;
     "Runtime.setSavedResultAlias": Runtime.SetSavedResultAliasResponse;
+    "Runtime.releaseObject": Runtime.ReleaseObjectResponse;
+    "Runtime.releaseObjectGroup": Runtime.ReleaseObjectGroupResponse;
+    "Runtime.enable": Runtime.EnableResponse;
+    "Runtime.disable": Runtime.DisableResponse;
+    "Runtime.getRuntimeTypesForVariablesAtOffsets": Runtime.GetRuntimeTypesForVariablesAtOffsetsResponse;
+    "Runtime.enableTypeProfiler": Runtime.EnableTypeProfilerResponse;
+    "Runtime.disableTypeProfiler": Runtime.DisableTypeProfilerResponse;
+    "Runtime.enableControlFlowProfiler": Runtime.EnableControlFlowProfilerResponse;
+    "Runtime.disableControlFlowProfiler": Runtime.DisableControlFlowProfilerResponse;
+    "Runtime.getBasicBlocks": Runtime.GetBasicBlocksResponse;
     "ScriptProfiler.startTracking": ScriptProfiler.StartTrackingResponse;
     "ScriptProfiler.stopTracking": ScriptProfiler.StopTrackingResponse;
-    "TestReporter.disable": TestReporter.DisableResponse;
     "TestReporter.enable": TestReporter.EnableResponse;
+    "TestReporter.disable": TestReporter.DisableResponse;
   };
 
   export type Event<T extends keyof EventMap = keyof EventMap> = {

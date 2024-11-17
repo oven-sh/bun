@@ -11,6 +11,7 @@
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include "ConsoleObject.h"
+
 namespace Inspector {
 
 // Zig bindings implementation
@@ -24,12 +25,12 @@ void Bun__LifecycleAgentReportReload(Inspector::InspectorLifecycleAgent* agent)
     agent->reportReload();
 }
 
-void Bun__LifecycleAgentReportError(Inspector::InspectorLifecycleAgent* agent, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorOrExceptionEncoded)
+void Bun__LifecycleAgentReportError(Inspector::InspectorLifecycleAgent* agent, ZigException* exception)
 {
-    JSC::JSValue errorOrException = JSC::JSValue::decode(errorOrExceptionEncoded);
-    ASSERT(errorOrException);
+    ASSERT(exception);
+    ASSERT(agent);
 
-    agent->reportError(*globalObject, errorOrException);
+    agent->reportError(*exception);
 }
 
 void Bun__LifecycleAgentPreventExit(Inspector::InspectorLifecycleAgent* agent);
@@ -87,46 +88,30 @@ void InspectorLifecycleAgent::reportReload()
     m_frontendDispatcher->reload();
 }
 
-void InspectorLifecycleAgent::reportError(JSC::JSGlobalObject& globalObject, JSC::JSValue errorOrException)
+void InspectorLifecycleAgent::reportError(ZigException& exception)
 {
     if (!m_enabled || !m_frontendDispatcher)
         return;
 
-    auto* cell = errorOrException.asCell();
+    String message = exception.message.toWTFString();
+    String name = exception.name.toWTFString();
 
-    Ref<ScriptCallStack> callStack = ScriptCallStack::create();
+    Ref<JSON::ArrayOf<String>> urls = JSON::ArrayOf<String>::create();
+    Ref<JSON::ArrayOf<int>> lineColumns = JSON::ArrayOf<int>::create();
+    Ref<JSON::ArrayOf<String>> sourceLines = JSON::ArrayOf<String>::create();
 
-    WTF::String message;
-    JSC::JSValue valueForMessage = errorOrException;
-
-    if (cell) {
-        if (cell->inherits<JSC::Exception>()) {
-            auto* exception = static_cast<JSC::Exception*>(cell);
-            callStack = Inspector::createScriptCallStackFromException(&globalObject, exception);
-            JSC::JSValue value = exception->value();
-            valueForMessage = value;
-        } else if (auto* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(cell)) {
-            if (error->stackTrace()) {
-                auto& stackTrace = *error->stackTrace();
-                callStack = Inspector::createScriptCallStackFromStackTrace(&globalObject, { stackTrace.begin(), stackTrace.end() }, error);
-                message = error->sanitizedToString(&globalObject);
-            }
-        }
+    for (size_t i = 0; i < exception.stack.source_lines_len; i++) {
+        sourceLines->addItem(exception.stack.source_lines_ptr[i].toWTFString());
     }
 
-    if (!message) {
-        message = valueForMessage.toWTFStringForConsole(&globalObject);
+    for (size_t i = 0; i < exception.stack.frames_len; i++) {
+        ZigStackFrame* frame = &exception.stack.frames_ptr[i];
+        lineColumns->addItem(frame->position.line_zero_based + 1);
+        lineColumns->addItem(frame->position.column_zero_based + 1);
     }
 
-    auto consoleMessage = Protocol::Console::ConsoleMessage::create()
-                              .setLevel(Protocol::Console::ConsoleMessage::Level::Error)
-                              .setText(message)
-                              .setSource(Protocol::Console::ChannelSource::Other)
-                              .release();
-
-    consoleMessage->setStackTrace(callStack->buildInspectorObject());
-
-    m_frontendDispatcher->error(WTFMove(consoleMessage));
+    // error(const String& message, const String& name, Ref<JSON::ArrayOf<String>>&& urls, Ref<JSON::ArrayOf<int>>&& lineColumns, Ref<JSON::ArrayOf<String>>&& sourceLines);
+    m_frontendDispatcher->error(WTFMove(message), WTFMove(name), WTFMove(urls), WTFMove(lineColumns), WTFMove(sourceLines));
 }
 
 Protocol::ErrorStringOr<void> InspectorLifecycleAgent::preventExit()

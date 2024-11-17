@@ -20,10 +20,10 @@ extern "C" {
 void Bun__TestReporterAgentEnable(Inspector::InspectorTestReporterAgent* agent);
 void Bun__TestReporterAgentDisable(Inspector::InspectorTestReporterAgent* agent);
 
-void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, JSC::CallFrame* callFrame, int testId, int line, BunString* name)
+void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, JSC::CallFrame* callFrame, int testId, BunString* name)
 {
     auto str = name->toWTFString(BunString::ZeroCopy);
-    agent->reportTestFound(callFrame, testId, line, str);
+    agent->reportTestFound(callFrame, testId, str);
 }
 
 void Bun__TestReporterAgentReportTestStart(Inspector::InspectorTestReporterAgent* agent, int testId)
@@ -109,26 +109,84 @@ Protocol::ErrorStringOr<void> InspectorTestReporterAgent::disable()
     return {};
 }
 
-void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int testId, int line, const String& name)
+void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int testId, const String& name)
 {
     if (!m_enabled || !m_frontendDispatcher)
         return;
 
     JSC::LineColumn lineColumn;
     JSC::SourceID sourceID = 0;
+    String sourceURL;
 
-    auto stackTrace = Zig::JSCStackTrace::captureCurrentJSStackTrace(defaultGlobalObject(&m_globalObject), callFrame, 1, {});
-    if (stackTrace.size() > 0) {
-        auto& frame = stackTrace.at(0);
-        auto* sourcePositions = frame.getSourcePositions();
-        if (sourcePositions) {
-            lineColumn.line = sourcePositions->line.oneBasedInt();
-            lineColumn.column = sourcePositions->column.oneBasedInt();
+    ZigStackFrame remappedFrame = {};
+
+    auto* globalObject = &m_globalObject;
+    auto& vm = globalObject->vm();
+
+    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        if (Zig::isImplementationVisibilityPrivate(visitor))
+            return WTF::IterationStatus::Continue;
+
+        if (visitor->hasLineAndColumnInfo()) {
+            lineColumn = visitor->computeLineAndColumn();
+
+            String sourceURLForFrame = visitor->sourceURL();
+
+            // Sometimes, the sourceURL is empty.
+            // For example, pages in Next.js.
+            if (sourceURLForFrame.isEmpty()) {
+
+                // hasLineAndColumnInfo() checks codeBlock(), so this is safe to access here.
+                const auto& source = visitor->codeBlock()->source();
+
+                // source.isNull() is true when the SourceProvider is a null pointer.
+                if (!source.isNull()) {
+                    auto* provider = source.provider();
+                    // I'm not 100% sure we should show sourceURLDirective here.
+                    if (!provider->sourceURLDirective().isEmpty()) {
+                        sourceURLForFrame = provider->sourceURLDirective();
+                    } else if (!provider->sourceURL().isEmpty()) {
+                        sourceURLForFrame = provider->sourceURL();
+                    } else {
+                        const auto& origin = provider->sourceOrigin();
+                        if (!origin.isNull()) {
+                            sourceURLForFrame = origin.string();
+                        }
+                    }
+
+                    sourceID = provider->asID();
+                }
+            }
+
+            sourceURL = sourceURLForFrame;
+
+            return WTF::IterationStatus::Done;
         }
-        sourceID = frame.sourceID();
+
+        return WTF::IterationStatus::Continue;
+    });
+
+    if (!sourceURL.isEmpty() and lineColumn.line > 0) {
+        OrdinalNumber originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
+        OrdinalNumber originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
+
+        remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
+        remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
+        remappedFrame.source_url = Bun::toStringRef(sourceURL);
+
+        Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+
+        sourceURL = remappedFrame.source_url.toWTFString();
+        lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
+        lineColumn.column = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.column_zero_based).oneBasedInt();
     }
 
-    m_frontendDispatcher->found(testId, String::number(sourceID), sourceID != 0 ? lineColumn.line : -1, name);
+    m_frontendDispatcher->found(
+        testId,
+        sourceID > 0 ? String::number(sourceID) : String(),
+        sourceURL,
+        lineColumn.line,
+        name);
 }
 
 void InspectorTestReporterAgent::reportTestStart(int testId)

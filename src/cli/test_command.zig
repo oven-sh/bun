@@ -45,6 +45,39 @@ const Test = TestRunner.Test;
 const CodeCoverageReport = bun.sourcemap.CodeCoverageReport;
 const uws = bun.uws;
 
+fn escapeXml(str: string, writer: anytype) !void {
+    var last: usize = 0;
+    var i: usize = 0;
+    const len = str.len;
+    while (i < len) : (i += 1) {
+        const c = str[i];
+        switch (c) {
+            '&', '<', '>', '"', '\'', '\n', '\r', '\t', 0 => {
+                if (i > last) {
+                    try writer.writeAll(str[last..i]);
+                }
+                const escaped = switch (c) {
+                    '&' => "&amp;",
+                    '<' => "&lt;",
+                    '>' => "&gt;",
+                    '"' => "&quot;",
+                    '\'' => "&apos;",
+                    '\n' => "&#10;",
+                    '\r' => "&#13;",
+                    '\t' => "&#9;",
+                    0 => "&#0;",
+                    else => unreachable,
+                };
+                try writer.writeAll(escaped);
+                last = i + 1;
+            },
+            else => {},
+        }
+    }
+    if (len > last) {
+        try writer.writeAll(str[last..]);
+    }
+}
 fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_color: bool) []const u8 {
     comptime {
         // emoji and color might be split into two different options in the future
@@ -76,6 +109,173 @@ fn writeTestStatusLine(comptime status: @Type(.EnumLiteral), writer: anytype) vo
         writer.print(fmtStatusTextLine(status, false), .{}) catch unreachable;
 }
 
+pub const JunitReporter = struct {
+    contents: std.ArrayListUnmanaged(u8) = .{},
+    test_suites: u32 = 0,
+    test_cases: u32 = 0,
+    assertions: u32 = 0,
+    failures: u32 = 0,
+    skipped: u32 = 0,
+    start_time: i128 = 0,
+    pos_of_left_angle_bracket: usize = 0,
+    current_file: string = "",
+    pub fn init() *JunitReporter {
+        return JunitReporter.new(.{
+            .contents = .{},
+            .start_time = bun.start_time,
+        });
+    }
+
+    pub usingnamespace bun.New(JunitReporter);
+
+    pub fn beginTestSuite(this: *JunitReporter, name: string) !void {
+        this.test_suites += 1;
+        if (this.contents.items.len == 0) {
+            try this.contents.appendSlice(bun.default_allocator,
+                \\<?xml version="1.0" encoding="UTF-8"?>
+                \\
+            );
+        }
+
+        try this.contents.appendSlice(bun.default_allocator,
+            \\<testsuites>
+            \\  <testsuite name="
+        );
+        this.pos_of_left_angle_bracket = this.contents.items.len - "  <testsuite name=\"".len + 2;
+
+        try escapeXml(name, this.contents.writer(bun.default_allocator));
+
+        try this.contents.appendSlice(bun.default_allocator, "\">\n");
+        this.current_file = name;
+    }
+
+    pub fn endTestSuite(this: *JunitReporter) !void {
+        const elapsed_time = @as(f64, @floatFromInt(std.time.nanoTimestamp() - this.start_time)) / std.time.ns_per_s;
+
+        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        var stack_fallback_allocator = std.heap.stackFallback(4096, arena.allocator());
+        const allocator = stack_fallback_allocator.get();
+        // Insert the summary attributes
+        const summary = try std.fmt.allocPrint(allocator,
+            \\" tests="{d}" assertions="{d}" failures="{d}" skipped="{d}" time="{d:.3}"
+        , .{
+            this.test_cases,
+            this.assertions,
+            this.failures,
+            this.skipped,
+            elapsed_time,
+        });
+        this.assertions = 0;
+
+        this.contents.insertSlice(bun.default_allocator, this.pos_of_left_angle_bracket, summary) catch bun.outOfMemory();
+
+        try this.contents.appendSlice(bun.default_allocator, "  </testsuite>\n</testsuites>");
+    }
+
+    pub fn writeTestCase(
+        this: *JunitReporter,
+        status: TestRunner.Test.Status,
+        file: string,
+        name: string,
+        class_name: string,
+        assertions: u32,
+        elapsed_ns: u64,
+    ) !void {
+        this.test_cases += 1;
+
+        const elapsed_sec = @as(f64, @floatFromInt(elapsed_ns)) / std.time.ns_per_s;
+        try this.contents.appendSlice(bun.default_allocator, "    <testcase");
+        try this.contents.appendSlice(bun.default_allocator, " name=\"");
+        try escapeXml(name, this.contents.writer(bun.default_allocator));
+        try this.contents.appendSlice(bun.default_allocator, "\" classname=\"");
+        try escapeXml(class_name, this.contents.writer(bun.default_allocator));
+        try this.contents.appendSlice(bun.default_allocator, "\"");
+
+        var time_buf: [32]u8 = undefined;
+        const time_str = try std.fmt.bufPrint(&time_buf, " time=\"{d:.3}\"", .{elapsed_sec});
+        try this.contents.appendSlice(bun.default_allocator, time_str);
+
+        try this.contents.appendSlice(bun.default_allocator, " file=\"");
+        try escapeXml(file, this.contents.writer(bun.default_allocator));
+        try this.contents.appendSlice(bun.default_allocator, "\"");
+        this.assertions += assertions;
+
+        switch (status) {
+            .pass => {
+                try this.contents.appendSlice(bun.default_allocator, "/>\n");
+            },
+            .fail => {
+                this.failures += 1;
+                try this.contents.appendSlice(bun.default_allocator, ">\n      <failure");
+                // TODO: add the failure message
+                // if (failure_message) |msg| {
+                //     try this.contents.appendSlice(bun.default_allocator, " message=\"");
+                //     try escapeXml(msg, this.contents.writer(bun.default_allocator));
+                //     try this.contents.appendSlice(bun.default_allocator, "\"");
+                // }
+                try this.contents.appendSlice(bun.default_allocator, "/>\n    </testcase>\n");
+            },
+            .fail_because_expected_assertion_count => {
+                // TODO: add the failure message
+                try this.contents.writer(bun.default_allocator).print(
+                    \\      <failure message="Expected more assertions, but only received {d}" type="AssertionError"/>
+                    \\    </testcase>
+                , .{assertions});
+            },
+            .fail_because_todo_passed => {
+                // TODO: add the failure message
+                try this.contents.writer(bun.default_allocator).print(
+                    \\      <failure message="TODO passed" type="AssertionError"/>
+                    \\    </testcase>
+                , .{});
+            },
+            .fail_because_expected_has_assertions => {
+                try this.contents.writer(bun.default_allocator).print(
+                    \\      <failure message="Expected to have assertions, but none were run" type="AssertionError"/>
+                    \\    </testcase>
+                , .{});
+            },
+            .skip => {
+                this.skipped += 1;
+                try this.contents.appendSlice(bun.default_allocator, ">\n      <skipped/>\n    </testcase>\n");
+            },
+            .todo => {
+                this.skipped += 1;
+                try this.contents.appendSlice(bun.default_allocator, ">\n      <skipped message=\"TODO\"/>\n    </testcase>\n");
+            },
+            .pending => unreachable,
+        }
+    }
+
+    pub fn writeToFile(this: *JunitReporter, path: string) !void {
+        if (this.contents.items.len == 0) return;
+        var junit_path_buf: bun.PathBuffer = undefined;
+
+        @memcpy(junit_path_buf[0..path.len], path);
+        junit_path_buf[path.len] = 0;
+
+        switch (bun.sys.File.openat(std.fs.cwd(), junit_path_buf[0..path.len :0], bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+            .err => |err| {
+                Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{}", .{ path, err });
+            },
+            .result => |fd| {
+                defer _ = fd.close();
+                switch (bun.sys.File.writeAll(fd, this.contents.items)) {
+                    .result => {},
+                    .err => |err| {
+                        Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{}", .{ path, err });
+                    },
+                }
+            },
+        }
+    }
+
+    pub fn deinit(this: *JunitReporter) void {
+        this.contents.deinit(bun.default_allocator);
+    }
+};
+
 pub const CommandLineReporter = struct {
     jest: TestRunner,
     callback: TestRunner.Callback,
@@ -87,6 +287,8 @@ pub const CommandLineReporter = struct {
     failures_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     skips_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     todos_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
+
+    junit_reporter: ?*JunitReporter = null,
 
     pub const Summary = struct {
         pass: u32 = 0,
@@ -110,7 +312,7 @@ pub const CommandLineReporter = struct {
 
     pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {}
 
-    fn printTestLine(label: string, elapsed_ns: u64, parent: ?*jest.DescribeScope, comptime skip: bool, writer: anytype) void {
+    fn printTestLine(status: TestRunner.Test.Status, label: string, elapsed_ns: u64, parent: ?*jest.DescribeScope, assertions: u32, comptime skip: bool, writer: anytype, file: string, junit: ?*JunitReporter) void {
         var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
         var parent_ = parent;
 
@@ -165,9 +367,32 @@ pub const CommandLineReporter = struct {
         }
 
         writer.writeAll("\n") catch unreachable;
+
+        if (junit) |reporter| {
+            if (!strings.eql(reporter.current_file, file)) {
+                if (reporter.current_file.len > 0) {
+                    reporter.endTestSuite() catch bun.outOfMemory();
+                }
+                reporter.beginTestSuite(file) catch bun.outOfMemory();
+            }
+
+            var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+            var stack_fallback = std.heap.stackFallback(4096, arena.allocator());
+            const allocator = stack_fallback.get();
+            var concatenated_describe_scopes = std.ArrayList(u8).init(allocator);
+            for (scopes, 0..) |scope, i| {
+                if (i > 0) {
+                    concatenated_describe_scopes.appendSlice("::") catch bun.outOfMemory();
+                }
+
+                escapeXml(scope.label, concatenated_describe_scopes.writer()) catch bun.outOfMemory();
+            }
+
+            reporter.writeTestCase(status, file, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns) catch bun.outOfMemory();
+        }
     }
 
-    pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
+    pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         const writer_ = Output.errorWriter();
         var buffered_writer = std.io.bufferedWriter(writer_);
         var writer = buffered_writer.writer();
@@ -177,14 +402,14 @@ pub const CommandLineReporter = struct {
 
         writeTestStatusLine(.pass, &writer);
 
-        printTestLine(label, elapsed_ns, parent, false, writer);
+        printTestLine(.pass, label, elapsed_ns, parent, expectations, false, writer, file, this.junit_reporter);
 
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.pass;
         this.summary.pass += 1;
         this.summary.expectations += expectations;
     }
 
-    pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
+    pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_ = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
@@ -194,7 +419,7 @@ pub const CommandLineReporter = struct {
         var writer = this.failures_to_repeat_buf.writer(bun.default_allocator);
 
         writeTestStatusLine(.fail, &writer);
-        printTestLine(label, elapsed_ns, parent, false, writer);
+        printTestLine(.fail, label, elapsed_ns, parent, expectations, false, writer, file, this.junit_reporter);
 
         // We must always reset the colors because (skip) will have set them to <d>
         if (Output.enable_ansi_colors_stderr) {
@@ -217,7 +442,7 @@ pub const CommandLineReporter = struct {
         }
     }
 
-    pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
+    pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_ = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
@@ -229,7 +454,7 @@ pub const CommandLineReporter = struct {
             var writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
 
             writeTestStatusLine(.skip, &writer);
-            printTestLine(label, elapsed_ns, parent, true, writer);
+            printTestLine(.skip, label, elapsed_ns, parent, expectations, true, writer, file, if (this.junit_reporter) |junit| junit else null);
 
             writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch unreachable;
             Output.flush();
@@ -241,7 +466,7 @@ pub const CommandLineReporter = struct {
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skip;
     }
 
-    pub fn handleTestTodo(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
+    pub fn handleTestTodo(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_ = Output.errorWriter();
 
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
@@ -252,7 +477,7 @@ pub const CommandLineReporter = struct {
         var writer = this.todos_to_repeat_buf.writer(bun.default_allocator);
 
         writeTestStatusLine(.todo, &writer);
-        printTestLine(label, elapsed_ns, parent, true, writer);
+        printTestLine(.todo, label, elapsed_ns, parent, expectations, true, writer, file, if (this.junit_reporter) |junit| junit else null);
 
         writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch unreachable;
         Output.flush();
@@ -782,6 +1007,11 @@ pub const TestCommand = struct {
         reporter.jest.callback = &reporter.callback;
         jest.Jest.runner = &reporter.jest;
         reporter.jest.test_options = &ctx.test_options;
+
+        if (ctx.test_options.junit_report != null) {
+            reporter.junit_reporter = JunitReporter.init();
+        }
+
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
         var vm = try JSC.VirtualMachine.init(
@@ -1088,6 +1318,13 @@ pub const TestCommand = struct {
 
         Output.prettyError("\n", .{});
         Output.flush();
+
+        if (reporter.junit_reporter) |junit| {
+            if (junit.current_file.len > 0) {
+                junit.endTestSuite() catch {};
+            }
+            junit.writeToFile(ctx.test_options.junit_report.?) catch {};
+        }
 
         if (vm.hot_reload == .watch) {
             vm.eventLoop().tickPossiblyForever();

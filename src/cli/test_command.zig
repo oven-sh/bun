@@ -1307,6 +1307,8 @@ pub const TestCommand = struct {
         var results = try std.ArrayList(PathString).initCapacity(ctx.allocator, ctx.positionals.len);
         defer results.deinit();
 
+        // Start the debugger before we scan for files
+        // But, don't block the main thread waiting if they used --inspect-wait.
         const test_files, const search_count = scan: {
             if (for (ctx.positionals) |arg| {
                 if (std.fs.path.isAbsolute(arg) or

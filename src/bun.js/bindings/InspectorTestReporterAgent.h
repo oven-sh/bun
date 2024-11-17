@@ -39,6 +39,7 @@ public:
 private:
     JSC::JSGlobalObject& m_globalObject;
     std::unique_ptr<TestReporterFrontendDispatcher> m_frontendDispatcher;
+    Ref<TestReporterBackendDispatcher> m_backendDispatcher;
     bool m_enabled { false };
 };
 

@@ -40,6 +40,8 @@ void Bun__LifecycleAgentStopPreventingExit(Inspector::InspectorLifecycleAgent* a
 InspectorLifecycleAgent::InspectorLifecycleAgent(JSC::JSGlobalObject& globalObject)
     : InspectorAgentBase("LifecycleReporter"_s)
     , m_globalObject(globalObject)
+    , m_backendDispatcher(LifecycleReporterBackendDispatcher::create(m_globalObject.inspectorController().backendDispatcher(), this))
+    , m_frontendDispatcher(makeUnique<LifecycleReporterFrontendDispatcher>(const_cast<FrontendRouter&>(m_globalObject.inspectorController().frontendRouter())))
 {
 }
 
@@ -52,7 +54,6 @@ InspectorLifecycleAgent::~InspectorLifecycleAgent()
 
 void InspectorLifecycleAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
 {
-    this->m_frontendDispatcher = makeUnique<LifecycleReporterFrontendDispatcher>(const_cast<FrontendRouter&>(m_globalObject.inspectorController().frontendRouter()));
 }
 
 void InspectorLifecycleAgent::willDestroyFrontendAndBackend(DisconnectReason)
@@ -82,7 +83,7 @@ Protocol::ErrorStringOr<void> InspectorLifecycleAgent::disable()
 
 void InspectorLifecycleAgent::reportReload()
 {
-    if (!m_enabled || !m_frontendDispatcher)
+    if (!m_enabled)
         return;
 
     m_frontendDispatcher->reload();
@@ -90,7 +91,7 @@ void InspectorLifecycleAgent::reportReload()
 
 void InspectorLifecycleAgent::reportError(ZigException& exception)
 {
-    if (!m_enabled || !m_frontendDispatcher)
+    if (!m_enabled)
         return;
 
     String message = exception.message.toWTFString();

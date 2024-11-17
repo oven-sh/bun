@@ -610,11 +610,13 @@ const Scanner = struct {
             return false;
         }
 
-        if (jest.Jest.runner.?.test_options.coverage.skip_test_files) {
-            const name_without_extension = slice[0 .. slice.len - ext.len];
-            inline for (test_name_suffixes) |suffix| {
-                if (strings.endsWithComptime(name_without_extension, suffix)) {
-                    return false;
+        if (jest.Jest.runner) |runner| {
+            if (runner.test_options.coverage.skip_test_files) {
+                const name_without_extension = slice[0 .. slice.len - ext.len];
+                inline for (test_name_suffixes) |suffix| {
+                    if (strings.endsWithComptime(name_without_extension, suffix)) {
+                        return false;
+                    }
                 }
             }
         }

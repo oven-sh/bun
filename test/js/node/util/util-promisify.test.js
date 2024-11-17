@@ -284,6 +284,12 @@ describe("util.promisify", () => {
         }),
       ]);
     });
+
+    it("#15201", async () => {
+      const setTimeoutPromise = promisify(setTimeout);
+      const value = await setTimeoutPromise(100, "ok");
+      assert.strictEqual(value, "ok");
+    });
   });
 
   describe("invalid input", () => {

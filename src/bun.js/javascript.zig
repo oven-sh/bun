@@ -1522,9 +1522,10 @@ pub const VirtualMachine = struct {
         }
 
         pub export fn Bun__LifecycleAgentDisable(agent: *Handle) void {
+            _ = agent; // autofix
             if (JSC.VirtualMachine.get().debugger) |*debugger| {
                 debug("disable", .{});
-                debugger.lifecycle_reporter_agent.handle = agent;
+                debugger.lifecycle_reporter_agent.handle = null;
             }
         }
 
@@ -1556,43 +1557,28 @@ pub const VirtualMachine = struct {
 
         test_reporter_agent: TestReporterAgent = .{},
         lifecycle_reporter_agent: LifecycleAgent = .{},
+        must_block_until_connected: bool = false,
 
-        const debug = Output.scoped(.debugger, false);
+        pub const log = Output.scoped(.debugger, false);
 
         extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
         extern "C" fn Bun__ensureDebugger(u32, bool) void;
         extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String, i32) void;
         var futex_atomic: std.atomic.Value(u32) = undefined;
 
-        pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
-            debug("create", .{});
-            JSC.markBinding(@src());
-            if (has_created_debugger) return;
-            has_created_debugger = true;
-            std.mem.doNotOptimizeAway(&TestReporterAgent.Bun__TestReporterAgentDisable);
-            std.mem.doNotOptimizeAway(&LifecycleAgent.Bun__LifecycleAgentDisable);
-            std.mem.doNotOptimizeAway(&TestReporterAgent.Bun__TestReporterAgentEnable);
-            std.mem.doNotOptimizeAway(&LifecycleAgent.Bun__LifecycleAgentEnable);
-            var debugger = &this.debugger.?;
-            debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
-            if (!this.has_started_debugger) {
-                this.has_started_debugger = true;
-                futex_atomic = std.atomic.Value(u32).init(0);
-                var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
-                thread.detach();
+        pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
+            const debugger = &(this.debugger orelse return);
+            if (!debugger.must_block_until_connected) {
+                return;
             }
-            this.eventLoop().ensureWaker();
+            defer debugger.must_block_until_connected = false;
 
-            if (debugger.wait_for_connection) {
-                debugger.poll_ref.ref(this);
-            }
-
-            debug("spin", .{});
+            Debugger.log("spin", .{});
             while (futex_atomic.load(.monotonic) > 0) {
                 std.Thread.Futex.wait(&futex_atomic, 1);
             }
-            if (comptime Environment.allow_assert)
-                debug("waitForDebugger: {}", .{Output.ElapsedFormatter{
+            if (comptime Environment.enable_logs)
+                Debugger.log("waitForDebugger: {}", .{Output.ElapsedFormatter{
                     .colors = Output.enable_ansi_colors_stderr,
                     .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.CLI.start_time))),
                 }});
@@ -1605,10 +1591,36 @@ pub const VirtualMachine = struct {
             }
         }
 
+        pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
+            log("create", .{});
+            JSC.markBinding(@src());
+            if (!has_created_debugger) {
+                has_created_debugger = true;
+                std.mem.doNotOptimizeAway(&TestReporterAgent.Bun__TestReporterAgentDisable);
+                std.mem.doNotOptimizeAway(&LifecycleAgent.Bun__LifecycleAgentDisable);
+                std.mem.doNotOptimizeAway(&TestReporterAgent.Bun__TestReporterAgentEnable);
+                std.mem.doNotOptimizeAway(&LifecycleAgent.Bun__LifecycleAgentEnable);
+                var debugger = &this.debugger.?;
+                debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
+                if (!this.has_started_debugger) {
+                    this.has_started_debugger = true;
+                    futex_atomic = std.atomic.Value(u32).init(0);
+                    var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
+                    thread.detach();
+                }
+                this.eventLoop().ensureWaker();
+
+                if (debugger.wait_for_connection) {
+                    debugger.poll_ref.ref(this);
+                    debugger.must_block_until_connected = true;
+                }
+            }
+        }
+
         pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
             var arena = bun.MimallocArena.init() catch unreachable;
             Output.Source.configureNamedThread("Debugger");
-            debug("startJSDebuggerThread", .{});
+            log("startJSDebuggerThread", .{});
             JSC.markBinding(@src());
 
             var vm = JSC.VirtualMachine.init(.{
@@ -1628,9 +1640,10 @@ pub const VirtualMachine = struct {
 
         pub export fn Debugger__didConnect() void {
             var this = VirtualMachine.get();
-            bun.assert(this.debugger.?.wait_for_connection);
-            this.debugger.?.wait_for_connection = false;
-            this.debugger.?.poll_ref.unref(this);
+            if (this.debugger.?.wait_for_connection) {
+                this.debugger.?.wait_for_connection = false;
+                this.debugger.?.poll_ref.unref(this);
+            }
         }
 
         fn start(other_vm: *VirtualMachine) void {
@@ -1657,7 +1670,7 @@ pub const VirtualMachine = struct {
                 Output.flush();
             }
 
-            debug("wake", .{});
+            log("wake", .{});
             futex_atomic.store(0, .monotonic);
             std.Thread.Futex.wake(&futex_atomic, 1);
 
@@ -2930,10 +2943,22 @@ pub const VirtualMachine = struct {
         return null;
     }
 
+    pub fn ensureDebugger(this: *VirtualMachine, block_until_connected: bool) !void {
+        if (this.debugger != null) {
+            try Debugger.create(this, this.global);
+
+            if (block_until_connected) {
+                Debugger.waitForDebuggerIfNecessary(this);
+            }
+        }
+    }
+
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
         this.main_hash = GenericWatcher.getHash(entry_path);
+
+        try this.ensureDebugger(true);
 
         try this.entry_point.generate(
             this.allocator,
@@ -2942,10 +2967,6 @@ pub const VirtualMachine = struct {
             main_file_name,
         );
         this.eventLoop().ensureWaker();
-
-        if (this.debugger != null) {
-            try Debugger.create(this, this.global);
-        }
 
         if (!this.bundler.options.disable_transpilation) {
             if (try this.loadPreloads()) |promise| {
@@ -2975,9 +2996,7 @@ pub const VirtualMachine = struct {
 
         this.eventLoop().ensureWaker();
 
-        if (this.debugger != null) {
-            try Debugger.create(this, this.global);
-        }
+        try this.ensureDebugger(true);
 
         if (!this.bundler.options.disable_transpilation) {
             if (try this.loadPreloads()) |promise| {

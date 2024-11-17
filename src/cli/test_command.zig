@@ -1309,6 +1309,9 @@ pub const TestCommand = struct {
 
         // Start the debugger before we scan for files
         // But, don't block the main thread waiting if they used --inspect-wait.
+        //
+        try vm.ensureDebugger(false);
+
         const test_files, const search_count = scan: {
             if (for (ctx.positionals) |arg| {
                 if (std.fs.path.isAbsolute(arg) or

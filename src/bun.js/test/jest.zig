@@ -57,6 +57,7 @@ pub const Tag = enum(u3) {
     todo,
 };
 const debug = Output.scoped(.jest, false);
+var max_test_id_for_debugger: u32 = 0;
 pub const TestRunner = struct {
     tests: TestRunner.Test.List = .{},
     log: *logger.Log,
@@ -577,7 +578,7 @@ pub const TestScope = struct {
     func_arg: []JSValue,
     func_has_callback: bool = false,
 
-    id: TestRunner.Test.ID = 0,
+    test_id_for_debugger: TestRunner.Test.ID = 0,
     promise: ?*JSInternalPromise = null,
     ran: bool = false,
     task: ?*TestRunnerTask = null,
@@ -715,6 +716,14 @@ pub const TestScope = struct {
             this.timeout_millis,
             task.test_id,
         );
+
+        if (task.test_id_for_debugger > 0) {
+            if (vm.debugger) |*debugger| {
+                if (debugger.test_reporter_agent.isEnabled()) {
+                    debugger.test_reporter_agent.reportTestStart(@intCast(task.test_id_for_debugger));
+                }
+            }
+        }
 
         if (this.func_has_callback) {
             const callback_func = JSC.NewFunctionWithData(
@@ -1164,6 +1173,7 @@ pub const DescribeScope = struct {
                     .describe = this,
                     .globalThis = globalObject,
                     .source_file_path = source.path.text,
+                    .test_id_for_debugger = 0,
                 };
                 runner.ref.ref(globalObject.bunVM());
 
@@ -1172,6 +1182,8 @@ pub const DescribeScope = struct {
             }
         }
 
+        const maybe_report_debugger = max_test_id_for_debugger > 0;
+
         while (i < end) : (i += 1) {
             var runner = allocator.create(TestRunnerTask) catch unreachable;
             runner.* = .{
@@ -1179,6 +1191,7 @@ pub const DescribeScope = struct {
                 .describe = this,
                 .globalThis = globalObject,
                 .source_file_path = source.path.text,
+                .test_id_for_debugger = if (maybe_report_debugger) tests[i].test_id_for_debugger else 0,
             };
             runner.ref.ref(globalObject.bunVM());
 
@@ -1259,6 +1272,7 @@ pub const WrappedDescribeScope = struct {
 
 pub const TestRunnerTask = struct {
     test_id: TestRunner.Test.ID,
+    test_id_for_debugger: TestRunner.Test.ID,
     describe: *DescribeScope,
     globalThis: *JSGlobalObject,
     source_file_path: string = "",
@@ -1343,7 +1357,6 @@ pub const TestRunnerTask = struct {
         jsc_vm.last_reported_error_for_dedupe = .zero;
 
         const test_id = this.test_id;
-
         if (test_id == std.math.maxInt(TestRunner.Test.ID)) {
             describe.onTestComplete(globalThis, test_id, true);
             Jest.runner.?.runNextTest();
@@ -1353,15 +1366,17 @@ pub const TestRunnerTask = struct {
 
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
+        const test_id_for_debugger = test_.test_id_for_debugger;
+        this.test_id_for_debugger = test_id_for_debugger;
 
         if (test_.func == .zero or !describe.shouldEvaluateScope() or (test_.tag != .only and Jest.runner.?.only)) {
             const tag = if (!describe.shouldEvaluateScope()) describe.tag else test_.tag;
             switch (tag) {
                 .todo => {
-                    this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
+                    this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, test_id_for_debugger, describe);
                 },
                 .skip => {
-                    this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, describe);
+                    this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, test_id_for_debugger, describe);
                 },
                 else => {},
             }
@@ -1543,17 +1558,18 @@ pub const TestRunnerTask = struct {
         }
 
         checkAssertionsCounter(result);
-        processTestResult(this, this.globalThis, result.*, test_, test_id, describe);
+        processTestResult(this, this.globalThis, result.*, test_, test_id, this.test_id_for_debugger, describe);
     }
 
-    fn processTestResult(this: *TestRunnerTask, globalThis: *JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {
+    fn processTestResult(this: *TestRunnerTask, globalThis: *JSGlobalObject, result: Result, test_: TestScope, test_id: u32, test_id_for_debugger: u32, describe: *DescribeScope) void {
+        const elapsed = this.started_at.sinceNow();
         switch (result.forceTODO(test_.tag == .todo)) {
             .pass => |count| Jest.runner.?.reportPass(
                 test_id,
                 this.source_file_path,
                 test_.label,
                 count,
-                this.started_at.sinceNow(),
+                elapsed,
                 describe,
             ),
             .fail => |count| Jest.runner.?.reportFailure(
@@ -1561,7 +1577,7 @@ pub const TestRunnerTask = struct {
                 this.source_file_path,
                 test_.label,
                 count,
-                this.started_at.sinceNow(),
+                elapsed,
                 describe,
             ),
             .fail_because_expected_has_assertions => {
@@ -1572,7 +1588,7 @@ pub const TestRunnerTask = struct {
                     this.source_file_path,
                     test_.label,
                     0,
-                    this.started_at.sinceNow(),
+                    elapsed,
                     describe,
                 );
             },
@@ -1587,7 +1603,7 @@ pub const TestRunnerTask = struct {
                     this.source_file_path,
                     test_.label,
                     counter.actual,
-                    this.started_at.sinceNow(),
+                    elapsed,
                     describe,
                 );
             },
@@ -1600,12 +1616,26 @@ pub const TestRunnerTask = struct {
                     this.source_file_path,
                     test_.label,
                     count,
-                    this.started_at.sinceNow(),
+                    elapsed,
                     describe,
                 );
             },
             .pending => @panic("Unexpected pending test"),
         }
+
+        if (test_id_for_debugger > 0) {
+            if (globalThis.bunVM().debugger) |*debugger| {
+                if (debugger.test_reporter_agent.isEnabled()) {
+                    debugger.test_reporter_agent.reportTestEnd(@intCast(test_id_for_debugger), switch (result) {
+                        .pass => .pass,
+                        .skip => .skip,
+                        .todo => .todo,
+                        else => .fail,
+                    }, @floatFromInt(elapsed));
+                }
+            }
+        }
+
         describe.onTestComplete(globalThis, test_id, result == .skip or (!Jest.runner.?.test_options.run_todo and result == .todo));
 
         Jest.runner.?.runNextTest();
@@ -1790,6 +1820,21 @@ inline fn createScope(
             .func_arg = function_args,
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
+            .test_id_for_debugger = brk: {
+                if (!is_skip) {
+                    const vm = globalThis.bunVM();
+                    if (vm.debugger) |*debugger| {
+                        if (debugger.test_reporter_agent.isEnabled()) {
+                            max_test_id_for_debugger += 1;
+                            var name = bun.String.init(label);
+                            debugger.test_reporter_agent.reportTestFound(callframe, @intCast(max_test_id_for_debugger), &name);
+                            break :brk max_test_id_for_debugger;
+                        }
+                    }
+                }
+
+                break :brk 0;
+            },
         }) catch unreachable;
     } else {
         var scope = allocator.create(DescribeScope) catch unreachable;

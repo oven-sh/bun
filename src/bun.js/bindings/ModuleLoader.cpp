@@ -455,8 +455,6 @@ extern "C" void Bun__onFulfillAsyncModule(
     }
 }
 
-extern "C" bool isBunTest;
-
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* target,

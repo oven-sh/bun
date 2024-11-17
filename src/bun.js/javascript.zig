@@ -1418,6 +1418,133 @@ pub const VirtualMachine = struct {
 
     pub var has_created_debugger: bool = false;
 
+    pub const TestReporterAgent = struct {
+        handle: ?*Handle = null,
+        const debug = Output.scoped(.TestReporterAgent, false);
+        pub const TestStatus = enum(u8) {
+            pass,
+            fail,
+            timeout,
+            skip,
+            todo,
+        };
+        pub const Handle = opaque {
+            extern "c" fn Bun__TestReporterAgentReportTestFound(agent: *Handle, callFrame: *JSC.CallFrame, testId: c_int, name: *String) void;
+            extern "c" fn Bun__TestReporterAgentReportTestStart(agent: *Handle, testId: c_int) void;
+            extern "c" fn Bun__TestReporterAgentReportTestEnd(agent: *Handle, testId: c_int, bunTestStatus: TestStatus, elapsed: f64) void;
+
+            pub fn reportTestFound(this: *Handle, callFrame: *JSC.CallFrame, testId: i32, name: *String) void {
+                Bun__TestReporterAgentReportTestFound(this, callFrame, testId, name);
+            }
+
+            pub fn reportTestStart(this: *Handle, testId: c_int) void {
+                Bun__TestReporterAgentReportTestStart(this, testId);
+            }
+
+            pub fn reportTestEnd(this: *Handle, testId: c_int, bunTestStatus: TestStatus, elapsed: f64) void {
+                Bun__TestReporterAgentReportTestEnd(this, testId, bunTestStatus, elapsed);
+            }
+        };
+        pub export fn Bun__TestReporterAgentEnable(agent: *Handle) void {
+            if (JSC.VirtualMachine.get().debugger) |*debugger| {
+                debug("enable", .{});
+                debugger.test_reporter_agent.handle = agent;
+            }
+        }
+        pub export fn Bun__TestReporterAgentDisable(agent: *Handle) void {
+            _ = agent; // autofix
+            if (JSC.VirtualMachine.get().debugger) |*debugger| {
+                debug("disable", .{});
+                debugger.test_reporter_agent.handle = null;
+            }
+        }
+
+        /// Caller must ensure that it is enabled first.
+        ///
+        /// Since we may have to call .deinit on the name string.
+        pub fn reportTestFound(this: TestReporterAgent, callFrame: *JSC.CallFrame, test_id: i32, name: *bun.String) void {
+            debug("reportTestFound", .{});
+
+            this.handle.?.reportTestFound(callFrame, test_id, name);
+        }
+
+        /// Caller must ensure that it is enabled first.
+        pub fn reportTestStart(this: TestReporterAgent, test_id: i32) void {
+            debug("reportTestStart", .{});
+            this.handle.?.reportTestStart(test_id);
+        }
+
+        /// Caller must ensure that it is enabled first.
+        pub fn reportTestEnd(this: TestReporterAgent, test_id: i32, bunTestStatus: TestStatus, elapsed: f64) void {
+            debug("reportTestEnd", .{});
+            this.handle.?.reportTestEnd(test_id, bunTestStatus, elapsed);
+        }
+
+        pub fn isEnabled(this: TestReporterAgent) bool {
+            return this.handle != null;
+        }
+    };
+
+    pub const LifecycleAgent = struct {
+        handle: ?*Handle = null,
+        const debug = Output.scoped(.LifecycleAgent, false);
+
+        pub const Handle = opaque {
+            extern "c" fn Bun__LifecycleAgentReportReload(agent: *Handle) void;
+            extern "c" fn Bun__LifecycleAgentReportError(agent: *Handle, error_value: JSC.JSValue) void;
+            extern "c" fn Bun__LifecycleAgentPreventExit(agent: *Handle) void;
+            extern "c" fn Bun__LifecycleAgentStopPreventingExit(agent: *Handle) void;
+
+            pub fn preventExit(this: *Handle) void {
+                Bun__LifecycleAgentPreventExit(this);
+            }
+
+            pub fn stopPreventingExit(this: *Handle) void {
+                Bun__LifecycleAgentStopPreventingExit(this);
+            }
+
+            pub fn reportReload(this: *Handle) void {
+                debug("reportReload", .{});
+                Bun__LifecycleAgentReportReload(this);
+            }
+
+            pub fn reportError(this: *Handle, error_value: JSC.JSValue) void {
+                debug("reportError", .{});
+                Bun__LifecycleAgentReportError(this, error_value);
+            }
+        };
+
+        pub export fn Bun__LifecycleAgentEnable(agent: *Handle) void {
+            if (JSC.VirtualMachine.get().debugger) |*debugger| {
+                debug("enable", .{});
+                debugger.lifecycle_reporter_agent.handle = agent;
+            }
+        }
+
+        pub export fn Bun__LifecycleAgentDisable(agent: *Handle) void {
+            if (JSC.VirtualMachine.get().debugger) |*debugger| {
+                debug("disable", .{});
+                debugger.lifecycle_reporter_agent.handle = agent;
+            }
+        }
+
+        pub fn reportReload(this: *LifecycleAgent) void {
+            if (this.handle) |handle| {
+                handle.reportReload();
+            }
+        }
+
+        pub fn reportError(this: *LifecycleAgent, error_value: JSC.JSValue) void {
+            if (this.handle) |handle| {
+                handle.reportError(error_value);
+            }
+        }
+
+        pub fn isEnabled(this: *const LifecycleAgent) bool {
+            return this.handle != null;
+        }
+    };
+
     pub const Debugger = struct {
         path_or_port: ?[]const u8 = null,
         unix: []const u8 = "",
@@ -1427,7 +1554,10 @@ pub const VirtualMachine = struct {
         wait_for_connection: bool = false,
         set_breakpoint_on_first_line: bool = false,
 
-        const debug = Output.scoped(.DEBUGGER, false);
+        test_reporter_agent: TestReporterAgent = .{},
+        lifecycle_reporter_agent: LifecycleAgent = .{},
+
+        const debug = Output.scoped(.debugger, false);
 
         extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
         extern "C" fn Bun__ensureDebugger(u32, bool) void;
@@ -1439,6 +1569,10 @@ pub const VirtualMachine = struct {
             JSC.markBinding(@src());
             if (has_created_debugger) return;
             has_created_debugger = true;
+            std.mem.doNotOptimizeAway(&TestReporterAgent.Bun__TestReporterAgentDisable);
+            std.mem.doNotOptimizeAway(&LifecycleAgent.Bun__LifecycleAgentDisable);
+            std.mem.doNotOptimizeAway(&TestReporterAgent.Bun__TestReporterAgentEnable);
+            std.mem.doNotOptimizeAway(&LifecycleAgent.Bun__LifecycleAgentEnable);
             var debugger = &this.debugger.?;
             debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
             if (!this.has_started_debugger) {
@@ -3504,9 +3638,8 @@ pub const VirtualMachine = struct {
         this.had_errors = true;
         defer this.had_errors = prev_had_errors;
 
-        if (allow_side_effects and Output.is_github_action) {
-            defer printGithubAnnotation(exception);
-        }
+        defer if (allow_side_effects and Output.is_github_action)
+            printGithubAnnotation(exception);
 
         // This is a longer number than necessary because we don't handle this case very well
         // At the very least, we shouldn't dump 100 KB of minified code into your terminal.

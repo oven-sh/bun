@@ -12,6 +12,9 @@
 #include "BunInjectedScriptHost.h"
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 
+#include "InspectorLifecycleAgent.h"
+#include "InspectorTestReporterAgent.h"
+
 extern "C" void Bun__tickWhilePaused(bool*);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
@@ -51,6 +54,7 @@ public:
     }
     void unpauseForInitializedInspector() override
     {
+
         if (waitingForConnection) {
             waitingForConnection = false;
             Debugger__didConnect();
@@ -100,6 +104,7 @@ public:
         globalObject->setInspectable(true);
         auto& inspector = globalObject->inspectorDebuggable();
         inspector.setInspectable(true);
+
         globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
 
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
@@ -345,6 +350,8 @@ public:
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
     bool unrefOnDisconnect = false;
+
+    bool hasEverConnected = false;
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSend);
@@ -461,6 +468,11 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
 
     auto& inspector = globalObject->inspectorDebuggable();
     inspector.setInspectable(true);
+
+    globalObject->inspectorController().registerAlternateAgent(
+        WTF::makeUnique<Inspector::InspectorLifecycleAgent>(*globalObject));
+    globalObject->inspectorController().registerAlternateAgent(
+        WTF::makeUnique<Inspector::InspectorTestReporterAgent>(*globalObject));
 
     Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
     if (debugger) {

@@ -54,11 +54,6 @@ public:
     }
     void unpauseForInitializedInspector() override
     {
-
-        if (waitingForConnection) {
-            waitingForConnection = false;
-            Debugger__didConnect();
-        }
     }
 };
 
@@ -105,7 +100,6 @@ public:
         auto& inspector = globalObject->inspectorDebuggable();
         inspector.setInspectable(true);
 
-        globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
         static bool hasConnected = false;
 
         if (!hasConnected) {
@@ -116,11 +110,18 @@ public:
                 WTF::makeUnique<Inspector::InspectorTestReporterAgent>(*globalObject));
         }
 
+        globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
+
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
         if (debugger) {
             debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
                 BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
             };
+        }
+
+        if (waitingForConnection) {
+            waitingForConnection = false;
+            Debugger__didConnect();
         }
 
         this->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(globalObject), false);

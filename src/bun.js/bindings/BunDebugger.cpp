@@ -106,6 +106,15 @@ public:
         inspector.setInspectable(true);
 
         globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
+        static bool hasConnected = false;
+
+        if (!hasConnected) {
+            hasConnected = true;
+            globalObject->inspectorController().registerAlternateAgent(
+                WTF::makeUnique<Inspector::InspectorLifecycleAgent>(*globalObject));
+            globalObject->inspectorController().registerAlternateAgent(
+                WTF::makeUnique<Inspector::InspectorTestReporterAgent>(*globalObject));
+        }
 
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
         if (debugger) {
@@ -494,11 +503,6 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
 
     auto& inspector = globalObject->inspectorDebuggable();
     inspector.setInspectable(true);
-
-    globalObject->inspectorController().registerAlternateAgent(
-        WTF::makeUnique<Inspector::InspectorLifecycleAgent>(*globalObject));
-    globalObject->inspectorController().registerAlternateAgent(
-        WTF::makeUnique<Inspector::InspectorTestReporterAgent>(*globalObject));
 
     Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
     if (debugger) {

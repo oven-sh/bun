@@ -273,6 +273,7 @@ class Debugger {
             framer,
             backend,
           };
+          socket.ref();
         },
         data: (socket, bytes) => {
           if (!socket.data) {

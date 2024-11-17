@@ -68,6 +68,8 @@ void Bun__TestReporterAgentReportTestEnd(Inspector::InspectorTestReporterAgent* 
 InspectorTestReporterAgent::InspectorTestReporterAgent(JSC::JSGlobalObject& globalObject)
     : InspectorAgentBase("TestReporter"_s)
     , m_globalObject(globalObject)
+    , m_backendDispatcher(TestReporterBackendDispatcher::create(m_globalObject.inspectorController().backendDispatcher(), this))
+    , m_frontendDispatcher(makeUnique<TestReporterFrontendDispatcher>(const_cast<FrontendRouter&>(m_globalObject.inspectorController().frontendRouter())))
 {
 }
 
@@ -111,7 +113,7 @@ Protocol::ErrorStringOr<void> InspectorTestReporterAgent::disable()
 
 void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int testId, const String& name)
 {
-    if (!m_enabled || !m_frontendDispatcher)
+    if (!m_enabled)
         return;
 
     JSC::LineColumn lineColumn;

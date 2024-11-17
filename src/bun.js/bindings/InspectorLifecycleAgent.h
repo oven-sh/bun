@@ -40,6 +40,7 @@ public:
 private:
     JSC::JSGlobalObject& m_globalObject;
     std::unique_ptr<LifecycleReporterFrontendDispatcher> m_frontendDispatcher;
+    Ref<LifecycleReporterBackendDispatcher> m_backendDispatcher;
     bool m_enabled { false };
     bool m_preventingExit { false };
 };

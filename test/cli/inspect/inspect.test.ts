@@ -1,289 +1,433 @@
 import { Subprocess, spawn } from "bun";
-import { afterEach, expect, test } from "bun:test";
-import { bunEnv, bunExe, randomPort } from "harness";
+import { afterEach, expect, test, describe } from "bun:test";
+import { bunEnv, bunExe, isPosix, randomPort } from "harness";
 import { WebSocket } from "ws";
-
+import { join } from "node:path";
 let inspectee: Subprocess;
 
 const anyPort = expect.stringMatching(/^\d+$/);
 const anyPathname = expect.stringMatching(/^\/[a-z0-9]+$/);
-const tests = [
-  {
-    args: ["--inspect"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: "6499",
-      pathname: anyPathname,
-    },
-  },
-  {
-    args: ["--inspect=0"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: anyPort,
-      pathname: anyPathname,
-    },
-  },
-  {
-    args: [`--inspect=${randomPort()}`],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: anyPort,
-      pathname: anyPathname,
-    },
-  },
-  {
-    args: ["--inspect=localhost"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: "6499",
-      pathname: anyPathname,
-    },
-  },
-  {
-    args: ["--inspect=localhost/"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: "6499",
-      pathname: "/",
-    },
-  },
-  {
-    args: ["--inspect=localhost:0"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: anyPort,
-      pathname: anyPathname,
-    },
-  },
-  {
-    args: ["--inspect=localhost:0/"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: anyPort,
-      pathname: "/",
-    },
-  },
-  {
-    args: ["--inspect=localhost/foo/bar"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: "6499",
-      pathname: "/foo/bar",
-    },
-  },
-  {
-    args: ["--inspect=127.0.0.1"],
-    url: {
-      protocol: "ws:",
-      hostname: "127.0.0.1",
-      port: "6499",
-      pathname: anyPathname,
-    },
-  },
-  {
-    args: ["--inspect=127.0.0.1/"],
-    url: {
-      protocol: "ws:",
-      hostname: "127.0.0.1",
-      port: "6499",
-      pathname: "/",
-    },
-  },
-  {
-    args: ["--inspect=127.0.0.1:0/"],
-    url: {
-      protocol: "ws:",
-      hostname: "127.0.0.1",
-      port: anyPort,
-      pathname: "/",
-    },
-  },
-  {
-    args: ["--inspect=[::1]"],
-    url: {
-      protocol: "ws:",
-      hostname: "[::1]",
-      port: "6499",
-      pathname: anyPathname,
-    },
-  },
-  {
-    args: ["--inspect=[::1]:0"],
-    url: {
-      protocol: "ws:",
-      hostname: "[::1]",
-      port: anyPort,
-      pathname: anyPathname,
-    },
-  },
-  {
-    args: ["--inspect=[::1]:0/"],
-    url: {
-      protocol: "ws:",
-      hostname: "[::1]",
-      port: anyPort,
-      pathname: "/",
-    },
-  },
-  {
-    args: ["--inspect=/"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: "6499",
-      pathname: "/",
-    },
-  },
-  {
-    args: ["--inspect=/foo"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: "6499",
-      pathname: "/foo",
-    },
-  },
-  {
-    args: ["--inspect=/foo/baz/"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: "6499",
-      pathname: "/foo/baz/",
-    },
-  },
-  {
-    args: ["--inspect=:0"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: anyPort,
-      pathname: anyPathname,
-    },
-  },
-  {
-    args: ["--inspect=:0/"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: anyPort,
-      pathname: "/",
-    },
-  },
-  {
-    args: ["--inspect=ws://localhost/"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: anyPort,
-      pathname: "/",
-    },
-  },
-  {
-    args: ["--inspect=ws://localhost:0/"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: anyPort,
-      pathname: "/",
-    },
-  },
-  {
-    args: ["--inspect=ws://localhost:6499/foo/bar"],
-    url: {
-      protocol: "ws:",
-      hostname: "localhost",
-      port: "6499",
-      pathname: "/foo/bar",
-    },
-  },
-];
 
-for (const { args, url: expected } of tests) {
-  test(`bun ${args.join(" ")}`, async () => {
-    inspectee = spawn({
-      cwd: import.meta.dir,
-      cmd: [bunExe(), ...args, "inspectee.js"],
-      env: bunEnv,
-      stdout: "ignore",
-      stderr: "pipe",
-    });
+describe("websocket", () => {
+  const tests = [
+    {
+      args: ["--inspect"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: "6499",
+        pathname: anyPathname,
+      },
+    },
+    {
+      args: ["--inspect=0"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: anyPort,
+        pathname: anyPathname,
+      },
+    },
+    {
+      args: [`--inspect=${randomPort()}`],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: anyPort,
+        pathname: anyPathname,
+      },
+    },
+    {
+      args: ["--inspect=localhost"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: "6499",
+        pathname: anyPathname,
+      },
+    },
+    {
+      args: ["--inspect=localhost/"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: "6499",
+        pathname: "/",
+      },
+    },
+    {
+      args: ["--inspect=localhost:0"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: anyPort,
+        pathname: anyPathname,
+      },
+    },
+    {
+      args: ["--inspect=localhost:0/"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: anyPort,
+        pathname: "/",
+      },
+    },
+    {
+      args: ["--inspect=localhost/foo/bar"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: "6499",
+        pathname: "/foo/bar",
+      },
+    },
+    {
+      args: ["--inspect=127.0.0.1"],
+      url: {
+        protocol: "ws:",
+        hostname: "127.0.0.1",
+        port: "6499",
+        pathname: anyPathname,
+      },
+    },
+    {
+      args: ["--inspect=127.0.0.1/"],
+      url: {
+        protocol: "ws:",
+        hostname: "127.0.0.1",
+        port: "6499",
+        pathname: "/",
+      },
+    },
+    {
+      args: ["--inspect=127.0.0.1:0/"],
+      url: {
+        protocol: "ws:",
+        hostname: "127.0.0.1",
+        port: anyPort,
+        pathname: "/",
+      },
+    },
+    {
+      args: ["--inspect=[::1]"],
+      url: {
+        protocol: "ws:",
+        hostname: "[::1]",
+        port: "6499",
+        pathname: anyPathname,
+      },
+    },
+    {
+      args: ["--inspect=[::1]:0"],
+      url: {
+        protocol: "ws:",
+        hostname: "[::1]",
+        port: anyPort,
+        pathname: anyPathname,
+      },
+    },
+    {
+      args: ["--inspect=[::1]:0/"],
+      url: {
+        protocol: "ws:",
+        hostname: "[::1]",
+        port: anyPort,
+        pathname: "/",
+      },
+    },
+    {
+      args: ["--inspect=/"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: "6499",
+        pathname: "/",
+      },
+    },
+    {
+      args: ["--inspect=/foo"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: "6499",
+        pathname: "/foo",
+      },
+    },
+    {
+      args: ["--inspect=/foo/baz/"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: "6499",
+        pathname: "/foo/baz/",
+      },
+    },
+    {
+      args: ["--inspect=:0"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: anyPort,
+        pathname: anyPathname,
+      },
+    },
+    {
+      args: ["--inspect=:0/"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: anyPort,
+        pathname: "/",
+      },
+    },
+    {
+      args: ["--inspect=ws://localhost/"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: anyPort,
+        pathname: "/",
+      },
+    },
+    {
+      args: ["--inspect=ws://localhost:0/"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: anyPort,
+        pathname: "/",
+      },
+    },
+    {
+      args: ["--inspect=ws://localhost:6499/foo/bar"],
+      url: {
+        protocol: "ws:",
+        hostname: "localhost",
+        port: "6499",
+        pathname: "/foo/bar",
+      },
+    },
+  ];
 
-    let url: URL | undefined;
-    let stderr = "";
-    const decoder = new TextDecoder();
-    for await (const chunk of inspectee.stderr as ReadableStream) {
-      stderr += decoder.decode(chunk);
-      for (const line of stderr.split("\n")) {
-        try {
-          url = new URL(line);
-        } catch {
-          // Ignore
+  for (const { args, url: expected } of tests) {
+    test(`bun ${args.join(" ")}`, async () => {
+      inspectee = spawn({
+        cwd: import.meta.dir,
+        cmd: [bunExe(), ...args, "inspectee.js"],
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+
+      let url: URL | undefined;
+      let stderr = "";
+      const decoder = new TextDecoder();
+      for await (const chunk of inspectee.stderr as ReadableStream) {
+        stderr += decoder.decode(chunk);
+        for (const line of stderr.split("\n")) {
+          try {
+            url = new URL(line);
+          } catch {
+            // Ignore
+          }
+          if (url?.protocol.includes("ws")) {
+            break;
+          }
         }
-        if (url?.protocol.includes("ws")) {
+        if (stderr.includes("Listening:")) {
           break;
         }
       }
-      if (stderr.includes("Listening:")) {
-        break;
+
+      if (!url) {
+        process.stderr.write(stderr);
+        throw new Error("Unable to find listening URL");
       }
-    }
 
-    if (!url) {
-      process.stderr.write(stderr);
-      throw new Error("Unable to find listening URL");
-    }
+      const { protocol, hostname, port, pathname } = url;
+      expect({
+        protocol,
+        hostname,
+        port,
+        pathname,
+      }).toMatchObject(expected);
 
-    const { protocol, hostname, port, pathname } = url;
-    expect({
-      protocol,
-      hostname,
-      port,
-      pathname,
-    }).toMatchObject(expected);
+      const webSocket = new WebSocket(url);
+      expect(
+        new Promise<void>((resolve, reject) => {
+          webSocket.addEventListener("open", () => resolve());
+          webSocket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+          webSocket.addEventListener("close", cause => reject(new Error("WebSocket closed", { cause })));
+        }),
+      ).resolves.toBeUndefined();
 
-    const webSocket = new WebSocket(url);
-    expect(
-      new Promise<void>((resolve, reject) => {
-        webSocket.addEventListener("open", () => resolve());
-        webSocket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
-        webSocket.addEventListener("close", cause => reject(new Error("WebSocket closed", { cause })));
-      }),
-    ).resolves.toBeUndefined();
-
-    webSocket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
-    expect(
-      new Promise(resolve => {
-        webSocket.addEventListener("message", ({ data }) => {
-          resolve(JSON.parse(data.toString()));
-        });
-      }),
-    ).resolves.toMatchObject({
-      id: 1,
-      result: {
+      webSocket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
+      expect(
+        new Promise(resolve => {
+          webSocket.addEventListener("message", ({ data }) => {
+            resolve(JSON.parse(data.toString()));
+          });
+        }),
+      ).resolves.toMatchObject({
+        id: 1,
         result: {
-          type: "number",
-          value: 2,
+          result: {
+            type: "number",
+            value: 2,
+          },
         },
-      },
+      });
+
+      webSocket.close();
+    });
+  }
+
+  // FIXME: Depends on https://github.com/oven-sh/bun/pull/4649
+  test.todo("bun --inspect=ws+unix:///tmp/inspect.sock");
+
+  afterEach(() => {
+    inspectee?.kill();
+  });
+});
+
+describe("unix domain socket without websocket", () => {
+  if (isPosix) {
+    async function runTest(path: string, args: string[], env = bunEnv) {
+      let { promise, resolve, reject } = Promise.withResolvers();
+
+      const framer = new SocketFramer(message => {
+        resolve(JSON.parse(message));
+      });
+
+      let sock;
+
+      using listener = Bun.listen({
+        unix: path,
+        socket: {
+          open: socket => {
+            sock = socket;
+            framer.send(socket, JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
+          },
+          data: (socket, bytes) => {
+            framer.onData(socket, bytes);
+          },
+          error: reject,
+        },
+      });
+
+      const inspectee = spawn({
+        cmd: [bunExe(), ...args, join(import.meta.dir, "inspectee.js")],
+        env,
+        stdout: "inherit",
+        stderr: "inherit",
+        stdin: "inherit",
+      });
+      const message = await promise;
+      expect(message).toMatchObject({
+        id: 1,
+        result: {
+          result: { type: "number", value: 2 },
+        },
+      });
+      inspectee.kill();
+      sock?.end?.();
+    }
+
+    test("bun --inspect=unix://", async () => {
+      const path = Math.random().toString(36).substring(2, 15) + ".sock";
+      const url = new URL(`unix://${path}`);
+      await runTest(path, ["--inspect=" + url.href]);
     });
 
-    webSocket.close();
-  });
+    test("bun --inspect=unix:", async () => {
+      const path = Math.random().toString(36).substring(2, 15) + ".sock";
+      await runTest(path, ["--inspect=unix:" + path]);
+    });
+
+    test("BUN_INSPECT=' unix://' bun --inspect", async () => {
+      const path = Math.random().toString(36).substring(2, 15) + ".sock";
+      await runTest(path, [], { ...bunEnv, BUN_INSPECT: "unix://" + path });
+    });
+
+    test("BUN_INSPECT='unix:' bun --inspect", async () => {
+      const path = Math.random().toString(36).substring(2, 15) + ".sock";
+      await runTest(path, [], { ...bunEnv, BUN_INSPECT: "unix:" + path });
+    });
+  }
+});
+
+const enum FramerState {
+  WaitingForLength,
+  WaitingForMessage,
 }
 
-// FIXME: Depends on https://github.com/oven-sh/bun/pull/4649
-test.todo("bun --inspect=ws+unix:///tmp/inspect.sock");
+let socketFramerMessageLengthBuffer: Buffer;
+class SocketFramer {
+  private state: FramerState = FramerState.WaitingForLength;
+  private pendingLength: number = 0;
+  private sizeBuffer: Buffer = Buffer.alloc(0);
+  private sizeBufferIndex: number = 0;
+  private bufferedData: Buffer = Buffer.alloc(0);
 
-afterEach(() => {
-  inspectee?.kill();
-});
+  constructor(private onMessage: (message: string) => void) {
+    if (!socketFramerMessageLengthBuffer) {
+      socketFramerMessageLengthBuffer = Buffer.alloc(4);
+    }
+    this.reset();
+  }
+
+  reset(): void {
+    this.state = FramerState.WaitingForLength;
+    this.bufferedData = Buffer.alloc(0);
+    this.sizeBufferIndex = 0;
+    this.sizeBuffer = Buffer.alloc(4);
+  }
+
+  send(socket: Socket, data: string): void {
+    socketFramerMessageLengthBuffer.writeUInt32BE(data.length, 0);
+    socket.write(socketFramerMessageLengthBuffer);
+    socket.write(data);
+  }
+
+  onData(socket: Socket<{ framer: SocketFramer; backend: Writer }>, data: Buffer): void {
+    this.bufferedData = this.bufferedData.length > 0 ? Buffer.concat([this.bufferedData, data]) : data;
+
+    let messagesToDeliver: string[] = [];
+
+    while (this.bufferedData.length > 0) {
+      if (this.state === FramerState.WaitingForLength) {
+        if (this.sizeBufferIndex + this.bufferedData.length < 4) {
+          const remainingBytes = Math.min(4 - this.sizeBufferIndex, this.bufferedData.length);
+          this.bufferedData.copy(this.sizeBuffer, this.sizeBufferIndex, 0, remainingBytes);
+          this.sizeBufferIndex += remainingBytes;
+          this.bufferedData = this.bufferedData.slice(remainingBytes);
+          break;
+        }
+
+        const remainingBytes = 4 - this.sizeBufferIndex;
+        this.bufferedData.copy(this.sizeBuffer, this.sizeBufferIndex, 0, remainingBytes);
+        this.pendingLength = this.sizeBuffer.readUInt32BE(0);
+
+        this.state = FramerState.WaitingForMessage;
+        this.sizeBufferIndex = 0;
+        this.bufferedData = this.bufferedData.slice(remainingBytes);
+      }
+
+      if (this.bufferedData.length < this.pendingLength) {
+        break;
+      }
+
+      const message = this.bufferedData.toString("utf-8", 0, this.pendingLength);
+      this.bufferedData = this.bufferedData.slice(this.pendingLength);
+      this.state = FramerState.WaitingForLength;
+      this.pendingLength = 0;
+      this.sizeBufferIndex = 0;
+      messagesToDeliver.push(message);
+    }
+
+    for (const message of messagesToDeliver) {
+      this.onMessage(message);
+    }
+  }
+}

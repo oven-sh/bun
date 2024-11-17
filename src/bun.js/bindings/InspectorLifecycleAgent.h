@@ -8,7 +8,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
-
+#include "headers-handwritten.h"
 namespace Inspector {
 
 class FrontendRouter;
@@ -33,7 +33,7 @@ public:
 
     // Public API
     void reportReload();
-    void reportError(JSC::JSGlobalObject&, JSC::JSValue);
+    void reportError(ZigException&);
     Protocol::ErrorStringOr<void> preventExit();
     Protocol::ErrorStringOr<void> stopPreventingExit();
 

@@ -1,10 +1,12 @@
 import { Subprocess, spawn } from "bun";
 import { afterEach, expect, test, describe } from "bun:test";
-import { bunEnv, bunExe, isPosix, randomPort } from "harness";
+import { bunEnv, bunExe, isPosix, randomPort, tempDirWithFiles } from "harness";
 import { WebSocket } from "ws";
 import { join } from "node:path";
 let inspectee: Subprocess;
-
+import { SocketFramer } from "./socket-framer";
+import { JUnitReporter, InspectorSession, connect } from "./junit-reporter";
+import stripAnsi from "strip-ansi";
 const anyPort = expect.stringMatching(/^\d+$/);
 const anyPathname = expect.stringMatching(/^\/[a-z0-9]+$/);
 
@@ -357,77 +359,69 @@ describe("unix domain socket without websocket", () => {
   }
 });
 
-const enum FramerState {
-  WaitingForLength,
-  WaitingForMessage,
-}
+test("junit reporter", async () => {
+  const path = Math.random().toString(36).substring(2, 15) + ".sock";
+  let reporter: JUnitReporter;
+  let session: InspectorSession;
 
-let socketFramerMessageLengthBuffer: Buffer;
-class SocketFramer {
-  private state: FramerState = FramerState.WaitingForLength;
-  private pendingLength: number = 0;
-  private sizeBuffer: Buffer = Buffer.alloc(0);
-  private sizeBufferIndex: number = 0;
-  private bufferedData: Buffer = Buffer.alloc(0);
-
-  constructor(private onMessage: (message: string) => void) {
-    if (!socketFramerMessageLengthBuffer) {
-      socketFramerMessageLengthBuffer = Buffer.alloc(4);
-    }
-    this.reset();
-  }
-
-  reset(): void {
-    this.state = FramerState.WaitingForLength;
-    this.bufferedData = Buffer.alloc(0);
-    this.sizeBufferIndex = 0;
-    this.sizeBuffer = Buffer.alloc(4);
-  }
-
-  send(socket: Socket, data: string): void {
-    socketFramerMessageLengthBuffer.writeUInt32BE(data.length, 0);
-    socket.write(socketFramerMessageLengthBuffer);
-    socket.write(data);
-  }
-
-  onData(socket: Socket<{ framer: SocketFramer; backend: Writer }>, data: Buffer): void {
-    this.bufferedData = this.bufferedData.length > 0 ? Buffer.concat([this.bufferedData, data]) : data;
-
-    let messagesToDeliver: string[] = [];
-
-    while (this.bufferedData.length > 0) {
-      if (this.state === FramerState.WaitingForLength) {
-        if (this.sizeBufferIndex + this.bufferedData.length < 4) {
-          const remainingBytes = Math.min(4 - this.sizeBufferIndex, this.bufferedData.length);
-          this.bufferedData.copy(this.sizeBuffer, this.sizeBufferIndex, 0, remainingBytes);
-          this.sizeBufferIndex += remainingBytes;
-          this.bufferedData = this.bufferedData.slice(remainingBytes);
-          break;
+  const tempdir = tempDirWithFiles("junit-reporter", {
+    "package.json": `
+      {
+        "type": "module",
+        "scripts": {
+          "test": "bun a.test.js"
         }
-
-        const remainingBytes = 4 - this.sizeBufferIndex;
-        this.bufferedData.copy(this.sizeBuffer, this.sizeBufferIndex, 0, remainingBytes);
-        this.pendingLength = this.sizeBuffer.readUInt32BE(0);
-
-        this.state = FramerState.WaitingForMessage;
-        this.sizeBufferIndex = 0;
-        this.bufferedData = this.bufferedData.slice(remainingBytes);
       }
+    `,
+    "a.test.js": `
+      import { test, expect } from "bun:test";
+      test("fail", () => {
+        expect(1).toBe(2);
+      });
 
-      if (this.bufferedData.length < this.pendingLength) {
-        break;
-      }
+      test("success", () => {
+        expect(1).toBe(1);
+      });
+    `,
+  });
+  let { resolve, reject, promise } = Promise.withResolvers();
+  const [socket, subprocess] = await Promise.all([
+    connect(`unix://${path}`, resolve),
+    spawn({
+      cmd: [bunExe(), "--inspect-wait=unix:" + path, "test", join(tempdir, "a.test.js")],
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "inherit",
+    }),
+  ]);
 
-      const message = this.bufferedData.toString("utf-8", 0, this.pendingLength);
-      this.bufferedData = this.bufferedData.slice(this.pendingLength);
-      this.state = FramerState.WaitingForLength;
-      this.pendingLength = 0;
-      this.sizeBufferIndex = 0;
-      messagesToDeliver.push(message);
-    }
+  const framer = new SocketFramer((message: string) => {
+    session.onMessage(message);
+  });
 
-    for (const message of messagesToDeliver) {
-      this.onMessage(message);
-    }
+  session = new InspectorSession();
+  session.socket = socket;
+  session.framer = framer;
+  socket.data = {
+    onData: framer.onData.bind(framer),
+  };
+
+  reporter = new JUnitReporter(session);
+
+  await Promise.all([subprocess.exited, promise]);
+
+  for (const [file, suite] of reporter.testSuites.entries()) {
+    suite.time = 1000 * 5;
+    suite.timestamp = new Date(2024, 11, 17, 15, 37, 38, 935).toISOString();
   }
-}
+
+  const report = reporter
+    .generateReport()
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\\", "/")
+    .replaceAll(tempdir.replaceAll("\\", "/"), "<dir>")
+    .replaceAll(process.cwd().replaceAll("\\", "/"), "<cwd>")
+    .trim();
+  expect(stripAnsi(report)).toMatchSnapshot();
+});

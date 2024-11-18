@@ -1415,7 +1415,9 @@ fn report(url: []const u8) void {
 fn crash() noreturn {
     switch (bun.Environment.os) {
         .windows => {
-            std.posix.abort();
+            // This exit code is what Node.js uses when it calls
+            // abort. This is relied on by their Node-API tests.
+            bun.C.quick_exit(0x80000003);
         },
         else => {
             // Install default handler so that the tkill below will terminate.

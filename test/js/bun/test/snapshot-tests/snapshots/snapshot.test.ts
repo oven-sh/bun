@@ -233,6 +233,6 @@ describe("snapshots", async () => {
   test("jest newline oddity", async () => {
     await t.update(defaultWrap("'\\n'"));
     await t.update(defaultWrap("'\\r'"), { shouldNotError: true });
-    await t.update(defaultWrap("'\\r\\n"), { shouldNotError: true });
+    await t.update(defaultWrap("'\\r\\n'"), { shouldNotError: true });
   });
 });

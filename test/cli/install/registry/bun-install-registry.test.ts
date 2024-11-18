@@ -520,6 +520,31 @@ ${Object.keys(opts)
   );
 });
 
+describe("auto-install", () => {
+  test("symlinks (and junctions) are created correctly in the install cache", async () => {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "--print", "require('is-number')"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+      },
+    });
+
+    const out = await Bun.readableStreamToText(stdout);
+    expect(out).toMatchSnapshot();
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    expect(resolve(await readlink(join(packageDir, ".bun-cache", "is-number", "2.0.0@@localhost@@@1")))).toBe(
+      join(packageDir, ".bun-cache", "is-number@2.0.0@@localhost@@@1"),
+    );
+  });
+});
+
 describe("certificate authority", () => {
   const mockRegistryFetch = function (opts?: any): (req: Request) => Promise<Response> {
     return async function (req: Request) {
@@ -639,6 +664,22 @@ describe("certificate authority", () => {
     expect(out).not.toContain("no-deps");
     const err = await Bun.readableStreamToText(stderr);
     expect(err).toContain(`HTTPThread: could not find CA file: '${join(packageDir, "does-not-exist")}'`);
+    expect(await exited).toBe(1);
+  });
+
+  test("non-existent --cafile (absolute path)", async () => {
+    await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--cafile", "/does/not/exist"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+    const out = await Bun.readableStreamToText(stdout);
+    expect(out).not.toContain("no-deps");
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).toContain(`HTTPThread: could not find CA file: '/does/not/exist'`);
     expect(await exited).toBe(1);
   });
 

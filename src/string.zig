@@ -691,6 +691,7 @@ pub const String = extern struct {
         try self.toZigString().format(fmt, opts, writer);
     }
 
+    /// Deprecated: use `fromJS2` to handle errors explicitly
     pub fn fromJS(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) String {
         JSC.markBinding(@src());
 
@@ -702,14 +703,26 @@ pub const String = extern struct {
         }
     }
 
-    pub fn fromJSRef(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) String {
+    pub fn fromJS2(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
+        var out: String = String.dead;
+        if (BunString__fromJS(globalObject, value, &out)) {
+            bun.assert(out.tag != .Dead);
+            return out;
+        } else {
+            bun.assert(globalObject.hasException());
+            return error.JSError;
+        }
+    }
+
+    pub fn fromJSRef(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
         JSC.markBinding(@src());
 
         var out: String = String.dead;
         if (BunString__fromJSRef(globalObject, value, &out)) {
             return out;
         } else {
-            return String.dead;
+            bun.assert(globalObject.hasException());
+            return error.JSError;
         }
     }
 
@@ -720,7 +733,7 @@ pub const String = extern struct {
         if (BunString__fromJS(globalObject, value, &out)) {
             return out;
         } else {
-            return null;
+            return null; //TODO: return error.JSError
         }
     }
 
@@ -1314,7 +1327,7 @@ pub const String = extern struct {
         return try concat(strings.len, allocator, strings);
     }
 
-    pub export fn jsGetStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    pub fn jsGetStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args.ptr[0].isString()) {
@@ -1331,6 +1344,11 @@ pub const String = extern struct {
         const width = str.visibleWidth(false);
         return JSC.jsNumber(width);
     }
+
+    // TODO: move ZigString.Slice here
+    /// A UTF-8 encoded slice tied to the lifetime of a `bun.String`
+    /// Must call `.deinit` to release memory
+    pub const Slice = ZigString.Slice;
 };
 
 pub const SliceWithUnderlyingString = struct {

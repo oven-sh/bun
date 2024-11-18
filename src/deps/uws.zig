@@ -9,6 +9,7 @@ pub const u_int32_t = c_uint;
 pub const u_int64_t = c_ulonglong;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
+pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: i32 = 2;
 pub const Socket = opaque {
     pub fn write2(this: *Socket, first: []const u8, second: []const u8) i32 {
         const rc = us_socket_write2(0, this, first.ptr, first.len, second.ptr, second.len);
@@ -218,7 +219,7 @@ pub const UpgradedDuplex = struct {
     fn onReceivedData(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         log("onReceivedData", .{});
 
         const function = callframe.callee();
@@ -268,7 +269,7 @@ pub const UpgradedDuplex = struct {
     fn onWritable(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         log("onWritable", .{});
 
         _ = globalObject;
@@ -290,7 +291,7 @@ pub const UpgradedDuplex = struct {
     fn onCloseJS(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         log("onCloseJS", .{});
 
         _ = globalObject;
@@ -743,6 +744,25 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         this.callWriteOrEnd(encoded_data, true);
     }
 
+    pub fn resumeStream(this: *WindowsNamedPipe) bool {
+        const stream = this.writer.getStream() orelse {
+            return false;
+        };
+        const readStartResult = stream.readStart(this, onReadAlloc, onReadError, onRead);
+        if (readStartResult == .err) {
+            return false;
+        }
+        return true;
+    }
+
+    pub fn pauseStream(this: *WindowsNamedPipe) bool {
+        const pipe = this.pipe orelse {
+            return false;
+        };
+        pipe.readStop();
+        return true;
+    }
+
     pub fn flush(this: *WindowsNamedPipe) void {
         if (this.wrapper) |*wrapper| {
             _ = wrapper.flush();
@@ -1096,6 +1116,39 @@ pub const InternalSocket = union(enum) {
     detached: void,
     upgradedDuplex: *UpgradedDuplex,
     pipe: *WindowsNamedPipe,
+
+    pub fn pauseResume(this: InternalSocket, comptime ssl: bool, comptime pause: bool) bool {
+        switch (this) {
+            .detached => return true,
+            .connected => |socket| {
+                if (pause) {
+                    // Pause
+                    us_socket_pause(@intFromBool(ssl), socket);
+                } else {
+                    // Resume
+                    us_socket_resume(@intFromBool(ssl), socket);
+                }
+                return true;
+            },
+            .connecting => |_| {
+                // always return false for connecting sockets
+                return false;
+            },
+            .upgradedDuplex => |_| {
+                // TODO: pause and resume upgraded duplex
+                return false;
+            },
+            .pipe => |pipe| {
+                if (Environment.isWindows) {
+                    if (pause) {
+                        return pipe.pauseStream();
+                    }
+                    return pipe.resumeStream();
+                }
+                return false;
+            },
+        }
+    }
     pub fn isDetached(this: InternalSocket) bool {
         return this == .detached;
     }
@@ -1104,6 +1157,25 @@ pub const InternalSocket = union(enum) {
     }
     pub fn detach(this: *InternalSocket) void {
         this.* = .detached;
+    }
+    pub fn setNoDelay(this: InternalSocket, enabled: bool) bool {
+        switch (this) {
+            .pipe, .upgradedDuplex, .connecting, .detached => return false,
+            .connected => |socket| {
+                // only supported by connected sockets
+                us_socket_nodelay(socket, @intFromBool(enabled));
+                return true;
+            },
+        }
+    }
+    pub fn setKeepAlive(this: InternalSocket, enabled: bool, delay: u32) bool {
+        switch (this) {
+            .pipe, .upgradedDuplex, .connecting, .detached => return false,
+            .connected => |socket| {
+                // only supported by connected sockets and can fail
+                return us_socket_keepalive(socket, @intFromBool(enabled), delay) == 0;
+            },
+        }
     }
     pub fn close(this: InternalSocket, comptime is_ssl: bool, code: CloseCode) void {
         switch (this) {
@@ -1185,6 +1257,18 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         socket: InternalSocket,
         const ThisSocket = @This();
         pub const detached: NewSocketHandler(is_ssl) = NewSocketHandler(is_ssl){ .socket = .{ .detached = {} } };
+        pub fn setNoDelay(this: ThisSocket, enabled: bool) bool {
+            return this.socket.setNoDelay(enabled);
+        }
+        pub fn setKeepAlive(this: ThisSocket, enabled: bool, delay: u32) bool {
+            return this.socket.setKeepAlive(enabled, delay);
+        }
+        pub fn pauseStream(this: ThisSocket) bool {
+            return this.socket.pauseResume(is_ssl, true);
+        }
+        pub fn resumeStream(this: ThisSocket) bool {
+            return this.socket.pauseResume(is_ssl, false);
+        }
         pub fn detach(this: *ThisSocket) void {
             this.socket.detach();
         }
@@ -1741,6 +1825,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime Context: type,
             ctx: Context,
             comptime socket_field_name: []const u8,
+            allowHalfOpen: bool,
         ) ?*Context {
             debug("connect({s}, {d})", .{ host, port });
 
@@ -1757,7 +1842,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             defer allocator.free(host);
 
             var did_dns_resolve: i32 = 0;
-            const socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, 0, @sizeOf(Context), &did_dns_resolve) orelse return null;
+            const socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, if (allowHalfOpen) LIBUS_SOCKET_ALLOW_HALF_OPEN else 0, @sizeOf(Context), &did_dns_resolve) orelse return null;
             const socket_ = if (did_dns_resolve == 1)
                 ThisSocket{
                     .socket = .{ .connected = @ptrCast(socket) },
@@ -1780,8 +1865,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime Context: type,
             ctx: *Context,
             comptime socket_field_name: []const u8,
+            allowHalfOpen: bool,
         ) !*Context {
-            const this_socket = try connectAnon(host, port, socket_ctx, ctx);
+            const this_socket = try connectAnon(host, port, socket_ctx, ctx, allowHalfOpen);
             @field(ctx, socket_field_name) = this_socket;
             return ctx;
         }
@@ -1837,6 +1923,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             path: []const u8,
             socket_ctx: *SocketContext,
             ctx: *anyopaque,
+            allowHalfOpen: bool,
         ) !ThisSocket {
             debug("connect(unix:{s})", .{path});
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
@@ -1844,7 +1931,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const path_ = allocator.dupeZ(u8, path) catch bun.outOfMemory();
             defer allocator.free(path_);
 
-            const socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, path_.len, 0, 8) orelse
+            const socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, path_.len, if (allowHalfOpen) LIBUS_SOCKET_ALLOW_HALF_OPEN else 0, 8) orelse
                 return error.FailedToOpenSocket;
 
             const socket_ = ThisSocket{ .socket = .{ .connected = socket } };
@@ -1859,6 +1946,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             port: i32,
             socket_ctx: *SocketContext,
             ptr: *anyopaque,
+            allowHalfOpen: bool,
         ) !ThisSocket {
             debug("connect({s}, {d})", .{ raw_host, port });
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
@@ -1879,7 +1967,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 socket_ctx,
                 host.ptr,
                 port,
-                0,
+                if (allowHalfOpen) LIBUS_SOCKET_ALLOW_HALF_OPEN else 0,
                 @sizeOf(*anyopaque),
                 &did_dns_resolve,
             ) orelse return error.FailedToOpenSocket;
@@ -2602,8 +2690,8 @@ extern fn us_socket_context_on_socket_connect_error(ssl: i32, context: ?*SocketC
 extern fn us_socket_context_on_end(ssl: i32, context: ?*SocketContext, on_end: *const fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_ext(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 
-pub extern fn us_socket_context_listen(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32) ?*ListenSocket;
-pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, path: [*:0]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*ListenSocket;
+pub extern fn us_socket_context_listen(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32, err: *c_int) ?*ListenSocket;
+pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, path: [*:0]const u8, pathlen: usize, options: i32, socket_ext_size: i32, err: *c_int) ?*ListenSocket;
 pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: [*:0]const u8, port: i32, options: i32, socket_ext_size: i32, has_dns_resolved: *i32) ?*anyopaque;
 pub extern fn us_socket_context_connect_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_is_established(ssl: i32, s: ?*Socket) i32;
@@ -2713,6 +2801,11 @@ extern fn us_socket_shutdown_read(ssl: i32, s: ?*Socket) void;
 extern fn us_socket_is_shut_down(ssl: i32, s: ?*Socket) i32;
 extern fn us_socket_is_closed(ssl: i32, s: ?*Socket) i32;
 extern fn us_socket_close(ssl: i32, s: ?*Socket, code: CloseCode, reason: ?*anyopaque) ?*Socket;
+
+extern fn us_socket_nodelay(s: ?*Socket, enable: c_int) void;
+extern fn us_socket_keepalive(s: ?*Socket, enable: c_int, delay: c_uint) c_int;
+extern fn us_socket_pause(ssl: i32, s: ?*Socket) void;
+extern fn us_socket_resume(ssl: i32, s: ?*Socket) void;
 
 extern fn us_connecting_socket_timeout(ssl: i32, s: ?*ConnectingSocket, seconds: c_uint) void;
 extern fn us_connecting_socket_long_timeout(ssl: i32, s: ?*ConnectingSocket, seconds: c_uint) void;
@@ -3447,7 +3540,7 @@ pub fn NewApp(comptime ssl: bool) type {
         pub fn constructorFailed(app: *ThisApp) bool {
             return uws_constructor_failed(ssl_flag, app);
         }
-        pub fn num_subscribers(app: *ThisApp, topic: []const u8) c_uint {
+        pub fn numSubscribers(app: *ThisApp, topic: []const u8) u32 {
             return uws_num_subscribers(ssl_flag, @as(*uws_app_t, @ptrCast(app)), topic.ptr, topic.len);
         }
         pub fn publish(app: *ThisApp, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {

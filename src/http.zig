@@ -956,6 +956,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 socket_path,
                 this.us_socket_context,
                 ActiveSocket.init(client).ptr(),
+                false, // dont allow half-open sockets
             );
             client.allow_retry = false;
             return socket;
@@ -989,6 +990,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 port,
                 this.us_socket_context,
                 ActiveSocket.init(client).ptr(),
+                false,
             );
             client.allow_retry = false;
             return socket;

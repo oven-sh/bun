@@ -797,7 +797,7 @@ pub const Bunfig = struct {
 
         pub fn expectString(this: *Parser, expr: js_ast.Expr) !void {
             switch (expr.data) {
-                .e_string, .e_utf8_string => {},
+                .e_string => {},
                 else => {
                     this.log.addErrorFmtOpts(
                         this.allocator,

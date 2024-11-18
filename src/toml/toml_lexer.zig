@@ -1184,7 +1184,7 @@ pub const Lexer = struct {
         }
 
         return js_ast.Expr.init(
-            js_ast.E.UTF8String,
+            js_ast.E.String,
             .{ .data = lexer.string_literal_slice },
             loc_,
         );

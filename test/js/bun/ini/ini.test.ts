@@ -49,6 +49,13 @@ wow = 'hi'
     });
 
     envVarTest({
+      name: "backslashes",
+      ini: "filepath=C:\\Home\\someuser\\My Documents\nfilepath2=\\\\\\\\TwoBackslashes",
+      env: {},
+      expected: { filepath: "C:\\Home\\someuser\\My Documents", filepath2: "\\\\TwoBackslashes" },
+    });
+
+    envVarTest({
       name: "basic",
       ini: /* ini */ `
 hello = \${LOL}

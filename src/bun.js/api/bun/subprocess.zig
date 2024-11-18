@@ -1879,7 +1879,7 @@ pub const Subprocess = struct {
                         const signal_int = globalThis.validateIntegerRange(death_signal_val, u8, 0, .{ .min = 1, .max = @intFromEnum(bun.SignalCode.max) }) orelse return .zero;
                         death_signal = @enumFromInt(signal_int);
                     } else if (death_signal_val.isString()) {
-                        death_signal = bun.SignalCode.fromJS(globalThis, death_signal_val) orelse {
+                        death_signal = bun.SignalCode.Map.fromJS(globalThis, death_signal_val) orelse {
                             globalThis.throwInvalidArguments("deathSignal must be a valid signal code", .{});
                             return .zero;
                         };

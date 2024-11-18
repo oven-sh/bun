@@ -173,7 +173,10 @@ pub const InstallCompletionsCommand = struct {
         var stdout = std.io.getStdOut();
 
         var shell = ShellCompletions.Shell.unknown;
-        if (bun.getenvZ("SHELL")) |shell_name| {
+        // Powershell doesn't set SHELL so it need to be checked first because it may have inherited it from a parent shell process
+        if (bun.getenvZ("PSModulePath") != null) {
+            shell = ShellCompletions.Shell.pwsh;
+        } else if (bun.getenvZ("SHELL")) |shell_name| {
             shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell_name), shell_name);
         }
 
@@ -196,16 +199,9 @@ pub const InstallCompletionsCommand = struct {
             installUninstallerWindows() catch {};
         }
 
-        // TODO: https://github.com/oven-sh/bun/issues/8939
-        if (Environment.isWindows) {
-            Output.errGeneric("PowerShell completions are not yet written for Bun yet.", .{});
-            Output.printErrorln("See https://github.com/oven-sh/bun/issues/8939", .{});
-            return;
-        }
-
         switch (shell) {
             .unknown => {
-                Output.errGeneric("Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash.", .{});
+                Output.errGeneric("Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, pwsh, or bash.", .{});
                 Output.note("To manually output completions, run 'bun getcompletes'", .{});
                 Global.exit(fail_exit_code);
             },
@@ -413,6 +409,21 @@ pub const InstallCompletionsCommand = struct {
                         break :found std.fs.openDirAbsolute(dir, .{}) catch continue;
                     }
                 },
+                .pwsh => {
+                    // Powershell doesn't have a completions dir, put the completions in the users .bun folder.
+                    // Dot source it in their profile in install.ps1 because the installer ps1 script has access to the user $PROFILE.
+                    // https://github.com/PowerShell/PowerShell/issues/17582
+                    if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+                        {
+                            outer: {
+                                var paths = [_]string{ home_dir, "./.bun" };
+                                completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+                                break :found std.fs.openDirAbsolute(completions_dir, .{}) catch
+                                    break :outer;
+                            }
+                        }
+                    }
+                },
                 else => unreachable,
             }
 
@@ -439,6 +450,7 @@ pub const InstallCompletionsCommand = struct {
             .fish => "bun.fish",
             .zsh => "_bun",
             .bash => "bun.completion.bash",
+            .pwsh => "bun.completion.ps1",
             else => unreachable,
         };
 

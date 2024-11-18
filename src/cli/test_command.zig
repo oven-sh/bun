@@ -1102,10 +1102,17 @@ pub const TestCommand = struct {
             }
         }
 
-        if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage)) {
+        if (
+        // Fail when no tests were run.
+        (reporter.summary.pass + reporter.summary.skip + reporter.summary.todo) == 0 or
+            // Fail when there are unhandled errors between tests
+            reporter.jest.unhandled_errors_between_tests > 0 or
+            // Fail when there are test failures
+            reporter.summary.fail > 0 or
+            // Fail when coverage is enabled and the coverage is too low
+            (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage))
+        {
             Global.exit(1);
-        } else if (reporter.jest.unhandled_errors_between_tests > 0) {
-            Global.exit(reporter.jest.unhandled_errors_between_tests);
         }
     }
 

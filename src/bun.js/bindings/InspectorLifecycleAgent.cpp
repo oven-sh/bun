@@ -109,6 +109,7 @@ void InspectorLifecycleAgent::reportError(ZigException& exception)
         ZigStackFrame* frame = &exception.stack.frames_ptr[i];
         lineColumns->addItem(frame->position.line_zero_based + 1);
         lineColumns->addItem(frame->position.column_zero_based + 1);
+        urls->addItem(frame->source_url.toWTFString());
     }
 
     // error(const String& message, const String& name, Ref<JSON::ArrayOf<String>>&& urls, Ref<JSON::ArrayOf<int>>&& lineColumns, Ref<JSON::ArrayOf<String>>&& sourceLines);

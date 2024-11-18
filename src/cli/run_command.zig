@@ -332,6 +332,7 @@ pub const RunCommand = struct {
             .stdout = .inherit,
             .stdin = .inherit,
             .ipc = ipc_fd,
+            .deathsig = .SIGTERM,
 
             .windows = if (Environment.isWindows) .{
                 .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
@@ -497,6 +498,7 @@ pub const RunCommand = struct {
             .stdout = .inherit,
             .stdin = .inherit,
             .use_execve_on_macos = silent,
+            .deathsig = .SIGTERM,
 
             .windows = if (Environment.isWindows) .{
                 .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),

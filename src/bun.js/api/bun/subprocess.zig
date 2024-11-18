@@ -1711,6 +1711,7 @@ pub const Subprocess = struct {
         var extra_fds = std.ArrayList(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
         var argv0: ?[*:0]const u8 = null;
         var ipc_channel: i32 = -1;
+        var death_signal: bun.SignalCode = @enumFromInt(0);
 
         var windows_hide: bool = false;
         var windows_verbatim_arguments: bool = false;
@@ -1870,6 +1871,20 @@ pub const Subprocess = struct {
                         abort_signal = signal.ref();
                     } else {
                         return globalThis.throwInvalidArgumentTypeValue("signal", "AbortSignal", signal_val);
+                    }
+                }
+
+                if (args.getTruthy(globalThis, "deathSig")) |death_signal_val| {
+                    if (death_signal_val.isNumber()) {
+                        const signal_int = globalThis.validateIntegerRange(death_signal_val, u8, 0, .{ .min = 1, .max = @intFromEnum(bun.SignalCode.max) }) orelse return .zero;
+                        death_signal = @enumFromInt(signal_int);
+                    } else if (death_signal_val.isString()) {
+                        death_signal = bun.SignalCode.fromJS(globalThis, death_signal_val) orelse {
+                            globalThis.throwInvalidArguments("deathSignal must be a valid signal code", .{});
+                            return .zero;
+                        };
+                    } else if (death_signal_val.toBoolean()) {
+                        return globalThis.throwInvalidArgumentTypeValue("deathSignal", "number or string", death_signal_val);
                     }
                 }
 
@@ -2105,7 +2120,7 @@ pub const Subprocess = struct {
             },
             .extra_fds = extra_fds.items,
             .argv0 = argv0,
-
+            .deathsig = death_signal,
             .windows = if (Environment.isWindows) .{
                 .hide_window = windows_hide,
                 .verbatim_arguments = windows_verbatim_arguments,

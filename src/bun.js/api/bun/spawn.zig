@@ -64,6 +64,7 @@ pub const BunSpawn = struct {
         chdir_buf: ?[*:0]u8 = null,
         actions: std.ArrayListUnmanaged(Action) = .{},
         detached: bool = false,
+        deathsig: i32 = 0,
 
         pub fn init() !Actions {
             return .{};
@@ -126,7 +127,7 @@ pub const BunSpawn = struct {
 
     pub const Attr = struct {
         detached: bool = false,
-
+        deathsig: i32 = 0,
         pub fn init() !Attr {
             return Attr{};
         }
@@ -299,6 +300,7 @@ pub const PosixSpawn = struct {
     const BunSpawnRequest = extern struct {
         chdir_buf: ?[*:0]u8 = null,
         detached: bool = false,
+        deathsig: i32 = 0,
         actions: ActionsList = .{},
 
         const ActionsList = extern struct {

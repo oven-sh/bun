@@ -12,6 +12,8 @@
 #include <signal.h>
 #include <sys/syscall.h>
 #include <sys/resource.h>
+#include <linux/prctl.h> /* Definition of PR_* constants */
+#include <sys/prctl.h>
 
 extern char** environ;
 
@@ -44,6 +46,7 @@ typedef struct bun_spawn_file_action_list_t {
 typedef struct bun_spawn_request_t {
     const char* chdir;
     bool detached;
+    int deathsig;
     bun_spawn_file_action_list_t actions;
 } bun_spawn_request_t;
 
@@ -85,6 +88,9 @@ extern "C" ssize_t posix_spawn_bun(
         // Make "detached" work
         if (request->detached) {
             setsid();
+        } else if (request->deathsig > 0) {
+            // If the child dies, send the specified signal to the parent
+            prctl(PR_SET_PDEATHSIG, request->deathsig);
         }
 
         int current_max_fd = 0;

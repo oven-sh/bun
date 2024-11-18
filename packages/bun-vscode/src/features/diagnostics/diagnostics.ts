@@ -103,6 +103,14 @@ class CoverageReporter {
     this.coverageIntervalMap.clear();
   }
 
+  private cleanupStaleExecutionCounts(scriptId: string) {
+    for (const key of this.executionCounts.keys()) {
+      if (key.startsWith(`${scriptId}:`)) {
+        this.executionCounts.delete(key);
+      }
+    }
+  }
+
   async createCoverageReportingTimer(
     adapter: DebugAdapter,
     event: JSC.Debugger.ScriptParsedEvent,
@@ -110,7 +118,10 @@ class CoverageReporter {
     sourceMapURL: string | undefined,
   ) {
     const existingTimer = this.coverageIntervalMap.get(event.scriptId);
-    if (existingTimer) clearInterval(existingTimer);
+    if (existingTimer) {
+      clearInterval(existingTimer);
+      this.cleanupStaleExecutionCounts(event.scriptId);
+    }
 
     // TODO: Move source map handling to nativeland
     const map = sourceMapURL ? SourceMap(sourceMapURL) : null;
@@ -222,7 +233,7 @@ class BunDiagnosticsManager {
   /**
    * Called when Bun pings BUN_INSPECT_NOTIFY (indicating a program has started).
    */
-  private async handleNewConnection() {
+  private async handleSignalReceived() {
     // Clear all diagnostics and decorations so the editor is clean
     this.editorState.clearAll();
 
@@ -293,6 +304,7 @@ class BunDiagnosticsManager {
   public dispose() {
     return vscode.Disposable.from(this.editorState, {
       dispose: () => {
+        this.signal.off("Signal.received", this.handleSignalReceived);
         this.signal.close();
         this.signal.removeAllListeners();
       },
@@ -311,7 +323,9 @@ class BunDiagnosticsManager {
     this.signal = options.signal;
     this.context = context;
 
-    this.signal.on("Signal.received", () => this.handleNewConnection());
+    this.handleSignalReceived = this.handleSignalReceived.bind(this);
+
+    this.signal.on("Signal.received", this.handleSignalReceived);
   }
 }
 

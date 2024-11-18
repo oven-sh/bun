@@ -338,6 +338,8 @@ struct us_loop_t *us_socket_context_loop(int ssl, us_socket_context_r context) n
  * Used mainly for "socket upgrades" such as when transitioning from HTTP to WebSocket. */
 struct us_socket_t *us_socket_context_adopt_socket(int ssl, us_socket_context_r context, us_socket_r s, int ext_size);
 
+struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r new_context, const char *sni);
+
 /* Create a child socket context which acts much like its own socket context with its own callbacks yet still relies on the
  * parent socket context for some shared resources. Child socket contexts should be used together with socket adoptions and nothing else. */
 struct us_socket_context_t *us_create_child_socket_context(int ssl, us_socket_context_r context, int context_ext_size);

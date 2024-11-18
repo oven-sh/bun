@@ -1,7 +1,7 @@
+use mdxjs::{compile, JsxRuntime, Options as CompileOptions};
 use std::ffi::{c_int, c_void};
 use std::slice;
 use std::str;
-use mdxjs::{Options as CompileOptions, JsxRuntime, compile};
 
 // Add this struct to store our compilation context
 #[repr(C)]
@@ -15,10 +15,8 @@ pub unsafe extern "C" fn bun_mdx_rs(
     args: *const OnBeforeParseArguments,
     result: *mut OnBeforeParseResult,
 ) {
-
     let args = &*args;
     let result = &mut *result;
-
 
     // Fetch the source code using the provided callback
     let fetch_result = (result.fetchSourceCode)(args, result);
@@ -41,9 +39,14 @@ pub unsafe extern "C" fn bun_mdx_rs(
     options.jsx = true;
 
     // File paths on Windows are not necessarily valid UTF-8.
-    let path = unsafe { std::str::from_utf8_unchecked(slice::from_raw_parts(args.path_ptr as *const u8, args.path_len)).to_string() };
+    let path = unsafe {
+        std::str::from_utf8_unchecked(slice::from_raw_parts(
+            args.path_ptr as *const u8,
+            args.path_len,
+        ))
+        .to_string()
+    };
     options.filepath = Some(path);
-
 
     match compile(source_str, &options) {
         Ok(compiled) => {
@@ -51,15 +54,15 @@ pub unsafe extern "C" fn bun_mdx_rs(
             let context = Box::new(CompilationContext {
                 compiled_jsx: compiled.into_bytes(),
             });
-            
+
             // Set up the result with zero-copy access to our compiled JSX
             let context_ptr = Box::into_raw(context);
             let compiled_context = &(*context_ptr).compiled_jsx;
-            
+
             result.source_ptr = compiled_context.as_ptr() as *mut u8;
             result.source_len = compiled_context.len();
             result.loader = 0;
-            
+
             // Set the context and finalizer
             result.plugin_source_code_context = context_ptr as *mut c_void;
             result.free_plugin_source_code_context = Some(free_compilation_context);
@@ -81,11 +84,7 @@ unsafe extern "C" fn free_compilation_context(context: *mut c_void) {
 }
 
 // Helper function to log errors
-unsafe fn log_error(
-    args: &OnBeforeParseArguments,
-    result: &OnBeforeParseResult,
-    message: &[u8],
-) {
+unsafe fn log_error(args: &OnBeforeParseArguments, result: &OnBeforeParseResult, message: &[u8]) {
     let mut log_options = BunLogOptions {
         message_ptr: message.as_ptr(),
         message_len: message.len(),

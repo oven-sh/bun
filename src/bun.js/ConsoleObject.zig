@@ -683,7 +683,7 @@ pub const FormatOptions = struct {
     single_line: bool = false,
     default_indent: u16 = 0,
 
-    pub fn fromJS(formatOptions: *FormatOptions, globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue) !void {
+    pub fn fromJS(formatOptions: *FormatOptions, globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue) bun.JSError!void {
         const arg1 = arguments[0];
 
         if (arg1.isObject()) {

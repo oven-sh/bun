@@ -509,76 +509,42 @@ pub const Response = struct {
         return response.toJS(globalThis);
     }
 
-    pub fn constructor(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) ?*Response {
-        const args_list = brk: {
-            var args = callframe.arguments(2);
-            if (args.len > 1 and args.ptr[1].isEmptyOrUndefinedOrNull()) {
-                args.len = 1;
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Response {
+        const arguments = callframe.argumentsAsArray(2);
+
+        var init: Init = (brk: {
+            if (arguments[1].isUndefinedOrNull()) {
+                break :brk Init{
+                    .status_code = 200,
+                    .headers = null,
+                };
             }
-            break :brk args;
-        };
-
-        const arguments = args_list.ptr[0..args_list.len];
-
-        var init: Init = @as(?Init, brk: {
-            switch (arguments.len) {
-                0 => {
-                    break :brk Init{
-                        .status_code = 200,
-                        .headers = null,
-                    };
-                },
-                1 => {
-                    break :brk Init{
-                        .status_code = 200,
-                        .headers = null,
-                    };
-                },
-                else => {
-                    if (arguments[1].isObject()) {
-                        break :brk Init.init(globalThis, arguments[1]) catch null;
-                    }
-
-                    if (!globalThis.hasException()) {
-                        globalThis.throwInvalidArguments("new Response() requires a Response-like object in the 2nd argument", .{});
-                    }
-
-                    break :brk null;
-                },
+            if (arguments[1].isObject()) {
+                break :brk try Init.init(globalThis, arguments[1]) orelse unreachable;
             }
-            unreachable;
-        }) orelse return null;
+            if (!globalThis.hasException()) {
+                return globalThis.throwInvalidArguments2("Failed to construct 'Response': The provided body value is not of type 'ResponseInit'", .{});
+            }
+            return error.JSError;
+        });
+        errdefer init.deinit(bun.default_allocator);
 
         if (globalThis.hasException()) {
-            init.deinit(bun.default_allocator);
-            return null;
+            return error.JSError;
         }
 
         var body: Body = brk: {
-            switch (arguments.len) {
-                0 => {
-                    break :brk Body{
-                        .value = Body.Value{ .Null = {} },
-                    };
-                },
-                else => {
-                    break :brk Body.extract(globalThis, arguments[0]);
-                },
+            if (arguments[0].isUndefinedOrNull()) {
+                break :brk Body{
+                    .value = Body.Value{ .Null = {} },
+                };
             }
-            unreachable;
-        } orelse {
-            init.deinit(bun.default_allocator);
-
-            return null;
+            break :brk try Body.extract(globalThis, arguments[0]);
         };
+        errdefer body.deinit(bun.default_allocator);
 
         if (globalThis.hasException()) {
-            body.deinit(bun.default_allocator);
-            init.deinit(bun.default_allocator);
-            return null;
+            return error.JSError;
         }
 
         var response = bun.new(Response, Response{
@@ -616,7 +582,7 @@ pub const Response = struct {
             return that;
         }
 
-        pub fn init(globalThis: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
+        pub fn init(globalThis: *JSGlobalObject, response_init: JSC.JSValue) bun.JSError!?Init {
             var result = Init{ .status_code = 200 };
             errdefer {
                 result.deinit(bun.default_allocator);
@@ -1934,7 +1900,7 @@ pub const Fetch = struct {
             return .zero;
         }
 
-        var url_str = JSC.URL.hrefFromJS(arguments[0], globalObject);
+        var url_str = try JSC.URL.hrefFromJS(arguments[0], globalObject);
         defer url_str.deref();
 
         if (globalObject.hasException()) {
@@ -1975,15 +1941,13 @@ pub const Fetch = struct {
     }
 
     const StringOrURL = struct {
-        pub fn fromJS(value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) ?bun.String {
+        pub fn fromJS(value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!?bun.String {
             if (value.isString()) {
-                return bun.String.tryFromJS(value, globalThis);
+                return try bun.String.fromJS2(value, globalThis);
             }
 
-            const out = JSC.URL.hrefFromJS(value, globalThis);
-            if (out.tag == .Dead) {
-                return null;
-            }
+            const out = try JSC.URL.hrefFromJS(value, globalThis);
+            if (out.tag == .Dead) return null;
             return out;
         }
     };
@@ -2006,6 +1970,7 @@ pub const Fetch = struct {
         // used to clean up dynamically allocated memory on error (a poor man's errdefer)
         var is_error = false;
         var allocator = memory_reporter.wrap(bun.default_allocator);
+        errdefer bun.default_allocator.destroy(memory_reporter);
         defer {
             memory_reporter.report(globalThis.vm());
 
@@ -2069,10 +2034,6 @@ pub const Fetch = struct {
                 sig.unref();
             }
 
-            if (!is_error and globalThis.hasException()) {
-                is_error = true;
-            }
-
             unix_socket_path.deinit();
 
             allocator.free(url_proxy_buffer);
@@ -2118,7 +2079,7 @@ pub const Fetch = struct {
             break :brk null;
         };
         // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
-        const url_str_optional = if (first_arg.as(Request) == null) StringOrURL.fromJS(first_arg, globalThis) else null;
+        const url_str_optional = if (first_arg.as(Request) == null) try StringOrURL.fromJS(first_arg, globalThis) else null;
         if (globalThis.hasException()) {
             is_error = true;
             return .zero;
@@ -2142,9 +2103,7 @@ pub const Fetch = struct {
             if (request_init_object) |request_init| {
                 if (request_init.fastGet(globalThis, .url)) |url_| {
                     if (!url_.isUndefined()) {
-                        if (bun.String.tryFromJS(url_, globalThis)) |str| {
-                            break :extract_url str;
-                        }
+                        break :extract_url try bun.String.fromJS2(url_, globalThis);
                     }
                 }
             }
@@ -2491,7 +2450,7 @@ pub const Fetch = struct {
                 if (objects_to_try[i] != .zero) {
                     if (objects_to_try[i].get(globalThis, "proxy")) |proxy_arg| {
                         if (proxy_arg.isString() and proxy_arg.getLength(ctx) > 0) {
-                            var href = JSC.URL.hrefFromJS(proxy_arg, globalThis);
+                            var href = try JSC.URL.hrefFromJS(proxy_arg, globalThis);
                             if (href.tag == .Dead) {
                                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
                                 is_error = true;
@@ -2583,10 +2542,8 @@ pub const Fetch = struct {
             if (options_object) |options| {
                 if (options.fastGet(globalThis, .body)) |body__| {
                     if (!body__.isUndefined()) {
-                        if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
-                            var body_value = body_const;
-                            break :extract_body body_value.useAsAnyBlob();
-                        }
+                        var body_value = try Body.Value.fromJS(ctx.ptr(), body__);
+                        break :extract_body body_value.useAsAnyBlob();
                     }
                 }
 
@@ -2609,10 +2566,8 @@ pub const Fetch = struct {
             if (request_init_object) |req| {
                 if (req.fastGet(globalThis, .body)) |body__| {
                     if (!body__.isUndefined()) {
-                        if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
-                            var body_value = body_const;
-                            break :extract_body body_value.useAsAnyBlob();
-                        }
+                        var body_value = try Body.Value.fromJS(ctx.ptr(), body__);
+                        break :extract_body body_value.useAsAnyBlob();
                     }
                 }
             }

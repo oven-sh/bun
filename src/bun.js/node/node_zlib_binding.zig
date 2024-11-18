@@ -321,23 +321,23 @@ pub const SNativeZlib = struct {
     closed: bool = false,
     task: JSC.WorkPoolTask = .{ .callback = undefined },
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*@This() {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*@This() {
         const arguments = callframe.argumentsUndef(4).ptr;
 
         var mode = arguments[0];
         if (!mode.isNumber()) {
             _ = globalThis.throwInvalidArgumentTypeValue("mode", "number", mode);
-            return null;
+            return error.JSError;
         }
         const mode_double = mode.asNumber();
         if (@mod(mode_double, 1.0) != 0.0) {
             _ = globalThis.throwInvalidArgumentTypeValue("mode", "integer", mode);
-            return null;
+            return error.JSError;
         }
         const mode_int: i64 = @intFromFloat(mode_double);
         if (mode_int < 1 or mode_int > 7) {
             _ = globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 1, .max = 7 });
-            return null;
+            return error.JSError;
         }
 
         const ptr = SNativeZlib.new(.{
@@ -681,23 +681,23 @@ pub const SNativeBrotli = struct {
         .callback = undefined,
     },
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*@This() {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*@This() {
         const arguments = callframe.argumentsUndef(1).ptr;
 
         var mode = arguments[0];
         if (!mode.isNumber()) {
             _ = globalThis.throwInvalidArgumentTypeValue("mode", "number", mode);
-            return null;
+            return error.JSError;
         }
         const mode_double = mode.asNumber();
         if (@mod(mode_double, 1.0) != 0.0) {
             _ = globalThis.throwInvalidArgumentTypeValue("mode", "integer", mode);
-            return null;
+            return error.JSError;
         }
         const mode_int: i64 = @intFromFloat(mode_double);
         if (mode_int < 8 or mode_int > 9) {
             _ = globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 8, .max = 9 });
-            return null;
+            return error.JSError;
         }
 
         const ptr = @This().new(.{

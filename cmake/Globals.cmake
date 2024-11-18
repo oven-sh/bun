@@ -105,14 +105,6 @@ else()
   unsupported(CMAKE_HOST_SYSTEM_NAME)
 endif()
 
-if(EXISTS "/lib/ld-musl-aarch64.so.1")
-  set(IS_MUSL ON)
-elseif(EXISTS "/lib/ld-musl-x86_64.so.1")
-  set(IS_MUSL ON)
-else()
-  set(IS_MUSL OFF)
-endif()
-
 if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64|ARM64|aarch64|AARCH64")
   set(HOST_OS "aarch64")
 elseif(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64")
@@ -142,6 +134,16 @@ if(CI)
   set(WARNING FATAL_ERROR)
 else()
   set(WARNING WARNING)
+endif()
+
+if(LINUX)
+  if(EXISTS "/etc/alpine-release")
+    set(DEFAULT_ABI "musl")
+  else()
+    set(DEFAULT_ABI "gnu")
+  endif()
+
+  optionx(ABI "musl|gnu" "The ABI to use (e.g. musl, gnu)" DEFAULT ${DEFAULT_ABI})
 endif()
 
 # TODO: This causes flaky zig builds in CI, so temporarily disable it.

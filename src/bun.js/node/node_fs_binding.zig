@@ -120,11 +120,6 @@ pub const NodeJSFS = struct {
     pub usingnamespace JSC.Codegen.JSNodeJSFS;
     pub usingnamespace bun.New(@This());
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*@This() {
-        globalObject.throw("Not a constructor", .{});
-        return null;
-    }
-
     pub fn finalize(this: *JSC.Node.NodeJSFS) void {
         if (this.node_fs.vm) |vm| {
             if (vm.node_fs == &this.node_fs) {

@@ -1800,16 +1800,16 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe([:0]u8) {
     }
 }
 
-pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0]const u8) {
+pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0]u8) {
     while (true) {
         const rc = syscall.readlinkat(fd.cast(), in, buf.ptr, buf.len);
 
-        if (Maybe([:0]const u8).errnoSys(rc, .readlink)) |err| {
+        if (Maybe([:0]u8).errnoSys(rc, .readlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
         buf[@intCast(rc)] = 0;
-        return Maybe([:0]const u8){ .result = buf[0..@intCast(rc) :0] };
+        return Maybe([:0]u8){ .result = buf[0..@intCast(rc) :0] };
     }
 }
 

@@ -15,9 +15,7 @@ function assertReactComponent(Component: any) {
 function getPage(meta: Bake.RouteMetadata) {
   const { styles } = meta;
 
-  const Page = meta.pageModule.default;
-  if (import.meta.env.DEV) assertReactComponent(Page);
-  let route = <Page />;
+  let route = component(meta.pageModule);
   for (const layout of meta.layouts) {
     const Layout = layout.default;
     if (import.meta.env.DEV) assertReactComponent(Layout);
@@ -36,6 +34,26 @@ function getPage(meta: Bake.RouteMetadata) {
       <body>{route}</body>
     </html>
   );
+}
+
+function component(mod: any) {
+  const Page = mod.default;
+  let props = {};
+  if (import.meta.env.DEV) assertReactComponent(Page);
+
+  let method;
+  if (
+    ((import.meta.env.DEV || import.meta.env.STATIC) && 
+      (method = mod.getStaticProps))
+  ) {
+    if (mod.getServerSideProps) {
+      throw new Error("Cannot have both getStaticProps and getServerSideProps");
+    }
+
+    props = method();
+  } 
+
+  return <Page {...props} />;
 }
 
 // `server.tsx` exports a function to be used for handling user routes. It takes
@@ -64,7 +82,7 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
   }
 
   // Then the RSC payload is rendered into HTML
-  return new Response(await renderToHtml(rscPayload, meta.scripts), {
+  return new Response(await renderToHtml(rscPayload, meta.modules), {
     headers: {
       "Content-Type": "text/html; charset=utf8",
     },
@@ -84,7 +102,7 @@ export async function prerender(meta: Bake.RouteMetadata) {
   let rscChunks: Uint8Array[] = [];
   rscPayload.on("data", chunk => rscChunks.push(chunk));
 
-  const html = await renderToStaticHtml(rscPayload, meta.scripts);
+  const html = await renderToStaticHtml(rscPayload, meta.modules);
   const rsc = new Blob(rscChunks, { type: "text/x-component" });
 
   return {

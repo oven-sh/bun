@@ -7,23 +7,31 @@ const { parseRoutePattern } = frameworkRouterInternals;
 const testRoutePattern = (style: string) => {
   // The 'expected' is a one-off string serialization that is only used for testing.
   // Params are serialized as ":param", catch all as ":*param", and optional catch all as ":*?param".
-  const fn = (pattern:string, expected:string, kind: 'page' | 'layout' | 'extra'= 'page') => {
-    test(`[${style}] should pass: ${JSON.stringify(pattern)})`, () => {
+  const fn = (pattern:string, expected:string, kind: 'page' | 'layout' | 'extra' = 'page') => {
+    test(`[${style}] pass: ${JSON.stringify(pattern)}`, () => {
       const result = parseRoutePattern(style, pattern);
+      if (result === null) {
+        throw new Error('Parser said this file is not a route');
+      }
       expect(result.kind, 'expected route kind to match').toBe(kind);
       expect(result.pattern, 'expected route pattern to match').toBe(expected);
     }); 
   }
   fn.fails = (pattern: string, msg: string) => {
-    test(`[${style}] should error: ${JSON.stringify(pattern)})`, () => {
+    test(`[${style}] error: ${JSON.stringify(pattern)}`, () => {
       expect(() => parseRoutePattern(style, pattern)).toThrow(msg);
+    });
+  }
+  fn.isNull = (pattern: string) => {
+    test(`[${style}] ignore: ${JSON.stringify(pattern)}`, () => {
+      expect(parseRoutePattern(style, pattern)).toBeNull();
     });
   }
   return fn;
 };
 
-describe("route pattern parser", () => {
-  const testPages = testRoutePattern('nextjs-pages-ui');
+describe("pattern parse", () => {
+  const testPages = testRoutePattern('nextjs-pages');
   testPages('/index.tsx', '', 'page');
   testPages('/_layout.tsx', '', 'layout');
   testPages('/subdir/index.tsx', '/subdir', 'page');
@@ -60,4 +68,5 @@ describe("route pattern parser", () => {
   testApp('/route/[param]/page.tsx', '/route/:param', 'page');
   testApp('/route/(group)/page.tsx', '/route/(group)', 'page');
   testApp('/route/[param]/not-found.tsx', '/route/:param', 'extra');
+  testApp.isNull('/route/_layout.tsx');
 });

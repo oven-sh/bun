@@ -100,6 +100,12 @@ const BuildConfigSubset = struct {
     conditions: bun.StringArrayHashMapUnmanaged(void) = .{},
     drop: bun.StringArrayHashMapUnmanaged(void) = .{},
     // TODO: plugins
+
+    pub fn loadFromJs(config: *BuildConfigSubset, value: JSValue, arena: Allocator) !void {
+        _ = config; // autofix
+        _ = value; // autofix
+        _ = arena; // autofix
+    }
 };
 
 /// Temporary function to invoke dev server via JavaScript. Will be

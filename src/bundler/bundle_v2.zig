@@ -893,7 +893,6 @@ pub const BundleV2 = struct {
 
         this.linker.resolver = &this.bundler.resolver;
         this.linker.graph.code_splitting = bundler.options.code_splitting;
-        this.graph.code_splitting = bundler.options.code_splitting;
 
         this.linker.options.minify_syntax = bundler.options.minify_syntax;
         this.linker.options.minify_identifiers = bundler.options.minify_identifiers;
@@ -4363,9 +4362,6 @@ pub const JSMeta = struct {
 };
 
 pub const Graph = struct {
-    // TODO: consider removing references to this in favor of bundler.options.code_splitting
-    code_splitting: bool = false,
-
     pool: *ThreadPool,
     heap: ThreadlocalArena = .{},
     /// This allocator is thread-local to the Bundler thread

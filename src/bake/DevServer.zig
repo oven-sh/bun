@@ -847,14 +847,6 @@ pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: *App.Response) voi
     }
 }
 
-const BundleError = error{
-    OutOfMemory,
-    /// Graph entry points will be annotated with failures to display.
-    BuildFailed,
-
-    ServerLoadFailed,
-};
-
 const DeferredRequest = struct {
     route_bundle_index: RouteBundle.Index,
     data: Data,
@@ -1155,6 +1147,7 @@ pub fn finalizeBundle(
     result: bun.bundle_v2.BakeBundleOutput,
 ) bun.OOM!void {
     const current_bundle = &dev.current_bundle.?;
+    defer dev.current_bundle = null;
 
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
@@ -1367,6 +1360,7 @@ pub fn finalizeBundle(
             });
         }
 
+        dev.startNextBundleIfPresent();
         return;
     }
 
@@ -1509,10 +1503,13 @@ pub fn finalizeBundle(
     // Clear the current bundle
     dev.log.clearAndFree();
 
-    dev.current_bundle = null;
     dev.current_bundle_requests.clearRetainingCapacity();
     dev.emitVisualizerMessageIfNeeded() catch {};
 
+    dev.startNextBundleIfPresent();
+}
+
+fn startNextBundleIfPresent(dev: *DevServer) void {
     // If there were pending requests, begin another bundle.
     if (dev.next_bundle.reload_event != null or dev.next_bundle.requests.items.len > 0) {
         var sfb = std.heap.stackFallback(4096, bun.default_allocator);
@@ -2546,9 +2543,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 try g.first_import.append(g.owner().allocator, .none);
             }
 
-            if (g.stale_files.bit_length > gop.index) {
-                g.stale_files.set(gop.index);
-            }
+            try g.ensureStaleBitCapacity(true);
+            g.stale_files.set(gop.index);
 
             switch (side) {
                 .client => {
@@ -2970,6 +2966,8 @@ const DirectoryWatchStore = struct {
         // `import_source` is not a stable string. let's share memory with the file graph.
         // this requires that
         const dev = store.owner();
+        dev.graph_safety_lock.lock();
+        defer dev.graph_safety_lock.unlock();
         const owned_file_path = switch (renderer) {
             .client => path: {
                 const index = try dev.client_graph.insertStale(import_source, false);

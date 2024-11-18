@@ -461,7 +461,7 @@ declare module "bun" {
       /**
        * A list of js files that the route will need to be interactive.
        */
-      readonly scripts: ReadonlyArray<string>;
+      readonly modules: ReadonlyArray<string>;
       /**
        * A list of js files that should be preloaded.
        *

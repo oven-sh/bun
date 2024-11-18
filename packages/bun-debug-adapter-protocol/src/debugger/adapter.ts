@@ -105,8 +105,16 @@ const capabilities: DAP.Capabilities = {
 type InitializeRequest = DAP.InitializeRequest & {
   supportsConfigurationDoneRequest?: boolean;
   enableControlFlowProfiler?: boolean;
-  sendImmediatePreventExit?: boolean;
-};
+} & (
+    | {
+        enableLifecycleAgentReporter?: false;
+        sendImmediatePreventExit?: false;
+      }
+    | {
+        enableLifecycleAgentReporter: true;
+        sendImmediatePreventExit?: boolean;
+      }
+  );
 
 type LaunchRequest = DAP.LaunchRequest & {
   runtime?: string;
@@ -444,12 +452,19 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.send("Inspector.enable");
     this.send("Runtime.enable");
     this.send("Console.enable");
+
     if (request.enableControlFlowProfiler) {
       this.send("Runtime.enableControlFlowProfiler");
     }
-    if (request.sendImmediatePreventExit) {
-      this.send("LifecycleReporter.preventExit");
+
+    if (request.enableLifecycleAgentReporter) {
+      this.send("LifecycleReporter.enable");
+
+      if (request.sendImmediatePreventExit) {
+        this.send("LifecycleReporter.preventExit");
+      }
     }
+
     this.send("Debugger.enable").catch(error => {
       const { message } = unknownToError(error);
       if (message !== "Debugger domain already enabled") {

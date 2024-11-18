@@ -169,9 +169,6 @@ class CoverageReporter {
 
     this.editorState.clearAll();
 
-    // Track which lines already have decorations
-    const decoratedLines = new Set<number>();
-
     for (const block of response.basicBlocks) {
       if (!block.hasExecuted) continue;
 
@@ -184,14 +181,10 @@ class CoverageReporter {
       const currentCount = (this.executionCounts.get(rangeKey) ?? 1) + 1;
       this.executionCounts.set(rangeKey, currentCount);
 
-      if (currentCount > 2 && !decoratedLines.has(start.line)) {
-        decoratedLines.add(start.line);
+      if (currentCount > 2) {
         const range = new vscode.Range(start, end);
         const decorationType = vscode.window.createTextEditorDecorationType({
-          borderColor: new vscode.ThemeColor("editorGutter.addedBackground"),
-          borderWidth: "0 0 0 2px",
-          borderStyle: "solid",
-          isWholeLine: true,
+          backgroundColor: "rgba(79, 250, 123, 0.08)",
         });
 
         editor.setDecorations(decorationType, [{ range }]);
@@ -271,6 +264,7 @@ class BunDiagnosticsManager {
     debugAdapter.initialize({
       adapterID: "bun-vsc-terminal-debug-adapter",
       enableControlFlowProfiler: true,
+      enableLifecycleAgentReporter: true,
       sendImmediatePreventExit: true,
     });
   }

@@ -7,7 +7,7 @@
     "moduleDetection": "force",
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "composite": true,
+    // "composite": true,
     "strict": true,
     "downlevelIteration": true,
     "skipLibCheck": true,
@@ -17,5 +17,5 @@
     "allowJs": true,
     "outDir": "dist"
   },
-  "include": ["src", "scripts", "../bun-types/index.d.ts", "../bun-inspector-protocol/**/*.{ts,tsx}"]
+  "include": ["src", "scripts", "../bun-types/index.d.ts", "../bun-inspector-protocol/**/*.ts"]
 }

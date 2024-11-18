@@ -1,19 +1,18 @@
-import type { InspectorEventMap } from "../../../bun-inspector-protocol/src/inspector";
-import type { JSC } from "../../../bun-inspector-protocol/src/protocol";
-import type { DAP } from "../protocol";
-// @ts-ignore
 import { ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { AddressInfo, createServer } from "node:net";
 import * as path from "node:path";
-import { remoteObjectToString, WebSocketInspector } from "../../../bun-inspector-protocol/index";
-import { randomUnixPath, TCPSocketSignal, UnixSignal } from "./signal";
-import { Location, SourceMap } from "./sourcemap";
+import { remoteObjectToString, WebSocketInspector } from "../../../bun-inspector-protocol/index.ts";
+import type { InspectorEventMap } from "../../../bun-inspector-protocol/src/inspector/index.d.ts";
+import type { JSC } from "../../../bun-inspector-protocol/src/protocol/index.d.ts";
+import type { DAP } from "../protocol/index.d.ts";
+import { randomUnixPath, TCPSocketSignal, UnixSignal } from "./signal.ts";
+import { Location, SourceMap } from "./sourcemap.ts";
 
 export async function getAvailablePort(): Promise<number> {
   const server = createServer();
   server.listen(0);
-  return new Promise((resolve, reject) => {
+  return new Promise(resolve => {
     server.on("listening", () => {
       const { port } = server.address() as AddressInfo;
       server.close(() => {
@@ -106,6 +105,7 @@ const capabilities: DAP.Capabilities = {
 type InitializeRequest = DAP.InitializeRequest & {
   supportsConfigurationDoneRequest?: boolean;
   enableControlFlowProfiler?: boolean;
+  sendImmediatePreventExit?: boolean;
 };
 
 type LaunchRequest = DAP.LaunchRequest & {
@@ -446,6 +446,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.send("Console.enable");
     if (request.enableControlFlowProfiler) {
       this.send("Runtime.enableControlFlowProfiler");
+    }
+    if (request.sendImmediatePreventExit) {
+      this.send("LifecycleReporter.preventExit");
     }
     this.send("Debugger.enable").catch(error => {
       const { message } = unknownToError(error);
@@ -1699,7 +1702,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
       // If the path changed or the source has a source reference,
       // the old source should be marked as removed.
-      if (path !== oldPath || sourceReference) {
+      if (path !== oldPath /*|| sourceReference*/) {
         this.#emit("loadedSource", {
           reason: "removed",
           source: oldSource,
@@ -1766,9 +1769,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     }
 
     // If the source is not present, it may not have been loaded yet.
-    let resolves = this.#pendingSources.get(sourceId);
+    let resolves = this.#pendingSources.get(sourceId.toString());
     if (!resolves) {
-      this.#pendingSources.set(sourceId, (resolves = []));
+      this.#pendingSources.set(sourceId.toString(), (resolves = []));
     }
 
     return new Promise(resolve => {

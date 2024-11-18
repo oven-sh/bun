@@ -249,7 +249,8 @@ class BunDiagnosticsManager {
       this.handleConsoleMessage(params);
     });
 
-    const dispose = () => {
+    const dispose = async () => {
+      await debugAdapter.send("LifecycleReporter.stopPreventingExit");
       debugAdapter.close();
       debugAdapter.removeAllListeners();
       coverageReporter.dispose();
@@ -270,6 +271,7 @@ class BunDiagnosticsManager {
     debugAdapter.initialize({
       adapterID: "bun-vsc-terminal-debug-adapter",
       enableControlFlowProfiler: true,
+      sendImmediatePreventExit: true,
     });
   }
 

@@ -101,7 +101,7 @@ async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
   }
 
   const { env } = creationOptions as vscode.TerminalOptions;
-  if (env["BUN_INSPECT"]) {
+  if (env && env["BUN_INSPECT"]) {
     return;
   }
 
@@ -236,7 +236,7 @@ interface RuntimeExceptionThrownEvent {
 }
 
 class FileDebugSession extends DebugSession {
-  adapter: DebugAdapter;
+  adapter!: DebugAdapter;
   sessionId?: string;
   untitledDocPath?: string;
   bunEvalPath?: string;
@@ -321,7 +321,7 @@ class FileDebugSession extends DebugSession {
 }
 
 class TerminalDebugSession extends FileDebugSession {
-  signal: TCPSocketSignal | UnixSignal;
+  signal!: TCPSocketSignal | UnixSignal;
 
   constructor() {
     super();

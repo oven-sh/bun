@@ -7,7 +7,6 @@ import {
   TCPSocketSignal,
   UnixSignal,
 } from "../../../../bun-debug-adapter-protocol";
-import { SourceMap } from "../../../../bun-debug-adapter-protocol/src/debugger/sourcemap";
 import type { JSC } from "../../../../bun-inspector-protocol";
 
 function byteOffsetToPosition(text: string, offset: number) {
@@ -28,39 +27,11 @@ function byteOffsetToPosition(text: string, offset: number) {
 }
 
 class EditorStateManager {
-  private decorations = new Set<vscode.TextEditorDecorationType>();
   private diagnosticCollection: vscode.DiagnosticCollection;
   private disposables: vscode.Disposable[] = [];
 
   public constructor() {
     this.diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
-
-    this.disposables.push(
-      // When user is typing we should clear everything
-      vscode.workspace.onDidChangeTextDocument(e => {
-        if (this.decorations.size !== 0) {
-          this.clearAll();
-        }
-      }),
-    );
-  }
-
-  clearDecorationsForUri(uri: vscode.Uri) {
-    const editor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
-
-    if (editor) {
-      for (const decoration of this.decorations) {
-        editor.setDecorations(decoration, []);
-      }
-    }
-  }
-
-  clearDecorations() {
-    for (const decoration of this.decorations) {
-      decoration.dispose();
-    }
-
-    this.decorations.clear();
   }
 
   clearDiagnostics() {
@@ -68,12 +39,7 @@ class EditorStateManager {
   }
 
   clearAll() {
-    this.clearDecorations();
     this.clearDiagnostics();
-  }
-
-  addDecoration(decoration: vscode.TextEditorDecorationType) {
-    this.decorations.add(decoration);
   }
 
   setDiagnostic(uri: vscode.Uri, diagnostic: vscode.Diagnostic) {
@@ -83,126 +49,6 @@ class EditorStateManager {
   dispose() {
     this.clearAll();
     this.disposables.forEach(d => d.dispose());
-  }
-}
-
-class CoverageReporter {
-  private coverageIntervalMap = new Map<string, NodeJS.Timer>();
-  private editorState: EditorStateManager;
-
-  constructor(editorState: EditorStateManager) {
-    this.editorState = editorState;
-  }
-
-  clearIntervals() {
-    for (const interval of this.coverageIntervalMap.values()) {
-      clearInterval(interval);
-    }
-
-    this.coverageIntervalMap.clear();
-  }
-
-  async createCoverageReportingTimer(
-    adapter: DebugAdapter,
-    event: JSC.Debugger.ScriptParsedEvent,
-    scriptSource: string,
-    sourceMapURL: string | undefined,
-  ) {
-    const existingTimer = this.coverageIntervalMap.get(event.scriptId);
-    if (existingTimer) {
-      clearInterval(existingTimer);
-    }
-
-    // TODO: Move source map handling to nativeland
-    const map = sourceMapURL ? SourceMap(sourceMapURL) : null;
-    const uri = vscode.Uri.file(event.url);
-
-    const offsetToPos = (offset: number) => {
-      if (map) {
-        const { line, column } = byteOffsetToPosition(scriptSource, offset);
-        const original = map.originalLocation({ line, column });
-        return new vscode.Position(original.line, original.column);
-      } else {
-        const { line, column } = byteOffsetToPosition(scriptSource, offset);
-        return new vscode.Position(line, column);
-      }
-    };
-
-    const report = () => {
-      return this.reportCoverage(adapter, event, uri, offsetToPos);
-    };
-
-    // Once we've got at least 1 report, it's safe to stop preventing exit
-    // as there's something valuable to show the user
-    /* */ await report();
-    /* */ await adapter.send("LifecycleReporter.stopPreventingExit");
-
-    const timer = setInterval(report, 1000);
-    this.coverageIntervalMap.set(event.scriptId, timer);
-  }
-
-  // private rangeExecutionMap = new (class DiagnosticsRangeMap extends Map<string, vscode.Range> {
-  //   some(fn: (value: vscode.Range) => boolean) {
-  //     for (const value of this.values()) {
-  //       if (fn(value)) {
-  //         return true;
-  //       }
-  //     }
-
-  //     return false;
-  //   }
-
-  //   doesContainChild(range: vscode.Range) {
-  //     return this.some(r => r.contains(range));
-  //   }
-  // })();
-
-  private async reportCoverage(
-    adapter: DebugAdapter,
-    event: JSC.Debugger.ScriptParsedEvent,
-    uri: vscode.Uri,
-    transpiledOffsetToOriginalPosition: (offset: number) => vscode.Position,
-  ) {
-    const editor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
-
-    if (!editor) {
-      return;
-    }
-
-    const response = await adapter
-      .send("Runtime.getBasicBlocks", {
-        sourceID: event.scriptId,
-      })
-      .catch(() => null);
-
-    if (!response) return;
-
-    this.editorState.clearDecorationsForUri(uri);
-
-    for (const block of response.basicBlocks) {
-      const start = transpiledOffsetToOriginalPosition(block.startOffset);
-      const end = transpiledOffsetToOriginalPosition(block.endOffset);
-
-      if (end.character === uri.fsPath.length) continue;
-
-      const range = new vscode.Range(start, end);
-
-      if (!block.hasExecuted) continue;
-
-      // const isInsideOtherRange = this.rangeExecutionMap.some(r => r.contains(range));
-      // if (!isInsideOtherRange) continue;
-
-      const decorationType = vscode.window.createTextEditorDecorationType({
-        backgroundColor: "rgba(79, 250, 123, 0.08)",
-      });
-
-      editor.setDecorations(decorationType, [{ range }]);
-      this.editorState.addDecoration(decorationType);
-    }
-  }
-
-  dispose() {
-    this.clearIntervals();
   }
 }
 
@@ -236,22 +82,16 @@ class BunDiagnosticsManager {
    * Called when Bun pings BUN_INSPECT_NOTIFY (indicating a program has started).
    */
   private async handleSignalReceived() {
-    // Clear all diagnostics and decorations so the editor is clean
-    this.editorState.clearDecorations();
-
     const debugAdapter = new DebugAdapter();
-    const coverageReporter = new CoverageReporter(this.editorState);
 
-    debugAdapter.on("Debugger.scriptParsed", async event => {
-      await this.handleScriptParsed(debugAdapter, event, coverageReporter);
-    });
+    this.editorState.clearAll();
 
     debugAdapter.on("LifecycleReporter.reload", async () => {
       this.editorState.clearAll();
     });
 
     debugAdapter.on("Inspector.event", async event => {
-      console.log(JSON.stringify(event.method));
+      console.log(event.method);
     });
 
     debugAdapter.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
@@ -260,7 +100,6 @@ class BunDiagnosticsManager {
       debugAdapter.removeAllListeners();
       await debugAdapter.send("LifecycleReporter.stopPreventingExit");
       debugAdapter.close();
-      coverageReporter.dispose();
     };
 
     this.signal.once("Signal.closed", dispose);
@@ -283,18 +122,6 @@ class BunDiagnosticsManager {
     });
   }
 
-  private async handleScriptParsed(
-    debugAdapter: DebugAdapter,
-    event: JSC.Debugger.ScriptParsedEvent,
-    coverageReporter: CoverageReporter,
-  ) {
-    const { scriptSource } = await debugAdapter.send("Debugger.getScriptSource", {
-      scriptId: event.scriptId,
-    });
-
-    await coverageReporter.createCoverageReportingTimer(debugAdapter, event, scriptSource, event.sourceMapURL);
-  }
-
   private handleLifecycleError(params: JSC.LifecycleReporter.ErrorEvent) {
     // params.lineColumns is flat pairs of line and columns from each stack frame, we only care about the first one
     const [line = null, column = null] = params.lineColumns;
@@ -304,7 +131,7 @@ class BunDiagnosticsManager {
     }
 
     // params.urls is the url from each stack frame, and again we only care about the first one
-    const url = params.urls[0];
+    const [url = null] = params.urls;
     if (!url) {
       return;
     }
@@ -319,7 +146,6 @@ class BunDiagnosticsManager {
   public dispose() {
     return vscode.Disposable.from(this.editorState, {
       dispose: () => {
-        this.signal.off("Signal.received", this.handleSignalReceived);
         this.signal.close();
         this.signal.removeAllListeners();
       },

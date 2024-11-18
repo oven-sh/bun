@@ -1,7 +1,9 @@
-// Run like `/Users/ali/code/bun/build/release/bun --preload=./bug-preload.js --watch print.ts`
-// to see this and have Cursor (or other editor llm) fix it.
+// this complex function isn't done yet, but it should
+// return the oldest person in a booking. Perhaps
+// we could use Math.max() for this?
+function getOldestPersonInBooking(ages: number[]) {
+  return -1;
+}
 
-await Bun.sleep(1000);
-await Bun.sleep(1000);
-
-console.log(Math.max(1, 2));
+const ticketAges = [5, 25, 30];
+console.log(getOldestPersonInBooking(ticketAges));

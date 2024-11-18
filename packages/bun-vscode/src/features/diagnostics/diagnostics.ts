@@ -36,10 +36,10 @@ class EditorStateManager {
     this.diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
 
     this.disposables.push(
-      // When user is typing we should clear the decorations
+      // When user is typing we should clear everything
       vscode.workspace.onDidChangeTextDocument(e => {
         if (this.decorations.size !== 0) {
-          this.clearDecorationsForUri(e.document.uri);
+          this.clearAll();
         }
       }),
     );
@@ -88,7 +88,6 @@ class EditorStateManager {
 
 class CoverageReporter {
   private coverageIntervalMap = new Map<string, NodeJS.Timer>();
-  private executionCounts = new Map<string, number>();
   private editorState: EditorStateManager;
 
   constructor(editorState: EditorStateManager) {
@@ -103,14 +102,6 @@ class CoverageReporter {
     this.coverageIntervalMap.clear();
   }
 
-  private cleanupStaleExecutionCounts(scriptId: string) {
-    for (const key of this.executionCounts.keys()) {
-      if (key.startsWith(`${scriptId}:`)) {
-        this.executionCounts.delete(key);
-      }
-    }
-  }
-
   async createCoverageReportingTimer(
     adapter: DebugAdapter,
     event: JSC.Debugger.ScriptParsedEvent,
@@ -120,7 +111,6 @@ class CoverageReporter {
     const existingTimer = this.coverageIntervalMap.get(event.scriptId);
     if (existingTimer) {
       clearInterval(existingTimer);
-      this.cleanupStaleExecutionCounts(event.scriptId);
     }
 
     // TODO: Move source map handling to nativeland
@@ -151,6 +141,22 @@ class CoverageReporter {
     this.coverageIntervalMap.set(event.scriptId, timer);
   }
 
+  // private rangeExecutionMap = new (class DiagnosticsRangeMap extends Map<string, vscode.Range> {
+  //   some(fn: (value: vscode.Range) => boolean) {
+  //     for (const value of this.values()) {
+  //       if (fn(value)) {
+  //         return true;
+  //       }
+  //     }
+
+  //     return false;
+  //   }
+
+  //   doesContainChild(range: vscode.Range) {
+  //     return this.some(r => r.contains(range));
+  //   }
+  // })();
+
   private async reportCoverage(
     adapter: DebugAdapter,
     event: JSC.Debugger.ScriptParsedEvent,
@@ -171,35 +177,32 @@ class CoverageReporter {
 
     if (!response) return;
 
-    this.editorState.clearAll();
+    this.editorState.clearDecorationsForUri(uri);
 
     for (const block of response.basicBlocks) {
-      if (!block.hasExecuted) continue;
-
       const start = transpiledOffsetToOriginalPosition(block.startOffset);
       const end = transpiledOffsetToOriginalPosition(block.endOffset);
 
       if (end.character === uri.fsPath.length) continue;
 
-      const rangeKey = `${event.scriptId}:${block.startOffset}-${block.endOffset}`;
-      const currentCount = (this.executionCounts.get(rangeKey) ?? 1) + 1;
-      this.executionCounts.set(rangeKey, currentCount);
+      const range = new vscode.Range(start, end);
 
-      if (currentCount > 2) {
-        const range = new vscode.Range(start, end);
-        const decorationType = vscode.window.createTextEditorDecorationType({
-          backgroundColor: "rgba(79, 250, 123, 0.08)",
-        });
+      if (!block.hasExecuted) continue;
 
-        editor.setDecorations(decorationType, [{ range }]);
-        this.editorState.addDecoration(decorationType);
-      }
+      // const isInsideOtherRange = this.rangeExecutionMap.some(r => r.contains(range));
+      // if (!isInsideOtherRange) continue;
+
+      const decorationType = vscode.window.createTextEditorDecorationType({
+        backgroundColor: "rgba(79, 250, 123, 0.08)",
+      });
+
+      editor.setDecorations(decorationType, [{ range }]);
+      this.editorState.addDecoration(decorationType);
     }
   }
 
   dispose() {
     this.clearIntervals();
-    this.executionCounts.clear();
   }
 }
 
@@ -221,6 +224,8 @@ class BunDiagnosticsManager {
     const urlBunShouldListenOn = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
     const signal = os.platform() !== "win32" ? new UnixSignal() : new TCPSocketSignal(await getAvailablePort());
 
+    await signal.ready;
+
     return new BunDiagnosticsManager(context, {
       urlBunShouldListenOn,
       signal,
@@ -232,13 +237,17 @@ class BunDiagnosticsManager {
    */
   private async handleSignalReceived() {
     // Clear all diagnostics and decorations so the editor is clean
-    this.editorState.clearAll();
+    this.editorState.clearDecorations();
 
     const debugAdapter = new DebugAdapter();
     const coverageReporter = new CoverageReporter(this.editorState);
 
     debugAdapter.on("Debugger.scriptParsed", async event => {
       await this.handleScriptParsed(debugAdapter, event, coverageReporter);
+    });
+
+    debugAdapter.on("LifecycleReporter.reload", async () => {
+      this.editorState.clearAll();
     });
 
     debugAdapter.on("Inspector.event", async event => {

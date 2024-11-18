@@ -470,9 +470,9 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         const Overflow = OverflowList(ValueType, count / 4);
 
         const TRAILING_SLASH_CHAR = if (Environment.isWindows)
-            "\\"
+            std.fs.path.sep_str_windows
         else
-            "/";
+            std.fs.path.sep_str_posix;
 
         index: IndexMap,
         overflow_list: Overflow = Overflow{},

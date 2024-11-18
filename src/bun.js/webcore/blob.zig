@@ -1445,15 +1445,16 @@ pub const Blob = struct {
             };
             defer name_value_str.deref();
 
-            blob = get(globalThis, args[0], false, true) catch |err| {
-                if (!globalThis.hasException()) {
-                    if (err == error.InvalidArguments) {
-                        globalThis.throwInvalidArguments("new File(bits, name) expects iterable as the first argument", .{});
-                        return null;
-                    }
+            blob = get(globalThis, args[0], false, true) catch |err| switch (err) {
+                error.JSError => return null,
+                error.OutOfMemory => {
                     globalThis.throwOutOfMemory();
-                }
-                return null;
+                    return null;
+                },
+                error.InvalidArguments => {
+                    globalThis.throwInvalidArguments("new Blob() expects an Array", .{});
+                    return null;
+                },
             };
 
             if (blob.store) |store_| {
@@ -3468,18 +3469,15 @@ pub const Blob = struct {
         var arguments = arguments_.ptr[0..arguments_.len];
 
         if (!arguments.ptr[0].isEmptyOrUndefinedOrNull() and !arguments.ptr[0].isObject()) {
-            globalThis.throwInvalidArguments("options must be an object or undefined", .{});
-            return JSValue.jsUndefined();
+            return globalThis.throwInvalidArguments2("options must be an object or undefined", .{});
         }
 
         var store = this.store orelse {
-            globalThis.throwInvalidArguments("Blob is detached", .{});
-            return JSValue.jsUndefined();
+            return globalThis.throwInvalidArguments2("Blob is detached", .{});
         };
 
         if (store.data != .file) {
-            globalThis.throwInvalidArguments("Blob is read-only", .{});
-            return JSValue.jsUndefined();
+            return globalThis.throwInvalidArguments2("Blob is read-only", .{});
         }
 
         if (Environment.isWindows) {
@@ -3497,8 +3495,7 @@ pub const Blob = struct {
                         break :brk result;
                     },
                     .err => |err| {
-                        globalThis.throwValue(err.withPath(path).toJSC(globalThis));
-                        return JSValue.jsUndefined();
+                        return globalThis.throwValue2(err.withPath(path).toJSC(globalThis));
                     },
                 }
                 unreachable;
@@ -3530,20 +3527,16 @@ pub const Blob = struct {
             if (is_stdout_or_stderr) {
                 switch (sink.writer.startSync(fd, false)) {
                     .err => |err| {
-                        globalThis.throwValue(err.toJSC(globalThis));
                         sink.deref();
-
-                        return JSC.JSValue.zero;
+                        return globalThis.throwValue2(err.toJSC(globalThis));
                     },
                     else => {},
                 }
             } else {
                 switch (sink.writer.start(fd, true)) {
                     .err => |err| {
-                        globalThis.throwValue(err.toJSC(globalThis));
                         sink.deref();
-
-                        return JSC.JSValue.zero;
+                        return globalThis.throwValue2(err.toJSC(globalThis));
                     },
                     else => {},
                 }
@@ -3576,16 +3569,14 @@ pub const Blob = struct {
         };
 
         if (arguments.len > 0 and arguments.ptr[0].isObject()) {
-            stream_start = JSC.WebCore.StreamStart.fromJSWithTag(globalThis, arguments[0], .FileSink);
+            stream_start = try JSC.WebCore.StreamStart.fromJSWithTag(globalThis, arguments[0], .FileSink);
             stream_start.FileSink.input_path = input_path;
         }
 
         switch (sink.start(stream_start)) {
             .err => |err| {
-                globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
                 sink.deref();
-
-                return JSC.JSValue.zero;
+                return globalThis.vm().throwError2(globalThis, err.toJSC(globalThis));
             },
             else => {},
         }
@@ -3959,13 +3950,9 @@ pub const Blob = struct {
                 blob = Blob.init(empty, allocator, globalThis);
             },
             else => {
-                blob = get(globalThis, args[0], false, true) catch |err| {
-                    if (err == error.InvalidArguments) {
-                        return globalThis.throwInvalidArguments2("new Blob() expects an Array", .{});
-                    }
-                    if (!globalThis.hasException())
-                        globalThis.throwOutOfMemory();
-                    return error.JSError;
+                blob = get(globalThis, args[0], false, true) catch |err| switch (err) {
+                    error.OutOfMemory, error.JSError => |e| return e,
+                    error.InvalidArguments => return globalThis.throwInvalidArguments2("new Blob() expects an Array", .{}),
                 };
 
                 if (args.len > 1) {
@@ -4518,24 +4505,26 @@ pub const Blob = struct {
         return toFormDataWithBytes(this, global, @constCast(view_), lifetime);
     }
 
+    const FromJsError = bun.JSError || error{InvalidArguments};
+
     pub inline fn get(
         global: *JSGlobalObject,
         arg: JSValue,
         comptime move: bool,
         comptime require_array: bool,
-    ) anyerror!Blob {
+    ) FromJsError!Blob {
         return fromJSMovable(global, arg, move, require_array);
     }
 
-    pub inline fn fromJSMove(global: *JSGlobalObject, arg: JSValue) anyerror!Blob {
+    pub inline fn fromJSMove(global: *JSGlobalObject, arg: JSValue) FromJsError!Blob {
         return fromJSWithoutDeferGC(global, arg, true, false);
     }
 
-    pub inline fn fromJSClone(global: *JSGlobalObject, arg: JSValue) anyerror!Blob {
+    pub inline fn fromJSClone(global: *JSGlobalObject, arg: JSValue) FromJsError!Blob {
         return fromJSWithoutDeferGC(global, arg, false, true);
     }
 
-    pub inline fn fromJSCloneOptionalArray(global: *JSGlobalObject, arg: JSValue) anyerror!Blob {
+    pub inline fn fromJSCloneOptionalArray(global: *JSGlobalObject, arg: JSValue) FromJsError!Blob {
         return fromJSWithoutDeferGC(global, arg, false, false);
     }
 
@@ -4544,7 +4533,7 @@ pub const Blob = struct {
         arg: JSValue,
         comptime move: bool,
         comptime require_array: bool,
-    ) anyerror!Blob {
+    ) FromJsError!Blob {
         const FromJSFunction = if (comptime move and !require_array)
             fromJSMove
         else if (!require_array)
@@ -4560,7 +4549,7 @@ pub const Blob = struct {
         arg: JSValue,
         comptime move: bool,
         comptime require_array: bool,
-    ) anyerror!Blob {
+    ) FromJsError!Blob {
         var current = arg;
         if (current.isUndefinedOrNull()) {
             return Blob{ .globalThis = global };

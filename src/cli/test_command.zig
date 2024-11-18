@@ -109,68 +109,221 @@ fn writeTestStatusLine(comptime status: @Type(.EnumLiteral), writer: anytype) vo
         writer.print(fmtStatusTextLine(status, false), .{}) catch unreachable;
 }
 
+// Remaining TODOs:
+// - Add stdout/stderr to the JUnit report
+// - Add timestamp field to the JUnit report
 pub const JunitReporter = struct {
     contents: std.ArrayListUnmanaged(u8) = .{},
-    test_suites: u32 = 0,
-    test_cases: u32 = 0,
-    assertions: u32 = 0,
-    failures: u32 = 0,
-    skipped: u32 = 0,
-    start_time: i128 = 0,
-    pos_of_left_angle_bracket: usize = 0,
+    total_metrics: Metrics = .{},
+    testcases_metrics: Metrics = .{},
+    offset_of_testsuites_value: usize = 0,
+    offset_of_testsuite_value: usize = 0,
     current_file: string = "",
+    properties_list_to_repeat_in_every_test_suite: ?[]const u8 = null,
+
+    hostname_value: ?string = null,
+
+    pub fn getHostname(this: *JunitReporter) ?string {
+        if (this.hostname_value == null) {
+            if (Environment.isWindows) {
+                return null;
+            }
+
+            var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
+            const hostname = std.posix.gethostname(&name_buffer) catch {
+                this.hostname_value = "";
+                return null;
+            };
+
+            var arraylist_writer = std.ArrayList(u8).init(bun.default_allocator);
+            escapeXml(hostname, arraylist_writer.writer()) catch {
+                this.hostname_value = "";
+                return null;
+            };
+            this.hostname_value = arraylist_writer.items;
+        }
+
+        if (this.hostname_value) |hostname| {
+            if (hostname.len > 0) {
+                return hostname;
+            }
+        }
+        return null;
+    }
+
+    const Metrics = struct {
+        test_cases: u32 = 0,
+        assertions: u32 = 0,
+        failures: u32 = 0,
+        skipped: u32 = 0,
+        elapsed_time: u64 = 0,
+
+        pub fn add(this: *Metrics, other: *const Metrics) void {
+            this.test_cases += other.test_cases;
+            this.assertions += other.assertions;
+            this.failures += other.failures;
+            this.skipped += other.skipped;
+        }
+    };
     pub fn init() *JunitReporter {
-        return JunitReporter.new(.{
-            .contents = .{},
-            .start_time = bun.start_time,
-        });
+        return JunitReporter.new(
+            .{ .contents = .{}, .total_metrics = .{} },
+        );
     }
 
     pub usingnamespace bun.New(JunitReporter);
 
+    fn generatePropertiesList(this: *JunitReporter) !void {
+        const PropertiesList = struct {
+            ci: string,
+            commit: string,
+        };
+        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        var stack = std.heap.stackFallback(1024, arena.allocator());
+        const allocator = stack.get();
+
+        const properties: PropertiesList = .{
+            .ci = brk: {
+                if (bun.getenvZ("GITHUB_RUN_ID")) |github_run_id| {
+                    if (bun.getenvZ("GITHUB_SERVER_URL")) |github_server_url| {
+                        if (bun.getenvZ("GITHUB_REPOSITORY")) |github_repository| {
+                            if (github_run_id.len > 0 and github_server_url.len > 0 and github_repository.len > 0) {
+                                break :brk try std.fmt.allocPrint(allocator, "{s}/{s}/actions/runs/{s}", .{ github_server_url, github_repository, github_run_id });
+                            }
+                        }
+                    }
+                }
+
+                if (bun.getenvZ("CI_JOB_URL")) |ci_job_url| {
+                    if (ci_job_url.len > 0) {
+                        break :brk ci_job_url;
+                    }
+                }
+
+                break :brk "";
+            },
+            .commit = brk: {
+                if (bun.getenvZ("GITHUB_SHA")) |github_sha| {
+                    if (github_sha.len > 0) {
+                        break :brk github_sha;
+                    }
+                }
+
+                if (bun.getenvZ("CI_COMMIT_SHA")) |sha| {
+                    if (sha.len > 0) {
+                        break :brk sha;
+                    }
+                }
+
+                if (bun.getenvZ("GIT_SHA")) |git_sha| {
+                    if (git_sha.len > 0) {
+                        break :brk git_sha;
+                    }
+                }
+
+                break :brk "";
+            },
+        };
+
+        if (properties.ci.len == 0 and properties.commit.len == 0) {
+            this.properties_list_to_repeat_in_every_test_suite = "";
+            return;
+        }
+
+        var buffer = std.ArrayList(u8).init(bun.default_allocator);
+        var writer = buffer.writer();
+
+        try writer.writeAll(
+            \\    <properties>
+            \\
+        );
+
+        if (properties.ci.len > 0) {
+            try writer.writeAll(
+                \\      <property name="ci" value="
+            );
+            try escapeXml(properties.ci, writer);
+            try writer.writeAll("\" />\n");
+        }
+        if (properties.commit.len > 0) {
+            try writer.writeAll(
+                \\      <property name="commit" value="
+            );
+            try escapeXml(properties.commit, writer);
+            try writer.writeAll("\" />\n");
+        }
+
+        try writer.writeAll("    </properties>\n");
+
+        this.properties_list_to_repeat_in_every_test_suite = buffer.items;
+    }
+
     pub fn beginTestSuite(this: *JunitReporter, name: string) !void {
-        this.test_suites += 1;
         if (this.contents.items.len == 0) {
             try this.contents.appendSlice(bun.default_allocator,
                 \\<?xml version="1.0" encoding="UTF-8"?>
                 \\
             );
+
+            try this.contents.appendSlice(bun.default_allocator,
+                \\<testsuites name="bun test" 
+            );
+            this.offset_of_testsuites_value = this.contents.items.len;
+            try this.contents.appendSlice(bun.default_allocator, ">\n");
         }
 
         try this.contents.appendSlice(bun.default_allocator,
-            \\<testsuites>
             \\  <testsuite name="
         );
-        this.pos_of_left_angle_bracket = this.contents.items.len - "  <testsuite name=\"".len + 2;
 
         try escapeXml(name, this.contents.writer(bun.default_allocator));
 
-        try this.contents.appendSlice(bun.default_allocator, "\">\n");
+        try this.contents.appendSlice(bun.default_allocator, "\" ");
+        this.offset_of_testsuite_value = this.contents.items.len;
+        try this.contents.appendSlice(bun.default_allocator, ">\n");
+
+        if (this.properties_list_to_repeat_in_every_test_suite == null) {
+            try this.generatePropertiesList();
+        }
+
+        if (this.properties_list_to_repeat_in_every_test_suite) |properties_list| {
+            if (properties_list.len > 0) {
+                try this.contents.appendSlice(bun.default_allocator, properties_list);
+            }
+        }
+
         this.current_file = name;
     }
 
     pub fn endTestSuite(this: *JunitReporter) !void {
-        const elapsed_time = @as(f64, @floatFromInt(std.time.nanoTimestamp() - this.start_time)) / std.time.ns_per_s;
-
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback_allocator = std.heap.stackFallback(4096, arena.allocator());
         const allocator = stack_fallback_allocator.get();
+
+        const metrics = &this.testcases_metrics;
+        this.total_metrics.add(metrics);
+
+        const elapsed_time_ms = metrics.elapsed_time;
+        const elapsed_time_ms_f64: f64 = @floatFromInt(elapsed_time_ms);
+        const elapsed_time_seconds = elapsed_time_ms_f64 / std.time.ms_per_s;
+
         // Insert the summary attributes
         const summary = try std.fmt.allocPrint(allocator,
-            \\" tests="{d}" assertions="{d}" failures="{d}" skipped="{d}" time="{d:.3}"
+            \\tests="{d}" assertions="{d}" failures="{d}" skipped="{d}" time="{d}" hostname="{s}"
         , .{
-            this.test_cases,
-            this.assertions,
-            this.failures,
-            this.skipped,
-            elapsed_time,
+            metrics.test_cases,
+            metrics.assertions,
+            metrics.failures,
+            metrics.skipped,
+            elapsed_time_seconds,
+            this.getHostname() orelse "",
         });
-        this.assertions = 0;
+        this.testcases_metrics = .{};
+        this.contents.insertSlice(bun.default_allocator, this.offset_of_testsuite_value, summary) catch bun.outOfMemory();
 
-        this.contents.insertSlice(bun.default_allocator, this.pos_of_left_angle_bracket, summary) catch bun.outOfMemory();
-
-        try this.contents.appendSlice(bun.default_allocator, "  </testsuite>\n</testsuites>");
+        try this.contents.appendSlice(bun.default_allocator, "  </testsuite>\n");
     }
 
     pub fn writeTestCase(
@@ -182,9 +335,11 @@ pub const JunitReporter = struct {
         assertions: u32,
         elapsed_ns: u64,
     ) !void {
-        this.test_cases += 1;
+        const elapsed_ns_f64: f64 = @floatFromInt(elapsed_ns);
+        const elapsed_ms = elapsed_ns_f64 / std.time.ns_per_ms;
+        this.testcases_metrics.elapsed_time +|= @as(u64, @intFromFloat(elapsed_ms));
+        this.testcases_metrics.test_cases += 1;
 
-        const elapsed_sec = @as(f64, @floatFromInt(elapsed_ns)) / std.time.ns_per_s;
         try this.contents.appendSlice(bun.default_allocator, "    <testcase");
         try this.contents.appendSlice(bun.default_allocator, " name=\"");
         try escapeXml(name, this.contents.writer(bun.default_allocator));
@@ -192,57 +347,66 @@ pub const JunitReporter = struct {
         try escapeXml(class_name, this.contents.writer(bun.default_allocator));
         try this.contents.appendSlice(bun.default_allocator, "\"");
 
+        const elapsed_seconds = elapsed_ms / std.time.ms_per_s;
         var time_buf: [32]u8 = undefined;
-        const time_str = try std.fmt.bufPrint(&time_buf, " time=\"{d:.3}\"", .{elapsed_sec});
+        const time_str = try std.fmt.bufPrint(&time_buf, " time=\"{d}\"", .{elapsed_seconds});
         try this.contents.appendSlice(bun.default_allocator, time_str);
 
         try this.contents.appendSlice(bun.default_allocator, " file=\"");
         try escapeXml(file, this.contents.writer(bun.default_allocator));
         try this.contents.appendSlice(bun.default_allocator, "\"");
-        this.assertions += assertions;
+
+        try this.contents.writer(bun.default_allocator).print(" assertions=\"{d}\"", .{assertions});
+
+        this.testcases_metrics.assertions += assertions;
 
         switch (status) {
             .pass => {
-                try this.contents.appendSlice(bun.default_allocator, "/>\n");
+                try this.contents.appendSlice(bun.default_allocator, " />\n");
             },
             .fail => {
-                this.failures += 1;
-                try this.contents.appendSlice(bun.default_allocator, ">\n      <failure");
+                this.testcases_metrics.failures += 1;
+                try this.contents.appendSlice(bun.default_allocator, ">\n      <failure type=\"AssertionError\" />\n    </testcase>\n");
                 // TODO: add the failure message
                 // if (failure_message) |msg| {
                 //     try this.contents.appendSlice(bun.default_allocator, " message=\"");
                 //     try escapeXml(msg, this.contents.writer(bun.default_allocator));
                 //     try this.contents.appendSlice(bun.default_allocator, "\"");
                 // }
-                try this.contents.appendSlice(bun.default_allocator, "/>\n    </testcase>\n");
             },
             .fail_because_expected_assertion_count => {
+                this.testcases_metrics.failures += 1;
                 // TODO: add the failure message
                 try this.contents.writer(bun.default_allocator).print(
+                    \\>
                     \\      <failure message="Expected more assertions, but only received {d}" type="AssertionError"/>
                     \\    </testcase>
                 , .{assertions});
             },
             .fail_because_todo_passed => {
+                this.testcases_metrics.failures += 1;
                 // TODO: add the failure message
                 try this.contents.writer(bun.default_allocator).print(
+                    \\>
                     \\      <failure message="TODO passed" type="AssertionError"/>
                     \\    </testcase>
                 , .{});
             },
             .fail_because_expected_has_assertions => {
+                this.testcases_metrics.failures += 1;
                 try this.contents.writer(bun.default_allocator).print(
+                    \\>
                     \\      <failure message="Expected to have assertions, but none were run" type="AssertionError"/>
                     \\    </testcase>
                 , .{});
             },
             .skip => {
-                this.skipped += 1;
-                try this.contents.appendSlice(bun.default_allocator, ">\n      <skipped/>\n    </testcase>\n");
+                this.testcases_metrics.skipped += 1;
+                try this.contents.appendSlice(bun.default_allocator, ">\n      <skipped />\n    </testcase>\n");
             },
             .todo => {
-                this.skipped += 1;
-                try this.contents.appendSlice(bun.default_allocator, ">\n      <skipped message=\"TODO\"/>\n    </testcase>\n");
+                this.testcases_metrics.skipped += 1;
+                try this.contents.appendSlice(bun.default_allocator, ">\n      <skipped message=\"TODO\" />\n    </testcase>\n");
             },
             .pending => unreachable,
         }
@@ -250,6 +414,26 @@ pub const JunitReporter = struct {
 
     pub fn writeToFile(this: *JunitReporter, path: string) !void {
         if (this.contents.items.len == 0) return;
+        {
+            var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+            defer arena.deinit();
+            var stack_fallback_allocator = std.heap.stackFallback(4096, arena.allocator());
+            const allocator = stack_fallback_allocator.get();
+            const metrics = this.total_metrics;
+            const elapsed_time = @as(f64, @floatFromInt(std.time.nanoTimestamp() - bun.start_time)) / std.time.ns_per_s;
+            const summary = try std.fmt.allocPrint(allocator,
+                \\tests="{d}" assertions="{d}" failures="{d}" skipped="{d}" time="{d}"
+            , .{
+                metrics.test_cases,
+                metrics.assertions,
+                metrics.failures,
+                metrics.skipped,
+                elapsed_time,
+            });
+            this.contents.insertSlice(bun.default_allocator, this.offset_of_testsuites_value, summary) catch bun.outOfMemory();
+            this.contents.appendSlice(bun.default_allocator, "</testsuites>\n") catch bun.outOfMemory();
+        }
+
         var junit_path_buf: bun.PathBuffer = undefined;
 
         @memcpy(junit_path_buf[0..path.len], path);
@@ -369,26 +553,41 @@ pub const CommandLineReporter = struct {
         writer.writeAll("\n") catch unreachable;
 
         if (junit) |reporter| {
-            if (!strings.eql(reporter.current_file, file)) {
+            const filename = brk: {
+                if (strings.hasPrefix(file, bun.fs.FileSystem.instance.top_level_dir)) {
+                    break :brk strings.withoutLeadingPathSeparator(file[bun.fs.FileSystem.instance.top_level_dir.len..]);
+                } else {
+                    break :brk file;
+                }
+            };
+            if (!strings.eql(reporter.current_file, filename)) {
                 if (reporter.current_file.len > 0) {
                     reporter.endTestSuite() catch bun.outOfMemory();
                 }
-                reporter.beginTestSuite(file) catch bun.outOfMemory();
+
+                reporter.beginTestSuite(filename) catch bun.outOfMemory();
             }
 
             var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+            defer arena.deinit();
             var stack_fallback = std.heap.stackFallback(4096, arena.allocator());
             const allocator = stack_fallback.get();
             var concatenated_describe_scopes = std.ArrayList(u8).init(allocator);
-            for (scopes, 0..) |scope, i| {
-                if (i > 0) {
-                    concatenated_describe_scopes.appendSlice("::") catch bun.outOfMemory();
-                }
 
-                escapeXml(scope.label, concatenated_describe_scopes.writer()) catch bun.outOfMemory();
+            {
+                const initial_length = concatenated_describe_scopes.items.len;
+                for (scopes) |scope| {
+                    if (scope.label.len > 0) {
+                        if (initial_length != concatenated_describe_scopes.items.len) {
+                            concatenated_describe_scopes.appendSlice(" &gt; ") catch bun.outOfMemory();
+                        }
+
+                        escapeXml(scope.label, concatenated_describe_scopes.writer()) catch bun.outOfMemory();
+                    }
+                }
             }
 
-            reporter.writeTestCase(status, file, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns) catch bun.outOfMemory();
+            reporter.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns) catch bun.outOfMemory();
         }
     }
 
@@ -1342,7 +1541,6 @@ pub const TestCommand = struct {
         if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage)) {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
-            Global.exit(reporter.jest.unhandled_errors_between_tests);
         }
     }
 

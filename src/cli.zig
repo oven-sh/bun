@@ -306,7 +306,7 @@ pub const Arguments = struct {
         clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
-        clap.parseParam("--junit-reporter <STR>           Write a JUnit XML report to the given path") catch unreachable,
+        clap.parseParam("--junit-report <STR>             Write a JUnit XML report to the given path (useful for CI/CD pipelines)") catch unreachable,
     };
     pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -525,7 +525,7 @@ pub const Arguments = struct {
                 }
             }
 
-            if (args.option("--junit-reporter")) |junit_report| {
+            if (args.option("--junit-report")) |junit_report| {
                 ctx.test_options.junit_report = junit_report;
             }
 

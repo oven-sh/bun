@@ -250,9 +250,9 @@ class BunDiagnosticsManager {
     });
 
     const dispose = async () => {
+      debugAdapter.removeAllListeners();
       await debugAdapter.send("LifecycleReporter.stopPreventingExit");
       debugAdapter.close();
-      debugAdapter.removeAllListeners();
       coverageReporter.dispose();
     };
 

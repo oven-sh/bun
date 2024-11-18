@@ -190,6 +190,7 @@ struct us_socket_context_options_t {
 };
 
 struct us_bun_verify_error_t {
+    // this is a long because can store a result of BoringSSL.SSL_get_verify_result
     long error;
     const char* code;
     const char* reason;

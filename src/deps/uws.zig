@@ -95,7 +95,7 @@ pub const InternalLoopData = extern struct {
 
 pub const UpgradedDuplex = struct {
     pub const CertError = struct {
-        error_no: i32 = 0,
+        error_no: i64 = 0,
         code: [:0]const u8 = "",
         reason: [:0]const u8 = "",
 
@@ -154,7 +154,7 @@ pub const UpgradedDuplex = struct {
         log("onHandshake", .{});
 
         this.ssl_error = .{
-            .error_no = ssl_error.error_no,
+            .error_no = @intCast(ssl_error.error_no),
             .code = if (ssl_error.code == null or ssl_error.error_no == 0) "" else bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0]) catch bun.outOfMemory(),
             .reason = if (ssl_error.reason == null or ssl_error.error_no == 0) "" else bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0]) catch bun.outOfMemory(),
         };
@@ -1700,7 +1700,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return this.getError() != 0;
         }
 
-        pub fn getError(this: ThisSocket) i32 {
+        pub fn getError(this: ThisSocket) i64 {
             switch (this.socket) {
                 .connected => |socket| {
                     return us_socket_get_error(

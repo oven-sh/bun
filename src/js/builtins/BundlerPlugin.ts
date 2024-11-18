@@ -47,12 +47,14 @@ interface PluginBuilderExt extends PluginBuilder {
   esbuild: any;
 }
 
+type BeforeOnParseExternal = unknown;
+
 export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: BuildConfigExt) {
   var onLoadPlugins = new Map<string, [RegExp, AnyFunction][]>();
   var onResolvePlugins = new Map<string, [RegExp, AnyFunction][]>();
-  var onBeforeParsePlugins = new Map<string, [RegExp, AnyFunction][]>();
+  var onBeforeParsePlugins = new Map<string, [RegExp, AnyFunction, BeforeOnParseExternal | undefined][]>();
 
-  function validate(filterObject: PluginConstraints, callback, map) {
+  function validate(filterObject: PluginConstraints, callback, map, external) {
     if (!filterObject || !$isObject(filterObject)) {
       throw new TypeError('Expected an object with "filter" RegExp');
     }
@@ -61,10 +63,13 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
       throw new TypeError("callback must be a function");
     }
 
+    let isOnBeforeParse = false;
     if (map === onBeforeParsePlugins) {
+      isOnBeforeParse = true;
       if (typeof callback.ptr !== "number" && typeof callback?.native?.ptr !== "number") {
         throw new TypeError("onBeforeParse callback must be an FFI function");
       }
+      // TODO: How do we know if it's a napi external??
     }
 
     var { filter, namespace = "file" } = filterObject;
@@ -92,22 +97,22 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     var callbacks = map.$get(namespace);
 
     if (!callbacks) {
-      map.$set(namespace, [[filter, callback]]);
+      map.$set(namespace, [isOnBeforeParse ? [filter, callback, external] : [filter, callback]]);
     } else {
-      $arrayPush(callbacks, [filter, callback]);
+      $arrayPush(callbacks, isOnBeforeParse ? [filter, callback, external] : [filter, callback]);
     }
   }
 
   function onLoad(filterObject, callback) {
-    validate(filterObject, callback, onLoadPlugins);
+    validate(filterObject, callback, onLoadPlugins, undefined);
   }
 
   function onResolve(filterObject, callback) {
-    validate(filterObject, callback, onResolvePlugins);
+    validate(filterObject, callback, onResolvePlugins, undefined);
   }
 
-  function onBeforeParse(filterObject, callback) {
-    validate(filterObject, callback, onBeforeParsePlugins);
+  function onBeforeParse(filterObject, callback, external) {
+    validate(filterObject, callback, onBeforeParsePlugins, external);
   }
 
   const processSetupResult = () => {
@@ -130,8 +135,8 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     }
 
     for (var [namespace, callbacks] of onBeforeParsePlugins.entries()) {
-      for (var [filter, callback] of callbacks) {
-        this.onBeforeParse(filter, namespace, callback);
+      for (var [filter, callback, entries] of callbacks) {
+        this.onBeforeParse(filter, namespace, callback, entries);
         anyOnBeforeParse = true;
       }
     }

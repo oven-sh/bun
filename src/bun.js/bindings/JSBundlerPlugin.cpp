@@ -25,6 +25,7 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/YarrMatchingContextHolder.h>
 #include "ErrorCode.h"
+#include "napi_external.h"
 namespace Bun {
 
 extern "C" int OnBeforeParsePlugin__isDone(void* context);
@@ -281,6 +282,15 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     if (!callback) {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected callback (2nd argument) to be an FFI function"_s);
         return {};
+    }
+
+    JSC::JSValue external = callFrame->argument(3);
+    if (!external.isUndefinedOrNull()) {
+        auto* externalPtr = jsDynamicCast<Bun::NapiExternal*>(external);
+        if (UNLIKELY(!externalPtr)) {
+            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected external (3rd argument) to be a NAPI external"_s);
+            return {};
+        }
     }
 
     thisObject->plugin.onBeforeParse.append(vm, regExp->regExp(), namespaceStr, callback);

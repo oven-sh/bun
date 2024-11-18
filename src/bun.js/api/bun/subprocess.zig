@@ -1876,7 +1876,7 @@ pub const Subprocess = struct {
 
                 if (args.getTruthy(globalThis, "deathSig")) |death_signal_val| {
                     if (death_signal_val.isNumber()) {
-                        const signal_int = globalThis.validateIntegerRange(death_signal_val, u8, 0, .{ .min = 1, .max = @intFromEnum(bun.SignalCode.max) }) orelse return .zero;
+                        const signal_int = globalThis.validateIntegerRange(death_signal_val, u8, 0, .{ .min = 1, .max = bun.SignalCode.max }) orelse return .zero;
                         death_signal = @enumFromInt(signal_int);
                     } else if (death_signal_val.isString()) {
                         death_signal = bun.SignalCode.Map.fromJS(globalThis, death_signal_val) orelse {

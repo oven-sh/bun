@@ -435,7 +435,7 @@ describe("Server", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    expect(stderr).toBeEmpty();
+    expect(stderr.toString('utf-8')).toBeEmpty();
     expect(exitCode).toBe(0);
   });
 });

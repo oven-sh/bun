@@ -122,7 +122,7 @@ pub const napi_deferred = *JSC.JSPromise.Strong;
 
 /// To ensure napi_values are not collected prematurely after being returned into a native module,
 /// you must use these functions rather than convert between napi_value and JSC.JSValue directly
-pub const napi_value = enum(JSC.JSValueReprInt) {
+pub const napi_value = enum(i64) {
     _,
 
     pub fn set(
@@ -144,16 +144,7 @@ pub const napi_value = enum(JSC.JSValueReprInt) {
     }
 };
 
-pub const struct_napi_escapable_handle_scope__ = opaque {};
-
 const char16_t = u16;
-pub const napi_default: c_int = 0;
-pub const napi_writable: c_int = 1;
-pub const napi_enumerable: c_int = 2;
-pub const napi_configurable: c_int = 4;
-pub const napi_static: c_int = 1024;
-pub const napi_default_method: c_int = 5;
-pub const napi_default_jsproperty: c_int = 7;
 pub const napi_property_attributes = c_uint;
 pub const napi_valuetype = enum(c_uint) {
     undefined = 0,
@@ -268,20 +259,11 @@ pub const napi_extended_error_info = extern struct {
     engine_error_code: u32,
     error_code: napi_status,
 };
-pub const napi_key_include_prototypes: c_int = 0;
-pub const napi_key_own_only: c_int = 1;
-pub const napi_key_collection_mode = c_uint;
-pub const napi_key_all_properties: c_int = 0;
-pub const napi_key_writable: c_int = 1;
-pub const napi_key_enumerable: c_int = 2;
-pub const napi_key_configurable: c_int = 4;
-pub const napi_key_skip_strings: c_int = 8;
-pub const napi_key_skip_symbols: c_int = 16;
-pub const napi_key_filter = c_uint;
-pub const napi_key_keep_numbers: c_int = 0;
-pub const napi_key_numbers_to_strings: c_int = 1;
-pub const napi_key_conversion = c_uint;
-pub const napi_type_tag = extern struct {
+
+const napi_key_collection_mode = c_uint;
+const napi_key_filter = c_uint;
+const napi_key_conversion = c_uint;
+const napi_type_tag = extern struct {
     lower: u64,
     upper: u64,
 };
@@ -1202,7 +1184,7 @@ pub const napi_node_version = extern struct {
 };
 pub const struct_napi_async_cleanup_hook_handle__ = opaque {};
 pub const napi_async_cleanup_hook_handle = ?*struct_napi_async_cleanup_hook_handle__;
-pub const napi_async_cleanup_hook = *const fn (napi_async_cleanup_hook_handle, ?*anyopaque) callconv(.C) void;
+pub const napi_async_cleanup_hook = ?*const fn (napi_async_cleanup_hook_handle, ?*anyopaque) callconv(.C) void;
 
 pub const napi_addon_register_func = *const fn (napi_env, napi_value) callconv(.C) napi_value;
 pub const struct_napi_module = extern struct {
@@ -1405,6 +1387,11 @@ pub export fn napi_get_uv_event_loop(env_: napi_env, loop_: ?*napi_event_loop) n
     return env.ok();
 }
 pub extern fn napi_fatal_exception(env: napi_env, err: napi_value) napi_status;
+pub extern fn napi_add_async_cleanup_hook(env: napi_env, function: napi_async_cleanup_hook, data: ?*anyopaque, handle_out: ?*napi_async_cleanup_hook_handle) napi_status;
+pub extern fn napi_add_env_cleanup_hook(env: napi_env, function: ?*const fn (?*anyopaque) void, data: ?*anyopaque) napi_status;
+pub extern fn napi_create_typedarray(env: napi_env, napi_typedarray_type, length: usize, arraybuffer: napi_value, byte_offset: usize, result: ?*napi_value) napi_status;
+pub extern fn napi_remove_async_cleanup_hook(handle: napi_async_cleanup_hook_handle) napi_status;
+pub extern fn napi_remove_env_cleanup_hook(env: napi_env, function: ?*const fn (?*anyopaque) void, data: ?*anyopaque) napi_status;
 
 extern fn napi_internal_cleanup_env_cpp(env: napi_env) callconv(.C) void;
 extern fn napi_internal_check_gc(env: napi_env) callconv(.C) void;
@@ -1759,11 +1746,9 @@ pub export fn napi_ref_threadsafe_function(env_: napi_env, func: napi_threadsafe
     return env.ok();
 }
 
-pub const NAPI_VERSION_EXPERIMENTAL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 2147483647, .decimal);
-pub const NAPI_VERSION = @as(c_int, 8);
-pub const NAPI_AUTO_LENGTH = std.math.maxInt(usize);
-pub const SRC_NODE_API_TYPES_H_ = "";
-pub const NAPI_MODULE_VERSION = @as(c_int, 1);
+const NAPI_VERSION = @as(c_int, 8);
+const NAPI_AUTO_LENGTH = std.math.maxInt(usize);
+const NAPI_MODULE_VERSION = @as(c_int, 1);
 
 /// v8:: C++ symbols defined in v8.cpp
 ///
@@ -1908,13 +1893,155 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?IsFunction@Value@v8@@QEBA_NXZ"() *anyopaque;
 };
 
+// To update this list, use find + multi-cursor in your editor.
+// - pub extern fn napi_
+// - pub export fn napi_
+const napi_functions_to_export = .{
+    napi_acquire_threadsafe_function,
+    napi_add_async_cleanup_hook,
+    napi_add_env_cleanup_hook,
+    napi_add_finalizer,
+    napi_adjust_external_memory,
+    napi_async_destroy,
+    napi_async_init,
+    napi_call_function,
+    napi_call_threadsafe_function,
+    napi_cancel_async_work,
+    napi_check_object_type_tag,
+    napi_close_callback_scope,
+    napi_close_escapable_handle_scope,
+    napi_close_handle_scope,
+    napi_coerce_to_bool,
+    napi_coerce_to_number,
+    napi_coerce_to_object,
+    napi_create_array,
+    napi_create_array_with_length,
+    napi_create_arraybuffer,
+    napi_create_async_work,
+    napi_create_bigint_int64,
+    napi_create_bigint_uint64,
+    napi_create_bigint_words,
+    napi_create_buffer,
+    napi_create_buffer_copy,
+    napi_create_dataview,
+    napi_create_date,
+    napi_create_double,
+    napi_create_error,
+    napi_create_external,
+    napi_create_external_arraybuffer,
+    napi_create_external_buffer,
+    napi_create_int32,
+    napi_create_int64,
+    napi_create_object,
+    napi_create_promise,
+    napi_create_range_error,
+    napi_create_reference,
+    napi_create_string_latin1,
+    napi_create_string_utf16,
+    napi_create_string_utf8,
+    napi_create_symbol,
+    napi_create_threadsafe_function,
+    napi_create_type_error,
+    napi_create_typedarray,
+    napi_create_uint32,
+    napi_define_class,
+    napi_define_properties,
+    napi_delete_async_work,
+    napi_delete_element,
+    napi_delete_reference,
+    napi_detach_arraybuffer,
+    napi_escape_handle,
+    napi_fatal_error,
+    napi_fatal_exception,
+    napi_get_all_property_names,
+    napi_get_and_clear_last_exception,
+    napi_get_array_length,
+    napi_get_arraybuffer_info,
+    napi_get_boolean,
+    napi_get_buffer_info,
+    napi_get_cb_info,
+    napi_get_dataview_info,
+    napi_get_date_value,
+    napi_get_element,
+    napi_get_global,
+    napi_get_instance_data,
+    napi_get_last_error_info,
+    napi_get_new_target,
+    napi_get_node_version,
+    napi_get_null,
+    napi_get_prototype,
+    napi_get_reference_value,
+    napi_get_threadsafe_function_context,
+    napi_get_typedarray_info,
+    napi_get_undefined,
+    napi_get_uv_event_loop,
+    napi_get_value_bigint_int64,
+    napi_get_value_bigint_uint64,
+    napi_get_value_bigint_words,
+    napi_get_value_bool,
+    napi_get_value_double,
+    napi_get_value_external,
+    napi_get_value_int32,
+    napi_get_value_int64,
+    napi_get_value_string_latin1,
+    napi_get_value_string_utf16,
+    napi_get_value_string_utf8,
+    napi_get_value_uint32,
+    napi_get_version,
+    napi_has_element,
+    napi_instanceof,
+    napi_is_array,
+    napi_is_arraybuffer,
+    napi_is_buffer,
+    napi_is_dataview,
+    napi_is_date,
+    napi_is_detached_arraybuffer,
+    napi_is_error,
+    napi_is_exception_pending,
+    napi_is_promise,
+    napi_is_typedarray,
+    napi_make_callback,
+    napi_new_instance,
+    napi_open_callback_scope,
+    napi_open_escapable_handle_scope,
+    napi_open_handle_scope,
+    napi_queue_async_work,
+    napi_ref_threadsafe_function,
+    napi_reference_ref,
+    napi_reference_unref,
+    napi_reject_deferred,
+    napi_release_threadsafe_function,
+    napi_remove_async_cleanup_hook,
+    napi_remove_env_cleanup_hook,
+    napi_remove_wrap,
+    napi_resolve_deferred,
+    napi_run_script,
+    napi_set_element,
+    napi_set_instance_data,
+    napi_strict_equals,
+    napi_throw,
+    napi_throw_error,
+    napi_throw_range_error,
+    napi_throw_type_error,
+    napi_type_tag_object,
+    napi_typeof,
+    napi_unref_threadsafe_function,
+    napi_unwrap,
+    napi_wrap,
+
+    // -- node-api
+    node_api_create_syntax_error,
+    node_api_symbol_for,
+    node_api_throw_syntax_error,
+    node_api_create_external_string_latin1,
+    node_api_create_external_string_utf16,
+};
+
 pub fn fixDeadCodeElimination() void {
     JSC.markBinding(@src());
 
-    inline for (comptime std.meta.declarations(@This())) |decl| {
-        if (std.mem.startsWith(u8, decl.name, "node_api_") or std.mem.startsWith(u8, decl.name, "napi_")) {
-            std.mem.doNotOptimizeAway(&@field(@This(), decl.name));
-        }
+    inline for (napi_functions_to_export) |fn_name| {
+        std.mem.doNotOptimizeAway(&fn_name);
     }
 
     inline for (comptime std.meta.declarations(V8API)) |decl| {

@@ -37,18 +37,8 @@ else
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
-const cmath = struct {
-    extern "c" fn powf(x: f32, y: f32) f32;
-    extern "c" fn pow(x: f64, y: f64) f64;
-};
-
-pub inline fn powf(x: f32, y: f32) f32 {
-    return cmath.powf(x, y);
-}
-
-pub inline fn pow(x: f64, y: f64) f64 {
-    return cmath.pow(x, y);
-}
+pub extern "c" fn powf(x: f32, y: f32) f32;
+pub extern "c" fn pow(x: f64, y: f64) f64;
 
 /// Restrict a value to a certain interval unless it is a float and NaN.
 pub inline fn clamp(self: anytype, min: @TypeOf(self), max: @TypeOf(self)) @TypeOf(self) {
@@ -98,16 +88,17 @@ pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
     return default_allocator;
 }
 
-pub const OOM = error{OutOfMemory};
+pub const OOM = std.mem.Allocator.Error;
 
 pub const JSError = error{
-    /// There is an active exception on the global object. Options:
-    ///
-    /// - Bubble it up to the caller
-    /// - Call `global.takeException(err)` to get the JSValue of the exception,
-    /// - Call `global.reportActiveExceptionAsUnhandled(err)` to make it unhandled.
+    /// There is an active exception on the global object.
+    /// You should almost never have to construct this manually.
     JSError,
+    // XXX: This is temporary! meghan will remove this soon
+    OutOfMemory,
 };
+
+pub const JSOOM = OOM || JSError;
 
 pub const detectCI = @import("./ci_info.zig").detectCI;
 
@@ -139,6 +130,7 @@ pub const patch = @import("./patch.zig");
 pub const ini = @import("./ini.zig");
 pub const Bitflags = @import("./bitflags.zig").Bitflags;
 pub const css = @import("./css/css_parser.zig");
+pub const validators = @import("./bun.js/node/util/validators.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
@@ -327,7 +319,7 @@ pub const strings = @import("string_immutable.zig");
 pub const MutableString = @import("string_mutable.zig").MutableString;
 pub const RefCount = @import("./ref_count.zig").RefCount;
 
-pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
+pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.max_path_bytes;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
 pub const WPathBuffer = [std.os.windows.PATH_MAX_WIDE]u16;
 pub const OSPathChar = if (Environment.isWindows) u16 else u8;
@@ -1703,7 +1695,7 @@ pub noinline fn maybeHandlePanicDuringProcessReload() void {
     }
 
     // This shouldn't be reachable, but it can technically be because
-    // pthread_exit is a request and not guranteed.
+    // pthread_exit is a request and not guaranteed.
     if (isProcessReloadInProgressOnAnotherThread()) {
         while (true) {
             std.atomic.spinLoopHint();
@@ -2080,8 +2072,6 @@ pub const WTF = struct {
     /// The String type from WebKit's WTF library.
     pub const StringImpl = @import("./string.zig").WTFStringImpl;
 };
-
-pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
 
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
@@ -3318,6 +3308,7 @@ pub inline fn resolveSourcePath(
     comptime sub_path: string,
 ) string {
     return comptime path: {
+        @setEvalBranchQuota(2000000);
         var buf: bun.PathBuffer = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const resolved = (std.fs.path.resolve(fba.allocator(), &.{
@@ -3342,7 +3333,7 @@ const RuntimeEmbedRoot = enum {
 pub fn runtimeEmbedFile(
     comptime root: RuntimeEmbedRoot,
     comptime sub_path: []const u8,
-) []const u8 {
+) [:0]const u8 {
     comptime assert(Environment.isDebug);
     comptime assert(!Environment.codegen_embed);
 
@@ -3352,11 +3343,18 @@ pub fn runtimeEmbedFile(
     };
 
     const static = struct {
-        var storage: []const u8 = undefined;
+        var storage: [:0]const u8 = undefined;
         var once = std.once(load);
 
         fn load() void {
-            storage = std.fs.cwd().readFileAlloc(default_allocator, abs_path, std.math.maxInt(usize)) catch |e| {
+            storage = std.fs.cwd().readFileAllocOptions(
+                default_allocator,
+                abs_path,
+                std.math.maxInt(usize),
+                null,
+                @alignOf(u8),
+                '\x00',
+            ) catch |e| {
                 Output.panic(
                     \\Failed to load '{s}': {}
                     \\
@@ -3460,6 +3458,9 @@ pub fn SliceIterator(comptime T: type) type {
 }
 
 pub const Futex = @import("./futex.zig");
+
+// TODO: migrate
+pub const ArenaAllocator = std.heap.ArenaAllocator;
 
 pub const crash_handler = @import("crash_handler.zig");
 pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
@@ -3957,7 +3958,7 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             none = std.math.maxInt(backing_int),
             _,
 
-            pub inline fn init(maybe: ?Index) ?Index {
+            pub inline fn init(maybe: ?Index) Optional {
                 return if (maybe) |i| i.toOptional() else .none;
             }
 
@@ -4090,3 +4091,14 @@ pub inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
     comptime assertNoPointers(@TypeOf(thing)); // catch silly mistakes
     hasher.update(std.mem.asBytes(&thing));
 }
+
+pub inline fn isComptimeKnown(x: anytype) bool {
+    return comptime @typeInfo(@TypeOf(.{x})).Struct.fields[0].is_comptime;
+}
+
+pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
+    return if (index < slice.len) slice[index] else null;
+}
+
+/// Code used by the classes generator
+pub const gen_classes_lib = @import("gen_classes_lib.zig");

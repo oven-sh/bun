@@ -167,6 +167,7 @@ export interface BundlerTestInput {
   format?: "esm" | "cjs" | "iife" | "internal_bake_dev";
   globalName?: string;
   ignoreDCEAnnotations?: boolean;
+  bytecode?: boolean;
   emitDCEAnnotations?: boolean;
   inject?: string[];
   jsx?: {

@@ -434,10 +434,14 @@ pub export fn Bun__isNapiFinalizerQueueEmpty(globalObject: *JSGlobalObject) bool
     return globalObject.bunVM().eventLoop().napi_finalizer_queue.count == 0;
 }
 
-pub export fn Bun__Process__send(
+comptime {
+    const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
+    @export(Bun__Process__send, .{ .name = "Bun__Process__send" });
+}
+pub fn Bun__Process__send_(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
-) callconv(JSC.conv) JSValue {
+) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
     var message, var handle, var options_, var callback = callFrame.arguments(4).ptr;
 
@@ -458,7 +462,7 @@ pub export fn Bun__Process__send(
     }
 
     const S = struct {
-        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments_ = callframe.arguments(1).slice();
             const ex = arguments_[0];
             VirtualMachine.Process__emitErrorEvent(globalThis, ex);
@@ -1871,7 +1875,7 @@ pub const VirtualMachine = struct {
             },
         }
 
-        if (debugger != .unspecified) {
+        if (this.debugger != null) {
             this.bundler.options.minify_identifiers = false;
             this.bundler.options.minify_syntax = false;
             this.bundler.options.minify_whitespace = false;
@@ -1975,7 +1979,7 @@ pub const VirtualMachine = struct {
         return vm;
     }
 
-    pub fn initKit(opts: Options) anyerror!*VirtualMachine {
+    pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         JSC.markBinding(@src());
         const allocator = opts.allocator;
         var log: *logger.Log = undefined;
@@ -4385,9 +4389,6 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 // const path = Fs.PathName.init(file_path);
                 const current_hash = hashes[event.index];
 
-                // if (this.verbose)
-                //     std.debug.print("onFileUpdate {s} ({s}, {})\n", .{ file_path, @tagName(kind), event.op });
-
                 switch (kind) {
                     .file => {
                         if (event.op.delete or event.op.rename) {
@@ -4564,7 +4565,7 @@ comptime {
     @export(string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
 }
 
-pub export fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const args = callframe.arguments(1).slice();
     if (args.len < 1) {
         globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);

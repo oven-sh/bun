@@ -237,8 +237,7 @@ pub const StatWatcher = struct {
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Arguments {
             const vm = ctx.vm();
             const path = try PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator) orelse {
-                ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
-                return error.JSError;
+                return ctx.throwInvalidArguments2("filename must be a string or TypedArray", .{});
             };
 
             var listener: JSC.JSValue = .zero;
@@ -250,15 +249,14 @@ pub const StatWatcher = struct {
                 // options
                 if (options_or_callable.isObject()) {
                     // default true
-                    persistent = (try options_or_callable.getOptional(ctx, "persistent", bool)) orelse true;
+                    persistent = (try options_or_callable.getBooleanStrict(ctx, "persistent")) orelse true;
 
                     // default false
-                    bigint = (try options_or_callable.getOptional(ctx, "bigint", bool)) orelse false;
+                    bigint = (try options_or_callable.getBooleanStrict(ctx, "bigint")) orelse false;
 
                     if (options_or_callable.get(ctx, "interval")) |interval_| {
                         if (!interval_.isNumber() and !interval_.isAnyInt()) {
-                            ctx.throwInvalidArguments("interval must be a number", .{});
-                            return error.JSError;
+                            return ctx.throwInvalidArguments2("interval must be a number", .{});
                         }
                         interval = interval_.coerce(i32, ctx);
                     }
@@ -272,8 +270,7 @@ pub const StatWatcher = struct {
             }
 
             if (listener == .zero) {
-                ctx.throwInvalidArguments("Expected \"listener\" callback", .{});
-                return error.JSError;
+                return ctx.throwInvalidArguments2("Expected \"listener\" callback", .{});
             }
 
             return Arguments{
@@ -295,7 +292,7 @@ pub const StatWatcher = struct {
         }
     };
 
-    pub fn doRef(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doRef(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (!this.closed and !this.persistent) {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
@@ -303,7 +300,7 @@ pub const StatWatcher = struct {
         return .undefined;
     }
 
-    pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (this.persistent) {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
@@ -329,7 +326,7 @@ pub const StatWatcher = struct {
         this.last_jsvalue.clear();
     }
 
-    pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         this.close();
         return .undefined;
     }

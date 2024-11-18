@@ -142,7 +142,11 @@ class CoverageReporter {
       return this.reportCoverage(adapter, event, uri, offsetToPos);
     };
 
-    await report();
+    // Once we've got at least 1 report, it's safe to stop preventing exit
+    // as there's something valuable to show the user
+    /* */ await report();
+    /* */ await adapter.send("LifecycleReporter.stopPreventingExit");
+
     const timer = setInterval(report, 1000);
     this.coverageIntervalMap.set(event.scriptId, timer);
   }

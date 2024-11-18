@@ -29,7 +29,7 @@ execute_process(
 )
 
 if(NOT GIT_DIFF_RESULT EQUAL 0)
-  message(${WARNING} "Command failed: ${GIT_DIFF_COMMAND} ${GIT_DIFF_ERROR}")
+  message(WARNING "Command failed: ${GIT_DIFF_COMMAND} ${GIT_DIFF_ERROR}")
   return()
 endif()
 

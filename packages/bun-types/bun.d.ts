@@ -4862,6 +4862,35 @@ declare module "bun" {
        * ```
        */
       signal?: AbortSignal;
+
+      /**
+       * When Bun exits, automatically send this signal to subprocesses. This is
+       * helpful in cases where you want to make it harder for a subprocess to
+       * continue running after Bun has exited. Detached processes will ignore this.
+       *
+       * **Linux-only** - internally, this uses [`prctl(PR_SET_PDEATHSIG, ...)`](https://man7.org/linux/man-pages/man2/pr_set_pdeathsig.2const.html)
+       * When used on other platforms, this option is silently ignored.
+       *
+       * @example
+       *
+       * ```ts
+       * import {spawn} from "bun";
+       * const subprocess = spawn({
+       *  cmd: ["sleep", "1000000"],
+       *  deathSig: "SIGTERM",
+       * });
+       * process.exit(0);
+       * ```
+       *
+       * Then, run
+       *
+       * ```sh
+       * ps aux | grep sleep
+       * ```
+       *
+       * You'll see that the `sleep` process is no longer running after the `ps` command is run.
+       */
+      deathSig?: "SIGTERM" | "SIGINT" | "SIGKILL" | number | string;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =

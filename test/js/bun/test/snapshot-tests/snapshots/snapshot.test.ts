@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { expect, it, test } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import { bunExe, tempDirWithFiles } from "harness";
 
 function test1000000(arg1: any, arg218718132: any) {}
@@ -167,39 +167,72 @@ it("should work with expect.anything()", () => {
   // expect({ a: 0 }).toMatchSnapshot({ a: expect.anything() });
 });
 
-test("snapshot doesn't grow", async () => {
-  const dir = tempDirWithFiles("snapshot-doesnt-grow", {
-    "snapshot.test.ts": `
-      it("don't grow forever", async () => {
-        expect(\`\\$\`).toMatchSnapshot();
-        expect(\`\\\${}\`).toMatchSnapshot();
-        expect(\`æ™\n\r!!!!*5897yhduN\\"\\'\\\`Il\`).toMatchSnapshot();
-      });
-    `,
+function defaultWrap(a: string): string {
+  return `test("abc", () => { expect(${a}).toMatchSnapshot() });`;
+}
+
+class SnapshotTester {
+  dir: string;
+  targetSnapshotContents: string;
+  isFirst: boolean = true;
+  constructor() {
+    this.dir = tempDirWithFiles("snapshotTester", { "snapshot.test.ts": "" });
+    this.targetSnapshotContents = "";
+  }
+  test(label: string, contents: string, opts: { shouldNotError: boolean } = { shouldNotError: false }) {
+    test(label, async () => await this.update(contents, opts));
+  }
+  async update(contents: string, opts: { shouldNotError: boolean } = { shouldNotError: false }) {
+    const isFirst = this.isFirst;
+    this.isFirst = false;
+    await Bun.write(this.dir + "/snapshot.test.ts", contents);
+
+    if (!opts.shouldNotError) {
+      if (!isFirst) {
+        // make sure it fails first:
+        expect((await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.nothrow().quiet()).exitCode).toBe(1);
+        // make sure the existing snapshot is unchanged:
+        expect(await Bun.file(this.dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(
+          this.targetSnapshotContents,
+        );
+      }
+      // update snapshots now, using -u flag unless this is the first run
+      await $`cd ${this.dir} && ${bunExe()} test ${isFirst ? "" : "-u"} ./snapshot.test.ts`.quiet();
+      // make sure the snapshot changed & didn't grow
+      const newContents = await Bun.file(this.dir + "/__snapshots__/snapshot.test.ts.snap").text();
+      if (!isFirst) {
+        expect(newContents).not.toStartWith(this.targetSnapshotContents);
+      }
+      this.targetSnapshotContents = newContents;
+    }
+    // run, make sure snapshot does not change
+    await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.quiet();
+    expect(await Bun.file(this.dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(this.targetSnapshotContents);
+  }
+}
+
+describe("snapshots", async () => {
+  const t = new SnapshotTester();
+  await t.update(defaultWrap("''"));
+
+  t.test("dollars", defaultWrap("`\\$`"));
+  t.test("backslash", defaultWrap("`\\\\`"));
+  t.test("dollars curly", defaultWrap("`\\${}`"));
+  t.test("dollars curly 2", defaultWrap("`\\${`"));
+  t.test("stuff", defaultWrap(`\`æ™\n\r!!!!*5897yhduN\\"\\'\\\`Il\``));
+  t.test("stuff 2", defaultWrap(`\`æ™\n\r!!!!*5897yh!uN\\"\\'\\\`Il\``));
+
+  t.test("regexp 1", defaultWrap("/${1..}/"));
+  t.test("regexp 2", defaultWrap("/${2..}/"));
+  t.test("string", defaultWrap('"abc"'));
+  t.test("string with newline", defaultWrap('"qwerty\\nioup"'));
+
+  t.test("null byte", defaultWrap('"1 \x00"'));
+  t.test("null byte 2", defaultWrap('"2 \\x00"'));
+
+  test("jest newline oddity", async () => {
+    await t.update(defaultWrap("'\\n'"));
+    await t.update(defaultWrap("'\\r'"), { shouldNotError: true });
+    await t.update(defaultWrap("'\\r\\n"), { shouldNotError: true });
   });
-  // pass once
-  await $`cd ${dir} && ${bunExe()} test snapshot.test.ts`;
-  const first_snapshot_value = await Bun.file(dir + "/__snapshots__/snapshot.test.ts.snap").text();
-  // pass subsequent times and make no changes
-  await $`cd ${dir} && ${bunExe()} test snapshot.test.ts`;
-  expect(await Bun.file(dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(first_snapshot_value);
-  await $`cd ${dir} && ${bunExe()} test snapshot.test.ts`;
-  expect(await Bun.file(dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(first_snapshot_value);
-
-  // fail after a change, do not modify snapshot output
-  await Bun.write(
-    dir + "/snapshot.test.ts",
-    `
-      it("don't grow forever", async () => {
-        expect(\`\\$\`).toMatchSnapshot();
-        expect(\`\\\$\`).toMatchSnapshot();
-        expect(\`æ™\n\r!!!!*5897yhduN\\"\\'\\\`Il\`).toMatchSnapshot();
-      });
-    `,
-  );
-
-  expect((await $`cd ${dir} && ${bunExe()} test snapshot.test.ts`.nothrow()).exitCode).not.toBe(0);
-  expect(await Bun.file(dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(first_snapshot_value);
-  expect((await $`cd ${dir} && ${bunExe()} test snapshot.test.ts`.nothrow()).exitCode).not.toBe(0);
-  expect(await Bun.file(dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(first_snapshot_value);
 });

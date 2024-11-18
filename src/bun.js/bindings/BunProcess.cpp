@@ -30,10 +30,6 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
-#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
-#include <JavaScriptCore/ConsoleClient.h>
-#include <JavaScriptCore/ConsoleMessage.h>
-#include <JavaScriptCore/ScriptArguments.h>
 #include "wtf-bindings.h"
 #include <webcore/SerializedScriptValue.h>
 #include "ProcessBindingTTYWrap.h"
@@ -885,37 +881,6 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
         wrapped.emit(uncaughtExceptionIdent, args);
     } else {
-        //     if (globalObject->inspectable()) {
-        //         if (auto* client = globalObject->inspectorController().consoleClient().get()) {
-        //             if (auto* errorInstance = jsDynamicCast<JSC::ErrorInstance*>(exception)) {
-        //                 Vector<Inspector::ScriptCallFrame> frames;
-        //                 if (auto* stack = errorInstance->stackTrace()) {
-        //                     for (auto& frame : *stack) {
-        //                         LineColumn lineColumn = frame.computeLineAndColumn();
-        //                         frames.append(Inspector::ScriptCallFrame {
-
-        //                             frame.functionName(vm),
-        //                             frame.sourceURL(vm),
-        //                             frame.sourceID(),
-        //                             lineColumn });
-        //                     }
-
-        //                     Vector<JSC::Strong<Unknown>> arguments;
-        //                     arguments.append({ vm, errorInstance });
-
-        //                     Vector<Inspector::ScriptArguments> args;
-        //                     args.append(Inspector::ScriptArguments::create(globalObject, WTFMove(arguments)));
-
-        //                     JSC::JSGlobalObjectDebuggable& id = globalObject->inspectorController();
-        //                 }
-        //             }
-
-        //             // client->logWithLevel(globalObject, WTFMove(arguments), JSC::MessageLevel::Error);
-
-        //             // client->printConsoleMessageWithArguments(JSC::MessageSource::JS, JSC::MessageType::Log, JSC::MessageLevel::Error, globalObject, WTFMove(arguments));
-        //         }
-        //     }
-
         return false;
     }
 

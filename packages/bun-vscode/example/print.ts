@@ -1,7 +1,3 @@
-process.on("uncaughtException", e => {
-  console.error(e);
-});
-
 await Bun.sleep(1000);
 await Bun.sleep(1000);
 

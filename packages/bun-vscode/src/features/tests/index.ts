@@ -159,9 +159,6 @@ export function registerTestRunner(context: vscode.ExtensionContext) {
         location: vscode.TerminalLocation.Panel,
         message,
         hideFromUser: true,
-        env: {
-          BUN_HIDE_INSPECTOR_MESSAGE: "1",
-        },
       };
 
       activeTerminal = vscode.window.createTerminal(terminalOptions);

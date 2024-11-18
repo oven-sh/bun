@@ -269,7 +269,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#inspector.emit = (event, ...args) => {
       let sent = false;
       sent ||= emit(event, ...args);
-      sent ||= this.emit(event, ...(args as any));
+      sent ||= this.emit(event as keyof JSC.EventMap, ...(args as any));
       return sent;
     };
     this.#sourceId = 1;

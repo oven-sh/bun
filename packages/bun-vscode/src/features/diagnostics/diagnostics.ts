@@ -51,9 +51,29 @@ function byteOffsetToPosition(text: string, offset: number) {
 class EditorStateManager {
   private decorations = new Set<vscode.TextEditorDecorationType>();
   private diagnosticCollection: vscode.DiagnosticCollection;
+  private disposables: vscode.Disposable[] = [];
 
   public constructor() {
     this.diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
+
+    this.disposables.push(
+      // When user is typing we should clear the decorations
+      vscode.workspace.onDidChangeTextDocument(e => {
+        if (this.decorations.size !== 0) {
+          this.clearDecorationsForUri(e.document.uri);
+        }
+      }),
+    );
+  }
+
+  clearDecorationsForUri(uri: vscode.Uri) {
+    const editor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
+
+    if (editor) {
+      for (const decoration of this.decorations) {
+        editor.setDecorations(decoration, []);
+      }
+    }
   }
 
   clearDecorations() {
@@ -83,6 +103,7 @@ class EditorStateManager {
 
   dispose() {
     this.clearAll();
+    this.disposables.forEach(d => d.dispose());
   }
 }
 
@@ -230,17 +251,18 @@ class BunDiagnosticsManager {
     // Clear all diagnostics and decorations so the editor is clean
     this.editorState.clearAll();
 
-    await this.setupDebugAdapter(new DebugAdapter(), new CoverageReporter(this.editorState));
-  }
+    const debugAdapter = new DebugAdapter();
+    const coverageReporter = new CoverageReporter(this.editorState);
 
-  private async setupDebugAdapter(debugAdapter: DebugAdapter, coverageReporter: CoverageReporter) {
     debugAdapter.on("Debugger.scriptParsed", async event => {
       await this.handleScriptParsed(debugAdapter, event, coverageReporter);
     });
 
-    debugAdapter.on("Console.messageAdded", params => {
-      this.handleConsoleMessage(params);
+    debugAdapter.on("Inspector.event", async event => {
+      console.log(JSON.stringify(event.method));
     });
+
+    debugAdapter.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
 
     const dispose = async () => {
       debugAdapter.removeAllListeners();
@@ -281,19 +303,24 @@ class BunDiagnosticsManager {
     await coverageReporter.createCoverageReportingTimer(debugAdapter, event, scriptSource, event.sourceMapURL);
   }
 
-  private handleConsoleMessage(params: JSC.Console.MessageAddedEvent) {
-    if (!params.message.parameters || !params.message.url) return;
+  private handleLifecycleError(params: JSC.LifecycleReporter.ErrorEvent) {
+    // params.lineColumns is flat pairs of line and columns from each stack frame, we only care about the first one
+    const [line = null, column = null] = params.lineColumns;
 
-    const lineAndCol = findOriginalLineAndColumn(params.message.parameters);
-    if (!lineAndCol) return;
+    if (line === null || column === null) {
+      return;
+    }
 
-    const uri = vscode.Uri.file(params.message.url);
-    const range = new vscode.Range(
-      new vscode.Position(lineAndCol.originalLine - 1, lineAndCol.originalColumn - 1),
-      new vscode.Position(lineAndCol.originalLine - 1, lineAndCol.originalColumn),
-    );
+    // params.urls is the url from each stack frame, and again we only care about the first one
+    const url = params.urls[0];
+    if (!url) {
+      return;
+    }
 
-    const diagnostic = new vscode.Diagnostic(range, params.message.text, vscode.DiagnosticSeverity.Error);
+    const uri = vscode.Uri.file(url);
+    const range = new vscode.Range(new vscode.Position(line - 1, column - 1), new vscode.Position(line - 1, column));
+
+    const diagnostic = new vscode.Diagnostic(range, params.message, vscode.DiagnosticSeverity.Error);
     this.editorState.setDiagnostic(uri, diagnostic);
   }
 
@@ -330,7 +357,6 @@ export async function registerDiagnosticsSocket(context: vscode.ExtensionContext
 
   context.environmentVariableCollection.append("BUN_INSPECT", `${manager.bunInspectUrl}?wait=1`);
   context.environmentVariableCollection.append("BUN_INSPECT_NOTIFY", manager.signalUrl);
-  context.environmentVariableCollection.append("BUN_HIDE_INSPECTOR_MESSAGE", "1");
 
   context.subscriptions.push(manager);
 }

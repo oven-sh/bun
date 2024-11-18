@@ -310,7 +310,7 @@ pub fn crashHandler(
                         }
                         if (reason == .out_of_memory) {
                             writer.writeAll(
-                                \\Bun has ran out of memory.
+                                \\Bun has run out of memory.
                                 \\
                                 \\To send a redacted crash report to Bun's team,
                                 \\please file a GitHub issue using the link below:
@@ -1773,4 +1773,12 @@ pub fn removePreCrashHandler(ptr: *anyopaque) void {
         if (item.@"0" == ptr) break i;
     } else return;
     _ = before_crash_handlers.orderedRemove(index);
+}
+
+export fn Bun__crashHandler(message_ptr: [*]u8, message_len: usize) noreturn {
+    crashHandler(.{ .panic = message_ptr[0..message_len] }, null, @returnAddress());
+}
+
+comptime {
+    _ = &Bun__crashHandler;
 }

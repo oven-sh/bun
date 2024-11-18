@@ -21,6 +21,7 @@
 
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
 extern "C" void napi_internal_crash_in_gc(napi_env);
+extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
 namespace Napi {
 struct AsyncCleanupHook {
@@ -41,11 +42,13 @@ struct napi_async_cleanup_hook_handle__ {
     }
 };
 
+#define NAPI_ABORT(message) Bun__crashHandler(message "", sizeof(message "") - 1)
+
 #define NAPI_PERISH(...)                                                      \
     do {                                                                      \
         WTFReportError(__FILE__, __LINE__, __PRETTY_FUNCTION__, __VA_ARGS__); \
         WTFReportBacktrace();                                                 \
-        WTFCrash();                                                           \
+        NAPI_ABORT("Aborted");                                                \
     } while (0)
 
 #define NAPI_RELEASE_ASSERT(assertion, ...)                                                                         \
@@ -53,7 +56,7 @@ struct napi_async_cleanup_hook_handle__ {
         if (UNLIKELY(!(assertion))) {                                                                               \
             WTFReportAssertionFailureWithMessage(__FILE__, __LINE__, __PRETTY_FUNCTION__, #assertion, __VA_ARGS__); \
             WTFReportBacktrace();                                                                                   \
-            WTFCrash();                                                                                             \
+            NAPI_ABORT("Aborted");                                                                                  \
         }                                                                                                           \
     } while (0)
 

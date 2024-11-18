@@ -12,7 +12,6 @@
 #include <signal.h>
 #include <sys/syscall.h>
 #include <sys/resource.h>
-#include <linux/prctl.h> /* Definition of PR_* constants */
 #include <sys/prctl.h>
 
 extern char** environ;

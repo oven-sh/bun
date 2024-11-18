@@ -142,6 +142,12 @@ class CoverageReporter {
     uri: vscode.Uri,
     transpiledOffsetToOriginalPosition: (offset: number) => vscode.Position,
   ) {
+    const editor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
+
+    if (!editor) {
+      return;
+    }
+
     const response = await adapter
       .send("Runtime.getBasicBlocks", {
         sourceID: event.scriptId,
@@ -152,6 +158,9 @@ class CoverageReporter {
 
     this.editorState.clearAll();
 
+    // Track which lines already have decorations
+    const decoratedLines = new Set<number>();
+
     for (const block of response.basicBlocks) {
       if (!block.hasExecuted) continue;
 
@@ -161,23 +170,21 @@ class CoverageReporter {
       if (end.character === uri.fsPath.length) continue;
 
       const rangeKey = `${event.scriptId}:${block.startOffset}-${block.endOffset}`;
-      const currentCount = (this.executionCounts.get(rangeKey) ?? 0) + 1;
+      const currentCount = (this.executionCounts.get(rangeKey) ?? 1) + 1;
       this.executionCounts.set(rangeKey, currentCount);
 
-      if (currentCount > 2) {
+      if (currentCount > 2 && !decoratedLines.has(start.line)) {
+        decoratedLines.add(start.line);
         const range = new vscode.Range(start, end);
         const decorationType = vscode.window.createTextEditorDecorationType({
-          backgroundColor: "rgba(79, 250, 123, 0.08)",
+          borderColor: new vscode.ThemeColor("editorGutter.addedBackground"),
+          borderWidth: "0 0 0 2px",
+          borderStyle: "solid",
+          isWholeLine: true,
         });
 
-        const editor = vscode.window.visibleTextEditors.find(
-          editor => editor.document.uri.toString() === uri.toString(),
-        );
-
-        if (editor) {
-          editor.setDecorations(decorationType, [{ range }]);
-          this.editorState.addDecoration(decorationType);
-        }
+        editor.setDecorations(decorationType, [{ range }]);
+        this.editorState.addDecoration(decorationType);
       }
     }
   }

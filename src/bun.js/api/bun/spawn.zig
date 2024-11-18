@@ -367,6 +367,7 @@ pub const PosixSpawn = struct {
                     },
                     .chdir_buf = if (actions) |a| a.chdir_buf else null,
                     .detached = if (attr) |a| a.detached else false,
+                    .deathsig = if (attr) |a| a.deathsig else 0,
                 },
                 argv,
                 envp,

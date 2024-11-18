@@ -10,27 +10,6 @@ import {
 import { SourceMap } from "../../../../bun-debug-adapter-protocol/src/debugger/sourcemap";
 import type { JSC } from "../../../../bun-inspector-protocol";
 
-function findOriginalLineAndColumn(remoteObjects: JSC.Runtime.RemoteObject[]) {
-  for (const remoteObject of remoteObjects) {
-    if (remoteObject.type !== "object" || remoteObject.subtype !== "error" || !remoteObject.preview?.properties) {
-      continue;
-    }
-
-    const properties = remoteObject.preview.properties;
-    const originalLine = properties.find(prop => prop.name === "originalLine" && prop.type === "number")?.value;
-    const originalColumn = properties.find(prop => prop.name === "originalColumn" && prop.type === "number")?.value;
-
-    if (originalLine !== undefined && originalColumn !== undefined) {
-      return {
-        originalLine: parseInt(originalLine, 10),
-        originalColumn: parseInt(originalColumn, 10),
-      };
-    }
-  }
-
-  return null;
-}
-
 function byteOffsetToPosition(text: string, offset: number) {
   const lines = text.split("\n");
   let remainingOffset = offset;

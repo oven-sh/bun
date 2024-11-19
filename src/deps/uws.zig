@@ -154,7 +154,7 @@ pub const UpgradedDuplex = struct {
         log("onHandshake", .{});
 
         this.ssl_error = .{
-            .error_no = @intCast(ssl_error.error_no),
+            .error_no = ssl_error.error_no,
             .code = if (ssl_error.code == null or ssl_error.error_no == 0) "" else bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0]) catch bun.outOfMemory(),
             .reason = if (ssl_error.reason == null or ssl_error.error_no == 0) "" else bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0]) catch bun.outOfMemory(),
         };
@@ -2644,7 +2644,7 @@ pub const create_bun_socket_error_t = enum(i32) {
 
 pub const us_bun_verify_error_t = extern struct {
     // this is a c_long because can store a result of BoringSSL.SSL_get_verify_result
-    error_no: c_long = 0,
+    error_no: i64 = 0,
     code: [*c]const u8 = null,
     reason: [*c]const u8 = null,
 };

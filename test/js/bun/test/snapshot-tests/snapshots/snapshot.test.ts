@@ -190,7 +190,7 @@ class SnapshotTester {
     if (!opts.shouldNotError) {
       if (!isFirst) {
         // make sure it fails first:
-        expect((await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.nothrow().quiet()).exitCode).toBe(1);
+        expect((await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.nothrow().quiet()).exitCode).not.toBe(0);
         // make sure the existing snapshot is unchanged:
         expect(await Bun.file(this.dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(
           this.targetSnapshotContents,

@@ -2654,8 +2654,7 @@ pub const Crypto = struct {
                                     BoringSSL.ERR_clear_error();
                                     return globalThis.throwValue2(instance);
                                 } else {
-                                    globalThis.throwTODO("HMAC is not supported for this algorithm yet");
-                                    return error.JSError;
+                                    return globalThis.throwTODO("HMAC is not supported for this algorithm yet");
                                 }
                             }
                             return error.JSError;
@@ -3465,8 +3464,7 @@ pub fn mmapFile(
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
     if (comptime Environment.isWindows) {
-        globalThis.throwTODO("mmapFile is not supported on Windows");
-        return JSC.JSValue.zero;
+        return globalThis.throwTODO("mmapFile is not supported on Windows");
     }
 
     const arguments_ = callframe.arguments(2);

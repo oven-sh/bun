@@ -1185,33 +1185,18 @@ pub const Interpreter = struct {
         }
     };
 
-    pub fn createShellInterpreter(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
+    pub fn createShellInterpreter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const allocator = bun.default_allocator;
         const arguments_ = callframe.arguments(3);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
-        const resolve = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 3 arguments, got 0", .{});
-            return .undefined;
-        };
+        const resolve = arguments.nextEat() orelse return globalThis.throw2("shell: expected 3 arguments, got 0", .{});
 
-        const reject = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 3 arguments, got 0", .{});
-            return .undefined;
-        };
+        const reject = arguments.nextEat() orelse return globalThis.throw2("shell: expected 3 arguments, got 0", .{});
 
-        const parsed_shell_script_js = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 3 arguments, got 0", .{});
-            return .undefined;
-        };
+        const parsed_shell_script_js = arguments.nextEat() orelse return globalThis.throw2("shell: expected 3 arguments, got 0", .{});
 
-        const parsed_shell_script = parsed_shell_script_js.as(ParsedShellScript) orelse {
-            globalThis.throw("shell: expected a ParsedShellScript", .{});
-            return .undefined;
-        };
+        const parsed_shell_script = parsed_shell_script_js.as(ParsedShellScript) orelse return globalThis.throw2("shell: expected a ParsedShellScript", .{});
 
         var shargs: *ShellArgs = undefined;
         var jsobjs: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(allocator);
@@ -1219,10 +1204,7 @@ pub const Interpreter = struct {
         var cwd: ?bun.String = null;
         var export_env: ?EnvMap = null;
 
-        if (parsed_shell_script.args == null) {
-            globalThis.throw("shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.", .{});
-            return .undefined;
-        }
+        if (parsed_shell_script.args == null) return globalThis.throw2("shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.", .{});
 
         parsed_shell_script.take(
             globalThis,
@@ -1253,8 +1235,7 @@ pub const Interpreter = struct {
                 if (export_env) |*ee| ee.deinit();
                 if (cwd) |*cc| cc.deref();
                 shargs.deinit();
-                throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
-                return .zero;
+                return try throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
             },
         };
 
@@ -1264,7 +1245,7 @@ pub const Interpreter = struct {
             if (cwd) |*cc| cc.deref();
             shargs.deinit();
             interpreter.finalize();
-            return .zero;
+            return error.JSError;
         }
 
         interpreter.flags.quiet = quiet;
@@ -1477,8 +1458,8 @@ pub const Interpreter = struct {
             null,
         )) {
             .err => |*e| {
-                throwShellErr(e, .{ .mini = mini });
-                return 1;
+                throwShellErr(e, .{ .mini = mini }) catch unreachable;
+                unreachable;
             },
             .result => |i| i,
         };
@@ -1547,8 +1528,8 @@ pub const Interpreter = struct {
             null,
         )) {
             .err => |*e| {
-                throwShellErr(e, .{ .mini = mini });
-                return 1;
+                throwShellErr(e, .{ .mini = mini }) catch unreachable;
+                unreachable;
             },
             .result => |i| i,
         };
@@ -1648,8 +1629,7 @@ pub const Interpreter = struct {
         if (this.setupIOBeforeRun().asErr()) |e| {
             defer this.deinitEverything();
             const shellerr = bun.shell.ShellErr.newSys(e);
-            throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
-            return .undefined;
+            return try throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
         }
         incrPendingActivityFlag(&this.has_pending_activity);
 
@@ -2771,7 +2751,7 @@ pub const Interpreter = struct {
         }
 
         pub fn throw(this: *const State, err: *const bun.shell.ShellErr) void {
-            throwShellErr(err, this.eventLoop());
+            throwShellErr(err, this.eventLoop()) catch {}; //TODO:
         }
 
         pub fn rootIO(this: *const State) *const IO {
@@ -5750,7 +5730,7 @@ pub const Interpreter = struct {
         }
 
         pub inline fn throw(this: *const Builtin, err: *const bun.shell.ShellErr) void {
-            this.parentCmd().base.throw(err);
+            this.parentCmd().base.throw(err) catch {};
         }
 
         pub inline fn parentCmd(this: *const Builtin) *const Cmd {
@@ -12221,11 +12201,13 @@ inline fn fastMod(val: anytype, comptime rhs: comptime_int) @TypeOf(val) {
     return val & (rhs - 1);
 }
 
-fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) void {
-    switch (event_loop) {
+/// 'js' event loop will always return JSError
+/// 'mini' event loop will always return noreturn and exit 1
+fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) bun.JSError!noreturn {
+    return switch (event_loop) {
         .mini => e.throwMini(),
         .js => e.throwJS(event_loop.js.global),
-    }
+    };
 }
 
 pub const ReadChunkAction = enum {

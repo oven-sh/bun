@@ -2006,7 +2006,7 @@ pub const VirtualMachine = struct {
                 } else if (notify.len > 0) {
                     this.debugger = Debugger{
                         .path_or_port = null,
-                        .unix = notify,
+                        .from_environment_variable = notify,
                         .wait_for_connection = wait_for_connection,
                         .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
                         .mode = .connect,

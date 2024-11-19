@@ -1,13 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 describe("example", () => {
-  if (Math) {
-    console.log("Wow, what a surprise. this was called");
-  } else {
-    console.log("wtf?");
-  }
-
-  test("it works", async () => {
+  test("it works", () => {
     expect(1).toBe(1);
 
     expect(1).not.toBe(1);

@@ -3,7 +3,7 @@
     "lib": ["ESNext"],
     "module": "NodeNext",
     "target": "ESNext",
-    "moduleResolution": "NodeNext",
+    "moduleResolution": "bundler",
     "moduleDetection": "force",
     "strict": true,
     "downlevelIteration": true,

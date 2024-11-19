@@ -99,7 +99,7 @@ export default function (
   executionContextId: number,
   url: string,
   createBackend: CreateBackendFn,
-  send: (message: string) => void,
+  send: (message: string | string[]) => void,
   close: () => void,
   isAutomatic: boolean,
   urlIsServer: boolean,
@@ -402,33 +402,54 @@ async function connectToUnixServer(
   send: (message: string) => void,
   close: () => void,
 ) {
-  let backend: Writer | null = null;
-  const socket = await Bun.connect({
+  const socket = await Bun.connect<{ framer: SocketFramer; backend: Backend }>({
     unix,
     socket: {
-      open(socket) {
-        const backendRaw = createBackend(executionContextId, false, data => {
-          socket.write(data);
+      open: socket => {
+        const framer = new SocketFramer((message: string | string[]) => {
+          backend.write(message);
         });
-        backend = {
+
+        const backendRaw = createBackend(executionContextId, false, (...messages: string[]) => {
+          for (const message of messages) {
+            framer.send(socket, message);
+          }
+        });
+
+        const backend = {
           write: message => {
             send.$call(backendRaw, message);
             return true;
           },
           close: () => close.$call(backendRaw),
         };
+
+        socket.data = {
+          framer,
+          backend,
+        };
+
+        socket.ref();
       },
-      data(socket, data) {
-        if (backend) {
-          backend.write(data.toString("utf8"));
+      data: (socket, bytes) => {
+        if (!socket.data) {
+          socket.terminate();
+          return;
         }
+
+        socket.data.framer.onData(socket, bytes);
       },
-      close() {
-        backend?.close();
+      close: socket => {
+        if (socket.data) {
+          const { backend, framer } = socket.data;
+          backend.close();
+          framer.reset();
+        }
       },
     },
   });
-  socket.unref(); // do not keep process alive
+
+  return socket;
 }
 
 function versionInfo(): unknown {

@@ -1,70 +1,53 @@
 import { EventEmitter } from "node:events";
-import { WebSocket } from "ws";
-import type { Inspector, InspectorEventMap } from "./index";
+import { Socket } from "node:net";
+import { SocketFramer } from "../../../bun-debug-adapter-protocol/src/debugger/node-socket-framer.js";
 import type { JSC } from "../protocol";
+import type { Inspector, InspectorEventMap } from "./index";
 
 /**
- * An inspector that communicates with a debugger over a WebSocket.
+ * An inspector that communicates with a debugger over a (unix) socket
  */
-export class WebSocketInspector extends EventEmitter<InspectorEventMap> implements Inspector {
-  #url?: string;
-  #webSocket?: WebSocket;
+export class NodeSocketInspector extends EventEmitter<InspectorEventMap> implements Inspector {
   #ready: Promise<boolean> | undefined;
+  #url: string;
+  #socket: Socket;
   #requestId: number;
   #pendingRequests: JSC.Request[];
   #pendingResponses: Map<number, (result: unknown) => void>;
+  #framer: SocketFramer;
 
-  constructor(url?: string | URL) {
+  constructor(socket: Socket, url: string) {
     super();
-    this.#url = url ? String(url) : undefined;
+    this.#socket = socket;
+    this.#url = url;
     this.#requestId = 1;
     this.#pendingRequests = [];
     this.#pendingResponses = new Map();
+
+    this.#framer = new SocketFramer(message => {
+      if (Array.isArray(message)) {
+        for (const item of message) {
+          this.#accept(item);
+        }
+      } else {
+        this.#accept(message);
+      }
+    });
   }
 
-  get url(): string {
-    return this.#url!;
-  }
-
-  async start(url?: string | URL): Promise<boolean> {
-    if (url) {
-      this.#url = String(url);
-    }
-
-    if (!this.#url) {
-      this.emit("Inspector.error", new Error("Inspector needs a URL, but none was provided"));
-      return false;
-    }
-
-    return this.#connect(this.#url);
-  }
-
-  async #connect(url: string): Promise<boolean> {
+  async start(): Promise<boolean> {
     if (this.#ready) {
       return this.#ready;
     }
 
-    this.close(1001, "Restarting...");
-    this.emit("Inspector.connecting", url);
-
-    let webSocket: WebSocket;
-    try {
-      // @ts-expect-error: Support both Bun and Node.js version of `headers`.
-      webSocket = new WebSocket(url, {
-        headers: {
-          "Ref-Event-Loop": "0",
-        },
-        finishRequest: (request: import("http").ClientRequest) => {
-          request.setHeader("Ref-Event-Loop", "0");
-          request.end();
-        },
-      });
-    } catch (cause) {
-      this.#close(unknownToError(cause));
-      return false;
+    if (this.closed) {
+      this.close();
+      this.emit("Inspector.connecting", this.#url);
     }
 
-    webSocket.addEventListener("open", () => {
+    const socket = this.#socket;
+
+    socket.on("connect", () => {
       this.emit("Inspector.connected");
 
       for (let i = 0; i < this.#pendingRequests.length; i++) {
@@ -79,36 +62,30 @@ export class WebSocketInspector extends EventEmitter<InspectorEventMap> implemen
       }
     });
 
-    webSocket.addEventListener("message", ({ data }) => {
-      if (typeof data === "string") {
-        this.#accept(data);
+    socket.on("data", data => {
+      this.#framer.onData(socket, data);
+    });
+
+    socket.on("error", error => {
+      this.#close(unknownToError(error));
+    });
+
+    socket.on("close", hadError => {
+      if (hadError) {
+        this.#close(new Error("Socket closed due to a transmission error"));
       } else {
-        this.emit("Inspector.error", new Error(`WebSocket received unexpected binary message: ${data.toString()}`));
-      }
-    });
-
-    webSocket.addEventListener("error", event => {
-      this.#close(unknownToError(event));
-    });
-
-    webSocket.addEventListener("unexpected-response", () => {
-      this.#close(new Error("WebSocket upgrade failed"));
-    });
-
-    webSocket.addEventListener("close", ({ code, reason }) => {
-      if (code === 1001 || code === 1006) {
         this.#close();
-        return;
       }
-      this.#close(new Error(`WebSocket closed: ${code} ${reason}`.trimEnd()));
     });
-
-    this.#webSocket = webSocket;
 
     const ready = new Promise<boolean>(resolve => {
-      webSocket.addEventListener("open", () => resolve(true));
-      webSocket.addEventListener("close", () => resolve(false));
-      webSocket.addEventListener("error", () => resolve(false));
+      if (socket.connecting) {
+        socket.on("connect", () => resolve(true));
+      } else {
+        resolve(true);
+      }
+      socket.on("close", () => resolve(false));
+      socket.on("error", () => resolve(false));
     }).finally(() => {
       this.#ready = undefined;
     });
@@ -154,13 +131,7 @@ export class WebSocketInspector extends EventEmitter<InspectorEventMap> implemen
   }
 
   #send(request: JSC.Request): boolean {
-    if (this.#webSocket) {
-      const { readyState } = this.#webSocket!;
-      if (readyState === WebSocket.OPEN) {
-        this.#webSocket.send(JSON.stringify(request));
-        return true;
-      }
-    }
+    this.#framer.send(this.#socket, JSON.stringify(request));
 
     if (!this.#pendingRequests.includes(request)) {
       this.#pendingRequests.push(request);
@@ -204,27 +175,16 @@ export class WebSocketInspector extends EventEmitter<InspectorEventMap> implemen
   }
 
   get closed(): boolean {
-    if (!this.#webSocket) {
-      return true;
-    }
-
-    const { readyState } = this.#webSocket;
-    switch (readyState) {
-      case WebSocket.CLOSED:
-      case WebSocket.CLOSING:
-        return true;
-    }
-
-    return false;
+    return !this.#socket.writable;
   }
 
-  close(code?: number, reason?: string): void {
-    this.#webSocket?.close(code ?? 1001, reason);
+  close(): void {
+    this.#socket?.end();
   }
 
   #close(error?: Error): void {
     for (const resolve of this.#pendingResponses.values()) {
-      resolve(error ?? new Error("WebSocket closed"));
+      resolve(error ?? new Error("Socket closed"));
     }
     this.#pendingResponses.clear();
 

@@ -3,30 +3,12 @@ import * as os from "node:os";
 import stripAnsi from "strip-ansi";
 import * as vscode from "vscode";
 import {
-  DebugAdapter,
   getAvailablePort,
-  getRandomId,
+  NodeSocketDebugAdapter,
   TCPSocketSignal,
   UnixSignal,
 } from "../../../../bun-debug-adapter-protocol";
 import type { JSC } from "../../../../bun-inspector-protocol";
-
-function byteOffsetToPosition(text: string, offset: number) {
-  const lines = text.split("\n");
-  let remainingOffset = offset;
-
-  for (let i = 0; i < lines.length; i++) {
-    const lineLength = lines[i].length;
-
-    if (remainingOffset <= lineLength) {
-      return { line: i, column: remainingOffset };
-    }
-
-    remainingOffset -= lineLength + 1;
-  }
-
-  return { line: lines.length - 1, column: lines[lines.length - 1].length };
-}
 
 class EditorStateManager {
   private diagnosticCollection: vscode.DiagnosticCollection;
@@ -57,34 +39,26 @@ class EditorStateManager {
 class BunDiagnosticsManager {
   private editorState: EditorStateManager;
   private signal: UnixSignal | TCPSocketSignal;
-  private urlBunShouldListenOn: string;
   private context: vscode.ExtensionContext;
 
   public get signalUrl() {
     return this.signal.url;
   }
 
-  public get bunInspectUrl() {
-    return this.urlBunShouldListenOn;
-  }
-
   public static async initialize(context: vscode.ExtensionContext) {
-    const urlBunShouldListenOn = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
     const signal = os.platform() !== "win32" ? new UnixSignal() : new TCPSocketSignal(await getAvailablePort());
 
     await signal.ready;
 
-    return new BunDiagnosticsManager(context, {
-      urlBunShouldListenOn,
-      signal,
-    });
+    return new BunDiagnosticsManager(context, signal);
   }
 
   /**
    * Called when Bun pings BUN_INSPECT_NOTIFY (indicating a program has started).
    */
-  private async handleSignalReceived(socket: Socket) {
-    const debugAdapter = new DebugAdapter();
+  private async handleSignalReceived(socket: Socket, url: string) {
+    console.log("Socket connected");
+    const debugAdapter = new NodeSocketDebugAdapter(socket, url);
 
     this.editorState.clearAll();
 
@@ -99,21 +73,22 @@ class BunDiagnosticsManager {
     debugAdapter.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
 
     const dispose = async () => {
-      console.log(JSON.stringify({ socket }));
-
-      await vscode.window.showInformationMessage("Bun debug adapter has stopped");
       debugAdapter.removeAllListeners();
       await debugAdapter.send("LifecycleReporter.stopPreventingExit");
       debugAdapter.close();
       this.editorState.clearAll();
     };
 
-    socket.once("close", dispose);
+    socket.once("close", async () => {
+      void vscode.window.showInformationMessage("Bun debug adapter has stopped");
+      await dispose();
+    });
 
-    const ok = await debugAdapter.start(this.urlBunShouldListenOn);
+    const ok = await debugAdapter.start();
 
     if (!ok) {
-      await vscode.window.showErrorMessage("Failed to start Bun debug adapter");
+      await vscode.window.showErrorMessage("Failed to start debug adapter");
+      await dispose();
       return;
     }
 
@@ -165,29 +140,20 @@ class BunDiagnosticsManager {
     });
   }
 
-  private constructor(
-    context: vscode.ExtensionContext,
-    options: {
-      urlBunShouldListenOn: string;
-      signal: UnixSignal | TCPSocketSignal;
-    },
-  ) {
-    this.urlBunShouldListenOn = options.urlBunShouldListenOn;
+  private constructor(context: vscode.ExtensionContext, signal: UnixSignal | TCPSocketSignal) {
     this.editorState = new EditorStateManager();
-    this.signal = options.signal;
+    this.signal = signal;
     this.context = context;
 
     this.handleSignalReceived = this.handleSignalReceived.bind(this);
 
-    this.signal.on("Signal.Socket.connect", this.handleSignalReceived);
+    this.signal.on("Signal.Socket.connect", socket => this.handleSignalReceived(socket, this.signal.url));
   }
 }
 
 export async function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
   const manager = await BunDiagnosticsManager.initialize(context);
 
-  context.environmentVariableCollection.append("BUN_INSPECT", `${manager.bunInspectUrl}?wait=1`);
-  context.environmentVariableCollection.append("BUN_INSPECT_NOTIFY", manager.signalUrl);
-
   context.subscriptions.push(manager);
+  context.environmentVariableCollection.append("BUN_INSPECT_NOTIFY", manager.signalUrl);
 }

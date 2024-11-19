@@ -58,7 +58,7 @@ endif()
 
 # Add these linker flags to generate both .dll and .lib files
 if(WIN32)
-  set(RUSTFLAGS "-C link-args=/DEF /IMPLIB:lolhtml.lib")
+  set(RUSTFLAGS "-Clink-args=/DEF/IMPLIB:lolhtml.lib")
 endif()
 
 register_command(

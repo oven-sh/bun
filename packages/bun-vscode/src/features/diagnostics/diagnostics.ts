@@ -70,9 +70,9 @@ class BunDiagnosticsManager {
       this.editorState.clearAll();
     });
 
-    debugAdapter.on("Inspector.event", async event => {
-      console.log(event.method);
-    });
+    // debugAdapter.on("Inspector.event", async event => {
+    //   console.log(event.method);
+    // });
 
     debugAdapter.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
 
@@ -126,7 +126,7 @@ class BunDiagnosticsManager {
 
     const diagnostic = new vscode.Diagnostic(
       rangeOfWord,
-      stripAnsi(params.message).trim(),
+      stripAnsi(params.message).trim() || params.name || "Error",
       vscode.DiagnosticSeverity.Error,
     );
 

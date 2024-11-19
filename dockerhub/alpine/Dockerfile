@@ -36,9 +36,9 @@ RUN apk --no-cache add ca-certificates curl dirmngr gpg gpg-agent unzip \
       --compressed \
       --retry 5 \
     && gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc \
-       || (echo "error: failed to verify: $tag" && exit 1) \
-     && grep " bun-linux-$build.zip\$" SHASUMS256.txt | sha256sum -c - \
-       || (echo "error: failed to verify: $tag" && exit 1) \
+      || (echo "error: failed to verify: $tag" && exit 1) \
+    && grep " bun-linux-$build.zip\$" SHASUMS256.txt | sha256sum -c - \
+      || (echo "error: failed to verify: $tag" && exit 1) \
     && unzip "bun-linux-$build.zip" \
     && mv "bun-linux-$build/bun" /usr/local/bin/bun \
     && rm -f "bun-linux-$build.zip" SHASUMS256.txt.asc SHASUMS256.txt \

@@ -491,8 +491,8 @@ function getPipeline(options) {
     } else {
       parallelism = 10;
     }
-    let depends;
     let env;
+    let depends = [];
     if (buildId) {
       env = {
         BUILDKITE_ARTIFACT_BUILD_ID: buildId,
@@ -515,7 +515,7 @@ function getPipeline(options) {
     return {
       key: `${getPlatformKey(platform)}-test-bun`,
       label: `${getPlatformLabel(platform)} - test-bun`,
-      depends_on: depends,
+      depends_on: [...depends, ...getDependsOn(platform)],
       agents: getTestAgent(platform),
       retry,
       cancel_on_build_failing: isMergeQueue(),

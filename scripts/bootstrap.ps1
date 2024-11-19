@@ -75,29 +75,20 @@ function Refresh-Path {
 function Add-To-Path {
   $absolutePath = Resolve-Path $args[0]
   $currentPath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-  
-  # Check if path is already in PATH
   if ($currentPath -like "*$absolutePath*") {  
     return
   }
 
-  # Check path length
   $newPath = $currentPath.TrimEnd(";") + ";" + $absolutePath
   if ($newPath.Length -ge 2048) {
     Write-Warning "PATH is too long, removing duplicate and old entries..."
     
-    # Split path into unique entries
     $paths = $currentPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries) | 
       Where-Object { $_ -and (Test-Path $_) } |
       Select-Object -Unique
     
-    # Add new path
     $paths += $absolutePath
-    
-    # Rejoin paths
     $newPath = $paths -join ';'
-    
-    # If still too long, remove oldest entries until it fits
     while ($newPath.Length -ge 2048 -and $paths.Count -gt 1) {
       $paths = $paths[1..$paths.Count]
       $newPath = $paths -join ';'
@@ -218,8 +209,9 @@ function Install-Buildkite {
 }
 
 function Install-Build-Essentials {
-  Install-Visual-Studio
+  # Install-Visual-Studio
   Install-Packages `
+    cmake `
     make `
     ninja `
     ccache `
@@ -234,27 +226,66 @@ function Install-Build-Essentials {
 
 function Install-Visual-Studio {
   $components = @(
-    "Microsoft.VisualStudio.Workload.NativeDesktop", # C++ workload
-    "Microsoft.VisualStudio.Component.Windows10SDK.18362", # Windows 10 SDK (oldest available)
-    "Microsoft.VisualStudio.Component.Windows11SDK.22000", # Windows 11 SDK (oldest)
-    "Microsoft.VisualStudio.Component.Windows11Sdk.WindowsPerformanceToolkit", # Windows Performance Toolkit
+    "Microsoft.VisualStudio.Workload.NativeDesktop",
+    "Microsoft.VisualStudio.Component.Windows10SDK.18362",
+    "Microsoft.VisualStudio.Component.Windows11SDK.22000",
+    "Microsoft.VisualStudio.Component.Windows11Sdk.WindowsPerformanceToolkit",
     "Microsoft.VisualStudio.Component.VC.ASAN", # C++ AddressSanitizer
     "Microsoft.VisualStudio.Component.VC.ATL", # C++ ATL for latest v143 build tools (x86 & x64)
-    "Microsoft.VisualStudio.Component.VC.DiagnosticTools", # C++ profiling tools
-    "Microsoft.VisualStudio.Component.Vcpkg", # vcpkg package manager
-    "Microsoft.VisualStudio.Component.VC.CMake.Project" # C++ CMake tools for Windows
+    "Microsoft.VisualStudio.Component.VC.DiagnosticTools", # C++ Diagnostic Tools
+    "Microsoft.VisualStudio.Component.VC.CLI.Support", # C++/CLI support for v143 build tools (Latest)
+    "Microsoft.VisualStudio.Component.VC.CoreIde", # C++ core features
+    "Microsoft.VisualStudio.Component.VC.Redist.14.Latest" # C++ 2022 Redistributable Update
   )
 
   $arch = (Get-WmiObject Win32_Processor).Architecture
   if ($arch -eq 9) {
-    $components += "Microsoft.VisualStudio.Component.VC.Tools.x86.x64" # MSVC v143 build tools (x86 & x64)
+    $components += @(
+      "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", # MSVC v143 build tools (x86 & x64)
+      "Microsoft.VisualStudio.Component.VC.Modules.x86.x64" # MSVC v143 C++ Modules for latest v143 build tools (x86 & x64)
+    )
   } elseif ($arch -eq 5) {
-    $components += "Microsoft.VisualStudio.Component.VC.Tools.ARM64" # MSVC v143 build tools (ARM64)
+    $components += @(
+      "Microsoft.VisualStudio.Component.VC.Tools.ARM64", # MSVC v143 build tools (ARM64)
+      "Microsoft.VisualStudio.Component.UWP.VC.ARM64" # C++ Universal Windows Platform support for v143 build tools (ARM64/ARM64EC)
+    )
   }
 
-  $packageParams = ($components | ForEach-Object { "--add $_" }) -join " "
-  Install-Package visualstudio2022community `
-    -ExtraArgs "--package-parameters '$packageParams'"
+  Write-Output "Downloading Visual Studio installer..."
+  $vsInstaller = "$env:TEMP\vs_community.exe"
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_community.exe" -OutFile $vsInstaller
+
+  $arguments = @(
+    "--passive",
+    "--norestart",
+    "--wait",
+    "--includeRecommended"
+  )
+  $arguments += $components | ForEach-Object { "--add $_" }
+
+  Write-Output "Starting Visual Studio installation..."
+  $process = Start-Process -FilePath $vsInstaller -ArgumentList ($arguments -join ' ') `
+    -NoNewWindow -Wait -PassThru -Verb RunAs
+
+    if ($process.ExitCode -ne 0) {
+    throw "Installation failed with exit code: $($process.ExitCode)"
+  }
+
+  $paths = @(
+    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC",
+    "${env:ProgramFiles(x86)}\Windows Kits\10\Include",
+    "${env:ProgramFiles(x86)}\Windows Kits\10\Lib"
+  )
+
+  $missing = $paths | Where-Object { -not (Test-Path $_) }
+  if ($missing) {
+    Write-Output "Missing paths:"
+    $missing | ForEach-Object { Write-Output "  $_" }
+    throw "Visual Studio installation appears incomplete"
+  }
+
+  Write-Output "Visual Studio installation completed successfully"
 }
 
 function Install-Rust {

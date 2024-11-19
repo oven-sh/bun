@@ -570,6 +570,22 @@ install_nodejs() {
 		install_packages nodejs
 		;;
 	esac
+
+	# Some distros do not install the node headers by default.
+	# These are needed for certain FFI tests, such as: `cc.test.ts`
+	case "$distro" in
+	alpine | amzn)
+		install_nodejs_headers
+		;;
+	esac
+}
+
+install_nodejs_headers() {
+	headers_tar="$(download_file "https://nodejs.org/download/release/v$(nodejs_version_exact)/node-v$(nodejs_version_exact)-headers.tar.gz")"
+	headers_dir="$(dirname "$headers_tar")"
+	execute tar -xzf "$headers_tar" -C "$headers_dir"
+	headers_include="$headers_dir/node-v$(nodejs_version_exact)/include"
+	execute_sudo cp -R "$headers_include/" "/usr"
 }
 
 install_bun() {
@@ -958,6 +974,13 @@ install_chrome_dependencies() {
 			xorg-x11-fonts-misc \
 			xorg-x11-fonts-Type1 \
 			xorg-x11-utils
+		;;
+	esac
+
+	case "$distro" in
+	alpine)
+		install_packages \
+			mesa-libgbm
 		;;
 	esac
 }

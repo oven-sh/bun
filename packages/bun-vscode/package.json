@@ -18,44 +18,6 @@
     "esbuild": "^0.19.2",
     "typescript": "^5.0.0"
   },
-  "description": "The Visual Studio Code extension for Bun.",
-  "displayName": "Bun for Visual Studio Code",
-  "engines": {
-    "vscode": "^1.60.0"
-  },
-  "extensionKind": [
-    "workspace"
-  ],
-  "galleryBanner": {
-    "color": "#3B3738",
-    "theme": "dark"
-  },
-  "homepage": "https://bun.sh/",
-  "icon": "assets/icon.png",
-  "keywords": [
-    "bun",
-    "node.js",
-    "javascript",
-    "typescript",
-    "vscode"
-  ],
-  "license": "MIT",
-  "publisher": "oven",
-  "scripts": {
-    "build": "node scripts/build.mjs",
-    "pretest": "bun run build",
-    "test": "node scripts/test.mjs",
-    "dev": "vscode-test --config scripts/dev.mjs",
-    "prepublish": "npm version patch && bun run build",
-    "publish": "cd extension && bunx vsce publish"
-  },
-  "workspaceTrust": {
-    "request": "never"
-  },
-  "workspaces": [
-    "../bun-debug-adapter-protocol",
-    "../bun-inspector-protocol"
-  ],
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -358,7 +320,42 @@
       }
     ]
   },
-  "dependencies": {
-    "strip-ansi": "^7.1.0"
-  }
+  "description": "The Visual Studio Code extension for Bun.",
+  "displayName": "Bun for Visual Studio Code",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "galleryBanner": {
+    "color": "#3B3738",
+    "theme": "dark"
+  },
+  "homepage": "https://bun.sh/",
+  "icon": "assets/icon.png",
+  "keywords": [
+    "bun",
+    "node.js",
+    "javascript",
+    "typescript",
+    "vscode"
+  ],
+  "license": "MIT",
+  "publisher": "oven",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "pretest": "bun run build",
+    "test": "node scripts/test.mjs",
+    "dev": "vscode-test --config scripts/dev.mjs",
+    "prepublish": "npm version patch && bun run build",
+    "publish": "cd extension && bunx vsce publish"
+  },
+  "workspaceTrust": {
+    "request": "never"
+  },
+  "workspaces": [
+    "../bun-debug-adapter-protocol",
+    "../bun-inspector-protocol"
+  ]
 }

@@ -2032,9 +2032,19 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
   }
 }
 
+/**
+ * Create a debug adapter that connects over a unix/tcp socket. Usually
+ * in the case of a reverse connection. This is used by the vscode extension.
+ *
+ * @warning This will gracefully handle socket closure, you don't need to add extra handling.
+ */
 export class NodeSocketDebugAdapter extends BaseDebugAdapter<NodeSocketInspector> {
-  public constructor(socket: Socket, url: string, untitledDocPath?: string, bunEvalPath?: string) {
-    super(new NodeSocketInspector(socket, url), untitledDocPath, bunEvalPath);
+  public constructor(socket: Socket, untitledDocPath?: string, bunEvalPath?: string) {
+    super(new NodeSocketInspector(socket), untitledDocPath, bunEvalPath);
+
+    socket.once("close", () => {
+      this.resetInternal();
+    });
   }
 
   protected exitJSProcess(): void {
@@ -2044,7 +2054,7 @@ export class NodeSocketDebugAdapter extends BaseDebugAdapter<NodeSocketInspector
   }
 
   public async start() {
-    const ok = await this.getInspector().start();
+    const ok = await this.inspector.start();
     return ok;
   }
 }

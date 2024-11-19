@@ -5,21 +5,31 @@ import type { JSC } from "../protocol";
 import type { Inspector, InspectorEventMap } from "./index";
 
 /**
- * An inspector that communicates with a debugger over a (unix) socket
+ * An inspector that communicates with a debugger over a (unix) socket.
+ * This is used in the extension as follows:
+ *
+ * 1. Extension sets environment variable `BUN_INSPECT_NOTIFY` inside of all vscode terminals.
+ *    This is a path to a unix socket that the extension will listen on.
+ * 2. Bun reads it and connects to the socket, setting up a reverse connection for sending DAP
+ *    messages.
  */
 export class NodeSocketInspector extends EventEmitter<InspectorEventMap> implements Inspector {
   #ready: Promise<boolean> | undefined;
-  #url: string;
   #socket: Socket;
   #requestId: number;
   #pendingRequests: JSC.Request[];
-  #pendingResponses: Map<number, (result: unknown) => void>;
+  #pendingResponses: Map<
+    number,
+    {
+      request: JSC.Request;
+      done: (result: unknown) => void;
+    }
+  >;
   #framer: SocketFramer;
 
-  constructor(socket: Socket, url: string) {
+  constructor(socket: Socket) {
     super();
     this.#socket = socket;
-    this.#url = url;
     this.#requestId = 1;
     this.#pendingRequests = [];
     this.#pendingResponses = new Map();
@@ -35,6 +45,16 @@ export class NodeSocketInspector extends EventEmitter<InspectorEventMap> impleme
     });
   }
 
+  private onConnectOrImmediately(cb: () => void) {
+    const isAlreadyConnected = this.#socket.connecting === false;
+
+    if (isAlreadyConnected) {
+      cb();
+    } else {
+      this.#socket.once("connect", cb);
+    }
+  }
+
   async start(): Promise<boolean> {
     if (this.#ready) {
       return this.#ready;
@@ -42,12 +62,13 @@ export class NodeSocketInspector extends EventEmitter<InspectorEventMap> impleme
 
     if (this.closed) {
       this.close();
-      this.emit("Inspector.connecting", this.#url);
+      const addressWithPort = this.#socket.remoteAddress + ":" + this.#socket.remotePort;
+      this.emit("Inspector.connecting", addressWithPort);
     }
 
     const socket = this.#socket;
 
-    socket.on("connect", () => {
+    this.onConnectOrImmediately(() => {
       this.emit("Inspector.connected");
 
       for (let i = 0; i < this.#pendingRequests.length; i++) {
@@ -120,7 +141,11 @@ export class NodeSocketInspector extends EventEmitter<InspectorEventMap> impleme
         }
       };
 
-      this.#pendingResponses.set(id, done);
+      this.#pendingResponses.set(id, {
+        request: request,
+        done: done,
+      });
+
       if (this.#send(request)) {
         timerId = +setTimeout(() => done(new Error(`Timed out: ${method}`)), 10_000);
         this.emit("Inspector.request", request);
@@ -158,8 +183,8 @@ export class NodeSocketInspector extends EventEmitter<InspectorEventMap> impleme
     this.emit("Inspector.response", data);
 
     const { id } = data;
-    const resolve = this.#pendingResponses.get(id);
-    if (!resolve) {
+    const handle = this.#pendingResponses.get(id);
+    if (!handle) {
       this.emit("Inspector.error", new Error(`Failed to find matching request for ID: ${id}`));
       return;
     }
@@ -167,10 +192,10 @@ export class NodeSocketInspector extends EventEmitter<InspectorEventMap> impleme
     if ("error" in data) {
       const { error } = data;
       const { message } = error;
-      resolve(new Error(message));
+      handle.done(new Error(message));
     } else {
       const { result } = data;
-      resolve(result);
+      handle.done(result);
     }
   }
 
@@ -183,14 +208,18 @@ export class NodeSocketInspector extends EventEmitter<InspectorEventMap> impleme
   }
 
   #close(error?: Error): void {
-    for (const resolve of this.#pendingResponses.values()) {
-      resolve(error ?? new Error("Socket closed"));
+    console.log("#CLOSE() CALLED");
+
+    for (const handle of this.#pendingResponses.values()) {
+      handle.done(error ?? new Error("Socket closed" + handle.request.method));
     }
+
     this.#pendingResponses.clear();
 
     if (error) {
       this.emit("Inspector.error", error);
     }
+
     this.emit("Inspector.disconnected", error);
   }
 }

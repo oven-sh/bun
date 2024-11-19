@@ -37,9 +37,9 @@ class EditorStateManager {
 }
 
 class BunDiagnosticsManager {
-  private editorState: EditorStateManager;
-  private signal: UnixSignal | TCPSocketSignal;
-  private context: vscode.ExtensionContext;
+  private readonly editorState: EditorStateManager;
+  private readonly signal: UnixSignal | TCPSocketSignal;
+  private readonly context: vscode.ExtensionContext;
 
   public get signalUrl() {
     return this.signal.url;
@@ -56,9 +56,9 @@ class BunDiagnosticsManager {
   /**
    * Called when Bun pings BUN_INSPECT_NOTIFY (indicating a program has started).
    */
-  private async handleSignalReceived(socket: Socket, url: string) {
-    console.log("Socket connected");
-    const debugAdapter = new NodeSocketDebugAdapter(socket, url);
+  private async handleSignalReceived(socket: Socket) {
+    console.log("Received signal from Bun");
+    const debugAdapter = new NodeSocketDebugAdapter(socket);
 
     this.editorState.clearAll();
 
@@ -73,16 +73,12 @@ class BunDiagnosticsManager {
     debugAdapter.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
 
     const dispose = async () => {
-      debugAdapter.removeAllListeners();
-      await debugAdapter.send("LifecycleReporter.stopPreventingExit");
-      debugAdapter.close();
-      this.editorState.clearAll();
-    };
+      await debugAdapter.send("LifecycleReporter.stopPreventingExit").catch(() => {
+        // Probably already exited
+      });
 
-    socket.once("close", async () => {
-      void vscode.window.showInformationMessage("Bun debug adapter has stopped");
-      await dispose();
-    });
+      debugAdapter.removeAllListeners();
+    };
 
     const ok = await debugAdapter.start();
 
@@ -145,9 +141,7 @@ class BunDiagnosticsManager {
     this.signal = signal;
     this.context = context;
 
-    this.handleSignalReceived = this.handleSignalReceived.bind(this);
-
-    this.signal.on("Signal.Socket.connect", socket => this.handleSignalReceived(socket, this.signal.url));
+    this.signal.on("Signal.Socket.connect", this.handleSignalReceived.bind(this));
   }
 }
 

@@ -29,6 +29,9 @@ describe("bun shell", () => {
       "Invalid JS string ref (number too high)",
     );
   });
+  it("does not crash with an invalid string ref 5", async () => {
+    expect(() => $`echo __bunstr_123a`.text()).toThrowError("Invalid JS string ref (missing '.' at end)");
+  });
   it("doesn't parse string refs inside substitution", async () => {
     expect(await $`echo ${"\x08__bunstr_123."}`.text()).toBe("\x08__bunstr_123.\n");
   });

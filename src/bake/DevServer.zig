@@ -1645,6 +1645,14 @@ fn onRequest(dev: *DevServer, req: *Request, resp: *Response) void {
         return;
     }
 
+    switch (dev.server.?) {
+        inline .DebugHTTPServer, .HTTPServer => |s| if (s.config.onRequest != .zero) {
+            s.onRequest(req, resp);
+            return;
+        },
+        else => @panic("TODO: HTTPS"),
+    }
+
     sendBuiltInNotFound(resp);
 }
 

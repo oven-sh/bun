@@ -16,18 +16,45 @@ else()
   set(LOLHTML_BUILD_TYPE release)
 endif()
 
+if(ARCH STREQUAL "x64")
+  set(RUST_ARCH x86_64)
+elseif(ARCH STREQUAL "aarch64")
+  set(RUST_ARCH aarch64)
+else()
+  unsupported(ARCH)
+endif()
+
+if(WIN32)
+  set(RUST_TARGET ${RUST_ARCH}-pc-windows-msvc)
+elseif(APPLE)
+  set(RUST_TARGET ${RUST_ARCH}-apple-darwin)
+elseif(LINUX)
+  if(ABI STREQUAL "musl")
+    set(RUST_TARGET ${RUST_ARCH}-unknown-linux-musl)
+  else()
+    set(RUST_TARGET ${RUST_ARCH}-unknown-linux-gnu)
+  endif()
+else()
+  unsupported(CMAKE_SYSTEM_NAME)
+endif()
+
 set(LOLHTML_LIBRARY ${LOLHTML_BUILD_PATH}/${LOLHTML_BUILD_TYPE}/${CMAKE_STATIC_LIBRARY_PREFIX}lolhtml${CMAKE_STATIC_LIBRARY_SUFFIX})
 
 set(LOLHTML_BUILD_ARGS
   --target-dir ${BUILD_PATH}/lolhtml
 )
 
+# FIXME: On Windows, the build does not emit a .lib file when a target is specified.
+if(NOT WIN32)
+  list(APPEND LOLHTML_BUILD_ARGS --target ${RUST_TARGET})
+endif()
+
 if(RELEASE)
   list(APPEND LOLHTML_BUILD_ARGS --release)
 endif()
 
 # Windows requires unwind tables, apparently.
-if (NOT WIN32)
+if(NOT WIN32)
   # The encoded escape sequences are intentional. They're how you delimit multiple arguments in a single environment variable.
   # Also add rust optimization flag for smaller binary size, but not huge speed penalty.
   set(RUSTFLAGS "-Cpanic=abort-Cdebuginfo=0-Cforce-unwind-tables=no-Copt-level=s")

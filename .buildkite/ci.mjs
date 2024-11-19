@@ -694,7 +694,7 @@ async function main() {
       forceBuild = true;
     }
     for (const coref of [".buildkite/ci.mjs", "scripts/utils.mjs", "scripts/bootstrap.sh", "scripts/machine.mjs"]) {
-      if (changedFiles.includes(coref)) {
+      if (changedFiles && changedFiles.includes(coref)) {
         console.log(" - Yes, because the list of changed files contains:", coref);
         forceBuild = true;
         ciFileChanged = true;

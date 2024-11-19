@@ -18886,7 +18886,7 @@ pub const CertError = error{
     UNKKNOW_CERTIFICATE_VERIFICATION_ERROR,
 };
 
-pub fn getCertErrorFromNo(error_no: i32) CertError {
+pub fn getCertErrorFromNo(error_no: i64) CertError {
     return switch (error_no) {
         X509_V_OK => error.OK,
         X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT => error.UNABLE_TO_GET_ISSUER_CERT,

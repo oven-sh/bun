@@ -95,7 +95,7 @@ pub const InternalLoopData = extern struct {
 
 pub const UpgradedDuplex = struct {
     pub const CertError = struct {
-        error_no: i32 = 0,
+        error_no: i64 = 0,
         code: [:0]const u8 = "",
         reason: [:0]const u8 = "",
 
@@ -1700,7 +1700,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return this.getError() != 0;
         }
 
-        pub fn getError(this: ThisSocket) i32 {
+        pub fn getError(this: ThisSocket) i64 {
             switch (this.socket) {
                 .connected => |socket| {
                     return us_socket_get_error(
@@ -2643,7 +2643,8 @@ pub const create_bun_socket_error_t = enum(i32) {
 };
 
 pub const us_bun_verify_error_t = extern struct {
-    error_no: i32 = 0,
+    // this is a i64 because can store a result of BoringSSL.SSL_get_verify_result that uses a long
+    error_no: i64 = 0,
     code: [*c]const u8 = null,
     reason: [*c]const u8 = null,
 };

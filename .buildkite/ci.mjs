@@ -662,7 +662,7 @@ async function main() {
   }
 
   let changedFiles;
-  if (!isFork()) {
+  if (!isFork() && !isMainBranch()) {
     console.log("Checking changed files...");
     const baseRef = getCommit();
     console.log(" - Base Ref:", baseRef);

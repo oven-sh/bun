@@ -320,7 +320,7 @@ const ProxyTunnel = struct {
             this.state.request_stage = .proxy_headers;
             this.state.request_sent_len = 0;
             const handshake_error = HTTPCertError{
-                .error_no = ssl_error.error_no,
+                .error_no = @intCast(ssl_error.error_no),
                 .code = if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code) :0],
                 .reason = if (ssl_error.code == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason) :0],
             };
@@ -511,7 +511,7 @@ const ProxyTunnel = struct {
 };
 
 pub const HTTPCertError = struct {
-    error_no: i32 = 0,
+    error_no: i64 = 0,
     code: [:0]const u8 = "",
     reason: [:0]const u8 = "",
 };

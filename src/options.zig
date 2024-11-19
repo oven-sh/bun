@@ -656,7 +656,6 @@ pub const Loader = enum(u8) {
         if (experimental_css) {
             return switch (this) {
                 .file,
-                .css,
                 .napi,
                 .sqlite,
                 .sqlite_embedded,

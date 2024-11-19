@@ -84,7 +84,7 @@
 #endif
 
 #include "stddef.h"
-
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -190,7 +190,8 @@ struct us_socket_context_options_t {
 };
 
 struct us_bun_verify_error_t {
-    long error;
+    // this is a int64_t because can store a result of BoringSSL.SSL_get_verify_result that uses a long
+    int64_t error;
     const char* code;
     const char* reason;
 };
@@ -337,6 +338,8 @@ struct us_loop_t *us_socket_context_loop(int ssl, us_socket_context_r context) n
 /* Invalidates passed socket, returning a new resized socket which belongs to a different socket context.
  * Used mainly for "socket upgrades" such as when transitioning from HTTP to WebSocket. */
 struct us_socket_t *us_socket_context_adopt_socket(int ssl, us_socket_context_r context, us_socket_r s, int ext_size);
+
+struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r new_context, const char *sni);
 
 /* Create a child socket context which acts much like its own socket context with its own callbacks yet still relies on the
  * parent socket context for some shared resources. Child socket contexts should be used together with socket adoptions and nothing else. */

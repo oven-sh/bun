@@ -95,7 +95,7 @@ pub const InternalLoopData = extern struct {
 
 pub const UpgradedDuplex = struct {
     pub const CertError = struct {
-        error_no: i32 = 0,
+        error_no: i64 = 0,
         code: [:0]const u8 = "",
         reason: [:0]const u8 = "",
 
@@ -1700,7 +1700,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return this.getError() != 0;
         }
 
-        pub fn getError(this: ThisSocket) i32 {
+        pub fn getError(this: ThisSocket) i64 {
             switch (this.socket) {
                 .connected => |socket| {
                     return us_socket_get_error(
@@ -2640,12 +2640,37 @@ pub const create_bun_socket_error_t = enum(i32) {
     load_ca_file,
     invalid_ca_file,
     invalid_ca,
+
+    pub fn toJS(this: create_bun_socket_error_t, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return switch (this) {
+            .none => brk: {
+                bun.debugAssert(false);
+                break :brk .null;
+            },
+            .load_ca_file => globalObject.ERR_BORINGSSL("Failed to load CA file", .{}).toJS(),
+            .invalid_ca_file => globalObject.ERR_BORINGSSL("Invalid CA file", .{}).toJS(),
+            .invalid_ca => globalObject.ERR_BORINGSSL("Invalid CA", .{}).toJS(),
+        };
+    }
 };
 
 pub const us_bun_verify_error_t = extern struct {
-    error_no: i32 = 0,
+    // this is a i64 because can store a result of BoringSSL.SSL_get_verify_result that uses a long
+    error_no: i64 = 0,
     code: [*c]const u8 = null,
     reason: [*c]const u8 = null,
+
+    pub fn toJS(this: *const us_bun_verify_error_t, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        const code = if (this.code == null) "" else this.code[0..bun.len(this.code)];
+        const reason = if (this.reason == null) "" else this.reason[0..bun.len(this.reason)];
+
+        const fallback = JSC.SystemError{
+            .code = bun.String.createUTF8(code),
+            .message = bun.String.createUTF8(reason),
+        };
+
+        return fallback.toErrorInstance(globalObject);
+    }
 };
 pub extern fn us_ssl_socket_verify_error_from_ssl(ssl: *BoringSSL.SSL) us_bun_verify_error_t;
 
@@ -4529,3 +4554,5 @@ pub fn onThreadExit() void {
 }
 
 extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
+
+pub extern fn us_socket_upgrade_to_tls(s: *Socket, new_context: *SocketContext, sni: ?[*:0]const u8) ?*Socket;

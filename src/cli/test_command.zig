@@ -53,7 +53,12 @@ fn escapeXml(str: string, writer: anytype) !void {
     while (i < len) : (i += 1) {
         const c = str[i];
         switch (c) {
-            '&', '<', '>', '"', '\'', '\n', '\r', '\t', 0 => {
+            '&',
+            '<',
+            '>',
+            '"',
+            '\'',
+            => {
                 if (i > last) {
                     try writer.writeAll(str[last..i]);
                 }
@@ -63,14 +68,14 @@ fn escapeXml(str: string, writer: anytype) !void {
                     '>' => "&gt;",
                     '"' => "&quot;",
                     '\'' => "&apos;",
-                    '\n' => "&#10;",
-                    '\r' => "&#13;",
-                    '\t' => "&#9;",
-                    0 => "&#0;",
                     else => unreachable,
                 };
                 try writer.writeAll(escaped);
                 last = i + 1;
+            },
+            0...0x1f => {
+                // Escape all control characters
+                try writer.print("&#{d};", .{c});
             },
             else => {},
         }

@@ -3656,11 +3656,15 @@ pub const PackageManager = struct {
 
     const Holder = struct {
         pub var ptr: *PackageManager = undefined;
+        pub var initialized: bool = false;
     };
     pub fn allocatePackageManager() void {
+        if(Holder.initialized) @panic("double init");
         Holder.ptr = bun.default_allocator.create(PackageManager) catch bun.outOfMemory();
+        Holder.initialized = true;
     }
     pub fn get() *PackageManager {
+        if(!Holder.initialized) @panic("not initialized");
         return Holder.ptr;
     }
 

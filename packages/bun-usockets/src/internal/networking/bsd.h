@@ -36,12 +36,13 @@
 #define SETSOCKOPT_PTR_TYPE const char *
 #define LIBUS_SOCKET_ERROR INVALID_SOCKET
 #endif
+
 /* For socklen_t */
 #include <sys/socket.h>
 #include <netdb.h>
 #define SETSOCKOPT_PTR_TYPE int *
 #define LIBUS_SOCKET_ERROR -1
-#endif
+
 
 #define LIBUS_UDP_MAX_SIZE (64 * 1024)
 

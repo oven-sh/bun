@@ -97,6 +97,8 @@ class BunDiagnosticsManager {
   }
 
   private handleLifecycleError(params: JSC.LifecycleReporter.ErrorEvent) {
+    console.log(JSON.stringify(params));
+
     // params.lineColumns is flat pairs of line and columns from each stack frame, we only care about the first one
     const [line = null, column = null] = params.lineColumns;
 

@@ -243,7 +243,7 @@ describe("expect()", () => {
     if (isBun) {
       test("URL", () => {
         expect(new URL("https://example.com")).toEqual(new URL("https://example.com"));
-        expect(new URL("http://wat")).toStrictEqual(new URL("http://huh"));
+        expect(new URL("http://wat")).not.toStrictEqual(new URL("http://huh"));
       });
     }
 

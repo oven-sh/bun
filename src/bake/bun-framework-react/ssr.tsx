@@ -52,7 +52,7 @@ export function renderToHtml(rscPayload: Readable, bootstrapModules: readonly st
       });
       // The root is this "Root" component that unwraps the streamed promise
       // with `use`, and then returning the parsed React component for the UI.
-      const Root = () => React.use(promise);
+      const Root: any = () => React.use(promise);
 
       // `renderToPipeableStream` is what actually generates HTML.
       // Here is where React is told what script tags to inject.
@@ -203,9 +203,7 @@ class RscInjectionStream extends EventEmitter {
     // TODO:
   }
 
-  end() {
-    this.finalize();
-  }
+  end() {}
 }
 
 class StaticRscInjectionStream extends EventEmitter {

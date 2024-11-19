@@ -4102,3 +4102,111 @@ pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
 
 /// Code used by the classes generator
 pub const gen_classes_lib = @import("gen_classes_lib.zig");
+
+const CowString = CowSlice(u8);
+
+/// "Copy on write" slice. There are many instances when it is desired to re-use
+/// a slice, but doing so would make it unknown if that slice should be freed.
+/// This structure, in release builds, is the same size as `[]const T`, but
+/// stores one bit for if a de-allocation should free the underlying memory.
+/// 
+///     const str = CowSlice(u8).initOwned(try alloc.dupe(u8, "hello!"), alloc);
+///     const borrow = str.borrow();
+///     assert(borrow.slice().ptr == str.slice().ptr)
+///     borrow.deinit(alloc); // knows it is borrowed, no free
+///     str.deinit(alloc); // calls free
+/// 
+/// In a debug build, there are aggressive assertions to ensure unintentional
+/// frees do not happen. But in a release build, the developer is expected to
+/// keep the 
+pub fn CowSlice(T: type) type {
+    const DebugData = if (Environment.allow_assert) struct {
+        mutex: std.Thread.Mutex,
+        allocator: Allocator,
+        borrows: usize,
+    };
+    return struct {
+        ptr: [*]const T,
+        flags: packed struct(usize) {
+            len: @Type(.{ .Int = .{
+                .bits = @bitSizeOf(usize) - 1,
+                .signedness = .unsigned,
+            } }),
+            is_owned: bool,
+        },
+        debug: ?*DebugData,
+
+        const cow_str_assertions = Environment.isDebug;
+
+        /// `data` is transferred into the returned string, and must be freed with
+        /// `.deinit()` when the string and its borrows are done being used.
+        pub fn initOwned(data: []const T, allocator: Allocator) @This() {
+            return .{
+                .ptr = data.ptr,
+                .flags = .{
+                    .is_owned = true,
+                    .len = @intCast(data.len),
+                },
+                .debug = if (Environment.allow_assert)
+                    bun.new(DebugData(.{
+                        .mutex = .{},
+                        .allocator = allocator,
+                        .borrows = 0,
+                    })),
+            };
+        }
+
+        /// `.deinit` will not free memory from this slice.
+        pub fn initNeverFree(data: []const T) @This() {
+            return .{
+                .ptr = data.ptr,
+                .flags = .{
+                    .is_owned = false,
+                    .len = @intCast(data.len),
+                },
+                .debug = .none,
+            };
+        }
+
+        pub fn slice(str: @This()) []const T {
+            return str.ptr[0..str.flags.len];
+        }
+
+        /// Returns a new string. The borrowed string should be deinitialized
+        /// so that debug assertions that perform.
+        pub fn borrow(str: @This()) @This() {
+            if (cow_str_assertions) if (str.debug) |debug| {
+                debug.mutex.lock();
+                defer debug.mutex.unlock();
+                debug.borrows += 1;
+            };
+            return .{
+                .ptr = str.ptr,
+                .flags = .{
+                    .is_owned = false,
+                    .len = str.flags.len,
+                },
+                .debug = str.debug,
+            };
+        }
+
+        pub fn deinit(str: @This(), allocator: Allocator) void {
+            if (cow_str_assertions) if (str.debug) |debug| {
+                debug.mutex.lock();
+                defer debug.mutex.unlock();
+                bun.assert(debug.allocator == allocator);
+                if (str.flags.is_owned) {
+                    bun.assert(debug.borrows == 0); // active borrows become invalid data
+                } else {
+                    debug.borrows -= 1; // double deinit of a borrowed string
+                }
+                bun.destroy(debug);
+            };
+            if (str.flags.is_owned) {
+                allocator.free(str.slice());
+            }
+        }
+    };
+}
+
+const Allocator = std.mem.Allocator;

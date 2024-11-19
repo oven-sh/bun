@@ -22,30 +22,6 @@ pub fn EnumFields(comptime T: type) []const std.builtin.Type.EnumField {
     };
 }
 
-pub fn ReturnOfMaybe(comptime function: anytype) type {
-    const Func = @TypeOf(function);
-    const typeinfo: std.builtin.Type.Fn = @typeInfo(Func).Fn;
-    const MaybeType = typeinfo.return_type orelse @compileError("Expected the function to have a return type");
-    return MaybeResult(MaybeType);
-}
-
-pub fn MaybeResult(comptime MaybeType: type) type {
-    const maybe_ty_info = @typeInfo(MaybeType);
-
-    const maybe = maybe_ty_info.Union;
-    if (maybe.fields.len != 2) @compileError("Expected the Maybe type to be a union(enum) with two variants");
-
-    if (!std.mem.eql(u8, maybe.fields[0].name, "err")) {
-        @compileError("Expected the first field of the Maybe type to be \"err\", got: " ++ maybe.fields[0].name);
-    }
-
-    if (!std.mem.eql(u8, maybe.fields[1].name, "result")) {
-        @compileError("Expected the second field of the Maybe type to be \"result\"" ++ maybe.fields[1].name);
-    }
-
-    return maybe.fields[1].type;
-}
-
 pub fn ReturnOf(comptime function: anytype) type {
     return ReturnOfType(@TypeOf(function));
 }
@@ -172,31 +148,6 @@ pub inline fn ConcatArgs4(
     }
 
     return args;
-}
-
-// Copied from std.meta
-fn CreateUniqueTuple(comptime N: comptime_int, comptime types: [N]type) type {
-    var tuple_fields: [types.len]std.builtin.Type.StructField = undefined;
-    inline for (types, 0..) |T, i| {
-        @setEvalBranchQuota(10_000);
-        var num_buf: [128]u8 = undefined;
-        tuple_fields[i] = .{
-            .name = std.fmt.bufPrintZ(&num_buf, "{d}", .{i}) catch unreachable,
-            .type = T,
-            .default_value = null,
-            .is_comptime = false,
-            .alignment = if (@sizeOf(T) > 0) @alignOf(T) else 0,
-        };
-    }
-
-    return @Type(.{
-        .Struct = .{
-            .is_tuple = true,
-            .layout = .auto,
-            .decls = &.{},
-            .fields = &tuple_fields,
-        },
-    });
 }
 
 pub fn isSimpleCopyType(comptime T: type) bool {

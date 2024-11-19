@@ -306,7 +306,8 @@ pub const Arguments = struct {
         clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
-        clap.parseParam("--junit-report <STR>             Write a JUnit XML report to the given path (useful for CI/CD pipelines)") catch unreachable,
+        clap.parseParam("--reporter <STR>                 Specify the test reporter. Currently --reporter=junit is the only supported format.") catch unreachable,
+        clap.parseParam("--reporter-outfile <STR>         The output file used for the format from --reporter.") catch unreachable,
     };
     pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -525,8 +526,21 @@ pub const Arguments = struct {
                 }
             }
 
-            if (args.option("--junit-report")) |junit_report| {
-                ctx.test_options.junit_report = junit_report;
+            if (args.option("--reporter-outfile")) |reporter_outfile| {
+                ctx.test_options.reporter_outfile = reporter_outfile;
+            }
+
+            if (args.option("--reporter")) |reporter| {
+                if (strings.eqlComptime(reporter, "junit")) {
+                    if (ctx.test_options.reporter_outfile == null) {
+                        Output.errGeneric("--reporter=junit expects an output file from --reporter-outfile", .{});
+                        Global.crash();
+                    }
+                    ctx.test_options.file_reporter = .junit;
+                } else {
+                    Output.errGeneric("unrecognized reporter format: '{s}'", .{reporter});
+                    Global.crash();
+                }
             }
 
             if (args.option("--coverage-dir")) |dir| {
@@ -1359,7 +1373,9 @@ pub const Command = struct {
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},
         test_filter_regex: ?*RegularExpression = null,
-        junit_report: ?[]const u8 = null,
+
+        file_reporter: ?TestCommand.FileReporter = null,
+        reporter_outfile: ?[]const u8 = null,
     };
 
     pub const Debugger = union(enum) {

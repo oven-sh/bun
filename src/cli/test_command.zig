@@ -9,6 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
+const OOM = bun.OOM;
 
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -472,7 +473,11 @@ pub const CommandLineReporter = struct {
     skips_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     todos_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
 
-    junit_reporter: ?*JunitReporter = null,
+    file_reporter: ?FileReporter = null,
+
+    pub const FileReporter = union(enum) {
+        junit: *JunitReporter,
+    };
 
     pub const Summary = struct {
         pass: u32 = 0,
@@ -496,7 +501,17 @@ pub const CommandLineReporter = struct {
 
     pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {}
 
-    fn printTestLine(status: TestRunner.Test.Status, label: string, elapsed_ns: u64, parent: ?*jest.DescribeScope, assertions: u32, comptime skip: bool, writer: anytype, file: string, junit: ?*JunitReporter) void {
+    fn printTestLine(
+        status: TestRunner.Test.Status,
+        label: string,
+        elapsed_ns: u64,
+        parent: ?*jest.DescribeScope,
+        assertions: u32,
+        comptime skip: bool,
+        writer: anytype,
+        file: string,
+        file_reporter: ?FileReporter,
+    ) void {
         var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
         var parent_ = parent;
 
@@ -552,42 +567,46 @@ pub const CommandLineReporter = struct {
 
         writer.writeAll("\n") catch unreachable;
 
-        if (junit) |reporter| {
-            const filename = brk: {
-                if (strings.hasPrefix(file, bun.fs.FileSystem.instance.top_level_dir)) {
-                    break :brk strings.withoutLeadingPathSeparator(file[bun.fs.FileSystem.instance.top_level_dir.len..]);
-                } else {
-                    break :brk file;
-                }
-            };
-            if (!strings.eql(reporter.current_file, filename)) {
-                if (reporter.current_file.len > 0) {
-                    reporter.endTestSuite() catch bun.outOfMemory();
-                }
-
-                reporter.beginTestSuite(filename) catch bun.outOfMemory();
-            }
-
-            var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-            defer arena.deinit();
-            var stack_fallback = std.heap.stackFallback(4096, arena.allocator());
-            const allocator = stack_fallback.get();
-            var concatenated_describe_scopes = std.ArrayList(u8).init(allocator);
-
-            {
-                const initial_length = concatenated_describe_scopes.items.len;
-                for (scopes) |scope| {
-                    if (scope.label.len > 0) {
-                        if (initial_length != concatenated_describe_scopes.items.len) {
-                            concatenated_describe_scopes.appendSlice(" &gt; ") catch bun.outOfMemory();
+        if (file_reporter) |reporter| {
+            switch (reporter) {
+                .junit => |junit| {
+                    const filename = brk: {
+                        if (strings.hasPrefix(file, bun.fs.FileSystem.instance.top_level_dir)) {
+                            break :brk strings.withoutLeadingPathSeparator(file[bun.fs.FileSystem.instance.top_level_dir.len..]);
+                        } else {
+                            break :brk file;
+                        }
+                    };
+                    if (!strings.eql(junit.current_file, filename)) {
+                        if (junit.current_file.len > 0) {
+                            junit.endTestSuite() catch bun.outOfMemory();
                         }
 
-                        escapeXml(scope.label, concatenated_describe_scopes.writer()) catch bun.outOfMemory();
+                        junit.beginTestSuite(filename) catch bun.outOfMemory();
                     }
-                }
-            }
 
-            reporter.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns) catch bun.outOfMemory();
+                    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                    defer arena.deinit();
+                    var stack_fallback = std.heap.stackFallback(4096, arena.allocator());
+                    const allocator = stack_fallback.get();
+                    var concatenated_describe_scopes = std.ArrayList(u8).init(allocator);
+
+                    {
+                        const initial_length = concatenated_describe_scopes.items.len;
+                        for (scopes) |scope| {
+                            if (scope.label.len > 0) {
+                                if (initial_length != concatenated_describe_scopes.items.len) {
+                                    concatenated_describe_scopes.appendSlice(" &gt; ") catch bun.outOfMemory();
+                                }
+
+                                escapeXml(scope.label, concatenated_describe_scopes.writer()) catch bun.outOfMemory();
+                            }
+                        }
+                    }
+
+                    junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns) catch bun.outOfMemory();
+                },
+            }
         }
     }
 
@@ -601,7 +620,7 @@ pub const CommandLineReporter = struct {
 
         writeTestStatusLine(.pass, &writer);
 
-        printTestLine(.pass, label, elapsed_ns, parent, expectations, false, writer, file, this.junit_reporter);
+        printTestLine(.pass, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter);
 
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.pass;
         this.summary.pass += 1;
@@ -618,7 +637,7 @@ pub const CommandLineReporter = struct {
         var writer = this.failures_to_repeat_buf.writer(bun.default_allocator);
 
         writeTestStatusLine(.fail, &writer);
-        printTestLine(.fail, label, elapsed_ns, parent, expectations, false, writer, file, this.junit_reporter);
+        printTestLine(.fail, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter);
 
         // We must always reset the colors because (skip) will have set them to <d>
         if (Output.enable_ansi_colors_stderr) {
@@ -653,7 +672,7 @@ pub const CommandLineReporter = struct {
             var writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
 
             writeTestStatusLine(.skip, &writer);
-            printTestLine(.skip, label, elapsed_ns, parent, expectations, true, writer, file, if (this.junit_reporter) |junit| junit else null);
+            printTestLine(.skip, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter);
 
             writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch unreachable;
             Output.flush();
@@ -676,7 +695,7 @@ pub const CommandLineReporter = struct {
         var writer = this.todos_to_repeat_buf.writer(bun.default_allocator);
 
         writeTestStatusLine(.todo, &writer);
-        printTestLine(.todo, label, elapsed_ns, parent, expectations, true, writer, file, if (this.junit_reporter) |junit| junit else null);
+        printTestLine(.todo, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter);
 
         writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch unreachable;
         Output.flush();
@@ -1147,6 +1166,10 @@ pub const TestCommand = struct {
         lcov: bool,
     };
 
+    pub const FileReporter = enum {
+        junit,
+    };
+
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;
 
@@ -1207,8 +1230,10 @@ pub const TestCommand = struct {
         jest.Jest.runner = &reporter.jest;
         reporter.jest.test_options = &ctx.test_options;
 
-        if (ctx.test_options.junit_report != null) {
-            reporter.junit_reporter = JunitReporter.init();
+        if (ctx.test_options.file_reporter) |file_reporter| {
+            reporter.file_reporter = switch (file_reporter) {
+                .junit => .{ .junit = JunitReporter.init() },
+            };
         }
 
         js_ast.Expr.Data.Store.create();
@@ -1518,11 +1543,15 @@ pub const TestCommand = struct {
         Output.prettyError("\n", .{});
         Output.flush();
 
-        if (reporter.junit_reporter) |junit| {
-            if (junit.current_file.len > 0) {
-                junit.endTestSuite() catch {};
+        if (reporter.file_reporter) |file_reporter| {
+            switch (file_reporter) {
+                .junit => |junit| {
+                    if (junit.current_file.len > 0) {
+                        junit.endTestSuite() catch {};
+                    }
+                    junit.writeToFile(ctx.test_options.reporter_outfile.?) catch {};
+                },
             }
-            junit.writeToFile(ctx.test_options.junit_report.?) catch {};
         }
 
         if (vm.hot_reload == .watch) {

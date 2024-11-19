@@ -73,7 +73,7 @@ describe("junit reporter", () => {
       }
 
       const junitPath = `${tmpDir}/junit.xml`;
-      const proc = spawn([bunExe(), "test", "--junit-report", junitPath], {
+      const proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
         cwd: tmpDir,
         env,
         stdout: "inherit",

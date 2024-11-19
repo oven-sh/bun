@@ -44,6 +44,8 @@ const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
 const Index = @import("../../ast/base.zig").Index;
 
+const debug = bun.Output.scoped(.Bundler, false);
+
 pub const JSBundler = struct {
     const OwnedString = bun.MutableString;
 
@@ -60,7 +62,6 @@ pub const JSBundler = struct {
         jsx: options.JSX.Pragma = .{},
         code_splitting: bool = false,
         minify: Minify = .{},
-        server_components: ServerComponents = ServerComponents{},
         no_macros: bool = false,
         ignore_dce_annotations: bool = false,
         emit_dce_annotations: ?bool = null,
@@ -81,9 +82,7 @@ pub const JSBundler = struct {
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
-        const FromJSError = OOM || JSError;
-
-        pub fn fromJS(globalThis: *JSC.JSGlobalObject, config: JSC.JSValue, plugins: *?*Plugin, allocator: std.mem.Allocator) FromJSError!Config {
+        pub fn fromJS(globalThis: *JSC.JSGlobalObject, config: JSC.JSValue, plugins: *?*Plugin, allocator: std.mem.Allocator) JSError!Config {
             var this = Config{
                 .entry_points = bun.StringSet.init(allocator),
                 .external = bun.StringSet.init(allocator),
@@ -114,27 +113,26 @@ pub const JSBundler = struct {
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
             if (try config.getArray(globalThis, "plugins")) |array| {
+                const length = array.getLength(globalThis);
                 var iter = array.arrayIterator(globalThis);
-                while (iter.next()) |plugin| {
+                var onstart_promise_array: JSValue = JSValue.undefined;
+                var i: usize = 0;
+                while (iter.next()) |plugin| : (i += 1) {
                     if (!plugin.isObject()) {
-                        globalThis.throwInvalidArguments("Expected plugin to be an object", .{});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("Expected plugin to be an object", .{});
                     }
 
-                    if (plugin.getOptional(globalThis, "name", ZigString.Slice) catch null) |slice| {
+                    if (try plugin.getOptional(globalThis, "name", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (slice.len == 0) {
-                            globalThis.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
-                            return error.JSError;
+                            return globalThis.throwInvalidArguments2("Expected plugin to have a non-empty name", .{});
                         }
                     } else {
-                        globalThis.throwInvalidArguments("Expected plugin to have a name", .{});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("Expected plugin to have a name", .{});
                     }
 
-                    const function = (plugin.getFunction(globalThis, "setup") catch null) orelse {
-                        globalThis.throwInvalidArguments("Expected plugin to have a setup() function", .{});
-                        return error.JSError;
+                    const function = try plugin.getFunction(globalThis, "setup") orelse {
+                        return globalThis.throwInvalidArguments2("Expected plugin to have a setup() function", .{});
                     };
 
                     var bun_plugins: *Plugin = plugins.* orelse brk: {
@@ -149,29 +147,40 @@ pub const JSBundler = struct {
                         break :brk plugins.*.?;
                     };
 
-                    var plugin_result = bun_plugins.addPlugin(function, config);
+                    const is_last = i == length - 1;
+                    var plugin_result = try bun_plugins.addPlugin(function, config, onstart_promise_array, is_last);
 
                     if (!plugin_result.isEmptyOrUndefinedOrNull()) {
                         if (plugin_result.asAnyPromise()) |promise| {
+                            promise.setHandled(globalThis.vm());
                             globalThis.bunVM().waitForPromise(promise);
-                            plugin_result = promise.result(globalThis.vm());
+                            switch (promise.unwrap(globalThis.vm(), .mark_handled)) {
+                                .pending => unreachable,
+                                .fulfilled => |val| {
+                                    plugin_result = val;
+                                },
+                                .rejected => |err| {
+                                    return globalThis.throwValue2(err);
+                                },
+                            }
                         }
                     }
 
                     if (plugin_result.toError()) |err| {
-                        globalThis.throwValue(err);
+                        return globalThis.throwValue2(err);
+                    } else if (globalThis.hasException()) {
                         return error.JSError;
                     }
+
+                    onstart_promise_array = plugin_result;
                 }
             }
 
-            if (config.getTruthy(globalThis, "macros")) |macros_flag| {
-                if (!macros_flag.coerce(bool, globalThis)) {
-                    this.no_macros = true;
-                }
+            if (try config.getBooleanLoose(globalThis, "macros")) |macros_flag| {
+                this.no_macros = !macros_flag;
             }
 
-            if (try config.getOptional(globalThis, "bytecode", bool)) |bytecode| {
+            if (try config.getBooleanLoose(globalThis, "bytecode")) |bytecode| {
                 this.bytecode = bytecode;
 
                 if (bytecode) {
@@ -185,8 +194,7 @@ pub const JSBundler = struct {
                 this.target = target;
 
                 if (target != .bun and this.bytecode) {
-                    globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
-                    return error.JSError;
+                    return globalThis.throwInvalidArguments2("target must be 'bun' when bytecode is true", .{});
                 }
             }
 
@@ -232,38 +240,32 @@ pub const JSBundler = struct {
                 this.format = format;
 
                 if (this.bytecode and format != .cjs) {
-                    globalThis.throwInvalidArguments("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
-                    return error.JSError;
+                    return globalThis.throwInvalidArguments2("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
                 }
             }
 
-            // if (try config.getOptional(globalThis, "hot", bool)) |hot| {
-            //     this.hot = hot;
-            // }
-
-            if (try config.getOptional(globalThis, "splitting", bool)) |hot| {
+            if (try config.getBooleanLoose(globalThis, "splitting")) |hot| {
                 this.code_splitting = hot;
             }
 
-            if (config.getTruthy(globalThis, "minify")) |hot| {
-                if (hot.isBoolean()) {
-                    const value = hot.coerce(bool, globalThis);
+            if (config.getTruthy(globalThis, "minify")) |minify| {
+                if (minify.isBoolean()) {
+                    const value = minify.toBoolean();
                     this.minify.whitespace = value;
                     this.minify.syntax = value;
                     this.minify.identifiers = value;
-                } else if (hot.isObject()) {
-                    if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
+                } else if (minify.isObject()) {
+                    if (try minify.getBooleanLoose(globalThis, "whitespace")) |whitespace| {
                         this.minify.whitespace = whitespace;
                     }
-                    if (try hot.getOptional(globalThis, "syntax", bool)) |syntax| {
+                    if (try minify.getBooleanLoose(globalThis, "syntax")) |syntax| {
                         this.minify.syntax = syntax;
                     }
-                    if (try hot.getOptional(globalThis, "identifiers", bool)) |syntax| {
+                    if (try minify.getBooleanLoose(globalThis, "identifiers")) |syntax| {
                         this.minify.identifiers = syntax;
                     }
                 } else {
-                    globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
-                    return error.JSError;
+                    return globalThis.throwInvalidArguments2("Expected minify to be a boolean or an object", .{});
                 }
             }
 
@@ -271,34 +273,27 @@ pub const JSBundler = struct {
                 var iter = entry_points.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
                     var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                        globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("Expected entrypoints to be an array of strings", .{});
                     };
                     defer slice.deinit();
                     try this.entry_points.insert(slice.slice());
                 }
             } else {
-                globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
-                return error.JSError;
+                return globalThis.throwInvalidArguments2("Expected entrypoints to be an array of strings", .{});
             }
 
-            if (config.getTruthy(globalThis, "emitDCEAnnotations")) |flag| {
-                if (flag.coerce(bool, globalThis)) {
-                    this.emit_dce_annotations = true;
-                }
+            if (try config.getBooleanLoose(globalThis, "emitDCEAnnotations")) |flag| {
+                this.emit_dce_annotations = flag;
             }
 
-            if (config.getTruthy(globalThis, "ignoreDCEAnnotations")) |flag| {
-                if (flag.coerce(bool, globalThis)) {
-                    this.ignore_dce_annotations = true;
-                }
+            if (try config.getBooleanLoose(globalThis, "ignoreDCEAnnotations")) |flag| {
+                this.ignore_dce_annotations = flag;
             }
 
             if (config.getTruthy(globalThis, "conditions")) |conditions_value| {
                 if (conditions_value.isString()) {
                     var slice = conditions_value.toSliceOrNull(globalThis) orelse {
-                        globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
                     };
                     defer slice.deinit();
                     try this.conditions.insert(slice.slice());
@@ -306,15 +301,13 @@ pub const JSBundler = struct {
                     var iter = conditions_value.arrayIterator(globalThis);
                     while (iter.next()) |entry_point| {
                         var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                            globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
-                            return error.JSError;
+                            return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
                         };
                         defer slice.deinit();
                         try this.conditions.insert(slice.slice());
                     }
                 } else {
-                    globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
-                    return error.JSError;
+                    return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
                 }
             }
 
@@ -353,8 +346,7 @@ pub const JSBundler = struct {
                 var iter = externals.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
                     var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                        globalThis.throwInvalidArguments("Expected external to be an array of strings", .{});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("Expected external to be an array of strings", .{});
                     };
                     defer slice.deinit();
                     try this.external.insert(slice.slice());
@@ -365,8 +357,7 @@ pub const JSBundler = struct {
                 var iter = drops.arrayIterator(globalThis);
                 while (iter.next()) |entry| {
                     var slice = entry.toSliceOrNull(globalThis) orelse {
-                        globalThis.throwInvalidArguments("Expected drop to be an array of strings", .{});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("Expected drop to be an array of strings", .{});
                     };
                     defer slice.deinit();
                     try this.drop.insert(slice.slice());
@@ -423,15 +414,13 @@ pub const JSBundler = struct {
                         this.names.asset.data = this.names.owned_asset.list.items;
                     }
                 } else {
-                    globalThis.throwInvalidArguments("Expected naming to be a string or an object", .{});
-                    return error.JSError;
+                    return globalThis.throwInvalidArguments2("Expected naming to be a string or an object", .{});
                 }
             }
 
             if (try config.getOwnObject(globalThis, "define")) |define| {
                 if (!define.isObject()) {
-                    globalThis.throwInvalidArguments("define must be an object", .{});
-                    return error.JSError;
+                    return globalThis.throwInvalidArguments2("define must be an object", .{});
                 }
 
                 var define_iter = JSC.JSPropertyIterator(.{
@@ -445,8 +434,7 @@ pub const JSBundler = struct {
                     const value_type = property_value.jsType();
 
                     if (!value_type.isStringLike()) {
-                        globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("define \"{s}\" must be a JSON string", .{prop});
                     }
 
                     var val = JSC.ZigString.init("");
@@ -480,8 +468,7 @@ pub const JSBundler = struct {
 
                 while (loader_iter.next()) |prop| {
                     if (!prop.hasPrefixComptime(".") or prop.length() < 2) {
-                        globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments2("loader property names must be file extensions, such as '.txt'", .{});
                     }
 
                     loader_values[loader_iter.i] = try loader_iter.value.toEnumFromMap(
@@ -518,18 +505,6 @@ pub const JSBundler = struct {
             }
         };
 
-        pub const ServerComponents = struct {
-            router: JSC.Strong = .{},
-            client: std.ArrayListUnmanaged(OwnedString) = .{},
-            server: std.ArrayListUnmanaged(OwnedString) = .{},
-
-            pub fn deinit(self: *ServerComponents, allocator: std.mem.Allocator) void {
-                self.router.deinit();
-                self.client.clearAndFree(allocator);
-                self.server.clearAndFree(allocator);
-            }
-        };
-
         pub const Minify = struct {
             whitespace: bool = false,
             identifiers: bool = false,
@@ -553,7 +528,6 @@ pub const JSBundler = struct {
             self.define.deinit();
             self.dir.deinit();
             self.serve.deinit(allocator);
-            self.server_components.deinit(allocator);
             if (self.loaders) |loaders| {
                 for (loaders.extensions) |ext| {
                     bun.default_allocator.free(ext);
@@ -613,7 +587,7 @@ pub const JSBundler = struct {
     pub fn buildFn(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(1);
         return build(globalThis, arguments.slice());
     }
@@ -783,6 +757,8 @@ pub const JSBundler = struct {
         }
     };
 
+    const DeferredTask = bun.bundle_v2.DeferredTask;
+
     pub const Load = struct {
         source_index: Index,
         default_loader: options.Loader,
@@ -799,6 +775,11 @@ pub const JSBundler = struct {
 
         /// Faster path: skip the extra threadpool dispatch when the file is not found
         was_file: bool = false,
+
+        // We only allow the user to call defer once right now
+        called_defer: bool = false,
+
+        const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
 
         pub fn create(
             completion: *bun.BundleV2.JSBundleCompletionTask,
@@ -848,6 +829,7 @@ pub const JSBundler = struct {
         };
 
         pub fn deinit(this: *Load) void {
+            debug("Deinit Load(0{x}, {s})", .{ @intFromPtr(this), this.path });
             this.value.deinit();
             if (this.completion) |completion|
                 completion.deref();
@@ -856,7 +838,7 @@ pub const JSBundler = struct {
         const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
 
         pub fn runOnJSThread(this: *Load) void {
-            var completion = this.completion orelse {
+            var completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
                 this.deinit();
                 return;
             };
@@ -871,7 +853,7 @@ pub const JSBundler = struct {
         }
 
         pub fn dispatch(this: *Load) void {
-            var completion = this.completion orelse {
+            var completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
                 this.deinit();
                 return;
             };
@@ -882,6 +864,35 @@ pub const JSBundler = struct {
             completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
         }
 
+        export fn JSBundlerPlugin__onDefer(
+            this: *Load,
+            globalObject: *JSC.JSGlobalObject,
+        ) JSValue {
+            if (this.called_defer) {
+                globalObject.throw("can't call .defer() more than once within an onLoad plugin", .{});
+                return .undefined;
+            }
+            this.called_defer = true;
+
+            _ = this.parse_task.ctx.graph.deferred_pending.fetchAdd(1, .acq_rel);
+            _ = @atomicRmw(usize, &this.parse_task.ctx.graph.parse_pending, .Sub, 1, .acq_rel);
+
+            debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s}) parse_pending={d} deferred_pending={d}", .{
+                @intFromPtr(this),
+                this.path,
+                @atomicLoad(
+                    usize,
+                    &this.parse_task.ctx.graph.parse_pending,
+                    .monotonic,
+                ),
+                this.parse_task.ctx.graph.deferred_pending.load(.monotonic),
+            });
+
+            defer this.parse_task.ctx.loop().wakeup();
+            const promise: JSValue = if (this.completion) |c| c.plugins.?.appendDeferPromise() else return .undefined;
+            return promise;
+        }
+
         export fn JSBundlerPlugin__onLoadAsync(
             this: *Load,
             _: *anyopaque,
@@ -889,7 +900,7 @@ pub const JSBundler = struct {
             loader_as_int: JSValue,
         ) void {
             JSC.markBinding(@src());
-            var completion = this.completion orelse {
+            var completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
                 this.deinit();
                 return;
             };
@@ -903,12 +914,13 @@ pub const JSBundler = struct {
                     return;
                 }
             } else {
+                const loader: Api.Loader = @enumFromInt(loader_as_int.to(u8));
                 const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(completion.globalThis, source_code_value, bun.default_allocator) catch
                 // TODO:
                     @panic("Unexpected: source_code is not a string");
                 this.value = .{
                     .success = .{
-                        .loader = @as(options.Loader, @enumFromInt(@as(u8, @intCast(loader_as_int.to(i32))))),
+                        .loader = options.Loader.fromAPI(loader),
                         .source_code = source_code,
                     },
                 };
@@ -978,6 +990,13 @@ pub const JSBundler = struct {
             u8,
         ) void;
 
+        extern fn JSBundlerPlugin__drainDeferred(*Plugin, rejected: bool) void;
+        extern fn JSBundlerPlugin__appendDeferPromise(*Plugin, rejected: bool) JSValue;
+
+        pub fn appendDeferPromise(this: *Plugin) JSValue {
+            return JSBundlerPlugin__appendDeferPromise(this, false);
+        }
+
         pub fn hasAnyMatches(
             this: *Plugin,
             path: *const Fs.Path,
@@ -1008,6 +1027,7 @@ pub const JSBundler = struct {
             JSC.markBinding(@src());
             const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnLoad");
             defer tracer.end();
+            debug("JSBundler.matchOnLoad(0x{x}, {s}, {s})", .{ @intFromPtr(this), namespace, path });
             const namespace_string = if (namespace.len == 0)
                 bun.String.static("file")
             else
@@ -1046,11 +1066,19 @@ pub const JSBundler = struct {
             this: *Plugin,
             object: JSC.JSValue,
             config: JSC.JSValue,
-        ) JSValue {
+            onstart_promises_array: JSC.JSValue,
+            is_last: bool,
+        ) !JSValue {
             JSC.markBinding(@src());
             const tracer = bun.tracy.traceNamed(@src(), "JSBundler.addPlugin");
             defer tracer.end();
-            return JSBundlerPlugin__runSetupFunction(this, object, config);
+            const value = JSBundlerPlugin__runSetupFunction(this, object, config, onstart_promises_array, JSValue.jsBoolean(is_last));
+            if (value == .zero) return error.JSError;
+            return value;
+        }
+
+        pub fn drainDeferred(this: *Plugin, rejected: bool) void {
+            JSBundlerPlugin__drainDeferred(this, rejected);
         }
 
         pub fn deinit(this: *Plugin) void {
@@ -1068,6 +1096,8 @@ pub const JSBundler = struct {
 
         extern fn JSBundlerPlugin__runSetupFunction(
             *Plugin,
+            JSC.JSValue,
+            JSC.JSValue,
             JSC.JSValue,
             JSC.JSValue,
         ) JSValue;
@@ -1135,7 +1165,7 @@ pub const BuildArtifact = struct {
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return @call(bun.callmod_inline, Blob.getText, .{ &this.blob, globalThis, callframe });
     }
 
@@ -1143,21 +1173,21 @@ pub const BuildArtifact = struct {
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return @call(bun.callmod_inline, Blob.getJSON, .{ &this.blob, globalThis, callframe });
     }
     pub fn getArrayBuffer(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return @call(bun.callmod_inline, Blob.getArrayBuffer, .{ &this.blob, globalThis, callframe });
     }
     pub fn getSlice(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return @call(bun.callmod_inline, Blob.getSlice, .{ &this.blob, globalThis, callframe });
     }
     pub fn getType(
@@ -1171,7 +1201,7 @@ pub const BuildArtifact = struct {
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return @call(bun.callmod_inline, Blob.getStream, .{
             &this.blob,
             globalThis,

@@ -266,6 +266,17 @@ pub const Bunfig = struct {
                         this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
                     }
 
+                    if (test_.get("reporter")) |expr| {
+                        try this.expect(expr, .e_object);
+                        if (expr.get("junit")) |junit_expr| {
+                            try this.expectString(junit_expr);
+                            if (junit_expr.data.e_string.len() > 0) {
+                                this.ctx.test_options.file_reporter = .junit;
+                                this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.string(allocator);
+                            }
+                        }
+                    }
+
                     if (test_.get("coverageReporter")) |expr| brk: {
                         this.ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
                         if (expr.data == .e_string) {
@@ -797,7 +808,7 @@ pub const Bunfig = struct {
 
         pub fn expectString(this: *Parser, expr: js_ast.Expr) !void {
             switch (expr.data) {
-                .e_string, .e_utf8_string => {},
+                .e_string => {},
                 else => {
                     this.log.addErrorFmtOpts(
                         this.allocator,

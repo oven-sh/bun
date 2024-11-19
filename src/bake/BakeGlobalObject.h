@@ -4,16 +4,9 @@
 
 namespace Bake {
 
-struct DevServer; // DevServer.zig
-struct Route; // DevServer.zig
-struct BunVirtualMachine;
-
 class GlobalObject : public Zig::GlobalObject {
 public:
     using Base = Zig::GlobalObject;
-
-    /// Null if in production
-    DevServer* m_devServer;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -31,16 +24,10 @@ public:
     static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable);
 
-    ALWAYS_INLINE bool isProduction() const { return !m_devServer; }
-
     void finishCreation(JSC::VM& vm);
 
     GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable) 
         : Zig::GlobalObject(vm, structure, methodTable) { }
 };
-
-// Zig API
-extern "C" void KitInitProcessIdentifier();
-extern "C" GlobalObject* KitCreateDevGlobal(DevServer* owner, void* console);
 
 }; // namespace Kit

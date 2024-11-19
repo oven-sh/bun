@@ -26,6 +26,8 @@
 #include <JavaScriptCore/YarrMatchingContextHolder.h>
 #include "ErrorCode.h"
 #include "napi_external.h"
+#include <JavaScriptCore/Strong.h>
+#include <JavaScriptCore/JSPromise.h>
 namespace Bun {
 
 extern "C" int OnBeforeParsePlugin__isDone(void* context);
@@ -33,16 +35,19 @@ extern "C" int OnBeforeParsePlugin__isDone(void* context);
 #define WRAP_BUNDLER_PLUGIN(argName) jsNumber(bitwise_cast<double>(reinterpret_cast<uintptr_t>(argName)))
 #define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(bitwise_cast<uintptr_t>(callFrame->argument(0).asDouble()))
 
+/// These are callbacks defined in Zig and to be run after their associated JS version is run
 extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onVirtualModulePlugin(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__onDefer(void*, JSC::JSGlobalObject*);
 
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addError);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse);
+JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_generateDeferPromise);
 
 void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, unsigned& index)
 {
@@ -104,6 +109,7 @@ static const HashTableValue JSBundlerPluginHashTable[] = {
     { "onLoadAsync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onLoadAsync, 3 } },
     { "onResolveAsync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onResolveAsync, 4 } },
     { "onBeforeParse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onBeforeParse, 4 } },
+    { "generateDeferPromise"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_generateDeferPromise, 0 } },
 };
 
 class JSBundlerPlugin final : public JSC::JSNonFinalObject {
@@ -146,6 +152,7 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     Bun::BundlerPlugin plugin;
+    /// These are the user implementation of the plugin callbacks
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onLoadFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onResolveFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> setupFunction;
@@ -341,6 +348,23 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalO
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__appendDeferPromise(Bun::JSBundlerPlugin* pluginObject, bool rejected)
+{
+    JSC::JSGlobalObject* globalObject = pluginObject->globalObject();
+    Strong<JSPromise> strong_promise = JSC::Strong<JSPromise>(globalObject->vm(), JSPromise::create(globalObject->vm(), globalObject->promiseStructure()));
+    JSPromise* ret = strong_promise.get();
+    pluginObject->plugin.deferredPromises.append(strong_promise);
+
+    return JSC::JSValue::encode(ret);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_generateDeferPromise, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSBundlerPlugin* plugin = (JSBundlerPlugin*)UNWRAP_BUNDLER_PLUGIN(callFrame);
+    JSC::EncodedJSValue encoded_defer_promise = JSBundlerPlugin__onDefer(plugin, globalObject);
+    return encoded_defer_promise;
+}
+
 void JSBundlerPlugin::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -478,7 +502,9 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     Bun::JSBundlerPlugin* plugin,
     JSC::EncodedJSValue encodedSetupFunction,
-    JSC::EncodedJSValue encodedConfig)
+    JSC::EncodedJSValue encodedConfig,
+    JSC::EncodedJSValue encodedOnstartPromisesArray,
+    JSC::EncodedJSValue encodedIsLast)
 {
     auto& vm = plugin->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);
@@ -494,21 +520,29 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     MarkedArgumentBuffer arguments;
     arguments.append(JSValue::decode(encodedSetupFunction));
     arguments.append(JSValue::decode(encodedConfig));
+    arguments.append(JSValue::decode(encodedOnstartPromisesArray));
+    arguments.append(JSValue::decode(encodedIsLast));
     auto* lexicalGlobalObject = jsCast<JSFunction*>(JSValue::decode(encodedSetupFunction))->globalObject();
 
-    auto result = call(lexicalGlobalObject, setupFunction, callData, plugin, arguments);
-    if (UNLIKELY(scope.exception())) {
-        auto exception = scope.exception();
-        scope.clearException();
-        return JSValue::encode(exception);
-    }
-
-    return JSValue::encode(result);
+    return JSC::JSValue::encode(JSC::call(lexicalGlobalObject, setupFunction, callData, plugin, arguments));
 }
 
 extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* config)
 {
     plugin->plugin.config = config;
+}
+
+extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObject, bool rejected)
+{
+    auto deferredPromises = std::exchange(pluginObject->plugin.deferredPromises, {});
+    for (auto& promise : deferredPromises) {
+        if (rejected) {
+            promise->reject(pluginObject->globalObject(), JSC::jsUndefined());
+        } else {
+            promise->resolve(pluginObject->globalObject(), JSC::jsUndefined());
+        }
+        promise.clear();
+    }
 }
 
 extern "C" void JSBundlerPlugin__tombestone(Bun::JSBundlerPlugin* plugin)

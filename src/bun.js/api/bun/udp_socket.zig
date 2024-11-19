@@ -122,17 +122,15 @@ pub const UDPSocketConfig = struct {
     on_drain: JSValue = .zero,
     on_error: JSValue = .zero,
 
-    pub fn fromJS(globalThis: *JSGlobalObject, options: JSValue) ?This {
+    pub fn fromJS(globalThis: *JSGlobalObject, options: JSValue) bun.JSError!This {
         if (options.isEmptyOrUndefinedOrNull() or !options.isObject()) {
-            globalThis.throwInvalidArguments("Expected an object", .{});
-            return null;
+            return globalThis.throwInvalidArguments2("Expected an object", .{});
         }
 
         const hostname = brk: {
             if (options.getTruthy(globalThis, "hostname")) |value| {
                 if (!value.isString()) {
-                    globalThis.throwInvalidArguments("Expected \"hostname\" to be a string", .{});
-                    return null;
+                    return globalThis.throwInvalidArguments2("Expected \"hostname\" to be a string", .{});
                 }
                 const str = value.toBunString(globalThis);
                 defer str.deref();
@@ -147,8 +145,7 @@ pub const UDPSocketConfig = struct {
             if (options.getTruthy(globalThis, "port")) |value| {
                 const number = value.coerceToInt32(globalThis);
                 if (number < 0 or number > 0xffff) {
-                    globalThis.throwInvalidArguments("Expected \"port\" to be an integer between 0 and 65535", .{});
-                    return null;
+                    return globalThis.throwInvalidArguments2("Expected \"port\" to be an integer between 0 and 65535", .{});
                 }
                 break :brk @intCast(number);
             } else {
@@ -163,27 +160,23 @@ pub const UDPSocketConfig = struct {
 
         if (options.getTruthy(globalThis, "socket")) |socket| {
             if (!socket.isObject()) {
-                globalThis.throwInvalidArguments("Expected \"socket\" to be an object", .{});
-                return null;
+                return globalThis.throwInvalidArguments2("Expected \"socket\" to be an object", .{});
             }
 
             if (options.getTruthy(globalThis, "binaryType")) |value| {
                 if (!value.isString()) {
-                    globalThis.throwInvalidArguments("Expected \"socket.binaryType\" to be a string", .{});
-                    return null;
+                    return globalThis.throwInvalidArguments2("Expected \"socket.binaryType\" to be a string", .{});
                 }
 
-                config.binary_type = JSC.BinaryType.fromJSValue(globalThis, value) orelse {
-                    globalThis.throwInvalidArguments("Expected \"socket.binaryType\" to be 'arraybuffer', 'uint8array', or 'buffer'", .{});
-                    return null;
+                config.binary_type = try JSC.BinaryType.fromJSValue(globalThis, value) orelse {
+                    return globalThis.throwInvalidArguments2("Expected \"socket.binaryType\" to be 'arraybuffer', 'uint8array', or 'buffer'", .{});
                 };
             }
 
             inline for (handlers) |handler| {
                 if (socket.getTruthyComptime(globalThis, handler.@"0")) |value| {
                     if (!value.isCell() or !value.isCallable(globalThis.vm())) {
-                        globalThis.throwInvalidArguments("Expected \"socket.{s}\" to be a function", .{handler.@"0"});
-                        return null;
+                        return globalThis.throwInvalidArguments2("Expected \"socket.{s}\" to be a function", .{handler.@"0"});
                     }
                     @field(config, handler.@"1") = value;
                 }
@@ -200,23 +193,19 @@ pub const UDPSocketConfig = struct {
 
         if (options.getTruthy(globalThis, "connect")) |connect| {
             if (!connect.isObject()) {
-                globalThis.throwInvalidArguments("Expected \"connect\" to be an object", .{});
-                return null;
+                return globalThis.throwInvalidArguments2("Expected \"connect\" to be an object", .{});
             }
 
             const connect_host_js = connect.getTruthy(globalThis, "hostname") orelse {
-                globalThis.throwInvalidArguments("Expected \"connect.hostname\" to be a string", .{});
-                return null;
+                return globalThis.throwInvalidArguments2("Expected \"connect.hostname\" to be a string", .{});
             };
 
             if (!connect_host_js.isString()) {
-                globalThis.throwInvalidArguments("Expected \"connect.hostname\" to be a string", .{});
-                return null;
+                return globalThis.throwInvalidArguments2("Expected \"connect.hostname\" to be a string", .{});
             }
 
             const connect_port_js = connect.getTruthy(globalThis, "port") orelse {
-                globalThis.throwInvalidArguments("Expected \"connect.port\" to be an integer", .{});
-                return null;
+                return globalThis.throwInvalidArguments2("Expected \"connect.port\" to be an integer", .{});
             };
             const connect_port = connect_port_js.coerceToInt32(globalThis);
 
@@ -292,12 +281,10 @@ pub const UDPSocket = struct {
 
     pub usingnamespace bun.New(@This());
 
-    pub fn udpSocket(globalThis: *JSGlobalObject, options: JSValue) JSValue {
+    pub fn udpSocket(globalThis: *JSGlobalObject, options: JSValue) bun.JSError!JSValue {
         log("udpSocket", .{});
 
-        const config = UDPSocketConfig.fromJS(globalThis, options) orelse {
-            return .zero;
-        };
+        const config = try UDPSocketConfig.fromJS(globalThis, options);
 
         const vm = globalThis.bunVM();
         var this = This.new(.{
@@ -327,16 +314,14 @@ pub const UDPSocket = struct {
         )) |socket| {
             this.socket = socket;
         } else {
-            globalThis.throw("Failed to bind socket", .{});
-            return .zero;
+            return globalThis.throw2("Failed to bind socket", .{});
         }
 
         if (config.connect) |connect| {
             const ret = this.socket.connect(connect.address, connect.port);
             if (ret != 0) {
                 if (JSC.Maybe(void).errnoSys(ret, .connect)) |err| {
-                    globalThis.throwValue(err.toJS(globalThis));
-                    return .zero;
+                    return globalThis.throwValue2(err.toJS(globalThis));
                 }
             }
             this.connect_info = .{ .port = connect.port };
@@ -370,7 +355,7 @@ pub const UDPSocket = struct {
         return true;
     }
 
-    pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
+    pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         if (this.closed) {
             globalThis.throw("Socket is closed", .{});
             return .zero;
@@ -460,7 +445,7 @@ pub const UDPSocket = struct {
         this: *This,
         globalThis: *JSGlobalObject,
         callframe: *CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         if (this.closed) {
             globalThis.throw("Socket is closed", .{});
             return .zero;
@@ -563,7 +548,7 @@ pub const UDPSocket = struct {
         address: JSValue,
     };
 
-    pub fn ref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn ref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         if (!this.closed) {
             this.poll_ref.ref(globalThis.bunVM());
         }
@@ -571,7 +556,7 @@ pub const UDPSocket = struct {
         return .undefined;
     }
 
-    pub fn unref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn unref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.poll_ref.unref(globalThis.bunVM());
 
         return .undefined;
@@ -581,24 +566,21 @@ pub const UDPSocket = struct {
         this: *This,
         _: *JSGlobalObject,
         _: *CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         if (!this.closed) this.socket.close();
 
         return .undefined;
     }
 
-    pub fn reload(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
+    pub fn reload(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         const args = callframe.arguments(1);
 
         if (args.len < 1) {
-            globalThis.throwInvalidArguments("Expected 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments2("Expected 1 argument", .{});
         }
 
         const options = args.ptr[0];
-        const config = UDPSocketConfig.fromJS(globalThis, options) orelse {
-            return .zero;
-        };
+        const config = try UDPSocketConfig.fromJS(globalThis, options);
 
         config.protect();
         var previous_config = this.config;
@@ -693,7 +675,7 @@ pub const UDPSocket = struct {
         this.destroy();
     }
 
-    pub fn jsConnect(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsConnect(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callFrame.arguments(2);
 
         const this = callFrame.this().as(UDPSocket) orelse {
@@ -743,7 +725,7 @@ pub const UDPSocket = struct {
         return .undefined;
     }
 
-    pub fn jsDisconnect(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsDisconnect(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const this = callFrame.this().as(UDPSocket) orelse {
             globalObject.throwInvalidArguments("Expected UDPSocket as 'this'", .{});
             return .zero;

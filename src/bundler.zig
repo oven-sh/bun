@@ -51,6 +51,7 @@ const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
 const JSC = bun.JSC;
 const PackageManager = @import("./install/install.zig").PackageManager;
+const DataURL = @import("./resolver/data_url.zig").DataURL;
 
 pub fn MacroJSValueType_() type {
     if (comptime JSC.is_bindgen) {
@@ -1300,6 +1301,18 @@ pub const Bundler = struct {
                 break :brk logger.Source.initPathString(path.text, "");
             }
 
+            if (strings.startsWith(path.text, "data:")) {
+                const data_url = DataURL.parseWithoutCheck(path.text) catch |err| {
+                    bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} parsing data url \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                    return null;
+                };
+                const body = data_url.decodeData(this_parse.allocator) catch |err| {
+                    bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} decoding data \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                    return null;
+                };
+                break :brk logger.Source.initPathString(path.text, body);
+            }
+
             const entry = bundler.resolver.caches.fs.readFileWithAllocator(
                 if (use_shared_buffer) bun.fs_allocator else this_parse.allocator,
                 bundler.fs,
@@ -1581,7 +1594,7 @@ pub const Bundler = struct {
             },
             // TODO: use lazy export AST
             .text => {
-                const expr = js_ast.Expr.init(js_ast.E.UTF8String, js_ast.E.UTF8String{
+                const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
                     .data = source.contents,
                 }, logger.Loc.Empty);
                 const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{

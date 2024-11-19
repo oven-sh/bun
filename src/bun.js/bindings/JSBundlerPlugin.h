@@ -6,7 +6,6 @@
 #include <JavaScriptCore/RegularExpression.h>
 #include "napi_external.h"
 #include <JavaScriptCore/Yarr.h>
-#include <JavaScriptCore/Strong.h>
 
 typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
@@ -83,6 +82,8 @@ public:
     NamespaceList onResolve = {};
     NativePluginList onBeforeParse = {};
     BunPluginTarget target { BunPluginTargetBrowser };
+
+    Vector<Strong<JSPromise>> deferredPromises = {};
 
     JSBundlerPluginAddErrorCallback addError;
     JSBundlerPluginOnLoadAsyncCallback onLoadAsync;

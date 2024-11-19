@@ -21,10 +21,8 @@ http2-connect-options.test.js
 https-server-connections-checking-leak.test.js
 module-circular-symlinks.test.js
 module-prototype-mutation.test.js
-net-bind-twice.test.js
 net-listen-error.test.js
 net-server-close.test.js
-net-write-fully-async-hex-string.test.js
 permission-fs-windows-path.test.js
 pipe-abstract-socket-http.test.js
 pipe-file-to-http.test.js

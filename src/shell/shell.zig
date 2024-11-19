@@ -3782,7 +3782,7 @@ pub fn handleTemplateValue(
     jsobjref_buf: []u8,
 ) !bool {
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
-    if (!template_value.isEmpty()) {
+    if (template_value != .zero) {
         if (template_value.asArrayBuffer(globalThis)) |array_buffer| {
             _ = array_buffer;
             const idx = out_jsobjs.items.len;
@@ -4313,7 +4313,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
 
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub const TestingAPIs = struct {
-    pub fn disabledOnThisPlatform(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn disabledOnThisPlatform(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (comptime bun.Environment.isWindows) return JSValue.false;
 
         const arguments_ = callframe.arguments(1);
@@ -4339,7 +4339,7 @@ pub const TestingAPIs = struct {
     pub fn shellLex(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments_ = callframe.arguments(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
@@ -4429,7 +4429,7 @@ pub const TestingAPIs = struct {
     pub fn shellParse(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arguments_ = callframe.arguments(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {

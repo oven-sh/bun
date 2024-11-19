@@ -182,11 +182,12 @@ pub const Arguments = struct {
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
-        clap.parseParam("<POS>...") catch unreachable,
-    } ++ if (builtin.have_error_return_tracing) [_]ParamType{
+    } ++ (if (builtin.have_error_return_tracing) [_]ParamType{
         // This will print more error return traces, as a debug aid
-        clap.parseParam("--verbose-error-trace") catch unreachable,
-    } else [_]ParamType{};
+        clap.parseParam("--verbose-error-trace             Dump error return traces") catch unreachable,
+    } else [_]ParamType{}) ++ [_]ParamType{
+        clap.parseParam("<POS>...") catch unreachable,
+    };
 
     const debug_params = [_]ParamType{
         clap.parseParam("--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string") catch unreachable,
@@ -305,6 +306,8 @@ pub const Arguments = struct {
         clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
+        clap.parseParam("--reporter <STR>                 Specify the test reporter. Currently --reporter=junit is the only supported format.") catch unreachable,
+        clap.parseParam("--reporter-outfile <STR>         The output file used for the format from --reporter.") catch unreachable,
     };
     pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -520,6 +523,23 @@ pub const Arguments = struct {
                         Output.prettyErrorln("<r><red>error<r>: --coverage-reporter received invalid reporter: \"{s}\"", .{reporter});
                         Global.exit(1);
                     }
+                }
+            }
+
+            if (args.option("--reporter-outfile")) |reporter_outfile| {
+                ctx.test_options.reporter_outfile = reporter_outfile;
+            }
+
+            if (args.option("--reporter")) |reporter| {
+                if (strings.eqlComptime(reporter, "junit")) {
+                    if (ctx.test_options.reporter_outfile == null) {
+                        Output.errGeneric("--reporter=junit expects an output file from --reporter-outfile", .{});
+                        Global.crash();
+                    }
+                    ctx.test_options.file_reporter = .junit;
+                } else {
+                    Output.errGeneric("unrecognized reporter format: '{s}'. Currently, only 'junit' is supported", .{reporter});
+                    Global.crash();
                 }
             }
 
@@ -769,11 +789,9 @@ pub const Arguments = struct {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
             ctx.bundler_options.bytecode = args.flag("--bytecode");
 
-            if (comptime FeatureFlags.bake) {
-                if (args.flag("--app")) {
-                    ctx.bundler_options.bake = true;
-                    ctx.bundler_options.bake_debug_dump_server = args.flag("--debug-dump-server-files");
-                }
+            if (FeatureFlags.bake and args.flag("--app")) {
+                ctx.bundler_options.bake = true;
+                ctx.bundler_options.bake_debug_dump_server = args.flag("--debug-dump-server-files");
             }
 
             // TODO: support --format=esm
@@ -935,18 +953,12 @@ pub const Arguments = struct {
                 ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
-            if (comptime FeatureFlags.bake) {
-                if (args.flag("--server-components")) {
-                    if (!bun.FeatureFlags.cli_server_components) {
-                        // TODO: i want to disable this in non-canary
-                        // but i also want to have tests that can run for PRs
-                    }
-                    ctx.bundler_options.server_components = true;
-                    if (opts.target) |target| {
-                        if (!bun.options.Target.from(target).isServerSide()) {
-                            bun.Output.errGeneric("Cannot use client-side --target={s} with --server-components", .{@tagName(target)});
-                            Global.crash();
-                        }
+            if (bun.FeatureFlags.bake and args.flag("--server-components")) {
+                ctx.bundler_options.server_components = true;
+                if (opts.target) |target| {
+                    if (!bun.options.Target.from(target).isServerSide()) {
+                        bun.Output.errGeneric("Cannot use client-side --target={s} with --server-components", .{@tagName(target)});
+                        Global.crash();
                     } else {
                         opts.target = .bun;
                     }
@@ -1361,6 +1373,9 @@ pub const Command = struct {
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},
         test_filter_regex: ?*RegularExpression = null,
+
+        file_reporter: ?TestCommand.FileReporter = null,
+        reporter_outfile: ?[]const u8 = null,
     };
 
     pub const Debugger = union(enum) {

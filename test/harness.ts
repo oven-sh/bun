@@ -5,6 +5,7 @@ import { readFile, readlink, writeFile } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
+import detect_libc from "detect-libc";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -18,6 +19,7 @@ export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
 export const isBuildKite = process.env.BUILDKITE === "true";
+export const libc_family = detect_libc.familySync();
 
 // Use these to mark a test as flaky or broken.
 // This will help us keep track of these tests.
@@ -1363,5 +1365,21 @@ Object.defineProperty(globalThis, "gc", {
 export function waitForFileToExist(path: string, interval: number) {
   while (!fs.existsSync(path)) {
     sleepSync(interval);
+  }
+}
+
+export function libcPathForDlopen() {
+  switch (process.platform) {
+    case "linux":
+      switch (libc_family) {
+        case "glibc":
+          return "libc.so.6";
+        case "musl":
+          return "/usr/lib/libc.so";
+      }
+    case "darwin":
+      return "libc.dylib";
+    default:
+      throw new Error("TODO");
   }
 }

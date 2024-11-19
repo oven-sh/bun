@@ -3786,7 +3786,7 @@ declare module "bun" {
     | "browser";
 
   /** https://bun.sh/docs/bundler/loaders */
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text";
+  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css";
 
   interface PluginConstraints {
     /**
@@ -3874,10 +3874,18 @@ declare module "bun" {
      * The default loader for this file extension
      */
     loader: Loader;
+
+    /**
+     * Defer the execution of this callback until all other modules have been parsed.
+     *
+     * @returns Promise which will be resolved when all modules have been parsed
+     */
+    defer: () => Promise<void>;
   }
 
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
+  type OnStartCallback = () => void | Promise<void>;
 
   interface OnResolveArgs {
     /**
@@ -3960,6 +3968,20 @@ declare module "bun" {
      * ```
      */
     onResolve(constraints: PluginConstraints, callback: OnResolveCallback): void;
+    /**
+     * Register a callback which will be invoked when bundling starts.
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   setup(builder) {
+     *     builder.onStart(() => {
+     *       console.log("bundle just started!!")
+     *     });
+     *   },
+     * });
+     * ```
+     */
+    onStart(callback: OnStartCallback): void;
     /**
      * The config object passed to `Bun.build` as is. Can be mutated.
      */
@@ -4371,6 +4393,30 @@ declare module "bun" {
     setMaxSendFragment(size: number): boolean;
 
     /**
+     * Enable/disable the use of Nagle's algorithm.
+     * Only available for already connected sockets, will return false otherwise
+     * @param noDelay Default: `true`
+     * @returns true if is able to setNoDelay and false if it fails.
+     */
+    setNoDelay(noDelay?: boolean): boolean;
+
+    /**
+     * Enable/disable keep-alive functionality, and optionally set the initial delay before the first keepalive probe is sent on an idle socket.
+     * Set `initialDelay` (in milliseconds) to set the delay between the last data packet received and the first keepalive probe.
+     * Only available for already connected sockets, will return false otherwise.
+     *
+     * Enabling the keep-alive functionality will set the following socket options:
+     * SO_KEEPALIVE=1
+     * TCP_KEEPIDLE=initialDelay
+     * TCP_KEEPCNT=10
+     * TCP_KEEPINTVL=1
+     * @param enable Default: `false`
+     * @param initialDelay Default: `0`
+     * @returns true if is able to setNoDelay and false if it fails.
+     */
+    setKeepAlive(enable?: boolean, initialDelay?: number): boolean;
+
+    /**
      * The number of bytes written to the socket.
      */
     readonly bytesWritten: number;
@@ -4479,6 +4525,7 @@ declare module "bun" {
     port: number;
     tls?: TLSOptions;
     exclusive?: boolean;
+    allowHalfOpen?: boolean;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
@@ -4486,6 +4533,7 @@ declare module "bun" {
     port: number;
     tls?: boolean;
     exclusive?: boolean;
+    allowHalfOpen?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {

@@ -167,6 +167,7 @@ export interface BundlerTestInput {
   format?: "esm" | "cjs" | "iife" | "internal_bake_dev";
   globalName?: string;
   ignoreDCEAnnotations?: boolean;
+  bytecode?: boolean;
   emitDCEAnnotations?: boolean;
   inject?: string[];
   jsx?: {
@@ -380,7 +381,7 @@ export interface BundlerTestRef {
   options: BundlerTestInput;
 }
 
-interface ErrorMeta {
+export interface ErrorMeta {
   file: string;
   error: string;
   line?: string;
@@ -574,7 +575,9 @@ function expectBundled(
     const entryPaths = entryPoints.map(file => path.join(root, file));
 
     if (external) {
-      external = external.map(x => (typeof x !== "string" ? x : x.replace(/\{\{root\}\}/g, root)));
+      external = external.map(x =>
+        typeof x !== "string" ? x : x.replaceAll("{{root}}", root.replaceAll("\\", "\\\\")),
+      );
     }
 
     if (generateOutput === false) outputPaths = [];
@@ -625,7 +628,9 @@ function expectBundled(
       const filename = path.join(root, file);
       mkdirSync(path.dirname(filename), { recursive: true });
       const formattedContents =
-        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+        typeof contents === "string"
+          ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\"))
+          : contents;
       writeFileSync(filename, formattedContents);
     }
 
@@ -718,6 +723,7 @@ function expectBundled(
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
+              experimentalCss && "--experimental-css",
               external && external.map(x => `--external:${x}`),
               packages && ["--packages", packages],
               conditions && `--conditions=${conditions.join(",")}`,
@@ -1016,6 +1022,7 @@ function expectBundled(
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,
+          experimentalCss,
           drop,
         } as BuildConfig;
 
@@ -1131,6 +1138,7 @@ for (const [key, blob] of build.outputs) {
 
             return testRef(id, opts);
           }
+
           throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
         } else if (expectedErrors && expectedErrors.length > 0) {
           throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
@@ -1347,7 +1355,9 @@ for (const [key, blob] of build.outputs) {
     for (const [file, contents] of Object.entries(runtimeFiles ?? {})) {
       mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
       const formattedContents =
-        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+        typeof contents === "string"
+          ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\"))
+          : contents;
       writeFileSync(path.join(root, file), formattedContents);
     }
 

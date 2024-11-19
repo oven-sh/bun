@@ -360,6 +360,21 @@ function getPipeline(options) {
 
   /**
    * @param {Platform} platform
+   * @param {string} [step]
+   * @returns {string[]}
+   */
+  const getDependsOn = (platform, step) => {
+    if (imagePlatforms.has(getImageKey(platform))) {
+      const key = `${getImageKey(platform)}-build-image`;
+      if (key !== step) {
+        return [key];
+      }
+    }
+    return [];
+  };
+
+  /**
+   * @param {Platform} platform
    * @returns {Step}
    */
   const getBuildImageStep = platform => {
@@ -379,76 +394,79 @@ function getPipeline(options) {
   };
 
   /**
-   * @param {Target} target
+   * @param {Platform} platform
    * @returns {Step}
    */
-  const getBuildVendorStep = target => {
+  const getBuildVendorStep = platform => {
     return {
-      key: `${getTargetKey(target)}-build-vendor`,
-      label: `${getTargetLabel(target)} - build-vendor`,
-      agents: getBuildAgent(target),
+      key: `${getTargetKey(platform)}-build-vendor`,
+      label: `${getTargetLabel(platform)} - build-vendor`,
+      depends_on: getDependsOn(platform),
+      agents: getBuildAgent(platform),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
-      env: getBuildEnv(target),
+      env: getBuildEnv(platform),
       command: "bun run build:ci --target dependencies",
     };
   };
 
   /**
-   * @param {Target} target
+   * @param {Platform} platform
    * @returns {Step}
    */
-  const getBuildCppStep = target => {
+  const getBuildCppStep = platform => {
     return {
-      key: `${getTargetKey(target)}-build-cpp`,
-      label: `${getTargetLabel(target)} - build-cpp`,
-      agents: getBuildAgent(target),
+      key: `${getTargetKey(platform)}-build-cpp`,
+      label: `${getTargetLabel(platform)} - build-cpp`,
+      depends_on: getDependsOn(platform),
+      agents: getBuildAgent(platform),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
       env: {
         BUN_CPP_ONLY: "ON",
-        ...getBuildEnv(target),
+        ...getBuildEnv(platform),
       },
       command: "bun run build:ci --target bun",
     };
   };
 
   /**
-   * @param {Target} target
+   * @param {Platform} platform
    * @returns {Step}
    */
-  const getBuildZigStep = target => {
-    const toolchain = getBuildToolchain(target);
+  const getBuildZigStep = platform => {
+    const toolchain = getBuildToolchain(platform);
     return {
-      key: `${getTargetKey(target)}-build-zig`,
-      label: `${getTargetLabel(target)} - build-zig`,
-      agents: getZigAgent(target),
+      key: `${getTargetKey(platform)}-build-zig`,
+      label: `${getTargetLabel(platform)} - build-zig`,
+      depends_on: getDependsOn(platform),
+      agents: getZigAgent(platform),
       retry: getRetry(1), // FIXME: Sometimes zig build hangs, so we need to retry once
       cancel_on_build_failing: isMergeQueue(),
-      env: getBuildEnv(target),
+      env: getBuildEnv(platform),
       command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
     };
   };
 
   /**
-   * @param {Target} target
+   * @param {Platform} platform
    * @returns {Step}
    */
-  const getBuildBunStep = target => {
+  const getBuildBunStep = platform => {
     return {
-      key: `${getTargetKey(target)}-build-bun`,
-      label: `${getTargetLabel(target)} - build-bun`,
+      key: `${getTargetKey(platform)}-build-bun`,
+      label: `${getTargetLabel(platform)} - build-bun`,
       depends_on: [
-        `${getTargetKey(target)}-build-vendor`,
-        `${getTargetKey(target)}-build-cpp`,
-        `${getTargetKey(target)}-build-zig`,
+        `${getTargetKey(platform)}-build-vendor`,
+        `${getTargetKey(platform)}-build-cpp`,
+        `${getTargetKey(platform)}-build-zig`,
       ],
-      agents: getBuildAgent(target),
+      agents: getBuildAgent(platform),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
       env: {
         BUN_LINK_ONLY: "ON",
-        ...getBuildEnv(target),
+        ...getBuildEnv(platform),
       },
       command: "bun run build:ci --target bun",
     };
@@ -612,15 +630,6 @@ function getPipeline(options) {
 
     if (!platformSteps.length) {
       continue;
-    }
-
-    if (imagePlatforms.has(getImageKey(platform))) {
-      for (const step of platformSteps) {
-        if (step.agents?.["image-name"]) {
-          step.depends_on ??= [];
-          step.depends_on.push(`${getImageKey(platform)}-build-image`);
-        }
-      }
     }
 
     steps.push({

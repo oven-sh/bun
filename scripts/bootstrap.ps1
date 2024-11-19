@@ -245,8 +245,31 @@ function Install-Build-Essentials {
 }
 
 function Install-Visual-Studio {
+  $components = @(
+    "Microsoft.VisualStudio.Workload.NativeDesktop", # C++ workload
+    "Microsoft.VisualStudio.Component.Windows10SDK.18362", # Windows 10 SDK (newest)
+    "Microsoft.VisualStudio.Component.Windows11SDK.22000", # Windows 11 SDK (oldest)
+    "Microsoft.VisualStudio.Component.Windows11Sdk.WindowsPerformanceToolkit", # Windows Performance Toolkit
+    "Microsoft.VisualStudio.Component.VC.ASAN", # C++ AddressSanitizer
+    "Microsoft.VisualStudio.Component.VC.ATL", # C++ ATL for latest v143 build tools (x86 & x64)
+    "Microsoft.VisualStudio.Component.VC.DiagnosticTools", # C++ profiling tools
+    "Microsoft.VisualStudio.Component.Vcpkg", # vcpkg package manager
+    "Microsoft.VisualStudio.Component.VC.CMake.Project" # C++ CMake tools for Windows
+  )
+
+  $arch = (Get-WmiObject Win32_Processor).Architecture
+  if ($arch -eq 9) {
+    $components += "Microsoft.VisualStudio.Component.VC.Tools.x86.x64" # MSVC v143 build tools (x86 & x64)
+  } elseif ($arch -eq 5) {
+    $components += "Microsoft.VisualStudio.Component.VC.Tools.ARM64" # MSVC v143 build tools (ARM64)
+  }
+
+  $packageParams = @(
+    ($components | ForEach-Object { "--add $_" } | Join-String -Separator " ")
+  )
+
   Install-Package visualstudio2022community `
-    -ExtraArgs "--package-parameters '--add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended'"
+    -ExtraArgs "--package-parameters '$($packageParams -join ' ')'"
 }
 
 function Install-Llvm {

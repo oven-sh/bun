@@ -385,7 +385,7 @@ export const aws = {
    * @returns {Promise<Machine>}
    */
   async createMachine(options) {
-    const { os, arch, imageId, instanceType, metadata } = options;
+    const { os, arch, imageId, instanceType, tags } = options;
 
     /** @type {AwsImage} */
     let image;
@@ -417,11 +417,11 @@ export const aws = {
     }
 
     let tagSpecification = [];
-    if (metadata) {
+    if (tags) {
       tagSpecification = ["instance", "volume"].map(resourceType => {
         return {
           ResourceType: resourceType,
-          Tags: Object.entries(metadata).map(([Key, Value]) => ({ Key, Value: String(Value) })),
+          Tags: Object.entries(tags).map(([Key, Value]) => ({ Key, Value: String(Value) })),
         };
       });
     }

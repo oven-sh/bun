@@ -235,4 +235,9 @@ describe("snapshots", async () => {
     await t.update(defaultWrap("'\\r'"), { shouldNotError: true });
     await t.update(defaultWrap("'\\r\\n'"), { shouldNotError: true });
   });
+
+  const t2 = new SnapshotTester();
+  t2.test("backtick in test name", `test("\`", () => {expect("abc").toMatchSnapshot();})`);
+  const t3 = new SnapshotTester();
+  t3.test("dollars curly in test name", `test("\${}", () => {expect("abc").toMatchSnapshot();})`);
 });

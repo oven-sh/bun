@@ -89,18 +89,26 @@ interface Backend {
   close: () => void;
 }
 
+type CreateBackendFn = (
+  executionContextId: number,
+  refEventLoop: boolean,
+  receive: (...messages: string[]) => void,
+) => unknown;
+
 export default function (
-  executionContextId: string,
+  executionContextId: number,
   url: string,
-  createBackend: (
-    executionContextId: string,
-    refEventLoop: boolean,
-    receive: (...messages: string[]) => void,
-  ) => Backend,
-  send: (message: string | string[]) => void,
+  createBackend: CreateBackendFn,
+  send: (message: string) => void,
   close: () => void,
   isAutomatic: boolean,
+  urlIsServer: boolean,
 ): void {
+  if (urlIsServer) {
+    connectToUnixServer(executionContextId, url, createBackend, send, close);
+    return;
+  }
+
   let debug: Debugger | undefined;
   try {
     debug = new Debugger(executionContextId, url, createBackend, send, close);
@@ -162,13 +170,9 @@ class Debugger {
   #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void) => Backend;
 
   constructor(
-    executionContextId: string,
+    executionContextId: number,
     url: string,
-    createBackend: (
-      executionContextId: string,
-      refEventLoop: boolean,
-      receive: (...messages: string[]) => void,
-    ) => Backend,
+    createBackend: CreateBackendFn,
     send: (message: string | string[]) => void,
     close: () => void,
   ) {
@@ -389,6 +393,42 @@ class Debugger {
     console.error(error);
     backend?.close();
   }
+}
+
+async function connectToUnixServer(
+  executionContextId: number,
+  unix: string,
+  createBackend: CreateBackendFn,
+  send: (message: string) => void,
+  close: () => void,
+) {
+  let backend: Writer | null = null;
+  const socket = await Bun.connect({
+    unix,
+    socket: {
+      open(socket) {
+        const backendRaw = createBackend(executionContextId, false, data => {
+          socket.write(data);
+        });
+        backend = {
+          write: message => {
+            send.$call(backendRaw, message);
+            return true;
+          },
+          close: () => close.$call(backendRaw),
+        };
+      },
+      data(socket, data) {
+        if (backend) {
+          backend.write(data.toString("utf8"));
+        }
+      },
+      close() {
+        backend?.close();
+      },
+    },
+  });
+  socket.unref(); // do not keep process alive
 }
 
 function versionInfo(): unknown {

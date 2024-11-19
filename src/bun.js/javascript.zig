@@ -1554,6 +1554,12 @@ pub const VirtualMachine = struct {
         poll_ref: Async.KeepAlive = .{},
         wait_for_connection: bool = false,
         set_breakpoint_on_first_line: bool = false,
+        mode: enum {
+            /// Bun acts as the server. https://debug.bun.sh/ uses this
+            listen,
+            /// Bun connects to this path. The VSCode extension uses this.
+            connect,
+        } = .listen,
 
         test_reporter_agent: TestReporterAgent = .{},
         lifecycle_reporter_agent: LifecycleAgent = .{},
@@ -1563,7 +1569,7 @@ pub const VirtualMachine = struct {
 
         extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
         extern "C" fn Bun__ensureDebugger(u32, bool) void;
-        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String, i32) void;
+        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String, c_int, bool) void;
         var futex_atomic: std.atomic.Value(u32) = undefined;
 
         pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
@@ -1654,12 +1660,12 @@ pub const VirtualMachine = struct {
 
             if (debugger.from_environment_variable.len > 0) {
                 var url = bun.String.createUTF8(debugger.from_environment_variable);
-                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 1);
+                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 1, debugger.mode == .connect);
             }
 
             if (debugger.path_or_port) |path_or_port| {
                 var url = bun.String.createUTF8(path_or_port);
-                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 0);
+                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 0, debugger.mode == .connect);
             }
 
             this.global.handleRejectedPromises();
@@ -1979,12 +1985,16 @@ pub const VirtualMachine = struct {
         }
     }
 
-    fn configureDebugger(this: *VirtualMachine, debugger: bun.CLI.Command.Debugger) void {
+    fn configureDebugger(this: *VirtualMachine, cli_flag: bun.CLI.Command.Debugger) void {
+        if (bun.getenvZ("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null) {
+            return;
+        }
+        const notify = bun.getenvZ("BUN_INSPECT_NOTIFY") orelse "";
         const unix = bun.getenvZ("BUN_INSPECT") orelse "";
         const set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1");
         const wait_for_connection = set_breakpoint_on_first_line or (unix.len > 0 and strings.endsWith(unix, "?wait=1"));
 
-        switch (debugger) {
+        switch (cli_flag) {
             .unspecified => {
                 if (unix.len > 0) {
                     this.debugger = Debugger{
@@ -1993,14 +2003,22 @@ pub const VirtualMachine = struct {
                         .wait_for_connection = wait_for_connection,
                         .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
                     };
+                } else if (notify.len > 0) {
+                    this.debugger = Debugger{
+                        .path_or_port = null,
+                        .unix = notify,
+                        .wait_for_connection = wait_for_connection,
+                        .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
+                        .mode = .connect,
+                    };
                 }
             },
             .enable => {
                 this.debugger = Debugger{
-                    .path_or_port = debugger.enable.path_or_port,
+                    .path_or_port = cli_flag.enable.path_or_port,
                     .from_environment_variable = unix,
-                    .wait_for_connection = wait_for_connection or debugger.enable.wait_for_connection,
-                    .set_breakpoint_on_first_line = set_breakpoint_on_first_line or debugger.enable.set_breakpoint_on_first_line,
+                    .wait_for_connection = wait_for_connection or cli_flag.enable.wait_for_connection,
+                    .set_breakpoint_on_first_line = set_breakpoint_on_first_line or cli_flag.enable.set_breakpoint_on_first_line,
                 };
             },
         }

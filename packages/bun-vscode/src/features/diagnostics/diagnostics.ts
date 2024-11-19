@@ -41,6 +41,8 @@ class BunDiagnosticsManager {
   private readonly signal: UnixSignal | TCPSocketSignal;
   private readonly context: vscode.ExtensionContext;
 
+  private knownOpenSockets = new Set<Socket>();
+
   public get signalUrl() {
     return this.signal.url;
   }
@@ -58,6 +60,9 @@ class BunDiagnosticsManager {
    */
   private async handleSignalReceived(socket: Socket) {
     const debugAdapter = new NodeSocketDebugAdapter(socket);
+
+    this.knownOpenSockets.add(socket);
+    socket.once("close", () => this.knownOpenSockets.delete(socket));
 
     this.editorState.clearAll();
 
@@ -141,6 +146,15 @@ class BunDiagnosticsManager {
     this.editorState = new EditorStateManager();
     this.signal = signal;
     this.context = context;
+
+    this.context.subscriptions.push(
+      // on did type
+      vscode.workspace.onDidChangeTextDocument(event => {
+        if (this.knownOpenSockets.size === 0) {
+          this.editorState.clearAll();
+        }
+      }),
+    );
 
     this.signal.on("Signal.Socket.connect", this.handleSignalReceived.bind(this));
   }

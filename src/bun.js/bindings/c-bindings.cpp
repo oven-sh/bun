@@ -557,7 +557,7 @@ extern "C" void bun_initialize_process()
 
 #if OS(DARWIN)
     atexit(Bun__onExit);
-#else
+#elif !OS(WINDOWS)
     at_quick_exit(Bun__onExit);
 #endif
 }

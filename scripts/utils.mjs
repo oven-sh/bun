@@ -898,10 +898,10 @@ export function which(command, options = {}) {
  */
 export async function getChangedFiles(cwd, base, head) {
   const repository = getRepository(cwd);
-  base ||= getCommit(cwd);
-  head ||= `${base}^1`;
+  head ||= getCommit(cwd);
+  base ||= `${head}^1`;
 
-  const url = `https://api.github.com/repos/${repository}/compare/${head}...${base}`;
+  const url = `https://api.github.com/repos/${repository}/compare/${base}...${head}`;
   const { error, body } = await curl(url, { json: true });
 
   if (error) {

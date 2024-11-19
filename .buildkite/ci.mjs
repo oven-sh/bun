@@ -664,9 +664,9 @@ async function main() {
   let changedFiles;
   if (!isFork() && !isMainBranch()) {
     console.log("Checking changed files...");
-    const baseRef = getCommit();
+    const baseRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
     console.log(" - Base Ref:", baseRef);
-    const headRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
+    const headRef = getCommit();
     console.log(" - Head Ref:", headRef);
 
     changedFiles = await getChangedFiles(undefined, baseRef, headRef);
@@ -684,6 +684,7 @@ async function main() {
 
   console.log("Checking if CI should be forced...");
   let forceBuild;
+  let ciFileChanged;
   {
     const message = getCommitMessage();
     const match = /\[(force ci|ci force|ci force build)\]/i.exec(message);
@@ -691,6 +692,13 @@ async function main() {
       const [, reason] = match;
       console.log(" - Yes, because commit message contains:", reason);
       forceBuild = true;
+    }
+    for (const coref of [".buildkite/ci.mjs", "scripts/utils.mjs", "scripts/bootstrap.sh", "scripts/machine.mjs"]) {
+      if (changedFiles && changedFiles.includes(coref)) {
+        console.log(" - Yes, because the list of changed files contains:", coref);
+        forceBuild = true;
+        ciFileChanged = true;
+      }
     }
   }
 
@@ -719,6 +727,10 @@ async function main() {
       console.log(" - Yes, because commit message contains:", reason);
       buildImages = true;
     }
+    if (ciFileChanged) {
+      console.log(" - Yes, because a core CI file changed");
+      buildImages = true;
+    }
   }
 
   console.log("Checking if CI should publish images...");
@@ -729,6 +741,11 @@ async function main() {
     if (match) {
       const [, reason] = match;
       console.log(" - Yes, because commit message contains:", reason);
+      publishImages = true;
+      buildImages = true;
+    }
+    if (ciFileChanged && isMainBranch()) {
+      console.log(" - Yes, because a core CI file changed and this is main branch");
       publishImages = true;
       buildImages = true;
     }

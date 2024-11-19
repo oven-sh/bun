@@ -84,7 +84,7 @@
 #endif
 
 #include "stddef.h"
-#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -190,8 +190,7 @@ struct us_socket_context_options_t {
 };
 
 struct us_bun_verify_error_t {
-    // this is a int64_t because can store a result of BoringSSL.SSL_get_verify_result that uses a long
-    int64_t error;
+    int error;
     const char* code;
     const char* reason;
 };

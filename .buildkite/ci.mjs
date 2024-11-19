@@ -389,6 +389,7 @@ function getPipeline(options) {
       env: {
         DEBUG: "1",
       },
+      retry: getRetry(),
       command: `node ./scripts/machine.mjs ${action} --ci --cloud=aws --os=${os} --arch=${arch} --distro=${distro} --distro-version=${release}`,
     };
   };
@@ -505,6 +506,12 @@ function getPipeline(options) {
       // Because of this, we don't know if the run was fatal, or soft-failed.
       retry = getRetry(1);
     }
+    let soft_fail;
+    if (isMainBranch()) {
+      soft_fail = true;
+    } else {
+      soft_fail = [{ exit_status: 2 }];
+    }
     return {
       key: `${getPlatformKey(platform)}-test-bun`,
       label: `${getPlatformLabel(platform)} - test-bun`,
@@ -512,7 +519,7 @@ function getPipeline(options) {
       agents: getTestAgent(platform),
       retry,
       cancel_on_build_failing: isMergeQueue(),
-      soft_fail: isMainBranch(),
+      soft_fail,
       parallelism,
       command,
       env,

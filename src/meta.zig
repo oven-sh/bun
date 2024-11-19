@@ -3,14 +3,6 @@ const bun = @import("root").bun;
 
 pub usingnamespace std.meta;
 
-pub fn OptionalChild(comptime T: type) type {
-    const tyinfo = @typeInfo(T);
-    if (tyinfo != .Pointer) @compileError("OptionalChild(T) requires that T be a pointer to an optional type.");
-    const child = @typeInfo(tyinfo.Pointer.child);
-    if (child != .Optional) @compileError("OptionalChild(T) requires that T be a pointer to an optional type.");
-    return child.Optional.child;
-}
-
 pub fn EnumFields(comptime T: type) []const std.builtin.Type.EnumField {
     const tyinfo = @typeInfo(T);
     return switch (tyinfo) {

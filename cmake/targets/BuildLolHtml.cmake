@@ -16,9 +16,28 @@ else()
   set(LOLHTML_BUILD_TYPE release)
 endif()
 
+if(ARCH STREQUAL "x64")
+  set(RUST_ARCH x86_64)
+elseif(ARCH STREQUAL "aarch64")
+  set(RUST_ARCH aarch64)
+else()
+  unsupported(ARCH)
+endif()
+
+if(WIN32)
+  set(RUST_TARGET ${RUST_ARCH}-pc-windows-msvc)
+elseif(APPLE)
+  set(RUST_TARGET ${RUST_ARCH}-apple-darwin)
+elseif(LINUX)
+  set(RUST_TARGET ${RUST_ARCH}-unknown-linux-gnu)
+else()
+  unsupported(CMAKE_SYSTEM_NAME)
+endif()
+
 set(LOLHTML_LIBRARY ${LOLHTML_BUILD_PATH}/${LOLHTML_BUILD_TYPE}/${CMAKE_STATIC_LIBRARY_PREFIX}lolhtml${CMAKE_STATIC_LIBRARY_SUFFIX})
 
 set(LOLHTML_BUILD_ARGS
+  --target ${RUST_TARGET}
   --target-dir ${BUILD_PATH}/lolhtml
 )
 

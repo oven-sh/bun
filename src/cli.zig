@@ -538,7 +538,7 @@ pub const Arguments = struct {
                     }
                     ctx.test_options.file_reporter = .junit;
                 } else {
-                    Output.errGeneric("unrecognized reporter format: '{s}'", .{reporter});
+                    Output.errGeneric("unrecognized reporter format: '{s}'. Currently, only 'junit' is supported", .{reporter});
                     Global.crash();
                 }
             }

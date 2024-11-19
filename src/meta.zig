@@ -94,56 +94,23 @@ pub fn Item(comptime T: type) type {
     }
 }
 
-/// Returns .{a, ...args_}
-pub fn ConcatArgs1(
-    comptime func: anytype,
-    a: anytype,
-    args_: anytype,
-) std.meta.ArgsTuple(@TypeOf(func)) {
-    var args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
-    args[0] = a;
-
-    inline for (args_, 1..) |arg, i| {
-        args[i] = arg;
-    }
-
-    return args;
-}
-
-/// Returns .{a, b, ...args_}
+/// Returns a tuple of arguments to func, with the first two arguments passed separately and the
+/// rest from a tuple
 pub inline fn ConcatArgs2(
+    /// The function to create arguments for
     comptime func: anytype,
-    a: anytype,
-    b: anytype,
-    args_: anytype,
+    /// Value for the first argument to func
+    a: @typeInfo(@TypeOf(func)).Fn.params[0].type.?,
+    /// Value for the second argument to func
+    b: @typeInfo(@TypeOf(func)).Fn.params[1].type.?,
+    /// Tuple containing the other arguments to func
+    rest: anytype, // TODO: deduce an exact type from func's arguments (@190n's attempt crashed the zig compiler)
 ) std.meta.ArgsTuple(@TypeOf(func)) {
     var args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
     args[0] = a;
     args[1] = b;
 
-    inline for (args_, 2..) |arg, i| {
-        args[i] = arg;
-    }
-
-    return args;
-}
-
-/// Returns .{a, b, c, d, ...args_}
-pub inline fn ConcatArgs4(
-    comptime func: anytype,
-    a: anytype,
-    b: anytype,
-    c: anytype,
-    d: anytype,
-    args_: anytype,
-) std.meta.ArgsTuple(@TypeOf(func)) {
-    var args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
-    args[0] = a;
-    args[1] = b;
-    args[2] = c;
-    args[3] = d;
-
-    inline for (args_, 4..) |arg, i| {
+    inline for (rest, 2..) |arg, i| {
         args[i] = arg;
     }
 

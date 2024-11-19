@@ -670,9 +670,6 @@ async function main() {
     console.log(" - Head Ref:", headRef);
 
     changedFiles = await getChangedFiles(undefined, baseRef, headRef);
-    for (const f of changedFiles) {
-      console.log(` - file: ${f}`);
-    }
     if (changedFiles) {
       if (changedFiles.length) {
         changedFiles.forEach(filename => console.log(` - ${filename}`));
@@ -696,8 +693,6 @@ async function main() {
       console.log(" - Yes, because commit message contains:", reason);
       forceBuild = true;
     }
-  }
-  {
     for (const coref of [".buildkite/ci.mjs", "scripts/utils.mjs", "scripts/bootstrap.sh", "scripts/machine.mjs"]) {
       if (changedFiles.includes(coref)) {
         console.log(" - Yes, because the list of changed files contains:", coref);

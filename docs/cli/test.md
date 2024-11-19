@@ -87,7 +87,7 @@ From there, you'll get GitHub Actions annotations.
 
 ### JUnit XML reports (GitLab, etc.)
 
-To use `bun test` with a JUnit XML reporter, you can use the `--junit-report` flag.
+To use `bun test` with a JUnit XML reporter, you can use the `--reporter=junit` in combination with `--reporter-outfile`.
 
 ```sh
 $ bun test --junit-report=./bun.xml

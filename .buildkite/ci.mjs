@@ -746,6 +746,7 @@ async function main() {
     }
     if (ciFileChanged && isMainBranch()) {
       console.log(" - Yes, because a core CI file changed and this is main branch");
+      publishImages = true;
       buildImages = true;
     }
   }

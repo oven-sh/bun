@@ -339,23 +339,19 @@ pub const Run = struct {
                 Output.prettyErrorln("Error occurred loading entry point: {s}", .{@errorName(err)});
                 Output.flush();
             }
+            // TODO: Do a event loop tick when we figure out how to watch the file that wasn't found
+            //   under hot reload mode
+            vm.exit_handler.exit_code = 1;
+            vm.onExit();
+            if (run.any_unhandled) {
+                bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 
-            if (vm.hot_reload != .none) {
-                vm.eventLoop().tick();
-                vm.eventLoop().tickPossiblyForever();
-            } else {
-                vm.exit_handler.exit_code = 1;
-                vm.onExit();
-                if (run.any_unhandled) {
-                    bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
-
-                    Output.prettyErrorln(
-                        "<r>\n<d>{s}<r>",
-                        .{Global.unhandled_error_bun_version_string},
-                    );
-                }
-                vm.globalExit();
+                Output.prettyErrorln(
+                    "<r>\n<d>{s}<r>",
+                    .{Global.unhandled_error_bun_version_string},
+                );
             }
+            vm.globalExit();
         }
 
         // don't run the GC if we don't actually need to

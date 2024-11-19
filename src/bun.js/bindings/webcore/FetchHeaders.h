@@ -71,12 +71,12 @@ public:
 
     size_t memoryCost() const;
 
-    inline uint32_t size()
+    inline uint32_t size() const
     {
         return m_headers.size();
     }
 
-    inline uint32_t sizeAfterJoiningSetCookieHeader()
+    inline uint32_t sizeAfterJoiningSetCookieHeader() const
     {
         return m_headers.commonHeaders().size() + m_headers.uncommonHeaders().size() + (m_headers.getSetCookieHeaders().size() > 0);
     }

@@ -1816,11 +1816,19 @@ pub const BundleV2 = struct {
                 _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .monotonic);
             },
             .success => |code| {
+                const should_copy_for_bundling = load.parse_task.defer_copy_for_bundling and code.loader.shouldCopyForBundling(this.bundler.options.experimental_css);
+                if (should_copy_for_bundling) {
+                    const source_index = load.source_index;
+                    var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
+                    additional_files.push(this.graph.allocator, .{ .source_index = source_index.get() }) catch unreachable;
+                    this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
+                    this.graph.estimated_file_loader_count += 1;
+                }
                 this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
                 this.graph.input_files.items(.source)[load.source_index.get()].contents = code.source_code;
                 var parse_task = load.parse_task;
                 parse_task.loader = code.loader;
-                this.free_list.append(code.source_code) catch unreachable;
+                if (!should_copy_for_bundling) this.free_list.append(code.source_code) catch unreachable;
                 parse_task.contents_or_fd = .{
                     .contents = code.source_code,
                 };
@@ -2259,6 +2267,9 @@ pub const BundleV2 = struct {
     pub fn enqueueOnLoadPluginIfNeeded(this: *BundleV2, parse: *ParseTask) bool {
         if (this.plugins) |plugins| {
             if (plugins.hasAnyMatches(&parse.path, true)) {
+                if (parse.is_entry_point and parse.loader != null and parse.loader.?.shouldCopyForBundling(this.bundler.options.experimental_css)) {
+                    parse.defer_copy_for_bundling = true;
+                }
                 // This is where onLoad plugins are enqueued
                 debug("enqueue onLoad: {s}:{s}", .{
                     parse.path.namespace,
@@ -3201,6 +3212,10 @@ pub const ParseTask = struct {
     ctx: *BundleV2,
     package_version: string = "",
     is_entry_point: bool = false,
+    /// This is set when the file is an entrypoint, and it has an onLoad plugin.
+    /// In this case we want to defer adding this to additional_files until after
+    /// the onLoad plugin has finished.
+    defer_copy_for_bundling: bool = false,
 
     /// The information returned to the Bundler thread when a parse finishes.
     pub const Result = struct {
@@ -3874,7 +3889,7 @@ pub const ParseTask = struct {
         var ast: JSAst = if (!is_empty)
             try getAST(log, bundler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file)
         else switch (opts.module_type == .esm) {
-            inline else => |as_undefined| if (loader == .css) try getEmptyCSSAST(
+            inline else => |as_undefined| if (loader == .css and this.ctx.bundler.options.experimental_css) try getEmptyCSSAST(
                 log,
                 bundler,
                 opts,
@@ -12302,7 +12317,8 @@ pub const LinkerContext = struct {
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
 
-                    const additional_files: []AdditionalFile = c.parse_graph.input_files.items(.additional_files)[piece.query.index].slice();
+                    const source_index = piece.query.index;
+                    const additional_files: []AdditionalFile = c.parse_graph.input_files.items(.additional_files)[source_index].slice();
                     bun.assert(additional_files.len > 0);
                     switch (additional_files[0]) {
                         .output_file => |output_file_id| {

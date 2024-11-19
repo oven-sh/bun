@@ -1866,21 +1866,11 @@ fn NewSocket(comptime ssl: bool) type {
                 }
             } else {
                 // call handhsake callback with authorized and authorization error if has one
-                var authorization_error: JSValue = undefined;
-                if (ssl_error.error_no == 0) {
-                    authorization_error = JSValue.jsNull();
-                } else {
-                    const code = if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code)];
+                const authorization_error: JSValue = if (ssl_error.error_no == 0)
+                    JSValue.jsNull()
+                else
+                    ssl_error.toJS(globalObject);
 
-                    const reason = if (ssl_error.reason == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason)];
-
-                    const fallback = JSC.SystemError{
-                        .code = bun.String.createUTF8(code),
-                        .message = bun.String.createUTF8(reason),
-                    };
-
-                    authorization_error = fallback.toErrorInstance(globalObject);
-                }
                 result = callback.call(globalObject, this_value, &[_]JSValue{
                     this_value,
                     JSValue.jsBoolean(authorized),

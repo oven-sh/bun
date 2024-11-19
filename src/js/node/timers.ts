@@ -1,5 +1,4 @@
 const { throwNotImplemented } = require("internal/shared");
-const { defineCustomPromisify } = require("internal/promisify");
 
 var timersPromisesValue;
 

@@ -238,7 +238,8 @@ function Install-Build-Essentials {
     python `
     golang `
     nasm `
-    ruby
+    ruby `
+    mingw
   Install-Rust
   Install-Llvm
 }

@@ -301,8 +301,8 @@ pub const FFI = struct {
 
                     if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib/x86_64-linux-gnu").isTrue()) {
                         cached_default_system_library_dir = "/usr/lib/x86_64-linux-gnu";
-                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib").isTrue()) {
-                        cached_default_system_library_dir = "/usr/lib";
+                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib64").isTrue()) {
+                        cached_default_system_library_dir = "/usr/lib64";
                     }
                 } else if (Environment.isAarch64) {
                     if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include/aarch64-linux-gnu").isTrue()) {
@@ -313,8 +313,8 @@ pub const FFI = struct {
 
                     if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib/aarch64-linux-gnu").isTrue()) {
                         cached_default_system_library_dir = "/usr/lib/aarch64-linux-gnu";
-                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib").isTrue()) {
-                        cached_default_system_library_dir = "/usr/lib";
+                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib64").isTrue()) {
+                        cached_default_system_library_dir = "/usr/lib64";
                     }
                 }
             }

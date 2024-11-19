@@ -978,7 +978,7 @@ install_chrome_dependencies() {
 	esac
 
 	case "$distro" in
-	alpine)
+	amzn)
 		install_packages \
 			mesa-libgbm
 		;;

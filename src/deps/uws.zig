@@ -2643,7 +2643,7 @@ pub const create_bun_socket_error_t = enum(i32) {
 };
 
 pub const us_bun_verify_error_t = extern struct {
-    // this is a c_long because can store a result of BoringSSL.SSL_get_verify_result
+    // this is a i64 because can store a result of BoringSSL.SSL_get_verify_result that uses a long
     error_no: i64 = 0,
     code: [*c]const u8 = null,
     reason: [*c]const u8 = null,

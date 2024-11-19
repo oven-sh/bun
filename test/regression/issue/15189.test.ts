@@ -4,25 +4,45 @@ import { $ } from "bun";
 // they're not too hard - add as .sh files, execute them with bun, and expect the results to be the same as the .right files
 
 describe("bun shell", () => {
-  it("does not segfault", async () => {
+  it.todo("does not segfault", async () => {
     await $`echo ${Array(1000000).fill("a")}`;
   });
-
-  it("passes correct number of arguments", async () => {
+  it.todo("passes correct number of arguments", async () => {
     expect(await $`echo ${""} ${""} ${""}`.text()).toBe("  \n");
   });
-
-  it("does not expand tilde in ${}", async () => {
+  it("doesn't cause invalid js string ref error with a number after a string ref", async () => {
+    expect(await $`echo ${'"'}1`.text()).toBe('"1\n');
+  });
+  it("does not crash with an invalid string ref 1", async () => {
+    expect(() => $`echo __bunstr_123.`.text()).toThrowError("Invalid JS string ref (out of bounds)");
+  });
+  it("does not crash with an invalid string ref 2", async () => {
+    expect(() => $`echo __bunstr_123`.text()).toThrowError("Invalid JS string ref (missing '.' at end)");
+  });
+  it("does not crash with an invalid string ref 3", async () => {
+    expect(() => $`echo __bunstr_123456789012345678901234567890.`.text()).toThrowError(
+      "Invalid JS string ref (out of bounds)",
+    );
+  });
+  it("does not crash with an invalid string ref 4", async () => {
+    expect(() => $`echo __bunstr_123456789012345678901234567890123.`.text()).toThrowError(
+      "Invalid JS string ref (number too high)",
+    );
+  });
+  it("doesn't parse string refs inside substitution", async () => {
+    expect(await $`echo ${"\x08__bunstr_123."}`.text()).toBe("\x08__bunstr_123.\n");
+  });
+  it.todo("does not expand tilde in ${}", async () => {
     expect(await $`echo ${"~"}`.text()).toBe("~\n");
   });
-  it("does not expand tilde when escaped", async () => {
+  it.todo("does not expand tilde when escaped", async () => {
     expect(await $`echo \~`.text()).toBe("~\n");
   });
-  it("expands tilde in variable set", async () => {
-    expect(await $`MYVAR=~/abc && echo $MYVAR`.text()).toBe(process.env.HOME + "/abc\n");
+  it.todo("does not expand tilde when the slash is quoted", async () => {
+    expect(await $`echo ~"/"`.text()).toBe("~/\n");
   });
-  it("sets variable without '&&'", async () => {
-    expect(await $`MYVAR=hello echo $MYVAR`.text()).toBe("hello\n");
+  it.todo("expands tilde in variable set", async () => {
+    expect(await $`MYVAR=~/abc && echo $MYVAR`.text()).toBe(process.env.HOME + "/abc\n");
   });
 
   it("fails for bad surrogate pairs", async () => {

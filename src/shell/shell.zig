@@ -2139,15 +2139,15 @@ pub const LexResult = struct {
             const size = size: {
                 var i: usize = 0;
                 for (errors) |e| {
-                    i += e.msg.len;
+                    i += e.msg.end - e.msg.start;
                 }
                 break :size i;
             };
             var buf = arena.alloc(u8, size) catch bun.outOfMemory();
             var i: usize = 0;
             for (errors) |e| {
-                @memcpy(buf[i .. i + e.msg.len], e.msg);
-                i += e.msg.len;
+                @memcpy(buf[i .. i + (e.msg.end - e.msg.start)], this.strpool[e.msg.start..e.msg.end]);
+                i += e.msg.end - e.msg.start;
             }
             break :str buf;
         };
@@ -2155,8 +2155,8 @@ pub const LexResult = struct {
     }
 };
 pub const LexError = struct {
-    /// Allocated with lexer arena
-    msg: []const u8,
+    /// Within str pool
+    msg: struct { start: usize, end: usize },
 };
 
 /// A special char used to denote the beginning of a special token
@@ -2243,7 +2243,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             const start = self.strpool.items.len;
             self.strpool.appendSlice(msg) catch bun.outOfMemory();
             const end = self.strpool.items.len;
-            self.errors.append(.{ .msg = self.strpool.items[start..end] }) catch bun.outOfMemory();
+            self.errors.append(.{ .msg = .{ .start = start, .end = end } }) catch bun.outOfMemory();
         }
 
         fn make_sublexer(self: *@This(), kind: SubShellKind) @This() {
@@ -3138,17 +3138,24 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     switch (bytes[i]) {
                         '0'...'9' => {
                             if (digit_buf_count >= digit_buf.len) {
-                                const ERROR_STR = "Invalid " ++ name ++ " (number too high): ";
-                                var error_buf: [ERROR_STR.len + digit_buf.len + 1]u8 = undefined;
-                                const error_msg = std.fmt.bufPrint(error_buf[0..], "{s} {s}{c}", .{ ERROR_STR, digit_buf[0..digit_buf_count], bytes[i] }) catch @panic("Should not happen");
-                                self.add_error(error_msg);
+                                self.add_error("Invalid " ++ name ++ " (number too high)");
                                 return null;
                             }
                             digit_buf[digit_buf_count] = bytes[i];
                             digit_buf_count += 1;
                         },
-                        else => break,
+                        '.' => {
+                            i += 1;
+                            break;
+                        },
+                        else => {
+                            self.add_error("Invalid " ++ name ++ " (missing '.' at end)");
+                            return null;
+                        },
                     }
+                } else {
+                    self.add_error("Invalid " ++ name ++ " (missing '.' at end)");
+                    return null;
                 }
 
                 if (digit_buf_count == 0) {
@@ -3157,15 +3164,11 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 }
 
                 const idx = std.fmt.parseInt(usize, digit_buf[0..digit_buf_count], 10) catch {
-                    self.add_error("Invalid " ++ name ++ " ref ");
+                    self.add_error("Invalid " ++ name ++ " (out of bounds)");
                     return null;
                 };
 
                 if (!validate(self, idx)) return null;
-                // if (idx >= self.string_refs.len) {
-                //     self.add_error("Invalid " ++ name ++ " (out of bounds");
-                //     return null;
-                // }
 
                 // Bump the cursor
                 const new_idx = self.chars.cursorPos() + i;
@@ -3193,7 +3196,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         fn validateJSStringRefIdx(self: *@This(), idx: usize) bool {
             if (idx >= self.string_refs.len) {
-                self.add_error("Invalid JS string ref (out of bounds");
+                self.add_error("Invalid JS string ref (out of bounds)");
                 return false;
             }
             return true;
@@ -3788,7 +3791,7 @@ pub fn handleTemplateValue(
             const idx = out_jsobjs.items.len;
             template_value.protect();
             try out_jsobjs.append(template_value);
-            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
+            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}.", .{ LEX_JS_OBJREF_PREFIX, idx });
             try out_script.appendSlice(slice);
             return true;
         }
@@ -3810,7 +3813,7 @@ pub fn handleTemplateValue(
             const idx = out_jsobjs.items.len;
             template_value.protect();
             try out_jsobjs.append(template_value);
-            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
+            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}.", .{ LEX_JS_OBJREF_PREFIX, idx });
             try out_script.appendSlice(slice);
             return true;
         }
@@ -3821,7 +3824,7 @@ pub fn handleTemplateValue(
             const idx = out_jsobjs.items.len;
             template_value.protect();
             try out_jsobjs.append(template_value);
-            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
+            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}.", .{ LEX_JS_OBJREF_PREFIX, idx });
             try out_script.appendSlice(slice);
             return true;
         }
@@ -3832,7 +3835,7 @@ pub fn handleTemplateValue(
             const idx = out_jsobjs.items.len;
             template_value.protect();
             try out_jsobjs.append(template_value);
-            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
+            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}.", .{ LEX_JS_OBJREF_PREFIX, idx });
             try out_script.appendSlice(slice);
             return true;
         }
@@ -3982,7 +3985,7 @@ pub const ShellSrcBuilder = struct {
 
     pub fn appendJSStrRef(this: *ShellSrcBuilder, bunstr: bun.String) !void {
         const idx = this.jsstrs_to_escape.items.len;
-        const str = std.fmt.bufPrint(this.jsstr_ref_buf[0..], "{s}{d}", .{ LEX_JS_STRING_PREFIX, idx }) catch {
+        const str = std.fmt.bufPrint(this.jsstr_ref_buf[0..], "{s}{d}.", .{ LEX_JS_STRING_PREFIX, idx }) catch {
             @panic("Impossible");
         };
         try this.outbuf.appendSlice(str);

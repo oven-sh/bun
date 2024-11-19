@@ -56,6 +56,11 @@ if (NOT WIN32)
   set(RUSTFLAGS "-Cpanic=abort-Cdebuginfo=0-Cforce-unwind-tables=no-Copt-level=s")
 endif()
 
+# Add these linker flags to generate both .dll and .lib files
+if(WIN32)
+  set(RUSTFLAGS "-C link-args=/DEF /IMPLIB:lolhtml.lib")
+endif()
+
 register_command(
   TARGET
     lolhtml

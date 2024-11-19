@@ -208,10 +208,8 @@ export class NodeSocketInspector extends EventEmitter<InspectorEventMap> impleme
   }
 
   #close(error?: Error): void {
-    console.log("#CLOSE() CALLED");
-
     for (const handle of this.#pendingResponses.values()) {
-      handle.done(error ?? new Error("Socket closed" + handle.request.method));
+      handle.done(error ?? new Error("Socket closed while waiting for: " + handle.request.method));
     }
 
     this.#pendingResponses.clear();

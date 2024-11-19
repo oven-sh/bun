@@ -57,7 +57,6 @@ class BunDiagnosticsManager {
    * Called when Bun pings BUN_INSPECT_NOTIFY (indicating a program has started).
    */
   private async handleSignalReceived(socket: Socket) {
-    console.log("Received signal from Bun");
     const debugAdapter = new NodeSocketDebugAdapter(socket);
 
     this.editorState.clearAll();
@@ -97,8 +96,6 @@ class BunDiagnosticsManager {
   }
 
   private handleLifecycleError(params: JSC.LifecycleReporter.ErrorEvent) {
-    console.log(JSON.stringify(params));
-
     // params.lineColumns is flat pairs of line and columns from each stack frame, we only care about the first one
     const [line = null, column = null] = params.lineColumns;
 
@@ -117,8 +114,10 @@ class BunDiagnosticsManager {
     // range is really just 1 character here..
     const range = new vscode.Range(new vscode.Position(line - 1, column - 1), new vscode.Position(line - 1, column));
 
+    const editor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
+
     // ...but we want to highlight the entire word after(inclusive) the character
-    const rangeOfWord = vscode.window.activeTextEditor?.document.getWordRangeAtPosition(range.start) ?? range; // Fallback to just the character if no word range is found
+    const rangeOfWord = editor?.document.getWordRangeAtPosition(range.start) ?? range; // Fallback to just the character if no editor or no word range is found
 
     const diagnostic = new vscode.Diagnostic(
       rangeOfWord,

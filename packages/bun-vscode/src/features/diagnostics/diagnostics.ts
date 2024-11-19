@@ -1,3 +1,4 @@
+import { Socket } from "node:net";
 import * as os from "node:os";
 import stripAnsi from "strip-ansi";
 import * as vscode from "vscode";
@@ -82,7 +83,7 @@ class BunDiagnosticsManager {
   /**
    * Called when Bun pings BUN_INSPECT_NOTIFY (indicating a program has started).
    */
-  private async handleSignalReceived() {
+  private async handleSignalReceived(socket: Socket) {
     const debugAdapter = new DebugAdapter();
 
     this.editorState.clearAll();
@@ -98,6 +99,8 @@ class BunDiagnosticsManager {
     debugAdapter.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
 
     const dispose = async () => {
+      console.log(JSON.stringify({ socket }));
+
       await vscode.window.showInformationMessage("Bun debug adapter has stopped");
       debugAdapter.removeAllListeners();
       await debugAdapter.send("LifecycleReporter.stopPreventingExit");
@@ -105,13 +108,10 @@ class BunDiagnosticsManager {
       this.editorState.clearAll();
     };
 
-    this.signal.once("Signal.closed", dispose);
-
-    // might as well push it to the subscriptions array
-    // in case the user restarts extension host or something lol
-    this.context.subscriptions.push({ dispose });
+    socket.once("close", dispose);
 
     const ok = await debugAdapter.start(this.urlBunShouldListenOn);
+
     if (!ok) {
       await vscode.window.showErrorMessage("Failed to start Bun debug adapter");
       return;
@@ -179,10 +179,7 @@ class BunDiagnosticsManager {
 
     this.handleSignalReceived = this.handleSignalReceived.bind(this);
 
-    this.signal.on("Signal.received", this.handleSignalReceived);
-    this.signal.on("Signal.closed", async () => {
-      console.log("SIGNAL CLSOED BITCH");
-    });
+    this.signal.on("Signal.Socket.connect", this.handleSignalReceived);
   }
 }
 

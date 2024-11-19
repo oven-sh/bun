@@ -12,6 +12,7 @@ export type UnixSignalEventMap = {
   "Signal.received": [string];
   "Signal.closed": [];
   "Signal.Socket.closed": [socket: Socket];
+  "Signal.Socket.connect": [socket: Socket];
 };
 
 /**
@@ -30,6 +31,7 @@ export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
     this.#server.on("error", error => this.emit("Signal.error", error));
     this.#server.on("close", () => this.emit("Signal.closed"));
     this.#server.on("connection", socket => {
+      this.emit("Signal.Socket.connect", socket);
       socket.on("data", data => {
         this.emit("Signal.received", data.toString());
       });
@@ -49,7 +51,7 @@ export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
       console.log(event, ...args);
     }
 
-    return super.emit(event, ...args);
+    return super.emit(event, ...(args as never));
   }
 
   /**
@@ -96,6 +98,7 @@ export type TCPSocketSignalEventMap = {
   "Signal.closed": [];
   "Signal.received": [string];
   "Signal.Socket.closed": [socket: Socket];
+  "Signal.Socket.connect": [socket: Socket];
 };
 
 export class TCPSocketSignal extends EventEmitter {
@@ -108,6 +111,8 @@ export class TCPSocketSignal extends EventEmitter {
     this.#port = port;
 
     this.#server = createServer((socket: Socket) => {
+      this.emit("Signal.Socket.connect", socket);
+
       socket.on("data", data => {
         this.emit("Signal.received", data.toString());
       });

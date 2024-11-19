@@ -1468,6 +1468,7 @@ pub const ThreadSafeFunction = struct {
     env: *NapiEnv,
 
     finalizer: Finalizer = Finalizer{ .env = null, .fun = null, .data = null },
+    // TODO(@190n) change to better type
     channel: Queue,
 
     ctx: ?*anyopaque = null,
@@ -1510,6 +1511,13 @@ pub const ThreadSafeFunction = struct {
                         .sized = Channel(?*anyopaque, .Slice).init(slice),
                     };
                 },
+            }
+        }
+
+        pub fn deinit(this: *@This()) void {
+            switch (this.*) {
+                .sized => this.sized.deinit(),
+                .unsized => this.unsized.deinit(),
             }
         }
 
@@ -1602,6 +1610,7 @@ pub const ThreadSafeFunction = struct {
                 this.callback.c.js.unprotect();
             }
         }
+        this.channel.deinit();
         bun.default_allocator.destroy(this);
     }
 
@@ -1650,8 +1659,8 @@ pub const ThreadSafeFunction = struct {
 pub export fn napi_create_threadsafe_function(
     env_: napi_env,
     func_: napi_value,
-    _: napi_value,
-    _: napi_value,
+    _: napi_value, // async_resource
+    _: napi_value, // async_resource_name
     max_queue_size: usize,
     initial_thread_count: usize,
     thread_finalize_data: ?*anyopaque,
@@ -1685,6 +1694,7 @@ pub export fn napi_create_threadsafe_function(
         .callback = if (call_js_cb) |c| .{
             .c = .{
                 .napi_threadsafe_function_call_js = c,
+                // TODO(@190n) investigate whether these AsyncContextFrames are kept alive appropriately
                 .js = if (func == .zero) .undefined else func.withAsyncContextIfNeeded(env.toJS()),
             },
         } else .{

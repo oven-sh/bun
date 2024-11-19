@@ -291,10 +291,6 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     this.#variables = new Map();
   }
 
-  getInspector() {
-    return this.inspector;
-  }
-
   /**
    * Gets the inspector url. This is deprecated and exists for compat.
    * @deprecated You should get the inspector directly, and if it's a WebSocketInspector you can access `.url` direclty.

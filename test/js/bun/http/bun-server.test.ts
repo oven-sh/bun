@@ -316,6 +316,27 @@ describe("Server", () => {
       expect(response.url).toBe(url);
     }
   });
+
+
+  test('server should return a body for a OPTIONS Request', async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response("Hello World!");
+      },
+    });
+    {
+      const url = `http://${server.hostname}:${server.port}/`;
+      const response = await fetch(new Request(url, {
+        method: 'OPTIONS',
+      }));
+      expect(await response.text()).toBe("Hello World!");
+      expect(response.status).toBe(200);
+      expect(response.url).toBe(url);
+    }
+  });
+
+
   test("abort signal on server with stream", async () => {
     {
       let signalOnServer = false;

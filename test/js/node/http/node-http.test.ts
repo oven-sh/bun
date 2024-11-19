@@ -327,7 +327,16 @@ describe("node:http", () => {
         }
 
         // Check for body
-        if (req.method === "POST") {
+        if (req.method === "OPTIONS") {
+          req.on("data", chunk => {
+            res.write(chunk);
+          });
+
+          req.on("end", () => {
+            res.write("OPTIONS\n");
+            res.end("Hello World");
+          });
+        } else if (req.method === "POST") {
           req.on("data", chunk => {
             res.write(chunk);
           });
@@ -683,10 +692,10 @@ describe("node:http", () => {
       });
     });
 
-    it("should ignore body when method is GET/HEAD/OPTIONS", done => {
+    it("should ignore body when method is GET/HEAD", done => {
       runTest(done, (server, serverPort, done) => {
         const createDone = createDoneDotAll(done);
-        const methods = ["GET", "HEAD", "OPTIONS"];
+        const methods = ["GET", "HEAD"];
         const dones = {};
         for (const method of methods) {
           dones[method] = createDone();
@@ -705,6 +714,32 @@ describe("node:http", () => {
             res.on("error", err => dones[method](err));
           });
           req.write("BODY");
+          req.end();
+        }
+      });
+    });
+
+    it("should have a response body when method is OPTIONS", done => {
+      runTest(done, (server, serverPort, done) => {
+        const createDone = createDoneDotAll(done);
+        const methods = ["OPTIONS"]; //keep this logic to add more methods in future
+        const dones = {};
+        for (const method of methods) {
+          dones[method] = createDone();
+        }
+        for (const method of methods) {
+          const req = request(`http://localhost:${serverPort}`, { method }, res => {
+            let data = "";
+            res.setEncoding("utf8");
+            res.on("data", chunk => {
+              data += chunk;
+            });
+            res.on("end", () => {
+              expect(data).toBe(method + "\nHello World");
+              dones[method]();
+            });
+            res.on("error", err => dones[method](err));
+          });
           req.end();
         }
       });

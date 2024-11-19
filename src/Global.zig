@@ -119,8 +119,8 @@ pub fn exit(code: u32) noreturn {
     switch (Environment.os) {
         .mac => std.c.exit(@bitCast(code)),
         .windows => {
-            _ = bun.windows.TerminateProcess(bun.windows.GetCurrentProcess(), @bitCast(code));
-            std.posix.abort();
+            Bun__onExit();
+            std.os.windows.kernel32.ExitProcess(code);
         },
         else => bun.C.quick_exit(@bitCast(code)),
     }

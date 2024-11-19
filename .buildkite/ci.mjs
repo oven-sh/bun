@@ -746,6 +746,10 @@ async function main() {
       console.log(" - Yes, because commit message contains:", reason);
       buildImages = true;
     }
+    if (ciFileChanged) {
+      console.log(" - Yes, because a core CI file changed");
+      buildImages = true;
+    }
   }
 
   console.log("Checking if CI should publish images...");
@@ -756,6 +760,11 @@ async function main() {
     if (match) {
       const [, reason] = match;
       console.log(" - Yes, because commit message contains:", reason);
+      publishImages = true;
+      buildImages = true;
+    }
+    if (ciFileChanged && isMainBranch()) {
+      console.log(" - Yes, because a core CI file changed and this is main branch");
       publishImages = true;
       buildImages = true;
     }

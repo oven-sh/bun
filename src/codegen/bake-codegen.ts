@@ -51,7 +51,7 @@ async function run() {
           IS_BUN_DEVELOPMENT: String(!!debug),
         },
         minify: {
-          syntax: true,
+          syntax: !debug,
         },
         target: side === 'server' ? 'bun' : 'browser',
       });

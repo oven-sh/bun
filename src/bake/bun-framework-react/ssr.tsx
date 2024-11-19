@@ -66,6 +66,7 @@ export function renderToHtml(rscPayload: Readable, bootstrapModules: readonly st
       return stream.finished;
     },
     cancel() {
+      rscPayload.destroy();
       stream?.destroy();
       abort?.();
     },
@@ -152,7 +153,7 @@ class RscInjectionStream extends EventEmitter {
       controller.write(data.subarray(0, data.length - closingBodyTag.length));
       this.drainRscChunks();
       controller.write(closingBodyTag);
-      controller.end();
+      controller.flush();
       this.finalize();
     } else {
       this.controller.write(data);
@@ -204,7 +205,6 @@ class RscInjectionStream extends EventEmitter {
   }
 
   end() {
-    this.finalize();
   }
 }
 

@@ -3689,11 +3689,6 @@ pub fn NewApp(comptime ssl: bool) type {
 
                 return bun.toFD(@as(i32, @intCast(@intFromPtr(uws_res_get_native_handle(ssl_flag, res.downcast())))));
             }
-            pub fn getRemoteAddress(res: *Response) ?[]const u8 {
-                var buf: [*]const u8 = undefined;
-                const size = uws_res_get_remote_address(ssl_flag, res.downcast(), &buf);
-                return if (size > 0) buf[0..size] else null;
-            }
             pub fn getRemoteAddressAsText(res: *Response) ?[]const u8 {
                 var buf: [*]const u8 = undefined;
                 const size = uws_res_get_remote_address_as_text(ssl_flag, res.downcast(), &buf);
@@ -4015,7 +4010,6 @@ pub fn NewApp(comptime ssl: bool) type {
 extern fn uws_res_end_stream(ssl: i32, res: *uws_res, close_connection: bool) void;
 extern fn uws_res_prepare_for_sendfile(ssl: i32, res: *uws_res) void;
 extern fn uws_res_get_native_handle(ssl: i32, res: *uws_res) *Socket;
-extern fn uws_res_get_remote_address(ssl: i32, res: *uws_res, dest: *[*]const u8) usize;
 extern fn uws_res_get_remote_address_as_text(ssl: i32, res: *uws_res, dest: *[*]const u8) usize;
 extern fn uws_create_app(ssl: i32, options: us_bun_socket_context_options_t) ?*uws_app_t;
 extern fn uws_app_destroy(ssl: i32, app: *uws_app_t) void;

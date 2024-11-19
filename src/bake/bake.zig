@@ -697,6 +697,7 @@ pub const PatternBuffer = struct {
     pub fn prependPart(pb: *PatternBuffer, part: FrameworkRouter.Part) void {
         switch (part) {
             .text => |text| {
+                bun.assert(text.len == 0 or text[0] != '/');
                 pb.prepend(text);
                 pb.prepend("/");
             },

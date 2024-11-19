@@ -34,7 +34,7 @@ function wait() {
   });
 }
 
-export function initWebSocket(handlers: Record<number, (dv: DataView) => void>) {
+export function initWebSocket(handlers: Record<number, (dv: DataView, ws: WebSocket) => void>) {
   let firstConnection = true;
 
   function onOpen() {
@@ -51,7 +51,7 @@ export function initWebSocket(handlers: Record<number, (dv: DataView) => void>) 
       if (IS_BUN_DEVELOPMENT) {
         console.info("[WS] " + String.fromCharCode(view.getUint8(0)));
       }
-      handlers[view.getUint8(0)]?.(view);
+      handlers[view.getUint8(0)]?.(view, ws);
     }
   }
 

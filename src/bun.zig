@@ -3343,11 +3343,10 @@ pub fn runtimeEmbedFile(
     };
 
     const static = struct {
-        var storage: [:0]const u8 = undefined;
-        var once = std.once(load);
+        var once = bun.once(load);
 
-        fn load() void {
-            storage = std.fs.cwd().readFileAllocOptions(
+        fn load() [:0]const u8 {
+            return std.fs.cwd().readFileAllocOptions(
                 default_allocator,
                 abs_path,
                 std.math.maxInt(usize),
@@ -3368,12 +3367,10 @@ pub fn runtimeEmbedFile(
 
     if ((root == .src_eager or root == .codegen_eager) and static.once.done) {
         static.once.done = false;
-        default_allocator.free(static.storage);
+        default_allocator.free(static.once.payload);
     }
 
-    static.once.call();
-
-    return static.storage;
+    return static.once.call(.{});
 }
 
 pub inline fn markWindowsOnly() if (Environment.isWindows) void else noreturn {
@@ -4047,21 +4044,24 @@ pub fn once(comptime f: anytype) Once(f) {
 /// It is undefined behavior if `f` re-enters the same Once instance.
 pub fn Once(comptime f: anytype) type {
     return struct {
+        const Return = @typeInfo(@TypeOf(f)).Fn.return_type.?;
+
         done: bool = false,
-        mutex: std.Thread.Mutex = std.Thread.Mutex{},
+        payload: Return = undefined,
+        mutex: std.Thread.Mutex = .{},
 
         /// Call the function `f`.
         /// If `call` is invoked multiple times `f` will be executed only the
         /// first time.
         /// The invocations are thread-safe.
-        pub fn call(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+        pub fn call(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) Return {
             if (@atomicLoad(bool, &self.done, .acquire))
-                return;
+                return self.payload;
 
             return self.callSlow(args);
         }
 
-        fn callSlow(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+        fn callSlow(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) Return {
             @setCold(true);
 
             self.mutex.lock();
@@ -4069,9 +4069,11 @@ pub fn Once(comptime f: anytype) type {
 
             // The first thread to acquire the mutex gets to run the initializer
             if (!self.done) {
-                @call(.auto, f, args);
+                self.payload = @call(.auto, f, args);
                 @atomicStore(bool, &self.done, true, .release);
             }
+
+            return self.payload;
         }
     };
 }

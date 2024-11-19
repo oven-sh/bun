@@ -49,7 +49,7 @@ server_exports = {
 
     const response = await serverRenderer(req, {
       styles: styles,
-      scripts: [clientEntryUrl],
+      modules: [clientEntryUrl],
       layouts,
       pageModule,
       modulepreload: [],

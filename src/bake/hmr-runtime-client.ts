@@ -57,22 +57,25 @@ const cssStore = new Map<string, CSSStyleSheet>();
 
 let isFirstRun = true;
 initWebSocket({
-  [MessageId.version](view) {
+  [MessageId.version](view, ws) {
     if (td.decode(view.buffer.slice(1)) !== config.version) {
       console.error("Version mismatch, hard-reloading");
       location.reload();
+      return;
     }
 
     if (isFirstRun) {
       isFirstRun = false;
+    } else {
+      // It would be possible to use `performRouteReload` to do a hot-reload,
+      // but the issue lies in possibly outdated client files. For correctness,
+      // all client files have to be HMR reloaded or proven unchanged.
+      // Configuration changes are already handled by the `config.version` data.
+      location.reload();
       return;
     }
 
-    // It would be possible to use `performRouteReload` to do a hot-reload,
-    // but the issue lies in possibly outdated client files. For correctness,
-    // all client files have to be HMR reloaded or proven unchanged.
-    // Configuration changes are already handled by the `config.version` data.
-    location.reload();
+    ws.send('h'); // HmrSocket.subscribe_hmr
   },
   [MessageId.hot_update](view) {
     const reader = new DataViewReader(view, 1);
@@ -81,8 +84,19 @@ initWebSocket({
     if (cssCount > 0) {
       for (let i = 0; i < cssCount; i++) {
         const moduleId = reader.stringWithLength(16);
+        let routeCount = reader.u32();
+        let appliesToThisRoute = false;
+        while (routeCount > 0) {
+          routeCount -= 1;
+          const routeId = reader.u32();
+          const routePattern = reader.string32();
+          if (routeMatch(routeId, routePattern)) {
+            appliesToThisRoute = true;
+          }
+        } 
         const content = reader.string32();
-        reloadCss(moduleId, content);
+        if (appliesToThisRoute)
+          reloadCss(moduleId, content);
       }
     }
 

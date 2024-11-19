@@ -239,7 +239,8 @@ function Install-Build-Essentials {
     golang `
     nasm `
     ruby `
-    strawberryperl
+    strawberryperl `
+    bzip2
   Install-Rust
   Install-Llvm
 }

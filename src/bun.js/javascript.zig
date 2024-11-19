@@ -2007,7 +2007,7 @@ pub const VirtualMachine = struct {
                     this.debugger = Debugger{
                         .path_or_port = null,
                         .from_environment_variable = notify,
-                        .wait_for_connection = wait_for_connection,
+                        .wait_for_connection = true,
                         .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
                         .mode = .connect,
                     };

@@ -1,8 +1,8 @@
-// this complex function isn't done yet, but it should
-// return the oldest person in a booking. Perhaps
-// we could use Math.max() for this?
-function getOldestPersonInBooking(ages: number[]) {
-  return -1;
+function getOldestPersonInBooking(ages: number[]): number {
+  return ages.reduce((oldest, current) => 
+    current > oldest ? current : oldest, 
+    ages[0]
+  );
 }
 
 const ticketAges = [5, 25, 30];

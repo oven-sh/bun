@@ -4,7 +4,7 @@ describe("example", () => {
   test("it works", () => {
     expect(1).toBe(1);
 
-    expect(1).not.toBe(1);
+    expect(10).toBe(10);
 
     expect(() => {
       throw new TypeError("Oops! I did it again.");

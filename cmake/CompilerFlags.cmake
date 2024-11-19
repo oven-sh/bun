@@ -142,20 +142,12 @@ if (LINUX)
     DESCRIPTION "Define _GNU_SOURCE"
     -D_GNU_SOURCE=1
   )
-  register_compiler_flags(
-    DESCRIPTION "POSIX compatibility layer"
-    -D_POSIX_C_SOURCE=200809L
-  )
 endif()
 
 if (APPLE)
   register_compiler_flags(
     DESCRIPTION "Define _DARWIN_C_SOURCE"
     -D_DARWIN_C_SOURCE=1
-  )
-  register_compiler_flags(
-    DESCRIPTION "POSIX compatibility layer"
-    -D_POSIX_C_SOURCE=200809L
   )
 endif()
 

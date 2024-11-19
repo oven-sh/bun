@@ -254,7 +254,7 @@ function Install-Visual-Studio {
 
   $packageParams = ($components | ForEach-Object { "--add $_" }) -join " "
   Install-Package visualstudio2022community `
-    -ExtraArgs "--package-parameters `"$packageParams`""
+    -ExtraArgs "--package-parameters '$packageParams'"
 }
 
 function Install-Rust {

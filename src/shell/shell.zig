@@ -3948,7 +3948,7 @@ pub const ShellSrcBuilder = struct {
         const invalid = bun.simdutf.validate.utf8(utf8);
         if (!invalid) return false;
         if (allow_escape) {
-            if (needsEscapeUtf8AsciiLatin1(utf8)) {
+            if (needsEscape(u8, utf8)) {
                 const bunstr = bun.String.createUTF8(utf8);
                 defer bunstr.deref();
                 try this.appendJSStrRef(bunstr);
@@ -4073,26 +4073,20 @@ pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_qu
 }
 
 pub fn needsEscapeBunstr(bunstr: bun.String) bool {
-    if (bunstr.isUTF16()) return needsEscapeUTF16(bunstr.utf16());
+    if (bunstr.isUTF16()) return needsEscape(u16, bunstr.utf16());
     // Otherwise is utf-8, ascii, or latin-1
-    return needsEscapeUtf8AsciiLatin1(bunstr.byteSlice());
+    return needsEscape(u8, bunstr.byteSlice());
 }
 
-pub fn needsEscapeUTF16(str: []const u16) bool {
-    for (str) |codeunit| {
-        if (codeunit < 0xff and SPECIAL_CHARS_TABLE.isSet(codeunit)) return true;
-    }
-
-    return false;
-}
-
+/// For ascii, latin-1, utf-8, or utf-16.
 /// Checks for the presence of any char from `SPECIAL_CHARS` in `str`. This
 /// indicates the *possibility* that the string must be escaped, so it can have
 /// false positives, but it is faster than running the shell lexer through the
 /// input string for a more correct implementation.
-pub fn needsEscapeUtf8AsciiLatin1(str: []const u8) bool {
+pub fn needsEscape(comptime backing_char: type, str: []const backing_char) bool {
+    if (str.len == 0) return true;
     for (str) |c| {
-        if (SPECIAL_CHARS_TABLE.isSet(c)) return true;
+        if (c <= 0xFF and SPECIAL_CHARS_TABLE.isSet(c)) return true;
     }
     return false;
 }

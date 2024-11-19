@@ -4697,7 +4697,7 @@ pub const Interpreter = struct {
                     .expanding_redirect => {
                         if (this.state.expanding_redirect.idx >= 1) {
                             this.state = .{
-                                .expanding_args = undefined,
+                                .expanding_args = .{ .expansion = undefined },
                             };
                             continue;
                         }

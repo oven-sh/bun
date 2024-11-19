@@ -357,5 +357,8 @@
         }
       }
     ]
+  },
+  "dependencies": {
+    "strip-ansi": "^7.1.0"
   }
 }

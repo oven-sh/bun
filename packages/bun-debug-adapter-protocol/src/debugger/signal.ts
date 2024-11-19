@@ -11,6 +11,7 @@ export type UnixSignalEventMap = {
   "Signal.error": [Error];
   "Signal.received": [string];
   "Signal.closed": [];
+  "Signal.Socket.closed": [socket: Socket];
 };
 
 /**
@@ -31,6 +32,9 @@ export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
     this.#server.on("connection", socket => {
       socket.on("data", data => {
         this.emit("Signal.received", data.toString());
+      });
+      socket.on("close", () => {
+        this.emit("Signal.Socket.closed", socket);
       });
     });
     this.#ready = new Promise((resolve, reject) => {
@@ -91,6 +95,7 @@ export type TCPSocketSignalEventMap = {
   "Signal.error": [Error];
   "Signal.closed": [];
   "Signal.received": [string];
+  "Signal.Socket.closed": [socket: Socket];
 };
 
 export class TCPSocketSignal extends EventEmitter {
@@ -112,8 +117,12 @@ export class TCPSocketSignal extends EventEmitter {
       });
 
       socket.on("close", () => {
-        this.emit("Signal.closed");
+        this.emit("Signal.Socket.closed", socket);
       });
+    });
+
+    this.#server.on("close", () => {
+      this.emit("Signal.closed");
     });
 
     this.#ready = new Promise((resolve, reject) => {

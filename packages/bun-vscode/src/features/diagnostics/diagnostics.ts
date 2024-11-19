@@ -1,4 +1,5 @@
 import * as os from "node:os";
+import stripAnsi from "strip-ansi";
 import * as vscode from "vscode";
 import {
   DebugAdapter,
@@ -97,9 +98,11 @@ class BunDiagnosticsManager {
     debugAdapter.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
 
     const dispose = async () => {
+      await vscode.window.showInformationMessage("Bun debug adapter has stopped");
       debugAdapter.removeAllListeners();
       await debugAdapter.send("LifecycleReporter.stopPreventingExit");
       debugAdapter.close();
+      this.editorState.clearAll();
     };
 
     this.signal.once("Signal.closed", dispose);
@@ -137,9 +140,19 @@ class BunDiagnosticsManager {
     }
 
     const uri = vscode.Uri.file(url);
+
+    // range is really just 1 character here..
     const range = new vscode.Range(new vscode.Position(line - 1, column - 1), new vscode.Position(line - 1, column));
 
-    const diagnostic = new vscode.Diagnostic(range, params.message, vscode.DiagnosticSeverity.Error);
+    // ...but we want to highlight the entire word after(inclusive) the character
+    const rangeOfWord = vscode.window.activeTextEditor?.document.getWordRangeAtPosition(range.start) ?? range; // Fallback to just the character if no word range is found
+
+    const diagnostic = new vscode.Diagnostic(
+      rangeOfWord,
+      stripAnsi(params.message).trim(),
+      vscode.DiagnosticSeverity.Error,
+    );
+
     this.editorState.setDiagnostic(uri, diagnostic);
   }
 
@@ -167,6 +180,9 @@ class BunDiagnosticsManager {
     this.handleSignalReceived = this.handleSignalReceived.bind(this);
 
     this.signal.on("Signal.received", this.handleSignalReceived);
+    this.signal.on("Signal.closed", async () => {
+      console.log("SIGNAL CLSOED BITCH");
+    });
   }
 }
 

@@ -785,7 +785,7 @@ async function main() {
 
   console.log("Checking if build is a named release...");
   let buildRelease;
-  if (/^(1|true|on|yes)$/i.test(getEnv("RELEASE"))) {
+  if (/^(1|true|on|yes)$/i.test(getEnv("RELEASE", false))) {
     console.log(" - Yes, because RELEASE environment variable is set");
     buildRelease = true;
   } else {

@@ -14,6 +14,7 @@ import {
   getChangedFiles,
   getCommit,
   getCommitMessage,
+  getEnv,
   getLastSuccessfulBuild,
   getMainBranch,
   getTargetBranch,
@@ -784,7 +785,10 @@ async function main() {
 
   console.log("Checking if build is a named release...");
   let buildRelease;
-  {
+  if (/^(1|true|on|yes)$/i.test(getEnv("RELEASE"))) {
+    console.log(" - Yes, because RELEASE environment variable is set");
+    buildRelease = true;
+  } else {
     const message = getCommitMessage();
     const match = /\[(release|release build|build release)\]/i.exec(message);
     if (match) {

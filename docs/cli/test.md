@@ -90,7 +90,7 @@ From there, you'll get GitHub Actions annotations.
 To use `bun test` with a JUnit XML reporter, you can use the `--reporter=junit` in combination with `--reporter-outfile`.
 
 ```sh
-$ bun test --junit-report=./bun.xml
+$ bun test --reporter=junit --reporter-outfile=./bun.xml
 ```
 
 This will continue to output to stdout/stderr as usual, and also write a JUnit

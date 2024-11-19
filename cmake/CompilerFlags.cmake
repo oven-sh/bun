@@ -137,6 +137,28 @@ if(UNIX)
   )
 endif()
 
+if (LINUX)
+  register_compiler_definitions(
+    DESCRIPTION "Define _GNU_SOURCE"
+    _GNU_SOURCE=1
+  )
+  register_compiler_flags(
+    DESCRIPTION "POSIX compatibility layer"
+    _POSIX_C_SOURCE=200809L
+  )
+endif()
+
+if (APPLE)
+  register_compiler_definitions(
+    DESCRIPTION "Define _DARWIN_C_SOURCE"
+    _DARWIN_C_SOURCE=1
+  )
+  register_compiler_flags(
+    DESCRIPTION "POSIX compatibility layer"
+    _POSIX_C_SOURCE=200809L
+  )
+endif()
+
 register_compiler_flags(
   DESCRIPTION "Place each function in its own section"
   -ffunction-sections ${UNIX}

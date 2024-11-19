@@ -56,10 +56,6 @@ extern "C" int kill(int pid, int sig)
 #include <features.h>
 #ifdef __GNU_LIBRARY__
 
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
-
 #include <fcntl.h>
 #include <dlfcn.h>
 #include <stdarg.h>

@@ -190,7 +190,7 @@ struct us_socket_context_options_t {
 };
 
 struct us_bun_verify_error_t {
-    long error;
+    int error;
     const char* code;
     const char* reason;
 };

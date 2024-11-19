@@ -218,17 +218,17 @@ static JSBundlerPluginNativeOnBeforeParseCallback nativeCallbackFromJS(JSC::JSGl
     return nullptr;
 }
 
-void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback)
+void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, NapiExternal* external)
 {
     unsigned index = 0;
     this->BundlerPlugin::NamespaceList::append(vm, filter, namespaceString, index);
     if (index == std::numeric_limits<unsigned>::max()) {
-        this->fileCallbacks.append(callback);
+        this->fileCallbacks.append(std::make_pair(callback, external));
     } else {
         if (this->namespaceCallbacks.size() <= index) {
             this->namespaceCallbacks.grow(index + 1);
         }
-        this->namespaceCallbacks[index].append(callback);
+        this->namespaceCallbacks[index].append(std::make_pair(callback, external));
     }
 }
 
@@ -252,7 +252,8 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, int* shouldContinue, void
     for (size_t i = 0, total = callbacks.size(); i < total && *shouldContinue; ++i) {
         Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
         if (group->at(i).match(path) > -1) {
-            callbacks[i](1, onBeforeParseArgs, onBeforeParseResult);
+            ((OnBeforeParseArgs*) (onBeforeParseArgs))->external = callbacks[i].second->value();
+            callbacks[i].first(1, onBeforeParseArgs, onBeforeParseResult);
             count++;
         }
         if (OnBeforeParsePlugin__isDone(bunContextPtr)) {
@@ -285,15 +286,16 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     }
 
     JSC::JSValue external = callFrame->argument(3);
+    NapiExternal* externalPtr = nullptr;
     if (!external.isUndefinedOrNull()) {
-        auto* externalPtr = jsDynamicCast<Bun::NapiExternal*>(external);
+        externalPtr = jsDynamicCast<Bun::NapiExternal*>(external);
         if (UNLIKELY(!externalPtr)) {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected external (3rd argument) to be a NAPI external"_s);
             return {};
         }
     }
 
-    thisObject->plugin.onBeforeParse.append(vm, regExp->regExp(), namespaceStr, callback);
+    thisObject->plugin.onBeforeParse.append(vm, regExp->regExp(), namespaceStr, callback, externalPtr);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -519,7 +521,7 @@ extern "C" int JSBundlerPlugin__callOnBeforeParsePlugins(
     void* bunContextPtr,
     const BunString* namespaceStr,
     const BunString* pathString,
-    void* onBeforeParseArgs,
+    BundlerPlugin::OnBeforeParseArgs* onBeforeParseArgs,
     void* onBeforeParseResult,
     int* shouldContinue)
 {

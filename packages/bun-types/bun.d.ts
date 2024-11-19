@@ -3927,7 +3927,7 @@ declare module "bun" {
   };
 
   interface PluginBuilder {
-    onBeforeParse(constraints: PluginConstraints, callback: FFIFunctionCallable): void;
+    onBeforeParse(constraints: PluginConstraints, callback: { handle: FFIFunctionCallable; external: any }): void;
     /**
      * Register a callback to load imports with a specific import specifier
      * @param constraints The constraints to apply the plugin to

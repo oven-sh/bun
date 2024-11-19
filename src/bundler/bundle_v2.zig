@@ -3759,6 +3759,7 @@ pub const ParseTask = struct {
             namespace_ptr: [*]const u8 = "file",
             namespace_len: usize = "file".len,
             default_loader: Loader = .file,
+            external: ?*void = null,
         };
 
         const BunLogOptions = extern struct {

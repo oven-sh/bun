@@ -4,7 +4,7 @@
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/RegularExpression.h>
-#include "helpers.h"
+#include "napi_external.h"
 #include <JavaScriptCore/Yarr.h>
 #include <JavaScriptCore/Strong.h>
 
@@ -47,13 +47,23 @@ public:
         void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, unsigned& index);
     };
 
+    typedef struct {
+        void *context;
+        const char *path_ptr;
+        size_t path_len;
+        const char *namespace_ptr;
+        size_t namespace_len;
+        unsigned char default_loader;
+        void *external;
+    } OnBeforeParseArgs;
+
     class NativePluginList : public NamespaceList {
     public:
-        using PerNamespaceCallbackList = Vector<JSBundlerPluginNativeOnBeforeParseCallback>;
+        using PerNamespaceCallbackList = Vector<std::pair<JSBundlerPluginNativeOnBeforeParseCallback, Bun::NapiExternal*>>;
         PerNamespaceCallbackList fileCallbacks = {};
         Vector<PerNamespaceCallbackList> namespaceCallbacks = {};
         int call(JSC::VM& vm, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, void* onBeforeParseArgs, void* onBeforeParseResult);
-        void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback);
+        void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, NapiExternal* external);
     };
 
 public:

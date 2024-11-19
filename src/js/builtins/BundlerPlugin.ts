@@ -111,8 +111,8 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     validate(filterObject, callback, onResolvePlugins, undefined);
   }
 
-  function onBeforeParse(filterObject, callback, external) {
-    validate(filterObject, callback, onBeforeParsePlugins, external);
+  function onBeforeParse(filterObject, { handle, external }) {
+    validate(filterObject, handle, onBeforeParsePlugins, external);
   }
 
   const processSetupResult = () => {
@@ -135,8 +135,8 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     }
 
     for (var [namespace, callbacks] of onBeforeParsePlugins.entries()) {
-      for (var [filter, callback, entries] of callbacks) {
-        this.onBeforeParse(filter, namespace, callback, entries);
+      for (var [filter, callback, external] of callbacks) {
+        this.onBeforeParse(filter, namespace, callback, external);
         anyOnBeforeParse = true;
       }
     }

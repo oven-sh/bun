@@ -717,7 +717,7 @@ pub const ReadFileUV = struct {
             return;
         }
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
-        this.buffer.ensureTotalCapacityPrecise(this.byte_store.allocator, this.size + 16) catch |err| {
+        this.buffer.ensureTotalCapacityPrecise(this.byte_store.allocator, @min(this.size + 16, @as(usize, std.math.maxInt(bun.windows.ULONG)))) catch |err| {
             this.errno = err;
             this.onFinish();
             return;

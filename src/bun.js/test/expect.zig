@@ -558,7 +558,7 @@ pub const Expect = struct {
 
                 const signature = comptime getSignature("toBe", "<green>expected<r>", false);
                 if (left.deepEquals(right, globalThis) or left.strictDeepEquals(right, globalThis)) {
-                    const fmt = signature ++
+                    const fmt =
                         (if (!has_custom_label) "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>" else "") ++
                         "\n\nExpected: <green>{any}<r>\n" ++
                         "Received: serializes to the same string\n";

@@ -327,7 +327,8 @@ check_package_manager() {
 	print "Updating package manager..."
 	case "$pm" in
 	apt)
-		DEBIAN_FRONTEND=noninteractive package_manager update -y
+		export DEBIAN_FRONTEND=noninteractive
+		package_manager update -y
 		;;
 	apk)
 		package_manager update
@@ -373,7 +374,7 @@ package_manager() {
 		while ! sudo -n apt-get update -y; do
 			sleep 1
 		done
-		DEBIAN_FRONTEND=noninteractive execute_sudo apt-get "$@"
+		execute_sudo apt-get "$@"
 		;;
 	dnf)
 		case "$distro" in

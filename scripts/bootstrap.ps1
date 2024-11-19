@@ -217,18 +217,6 @@ function Install-Buildkite {
   Refresh-Path
 }
 
-function Install-Rust {
-  if (Which rustc) {
-    return
-  }
-
-  Write-Output "Installing Rust..."
-  $rustupInit = "$env:TEMP\rustup-init.exe"
-  (New-Object System.Net.WebClient).DownloadFile("https://win.rustup.rs/", $rustupInit)
-  Execute-Command $rustupInit -y
-  Add-To-Path "$env:USERPROFILE\.cargo\bin"
-}
-
 function Install-Build-Essentials {
   Install-Visual-Studio
   Install-Packages `
@@ -247,7 +235,7 @@ function Install-Build-Essentials {
 function Install-Visual-Studio {
   $components = @(
     "Microsoft.VisualStudio.Workload.NativeDesktop", # C++ workload
-    "Microsoft.VisualStudio.Component.Windows10SDK.18362", # Windows 10 SDK (newest)
+    "Microsoft.VisualStudio.Component.Windows10SDK.18362", # Windows 10 SDK (oldest available)
     "Microsoft.VisualStudio.Component.Windows11SDK.22000", # Windows 11 SDK (oldest)
     "Microsoft.VisualStudio.Component.Windows11Sdk.WindowsPerformanceToolkit", # Windows Performance Toolkit
     "Microsoft.VisualStudio.Component.VC.ASAN", # C++ AddressSanitizer
@@ -264,12 +252,21 @@ function Install-Visual-Studio {
     $components += "Microsoft.VisualStudio.Component.VC.Tools.ARM64" # MSVC v143 build tools (ARM64)
   }
 
-  $packageParams = @(
-    ($components | ForEach-Object { "--add $_" } | Join-String -Separator " ")
-  )
-
+  $packageParams = ($components | ForEach-Object { "--add $_" }) -join " "
   Install-Package visualstudio2022community `
-    -ExtraArgs "--package-parameters '$($packageParams -join ' ')'"
+    -ExtraArgs "--package-parameters `"$packageParams`""
+}
+
+function Install-Rust {
+  if (Which rustc) {
+    return
+  }
+
+  Write-Output "Installing Rust..."
+  $rustupInit = "$env:TEMP\rustup-init.exe"
+  (New-Object System.Net.WebClient).DownloadFile("https://win.rustup.rs/", $rustupInit)
+  Execute-Command $rustupInit -y
+  Add-To-Path "$env:USERPROFILE\.cargo\bin"
 }
 
 function Install-Llvm {

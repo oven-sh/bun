@@ -2061,8 +2061,7 @@ pub const ComponentParser = struct {
             return this.parseFrom(from, input, T, C, func, args_);
         }
 
-        const args = bun.meta.ConcatArgs2(func, input, this, args_);
-        return @call(.auto, func, args);
+        return @call(.auto, func, .{ input, this } ++ args_);
     }
 
     pub fn parseFrom(
@@ -2092,8 +2091,7 @@ pub const ComponentParser = struct {
 
         this.from = RelativeComponentParser.new(&new_from);
 
-        const args = bun.meta.ConcatArgs2(func, input, this, args_);
-        return @call(.auto, func, args);
+        return @call(.auto, func, .{ input, this } ++ args_);
     }
 
     pub fn parseNumberOrPercentage(this: *const ComponentParser, input: *css.Parser) Result(NumberOrPercentage) {

@@ -86,29 +86,6 @@ pub fn Item(comptime T: type) type {
     }
 }
 
-/// Returns a tuple of arguments to func, with the first two arguments passed separately and the
-/// rest from a tuple
-pub inline fn ConcatArgs2(
-    /// The function to create arguments for
-    comptime func: anytype,
-    /// Value for the first argument to func
-    a: @typeInfo(@TypeOf(func)).Fn.params[0].type.?,
-    /// Value for the second argument to func
-    b: @typeInfo(@TypeOf(func)).Fn.params[1].type.?,
-    /// Tuple containing the other arguments to func
-    rest: anytype, // TODO: deduce an exact type from func's arguments (@190n's attempt crashed the zig compiler)
-) std.meta.ArgsTuple(@TypeOf(func)) {
-    var args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
-    args[0] = a;
-    args[1] = b;
-
-    inline for (rest, 2..) |arg, i| {
-        args[i] = arg;
-    }
-
-    return args;
-}
-
 pub fn isSimpleCopyType(comptime T: type) bool {
     const tyinfo = @typeInfo(T);
     return switch (tyinfo) {

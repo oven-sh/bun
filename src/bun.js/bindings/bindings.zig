@@ -3762,12 +3762,11 @@ pub const JSMap = opaque {
     };
 };
 
-// TODO: this should not need to be `pub`
 pub const JSValueReprInt = i64;
 
 /// ABI-compatible with EncodedJSValue
 /// In the future, this type will exclude `zero`, encoding it as `error.JSError` instead.
-pub const JSValue = enum(i64) {
+pub const JSValue = enum(JSValueReprInt) {
     zero = 0,
     undefined = 0xa,
     null = 0x2,
@@ -3777,7 +3776,7 @@ pub const JSValue = enum(i64) {
 
     /// When JavaScriptCore throws something, it returns a null cell (0). The
     /// exception is set on the global object. ABI-compatible with EncodedJSValue.
-    pub const MaybeException = enum(i64) {
+    pub const MaybeException = enum(JSValueReprInt) {
         zero = 0,
         _,
 

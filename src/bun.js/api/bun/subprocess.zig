@@ -1447,7 +1447,8 @@ pub const Subprocess = struct {
             if (JSC.Codegen.JSSubprocess.stdinGetCached(this_jsvalue)) |existing_value| {
                 if (existing_stdin_value.isCell()) {
                     if (stdin == null) {
-                        stdin = @as(?*JSC.WebCore.FileSink, @alignCast(@ptrCast(JSC.WebCore.FileSink.JSSink.fromJS(globalThis, existing_value))));
+                        // TODO: review this cast
+                        stdin = @alignCast(@ptrCast(JSC.WebCore.FileSink.JSSink.fromJS(existing_value)));
                     }
 
                     existing_stdin_value = existing_value;

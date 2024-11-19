@@ -366,10 +366,6 @@ pub const Run = struct {
 
         {
             if (this.vm.isWatcherEnabled()) {
-                // var prev_promise = this.vm.pending_internal_promise;
-                // if (prev_promise.status(vm.global.vm()) == .rejected) {
-                //     _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                // }
                 vm.global.handleRejectedPromises();
 
                 while (true) {
@@ -378,31 +374,16 @@ pub const Run = struct {
 
                         // Report exceptions in hot-reloaded modules
                         vm.global.handleRejectedPromises();
-                        // if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
-                        //     prev_promise = this.vm.pending_internal_promise;
-                        //     _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                        //     continue;
-                        // }
-
                         vm.eventLoop().autoTickActive();
                     }
 
                     vm.onBeforeExit();
 
                     vm.global.handleRejectedPromises();
-                    // if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
-                    //     prev_promise = this.vm.pending_internal_promise;
-                    //     _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                    // }
-
                     vm.eventLoop().tickPossiblyForever();
                 }
 
                 vm.global.handleRejectedPromises();
-                // if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
-                //     prev_promise = this.vm.pending_internal_promise;
-                //     _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                // }
             } else {
                 while (vm.isEventLoopAlive()) {
                     vm.tick();

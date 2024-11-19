@@ -46,11 +46,9 @@ function readLogMsg(r: DataViewReader, level: BundlerMessageLevel) {
   const location = readBundlerMessageLocationOrNull(r);
   const noteCount = r.u32();
   const notes = new Array(noteCount);
-
   for (let i = 0; i < noteCount; i++) {
     notes[i] = readLogData(r);
   }
-
   return {
     kind: "bundler",
     level,

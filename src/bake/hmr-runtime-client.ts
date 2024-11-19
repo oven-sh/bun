@@ -56,7 +56,7 @@ try {
 const cssStore = new Map<string, CSSStyleSheet>();
 
 let isFirstRun = true;
-/*const ws =*/ initWebSocket({
+initWebSocket({
   [MessageId.version](view) {
     if (td.decode(view.buffer.slice(1)) !== config.version) {
       console.error("Version mismatch, hard-reloading");

@@ -12,6 +12,7 @@ pub const short = u16;
 pub const PostgresShort = u16;
 const Crypto = JSC.API.Bun.Crypto;
 const JSValue = JSC.JSValue;
+const BoringSSL = @import("../boringssl.zig");
 
 pub const SSLMode = enum(u8) {
     disable = 0,
@@ -1219,10 +1220,23 @@ pub const PostgresSQLConnection = struct {
 
     pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
         debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
+
         if (success != 1) {
-            if (this.tls_config.reject_unauthorized == 1) {
+            this.failWithJSValue(ssl_error.toJS(this.globalObject));
+            return;
+        }
+
+        if (this.tls_config.reject_unauthorized == 1) {
+            if (ssl_error.error_no != 0) {
                 this.failWithJSValue(ssl_error.toJS(this.globalObject));
                 return;
+            }
+            const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
+            if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                const hostname = servername[0..bun.len(servername)];
+                if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                    this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                }
             }
         }
     }

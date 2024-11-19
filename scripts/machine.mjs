@@ -17,6 +17,7 @@ import {
   tmpdir,
   waitForPort,
   which,
+  escapePowershell,
 } from "./utils.mjs";
 import { join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -119,7 +120,7 @@ export const aws = {
 
   /**
    * @param {string[]} args
-   * @returns {Promise<any>}
+   * @returns {Promise<unknown>}
    */
   async spawn(args) {
     const aws = which("aws");
@@ -136,7 +137,14 @@ export const aws = {
       };
     }
 
-    const { stdout } = await spawnSafe($`${aws} ${args} --output json`, { env });
+    const { error, stdout } = await spawn($`${aws} ${args} --output json`, { env });
+    if (error) {
+      if (/max attempts exceeded/i.test(inspect(error))) {
+        return this.spawn(args);
+      }
+      throw error;
+    }
+
     try {
       return JSON.parse(stdout);
     } catch {
@@ -286,16 +294,7 @@ export const aws = {
    * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/wait/image-available.html
    */
   async waitImage(action, ...imageIds) {
-    while (true) {
-      try {
-        await aws.spawn($`ec2 wait ${action} --image-ids ${imageIds}`);
-        return;
-      } catch (error) {
-        if (!/max attempts exceeded/i.test(inspect(error))) {
-          throw error;
-        }
-      }
-    }
+    await aws.spawn($`ec2 wait ${action} --image-ids ${imageIds}`);
   },
 
   /**
@@ -386,7 +385,7 @@ export const aws = {
    * @returns {Promise<Machine>}
    */
   async createMachine(options) {
-    const { arch, imageId, instanceType, metadata } = options;
+    const { os, arch, imageId, instanceType, metadata } = options;
 
     /** @type {AwsImage} */
     let image;
@@ -411,7 +410,11 @@ export const aws = {
     });
 
     const username = getUsername(Name);
-    const userData = getCloudInit({ ...options, username });
+
+    let userData = getUserData({ ...options, username });
+    if (os === "windows") {
+      userData = `<powershell>${userData}</powershell><powershellArguments>-ExecutionPolicy Unrestricted -NoProfile -NonInteractive</powershellArguments><persist>false</persist>`;
+    }
 
     let tagSpecification = [];
     if (metadata) {
@@ -435,6 +438,7 @@ export const aws = {
         "InstanceMetadataTags": "enabled",
       }),
       ["tag-specifications"]: JSON.stringify(tagSpecification),
+      ["key-name"]: "ashcon-bun",
     });
 
     return aws.toMachine(instance, { ...options, username });
@@ -672,6 +676,14 @@ const google = {
  * @property {string} [password]
  */
 
+function getUserData(cloudInit) {
+  const { os } = cloudInit;
+  if (os === "windows") {
+    return getWindowsStartupScript(cloudInit);
+  }
+  return getCloudInit(cloudInit);
+}
+
 /**
  * @param {CloudInit} cloudInit
  * @returns {string}
@@ -719,6 +731,80 @@ function getCloudInit(cloudInit) {
 
     ssh_pwauth: true
     ssh_authorized_keys: ${authorizedKeys}
+  `;
+}
+
+/**
+ * @param {CloudInit} cloudInit
+ * @returns {string}
+ */
+function getWindowsStartupScript(cloudInit) {
+  const { sshKeys } = cloudInit;
+  const authorizedKeys = sshKeys.filter(({ publicKey }) => publicKey).map(({ publicKey }) => publicKey);
+
+  return `
+    $ErrorActionPreference = "Stop"
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+
+    function Install-Ssh {
+      $sshService = Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Server*'
+      if ($sshService.State -ne "Installed") {
+        Write-Output "Installing OpenSSH server..."
+        Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+      }
+
+      $pwshPath = Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path
+      if (-not $pwshPath) {
+        $pwshPath = Get-Command powershell -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path
+      }
+
+      if (-not (Get-Service -Name sshd -ErrorAction SilentlyContinue)) {
+        Write-Output "Enabling OpenSSH server..."
+        Set-Service -Name sshd -StartupType Automatic
+        Start-Service sshd
+      }
+
+      if ($pwshPath) {
+        Write-Output "Setting default shell to $pwshPath..."
+        New-ItemProperty -Path "HKLM:\\SOFTWARE\\OpenSSH" -Name DefaultShell -Value $pwshPath -PropertyType String -Force
+      }
+
+      $firewallRule = Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue
+      if (-not $firewallRule) {
+        Write-Output "Configuring firewall..."
+        New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
+      }
+
+      $sshPath = "C:\\ProgramData\\ssh"
+      if (-not (Test-Path $sshPath)) {
+        Write-Output "Creating SSH directory..."
+        New-Item -Path $sshPath -ItemType Directory
+      }
+
+      $authorizedKeysPath = Join-Path $sshPath "administrators_authorized_keys"
+      $authorizedKeys = @(${authorizedKeys.map(key => `"${escapePowershell(key)}"`).join("\n")})
+      if (-not (Test-Path $authorizedKeysPath) -or (Get-Content $authorizedKeysPath) -ne $authorizedKeys) {
+        Write-Output "Adding SSH keys..."
+        Set-Content -Path $authorizedKeysPath -Value $authorizedKeys
+      }
+
+      $sshdConfigPath = Join-Path $sshPath "sshd_config"
+      $sshdConfig = @"
+        PasswordAuthentication no
+        PubkeyAuthentication yes
+        AuthorizedKeysFile $authorizedKeysPath
+        Subsystem sftp sftp-server.exe
+"@
+      if (-not (Test-Path $sshdConfigPath) -or (Get-Content $sshdConfigPath) -ne $sshdConfig) {
+        Write-Output "Writing SSH configuration..."
+        Set-Content -Path $sshdConfigPath -Value $sshdConfig
+      }
+
+      Write-Output "Restarting SSH server..."
+      Restart-Service sshd
+    }
+
+    Install-Ssh
   `;
 }
 
@@ -824,7 +910,7 @@ function getSshKeys() {
         publicPath,
         privatePath: publicPath.replace(/\.pub$/, ""),
         get publicKey() {
-          return readFile(publicPath, { cache: true });
+          return readFile(publicPath, { cache: true }).trim();
         },
       })),
     );
@@ -1030,7 +1116,7 @@ async function main() {
       "cloud": { type: "string", default: "aws" },
       "os": { type: "string", default: "linux" },
       "arch": { type: "string", default: "x64" },
-      "distro": { type: "string", default: "debian" },
+      "distro": { type: "string" },
       "distro-version": { type: "string" },
       "instance-type": { type: "string" },
       "image-id": { type: "string" },
@@ -1080,7 +1166,7 @@ async function main() {
 
   let bootstrapPath, agentPath;
   if (bootstrap) {
-    bootstrapPath = resolve(import.meta.dirname, "bootstrap.sh");
+    bootstrapPath = resolve(import.meta.dirname, os === "windows" ? "bootstrap.ps1" : "bootstrap.sh");
     if (!existsSync(bootstrapPath)) {
       throw new Error(`Script not found: ${bootstrapPath}`);
     }
@@ -1127,38 +1213,56 @@ async function main() {
     });
 
     if (bootstrapPath) {
-      const remotePath = "/tmp/bootstrap.sh";
-      const args = ci ? ["--ci"] : [];
-      await startGroup("Running bootstrap...", async () => {
-        await machine.upload(bootstrapPath, remotePath);
-        await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });
-      });
+      if (os === "windows") {
+        const remotePath = "C:\\Windows\\Temp\\bootstrap.ps1";
+        const args = ci ? ["-CI"] : [];
+        await startGroup("Running bootstrap...", async () => {
+          await machine.upload(bootstrapPath, remotePath);
+          await machine.spawnSafe(["powershell", remotePath, ...args], { stdio: "inherit" });
+        });
+      } else {
+        const remotePath = "/tmp/bootstrap.sh";
+        const args = ci ? ["--ci"] : [];
+        await startGroup("Running bootstrap...", async () => {
+          await machine.upload(bootstrapPath, remotePath);
+          await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });
+        });
+      }
     }
 
     if (agentPath) {
-      const tmpPath = "/tmp/agent.mjs";
-      const remotePath = "/var/lib/buildkite-agent/agent.mjs";
-      await startGroup("Installing agent...", async () => {
-        await machine.upload(agentPath, tmpPath);
-        const command = [];
-        {
-          const { exitCode } = await machine.spawn(["sudo", "echo", "1"], { stdio: "ignore" });
-          if (exitCode === 0) {
-            command.unshift("sudo");
+      if (os === "windows") {
+        // TODO
+        // const remotePath = "C:\\Windows\\Temp\\agent.mjs";
+        // await startGroup("Installing agent...", async () => {
+        //   await machine.upload(agentPath, remotePath);
+        //   await machine.spawnSafe(["node", remotePath, "install"], { stdio: "inherit" });
+        // });
+      } else {
+        const tmpPath = "/tmp/agent.mjs";
+        const remotePath = "/var/lib/buildkite-agent/agent.mjs";
+        await startGroup("Installing agent...", async () => {
+          await machine.upload(agentPath, tmpPath);
+          const command = [];
+          {
+            const { exitCode } = await machine.spawn(["sudo", "echo", "1"], { stdio: "ignore" });
+            if (exitCode === 0) {
+              command.unshift("sudo");
+            }
           }
-        }
-        await machine.spawnSafe([...command, "cp", tmpPath, remotePath]);
-        {
-          const { stdout } = await machine.spawn(["node", "-v"]);
-          const version = parseInt(stdout.trim().replace(/^v/, ""));
-          if (isNaN(version) || version < 20) {
-            command.push("bun");
-          } else {
-            command.push("node");
+          await machine.spawnSafe([...command, "cp", tmpPath, remotePath]);
+          {
+            const { stdout } = await machine.spawn(["node", "-v"]);
+            const version = parseInt(stdout.trim().replace(/^v/, ""));
+            if (isNaN(version) || version < 20) {
+              command.push("bun");
+            } else {
+              command.push("node");
+            }
           }
-        }
-        await machine.spawnSafe([...command, remotePath, "install"], { stdio: "inherit" });
-      });
+          await machine.spawnSafe([...command, remotePath, "install"], { stdio: "inherit" });
+        });
+      }
     }
 
     if (command === "create-image" || command === "publish-image") {

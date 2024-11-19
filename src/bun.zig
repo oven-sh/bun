@@ -4109,16 +4109,16 @@ const CowString = CowSlice(u8);
 /// a slice, but doing so would make it unknown if that slice should be freed.
 /// This structure, in release builds, is the same size as `[]const T`, but
 /// stores one bit for if a de-allocation should free the underlying memory.
-/// 
+///
 ///     const str = CowSlice(u8).initOwned(try alloc.dupe(u8, "hello!"), alloc);
 ///     const borrow = str.borrow();
 ///     assert(borrow.slice().ptr == str.slice().ptr)
 ///     borrow.deinit(alloc); // knows it is borrowed, no free
 ///     str.deinit(alloc); // calls free
-/// 
+///
 /// In a debug build, there are aggressive assertions to ensure unintentional
 /// frees do not happen. But in a release build, the developer is expected to
-/// keep the 
+/// keep the
 pub fn CowSlice(T: type) type {
     const DebugData = if (Environment.allow_assert) struct {
         mutex: std.Thread.Mutex,

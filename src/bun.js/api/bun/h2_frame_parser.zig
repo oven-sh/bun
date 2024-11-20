@@ -614,7 +614,7 @@ const Handlers = struct {
         };
 
         inline for (pairs) |pair| {
-            if (opts.getTruthy(globalObject, pair.@"1")) |callback_value| {
+            if (try opts.getTruthy(globalObject, pair.@"1")) |callback_value| {
                 if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
                     return globalObject.throwInvalidArguments2("Expected \"{s}\" callback to be a function", .{pair[1]});
                 }
@@ -636,7 +636,7 @@ const Handlers = struct {
             return globalObject.throwInvalidArguments2("Expected at least \"write\" callback", .{});
         }
 
-        if (opts.getTruthy(globalObject, "binaryType")) |binary_type_value| {
+        if (try opts.getTruthy(globalObject, "binaryType")) |binary_type_value| {
             if (!binary_type_value.isString()) {
                 return globalObject.throwInvalidArguments2("Expected \"binaryType\" to be a string", .{});
             }
@@ -2989,7 +2989,7 @@ pub const H2FrameParser = struct {
                 return globalObject.throwValue2(exception);
             }
 
-            var js_value = headers_arg.getTruthy(globalObject, name) orelse {
+            var js_value = try headers_arg.getTruthy(globalObject, name) orelse {
                 const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
                 return globalObject.throwValue2(exception);
             };
@@ -3014,7 +3014,7 @@ pub const H2FrameParser = struct {
                         return globalObject.throwValue2(exception);
                     };
 
-                    const never_index = sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                    const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
 
                     const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                     defer value_slice.deinit();
@@ -3036,7 +3036,7 @@ pub const H2FrameParser = struct {
                     return globalObject.throwValue2(exception);
                 };
 
-                const never_index = sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
 
                 const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                 defer value_slice.deinit();
@@ -3368,7 +3368,7 @@ pub const H2FrameParser = struct {
                     continue;
                 }
 
-                var js_value = headers_arg.getTruthy(globalObject, name) orelse {
+                var js_value = try headers_arg.getTruthy(globalObject, name) orelse {
                     const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
                     globalObject.throwValue(exception);
                     return .zero;
@@ -3398,7 +3398,7 @@ pub const H2FrameParser = struct {
                             return .zero;
                         };
 
-                        const never_index = sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                        const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
 
                         const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                         defer value_slice.deinit();
@@ -3425,7 +3425,7 @@ pub const H2FrameParser = struct {
                         return .zero;
                     };
 
-                    const never_index = sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                    const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
 
                     const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                     defer value_slice.deinit();

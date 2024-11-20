@@ -339,7 +339,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
             return .zero;
         }
 
-        if (options.get(globalObject, "headerTableSize")) |headerTableSize| {
+        if (try options.get(globalObject, "headerTableSize")) |headerTableSize| {
             if (headerTableSize.isNumber()) {
                 const headerTableSizeValue = headerTableSize.toInt32();
                 if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
@@ -352,14 +352,14 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
             }
         }
 
-        if (options.get(globalObject, "enablePush")) |enablePush| {
+        if (try options.get(globalObject, "enablePush")) |enablePush| {
             if (!enablePush.isBoolean() and !enablePush.isEmptyOrUndefinedOrNull()) {
                 globalObject.throw("Expected enablePush to be a boolean", .{});
                 return .zero;
             }
         }
 
-        if (options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
+        if (try options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
             if (initialWindowSize.isNumber()) {
                 const initialWindowSizeValue = initialWindowSize.toInt32();
                 if (initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
@@ -372,7 +372,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
             }
         }
 
-        if (options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
+        if (try options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
             if (maxFrameSize.isNumber()) {
                 const maxFrameSizeValue = maxFrameSize.toInt32();
                 if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
@@ -385,7 +385,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
             }
         }
 
-        if (options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
+        if (try options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
             if (maxConcurrentStreams.isNumber()) {
                 const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
                 if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
@@ -398,7 +398,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
             }
         }
 
-        if (options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
+        if (try options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
             if (maxHeaderListSize.isNumber()) {
                 const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
                 if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
@@ -411,7 +411,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
             }
         }
 
-        if (options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
+        if (try options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
             if (maxHeaderSize.isNumber()) {
                 const maxHeaderSizeValue = maxHeaderSize.toInt32();
                 if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
@@ -439,7 +439,7 @@ fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
             return .zero;
         }
 
-        if (options.get(globalObject, "headerTableSize")) |headerTableSize| {
+        if (try options.get(globalObject, "headerTableSize")) |headerTableSize| {
             if (headerTableSize.isNumber()) {
                 const headerTableSizeValue = headerTableSize.toInt32();
                 if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
@@ -453,7 +453,7 @@ fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
             }
         }
 
-        if (options.get(globalObject, "enablePush")) |enablePush| {
+        if (try options.get(globalObject, "enablePush")) |enablePush| {
             if (enablePush.isBoolean()) {
                 settings.enablePush = if (enablePush.asBoolean()) 1 else 0;
             } else if (!enablePush.isEmptyOrUndefinedOrNull()) {
@@ -462,7 +462,7 @@ fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
             }
         }
 
-        if (options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
+        if (try options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
             if (initialWindowSize.isNumber()) {
                 const initialWindowSizeValue = initialWindowSize.toInt32();
                 if (initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
@@ -476,7 +476,7 @@ fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
             }
         }
 
-        if (options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
+        if (try options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
             if (maxFrameSize.isNumber()) {
                 const maxFrameSizeValue = maxFrameSize.toInt32();
                 if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
@@ -490,7 +490,7 @@ fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
             }
         }
 
-        if (options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
+        if (try options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
             if (maxConcurrentStreams.isNumber()) {
                 const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
                 if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
@@ -504,7 +504,7 @@ fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
             }
         }
 
-        if (options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
+        if (try options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
             if (maxHeaderListSize.isNumber()) {
                 const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
                 if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
@@ -518,7 +518,7 @@ fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
             }
         }
 
-        if (options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
+        if (try options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
             if (maxHeaderSize.isNumber()) {
                 const maxHeaderSizeValue = maxHeaderSize.toInt32();
                 if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
@@ -2353,7 +2353,7 @@ pub const H2FrameParser = struct {
             return globalObject.throw2("Expected settings to be a object", .{});
         }
 
-        if (options.get(globalObject, "headerTableSize")) |headerTableSize| {
+        if (try options.get(globalObject, "headerTableSize")) |headerTableSize| {
             if (headerTableSize.isNumber()) {
                 const headerTableSizeValue = headerTableSize.toInt32();
                 if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
@@ -2365,7 +2365,7 @@ pub const H2FrameParser = struct {
             }
         }
 
-        if (options.get(globalObject, "enablePush")) |enablePush| {
+        if (try options.get(globalObject, "enablePush")) |enablePush| {
             if (enablePush.isBoolean()) {
                 this.localSettings.enablePush = if (enablePush.asBoolean()) 1 else 0;
             } else if (!enablePush.isEmptyOrUndefinedOrNull()) {
@@ -2373,7 +2373,7 @@ pub const H2FrameParser = struct {
             }
         }
 
-        if (options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
+        if (try options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
             if (initialWindowSize.isNumber()) {
                 const initialWindowSizeValue = initialWindowSize.toInt32();
                 if (initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
@@ -2385,7 +2385,7 @@ pub const H2FrameParser = struct {
             }
         }
 
-        if (options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
+        if (try options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
             if (maxFrameSize.isNumber()) {
                 const maxFrameSizeValue = maxFrameSize.toInt32();
                 if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
@@ -2397,7 +2397,7 @@ pub const H2FrameParser = struct {
             }
         }
 
-        if (options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
+        if (try options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
             if (maxConcurrentStreams.isNumber()) {
                 const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
                 if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
@@ -2409,7 +2409,7 @@ pub const H2FrameParser = struct {
             }
         }
 
-        if (options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
+        if (try options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
             if (maxHeaderListSize.isNumber()) {
                 const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
                 if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
@@ -2421,7 +2421,7 @@ pub const H2FrameParser = struct {
             }
         }
 
-        if (options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
+        if (try options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
             if (maxHeaderSize.isNumber()) {
                 const maxHeaderSizeValue = maxHeaderSize.toInt32();
                 if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
@@ -2676,7 +2676,7 @@ pub const H2FrameParser = struct {
         var exclusive = stream.exclusive;
         var parent_id = stream.streamDependency;
         var silent = false;
-        if (options.get(globalObject, "weight")) |js_weight| {
+        if (try options.get(globalObject, "weight")) |js_weight| {
             if (js_weight.isNumber()) {
                 const weight_u32 = js_weight.toU32();
                 if (weight_u32 > 255) {
@@ -2687,7 +2687,7 @@ pub const H2FrameParser = struct {
             }
         }
 
-        if (options.get(globalObject, "parent")) |js_parent| {
+        if (try options.get(globalObject, "parent")) |js_parent| {
             if (js_parent.isNumber()) {
                 parent_id = js_parent.toU32();
                 if (parent_id == 0 or parent_id > MAX_STREAM_ID) {
@@ -2697,11 +2697,11 @@ pub const H2FrameParser = struct {
             }
         }
 
-        if (options.get(globalObject, "exclusive")) |js_exclusive| {
+        if (try options.get(globalObject, "exclusive")) |js_exclusive| {
             exclusive = js_exclusive.toBoolean();
         }
 
-        if (options.get(globalObject, "silent")) |js_silent| {
+        if (try options.get(globalObject, "silent")) |js_silent| {
             silent = js_silent.toBoolean();
         }
         if (parent_id == stream.id) {
@@ -3468,7 +3468,7 @@ pub const H2FrameParser = struct {
                 return JSC.JSValue.jsNumber(stream_id);
             }
 
-            if (options.get(globalObject, "paddingStrategy")) |padding_js| {
+            if (try options.get(globalObject, "paddingStrategy")) |padding_js| {
                 if (padding_js.isNumber()) {
                     stream.paddingStrategy = switch (padding_js.to(u32)) {
                         1 => .aligned,
@@ -3478,14 +3478,14 @@ pub const H2FrameParser = struct {
                 }
             }
 
-            if (options.get(globalObject, "waitForTrailers")) |trailes_js| {
+            if (try options.get(globalObject, "waitForTrailers")) |trailes_js| {
                 if (trailes_js.isBoolean()) {
                     waitForTrailers = trailes_js.asBoolean();
                     stream.waitForTrailers = waitForTrailers;
                 }
             }
 
-            if (options.get(globalObject, "endStream")) |end_stream_js| {
+            if (try options.get(globalObject, "endStream")) |end_stream_js| {
                 if (end_stream_js.isBoolean()) {
                     if (end_stream_js.asBoolean()) {
                         end_stream = true;
@@ -3497,7 +3497,7 @@ pub const H2FrameParser = struct {
                 }
             }
 
-            if (options.get(globalObject, "exclusive")) |exclusive_js| {
+            if (try options.get(globalObject, "exclusive")) |exclusive_js| {
                 if (exclusive_js.isBoolean()) {
                     if (exclusive_js.asBoolean()) {
                         exclusive = true;
@@ -3507,7 +3507,7 @@ pub const H2FrameParser = struct {
                 }
             }
 
-            if (options.get(globalObject, "parent")) |parent_js| {
+            if (try options.get(globalObject, "parent")) |parent_js| {
                 if (parent_js.isNumber() or parent_js.isInt32()) {
                     has_priority = true;
                     parent = parent_js.toInt32();
@@ -3521,7 +3521,7 @@ pub const H2FrameParser = struct {
                 }
             }
 
-            if (options.get(globalObject, "weight")) |weight_js| {
+            if (try options.get(globalObject, "weight")) |weight_js| {
                 if (weight_js.isNumber() or weight_js.isInt32()) {
                     has_priority = true;
                     weight = weight_js.toInt32();
@@ -3543,7 +3543,7 @@ pub const H2FrameParser = struct {
                 stream.weight = @intCast(weight);
             }
 
-            if (options.get(globalObject, "signal")) |signal_arg| {
+            if (try options.get(globalObject, "signal")) |signal_arg| {
                 if (signal_arg.as(JSC.WebCore.AbortSignal)) |signal_| {
                     if (signal_.aborted()) {
                         stream.state = .IDLE;
@@ -3726,11 +3726,11 @@ pub const H2FrameParser = struct {
             return globalObject.throwInvalidArguments2("expected options as argument", .{});
         }
 
-        const context_obj = options.get(globalObject, "context") orelse {
+        const context_obj = try options.get(globalObject, "context") orelse {
             return globalObject.throw2("Expected \"context\" option", .{});
         };
         var handler_js = JSC.JSValue.zero;
-        if (options.get(globalObject, "handlers")) |handlers_| {
+        if (try options.get(globalObject, "handlers")) |handlers_| {
             handler_js = handlers_;
         }
         var handlers = try Handlers.fromJS(globalObject, handler_js);
@@ -3777,7 +3777,7 @@ pub const H2FrameParser = struct {
         errdefer this.deinit();
 
         // check if socket is provided, and if it is a valid native socket
-        if (options.get(globalObject, "native")) |socket_js| {
+        if (try options.get(globalObject, "native")) |socket_js| {
             if (JSTLSSocket.fromJS(socket_js)) |socket| {
                 log("TLSSocket attached", .{});
                 if (socket.attachNativeCallback(.{ .h2 = this })) {
@@ -3798,16 +3798,16 @@ pub const H2FrameParser = struct {
                 }
             }
         }
-        if (options.get(globalObject, "settings")) |settings_js| {
+        if (try options.get(globalObject, "settings")) |settings_js| {
             if (!settings_js.isEmptyOrUndefinedOrNull()) {
                 try this.loadSettingsFromJSValue(globalObject, settings_js);
 
-                if (settings_js.get(globalObject, "maxOutstandingPings")) |max_pings| {
+                if (try settings_js.get(globalObject, "maxOutstandingPings")) |max_pings| {
                     if (max_pings.isNumber()) {
                         this.maxOutstandingPings = max_pings.to(u64);
                     }
                 }
-                if (settings_js.get(globalObject, "maxSessionMemory")) |max_memory| {
+                if (try settings_js.get(globalObject, "maxSessionMemory")) |max_memory| {
                     if (max_memory.isNumber()) {
                         this.maxSessionMemory = @truncate(max_memory.to(u64));
                         if (this.maxSessionMemory < 1) {
@@ -3815,7 +3815,7 @@ pub const H2FrameParser = struct {
                         }
                     }
                 }
-                if (settings_js.get(globalObject, "maxHeaderListPairs")) |max_header_list_pairs| {
+                if (try settings_js.get(globalObject, "maxHeaderListPairs")) |max_header_list_pairs| {
                     if (max_header_list_pairs.isNumber()) {
                         this.maxHeaderListPairs = @truncate(max_header_list_pairs.to(u64));
                         if (this.maxHeaderListPairs < 4) {
@@ -3823,7 +3823,7 @@ pub const H2FrameParser = struct {
                         }
                     }
                 }
-                if (settings_js.get(globalObject, "maxSessionRejectedStreams")) |max_rejected_streams| {
+                if (try settings_js.get(globalObject, "maxSessionRejectedStreams")) |max_rejected_streams| {
                     if (max_rejected_streams.isNumber()) {
                         this.maxRejectedStreams = @truncate(max_rejected_streams.to(u64));
                     }
@@ -3831,7 +3831,7 @@ pub const H2FrameParser = struct {
             }
         }
         var is_server = false;
-        if (options.get(globalObject, "type")) |type_js| {
+        if (try options.get(globalObject, "type")) |type_js| {
             is_server = type_js.isNumber() and type_js.to(u32) == 0;
         }
 

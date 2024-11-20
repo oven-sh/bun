@@ -576,7 +576,7 @@ pub const OS = struct {
             }
 
             // Does this entry already exist?
-            if (ret.get(globalThis, interface_name)) |array| {
+            if (ret.get_unsafe(globalThis, interface_name)) |array| {
                 // Add this interface entry to the existing array
                 const next_index = @as(u32, @intCast(array.getLength(globalThis)));
                 array.putIndex(globalThis, next_index, interface);
@@ -691,7 +691,7 @@ pub const OS = struct {
 
             // Does this entry already exist?
             const interface_name = bun.span(iface.name);
-            if (ret.get(globalThis, interface_name)) |array| {
+            if (ret.get_unsafe(globalThis, interface_name)) |array| {
                 // Add this interface entry to the existing array
                 const next_index = @as(u32, @intCast(array.getLength(globalThis)));
                 array.putIndex(globalThis, next_index, interface);

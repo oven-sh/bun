@@ -799,7 +799,7 @@ const DocumentHandler = struct {
             }
         }
 
-        if (thisObject.get(global, "doctype")) |val| {
+        if (try thisObject.get(global, "doctype")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
                 global.throwInvalidArguments("doctype must be a function", .{});
                 return error.JSError;
@@ -808,7 +808,7 @@ const DocumentHandler = struct {
             handler.onDocTypeCallback = val;
         }
 
-        if (thisObject.get(global, "comments")) |val| {
+        if (try thisObject.get(global, "comments")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
                 global.throwInvalidArguments("comments must be a function", .{});
                 return error.JSError;
@@ -817,7 +817,7 @@ const DocumentHandler = struct {
             handler.onCommentCallback = val;
         }
 
-        if (thisObject.get(global, "text")) |val| {
+        if (try thisObject.get(global, "text")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
                 global.throwInvalidArguments("text must be a function", .{});
                 return error.JSError;
@@ -826,7 +826,7 @@ const DocumentHandler = struct {
             handler.onTextCallback = val;
         }
 
-        if (thisObject.get(global, "end")) |val| {
+        if (try thisObject.get(global, "end")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
                 global.throwInvalidArguments("end must be a function", .{});
                 return error.JSError;
@@ -937,7 +937,7 @@ const ElementHandler = struct {
             return error.JSError;
         }
 
-        if (thisObject.get(global, "element")) |val| {
+        if (try thisObject.get(global, "element")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
                 global.throwInvalidArguments("element must be a function", .{});
                 return error.JSError;
@@ -946,7 +946,7 @@ const ElementHandler = struct {
             handler.onElementCallback = val;
         }
 
-        if (thisObject.get(global, "comments")) |val| {
+        if (try thisObject.get(global, "comments")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
                 global.throwInvalidArguments("comments must be a function", .{});
                 return error.JSError;
@@ -955,7 +955,7 @@ const ElementHandler = struct {
             handler.onCommentCallback = val;
         }
 
-        if (thisObject.get(global, "text")) |val| {
+        if (try thisObject.get(global, "text")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
                 global.throwInvalidArguments("text must be a function", .{});
                 return error.JSError;

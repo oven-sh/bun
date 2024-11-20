@@ -1006,7 +1006,7 @@ pub const FormData = struct {
                 if (array_buffer.byteSlice().len > 0)
                     encoding = .{ .Multipart = array_buffer.byteSlice() };
             } else if (boundary_value.isString()) {
-                boundary_slice = boundary_value.toSliceOrNull(globalThis) orelse return .zero;
+                boundary_slice = try boundary_value.toSliceOrNull(globalThis);
                 if (boundary_slice.len > 0) {
                     encoding = .{ .Multipart = boundary_slice.slice() };
                 }
@@ -1022,7 +1022,7 @@ pub const FormData = struct {
         if (input_value.asArrayBuffer(globalThis)) |array_buffer| {
             input = array_buffer.byteSlice();
         } else if (input_value.isString()) {
-            input_slice = input_value.toSliceOrNull(globalThis) orelse return .zero;
+            input_slice = try input_value.toSliceOrNull(globalThis);
             input = input_slice.slice();
         } else if (input_value.as(JSC.WebCore.Blob)) |blob| {
             input = blob.sharedView();

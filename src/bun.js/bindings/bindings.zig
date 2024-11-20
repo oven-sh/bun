@@ -5219,17 +5219,15 @@ pub const JSValue = enum(i64) {
     }
 
     /// Call `toString()` on the JSValue and clone the result.
-    /// On exception, this returns null.
-    pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) ?ZigString.Slice {
-        const str = bun.String.tryFromJS(this, globalThis) orelse return null;
+    pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
+        const str = try bun.String.fromJS2(this, globalThis);
         defer str.deref();
         return str.toUTF8(bun.default_allocator);
     }
 
     /// Call `toString()` on the JSValue and clone the result.
-    /// On exception, this returns null.
-    pub fn toSliceOrNullWithAllocator(this: JSValue, globalThis: *JSGlobalObject, allocator: std.mem.Allocator) ?ZigString.Slice {
-        const str = bun.String.tryFromJS(this, globalThis) orelse return null;
+    pub fn toSliceOrNullWithAllocator(this: JSValue, globalThis: *JSGlobalObject, allocator: std.mem.Allocator) bun.JSError!ZigString.Slice {
+        const str = try bun.String.fromJS2(this, globalThis);
         defer str.deref();
         return str.toUTF8(allocator);
     }
@@ -5434,20 +5432,15 @@ pub const JSValue = enum(i64) {
     /// Equivalent to `obj.property` in JavaScript.
     /// Reminder: `undefined` is a value!
     ///
-    /// Prefer `get2` in new code, as this function is incapable of returning an exception
-    pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
+    /// Prefer `get` in new code, as this function is incapable of returning an exception
+    pub fn get_unsafe(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         if (comptime bun.Environment.isDebug) {
             if (BuiltinName.has(property)) {
                 Output.debugWarn("get(\"{s}\") called. Please use fastGet(.{s}) instead!", .{ property, property });
             }
         }
 
-        return JSC__JSValue__getIfPropertyExistsImpl(
-            this,
-            global,
-            property.ptr,
-            @intCast(property.len),
-        ).legacyUnwrap();
+        return JSC__JSValue__getIfPropertyExistsImpl(this, global, property.ptr, @intCast(property.len)).legacyUnwrap();
     }
 
     /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
@@ -5458,9 +5451,7 @@ pub const JSValue = enum(i64) {
     /// calling `fastGet`, which use a more optimal code path. This function is
     /// marked `inline` to allow Zig to determine if `fastGet` should be used
     /// per invocation.
-    ///
-    /// This function will eventually replace `get`.
-    pub inline fn get2(target: JSValue, global: *JSGlobalObject, property: anytype) JSError!?JSValue {
+    pub inline fn get(target: JSValue, global: *JSGlobalObject, property: anytype) JSError!?JSValue {
         if (bun.Environment.allow_assert) bun.assert(target.isObject());
         const property_slice: []const u8 = property; // must be a slice!
 
@@ -5471,12 +5462,7 @@ pub const JSValue = enum(i64) {
             }
         }
 
-        return JSC__JSValue__getIfPropertyExistsImpl(
-            target,
-            global,
-            property_slice.ptr,
-            @intCast(property_slice.len),
-        ).unwrap(global);
+        return JSC__JSValue__getIfPropertyExistsImpl(target, global, property_slice.ptr, @intCast(property_slice.len)).unwrap(global);
     }
 
     extern fn JSC__JSValue__getOwn(value: JSValue, globalObject: *JSGlobalObject, propertyName: *const bun.String) JSValue;
@@ -5538,7 +5524,7 @@ pub const JSValue = enum(i64) {
 
     // TODO: replace calls to this function with `getOptional`
     pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?JSValue {
-        if (try get2(this, global, property)) |prop| {
+        if (try get(this, global, property)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull()) return null;
             return prop;
         }
@@ -5603,7 +5589,7 @@ pub const JSValue = enum(i64) {
             return null;
         }
 
-        if (get(this, globalThis, property_name)) |prop| {
+        if (try get(this, globalThis, property_name)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull())
                 return null;
             return try toEnum(prop, globalThis, property_name, Enum);
@@ -5709,17 +5695,14 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    fn coerceOptional(prop: JSValue, global: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
+    fn coerceOptional(prop: JSValue, global: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!T {
         switch (comptime T) {
             JSValue => return prop,
             bool => @compileError("ambiguous coercion: use getBooleanStrict (throw error if not boolean) or getBooleanLoose (truthy check, never throws)"),
             ZigString.Slice => {
                 if (prop.isString()) {
-                    if (return prop.toSliceOrNull(global)) |str| {
-                        return str;
-                    }
+                    return try prop.toSliceOrNull(global);
                 }
-
                 return JSC.Node.validators.throwErrInvalidArgType(global, property_name, .{}, "string", prop);
             },
             else => @compileError("TODO:" ++ @typeName(T)),
@@ -5729,16 +5712,14 @@ pub const JSValue = enum(i64) {
     /// Many Bun API are loose and simply want to check if a value is truthy
     /// Missing value, null, and undefined return `null`
     pub inline fn getBooleanLoose(this: JSValue, global: *JSGlobalObject, comptime property_name: []const u8) JSError!?bool {
-        const prop = try this.get2(global, property_name) orelse
-            return null;
+        const prop = try this.get(global, property_name) orelse return null;
         return prop.toBoolean();
     }
 
     /// Many Node.js APIs use `validateBoolean`
     /// Missing value, null, and undefined return `null`
     pub inline fn getBooleanStrict(this: JSValue, global: *JSGlobalObject, comptime property_name: []const u8) JSError!?bool {
-        const prop = try this.get2(global, property_name) orelse
-            return null;
+        const prop = try this.get(global, property_name) orelse return null;
 
         return switch (prop) {
             .null, .undefined => null,
@@ -5750,11 +5731,11 @@ pub const JSValue = enum(i64) {
     }
 
     pub inline fn getOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
-        const prop = try this.get2(globalThis, property_name) orelse return null;
+        const prop = try this.get(globalThis, property_name) orelse return null;
         bun.assert(prop != .zero);
 
         if (!prop.isUndefinedOrNull()) {
-            return coerceOptional(prop, globalThis, property_name, T);
+            return try coerceOptional(prop, globalThis, property_name, T);
         }
 
         return null;

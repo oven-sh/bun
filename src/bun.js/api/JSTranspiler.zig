@@ -378,7 +378,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.get(globalThis, "external")) |external| {
+    if (try object.get(globalThis, "external")) |external| {
         external: {
             if (external.isUndefinedOrNull()) break :external;
 
@@ -418,7 +418,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.get(globalThis, "loader")) |loader| {
+    if (try object.get(globalThis, "loader")) |loader| {
         if (try Loader.fromJS(globalThis, loader)) |resolved| {
             if (!resolved.isJavaScriptLike()) {
                 globalObject.throwInvalidArguments("only JavaScript-like loaders supported for now", .{});
@@ -429,13 +429,13 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.get(globalThis, "target")) |target| {
+    if (try object.get(globalThis, "target")) |target| {
         if (try Target.fromJS(globalThis, target)) |resolved| {
             transpiler.transform.target = resolved.toAPI();
         }
     }
 
-    if (object.get(globalThis, "tsconfig")) |tsconfig| {
+    if (try object.get(globalThis, "tsconfig")) |tsconfig| {
         tsconfig: {
             if (tsconfig.isUndefinedOrNull()) break :tsconfig;
             const kind = tsconfig.jsType();
@@ -550,7 +550,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.get(globalThis, "sourcemap")) |flag| {
+    if (try object.get(globalThis, "sourcemap")) |flag| {
         if (flag.isBoolean() or flag.isUndefinedOrNull()) {
             if (flag.toBoolean()) {
                 transpiler.transform.source_map = .@"inline";

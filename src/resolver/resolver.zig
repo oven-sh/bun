@@ -573,7 +573,7 @@ pub const Resolver = struct {
 
                 .{},
                 this.env_loader.?,
-            ) catch @panic("Failed to initialize package manager");
+            );
             pm.onWake = this.onWakePackageManager;
             this.package_manager = pm;
             break :brk pm;

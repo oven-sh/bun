@@ -7106,7 +7106,7 @@ pub const PackageManager = struct {
             maybe_cli: ?CommandLineArguments,
             bun_install_: ?*Api.BunInstall,
             subcommand: Subcommand,
-        ) !void {
+        ) bun.OOM!void {
             var base = Api.NpmRegistry{
                 .url = "",
                 .username = "",
@@ -8810,7 +8810,26 @@ pub const PackageManager = struct {
         allocator: std.mem.Allocator,
         cli: CommandLineArguments,
         env: *DotEnv.Loader,
-    ) !*PackageManager {
+    ) *PackageManager {
+        init_with_runtime_once.call(.{
+            log,
+            bun_install,
+            allocator,
+            cli,
+            env,
+        });
+        return PackageManager.get();
+    }
+
+    var init_with_runtime_once = bun.once(initWithRuntimeOnce);
+
+    pub fn initWithRuntimeOnce(
+        log: *logger.Log,
+        bun_install: ?*Api.BunInstall,
+        allocator: std.mem.Allocator,
+        cli: CommandLineArguments,
+        env: *DotEnv.Loader,
+    ) void {
         if (env.get("BUN_INSTALL_VERBOSE") != null) {
             PackageManager.verbose_install = true;
         }
@@ -8818,12 +8837,16 @@ pub const PackageManager = struct {
         const cpu_count = bun.getThreadCount();
         PackageManager.allocatePackageManager();
         const manager = PackageManager.get();
-        var root_dir = try Fs.FileSystem.instance.fs.readDirectory(
+        var root_dir = Fs.FileSystem.instance.fs.readDirectory(
             Fs.FileSystem.instance.top_level_dir,
             null,
             0,
             true,
-        );
+        ) catch |err| {
+            Output.err(err, "failed to read root directory: '{s}'", .{Fs.FileSystem.instance.top_level_dir});
+            @panic("Failed to initialize package manager");
+        };
+
         // var progress = Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
         const top_level_dir_no_trailing_slash = strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir);
@@ -8852,7 +8875,7 @@ pub const PackageManager = struct {
             .original_package_json_path = original_package_json_path[0..original_package_json_path.len :0],
             .subcommand = .install,
         };
-        manager.lockfile = try allocator.create(Lockfile);
+        manager.lockfile = allocator.create(Lockfile) catch bun.outOfMemory();
 
         if (Output.enable_ansi_colors_stderr) {
             manager.progress = Progress{};
@@ -8880,14 +8903,18 @@ pub const PackageManager = struct {
             }
         }
 
-        try manager.options.load(
+        manager.options.load(
             allocator,
             log,
             env,
             cli,
             bun_install,
             .install,
-        );
+        ) catch |err| {
+            switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+            }
+        };
 
         manager.timestamp_for_manifest_cache_control = @as(
             u32,
@@ -8929,8 +8956,6 @@ pub const PackageManager = struct {
         } else {
             manager.lockfile.initEmpty(allocator);
         }
-
-        return manager;
     }
 
     fn attemptToCreatePackageJSONAndOpen() !std.fs.File {

@@ -444,3 +444,13 @@ it("it accepts stdio passthrough", async () => {
     throw e;
   }
 }, 10000);
+
+it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
+  const trapCode = `
+    process.kill(process.pid, "SIGTRAP");
+  `;
+
+  const { signal } = spawnSync(bunExe(), ["-e", trapCode]);
+
+  expect(signal).toBe("SIGTRAP");
+});

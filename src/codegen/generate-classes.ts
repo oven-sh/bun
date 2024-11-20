@@ -294,7 +294,7 @@ function propRow(
     return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, 0 } }
 `.trim();
   } else if (getter && !supportsObjectCreate && writable) {
-    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } } 
+    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } }
 `.trim();
   } else if (getter && supportsObjectCreate) {
     setter = getter.replace("Get", "Set");
@@ -356,14 +356,14 @@ function generatePrototype(typeName, obj) {
 
   if (obj.construct) {
     externs += `
-extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "construct")}(JSC::JSGlobalObject*, JSC::CallFrame*); 
+extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "construct")}(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
 `;
   }
 
   if (obj.wantsThis) {
     externs += `
-extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "_setThis")}(JSC::JSGlobalObject*, void*, JSC::EncodedJSValue); 
+extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "_setThis")}(JSC::JSGlobalObject*, void*, JSC::EncodedJSValue);
 `;
   }
 
@@ -809,11 +809,11 @@ function renderCallbacksZig(typeName, callbacks: Record<string, string>) {
   out += "\n};\n";
 
   out += `
-  
+
   pub fn callbacks(_: *const ${typeName}, instance: JSC.JSValue) Callbacks {
     return .{.instance = instance };
   }
-  
+
 `;
 
   return "\n" + out;
@@ -1027,10 +1027,10 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    
+
     if (JSValue cachedValue = thisObject->${cacheName}.get())
         return JSValue::encode(cachedValue);
-    
+
     JSC::JSValue result = JSC::JSValue::decode(
         ${symbolName(typeName, proto[name].getter)}(thisObject->wrapped(),${
           proto[name].this!! ? " thisValue, " : ""
@@ -1523,7 +1523,7 @@ extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${typeName}__fromJSDirect(JSC
 
   Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(object->globalObject());
 
-  if (UNLIKELY(globalObject == nullptr || cell->structureID() != globalObject->${className(typeName)}Structure()->id())) { 
+  if (UNLIKELY(globalObject == nullptr || cell->structureID() != globalObject->${className(typeName)}Structure()->id())) {
     return nullptr;
   }
 
@@ -1691,8 +1691,8 @@ function generateZig(
   function renderMethods() {
     const exports = new Map();
     var output = `
-const JavaScriptCoreBindings = struct {    
-    
+const JavaScriptCoreBindings = struct {
+
 `;
 
     if (estimatedSize) {
@@ -1726,9 +1726,15 @@ const JavaScriptCoreBindings = struct {
     if (construct && !noConstructor) {
       exports.set("construct", classSymbolName(typeName, "construct"));
       output += `
-        pub fn ${classSymbolName(typeName, "construct")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) ?*${typeName} {
+        pub fn ${classSymbolName(typeName, "construct")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) ?*anyopaque {
           if (comptime Environment.enable_logs) zig("<r><blue>new<r> ${typeName}<d>({})<r>", .{callFrame});
-          return @call(.always_inline, ${typeName}.constructor, .{globalObject, callFrame});
+          return @as(*${typeName}, ${typeName}.constructor(globalObject, callFrame) catch |err| switch (err) {
+            error.JSError => return null,
+            error.OutOfMemory => {
+              globalObject.throwOutOfMemory();
+              return null;
+            },
+          });
         }
       `;
     }
@@ -1748,7 +1754,10 @@ const JavaScriptCoreBindings = struct {
       output += `
         pub fn ${classSymbolName(typeName, "call")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
           if (comptime Environment.enable_logs) zig("${typeName}<d>({})<r>", .{callFrame});
-          return @call(.always_inline, ${typeName}.call, .{globalObject, callFrame});
+          return @call(.always_inline, ${typeName}.call, .{globalObject, callFrame}) catch |err| switch (err) {
+            error.JSError => .zero,
+            error.OutOfMemory => globalObject.throwOutOfMemoryValue(),
+          };
         }
       `;
     }
@@ -1801,7 +1810,10 @@ const JavaScriptCoreBindings = struct {
           output += `
         pub fn ${names.fn}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame${proto[name].passThis ? ", js_this_value: JSC.JSValue" : ""}) callconv(JSC.conv) JSC.JSValue {
           if (comptime Environment.enable_logs) zig("<d>${typeName}.<r>${name}<d>({})<r>", .{callFrame});
-          return @call(.always_inline, ${typeName}.${fn}, .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}});
+          return @call(.always_inline, ${typeName}.${fn}, .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}}) catch |err| switch (err) {
+            error.JSError => .zero,
+            error.OutOfMemory => globalObject.throwOutOfMemoryValue(),
+          };
         }
         `;
         }
@@ -1848,7 +1860,10 @@ const JavaScriptCoreBindings = struct {
           output += `
         pub fn ${names.fn}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
           if (comptime Environment.enable_logs) JSC.markBinding(@src());
-          return @call(.always_inline, ${typeName}.${fn}, .{globalObject, callFrame});
+          return @call(.always_inline, ${typeName}.${fn}, .{globalObject, callFrame}) catch |err| switch (err) {
+            error.JSError => .zero,
+            error.OutOfMemory => globalObject.throwOutOfMemoryValue(),
+          };
         }
         `;
         }
@@ -2137,6 +2152,13 @@ const Classes = JSC.GeneratedClassesList;
 const Environment = bun.Environment;
 const std = @import("std");
 const zig = bun.Output.scoped(.zig, true);
+
+const wrapHostFunction = bun.gen_classes_lib.wrapHostFunction;
+const wrapMethod = bun.gen_classes_lib.wrapMethod;
+const wrapMethodWithThis = bun.gen_classes_lib.wrapMethodWithThis;
+const wrapConstructor = bun.gen_classes_lib.wrapConstructor;
+const wrapGetterCallback = bun.gen_classes_lib.wrapGetterCallback;
+const wrapGetterWithValueCallback = bun.gen_classes_lib.wrapGetterWithValueCallback;
 
 pub const StaticGetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) callconv(JSC.conv) JSC.JSValue;
 pub const StaticSetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, JSC.JSValue) callconv(JSC.conv) bool;

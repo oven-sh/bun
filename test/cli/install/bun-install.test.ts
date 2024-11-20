@@ -23,7 +23,7 @@ import {
   runBunInstall,
   isWindows,
 } from "harness";
-import { join, sep } from "path";
+import { join, sep, resolve } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -209,7 +209,6 @@ it("should not error when package.json has comments and trailing commas", async 
       "dependencies": {
         "bar": "^1",
       },
-      
     }
 `,
   );
@@ -3453,9 +3452,9 @@ it("should handle GitHub URL in dependencies (user/repo#commit-id)", async () =>
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -3519,9 +3518,9 @@ it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -3745,9 +3744,9 @@ it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () =
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -3869,9 +3868,9 @@ it("should handle GitHub URL in dependencies (git://github.com/user/repo.git#com
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -6348,14 +6347,14 @@ cache = false
   expect(err1).toContain("Saved lockfile");
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    expect.stringContaining("bun install v1."),
+    `bun install ${Bun.version_with_sha}`,
     "",
     "+ conditional-type-checks@1.0.6",
     "+ prettier@2.8.8",
     "+ tsd@0.22.0",
     "+ typescript@5.0.4",
     "",
-    "120 packages installed",
+    "112 packages installed",
   ]);
   expect(await exited1).toBe(0);
   expect(await readdirSorted(package_dir)).toEqual(["bun.lockb", "bunfig.toml", "node_modules", "package.json"]);
@@ -6384,7 +6383,6 @@ cache = false
     "dir-glob",
     "emoji-regex",
     "error-ex",
-    "escape-string-regexp",
     "eslint-formatter-pretty",
     "eslint-rule-docs",
     "fast-glob",

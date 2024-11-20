@@ -1,5 +1,5 @@
 import { peek } from "bun";
-import { bench, run } from "mitata";
+import { bench, run } from "../runner.mjs";
 
 let pending = Bun.sleep(1000);
 let resolved = Promise.resolve(1);

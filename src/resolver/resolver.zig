@@ -1550,8 +1550,8 @@ pub const Resolver = struct {
     /// But drive roots MUST have a trailing slash ('/' and 'C:\')
     /// UNC paths, even if the root, must not have the trailing slash.
     ///
-    /// The helper function bun.strings.pathWithoutTrailingSlashOne can be used to remove
-    /// the trailing slash from a path, but also note it will only remove a SINGLE slash.
+    /// The helper function bun.strings.withoutTrailingSlashWindowsPath can be used
+    /// to remove the trailing slash from a path
     pub fn assertValidCacheKey(path: []const u8) void {
         if (Environment.allow_assert) {
             if (path.len > 1 and strings.charIsAnySlash(path[path.len - 1]) and !if (Environment.isWindows)
@@ -1774,7 +1774,7 @@ pub const Resolver = struct {
             load_module_from_cache: {
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
-                var manager = r.getPackageManager();
+                const manager = r.getPackageManager();
                 var dependency_version = Dependency.Version{};
                 var dependency_behavior = Dependency.Behavior.normal;
                 var string_buf = esm.version;
@@ -2048,7 +2048,7 @@ pub const Resolver = struct {
     ) !?*DirInfo {
         assert(r.package_manager != null);
 
-        const dir_path = strings.pathWithoutTrailingSlashOne(dir_path_maybe_trail_slash);
+        const dir_path = strings.withoutTrailingSlashWindowsPath(dir_path_maybe_trail_slash);
 
         assertValidCacheKey(dir_path);
         var dir_cache_info_result = r.dir_cache.getOrPut(dir_path) catch bun.outOfMemory();
@@ -2483,25 +2483,15 @@ pub const Resolver = struct {
         return PackageJSON.new(pkg);
     }
 
-    fn dirInfoCached(
-        r: *ThisResolver,
-        path: string,
-    ) !?*DirInfo {
+    fn dirInfoCached(r: *ThisResolver, path: string) !?*DirInfo {
         return try r.dirInfoCachedMaybeLog(path, true, true);
     }
 
-    /// The path must have a trailing slash and a sentinel 0
-    pub fn readDirInfo(
-        r: *ThisResolver,
-        path: string,
-    ) !?*DirInfo {
+    pub fn readDirInfo(r: *ThisResolver, path: string) !?*DirInfo {
         return try r.dirInfoCachedMaybeLog(path, false, true);
     }
 
-    pub fn readDirInfoIgnoreError(
-        r: *ThisResolver,
-        path: string,
-    ) ?*const DirInfo {
+    pub fn readDirInfoIgnoreError(r: *ThisResolver, path: string) ?*const DirInfo {
         return r.dirInfoCachedMaybeLog(path, false, true) catch null;
     }
 
@@ -2545,7 +2535,7 @@ pub const Resolver = struct {
 
         assert(std.fs.path.isAbsolute(input_path));
 
-        const path_without_trailing_slash = strings.pathWithoutTrailingSlashOne(input_path);
+        const path_without_trailing_slash = strings.withoutTrailingSlashWindowsPath(input_path);
         assertValidCacheKey(path_without_trailing_slash);
         const top_result = try r.dir_cache.getOrPut(path_without_trailing_slash);
         if (top_result.status != .unknown) {
@@ -2567,7 +2557,7 @@ pub const Resolver = struct {
             .status = .not_found,
         };
         const root_path = if (Environment.isWindows)
-            bun.strings.pathWithoutTrailingSlashOne(ResolvePath.windowsFilesystemRoot(path))
+            bun.strings.withoutTrailingSlashWindowsPath(ResolvePath.windowsFilesystemRoot(path))
         else
             // we cannot just use "/"
             // we will write to the buffer past the ptr len so it must be a non-const buffer
@@ -2976,7 +2966,7 @@ pub const Resolver = struct {
     pub fn loadPackageImports(r: *ThisResolver, import_path: string, dir_info: *DirInfo, kind: ast.ImportKind, global_cache: GlobalCache) MatchResult.Union {
         const package_json = dir_info.package_json.?;
         if (r.debug_logs) |*debug| {
-            debug.addNoteFmt("Looking for {s} in \"imports\" map in {s}", .{ import_path, package_json.source.key_path.text });
+            debug.addNoteFmt("Looking for {s} in \"imports\" map in {s}", .{ import_path, package_json.source.path.text });
             debug.increaseIndent();
             defer debug.decreaseIndent();
         }
@@ -3280,11 +3270,15 @@ pub const Resolver = struct {
         };
     }
 
-    pub export fn Resolver__nodeModulePathsForJS(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    comptime {
+        const Resolver__nodeModulePathsForJS = JSC.toJSHostFunction(Resolver__nodeModulePathsForJS_);
+        @export(Resolver__nodeModulePathsForJS, .{ .name = "Resolver__nodeModulePathsForJS" });
+    }
+    pub fn Resolver__nodeModulePathsForJS_(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) bun.JSError!JSC.JSValue {
         bun.JSC.markBinding(@src());
         const argument: bun.JSC.JSValue = callframe.argument(0);
 
-        if (argument.isEmpty() or !argument.isString()) {
+        if (argument == .zero or !argument.isString()) {
             globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
             return .zero;
         }
@@ -3602,7 +3596,7 @@ pub const Resolver = struct {
                             // If it doesn't exist, the "module" field will be used.
                             if (r.prefer_module_field and kind != ast.ImportKind.require) {
                                 if (r.debug_logs) |*debug| {
-                                    debug.addNoteFmt("Resolved to \"{s}\" using the \"module\" field in \"{s}\"", .{ auto_main_result.path_pair.primary.text, pkg_json.source.key_path.text });
+                                    debug.addNoteFmt("Resolved to \"{s}\" using the \"module\" field in \"{s}\"", .{ auto_main_result.path_pair.primary.text, pkg_json.source.path.text });
 
                                     debug.addNoteFmt("The fallback path in case of \"require\" is {s}", .{auto_main_result.path_pair.primary.text});
                                 }
@@ -3622,7 +3616,7 @@ pub const Resolver = struct {
                                     debug.addNoteFmt("Resolved to \"{s}\" using the \"{s}\" field in \"{s}\"", .{
                                         auto_main_result.path_pair.primary.text,
                                         key,
-                                        pkg_json.source.key_path.text,
+                                        pkg_json.source.path.text,
                                     });
                                 }
                                 var _auto_main_result = auto_main_result;
@@ -3661,7 +3655,8 @@ pub const Resolver = struct {
             }
         }
 
-        const dir_path = bun.strings.pathWithoutTrailingSlashOne(Dirname.dirname(path));
+        const dir_path = bun.strings.withoutTrailingSlashWindowsPath(Dirname.dirname(path));
+        bun.strings.assertIsValidWindowsPath(u8, dir_path);
 
         const dir_entry: *Fs.FileSystem.RealFS.EntriesOption = rfs.readDirectory(
             dir_path,
@@ -4116,7 +4111,11 @@ pub const Dirname = struct {
             if (Environment.isWindows) {
                 const root = ResolvePath.windowsFilesystemRoot(path);
                 assert(root.len > 0);
-                break :brk root;
+
+                // Preserve the trailing slash for UNC paths.
+                // Going from `\\server\share\folder` should end up
+                // at `\\server\share\`, not `\\server\share`
+                break :brk if (root.len >= 5 and path.len > root.len) path[0 .. root.len + 1] else root;
             }
             break :brk "/";
         };
@@ -4199,7 +4198,6 @@ pub const GlobalCache = enum {
 
 comptime {
     if (!bun.JSC.is_bindgen) {
-        _ = Resolver.Resolver__nodeModulePathsForJS;
         _ = Resolver.Resolver__propForRequireMainPaths;
     }
 }

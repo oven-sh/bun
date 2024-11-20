@@ -323,7 +323,7 @@ CPP_DECL bool JSC__JSValue__deepEquals(JSC__JSValue JSValue0, JSC__JSValue JSVal
 CPP_DECL bool JSC__JSValue__deepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, bool arg3);
 CPP_DECL bool JSC__JSValue__eqlCell(JSC__JSValue JSValue0, JSC__JSCell* arg1);
 CPP_DECL bool JSC__JSValue__eqlValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
-CPP_DECL JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
+CPP_DECL JSC__JSValue JSC__JSValue__fastGet(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
 CPP_DECL JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
 CPP_DECL void JSC__JSValue__forEach(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__VM* arg0, JSC__JSGlobalObject* arg1, void* arg2, JSC__JSValue JSValue3));
 CPP_DECL void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, ZigString* arg2, JSC__JSValue JSValue3, bool arg4, bool arg5));
@@ -394,7 +394,6 @@ CPP_DECL bool JSC__JSValue__stringIncludes(JSC__JSValue JSValue0, JSC__JSGlobalO
 CPP_DECL JSC__JSValue JSC__JSValue__symbolFor(JSC__JSGlobalObject* arg0, ZigString* arg1);
 CPP_DECL bool JSC__JSValue__symbolKeyFor(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2);
 CPP_DECL bool JSC__JSValue__toBoolean(JSC__JSValue JSValue0);
-CPP_DECL bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue JSC__JSValue__toError_(JSC__JSValue JSValue0);
 CPP_DECL int32_t JSC__JSValue__toInt32(JSC__JSValue JSValue0);
 CPP_DECL int64_t JSC__JSValue__toInt64(JSC__JSValue JSValue0);

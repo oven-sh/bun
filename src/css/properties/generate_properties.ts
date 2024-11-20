@@ -37,8 +37,10 @@ const OUTPUT_FILE = "src/css/properties/properties_generated.zig";
 async function generateCode(property_defs: Record<string, PropertyDef>) {
   const EMIT_COMPLETED_MD_FILE = true;
   if (EMIT_COMPLETED_MD_FILE) {
-    const completed = Object.entries(property_defs).map(([name, meta]) => `- [x] \`${name}\``).join("\n");
-    await Bun.$`echo ${completed} > completed.md`
+    const completed = Object.entries(property_defs)
+      .map(([name, meta]) => `- [x] \`${name}\``)
+      .join("\n");
+    await Bun.$`echo ${completed} > completed.md`;
   }
   await Bun.$`echo ${prelude()} > ${OUTPUT_FILE}`;
   await Bun.$`echo ${generateProperty(property_defs)} >> ${OUTPUT_FILE}`;
@@ -55,6 +57,32 @@ function generatePropertyIdTag(property_defs: Record<string, PropertyDef>): stri
     all,
     unparsed,
     custom,
+
+    /// Helper function used in comptime code to know whether to access the underlying value
+    /// with tuple indexing syntax because it may have a VendorPrefix associated with it.
+    pub fn hasVendorPrefix(this: PropertyIdTag) bool {
+      return switch (this) {
+        ${Object.entries(property_defs)
+          .map(([name, meta]) => `.${escapeIdent(name)} => ${meta.valid_prefixes === undefined ? "false" : "true"},`)
+          .join("\n")}
+        .unparsed => false,
+        .custom => false,
+        .all => false,
+      };
+    }
+
+    /// Helper function used in comptime code to know whether to access the underlying value
+    /// with tuple indexing syntax because it may have a VendorPrefix associated with it.
+    pub fn valueType(this: PropertyIdTag) type {
+      return switch (this) {
+        ${Object.entries(property_defs)
+          .map(([name, meta]) => `.${escapeIdent(name)} => ${meta.ty},`)
+          .join("\n")}
+        .all => CSSWideKeyword,
+        .unparsed => UnparsedProperty,
+        .custom => CustomProperty,
+      };
+    }
 };`;
 }
 
@@ -72,12 +100,7 @@ ${Object.entries(property_defs)
 }
 
 function generatePropertyImpl(property_defs: Record<string, PropertyDef>): string {
-  const required_functions = [
-    "deepClone",
-    "parse",
-    "toCss",
-    "eql",
-  ];
+  const required_functions = ["deepClone", "parse", "toCss", "eql"];
 
   return `
   pub usingnamespace PropertyImpl();
@@ -96,11 +119,15 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
       ${Object.entries(property_defs)
         .map(([name, meta]) => {
           if (meta.ty != "void" && meta.ty != "CSSNumber" && meta.ty != "CSSInteger") {
-            return required_functions.map(fn => `
+            return required_functions
+              .map(
+                fn => `
             if (!@hasDecl(${meta.ty}, "${fn}")) {
               compile_error = compile_error ++ @typeName(${meta.ty}) ++ ": does not have a ${fn}() function.\\n";
             }
-            `).join("\n");
+            `,
+              )
+              .join("\n");
           }
           return "";
         })
@@ -162,10 +189,16 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
       ${Object.entries(property_defs)
         .map(([name, meta]) => {
           if (meta.valid_prefixes !== undefined) {
-            const clone_expr = (meta.ty === "CSSNumber" || meta.ty === "CSSInteger") ? "v[0]" : "v[0].deepClone(allocator)";
+            const clone_expr =
+              meta.ty === "CSSNumber" || meta.ty === "CSSInteger" ? "v[0]" : "v[0].deepClone(allocator)";
             return `.${escapeIdent(name)} => |*v| .{ .${escapeIdent(name)} = .{ ${clone_expr}, v[1] } },`;
           }
-          const clone_expr = (meta.ty === "CSSNumber" || meta.ty === "CSSInteger") ? "v.*" : meta.ty.includes("BabyList(") ? `css.generic.deepClone(${meta.ty}, v, allocator)` : "v.deepClone(allocator)";
+          const clone_expr =
+            meta.ty === "CSSNumber" || meta.ty === "CSSInteger"
+              ? "v.*"
+              : meta.ty.includes("BabyList(")
+                ? `css.generic.deepClone(${meta.ty}, v, allocator)`
+                : "v.deepClone(allocator)";
           return `.${escapeIdent(name)} => |*v| .{ .${escapeIdent(name)} = ${clone_expr} },`;
         })
         .join("\n")}
@@ -206,7 +239,14 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
       ${Object.entries(property_defs)
         .map(([name, meta]) => {
           const value = meta.valid_prefixes === undefined ? "value" : "value[0]";
-          const to_css = meta.ty === "CSSNumber" ? `CSSNumberFns.toCss(&${value}, W, dest)` : meta.ty === "CSSInteger" ? `CSSIntegerFns.toCss(&${value}, W, dest)` : meta.ty.includes("ArrayList") ? `css.generic.toCss(${meta.ty}, ${value}, W, dest)` : `${value}.toCss(W, dest)`;
+          const to_css =
+            meta.ty === "CSSNumber"
+              ? `CSSNumberFns.toCss(&${value}, W, dest)`
+              : meta.ty === "CSSInteger"
+                ? `CSSIntegerFns.toCss(&${value}, W, dest)`
+                : meta.ty.includes("ArrayList")
+                  ? `css.generic.toCss(${meta.ty}, ${value}, W, dest)`
+                  : `${value}.toCss(W, dest)`;
           return `.${escapeIdent(name)} => |*value| ${to_css},`;
         })
         .join("\n")}
@@ -242,8 +282,8 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
     return switch (lhs.*) {
       ${Object.entries(property_defs)
         .map(([name, meta]) => {
-
-          if (meta.valid_prefixes !== undefined) return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, &v[0], &v[0]) and v[1].eq(rhs.${escapeIdent(name)}[1]),`;
+          if (meta.valid_prefixes !== undefined)
+            return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, &v[0], &v[0]) and v[1].eq(rhs.${escapeIdent(name)}[1]),`;
           return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, v, &rhs.${escapeIdent(name)}),`;
         })
         .join("\n")}
@@ -329,11 +369,21 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
   }
 
   pub fn fromNameAndPrefix(name1: []const u8, pre: VendorPrefix) ?PropertyId {
-    // TODO: todo_stuff.match_ignore_ascii_case
-    ${generatePropertyIdImplFromNameAndPrefix(property_defs)}
-    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "all")) {
-    } else {
-      return null;
+    const Enum = enum { ${Object.entries(property_defs)
+      .map(
+        ([prop_name, def], i) => `${escapeIdent(prop_name)}${i === Object.keys(property_defs).length - 1 ? "" : ", "}`,
+      )
+      .join("")} };
+    const Map = comptime bun.ComptimeEnumMap(Enum);
+    if (Map.getASCIIICaseInsensitive(name1)) |prop| {
+      switch (prop) {
+        ${Object.entries(property_defs).map(([name, meta]) => {
+          return `.${escapeIdent(name)} => {
+            const allowed_prefixes = ${constructVendorPrefix(meta.valid_prefixes)};
+            if (allowed_prefixes.contains(pre)) return ${meta.valid_prefixes === undefined ? `.${escapeIdent(name)}` : `.{ .${escapeIdent(name)} = pre }`};
+          }`;
+        })}
+      }
     }
 
     return null;
@@ -412,7 +462,7 @@ function generatePropertyIdImplFromNameAndPrefix(property_defs: Record<string, P
 
 function constructVendorPrefix(prefixes: VendorPrefixes[] | undefined): string {
   if (prefixes === undefined) return `VendorPrefix{ .none = true }`;
-  return `VendorPrefix{ ${prefixes.map(prefix => `.${prefix} = true`).join(", ")} }`;
+  return `VendorPrefix{ ${[`.none = true`, ...prefixes.map(prefix => `.${prefix} = true`)].join(", ")} }`;
 }
 
 function needsEscaping(name: string): boolean {
@@ -444,7 +494,7 @@ generateCode({
     ty: "SmallList(css_values.position.HorizontalPosition, 1)",
   },
   "background-position-y": {
-    ty: "SmallList(css_values.position.HorizontalPosition, 1)",
+    ty: "SmallList(css_values.position.VerticalPosition, 1)",
   },
   "background-position": {
     ty: "SmallList(background.BackgroundPosition, 1)",
@@ -454,13 +504,13 @@ generateCode({
     ty: "SmallList(background.BackgroundSize, 1)",
   },
   "background-repeat": {
-    ty: "SmallList(background.BackgroundSize, 1)",
+    ty: "SmallList(background.BackgroundRepeat, 1)",
   },
   "background-attachment": {
     ty: "SmallList(background.BackgroundAttachment, 1)",
   },
   "background-clip": {
-    ty: "SmallList(background.BackgroundAttachment, 1)",
+    ty: "SmallList(background.BackgroundClip, 1)",
     valid_prefixes: ["webkit", "moz"],
   },
   "background-origin": {
@@ -1031,6 +1081,7 @@ generateCode({
   "margin-block-start": {
     ty: "LengthPercentageOrAuto",
     logical_group: { ty: "margin", category: "logical" },
+    eval_branch_quota: 5000,
   },
   "margin-block-end": {
     ty: "LengthPercentageOrAuto",
@@ -1415,9 +1466,9 @@ generateCode({
   //   ty: "TextEmphasisPosition",
   //   valid_prefixes: ["webkit"],
   // },
-  // "text-shadow": {
-  //   ty: "SmallList(TextShadow, 1)",
-  // },
+  "text-shadow": {
+    ty: "SmallList(TextShadow, 1)",
+  },
   // "text-size-adjust": {
   //   ty: "TextSizeAdjust",
   //   valid_prefixes: ["webkit", "moz", "ms"],
@@ -1438,12 +1489,14 @@ generateCode({
   // cursor: {
   //   ty: "Cursor",
   // },
+  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
   // "caret-color": {
   //   ty: "ColorOrAuto",
   // },
   // "caret-shape": {
   //   ty: "CaretShape",
   // },
+  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
   // caret: {
   //   ty: "Caret",
   //   shorthand: true,
@@ -1479,6 +1532,7 @@ generateCode({
     ty: "Composes",
     conditional: { css_modules: true },
   },
+  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
   // fill: {
   //   ty: "SVGPaint",
   // },
@@ -1488,6 +1542,7 @@ generateCode({
   // "fill-opacity": {
   //   ty: "AlphaValue",
   // },
+  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
   // stroke: {
   //   ty: "SVGPaint",
   // },
@@ -1654,10 +1709,12 @@ generateCode({
     valid_prefixes: ["webkit"],
     unprefixed: false,
   },
+  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
   // filter: {
   //   ty: "FilterList",
   //   valid_prefixes: ["webkit"],
   // },
+  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
   // "backdrop-filter": {
   //   ty: "FilterList",
   //   valid_prefixes: ["webkit"],
@@ -1874,7 +1931,7 @@ const Font = font.Font;
 // const TextEmphasisPositionVertical = text.TextEmphasisPositionVertical;
 // const TextEmphasisPositionHorizontal = text.TextEmphasisPositionHorizontal;
 // const TextEmphasisPosition = text.TextEmphasisPosition;
-// const TextShadow = text.TextShadow;
+const TextShadow = text.TextShadow;
 // const TextSizeAdjust = text.TextSizeAdjust;
 const Direction = text.Direction;
 // const UnicodeBidi = text.UnicodeBidi;

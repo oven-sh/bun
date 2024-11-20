@@ -333,13 +333,11 @@ pub fn braces(
     defer arena.deinit();
 
     var lexer_output = Braces.Lexer.tokenize(arena.allocator(), brace_slice.slice()) catch |err| {
-        globalThis.throwError(err, "failed to tokenize braces");
-        return .undefined;
+        return globalThis.throwError(err, "failed to tokenize braces");
     };
 
     const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]) catch |err| {
-        globalThis.throwError(err, "failed to calculate brace expansion amount");
-        return .undefined;
+        return globalThis.throwError(err, "failed to calculate brace expansion amount");
     };
 
     if (tokenize) {
@@ -354,8 +352,7 @@ pub fn braces(
     if (parse) {
         var parser = Braces.Parser.init(lexer_output.tokens.items[0..], arena.allocator());
         const ast_node = parser.parse() catch |err| {
-            globalThis.throwError(err, "failed to parse braces");
-            return .undefined;
+            return globalThis.throwError(err, "failed to parse braces");
         };
         const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, ast_node, .{}) catch {
             globalThis.throwOutOfMemory();
@@ -4756,8 +4753,7 @@ pub const JSZlib = struct {
                         return .zero;
                     }
 
-                    globalThis.throwError(err, "Zlib error");
-                    return .zero;
+                    return globalThis.throwError(err, "Zlib error") catch return .zero;
                 };
 
                 reader.readAll() catch {
@@ -4875,8 +4871,7 @@ pub const JSZlib = struct {
                         return .zero;
                     }
 
-                    globalThis.throwError(err, "Zlib error");
-                    return .zero;
+                    return globalThis.throwError(err, "Zlib error");
                 };
 
                 reader.readAll() catch {
@@ -4949,13 +4944,11 @@ const InternalTestingAPIs = struct {
             .check_for_unhighlighted_write = false,
         });
         std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
-            globalThis.throwError(err, "Error formatting code");
-            return .zero;
+            return globalThis.throwError(err, "Error formatting code");
         };
 
         writer.flush() catch |err| {
-            globalThis.throwError(err, "Error formatting code");
-            return .zero;
+            return globalThis.throwError(err, "Error formatting code");
         };
 
         var str = bun.String.createUTF8(buffer.list.items);

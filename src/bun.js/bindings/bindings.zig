@@ -3398,25 +3398,12 @@ pub const JSGlobalObject = opaque {
         return this.vm().throwError2(this, value);
     }
 
-    pub fn throwError(
-        this: *JSGlobalObject,
-        err: anyerror,
-        comptime fmt: [:0]const u8,
-    ) void {
-        var str = ZigString.init(std.fmt.allocPrint(this.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}) catch return);
+    pub fn throwError(this: *JSGlobalObject, err: anyerror, comptime fmt: [:0]const u8) bun.JSError {
+        var str = ZigString.init(try std.fmt.allocPrint(this.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}));
+        defer this.bunVM().allocator.free(ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
         str.markUTF8();
         const err_value = str.toErrorInstance(this);
-        this.vm().throwError(this, err_value);
-        this.bunVM().allocator.free(ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
-    }
-
-    pub fn handleError(
-        this: *JSGlobalObject,
-        err: anyerror,
-        comptime fmt: [:0]const u8,
-    ) JSValue {
-        this.throwError(err, fmt);
-        return JSValue.jsUndefined();
+        return this.vm().throwError2(this, err_value);
     }
 
     pub fn ref(this: *JSGlobalObject) C_API.JSContextRef {

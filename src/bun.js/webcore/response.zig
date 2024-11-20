@@ -2707,8 +2707,7 @@ pub const Fetch = struct {
                     .remote => unreachable,
                 },
             ) catch |err| {
-                globalThis.throwError(err, "Failed to decode file url");
-                return .zero;
+                return globalThis.throwError(err, "Failed to decode file url");
             }];
             var url_string: bun.String = bun.String.empty;
             defer url_string.deref();
@@ -2738,8 +2737,7 @@ pub const Fetch = struct {
                                 url_path_decoded = url_path_decoded[1..];
                             }
                             break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf, url_path_decoded) catch |err| {
-                                globalThis.throwError(err, "Failed to resolve file url");
-                                return .zero;
+                                return globalThis.throwError(err, "Failed to resolve file url");
                             };
                         }
                         break :brk url_path_decoded;
@@ -2747,8 +2745,7 @@ pub const Fetch = struct {
 
                     var cwd_buf: bun.PathBuffer = undefined;
                     const cwd = if (Environment.isWindows) (bun.getcwd(&cwd_buf) catch |err| {
-                        globalThis.throwError(err, "Failed to resolve file url");
-                        return .zero;
+                        return globalThis.throwError(err, "Failed to resolve file url");
                     }) else globalThis.bunVM().bundler.fs.top_level_dir;
 
                     const fullpath = bun.path.joinAbsStringBuf(
@@ -2763,8 +2760,7 @@ pub const Fetch = struct {
                     );
                     if (Environment.isWindows) {
                         break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf2, fullpath) catch |err| {
-                            globalThis.throwError(err, "Failed to resolve file url");
-                            return .zero;
+                            return globalThis.throwError(err, "Failed to resolve file url");
                         };
                     }
                     break :brk fullpath;

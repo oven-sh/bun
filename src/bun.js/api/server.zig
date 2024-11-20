@@ -6556,8 +6556,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     .framework = bake_options.framework,
                     .vm = global.bunVM(),
                 }) catch |err| {
-                    global.throwError(err, "while initializing Bun Dev Server");
-                    return error.JSError;
+                    return global.throwError(err, "while initializing Bun Dev Server");
                 };
             } else null else null;
             errdefer if (dev_server) |d| d.deinit();

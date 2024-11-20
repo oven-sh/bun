@@ -4239,7 +4239,7 @@ pub const FFIObject = struct {
         _: *anyopaque,
         array: *JSC.JSUint8Array,
     ) callconv(JSC.conv) JSValue {
-        return JSValue.fromPtrAddress(@intFromPtr(array));
+        return JSValue.fromPtrAddress(@intFromPtr(array.ptr()));
     }
 
     fn ptr_(

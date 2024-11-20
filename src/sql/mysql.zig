@@ -604,10 +604,6 @@ pub const MySQLConnection = struct {
     }
 
     pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: protocol.NewReader(Context)) !void {
-        const first_byte = try reader.int(u8);
-        _ = first_byte; // autofix
-        try reader.skip(-1);
-
         // Get the current request if any
         if (this.requests.items.len == 0) {
             debug("Received unexpected command response", .{});
@@ -957,17 +953,19 @@ pub const MySQLConnection = struct {
                             },
 
                             else => {
+                                var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
                                 // Read row data
                                 var row = protocol.ResultSet.Row{
                                     .columns = columns,
                                     .binary = request.binary,
                                 };
-                                try row.decode(Context, reader);
+                                try row.decodeInternal(stack_fallback.get(), Context, reader);
                                 defer row.deinit();
 
                                 // Process row data
                                 // Note: You'll need to implement row processing logic
                                 // based on your application's needs
+
                             },
                         }
                     }

@@ -1,6 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
-
+const sql = @import("../shared_sql.zig");
 const Data = mysql.Data;
 const protocol = @This();
 const MySQLInt32 = mysql.MySQLInt32;
@@ -914,124 +914,26 @@ pub const ColumnDefinition41 = struct {
     pub const decode = decoderWrap(ColumnDefinition41, decodeInternal).decode;
 };
 
-// Text result row
-pub const TextResultRow = struct {
-    values: []Data = &[_]Data{},
-    columns: []const ColumnDefinition41,
-
-    pub fn deinit(this: *TextResultRow) void {
-        for (this.values) |*value| {
-            value.deinit();
-        }
-        bun.default_allocator.free(this.values);
-    }
-
-    pub fn decodeInternal(this: *TextResultRow, comptime Context: type, reader: NewReader(Context)) !void {
-        const values = try bun.default_allocator.alloc(Data, this.columns.len);
-        errdefer {
-            for (values) |*value| {
-                value.deinit();
-            }
-            bun.default_allocator.free(values);
-        }
-
-        for (values) |*value| {
-            if (decodeLengthInt(reader.peek())) |result| {
-                try reader.skip(result.bytes_read);
-                if (result.value == 0xfb) { // NULL value
-                    value.* = .{ .empty = {} };
-                } else {
-                    value.* = try reader.read(@intCast(result.value));
-                }
-            } else {
-                return error.InvalidResultRow;
-            }
-        }
-
-        this.values = values;
-    }
-
-    pub const decode = decoderWrap(TextResultRow, decodeInternal).decode;
-};
-
-// Binary result row
-pub const BinaryResultRow = struct {
-    values: []Value = &[_]Value{},
-    columns: []const ColumnDefinition41,
-    pub fn deinit(this: *BinaryResultRow) void {
-        for (this.values) |*value| {
-            value.deinit();
-        }
-        bun.default_allocator.free(this.values);
-    }
-
-    pub fn decodeInternal(this: *BinaryResultRow, comptime Context: type, reader: NewReader(Context)) !void {
-        // Header
-        const header = try reader.int(u8);
-        if (header != 0) return error.InvalidBinaryRow;
-
-        // Null bitmap
-        const bitmap_bytes = (this.columns.len + 7 + 2) / 8;
-        var null_bitmap = try reader.read(bitmap_bytes);
-        defer null_bitmap.deinit();
-
-        const values = try bun.default_allocator.alloc(Value, this.columns.len);
-        errdefer {
-            for (values) |*value| {
-                value.deinit();
-            }
-            bun.default_allocator.free(values);
-        }
-
-        // Skip first 2 bits of null bitmap (reserved)
-        const bitmap_offset: usize = 2;
-
-        for (values, 0..) |*value, i| {
-            const byte_pos = (bitmap_offset + i) >> 3;
-            const bit_pos = @as(u3, @truncate((bitmap_offset + i) & 7));
-            const is_null = (null_bitmap.slice()[byte_pos] & (@as(u8, 1) << bit_pos)) != 0;
-
-            if (is_null) {
-                value.* = .{ .empty = {} };
-                continue;
-            }
-
-            const column = this.columns[i];
-            value.* = try decodeBinaryValue(column.column_type, Context, reader);
-        }
-
-        this.values = values;
-    }
-
-    pub const decode = decoderWrap(BinaryResultRow, decodeInternal).decode;
-};
-
-fn decodeBinaryValue(field_type: types.FieldType, comptime Context: type, reader: NewReader(Context)) !mysql.types.Value {
+fn decodeBinaryValue(field_type: types.FieldType, unsigned: bool, comptime Context: type, reader: NewReader(Context)) !mysql.types.Value {
     return switch (field_type) {
         .MYSQL_TYPE_TINY => blk: {
             const val = try reader.byte();
             break :blk Value{ .bool = val[0] != 0 };
         },
-        .MYSQL_TYPE_SHORT => blk: {
-            const val = try reader.int(i16);
-            break :blk Value{ .short = val };
-        },
-        .MYSQL_TYPE_LONG => blk: {
-            const val = try reader.int(i32);
-            break :blk Value{ .int = val };
-        },
-        .MYSQL_TYPE_FLOAT => blk: {
-            const val = try reader.read(4);
-            break :blk Value{ .float = @bitCast(val) };
-        },
-        .MYSQL_TYPE_DOUBLE => blk: {
-            const val = try reader.read(8);
-            break :blk Value{ .double = @bitCast(val) };
-        },
-        .MYSQL_TYPE_LONGLONG => blk: {
-            const val = try reader.read(8);
-            break :blk Value{ .long = @bitCast(val) };
-        },
+        .MYSQL_TYPE_SHORT => if (unsigned)
+            Value{ .ushort = try reader.int(u16) }
+        else
+            Value{ .short = try reader.int(i16) },
+        .MYSQL_TYPE_LONG => if (unsigned)
+            Value{ .uint = try reader.int(u32) }
+        else
+            Value{ .int = try reader.int(i32) },
+        .MYSQL_TYPE_LONGLONG => if (unsigned)
+            Value{ .ulong = try reader.int(u64) }
+        else
+            Value{ .long = try reader.int(i64) },
+        .MYSQL_TYPE_FLOAT => Value{ .float = @bitCast(try reader.int(u32)) },
+        .MYSQL_TYPE_DOUBLE => Value{ .double = @bitCast(try reader.int(u64)) },
         .MYSQL_TYPE_TIME => switch (try reader.byte()) {
             0 => Value{ .null = .{} },
             8, 12 => |l| Value{ .time = try Value.Time.fromBinary(reader.read(l)) },
@@ -1064,7 +966,7 @@ fn decodeBinaryValue(field_type: types.FieldType, comptime Context: type, reader
             if (decodeLengthInt(reader.peek())) |result| {
                 try reader.skip(result.bytes_read);
                 const val = try reader.read(@intCast(result.value));
-                break :blk val;
+                break :blk .{ .bytes = val };
             } else return error.InvalidBinaryValue;
         },
         else => return error.UnsupportedColumnType,
@@ -1415,37 +1317,44 @@ pub const ResultSet = struct {
         columns: []const ColumnDefinition41,
         binary: bool = false,
 
-        pub fn deinit(this: *Row) void {
+        extern fn MySQL__toJSFromRow(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, *anyopaque, usize) JSC.JSValue;
+        pub fn toJS(this: *Row, structure_value: JSValue, array_value: JSValue, globalObject: *JSC.JSGlobalObject) JSValue {
+            return MySQL__toJSFromRow(globalObject, structure_value, array_value, this.values, this.columns.len);
+        }
+
+        pub fn deinit(this: *Row, allocator: std.mem.Allocator) void {
             for (this.values) |*value| {
-                value.deinit();
+                value.deinit(allocator);
             }
-            bun.default_allocator.free(this.values);
+            allocator.free(this.values);
         }
 
-        pub fn decodeInternal(this: *Row, comptime Context: type, reader: NewReader(Context)) !void {
+        pub fn decodeInternal(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) !void {
             if (this.binary) {
-                try this.decodeBinary(Context, reader);
+                try this.decodeBinary(allocator, Context, reader);
             } else {
-                try this.decodeText(Context, reader);
+                try this.decodeText(allocator, Context, reader);
             }
         }
 
-        fn decodeText(this: *Row, comptime Context: type, reader: NewReader(Context)) !void {
-            const values = try bun.default_allocator.alloc(Value, this.columns.len);
+        fn decodeText(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) !void {
+            const values = try allocator.alloc(Value, this.columns.len);
             errdefer {
                 for (values) |*value| {
-                    value.deinit();
+                    value.deinit(allocator);
                 }
-                bun.default_allocator.free(values);
+                allocator.free(values);
             }
 
             for (values) |*value| {
                 if (decodeLengthInt(reader.peek())) |result| {
                     try reader.skip(result.bytes_read);
                     if (result.value == 0xfb) { // NULL value
-                        value.* = .{ .empty = {} };
+                        value.* = .{ .null = {} };
                     } else {
-                        value.* = try reader.read(@intCast(result.value));
+                        value.* = .{
+                            .string = try reader.read(@intCast(result.value)),
+                        };
                     }
                 } else {
                     return error.InvalidResultRow;
@@ -1455,7 +1364,7 @@ pub const ResultSet = struct {
             this.values = values;
         }
 
-        fn decodeBinary(this: *Row, comptime Context: type, reader: NewReader(Context)) !void {
+        fn decodeBinary(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) !void {
             // Header
             const header = try reader.int(u8);
             if (header != 0) return error.InvalidBinaryRow;
@@ -1465,12 +1374,12 @@ pub const ResultSet = struct {
             var null_bitmap = try reader.read(bitmap_bytes);
             defer null_bitmap.deinit();
 
-            const values = try bun.default_allocator.alloc(Value, this.columns.len);
+            const values = try allocator.alloc(Value, this.columns.len);
             errdefer {
                 for (values) |*value| {
-                    value.deinit();
+                    value.deinit(allocator);
                 }
-                bun.default_allocator.free(values);
+                allocator.free(values);
             }
 
             // Skip first 2 bits of null bitmap (reserved)

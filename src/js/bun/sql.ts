@@ -34,13 +34,6 @@ const _queryStatus = Symbol("status");
 const _handler = Symbol("handler");
 const PublicPromise = Promise;
 
-const {
-  createConnection: _createConnection,
-  createQuery,
-  PostgresSQLConnection,
-  init,
-} = $zig("postgres.zig", "createBinding");
-
 function normalizeSSLMode(value: string): SSLMode {
   if (!value) {
     return SSLMode.disable;
@@ -181,101 +174,256 @@ class Query extends PublicPromise {
 }
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
-init(
-  function (query, result, commandTag, count) {
-    $assert(result instanceof SQLResultArray, "Invalid result array");
-    if (typeof commandTag === "string") {
-      if (commandTag.length > 0) {
-        result.command = commandTag;
-      }
-    } else {
-      result.command = cmds[commandTag];
-    }
-
-    result.count = count || 0;
-
-    try {
-      query.resolve(result);
-    } catch (e) {}
-  },
-  function (query, reject) {
-    try {
-      query.reject(reject);
-    } catch (e) {}
-  },
-);
-
-function createConnection({ hostname, port, username, password, tls, query, database, sslMode }, onConnected, onClose) {
-  return _createConnection(
-    hostname,
-    Number(port),
-    username || "",
-    password || "",
-    database || "",
-    // > The default value for sslmode is prefer. As is shown in the table, this
-    // makes no sense from a security point of view, and it only promises
-    // performance overhead if possible. It is only provided as the default for
-    // backward compatibility, and is not recommended in secure deployments.
-    sslMode || SSLMode.disable,
-    tls || null,
-    query || "",
-    onConnected,
-    onClose,
-  );
-}
 
 var hasSQLArrayParameter = false;
-function normalizeStrings(strings, values) {
-  hasSQLArrayParameter = false;
-  if ($isJSArray(strings)) {
-    const count = strings.length;
-    if (count === 0) {
-      return "";
-    }
 
-    var out = strings[0];
+function createPostgresAdapter() {
+  const {
+    createConnection: _createConnection,
+    createQuery,
+    PostgresSQLConnection,
+    init,
+  } = $zig("postgres.zig", "createBinding");
 
-    // For now, only support insert queries with array parameters
-    //
-    // insert into users ${sql(users)}
-    //
-    if (values.length > 0 && typeof values[0] === "object" && values[0] && values[0] instanceof SQLArrayParameter) {
-      if (values.length > 1) {
-        throw new Error("Cannot mix array parameters with other values");
+  function normalizeStrings(strings, values) {
+    hasSQLArrayParameter = false;
+    if ($isJSArray(strings)) {
+      const count = strings.length;
+      if (count === 0) {
+        return "";
       }
-      hasSQLArrayParameter = true;
-      const { columns, value } = values[0];
-      const groupCount = value.length;
-      out += `values `;
 
-      let columnIndex = 1;
-      let columnCount = columns.length;
-      let lastColumnIndex = columnCount - 1;
+      var out = strings[0];
 
-      for (var i = 0; i < groupCount; i++) {
-        out += i > 0 ? `, (` : `(`;
+      // For now, only support insert queries with array parameters
+      //
+      // insert into users ${sql(users)}
+      //
+      if (values.length > 0 && typeof values[0] === "object" && values[0] && values[0] instanceof SQLArrayParameter) {
+        if (values.length > 1) {
+          throw new Error("Cannot mix array parameters with other values");
+        }
+        hasSQLArrayParameter = true;
+        const { columns, value } = values[0];
+        const groupCount = value.length;
+        out += `values `;
 
-        for (var j = 0; j < lastColumnIndex; j++) {
-          out += `$${columnIndex++}, `;
+        let columnIndex = 1;
+        let columnCount = columns.length;
+        let lastColumnIndex = columnCount - 1;
+
+        for (var i = 0; i < groupCount; i++) {
+          out += i > 0 ? `, (` : `(`;
+
+          for (var j = 0; j < lastColumnIndex; j++) {
+            out += `$${columnIndex++}, `;
+          }
+
+          out += `$${columnIndex++})`;
         }
 
-        out += `$${columnIndex++})`;
+        for (var i = 1; i < count; i++) {
+          out += strings[i];
+        }
+
+        return out;
       }
 
       for (var i = 1; i < count; i++) {
-        out += strings[i];
+        out += `$${i}${strings[i]}`;
       }
-
       return out;
     }
 
-    for (var i = 1; i < count; i++) {
-      out += `$${i}${strings[i]}`;
-    }
-    return out;
+    return strings + "";
   }
 
-  return strings + "";
+  function createConnection(
+    { hostname, port, username, password, tls, query, database, sslMode },
+    onConnected,
+    onClose,
+  ) {
+    return _createConnection(
+      hostname,
+      Number(port),
+      username || "",
+      password || "",
+      database || "",
+      // > The default value for sslmode is prefer. As is shown in the table, this
+      // makes no sense from a security point of view, and it only promises
+      // performance overhead if possible. It is only provided as the default for
+      // backward compatibility, and is not recommended in secure deployments.
+      sslMode || SSLMode.disable,
+      tls || null,
+      query || "",
+      onConnected,
+      onClose,
+    );
+  }
+
+  function doCreateQuery(strings, values) {
+    const sqlString = normalizeStrings(strings, values);
+    let columns;
+    if (hasSQLArrayParameter) {
+      hasSQLArrayParameter = false;
+      const v = values[0];
+      columns = v.columns;
+      values = v.value;
+    }
+
+    return createQuery(sqlString, values, new SQLResultArray(), columns);
+  }
+
+  init(
+    function (query, result, commandTag, count) {
+      $assert(result instanceof SQLResultArray, "Invalid result array");
+      if (typeof commandTag === "string") {
+        if (commandTag.length > 0) {
+          result.command = commandTag;
+        }
+      } else {
+        result.command = cmds[commandTag];
+      }
+
+      result.count = count || 0;
+
+      try {
+        query.resolve(result);
+      } catch (e) {}
+    },
+    function (query, reject) {
+      try {
+        query.reject(reject);
+      } catch (e) {}
+    },
+  );
+
+  return { createConnection, doCreateQuery, normalizeStrings, PostgresSQLConnection };
+}
+let postgres: ReturnType<typeof createPostgresAdapter>;
+let mysql: ReturnType<typeof createMySQLAdapter>;
+
+function createMySQLAdapter() {
+  function normalizeStrings(strings, values) {
+    hasSQLArrayParameter = false;
+    if ($isJSArray(strings)) {
+      const count = strings.length;
+      if (count === 0) {
+        return "";
+      }
+
+      var out = strings[0];
+
+      // For now, only support insert queries with array parameters
+      //
+      // insert into users ${sql(users)}
+      //
+      if (values.length > 0 && typeof values[0] === "object" && values[0] && values[0] instanceof SQLArrayParameter) {
+        if (values.length > 1) {
+          throw new Error("Cannot mix array parameters with other values");
+        }
+        hasSQLArrayParameter = true;
+        const { columns, value } = values[0];
+        const groupCount = value.length;
+        out += `values `;
+
+        let columnCount = columns.length;
+        let lastColumnIndex = columnCount - 1;
+
+        for (var i = 0; i < groupCount; i++) {
+          out += i > 0 ? `, (` : `(`;
+
+          for (var j = 0; j < lastColumnIndex; j++) {
+            out += `?, `;
+          }
+
+          out += `?)`;
+        }
+
+        for (var i = 1; i < count; i++) {
+          out += strings[i];
+        }
+
+        return out;
+      }
+
+      for (var i = 1; i < count; i++) {
+        out += `?`;
+      }
+      return out;
+    }
+
+    return strings + "";
+  }
+
+  const {
+    createConnection: _createConnection,
+    createQuery,
+    MySQLConnection,
+    init,
+  } = $zig("mysql.zig", "createBinding");
+
+  function createConnection(
+    { hostname, port, username, password, tls, query, database, sslMode },
+    onConnected,
+    onClose,
+  ) {
+    return _createConnection(
+      hostname,
+      Number(port),
+      username || "",
+      password || "",
+      database || "",
+      // > The default value for sslmode is prefer. As is shown in the table, this
+      // makes no sense from a security point of view, and it only promises
+      // performance overhead if possible. It is only provided as the default for
+      // backward compatibility, and is not recommended in secure deployments.
+      sslMode || SSLMode.disable,
+      tls || null,
+      query || "",
+      onConnected,
+      onClose,
+    );
+  }
+
+  function doCreateQuery(strings, values) {
+    const sqlString = normalizeStrings(strings, values);
+    let columns;
+    if (hasSQLArrayParameter) {
+      hasSQLArrayParameter = false;
+      const v = values[0];
+      columns = v.columns;
+      values = v.value;
+    }
+
+    return createQuery(sqlString, values, new SQLResultArray(), columns);
+  }
+
+  init(
+    function (query, result, commandTag, count) {
+      $assert(result instanceof SQLResultArray, "Invalid result array");
+      if (typeof commandTag === "string") {
+        if (commandTag.length > 0) {
+          result.command = commandTag;
+        }
+      } else {
+        result.command = cmds[commandTag];
+      }
+
+      result.count = count || 0;
+
+      try {
+        query.resolve(result);
+      } catch (e) {}
+    },
+    function (query, reject) {
+      try {
+        query.reject(reject);
+      } catch (e) {}
+    },
+  );
+
+  return { createConnection, doCreateQuery, normalizeStrings, MySQLConnection };
 }
 
 class SQLArrayParameter {
@@ -311,17 +459,56 @@ class SQLArrayParameter {
   }
 }
 
+const enum DatabaseAdapter {
+  postgres = 0,
+  mysql = 1,
+}
+
+function getAdapter(adapter: DatabaseAdapter) {
+  if (adapter === DatabaseAdapter.postgres) {
+    if (!postgres) {
+      postgres = createPostgresAdapter();
+    }
+    return postgres;
+  }
+
+  if (adapter === DatabaseAdapter.mysql) {
+    if (!mysql) {
+      mysql = createMySQLAdapter();
+    }
+    return mysql;
+  }
+
+  throw new Error(`Unsupported adapter: ${adapter}`);
+}
+
 function loadOptions(o) {
   var hostname, port, username, password, database, tls, url, query, adapter;
   const env = Bun.env;
   var sslMode: SSLMode = SSLMode.disable;
 
   if (o === undefined || (typeof o === "string" && o.length === 0)) {
-    let urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
-    if (!urlString) {
-      urlString = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL;
+    let urlString = env.TLS_POSTGRES_DATABASE_URL;
+    if (urlString) {
+      adapter = DatabaseAdapter.postgres;
+    } else {
+      urlString = env.TLS_MYSQL_DATABASE_URL || env.TLS_MARIADB_DATABASE_URL;
       if (urlString) {
-        sslMode = SSLMode.require;
+        adapter = DatabaseAdapter.mysql;
+      }
+    }
+
+    if (urlString) {
+      sslMode = SSLMode.require;
+    } else {
+      urlString ||= env.POSTGRES_URL || env.PGURL || env.PG_URL;
+      if (urlString) {
+        adapter = DatabaseAdapter.postgres;
+      } else {
+        urlString ||= env.MYSQL_URL || env.MARIADB_URL;
+        if (urlString) {
+          adapter = DatabaseAdapter.mysql;
+        }
       }
     }
 
@@ -349,10 +536,11 @@ function loadOptions(o) {
     url = new URL(o);
   }
 
+  let protocol;
   if (url) {
-    ({ hostname, port, username, password, protocol: adapter } = o = url);
-    if (adapter[adapter.length - 1] === ":") {
-      adapter = adapter.slice(0, -1);
+    ({ hostname, port, username, password, protocol } = o = url);
+    if (protocol[protocol.length - 1] === ":") {
+      protocol = protocol.slice(0, -1);
     }
 
     const queryObject = url.searchParams.toJSON();
@@ -367,13 +555,34 @@ function loadOptions(o) {
     query = query.trim();
   }
 
+  protocol ||= o.protocol || "postgres";
+  if (protocol === "postgresql") {
+    protocol = "postgres";
+  } else if (protocol === "mariadb") {
+    protocol = "mysql";
+  }
+
+  if (protocol === "mysql") {
+    adapter = DatabaseAdapter.mysql;
+  } else if (protocol === "postgres") {
+    adapter = DatabaseAdapter.postgres;
+  } else if (protocol && !(protocol === "postgres" || protocol === "mysql")) {
+    throw new TypeError(`Unsupported protocol: ${protocol}. Only "postgres" and "mysql" are supported`);
+  }
+
   hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
-  port ||= Number(o.port || env.PGPORT || 5432);
-  username ||= o.username || o.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
+  port ||= Number(o.port || (adapter === DatabaseAdapter.postgres ? env.PGPORT : env.MYSQL_PORT) || 5432);
+  username ||=
+    o.username ||
+    o.user ||
+    env.PGUSERNAME ||
+    env.PGUSER ||
+    env.USER ||
+    env.USERNAME ||
+    (protocol === "postgres" ? "postgres" : "root");
   database ||= o.database || o.db || (url?.pathname ?? "").slice(1) || env.PGDATABASE || username;
   password ||= o.password || o.pass || env.PGPASSWORD || "";
   tls ||= o.tls || o.ssl;
-  adapter ||= o.adapter || "postgres";
 
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
@@ -394,11 +603,7 @@ function loadOptions(o) {
     throw new Error(`Invalid port: ${port}`);
   }
 
-  if (adapter && !(adapter === "postgres" || adapter === "postgresql")) {
-    throw new Error(`Unsupported adapter: ${adapter}. Only \"postgres\" is supported for now`);
-  }
-
-  return { hostname, port, username, password, database, tls, query, sslMode };
+  return { hostname, port, username, password, database, tls, query, sslMode, adapter };
 }
 
 function SQL(o) {
@@ -408,6 +613,8 @@ function SQL(o) {
     closed = false,
     onConnect: any[] = [],
     connectionInfo = loadOptions(o);
+
+  var { createConnection, doCreateQuery } = getAdapter(connectionInfo.adapter);
 
   function connectedHandler(query, handle, err) {
     if (err) {
@@ -448,19 +655,6 @@ function SQL(o) {
   function onClose(err) {
     closed = true;
     onConnected(err, undefined);
-  }
-
-  function doCreateQuery(strings, values) {
-    const sqlString = normalizeStrings(strings, values);
-    let columns;
-    if (hasSQLArrayParameter) {
-      hasSQLArrayParameter = false;
-      const v = values[0];
-      columns = v.columns;
-      values = v.value;
-    }
-
-    return createQuery(sqlString, values, new SQLResultArray(), columns);
   }
 
   function connectedSQL(strings, values) {

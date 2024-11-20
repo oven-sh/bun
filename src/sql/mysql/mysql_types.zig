@@ -96,8 +96,8 @@ pub const FieldType = enum(u8) {
 
         if (value.isAnyInt()) {
             const int = value.toInt64();
-            if (int >= std.math.minInt(u24) and int <= std.math.maxInt(u24)) {
-                return .MYSQL_TYPE_INT24;
+            if (int >= std.math.minInt(i32) and int <= std.math.maxInt(i32)) {
+                return .MYSQL_TYPE_LONG;
             }
 
             return .MYSQL_TYPE_LONGLONG;
@@ -111,7 +111,7 @@ pub const FieldType = enum(u8) {
             return .MYSQL_TYPE_TINY;
         }
 
-        return .numeric;
+        return .MYSQL_TYPE_VARCHAR;
     }
 
     pub fn isBinaryFormatSupported(this: FieldType) bool {
@@ -179,13 +179,17 @@ pub const Value = union(enum) {
     null,
     bool: bool,
     short: i16,
+    ushort: u16,
     int: i32,
+    uint: u32,
     long: i64,
+    ulong: u64,
     float: f32,
     double: f64,
     string: []const u8,
     bytes: []const u8,
     date: DateTime,
+    timestamp: Timestamp,
     time: Time,
     decimal: Decimal,
 
@@ -416,20 +420,19 @@ pub const Value = union(enum) {
         }
     }
 
-    pub fn toJS(this: Value, globalObject: *JSC.JSGlobalObject) JSValue {
-        return switch (this) {
+    pub fn toJS(this: *const Value, globalObject: *JSC.JSGlobalObject) JSValue {
+        return switch (this.*) {
             .null => JSValue.jsNull(),
-            .int => |i| JSValue.jsNumber(@floatFromInt(i)),
-            .float => |f| JSValue.jsNumber(f),
-            .double => |d| JSValue.jsNumber(d),
             .string => |str| JSC.ZigString.init(str).toJS(globalObject),
             .bytes => JSValue.createBuffer(globalObject, this.bytes, null),
-            .date => |d| d.toJS(globalObject),
-            .time => |t| t.toJS(globalObject),
-            .decimal => |d| d.toJS(globalObject),
             .long => |l| JSValue.toInt64(@floatFromInt(l)),
-            .short => |s| JSValue.jsNumber(@floatFromInt(s)),
+            inline .int, .float, .double, .short, .ushort, .uint, .ulong => |t| JSValue.jsNumber(t),
+            inline .timestamp, .date, .time, .decimal => |*d| d.toJS(globalObject),
         };
+    }
+
+    export fn MySQL__ValueToJS(globalObject: *JSC.JSGlobalObject, value: *Value) JSValue {
+        return value.toJS(globalObject);
     }
 };
 

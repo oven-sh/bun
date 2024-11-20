@@ -269,24 +269,14 @@ pub const Expect = struct {
     }
 
     pub fn isAsymmetricMatcher(value: JSValue) bool {
-        if (ExpectCustomAsymmetricMatcher.fromJS(value) != null) {
-            return true;
-        } else if (ExpectAny.fromJS(value) != null) {
-            return true;
-        } else if (ExpectAnything.fromJS(value) != null) {
-            return true;
-        } else if (ExpectStringMatching.fromJS(value) != null) {
-            return true;
-        } else if (ExpectCloseTo.fromJS(value) != null) {
-            return true;
-        } else if (ExpectObjectContaining.fromJS(value) != null) {
-            return true;
-        } else if (ExpectStringContaining.fromJS(value) != null) {
-            return true;
-        } else if (ExpectArrayContaining.fromJS(value) != null) {
-            return true;
-        }
-
+        if (ExpectCustomAsymmetricMatcher.fromJS(value) != null) return true;
+        if (ExpectAny.fromJS(value) != null) return true;
+        if (ExpectAnything.fromJS(value) != null) return true;
+        if (ExpectStringMatching.fromJS(value) != null) return true;
+        if (ExpectCloseTo.fromJS(value) != null) return true;
+        if (ExpectObjectContaining.fromJS(value) != null) return true;
+        if (ExpectStringContaining.fromJS(value) != null) return true;
+        if (ExpectArrayContaining.fromJS(value) != null) return true;
         return false;
     }
 

@@ -745,7 +745,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     const allocator = getAllocator(globalThis);
 
     if ((transpiler_options.log.warnings + transpiler_options.log.errors) > 0) {
-        return globalThis.throwValue2(transpiler_options.log.toJS(globalThis.ptr(), allocator, "Failed to create transpiler"));
+        return globalThis.throwValue2(transpiler_options.log.toJS(globalThis, allocator, "Failed to create transpiler"));
     }
 
     var log = try allocator.create(logger.Log);
@@ -757,7 +757,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
         JavaScript.VirtualMachine.get().bundler.env,
     ) catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue2(log.toJS(globalThis.ptr(), allocator, "Failed to create transpiler"));
+            return globalThis.throwValue2(log.toJS(globalThis, allocator, "Failed to create transpiler"));
         }
 
         globalThis.throwError(err, "Error creating transpiler");
@@ -768,7 +768,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     bundler.options.env.behavior = .disable;
     bundler.configureDefines() catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue2(log.toJS(globalThis.ptr(), allocator, "Failed to load define"));
+            return globalThis.throwValue2(log.toJS(globalThis, allocator, "Failed to load define"));
         }
 
         globalThis.throwError(err, "Failed to load define");

@@ -1112,10 +1112,10 @@ pub const DescribeScope = struct {
 
             if (result.asAnyPromise()) |prom| {
                 globalObject.bunVM().waitForPromise(prom);
-                switch (prom.status(globalObject.ptr().vm())) {
+                switch (prom.status(globalObject.vm())) {
                     .fulfilled => {},
                     else => {
-                        _ = globalObject.bunVM().unhandledRejection(globalObject, prom.result(globalObject.ptr().vm()), prom.asValue(globalObject));
+                        _ = globalObject.bunVM().unhandledRejection(globalObject, prom.result(globalObject.vm()), prom.asValue(globalObject));
                         return .undefined;
                     },
                 }

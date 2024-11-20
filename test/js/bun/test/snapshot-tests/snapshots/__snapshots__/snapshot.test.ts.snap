@@ -368,3 +368,122 @@ exports[`most types: testing 7 2`] = `9`;
 exports[`most types: testing 7 3`] = `8`;
 
 exports[`most types: undefined 1`] = `undefined`;
+
+exports[`snapshots dollars 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"$"\`;
+"
+`;
+
+exports[`snapshots backslash 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"\\\\"\`;
+"
+`;
+
+exports[`snapshots dollars curly 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"\\\${}"\`;
+"
+`;
+
+exports[`snapshots dollars curly 2 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"\\\${"\`;
+"
+`;
+
+exports[`snapshots stuff 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`
+"æ™
+
+!!!!*5897yhduN"'\\\`Il"
+\`;
+"
+`;
+
+exports[`snapshots stuff 2 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`
+"æ™
+
+!!!!*5897yh!uN"'\\\`Il"
+\`;
+"
+`;
+
+exports[`snapshots regexp 1 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`/\\\${1..}/\`;
+"
+`;
+
+exports[`snapshots regexp 2 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`/\\\${2..}/\`;
+"
+`;
+
+exports[`snapshots string 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"abc"\`;
+"
+`;
+
+exports[`snapshots string with newline 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`
+"qwerty
+ioup"
+\`;
+"
+`;
+
+exports[`snapshots null byte 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"1 \\x00"\`;
+"
+`;
+
+exports[`snapshots null byte 2 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"2 \\x00"\`;
+"
+`;
+
+exports[`snapshots backticks 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"This is \\\`wrong\\\`"\`;
+"
+`;
+
+exports[`snapshots unicode 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"😊abc\\\`\\\${def} �, � "\`;
+"
+`;
+
+exports[`snapshots jest newline oddity 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`
+"
+"
+\`;
+"
+`;

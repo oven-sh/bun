@@ -202,6 +202,7 @@ class SnapshotTester {
       const newContents = await Bun.file(this.dir + "/__snapshots__/snapshot.test.ts.snap").text();
       if (!isFirst) {
         expect(newContents).not.toStartWith(this.targetSnapshotContents);
+        expect(newContents).toMatchSnapshot();
       }
       this.targetSnapshotContents = newContents;
     }
@@ -229,6 +230,9 @@ describe("snapshots", async () => {
 
   t.test("null byte", defaultWrap('"1 \x00"'));
   t.test("null byte 2", defaultWrap('"2 \\x00"'));
+
+  t.test("backticks", defaultWrap("`This is \\`wrong\\``"));
+  t.test("unicode", defaultWrap("'😊abc`${def} " + "😊".substring(0, 1) + ", " + "😊".substring(1, 2) + " '"));
 
   test("jest newline oddity", async () => {
     await t.update(defaultWrap("'\\n'"));

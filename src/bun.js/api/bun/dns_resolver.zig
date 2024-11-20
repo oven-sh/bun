@@ -206,7 +206,7 @@ const LibUVBackend = struct {
         this.head.globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
     }
 
-    pub fn lookup(this: *DNSResolver, query: GetAddrInfo, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn lookup(this: *DNSResolver, query: GetAddrInfo, globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         const key = GetAddrInfoRequest.PendingCacheKey.init(query);
 
         var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_native);

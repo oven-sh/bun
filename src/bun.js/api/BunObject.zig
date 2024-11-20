@@ -4861,7 +4861,7 @@ pub const JSZlib = struct {
                     globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
                     return .zero;
                 };
-                reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
+                reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch bun.outOfMemory() };
                 reader.list.capacity = reader.list.items.len;
                 reader.list_ptr = &reader.list;
 

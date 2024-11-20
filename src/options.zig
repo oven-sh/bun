@@ -170,7 +170,7 @@ pub const ExternalModules = struct {
             }
         }
 
-        result.patterns = patterns.toOwnedSlice() catch @panic("TODO");
+        result.patterns = patterns.toOwnedSlice() catch bun.outOfMemory();
 
         return result;
     }
@@ -1892,10 +1892,14 @@ pub const OutputFile = struct {
         }
     };
 
-    pub const Value = union(Kind) {
+    pub const Kind = @typeInfo(Value).Union.tag_type.?;
+    // TODO: document how and why all variants of this union(enum) are used,
+    // specifically .move and .copy; the new bundler has to load files in memory
+    // in order to hash them, so i think it uses .buffer for those
+    pub const Value = union(enum) {
         move: FileOperation,
         copy: FileOperation,
-        noop: u0,
+        noop,
         buffer: struct {
             allocator: std.mem.Allocator,
             bytes: []const u8,
@@ -1958,8 +1962,6 @@ pub const OutputFile = struct {
             return blob.toJS(globalThis);
         }
     };
-
-    pub const Kind = enum { move, copy, noop, buffer, pending, saved };
 
     pub fn initPending(loader: Loader, pending: resolver.Result) OutputFile {
         return .{
@@ -2105,30 +2107,12 @@ pub const OutputFile = struct {
                 return rel_path;
             },
             .move => |value| {
-                _ = value;
-                // var filepath_buf: bun.PathBuffer = undefined;
-                // filepath_buf[0] = '.';
-                // filepath_buf[1] = '/';
-                // const primary = f.dest_path[root_dir_path.len..];
-                // bun.copy(u8, filepath_buf[2..], primary);
-                // var rel_path: []const u8 = filepath_buf[0 .. primary.len + 2];
-                // rel_path = value.pathname;
-
-                // try f.moveTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
-                {
-                    @panic("TODO: Regressed behavior");
-                }
-
-                // return primary;
+                try f.moveTo(root_dir_path, value.pathname, bun.toFD(root_dir.fd));
+                return value.pathname;
             },
             .copy => |value| {
-                _ = value;
-                // rel_path = value.pathname;
-
-                // try f.copyTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
-                {
-                    @panic("TODO: Regressed behavior");
-                }
+                try f.copyTo(root_dir_path, value.pathname, bun.toFD(root_dir.fd));
+                return value.pathname;
             },
             .noop => {
                 return f.dest_path;
@@ -2137,11 +2121,11 @@ pub const OutputFile = struct {
         }
     }
 
-    pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
+    pub fn moveTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: FileDescriptorType) !void {
         try bun.C.moveFileZ(file.value.move.dir, bun.sliceTo(&(try std.posix.toPosixPath(file.value.move.getPathname())), 0), dir, bun.sliceTo(&(try std.posix.toPosixPath(rel_path)), 0));
     }
 
-    pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
+    pub fn copyTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: FileDescriptorType) !void {
         const file_out = (try dir.asDir().createFile(rel_path, .{}));
 
         const fd_out = file_out.handle;

@@ -1532,7 +1532,7 @@ pub const ArrayBufferSink = struct {
         this.done = true;
         this.signal.close(null);
         return .{ .result = ArrayBuffer.fromBytes(
-            list.toOwnedSlice() catch @panic("TODO"),
+            list.toOwnedSlice() catch bun.outOfMemory(),
             if (this.as_uint8array)
                 .Uint8Array
             else

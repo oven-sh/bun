@@ -1458,8 +1458,7 @@ pub const Interpreter = struct {
             null,
         )) {
             .err => |*e| {
-                throwShellErr(e, .{ .mini = mini }) catch unreachable;
-                unreachable;
+                e.throwMini();
             },
             .result => |i| i,
         };
@@ -1528,8 +1527,7 @@ pub const Interpreter = struct {
             null,
         )) {
             .err => |*e| {
-                throwShellErr(e, .{ .mini = mini }) catch unreachable;
-                unreachable;
+                e.throwMini();
             },
             .result => |i| i,
         };

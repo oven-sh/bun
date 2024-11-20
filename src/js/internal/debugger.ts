@@ -32,8 +32,9 @@ class SocketFramer {
     }
 
     socketFramerMessageLengthBuffer.writeUInt32BE(data.length, 0);
-    socket.write(socketFramerMessageLengthBuffer);
-    socket.write(data);
+    const a = socket.$write(socketFramerMessageLengthBuffer);
+    const r = socket.$write(data);
+    console.log(a, r, data.length);
   }
 
   onData(socket: Socket<{ framer: SocketFramer; backend: Writer }>, data: Buffer): void {
@@ -410,7 +411,7 @@ async function connectToUnixServer(
           backend.write(message);
         });
 
-        const backendRaw = createBackend(executionContextId, false, (...messages: string[]) => {
+        const backendRaw = createBackend(executionContextId, true, (...messages: string[]) => {
           for (const message of messages) {
             framer.send(socket, message);
           }

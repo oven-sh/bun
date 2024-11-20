@@ -109,7 +109,7 @@ class BunDiagnosticsManager {
       adapterID: "bun-vsc-terminal-debug-adapter",
       enableControlFlowProfiler: true,
       enableLifecycleAgentReporter: true,
-      sendImmediatePreventExit: true,
+      sendImmediatePreventExit: false,
     });
   }
 

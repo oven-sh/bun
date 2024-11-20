@@ -23,7 +23,8 @@ suite("VSCode extension", function () {
 
 export default defineConfig({
   // workspaceFolder: "/Users/ali/code/bun-vscode-vite-test",
-  workspaceFolder: join(workspacePath, "example"),
+  workspaceFolder: "/Users/ali/code/alistair-api",
+  // workspaceFolder: join(workspacePath, "example"),
   extensionDevelopmentPath: workspacePath,
   skipExtensionDependencies: true,
   files: vscodeTestPath,

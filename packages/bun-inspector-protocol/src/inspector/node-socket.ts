@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs/promises";
 import { Socket } from "node:net";
 import { SocketFramer } from "../../../bun-debug-adapter-protocol/src/debugger/node-socket-framer.js";
 import type { JSC } from "../protocol";
@@ -34,10 +35,11 @@ export class NodeSocketInspector extends EventEmitter<InspectorEventMap> impleme
     this.#pendingRequests = [];
     this.#pendingResponses = new Map();
 
-    this.#framer = new SocketFramer(message => {
+    this.#framer = new SocketFramer(socket, message => {
+      // console.log(message);
       if (Array.isArray(message)) {
-        for (const item of message) {
-          this.#accept(item);
+        for (const m of message) {
+          this.#accept(m);
         }
       } else {
         this.#accept(message);
@@ -83,8 +85,19 @@ export class NodeSocketInspector extends EventEmitter<InspectorEventMap> impleme
       }
     });
 
-    socket.on("data", data => {
-      this.#framer.onData(socket, data);
+    await fs.writeFile("./bytes.hex", "");
+
+    socket.on("data", async data => {
+      this.#framer.onData(data);
+
+      // void Bun.file("bytes")
+      // .text()
+      // .then(async t => {
+      //   await Bun.write("bytes", t + "\n\n" + data.toString("hex"));
+      // });
+
+      const text = await fs.readFile("./bytes.hex");
+      await fs.writeFile("./bytes.hex", text + "\n\n" + data.toString("hex"));
     });
 
     socket.on("error", error => {
@@ -156,11 +169,12 @@ export class NodeSocketInspector extends EventEmitter<InspectorEventMap> impleme
   }
 
   #send(request: JSC.Request): boolean {
-    this.#framer.send(this.#socket, JSON.stringify(request));
+    this.#framer.send(JSON.stringify(request));
 
     if (!this.#pendingRequests.includes(request)) {
       this.#pendingRequests.push(request);
     }
+
     return false;
   }
 

@@ -236,6 +236,9 @@ interface RuntimeExceptionThrownEvent {
 }
 
 class FileDebugSession extends DebugSession {
+  // If these classes are moved/published, we should make sure
+  // we remove these non-null assertions so consumers of
+  // this lib are not running into these hard
   adapter!: DebugAdapter;
   sessionId?: string;
   untitledDocPath?: string;

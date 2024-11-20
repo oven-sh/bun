@@ -2025,6 +2025,7 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     this.#functionBreakpoints.clear();
     this.#targets.clear();
     this.#variables.clear();
+    this.options = undefined;
   }
 }
 
@@ -2093,11 +2094,6 @@ export class DebugAdapter extends BaseDebugAdapter<WebSocketInspector> {
   close() {
     this.#process?.kill();
     super.close();
-  }
-
-  protected resetInternal() {
-    super.resetInternal();
-    this.options = undefined;
   }
 
   async launch(request: DAP.LaunchRequest): Promise<void> {

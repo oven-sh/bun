@@ -11,8 +11,13 @@ export class SocketFramer {
   sizeBuffer: Buffer = Buffer.alloc(4);
   sizeBufferIndex: number = 0;
   bufferedData: Buffer = Buffer.alloc(0);
+  socket: Socket;
+  private onMessage: (message: string | string[]) => void;
 
-  constructor(private onMessage: (message: string | string[]) => void) {
+  constructor(socket: Socket, onMessage: (message: string | string[]) => void) {
+    this.socket = socket;
+    this.onMessage = onMessage;
+
     if (!socketFramerMessageLengthBuffer) {
       socketFramerMessageLengthBuffer = Buffer.alloc(4);
     }
@@ -27,13 +32,13 @@ export class SocketFramer {
     this.sizeBuffer = Buffer.alloc(4);
   }
 
-  send(socket: Socket, data: string): void {
+  send(data: string): void {
     socketFramerMessageLengthBuffer.writeUInt32BE(data.length, 0);
-    socket.write(socketFramerMessageLengthBuffer);
-    socket.write(data);
+    this.socket.write(socketFramerMessageLengthBuffer);
+    this.socket.write(data);
   }
 
-  onData(socket: Socket, data: Buffer): void {
+  onData(data: Buffer): void {
     this.bufferedData = this.bufferedData.length > 0 ? Buffer.concat([this.bufferedData, data]) : data;
 
     let messagesToDeliver: string[] = [];

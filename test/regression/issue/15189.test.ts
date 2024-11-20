@@ -15,10 +15,19 @@ describe("bun shell", () => {
     expect(await $({ raw: ["echo " + 'a"a"'.repeat(1000000)] } as any).text()).toBe("aa".repeat(1000000) + "\n");
   });
   it("passes correct number of arguments with empty string substitutions", async () => {
-    expect(await $`echo ${"1"} ${""} ${"2"}`.text()).toBe("1  2\n");
+    expect(await $`echo 1 ${""} 2`.text()).toBe("1  2\n");
   });
-  it("passes correct number of arguments with empty string quotes", async () => {
+  it("passes correct number of arguments with empty string substitutions 2", async () => {
+    expect(await $`echo 1 "${""}" 2`.text()).toBe("1  2\n");
+  });
+  it("passes correct number of arguments with empty string substitutions 3", async () => {
+    expect(await $`echo 1 '${""}' 2`.text()).toBe("1  2\n");
+  });
+  it("passes correct number of arguments with empty double string quotes", async () => {
     expect(await $`echo "1" "" "2"`.text()).toBe("1  2\n");
+  });
+  it("passes correct number of arguments with empty single string quotes", async () => {
+    expect(await $`echo '1' '' '2'`.text()).toBe("1  2\n");
   });
   it("doesn't cause invalid js string ref error with a number after a string ref", async () => {
     expect(await $`echo ${'"'}1`.text()).toBe('"1\n');
@@ -72,7 +81,7 @@ describe("bun shell", () => {
   it("expands tilde as middle argument", async () => {
     expect(await $`echo a ~ b`.text()).toBe("a " + process.env.HOME + " b\n");
   });
-  it.todo("expands tilde as middle argument 2", async () => {
+  it("expands tilde as middle argument 2", async () => {
     expect(
       await $`echo a ~\
  b`.text(),
@@ -117,6 +126,24 @@ describe("bun shell", () => {
   });
   it("does not expand tilde second", async () => {
     expect(await $`echo "a"~`.text()).toBe("a~\n");
+  });
+  it("handles backslashed newline", async () => {
+    expect(
+      await $`echo a\
+b`.text(),
+    ).toBe("ab\n");
+  });
+  it("handles backslashed newline in single quotes", async () => {
+    expect(
+      await $`echo 'a\
+b'`.text(),
+    ).toBe("a\\\nb\n");
+  });
+  it("handles backslashed newline in double quotes", async () => {
+    expect(
+      await $`echo "a\
+b"`.text(),
+    ).toBe("ab\n");
   });
   // TODO: handle username (`~user` -> getpwnam(user) eg /home/user if the accont exists. but only if all unquoted, ie `~user"a"` <- not allowed)
 

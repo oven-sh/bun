@@ -2711,13 +2711,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     }
                     continue;
                 }
-                // Treat newline preceded by backslash as whitespace
+                // Ignore newline preceeded by backslash
                 else if (char == '\n') {
                     if (comptime bun.Environment.allow_assert) {
                         assert(input.escaped);
-                    }
-                    if (self.chars.state != .Double) {
-                        try self.break_word_impl(true, true, false);
                     }
                     continue;
                 }
@@ -2771,7 +2768,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         inline fn isImmediatelyEscapedQuote(self: *@This()) bool {
-            return (self.chars.state == .Double and
+            return ((self.chars.state == .Double or self.chars.state == .Single) and
                 (self.chars.current != null and !self.chars.current.?.escaped and self.chars.current.?.char == '"') and
                 (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '"'));
         }
@@ -3516,31 +3513,37 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
         }
 
         pub fn read_char(self: *@This()) ?InputChar {
-            const indexed_value = self.src.index() orelse return null;
-            var char = indexed_value.char;
-            if (char != '\\' or self.state == .Single) return .{ .char = char };
+            while (true) {
+                const indexed_value = self.src.index() orelse return null;
+                var char = indexed_value.char;
+                if (char != '\\' or self.state == .Single) return .{ .char = char };
 
-            // Handle backslash
-            switch (self.state) {
-                .Normal => {
-                    const peeked = self.src.indexNext() orelse return null;
-                    char = peeked.char;
-                },
-                .Double => {
-                    const peeked = self.src.indexNext() orelse return null;
-                    switch (peeked.char) {
-                        // Backslash only applies to these characters
-                        '$', '`', '"', '\\', '\n', '#' => {
-                            char = peeked.char;
-                        },
-                        else => return .{ .char = char, .escaped = false },
-                    }
-                },
-                // We checked `self.state == .Single` above so this is impossible
-                .Single => unreachable,
+                // Handle backslash
+                const peeked = self.src.indexNext() orelse return null;
+                if (peeked.char == '\n') {
+                    // completely ignore backslash newline, don't advance self.prev/self.current
+                    self.src.eat(true);
+                    continue;
+                }
+                switch (self.state) {
+                    .Normal => {
+                        char = peeked.char;
+                    },
+                    .Double => {
+                        switch (peeked.char) {
+                            // Backslash only applies to these characters
+                            '$', '`', '"', '\\', '#' => {
+                                char = peeked.char;
+                            },
+                            else => return .{ .char = char, .escaped = false },
+                        }
+                    },
+                    // We checked `self.state == .Single` above so this is impossible
+                    .Single => unreachable,
+                }
+
+                return .{ .char = char, .escaped = true };
             }
-
-            return .{ .char = char, .escaped = true };
         }
     };
 }

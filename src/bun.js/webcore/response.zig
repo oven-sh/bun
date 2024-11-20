@@ -1252,17 +1252,28 @@ pub const Fetch = struct {
                     if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
                         defer BoringSSL.X509_free(x509);
                         const globalObject = this.global_this;
-                        const js_cert = X509.toJS(x509, globalObject);
+                        const js_cert = X509.toJS(x509, globalObject) catch |err| {
+                            switch (err) {
+                                error.JSError => {},
+                                error.OutOfMemory => globalObject.throwOutOfMemory(),
+                            }
+                            const check_result = globalObject.tryTakeException().?;
+                            // mark to wait until deinit
+                            this.is_waiting_abort = this.result.has_more;
+                            this.abort_reason.set(globalObject, check_result);
+                            this.signal_store.aborted.store(true, .monotonic);
+                            this.tracker.didCancel(this.global_this);
+                            // we need to abort the request
+                            if (this.http) |http_| http.http_thread.scheduleShutdown(http_);
+                            this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                            return false;
+                        };
                         var hostname: bun.String = bun.String.createUTF8(certificate_info.hostname);
                         defer hostname.deref();
                         const js_hostname = hostname.toJS(globalObject);
                         js_hostname.ensureStillAlive();
                         js_cert.ensureStillAlive();
-                        const check_result = check_server_identity.call(
-                            globalObject,
-                            .undefined,
-                            &.{ js_hostname, js_cert },
-                        ) catch |err| globalObject.takeException(err);
+                        const check_result = check_server_identity.call(globalObject, .undefined, &.{ js_hostname, js_cert }) catch |err| globalObject.takeException(err);
 
                         // > Returns <Error> object [...] on failure
                         if (check_result.isAnyError()) {
@@ -1896,8 +1907,7 @@ pub const Fetch = struct {
         const arguments = callframe.arguments(1).slice();
 
         if (arguments.len < 1) {
-            globalObject.throwNotEnoughArguments("fetch.preconnect", 1, arguments.len);
-            return .zero;
+            return globalObject.throwNotEnoughArguments("fetch.preconnect", 1, arguments.len);
         }
 
         var url_str = try JSC.URL.hrefFromJS(arguments[0], globalObject);
@@ -2170,7 +2180,7 @@ pub const Fetch = struct {
         // "method"
         method = extract_method: {
             if (options_object) |options| {
-                if (options.getTruthyComptime(globalThis, "method")) |method_| {
+                if (try options.getTruthyComptime(globalThis, "method")) |method_| {
                     break :extract_method Method.fromJS(globalThis, method_);
                 }
 
@@ -2185,7 +2195,7 @@ pub const Fetch = struct {
             }
 
             if (request_init_object) |req| {
-                if (req.getTruthyComptime(globalThis, "method")) |method_| {
+                if (try req.getTruthyComptime(globalThis, "method")) |method_| {
                     break :extract_method Method.fromJS(globalThis, method_);
                 }
 

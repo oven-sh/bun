@@ -558,7 +558,7 @@ pub const Expect = struct {
 
                 const signature = comptime getSignature("toBe", "<green>expected<r>", false);
                 if (left.deepEquals(right, globalThis) or left.strictDeepEquals(right, globalThis)) {
-                    const fmt = signature ++
+                    const fmt =
                         (if (!has_custom_label) "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>" else "") ++
                         "\n\nExpected: <green>{any}<r>\n" ++
                         "Received: serializes to the same string\n";
@@ -2382,8 +2382,8 @@ pub const Expect = struct {
             if (expected_value == .zero or expected_value.isUndefined()) {
                 const signature_no_args = comptime getSignature("toThrow", "", true);
                 if (result.toError()) |err| {
-                    const name = err.getTruthyComptime(globalThis, "name") orelse JSValue.undefined;
-                    const message = err.getTruthyComptime(globalThis, "message") orelse JSValue.undefined;
+                    const name = try err.getTruthyComptime(globalThis, "name") orelse JSValue.undefined;
+                    const message = try err.getTruthyComptime(globalThis, "message") orelse JSValue.undefined;
                     const fmt = signature_no_args ++ "\n\nError name: <red>{any}<r>\nError message: <red>{any}<r>\n";
                     globalThis.throwPretty(fmt, .{
                         name.toFmt(&formatter),

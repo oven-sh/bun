@@ -3147,6 +3147,7 @@ pub const JSGlobalObject = opaque {
         this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, bun.fmt.quote(ty_str.slice()) }).throw();
         return .zero;
     }
+
     pub fn throwInvalidArgumentRangeValue(
         this: *JSGlobalObject,
         argname: []const u8,
@@ -3183,8 +3184,8 @@ pub const JSGlobalObject = opaque {
         comptime name_: []const u8,
         comptime expected: usize,
         got: usize,
-    ) void {
-        this.throwValue(this.createNotEnoughArguments(name_, expected, got));
+    ) bun.JSError {
+        return this.throwValue2(this.createNotEnoughArguments(name_, expected, got));
     }
 
     extern fn JSC__JSGlobalObject__reload(JSC__JSGlobalObject__ptr: *JSGlobalObject) void;
@@ -5539,7 +5540,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     // TODO: replace calls to this function with `getOptional`
-    pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
+    pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) bun.JSError!?JSValue {
         if (comptime bun.ComptimeEnumMap(BuiltinName).has(property)) {
             if (fastGet(this, global, @field(BuiltinName, property))) |prop| {
                 if (prop.isEmptyOrUndefinedOrNull()) return null;
@@ -5553,8 +5554,8 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     // TODO: replace calls to this function with `getOptional`
-    pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
-        if (get(this, global, property)) |prop| {
+    pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?JSValue {
+        if (try get2(this, global, property)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull()) return null;
             return prop;
         }
@@ -5766,8 +5767,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub inline fn getOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
-        const prop = try this.get2(globalThis, property_name) orelse
-            return null;
+        const prop = try this.get2(globalThis, property_name) orelse return null;
         bun.assert(prop != .zero);
 
         if (!prop.isUndefinedOrNull()) {
@@ -6802,7 +6802,7 @@ pub const CallFrame = opaque {
         const ptr = self.argumentsPtr();
         return switch (@as(u4, @min(len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
-            inline 1...9 => |count| Arguments(max).init(comptime @min(count, max), ptr),
+            inline 1...10 => |count| Arguments(max).init(comptime @min(count, max), ptr),
             else => unreachable,
         };
     }

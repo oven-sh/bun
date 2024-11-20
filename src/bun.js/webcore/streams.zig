@@ -612,7 +612,7 @@ pub const StreamStart = union(Tag) {
                             },
                         },
                     };
-                } else if (value.getTruthy(globalThis, "fd")) |fd_value| {
+                } else if (try value.getTruthy(globalThis, "fd")) |fd_value| {
                     if (!fd_value.isAnyInt()) {
                         return .{
                             .err = Syscall.Error{

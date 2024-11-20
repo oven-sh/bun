@@ -1665,11 +1665,11 @@ pub const Subprocess = struct {
         return JSC.JSValue.jsNull();
     }
 
-    pub fn spawn(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) JSValue {
+    pub fn spawn(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) bun.JSError!JSValue {
         return spawnMaybeSync(globalThis, args, secondaryArgsValue, false);
     }
 
-    pub fn spawnSync(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) JSValue {
+    pub fn spawnSync(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) bun.JSError!JSValue {
         return spawnMaybeSync(globalThis, args, secondaryArgsValue, true);
     }
 
@@ -1678,7 +1678,7 @@ pub const Subprocess = struct {
         args_: JSValue,
         secondaryArgsValue: ?JSValue,
         comptime is_sync: bool,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var allocator = arena.allocator();
@@ -1736,7 +1736,7 @@ pub const Subprocess = struct {
             } else if (!args.isObject()) {
                 globalThis.throwInvalidArguments("cmd must be an array", .{});
                 return .zero;
-            } else if (args.getTruthy(globalThis, "cmd")) |cmd_value_| {
+            } else if (try args.getTruthy(globalThis, "cmd")) |cmd_value_| {
                 cmd_value = cmd_value_;
             } else {
                 globalThis.throwInvalidArguments("cmd must be an array", .{});
@@ -1744,7 +1744,7 @@ pub const Subprocess = struct {
             }
 
             if (args.isObject()) {
-                if (args.getTruthy(globalThis, "argv0")) |argv0_| {
+                if (try args.getTruthy(globalThis, "argv0")) |argv0_| {
                     const argv0_str = argv0_.getZigString(globalThis);
                     if (argv0_str.len > 0) {
                         argv0 = argv0_str.toOwnedSliceZ(allocator) catch {
@@ -1755,7 +1755,7 @@ pub const Subprocess = struct {
                 }
 
                 // need to update `cwd` before searching for executable with `Which.which`
-                if (args.getTruthy(globalThis, "cwd")) |cwd_| {
+                if (try args.getTruthy(globalThis, "cwd")) |cwd_| {
                     const cwd_str = cwd_.getZigString(globalThis);
                     if (cwd_str.len > 0) {
                         cwd = cwd_str.toOwnedSliceZ(allocator) catch {
@@ -1840,10 +1840,10 @@ pub const Subprocess = struct {
             if (args != .zero and args.isObject()) {
                 // This must run before the stdio parsing happens
                 if (!is_sync) {
-                    if (args.getTruthy(globalThis, "ipc")) |val| {
+                    if (try args.getTruthy(globalThis, "ipc")) |val| {
                         if (val.isCell() and val.isCallable(globalThis.vm())) {
                             maybe_ipc_mode = ipc_mode: {
-                                if (args.getTruthy(globalThis, "serialization")) |mode_val| {
+                                if (try args.getTruthy(globalThis, "serialization")) |mode_val| {
                                     if (mode_val.isString()) {
                                         break :ipc_mode IPC.Mode.fromJS(globalThis, mode_val) orelse {
                                             if (!globalThis.hasException()) {
@@ -1866,7 +1866,7 @@ pub const Subprocess = struct {
                     }
                 }
 
-                if (args.getTruthy(globalThis, "signal")) |signal_val| {
+                if (try args.getTruthy(globalThis, "signal")) |signal_val| {
                     if (signal_val.as(JSC.WebCore.AbortSignal)) |signal| {
                         abort_signal = signal.ref();
                     } else {
@@ -1874,7 +1874,7 @@ pub const Subprocess = struct {
                     }
                 }
 
-                if (args.getTruthy(globalThis, "onDisconnect")) |onDisconnect_| {
+                if (try args.getTruthy(globalThis, "onDisconnect")) |onDisconnect_| {
                     if (!onDisconnect_.isCell() or !onDisconnect_.isCallable(globalThis.vm())) {
                         globalThis.throwInvalidArguments("onDisconnect must be a function or undefined", .{});
                         return .zero;
@@ -1886,7 +1886,7 @@ pub const Subprocess = struct {
                         onDisconnect_.withAsyncContextIfNeeded(globalThis);
                 }
 
-                if (args.getTruthy(globalThis, "onExit")) |onExit_| {
+                if (try args.getTruthy(globalThis, "onExit")) |onExit_| {
                     if (!onExit_.isCell() or !onExit_.isCallable(globalThis.vm())) {
                         globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
                         return .zero;
@@ -1898,7 +1898,7 @@ pub const Subprocess = struct {
                         onExit_.withAsyncContextIfNeeded(globalThis);
                 }
 
-                if (args.getTruthy(globalThis, "env")) |object| {
+                if (try args.getTruthy(globalThis, "env")) |object| {
                     if (!object.isObject()) {
                         globalThis.throwInvalidArguments("env must be an object", .{});
                         return .zero;

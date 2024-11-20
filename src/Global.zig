@@ -118,6 +118,10 @@ pub fn exit(code: u32) noreturn {
 
     switch (Environment.os) {
         .mac => std.c.exit(@bitCast(code)),
+        .windows => {
+            Bun__onExit();
+            std.os.windows.kernel32.ExitProcess(code);
+        },
         else => bun.C.quick_exit(@bitCast(code)),
     }
 }

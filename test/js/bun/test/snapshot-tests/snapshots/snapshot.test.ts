@@ -199,7 +199,7 @@ class SnapshotTester {
       // update snapshots now, using -u flag unless this is the first run
       await $`cd ${this.dir} && ${bunExe()} test ${isFirst ? "" : "-u"} ./snapshot.test.ts`.quiet();
       // make sure the snapshot changed & didn't grow
-      const newContents = await Bun.file(this.dir + "/__snapshots__/snapshot.test.ts.snap").text();
+      const newContents = await this.getSnapshotContents();
       if (!isFirst) {
         expect(newContents).not.toStartWith(this.targetSnapshotContents);
         expect(newContents).toMatchSnapshot();
@@ -209,6 +209,13 @@ class SnapshotTester {
     // run, make sure snapshot does not change
     await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.quiet();
     expect(await Bun.file(this.dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(this.targetSnapshotContents);
+  }
+  async setSnapshotFile(contents: string) {
+    await Bun.write(this.dir + "/__snapshots__/snapshot.test.ts.snap", contents);
+    this.isFirst = true;
+  }
+  async getSnapshotContents(): Promise<string> {
+    return await Bun.file(this.dir + "/__snapshots__/snapshot.test.ts.snap").text();
   }
 }
 
@@ -238,6 +245,18 @@ describe("snapshots", async () => {
     await t.update(defaultWrap("'\\n'"));
     await t.update(defaultWrap("'\\r'"), { shouldNotError: true });
     await t.update(defaultWrap("'\\r\\n'"), { shouldNotError: true });
+  });
+
+  test("don't grow file on error", async () => {
+    await t.setSnapshotFile("exports[`snap 1`] = `hello`goodbye`;");
+    try {
+      await t.update(/*js*/ `
+        test("t1", () => {expect("abc def ghi jkl").toMatchSnapshot();})
+        test("t2", () => {expect("abc\`def").toMatchSnapshot();})
+        test("t3", () => {expect("abc def ghi").toMatchSnapshot();})
+      `);
+    } catch (e) {}
+    expect(await t.getSnapshotContents()).toBe("exports[`snap 1`] = `hello`goodbye`;");
   });
 
   const t2 = new SnapshotTester();

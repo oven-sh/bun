@@ -266,7 +266,10 @@ pub const Snapshots = struct {
             }
 
             this._current_file = file;
-            try this.parseFile();
+            this.parseFile() catch |err| {
+                this._current_file = null;
+                return err;
+            };
         }
 
         return JSC.Maybe(void).success;

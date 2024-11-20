@@ -7,8 +7,8 @@ describe("bun shell", () => {
   it.todo("does not segfault", async () => {
     await $`echo ${Array(1000000).fill("a")}`;
   });
-  it.todo("passes correct number of arguments", async () => {
-    expect(await $`echo ${""} ${""} ${""}`.text()).toBe("  \n");
+  it.todo("passes correct number of arguments with empties", async () => {
+    expect(await $`echo ${"1"} ${""} ${"2"}`.text()).toBe("1  2\n");
   });
   it("doesn't cause invalid js string ref error with a number after a string ref", async () => {
     expect(await $`echo ${'"'}1`.text()).toBe('"1\n');
@@ -31,6 +31,9 @@ describe("bun shell", () => {
   });
   it("does not crash with an invalid string ref 5", async () => {
     expect(() => $`echo __bunstr_123a`.text()).toThrowError("Invalid JS string ref (missing '.' at end)");
+  });
+  it("does not crash with an invalid string ref 6", async () => {
+    expect(await $`echo ${'"'} __bunstr_0.`.text()).toBe('" "\n');
   });
   it("doesn't parse string refs inside substitution", async () => {
     expect(await $`echo ${"\x08__bunstr_123."}`.text()).toBe("\x08__bunstr_123.\n");

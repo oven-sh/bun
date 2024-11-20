@@ -423,8 +423,7 @@ pub const TextEncoderStreamEncoder = struct {
     pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callFrame.arguments(1).slice();
         if (arguments.len == 0) {
-            globalObject.throwNotEnoughArguments("TextEncoderStreamEncoder.encode", 1, arguments.len);
-            return .zero;
+            return globalObject.throwNotEnoughArguments("TextEncoderStreamEncoder.encode", 1, arguments.len);
         }
 
         const str: ZigString = (arguments[0].toStringOrNull(globalObject) orelse return .zero).getZigString(globalObject);

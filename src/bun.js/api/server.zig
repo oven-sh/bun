@@ -5073,8 +5073,7 @@ pub const ServerWebSocket = struct {
         this.this_value = this_value;
 
         if (args.len < 1) {
-            globalThis.throwNotEnoughArguments("cork", 1, 0);
-            return .zero;
+            return globalThis.throwNotEnoughArguments("cork", 1, 0);
         }
 
         const callback = args.ptr[0];
@@ -5764,8 +5763,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn doSubscriberCount(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments(1);
             if (arguments.len < 1) {
-                globalThis.throwNotEnoughArguments("subscriberCount", 1, 0);
-                return .zero;
+                return globalThis.throwNotEnoughArguments("subscriberCount", 1, 0);
             }
 
             if (arguments.ptr[0].isEmptyOrUndefinedOrNull()) {
@@ -6087,8 +6085,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn onReload(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments(1).slice();
             if (arguments.len < 1) {
-                globalThis.throwNotEnoughArguments("reload", 1, 0);
-                return .zero;
+                return globalThis.throwNotEnoughArguments("reload", 1, 0);
             }
 
             var args_slice = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);

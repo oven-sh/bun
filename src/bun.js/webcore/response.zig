@@ -1907,8 +1907,7 @@ pub const Fetch = struct {
         const arguments = callframe.arguments(1).slice();
 
         if (arguments.len < 1) {
-            globalObject.throwNotEnoughArguments("fetch.preconnect", 1, arguments.len);
-            return .zero;
+            return globalObject.throwNotEnoughArguments("fetch.preconnect", 1, arguments.len);
         }
 
         var url_str = try JSC.URL.hrefFromJS(arguments[0], globalObject);

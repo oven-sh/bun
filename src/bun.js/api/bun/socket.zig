@@ -4222,15 +4222,13 @@ pub fn jsAddServerName(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 
     const arguments = callframe.arguments(3);
     if (arguments.len < 3) {
-        global.throwNotEnoughArguments("addServerName", 3, arguments.len);
-        return .zero;
+        return global.throwNotEnoughArguments("addServerName", 3, arguments.len);
     }
     const listener = arguments.ptr[0];
     if (listener.as(Listener)) |this| {
         return this.addServerName(global, arguments.ptr[1], arguments.ptr[2]);
     }
-    global.throw("Expected a Listener instance", .{});
-    return .zero;
+    return global.throw2("Expected a Listener instance", .{});
 }
 
 pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -4349,8 +4347,7 @@ pub fn jsIsNamedPipeSocket(global: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 
     const arguments = callframe.arguments(3);
     if (arguments.len < 1) {
-        global.throwNotEnoughArguments("isNamedPipeSocket", 1, arguments.len);
-        return .zero;
+        return global.throwNotEnoughArguments("isNamedPipeSocket", 1, arguments.len);
     }
     const socket = arguments.ptr[0];
     if (socket.as(TCPSocket)) |this| {

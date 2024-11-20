@@ -147,6 +147,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     _ = bun.spawnSync(&.{
         .argv = argv,
         .envp = null,
+        .deathsig = .SIGTERM,
 
         .cwd = cwd,
         .stderr = .inherit,
@@ -1515,6 +1516,7 @@ pub const CreateCommand = struct {
                 .stderr = .inherit,
                 .stdout = .inherit,
                 .stdin = .inherit,
+                .deathsig = .SIGTERM,
 
                 .windows = if (Environment.isWindows) .{
                     .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),

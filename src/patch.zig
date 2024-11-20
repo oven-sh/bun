@@ -1291,6 +1291,7 @@ pub fn spawnOpts(
         .cwd = cwd,
         .envp = envp,
         .argv = argv,
+        .deathsig = .SIGTERM,
         .windows = if (bun.Environment.isWindows) .{ .loop = switch (loop.*) {
             .js => |x| .{ .js = x },
             .mini => |*x| .{ .mini = x },

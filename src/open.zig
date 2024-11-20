@@ -36,6 +36,7 @@ pub fn openURL(url: stringZ) void {
             .stderr = .inherit,
             .stdout = .inherit,
             .stdin = .inherit,
+            .deathsig = .SIGTERM,
 
             .windows = if (Environment.isWindows) .{
                 .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),

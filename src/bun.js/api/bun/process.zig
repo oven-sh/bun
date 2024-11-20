@@ -970,6 +970,11 @@ pub const PosixSpawnOptions = struct {
     argv0: ?[*:0]const u8 = null,
     stream: bool = true,
 
+    /// Linux-only.
+    ///
+    /// Send a signal to the parent process when the child process exits.
+    deathsig: bun.SignalCode = @enumFromInt(0),
+
     /// Apple Extension: If this bit is set, rather
     /// than returning to the caller, posix_spawn(2)
     /// and posix_spawnp(2) will behave as a more
@@ -1040,6 +1045,9 @@ pub const WindowsSpawnOptions = struct {
     argv0: ?[*:0]const u8 = null,
     stream: bool = true,
     use_execve_on_macos: bool = false,
+
+    /// Linux-only. Does nothing on Windows.
+    deathsig: bun.SignalCode = @enumFromInt(0),
 
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
@@ -1226,6 +1234,10 @@ pub fn spawnProcessPosix(
 
     if (options.detached) {
         flags |= bun.C.POSIX_SPAWN_SETSID;
+    } else if (Environment.isLinux) {
+        if (@intFromEnum(options.deathsig) > 0) {
+            actions.deathsig = @intFromEnum(options.deathsig);
+        }
     }
 
     if (options.cwd.len > 0) {
@@ -1776,6 +1788,7 @@ pub const sync = struct {
         ipc: ?bun.FileDescriptor = null,
         cwd: []const u8 = "",
         detached: bool = false,
+        deathsig: bun.SignalCode = @enumFromInt(0),
 
         argv: []const []const u8,
         /// null = inherit parent env
@@ -1809,6 +1822,7 @@ pub const sync = struct {
                 .stdout = this.stdout.toStdio(),
                 .stderr = this.stderr.toStdio(),
                 .ipc = this.ipc,
+                .deathsig = this.deathsig,
 
                 .cwd = this.cwd,
                 .detached = this.detached,

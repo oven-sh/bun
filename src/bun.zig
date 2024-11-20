@@ -1206,6 +1206,8 @@ pub const SignalCode = enum(u8) {
     SIGSYS = 31,
     _,
 
+    pub const max = @intFromEnum(SignalCode.SIGSYS);
+
     // The `subprocess.kill()` method sends a signal to the child process. If no
     // argument is given, the process will be sent the 'SIGTERM' signal.
     pub const default = @intFromEnum(SignalCode.SIGTERM);

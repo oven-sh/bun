@@ -185,6 +185,8 @@ pub const LifecycleScriptSubprocess = struct {
                 },
             .cwd = cwd,
 
+            .deathsig = .SIGTERM,
+
             .windows = if (Environment.isWindows)
                 .{
                     .loop = JSC.EventLoopHandle.init(&manager.event_loop),

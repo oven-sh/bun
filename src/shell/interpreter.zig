@@ -63,7 +63,8 @@ pub fn OOM(e: anyerror) noreturn {
     bun.outOfMemory();
 }
 
-const log = bun.Output.scoped(.SHELL, false);
+const logscope = bun.Output.Scoped(.SHELL, false);
+const log = logscope.log;
 
 const assert = bun.assert;
 
@@ -1297,6 +1298,19 @@ pub const Interpreter = struct {
             try lexer.lex();
             break :brk lexer.get_result();
         };
+
+        if (bun.Environment.enable_logs and logscope.isVisible()) {
+            var log_buf = std.ArrayList(u8).init(arena_allocator);
+            defer log_buf.deinit();
+            try log_buf.append('[');
+            for (lex_result.tokens, 0..) |token, i| {
+                if (i != 0) try log_buf.appendSlice(", ");
+                const tok_str = token.asHumanReadable(lex_result.strpool);
+                try log_buf.writer().print("\"{}\"", .{if (@hasDecl(bun.strings, "formatEscapes")) bun.strings.formatEscapes(tok_str, .{ .quote_char = '"' }) else bun.strings.QuoteEscapeFormat{ .data = tok_str }});
+            }
+            try log_buf.append(']');
+            logscope.log("Shell command tokens: {s}", .{log_buf.items});
+        }
 
         if (lex_result.errors.len > 0) {
             out_lex_result.* = lex_result;

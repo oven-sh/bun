@@ -1073,11 +1073,9 @@ pub const ImportScanner = struct {
         for (stmts) |_stmt| {
             var stmt = _stmt; // copy
             switch (stmt.data) {
-                .s_import => |st__| {
-                    var st = st__.*;
-                    defer {
-                        st__.* = st;
-                    }
+                .s_import => |import_ptr| {
+                    var st = import_ptr.*;
+                    defer import_ptr.* = st;
 
                     const record: *ImportRecord = &p.import_records.items[st.import_record_index];
 
@@ -3247,6 +3245,14 @@ pub const Parser = struct {
         var opts = ParseStatementOptions{ .is_module_scope = true };
         const parse_tracer = bun.tracy.traceNamed(@src(), "JSParser.parse");
 
+        if (self.options.features.hot_module_reloading) {
+            // Hot module reloading wraps everything in a closure. As a hack to
+            // prevent multiple files from interfering with each other, a fake
+            // scope is pushed to effectively wrap the file in a function.
+            // Locations -3 and -2 are used to avoid assertions.
+            // _ = try p.pushScopeForParsePass(.entry, logger.Loc.Empty);
+        }
+
         // Parsing seems to take around 2x as much time as visiting.
         // Which makes sense.
         // June 4: "Parsing took: 18028000"
@@ -3268,6 +3274,10 @@ pub const Parser = struct {
 
         const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
         try p.prepareForVisitPass();
+
+        if (self.options.features.hot_module_reloading) {
+            // try p.pushScopeForVisitPass(.entry, logger.Loc.Empty);
+        }
 
         // ESM is always strict mode. I don't think we need this.
         // // Strip off a leading "use strict" directive when not bundling
@@ -5934,10 +5944,9 @@ fn NewParser_(
                         }
                     }
 
-                    return p.newExpr(E.Dot{
-                        .target = p.newExpr(E.Identifier.init(ns_alias.namespace_ref), loc),
-                        .name = ns_alias.alias,
-                        .name_loc = loc,
+                    return p.newExpr(E.ImportIdentifier{
+                        .ref = ident.ref,
+                        .was_originally_identifier = true,
                     }, loc);
                 }
             }
@@ -9805,12 +9814,12 @@ fn NewParser_(
                                 const namespace_ref = p.storeNameInRef(
                                     std.fmt.allocPrint(
                                         p.allocator,
-                                        "import_{any}",
+                                        "import_{}",
                                         .{
                                             path_name.fmtIdentifier(),
                                         },
-                                    ) catch unreachable,
-                                ) catch unreachable;
+                                    ) catch bun.outOfMemory(),
+                                ) catch bun.outOfMemory();
 
                                 if (comptime track_symbol_usage_during_parse_pass) {
                                     // In the scan pass, we need _some_ way of knowing *not* to mark as unused
@@ -16224,7 +16233,7 @@ fn NewParser_(
 
                     // Handle assigning to a constant
                     if (in.assign_target != .none) {
-                        if (p.symbols.items[result.ref.innerIndex()].kind == .constant) {
+                        if (p.symbols.items[result.ref.innerIndex()].kind == .constant) { // TODO: silence this for runtime transpiler
                             const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
                             var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
                             notes[0] = logger.Data{

@@ -1471,7 +1471,7 @@ pub fn finalizeBundle(
                 Output.prettyError("<cyan>[x{d}]<r> ", .{dev.bundles_since_last_error});
             }
         } else {
-            dev.bundles_since_last_error = 1;
+            dev.bundles_since_last_error = 0;
         }
 
         Output.prettyError("<green>{s} in {d}ms<r>", .{

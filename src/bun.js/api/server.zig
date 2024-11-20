@@ -6564,14 +6564,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             errdefer bun.default_allocator.free(base_url);
 
             const dev_server = if (bun.FeatureFlags.bake) if (config.bake) |*bake_options| dev_server: {
-                bun.Output.warn(
-                    \\Be advised that Bun Bake is highly experimental, and its API
-                    \\will have breaking changes. Join the <magenta>#bake<r> Discord
-                    \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
-                    \\
-                    \\
-                , .{});
-                bun.Output.flush();
+                bun.bake.printWarning();
 
                 break :dev_server try bun.bake.DevServer.init(.{
                     .arena = bake_options.arena.allocator(),

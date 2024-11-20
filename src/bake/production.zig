@@ -2,14 +2,7 @@
 const log = bun.Output.scoped(.production, false);
 
 pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
-    Output.warn(
-        \\Be advised that Bun Bake is highly experimental, and its API
-        \\will have breaking changes. Join the <magenta>#bake<r> Discord
-        \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
-        \\
-        \\
-    , .{});
-    Output.flush();
+    bun.bake.printWarning();
 
     if (ctx.args.entry_points.len > 1) {
         Output.errGeneric("bun build --app only accepts one entrypoint", .{});

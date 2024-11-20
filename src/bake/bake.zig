@@ -714,6 +714,20 @@ pub const PatternBuffer = struct {
     }
 };
 
+pub fn printWarning() void {
+    // Silence this for the test suite
+    if (bun.getenvZ("BUN_DEV_SERVER_TEST_RUNNER") == null) {
+        bun.Output.warn(
+            \\Be advised that Bun Bake is highly experimental, and its API
+            \\will have breaking changes. Join the <magenta>#bake<r> Discord
+            \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
+            \\
+            \\
+        , .{});
+        bun.Output.flush();
+    }
+}
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

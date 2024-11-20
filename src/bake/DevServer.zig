@@ -135,7 +135,7 @@ next_bundle: struct {
 
 // Debugging
 
-dump_dir: ?std.fs.Dir,
+dump_dir: if (bun.FeatureFlags.bake_debugging_features) ?std.fs.Dir else void,
 /// Reference count to number of active sockets with the visualizer enabled.
 emit_visualizer_events: u32,
 has_pre_crash_handler: bool,

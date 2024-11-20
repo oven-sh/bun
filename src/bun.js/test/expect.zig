@@ -107,9 +107,11 @@ pub const Expect = struct {
             Promise = 8,
             InstanceOf = 9,
 
-            extern fn AsymmetricMatcherConstructorType__fromJS(globalObject: *JSGlobalObject, value: JSValue) u8;
-            pub fn fromJS(globalObject: *JSGlobalObject, value: JSValue) AsymmetricMatcherConstructorType {
-                return @enumFromInt(AsymmetricMatcherConstructorType__fromJS(globalObject, value));
+            extern fn AsymmetricMatcherConstructorType__fromJS(globalObject: *JSGlobalObject, value: JSValue) i8;
+            pub fn fromJS(globalObject: *JSGlobalObject, value: JSValue) bun.JSError!AsymmetricMatcherConstructorType {
+                const result = AsymmetricMatcherConstructorType__fromJS(globalObject, value);
+                if (result == -1) return error.JSError;
+                return @enumFromInt(result);
             }
         };
 
@@ -556,7 +558,7 @@ pub const Expect = struct {
 
                 const signature = comptime getSignature("toBe", "<green>expected<r>", false);
                 if (left.deepEquals(right, globalThis) or left.strictDeepEquals(right, globalThis)) {
-                    const fmt = signature ++
+                    const fmt =
                         (if (!has_custom_label) "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>" else "") ++
                         "\n\nExpected: <green>{any}<r>\n" ++
                         "Received: serializes to the same string\n";
@@ -2380,8 +2382,8 @@ pub const Expect = struct {
             if (expected_value == .zero or expected_value.isUndefined()) {
                 const signature_no_args = comptime getSignature("toThrow", "", true);
                 if (result.toError()) |err| {
-                    const name = err.getTruthyComptime(globalThis, "name") orelse JSValue.undefined;
-                    const message = err.getTruthyComptime(globalThis, "message") orelse JSValue.undefined;
+                    const name = try err.getTruthyComptime(globalThis, "name") orelse JSValue.undefined;
+                    const message = try err.getTruthyComptime(globalThis, "message") orelse JSValue.undefined;
                     const fmt = signature_no_args ++ "\n\nError name: <red>{any}<r>\nError message: <red>{any}<r>\n";
                     globalThis.throwPretty(fmt, .{
                         name.toFmt(&formatter),
@@ -5194,9 +5196,7 @@ pub const ExpectAny = struct {
 
     flags: Expect.Flags = .{},
 
-    pub fn finalize(
-        this: *ExpectAny,
-    ) callconv(.C) void {
+    pub fn finalize(this: *ExpectAny) callconv(.C) void {
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -5205,8 +5205,7 @@ pub const ExpectAny = struct {
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len == 0) {
-            globalThis.throw("any() expects to be passed a constructor function. Please pass one or use anything() to match any object.", .{});
-            return .zero;
+            return globalThis.throw2("any() expects to be passed a constructor function. Please pass one or use anything() to match any object.", .{});
         }
 
         const constructor = arguments[0];
@@ -5214,19 +5213,19 @@ pub const ExpectAny = struct {
         if (!constructor.isConstructor()) {
             const fmt = "<d>expect.<r>any<d>(<r>constructor<d>)<r>\n\nExpected a constructor\n";
             globalThis.throwPretty(fmt, .{});
-            return .zero;
+            return error.JSError;
         }
 
-        const asymmetric_matcher_constructor_type = Expect.Flags.AsymmetricMatcherConstructorType.fromJS(globalThis, constructor);
+        const asymmetric_matcher_constructor_type = try Expect.Flags.AsymmetricMatcherConstructorType.fromJS(globalThis, constructor);
 
         // I don't think this case is possible, but just in case!
         if (globalThis.hasException()) {
-            return .zero;
+            return error.JSError;
         }
 
         var any = globalThis.bunVM().allocator.create(ExpectAny) catch {
             globalThis.throwOutOfMemory();
-            return .zero;
+            return error.JSError;
         };
         any.* = .{
             .flags = .{

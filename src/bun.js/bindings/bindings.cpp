@@ -221,7 +221,8 @@ enum class AsymmetricMatcherResult : uint8_t {
     NOT_MATCHER,
 };
 
-enum class AsymmetricMatcherConstructorType : uint8_t {
+enum class AsymmetricMatcherConstructorType : int8_t {
+    exception = -1,
     none = 0,
     Symbol = 1,
     String = 2,
@@ -242,7 +243,7 @@ enum class AsymmetricMatcherConstructorType : uint8_t {
 
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC__JSValue instanceValue, JSC__JSGlobalObject* globalObject, ExpectFlags* flags, JSC__JSValue* value, AsymmetricMatcherConstructorType* constructorType);
 
-extern "C" uint8_t AsymmetricMatcherConstructorType__fromJS(JSC__JSGlobalObject* globalObject, JSC__JSValue encodedValue)
+extern "C" int8_t AsymmetricMatcherConstructorType__fromJS(JSC__JSGlobalObject* globalObject, JSC__JSValue encodedValue)
 {
     JSValue value = JSValue::decode(encodedValue);
     if (value.isObject()) {
@@ -258,21 +259,21 @@ extern "C" uint8_t AsymmetricMatcherConstructorType__fromJS(JSC__JSGlobalObject*
         }
 
         auto stringConstructorValue = globalObject->stringPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, -1);
 
         if (stringConstructorValue == object) {
             return static_cast<uint8_t>(AsymmetricMatcherConstructorType::String);
         }
 
         auto symbolConstructorValue = globalObject->symbolPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, -1);
 
         if (symbolConstructorValue == object) {
             return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Symbol);
         }
 
         auto bigIntConstructorValue = globalObject->bigIntPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, -1);
 
         if (bigIntConstructorValue == object) {
             return static_cast<uint8_t>(AsymmetricMatcherConstructorType::BigInt);
@@ -412,6 +413,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         case AsymmetricMatcherConstructorType::InstanceOf: {
             break;
         }
+        case AsymmetricMatcherConstructorType::exception:
         case AsymmetricMatcherConstructorType::none: {
             ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid constructor type");
             break;
@@ -942,8 +944,10 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return false;
     }
 
+    case JSAsJSONType:
     case JSDOMWrapperType: {
-        if (c2Type == JSDOMWrapperType) {
+        if (c2Type == c1Type) {
+
             // https://github.com/oven-sh/bun/issues/4089
             // https://github.com/oven-sh/bun/issues/6492
             auto* url2 = jsDynamicCast<JSDOMURL*>(v2);
@@ -953,6 +957,10 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 // if one is a URL and the other is not a URL, toStrictEqual returns false.
                 if ((url2 == nullptr) != (url1 == nullptr)) {
                     return false;
+                }
+            } else {
+                if ((url1 == nullptr) != (url2 == nullptr)) {
+                    goto compareAsNormalValue;
                 }
             }
 
@@ -964,8 +972,91 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 if (url1->wrapped().href() != url2->wrapped().href()) {
                     return false;
                 }
+
+                goto compareAsNormalValue;
+            }
+
+            // TODO: FormData.
+            // It's complicated because it involves Blob.
+
+            {
+                auto urlSearchParams1 = jsDynamicCast<JSURLSearchParams*>(v1);
+                auto urlSearchParams2 = jsDynamicCast<JSURLSearchParams*>(v2);
+                if (urlSearchParams1 && urlSearchParams2) {
+                    auto& wrapped1 = urlSearchParams1->wrapped();
+                    const auto& wrapped2 = urlSearchParams2->wrapped();
+                    if (wrapped1.size() != wrapped2.size()) {
+                        return false;
+                    }
+
+                    auto iter1 = wrapped1.createIterator();
+                    while (const auto& maybePair = iter1.next()) {
+                        const auto& key = maybePair->key;
+                        const auto& value = maybePair->value;
+                        const auto& maybeValue = wrapped2.get(key);
+                        if (!maybeValue || maybeValue != value) {
+                            return false;
+                        }
+                    }
+
+                    goto compareAsNormalValue;
+                } else {
+                    if constexpr (isStrict) {
+                        // if one is a URLSearchParams and the other is not a URLSearchParams, toStrictEqual should return false.
+                        if ((urlSearchParams2 == nullptr) != (urlSearchParams1 == nullptr)) {
+                            return false;
+                        }
+                    } else {
+                        if ((urlSearchParams1 == nullptr) != (urlSearchParams2 == nullptr)) {
+                            goto compareAsNormalValue;
+                        }
+                    }
+                }
+            }
+
+            {
+                auto headers1 = jsDynamicCast<JSFetchHeaders*>(v1);
+                auto headers2 = jsDynamicCast<JSFetchHeaders*>(v2);
+                if (headers1 && headers2) {
+                    auto& wrapped1 = headers1->wrapped();
+                    const auto& wrapped2 = headers2->wrapped();
+                    if (wrapped1.size() != wrapped2.size()) {
+                        return false;
+                    }
+
+                    auto iter1 = wrapped1.createIterator();
+                    while (const auto& maybePair = iter1.next()) {
+                        const auto& key = maybePair->key;
+                        const auto& value = maybePair->value;
+                        const auto& maybeValue = wrapped2.get(key);
+                        if (maybeValue.hasException()) {
+                            return false;
+                        }
+
+                        if (maybeValue.returnValue() != value) {
+                            return false;
+                        }
+                    }
+
+                    goto compareAsNormalValue;
+                } else {
+                    if constexpr (isStrict) {
+                        // if one is a FetchHeaders and the other is not a FetchHeaders, toStrictEqual should return false.
+                        if ((headers2 == nullptr) != (headers1 == nullptr)) {
+                            return false;
+                        }
+                    } else {
+                        if ((headers1 == nullptr) != (headers2 == nullptr)) {
+                            goto compareAsNormalValue;
+                        }
+                    }
+                }
             }
         }
+
+        goto compareAsNormalValue;
+
+    compareAsNormalValue:
         break;
     }
 

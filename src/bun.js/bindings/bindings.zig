@@ -1100,9 +1100,7 @@ pub const DOMFormData = opaque {
         DOMFormData__toQueryString(this, ctx, &Wrapper.run);
     }
 
-    pub fn fromJS(
-        value: JSValue,
-    ) ?*DOMFormData {
+    pub fn fromJS(value: JSValue) ?*DOMFormData {
         return shim.cppFn("fromJS", .{
             value,
         });
@@ -3144,11 +3142,11 @@ pub const JSGlobalObject = opaque {
         typename: []const u8,
         value: JSValue,
     ) JSValue {
-        const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
-        defer ty_str.deinit();
-        this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, bun.fmt.quote(ty_str.slice()) }).throw();
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = this };
+        this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, value.toFmt(&formatter) }).throw();
         return .zero;
     }
+
     pub fn throwInvalidArgumentRangeValue(
         this: *JSGlobalObject,
         argname: []const u8,
@@ -3185,8 +3183,8 @@ pub const JSGlobalObject = opaque {
         comptime name_: []const u8,
         comptime expected: usize,
         got: usize,
-    ) void {
-        this.throwValue(this.createNotEnoughArguments(name_, expected, got));
+    ) bun.JSError {
+        return this.throwValue2(this.createNotEnoughArguments(name_, expected, got));
     }
 
     extern fn JSC__JSGlobalObject__reload(JSC__JSGlobalObject__ptr: *JSGlobalObject) void;
@@ -3400,35 +3398,18 @@ pub const JSGlobalObject = opaque {
         return this.vm().throwError2(this, value);
     }
 
-    pub fn throwError(
-        this: *JSGlobalObject,
-        err: anyerror,
-        comptime fmt: [:0]const u8,
-    ) void {
-        var str = ZigString.init(std.fmt.allocPrint(this.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}) catch return);
+    pub fn throwError(this: *JSGlobalObject, err: anyerror, comptime fmt: [:0]const u8) bun.JSError {
+        var str = ZigString.init(try std.fmt.allocPrint(this.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}));
+        defer this.bunVM().allocator.free(ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
         str.markUTF8();
         const err_value = str.toErrorInstance(this);
-        this.vm().throwError(this, err_value);
-        this.bunVM().allocator.free(ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
-    }
-
-    pub fn handleError(
-        this: *JSGlobalObject,
-        err: anyerror,
-        comptime fmt: [:0]const u8,
-    ) JSValue {
-        this.throwError(err, fmt);
-        return JSValue.jsUndefined();
+        return this.vm().throwError2(this, err_value);
     }
 
     pub fn ref(this: *JSGlobalObject) C_API.JSContextRef {
         return @as(C_API.JSContextRef, @ptrCast(this));
     }
     pub const ctx = ref;
-
-    pub inline fn ptr(this: *JSGlobalObject) *JSGlobalObject {
-        return this;
-    }
 
     extern fn JSC__JSGlobalObject__createAggregateError(*JSGlobalObject, [*]const JSValue, usize, *const ZigString) JSValue;
     pub fn createAggregateError(globalObject: *JSGlobalObject, errors: []const JSValue, message: *const ZigString) JSValue {
@@ -5147,6 +5128,7 @@ pub const JSValue = enum(i64) {
         });
     }
 
+    /// Deprecated: replace with 'toBunString2'
     pub inline fn getZigString(this: JSValue, global: *JSGlobalObject) ZigString {
         var str = ZigString.init("");
         this.toZigString(&str, global);
@@ -5507,7 +5489,7 @@ pub const JSValue = enum(i64) {
     }
 
     // TODO: replace calls to this function with `getOptional`
-    pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
+    pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) bun.JSError!?JSValue {
         if (comptime bun.ComptimeEnumMap(BuiltinName).has(property)) {
             if (fastGet(this, global, @field(BuiltinName, property))) |prop| {
                 if (prop.isEmptyOrUndefinedOrNull()) return null;
@@ -5521,8 +5503,8 @@ pub const JSValue = enum(i64) {
     }
 
     // TODO: replace calls to this function with `getOptional`
-    pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
-        if (get(this, global, property)) |prop| {
+    pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?JSValue {
+        if (try get2(this, global, property)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull()) return null;
             return prop;
         }
@@ -5734,8 +5716,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub inline fn getOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
-        const prop = try this.get2(globalThis, property_name) orelse
-            return null;
+        const prop = try this.get2(globalThis, property_name) orelse return null;
         bun.assert(prop != .zero);
 
         if (!prop.isUndefinedOrNull()) {
@@ -6770,7 +6751,7 @@ pub const CallFrame = opaque {
         const ptr = self.argumentsPtr();
         return switch (@as(u4, @min(len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
-            inline 1...9 => |count| Arguments(max).init(comptime @min(count, max), ptr),
+            inline 1...10 => |count| Arguments(max).init(comptime @min(count, max), ptr),
             else => unreachable,
         };
     }
@@ -7038,14 +7019,18 @@ pub const URL = opaque {
 
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result
     /// If it fails, the tag is marked Dead
-    pub fn hrefFromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) String {
+    pub fn hrefFromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
         JSC.markBinding(@src());
-        return URL__getHrefFromJS(value, globalObject);
+        const result = URL__getHrefFromJS(value, globalObject);
+        if (globalObject.hasException()) return error.JSError;
+        return result;
     }
 
-    pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) ?*URL {
+    pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!?*URL {
         JSC.markBinding(@src());
-        return URL__fromJS(value, globalObject);
+        const result = URL__fromJS(value, globalObject);
+        if (globalObject.hasException()) return error.JSError;
+        return result;
     }
 
     pub fn fromUTF8(input: []const u8) ?*URL {

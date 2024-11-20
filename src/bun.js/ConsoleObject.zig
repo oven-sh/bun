@@ -683,11 +683,11 @@ pub const FormatOptions = struct {
     single_line: bool = false,
     default_indent: u16 = 0,
 
-    pub fn fromJS(formatOptions: *FormatOptions, globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue) !void {
+    pub fn fromJS(formatOptions: *FormatOptions, globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue) bun.JSError!void {
         const arg1 = arguments[0];
 
         if (arg1.isObject()) {
-            if (arg1.getTruthy(globalThis, "depth")) |opt| {
+            if (try arg1.getTruthy(globalThis, "depth")) |opt| {
                 if (opt.isInt32()) {
                     const arg = opt.toInt32();
                     if (arg < 0) {

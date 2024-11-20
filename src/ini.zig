@@ -615,8 +615,7 @@ pub const IniTestingAPIs = struct {
         try parser.parse(parser.arena.allocator());
 
         return parser.out.toJS(bun.default_allocator, globalThis) catch |e| {
-            globalThis.throwError(e, "failed to turn AST into JS");
-            return .undefined;
+            return globalThis.throwError(e, "failed to turn AST into JS");
         };
     }
 };

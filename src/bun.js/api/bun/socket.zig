@@ -225,8 +225,7 @@ const Handlers = struct {
         };
 
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-            globalObject.throwInvalidArguments("Expected \"socket\" to be an object", .{});
-            return error.JSError;
+            return globalObject.throwInvalidArguments2("Expected \"socket\" to be an object", .{});
         }
 
         const pairs = .{
@@ -241,10 +240,9 @@ const Handlers = struct {
             .{ "onHandshake", "handshake" },
         };
         inline for (pairs) |pair| {
-            if (opts.getTruthyComptime(globalObject, pair.@"1")) |callback_value| {
+            if (try opts.getTruthyComptime(globalObject, pair.@"1")) |callback_value| {
                 if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
-                    globalObject.throwInvalidArguments("Expected \"{s}\" callback to be a function", .{pair[1]});
-                    return error.JSError;
+                    return globalObject.throwInvalidArguments2("Expected \"{s}\" callback to be a function", .{pair[1]});
                 }
 
                 @field(handlers, pair.@"0") = callback_value;
@@ -252,19 +250,16 @@ const Handlers = struct {
         }
 
         if (handlers.onData == .zero and handlers.onWritable == .zero) {
-            globalObject.throwInvalidArguments("Expected at least \"data\" or \"drain\" callback", .{});
-            return error.JSError;
+            return globalObject.throwInvalidArguments2("Expected at least \"data\" or \"drain\" callback", .{});
         }
 
-        if (opts.getTruthy(globalObject, "binaryType")) |binary_type_value| {
+        if (try opts.getTruthy(globalObject, "binaryType")) |binary_type_value| {
             if (!binary_type_value.isString()) {
-                globalObject.throwInvalidArguments("Expected \"binaryType\" to be a string", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments2("Expected \"binaryType\" to be a string", .{});
             }
 
-            handlers.binary_type = BinaryType.fromJSValue(globalObject, binary_type_value) orelse {
-                globalObject.throwInvalidArguments("Expected 'binaryType' to be 'ArrayBuffer', 'Uint8Array', or 'Buffer'", .{});
-                return error.JSError;
+            handlers.binary_type = try BinaryType.fromJSValue(globalObject, binary_type_value) orelse {
+                return globalObject.throwInvalidArguments2("Expected 'binaryType' to be 'ArrayBuffer', 'Uint8Array', or 'Buffer'", .{});
             };
         }
 
@@ -316,11 +311,7 @@ pub const SocketConfig = struct {
     exclusive: bool = false,
     allowHalfOpen: bool = false,
 
-    pub fn fromJS(
-        vm: *JSC.VirtualMachine,
-        opts: JSC.JSValue,
-        globalObject: *JSC.JSGlobalObject,
-    ) bun.JSError!SocketConfig {
+    pub fn fromJS(vm: *JSC.VirtualMachine, opts: JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!SocketConfig {
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
         var port: ?u16 = null;
         var exclusive = false;
@@ -329,7 +320,7 @@ pub const SocketConfig = struct {
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
 
-        if (opts.getTruthy(globalObject, "tls")) |tls| {
+        if (try opts.getTruthy(globalObject, "tls")) |tls| {
             if (tls.isBoolean()) {
                 if (tls.toBoolean()) {
                     ssl = JSC.API.ServerConfig.SSLConfig.zero;
@@ -342,16 +333,15 @@ pub const SocketConfig = struct {
         }
 
         hostname_or_unix: {
-            if (opts.getTruthy(globalObject, "fd")) |fd_| {
+            if (try opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
                     break :hostname_or_unix;
                 }
             }
 
-            if (opts.getTruthy(globalObject, "unix")) |unix_socket| {
+            if (try opts.getTruthy(globalObject, "unix")) |unix_socket| {
                 if (!unix_socket.isString()) {
-                    globalObject.throwInvalidArguments("Expected \"unix\" to be a string", .{});
-                    return error.JSError;
+                    return globalObject.throwInvalidArguments2("Expected \"unix\" to be a string", .{});
                 }
 
                 hostname_or_unix = unix_socket.getZigString(globalObject).toSlice(bun.default_allocator);
@@ -366,17 +356,16 @@ pub const SocketConfig = struct {
                 }
             }
 
-            if (opts.getTruthy(globalObject, "exclusive")) |_| {
+            if (try opts.getTruthy(globalObject, "exclusive")) |_| {
                 exclusive = true;
             }
-            if (opts.getTruthy(globalObject, "allowHalfOpen")) |_| {
+            if (try opts.getTruthy(globalObject, "allowHalfOpen")) |_| {
                 allowHalfOpen = true;
             }
 
-            if (opts.getTruthy(globalObject, "hostname") orelse opts.getTruthy(globalObject, "host")) |hostname| {
+            if (try opts.getTruthy(globalObject, "hostname") orelse try opts.getTruthy(globalObject, "host")) |hostname| {
                 if (!hostname.isString()) {
-                    globalObject.throwInvalidArguments("Expected \"hostname\" to be a string", .{});
-                    return error.JSError;
+                    return globalObject.throwInvalidArguments2("Expected \"hostname\" to be a string", .{});
                 }
 
                 var port_value = opts.get(globalObject, "port") orelse JSValue.zero;
@@ -392,8 +381,7 @@ pub const SocketConfig = struct {
                 }
 
                 if (port_value.isEmptyOrUndefinedOrNull()) {
-                    globalObject.throwInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{});
-                    return error.JSError;
+                    return globalObject.throwInvalidArguments2("Expected \"port\" to be a number between 0 and 65535", .{});
                 }
 
                 const porti32 = port_value.coerceToInt32(globalObject);
@@ -402,15 +390,13 @@ pub const SocketConfig = struct {
                 }
 
                 if (porti32 < 0 or porti32 > 65535) {
-                    globalObject.throwInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{});
-                    return error.JSError;
+                    return globalObject.throwInvalidArguments2("Expected \"port\" to be a number between 0 and 65535", .{});
                 }
 
                 port = @intCast(porti32);
 
                 if (hostname_or_unix.len == 0) {
-                    globalObject.throwInvalidArguments("Expected \"hostname\" to be a non-empty string", .{});
-                    return error.JSError;
+                    return globalObject.throwInvalidArguments2("Expected \"hostname\" to be a non-empty string", .{});
                 }
 
                 if (hostname_or_unix.len > 0) {
@@ -419,12 +405,10 @@ pub const SocketConfig = struct {
             }
 
             if (hostname_or_unix.len == 0) {
-                globalObject.throwInvalidArguments("Expected \"unix\" or \"hostname\" to be a non-empty string", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments2("Expected \"unix\" or \"hostname\" to be a non-empty string", .{});
             }
 
-            globalObject.throwInvalidArguments("Expected either \"hostname\" or \"unix\"", .{});
-            return error.JSError;
+            return globalObject.throwInvalidArguments2("Expected either \"hostname\" or \"unix\"", .{});
         }
         errdefer hostname_or_unix.deinit();
 
@@ -1077,7 +1061,7 @@ pub const Listener = struct {
         vm.eventLoop().ensureWaker();
 
         var connection: Listener.UnixOrHost = blk: {
-            if (opts.getTruthy(globalObject, "fd")) |fd_| {
+            if (try opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
                     const fd = fd_.asFileDescriptor();
                     break :blk .{ .fd = fd };
@@ -1882,21 +1866,11 @@ fn NewSocket(comptime ssl: bool) type {
                 }
             } else {
                 // call handhsake callback with authorized and authorization error if has one
-                var authorization_error: JSValue = undefined;
-                if (ssl_error.error_no == 0) {
-                    authorization_error = JSValue.jsNull();
-                } else {
-                    const code = if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code)];
+                const authorization_error: JSValue = if (ssl_error.error_no == 0)
+                    JSValue.jsNull()
+                else
+                    ssl_error.toJS(globalObject);
 
-                    const reason = if (ssl_error.reason == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason)];
-
-                    const fallback = JSC.SystemError{
-                        .code = bun.String.createUTF8(code),
-                        .message = bun.String.createUTF8(reason),
-                    };
-
-                    authorization_error = fallback.toErrorInstance(globalObject);
-                }
                 result = callback.call(globalObject, this_value, &[_]JSValue{
                     this_value,
                     JSValue.jsBoolean(authorized),
@@ -2228,7 +2202,9 @@ fn NewSocket(comptime ssl: bool) type {
             const buffer: JSC.Node.StringOrBuffer = if (data_value.isUndefined())
                 JSC.Node.StringOrBuffer.empty
             else
-                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false) orelse {
+                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false) catch {
+                    return .fail;
+                } orelse {
                     if (!globalObject.hasException()) {
                         _ = globalObject.throwInvalidArgumentTypeValue("data", "string, buffer, or blob", data_value);
                     }
@@ -2337,7 +2313,9 @@ fn NewSocket(comptime ssl: bool) type {
             const buffer: JSC.Node.BlobOrStringOrBuffer = if (args[0].isUndefined())
                 JSC.Node.BlobOrStringOrBuffer{ .string_or_buffer = JSC.Node.StringOrBuffer.empty }
             else
-                JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(globalObject, stack_fallback.get(), args[0], encoding_value, false, true) orelse {
+                JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(globalObject, stack_fallback.get(), args[0], encoding_value, false, true) catch {
+                    return .fail;
+                } orelse {
                     if (!globalObject.hasException()) {
                         _ = globalObject.throwInvalidArgumentTypeValue("data", "string, buffer, or blob", args[0]);
                     }
@@ -3391,7 +3369,7 @@ fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
-            if (opts.getTruthy(globalObject, "tls")) |tls| {
+            if (try opts.getTruthy(globalObject, "tls")) |tls| {
                 if (tls.isBoolean()) {
                     if (tls.toBoolean()) {
                         ssl_opts = JSC.API.ServerConfig.SSLConfig.zero;
@@ -4244,15 +4222,13 @@ pub fn jsAddServerName(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 
     const arguments = callframe.arguments(3);
     if (arguments.len < 3) {
-        global.throwNotEnoughArguments("addServerName", 3, arguments.len);
-        return .zero;
+        return global.throwNotEnoughArguments("addServerName", 3, arguments.len);
     }
     const listener = arguments.ptr[0];
     if (listener.as(Listener)) |this| {
         return this.addServerName(global, arguments.ptr[1], arguments.ptr[2]);
     }
-    global.throw("Expected a Listener instance", .{});
-    return .zero;
+    return global.throw2("Expected a Listener instance", .{});
 }
 
 pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -4284,7 +4260,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
     var handlers = try Handlers.fromJS(globalObject, socket_obj);
 
     var ssl_opts: ?JSC.API.ServerConfig.SSLConfig = null;
-    if (opts.getTruthy(globalObject, "tls")) |tls| {
+    if (try opts.getTruthy(globalObject, "tls")) |tls| {
         if (tls.isBoolean()) {
             if (tls.toBoolean()) {
                 ssl_opts = JSC.API.ServerConfig.SSLConfig.zero;
@@ -4371,8 +4347,7 @@ pub fn jsIsNamedPipeSocket(global: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 
     const arguments = callframe.arguments(3);
     if (arguments.len < 1) {
-        global.throwNotEnoughArguments("isNamedPipeSocket", 1, arguments.len);
-        return .zero;
+        return global.throwNotEnoughArguments("isNamedPipeSocket", 1, arguments.len);
     }
     const socket = arguments.ptr[0];
     if (socket.as(TCPSocket)) |this| {

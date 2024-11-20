@@ -4,8 +4,15 @@ import { $ } from "bun";
 // they're not too hard - add as .sh files, execute them with bun, and expect the results to be the same as the .right files
 
 describe("bun shell", () => {
-  it.todo("does not segfault", async () => {
+  it.todo("does not segfault 1", async () => {
     await $`echo ${Array(1000000).fill("a")}`;
+  });
+  it.todo("does not segfault 2", async () => {
+    await $({ raw: ["echo" + " a".repeat(1000000)] } as any);
+  });
+  it.skip("does not segfault 3", async () => {
+    // slow
+    expect(await $({ raw: ["echo " + 'a"a"'.repeat(1000000)] } as any).text()).toBe("aa".repeat(1000000) + "\n");
   });
   it("passes correct number of arguments with empty string substitutions", async () => {
     expect(await $`echo ${"1"} ${""} ${"2"}`.text()).toBe("1  2\n");

@@ -2112,17 +2112,7 @@ pub const Interpreter = struct {
                             if (this.node.hasTildeExpansion() and this.node.atomsLen() > 1) {
                                 const homedir = this.base.shell.getHomedir();
                                 defer homedir.deref();
-                                if (this.current_out.items.len > 0) {
-                                    switch (this.current_out.items[0]) {
-                                        '/', '\\' => {
-                                            this.current_out.insertSlice(0, homedir.slice()) catch bun.outOfMemory();
-                                        },
-                                        else => {
-                                            // TODO: Handle username
-                                            this.current_out.insert(0, '~') catch bun.outOfMemory();
-                                        },
-                                    }
-                                }
+                                this.current_out.insertSlice(0, homedir.slice()) catch bun.outOfMemory();
                             }
 
                             // NOTE brace expansion + cmd subst has weird behaviour we don't support yet, ex:

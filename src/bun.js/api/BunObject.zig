@@ -899,8 +899,7 @@ pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     // Expect at least one argument.  We allow more than one but ignore them; this
     //  is useful for supporting things like `[1, 2].map(sleepSync)`
     if (arguments.len < 1) {
-        globalObject.throwNotEnoughArguments("sleepSync", 1, 0);
-        return .undefined;
+        return globalObject.throwNotEnoughArguments("sleepSync", 1, 0);
     }
     const arg = arguments.slice()[0];
 
@@ -1491,8 +1490,7 @@ pub const Crypto = struct {
 
             pub fn fromJS(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue, is_async: bool) bun.JSError!PBKDF2 {
                 if (arguments.len < 5) {
-                    globalThis.throwNotEnoughArguments("pbkdf2", 5, arguments.len);
-                    return error.JSError;
+                    return globalThis.throwNotEnoughArguments("pbkdf2", 5, arguments.len);
                 }
 
                 if (!arguments[3].isAnyInt()) {
@@ -2190,16 +2188,12 @@ pub const Crypto = struct {
         }
 
         // Once we have bindings generator, this should be replaced with a generated function
-        pub fn JSPasswordObject__hash(
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSC.JSValue {
+        pub fn JSPasswordObject__hash(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments_ = callframe.arguments(2);
             const arguments = arguments_.ptr[0..arguments_.len];
 
             if (arguments.len < 1) {
-                globalObject.throwNotEnoughArguments("hash", 1, 0);
-                return error.JSError;
+                return globalObject.throwNotEnoughArguments("hash", 1, 0);
             }
 
             var algorithm = PasswordObject.Algorithm.Value.default;
@@ -2225,16 +2219,12 @@ pub const Crypto = struct {
         }
 
         // Once we have bindings generator, this should be replaced with a generated function
-        pub fn JSPasswordObject__hashSync(
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSC.JSValue {
+        pub fn JSPasswordObject__hashSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments_ = callframe.arguments(2);
             const arguments = arguments_.ptr[0..arguments_.len];
 
             if (arguments.len < 1) {
-                globalObject.throwNotEnoughArguments("hash", 1, 0);
-                return error.JSError;
+                return globalObject.throwNotEnoughArguments("hash", 1, 0);
             }
 
             var algorithm = PasswordObject.Algorithm.Value.default;
@@ -2346,16 +2336,12 @@ pub const Crypto = struct {
         };
 
         // Once we have bindings generator, this should be replaced with a generated function
-        pub fn JSPasswordObject__verify(
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSC.JSValue {
+        pub fn JSPasswordObject__verify(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments_ = callframe.arguments(3);
             const arguments = arguments_.ptr[0..arguments_.len];
 
             if (arguments.len < 2) {
-                globalObject.throwNotEnoughArguments("verify", 2, 0);
-                return error.JSError;
+                return globalObject.throwNotEnoughArguments("verify", 2, 0);
             }
 
             var algorithm: ?PasswordObject.Algorithm = null;
@@ -2401,16 +2387,12 @@ pub const Crypto = struct {
         }
 
         // Once we have bindings generator, this should be replaced with a generated function
-        pub fn JSPasswordObject__verifySync(
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSC.JSValue {
+        pub fn JSPasswordObject__verifySync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments_ = callframe.arguments(3);
             const arguments = arguments_.ptr[0..arguments_.len];
 
             if (arguments.len < 2) {
-                globalObject.throwNotEnoughArguments("verify", 2, 0);
-                return JSC.JSValue.undefined;
+                return globalObject.throwNotEnoughArguments("verify", 2, 0);
             }
 
             var algorithm: ?PasswordObject.Algorithm = null;

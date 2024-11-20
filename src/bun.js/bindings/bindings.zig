@@ -3147,6 +3147,7 @@ pub const JSGlobalObject = opaque {
         this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, bun.fmt.quote(ty_str.slice()) }).throw();
         return .zero;
     }
+
     pub fn throwInvalidArgumentRangeValue(
         this: *JSGlobalObject,
         argname: []const u8,
@@ -3183,8 +3184,8 @@ pub const JSGlobalObject = opaque {
         comptime name_: []const u8,
         comptime expected: usize,
         got: usize,
-    ) void {
-        this.throwValue(this.createNotEnoughArguments(name_, expected, got));
+    ) bun.JSError {
+        return this.throwValue2(this.createNotEnoughArguments(name_, expected, got));
     }
 
     extern fn JSC__JSGlobalObject__reload(JSC__JSGlobalObject__ptr: *JSGlobalObject) void;

@@ -1,7 +1,7 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { BuildConfig, BunPlugin, fileURLToPath, PluginBuilder } from "bun";
+import { BuildConfig, BuildOutput, BunPlugin, fileURLToPath, PluginBuilder } from "bun";
 import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
@@ -10,6 +10,7 @@ import { bunEnv, bunExe, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 import { SourceMapConsumer } from "source-map";
+import filenamify from "filenamify";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
 export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
@@ -166,6 +167,7 @@ export interface BundlerTestInput {
   format?: "esm" | "cjs" | "iife" | "internal_bake_dev";
   globalName?: string;
   ignoreDCEAnnotations?: boolean;
+  bytecode?: boolean;
   emitDCEAnnotations?: boolean;
   inject?: string[];
   jsx?: {
@@ -277,6 +279,12 @@ export interface BundlerTestInput {
   timeoutScale?: number;
   /** Multiplier for test timeout when using bun-debug. Debug builds already have a higher timeout. */
   debugTimeoutScale?: number;
+
+  /* determines whether or not anything should be passed to outfile, outdir, etc. */
+  generateOutput?: boolean;
+
+  /** Run after the bun.build function is called with its output */
+  onAfterApiBundle?(build: BuildOutput): Promise<void> | void;
 }
 
 export interface SourceMapTests {
@@ -373,7 +381,7 @@ export interface BundlerTestRef {
   options: BundlerTestInput;
 }
 
-interface ErrorMeta {
+export interface ErrorMeta {
   file: string;
   error: string;
   line?: string;
@@ -461,6 +469,8 @@ function expectBundled(
     // @ts-expect-error
     _referenceFn,
     expectExactFilesize,
+    generateOutput = true,
+    onAfterApiBundle,
     ...unknownProps
   } = opts;
 
@@ -494,7 +504,7 @@ function expectBundled(
   if (metafile === true) metafile = "/metafile.json";
   if (bundleErrors === true) bundleErrors = {};
   if (bundleWarnings === true) bundleWarnings = {};
-  const useOutFile = outfile ? true : outdir ? false : entryPoints.length === 1;
+  const useOutFile = generateOutput == false ? false : outfile ? true : outdir ? false : entryPoints.length === 1;
 
   if (bundling === false && entryPoints.length > 1) {
     throw new Error("bundling:false only supports a single entry point");
@@ -544,7 +554,20 @@ function expectBundled(
       backend = plugins !== undefined ? "api" : "cli";
     }
 
-    let root = path.join(tempDirectory, id);
+    let root = path.join(
+      tempDirectory,
+      id
+        .replaceAll("\\", "/")
+        .replaceAll(":", "-")
+        .replaceAll(" ", "-")
+        .replaceAll("\r\n", "-")
+        .replaceAll("\n", "-")
+        .replaceAll(".", "-")
+        .split("/")
+        .map(a => filenamify(a))
+        .join("/"),
+    );
+
     mkdirSync(root, { recursive: true });
     root = realpathSync(root);
     if (DEBUG) console.log("root:", root);
@@ -552,11 +575,15 @@ function expectBundled(
     const entryPaths = entryPoints.map(file => path.join(root, file));
 
     if (external) {
-      external = external.map(x => (typeof x !== "string" ? x : x.replace(/\{\{root\}\}/g, root)));
+      external = external.map(x =>
+        typeof x !== "string" ? x : x.replaceAll("{{root}}", root.replaceAll("\\", "\\\\")),
+      );
     }
 
+    if (generateOutput === false) outputPaths = [];
+
     outfile = useOutFile ? path.join(root, outfile ?? (compile ? "/out" : "/out.js")) : undefined;
-    outdir = !useOutFile ? path.join(root, outdir ?? "/out") : undefined;
+    outdir = !useOutFile && generateOutput ? path.join(root, outdir ?? "/out") : undefined;
     metafile = metafile ? path.join(root, metafile) : undefined;
     outputPaths = (
       outputPaths
@@ -601,7 +628,9 @@ function expectBundled(
       const filename = path.join(root, file);
       mkdirSync(path.dirname(filename), { recursive: true });
       const formattedContents =
-        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+        typeof contents === "string"
+          ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\"))
+          : contents;
       writeFileSync(filename, formattedContents);
     }
 
@@ -694,6 +723,7 @@ function expectBundled(
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
+              experimentalCss && "--experimental-css",
               external && external.map(x => `--external:${x}`),
               packages && ["--packages", packages],
               conditions && `--conditions=${conditions.join(",")}`,
@@ -984,7 +1014,7 @@ function expectBundled(
           },
           plugins: pluginArray,
           treeShaking,
-          outdir: buildOutDir,
+          outdir: generateOutput ? buildOutDir : undefined,
           sourcemap: sourceMap,
           splitting,
           target,
@@ -992,6 +1022,7 @@ function expectBundled(
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,
+          experimentalCss,
           drop,
         } as BuildConfig;
 
@@ -1024,11 +1055,11 @@ for (const [key, blob] of build.outputs) {
 
         configRef = buildConfig;
         const build = await Bun.build(buildConfig);
+        if (onAfterApiBundle) await onAfterApiBundle(build);
         configRef = null!;
         Bun.gc(true);
 
         const buildLogs = build.logs.filter(x => x.level === "error");
-
         if (buildLogs.length) {
           const allErrors: ErrorMeta[] = [];
           for (const error of buildLogs) {
@@ -1107,6 +1138,7 @@ for (const [key, blob] of build.outputs) {
 
             return testRef(id, opts);
           }
+
           throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
         } else if (expectedErrors && expectedErrors.length > 0) {
           throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
@@ -1323,7 +1355,9 @@ for (const [key, blob] of build.outputs) {
     for (const [file, contents] of Object.entries(runtimeFiles ?? {})) {
       mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
       const formattedContents =
-        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+        typeof contents === "string"
+          ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\"))
+          : contents;
       writeFileSync(path.join(root, file), formattedContents);
     }
 

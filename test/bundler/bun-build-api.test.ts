@@ -27,7 +27,7 @@ describe("Bun.build", () => {
     });
 
     expect(build.outputs).toHaveLength(1);
-    expect(build.outputs[0].kind).toBe("entry-point");
+    expect(build.outputs[0].kind).toBe("asset");
     expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
   });
 

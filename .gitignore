@@ -141,6 +141,7 @@ test/node.js/upstream
 .zig-cache
 scripts/env.local
 *.generated.ts
+src/bake/generated.ts
 
 # Dependencies
 /vendor

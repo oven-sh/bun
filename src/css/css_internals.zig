@@ -17,15 +17,15 @@ const TestKind = enum {
     prefix,
 };
 
-pub fn minifyTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn minifyTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     return testingImpl(globalThis, callframe, .minify);
 }
 
-pub fn prefixTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn prefixTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     return testingImpl(globalThis, callframe, .prefix);
 }
 
-pub fn testWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn testWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     return testingImpl(globalThis, callframe, .normal);
 }
 
@@ -36,7 +36,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     defer arena.reset();
     const alloc = arena.allocator();
 
-    const arguments_ = callframe.arguments(2);
+    const arguments_ = callframe.arguments(3);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
         globalThis.throw("minifyTestWithOptions: expected 2 arguments, got 0", .{});
@@ -71,14 +71,12 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
 
     const parser_options = parser_options: {
         const opts = bun.css.ParserOptions.default(alloc, &log);
-        if (test_kind == .prefix) break :parser_options opts;
+        // if (test_kind == .prefix) break :parser_options opts;
 
         if (options_arg) |optargs| {
-            _ = optargs; // autofix
-            // if (optargs.isObject()) {
-            //     if (optargs.getStr
-            // }
-            std.debug.panic("ZACK: suppor this lol", .{});
+            if (optargs.isObject()) {
+                // minify_options.targets.browsers = targetsFromJS(globalThis, optarg);
+            }
         }
 
         break :parser_options opts;
@@ -94,16 +92,10 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
         .result => |stylesheet_| {
             var stylesheet = stylesheet_;
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
-            switch (test_kind) {
-                .minify => {},
-                .normal => {},
-                .prefix => {
-                    if (options_arg) |optarg| {
-                        if (optarg.isObject()) {
-                            minify_options.targets.browsers = targetsFromJS(globalThis, optarg);
-                        }
-                    }
-                },
+            if (options_arg) |optarg| {
+                if (optarg.isObject()) {
+                    minify_options.targets.browsers = targetsFromJS(globalThis, optarg);
+                }
             }
             _ = stylesheet.minify(alloc, minify_options).assert();
 
@@ -112,6 +104,9 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
                     .minify => true,
                     .normal => false,
                     .prefix => false,
+                },
+                .targets = .{
+                    .browsers = minify_options.targets.browsers,
                 },
             }, &import_records) catch |e| {
                 bun.handleErrorReturnTrace(e, @errorReturnTrace());
@@ -200,7 +195,7 @@ fn targetsFromJS(globalThis: *JSC.JSGlobalObject, jsobj: JSValue) bun.css.target
     return targets;
 }
 
-pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     var arena = arena_ orelse brk: {
         break :brk Arena.init() catch @panic("oopsie arena no good");
     };

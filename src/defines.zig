@@ -66,6 +66,13 @@ pub const DefineData = struct {
         };
     }
 
+    pub fn initStaticString(str: *const js_ast.E.String) DefineData {
+        return .{
+            .value = .{ .e_string = @constCast(str) },
+            .can_be_removed_if_unused = true,
+        };
+    }
+
     pub fn merge(a: DefineData, b: DefineData) DefineData {
         return DefineData{
             .value = b.value,
@@ -128,7 +135,6 @@ pub const DefineData = struct {
         var source = logger.Source{
             .contents = value_str,
             .path = defines_path,
-            .key_path = fs.Path.initWithNamespace("defines", "internal"),
         };
         const expr = try json_parser.parseEnvJSON(&source, _log, allocator);
         const cloned = try expr.data.deepClone(allocator);

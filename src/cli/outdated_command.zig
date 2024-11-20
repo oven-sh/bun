@@ -77,12 +77,7 @@ pub const OutdatedCommand = struct {
                     }
 
                     if (ctx.log.hasErrors()) {
-                        switch (Output.enable_ansi_colors) {
-                            inline else => |enable_ansi_colors| try manager.log.printForLogLevelWithEnableAnsiColors(
-                                Output.errorWriter(),
-                                enable_ansi_colors,
-                            ),
-                        }
+                        try manager.log.print(Output.errorWriter());
                     }
                 }
 
@@ -595,7 +590,7 @@ pub const OutdatedCommand = struct {
 
                     var task = manager.getNetworkTask();
                     task.* = .{
-                        .package_manager = &PackageManager.instance,
+                        .package_manager = PackageManager.get(),
                         .callback = undefined,
                         .task_id = task_id,
                         .allocator = manager.allocator,

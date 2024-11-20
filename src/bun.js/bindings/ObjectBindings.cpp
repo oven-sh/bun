@@ -52,14 +52,16 @@ static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSO
     return false;
 }
 
+// Returns empty for exception, returns deleted if not found.
+// Be careful when handling the return value.
 JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto propertySlot = PropertySlot(object, PropertySlot::InternalMethodType::HasProperty);
+    auto propertySlot = PropertySlot(object, PropertySlot::InternalMethodType::Get);
     auto isDefined = getNonIndexPropertySlotPrototypePollutionMitigation(vm, object, globalObject, name, propertySlot);
 
     if (!isDefined) {
-        return {};
+        return JSValue::decode(JSC::JSValue::ValueDeleted);
     }
 
     scope.assertNoException();

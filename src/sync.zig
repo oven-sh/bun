@@ -535,7 +535,7 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
         pub fn deinit(self: *RwLock) void {
             const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.posix.EAGAIN,
-                else => 0,
+                else => std.c.E.SUCCESS,
             };
 
             const rc = std.c.pthread_rwlock_destroy(&self.rwlock);
@@ -884,7 +884,7 @@ else if (@import("builtin").link_libc)
         pub fn deinit(self: *Mutex) void {
             const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.posix.EAGAIN,
-                else => 0,
+                else => std.c.E.SUCCESS,
             };
 
             const rc = std.c.pthread_mutex_destroy(&self.mutex);
@@ -1078,7 +1078,7 @@ else if (@import("builtin").link_libc)
         pub fn deinit(self: *Condvar) void {
             const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.posix.EAGAIN,
-                else => 0,
+                else => std.c.E.SUCCESS,
             };
 
             const rc = std.c.pthread_cond_destroy(&self.cond);

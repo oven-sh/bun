@@ -105,6 +105,14 @@ function getPipeline(options) {
   };
 
   /**
+   * @typedef {1 | 2 | 3 | 4} Tier
+   * - 1 is the latest release
+   * - 2 are previous releases
+   * - 3 is the oldest release
+   * - 4 is EOL or a super old release
+   */
+
+  /**
    * @typedef Platform
    * @property {Os} os
    * @property {Arch} arch
@@ -112,6 +120,7 @@ function getPipeline(options) {
    * @property {boolean} [baseline]
    * @property {string} [distro]
    * @property {string} release
+   * @property {Tier} [tier]
    */
 
   /**
@@ -559,40 +568,47 @@ function getPipeline(options) {
    * @type {Platform[]}
    */
   const testPlatforms = [
-    { os: "darwin", arch: "aarch64", release: "14" },
-    { os: "darwin", arch: "aarch64", release: "13" },
-    { os: "darwin", arch: "x64", release: "14" },
-    { os: "darwin", arch: "x64", release: "13" },
-    { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
-    { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
-    { os: "linux", arch: "x64", distro: "debian", release: "12" },
-    { os: "linux", arch: "x64", distro: "debian", release: "11" },
-    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12" },
-    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
-    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "10" },
-    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04" },
-    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
-    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
-    { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04" },
-    { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
-    { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
-    { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04" },
-    { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "22.04" },
-    { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "20.04" },
-    { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023" },
-    { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2" },
-    { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023" },
-    { os: "linux", arch: "x64", distro: "amazonlinux", release: "2" },
-    { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023" },
-    { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2" },
-    { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
-    { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.17" },
-    { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
-    { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.17" },
-    { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
-    { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.17" },
-    { os: "windows", arch: "x64", release: "2019" },
-    { os: "windows", arch: "x64", baseline: true, release: "2019" },
+    // { os: "darwin", arch: "aarch64", release: "15", tier: 1 },
+    { os: "darwin", arch: "aarch64", release: "14", tier: 1 },
+    { os: "darwin", arch: "aarch64", release: "13", tier: 2 },
+    // { os: "darwin", arch: "x64", release: "15", tier: 1 },
+    { os: "darwin", arch: "x64", release: "14", tier: 1 },
+    { os: "darwin", arch: "x64", release: "13", tier: 2 },
+    { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: 1 },
+    { os: "linux", arch: "aarch64", distro: "debian", release: "11", tier: 2 },
+    { os: "linux", arch: "aarch64", distro: "debian", release: "10", tier: 3 },
+    { os: "linux", arch: "x64", distro: "debian", release: "12", tier: 1 },
+    { os: "linux", arch: "x64", distro: "debian", release: "11", tier: 2 },
+    { os: "linux", arch: "x64", distro: "debian", release: "10", tier: 3 },
+    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: 1 },
+    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11", tier: 2 },
+    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "10", tier: 3 },
+    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04", tier: 1 },
+    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04", tier: 2 },
+    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04", tier: 3 },
+    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "18.04", tier: 4 },
+    { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04", tier: 1 },
+    { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04", tier: 2 },
+    { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04", tier: 3 },
+    { os: "linux", arch: "x64", distro: "ubuntu", release: "18.04", tier: 4 },
+    { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04", tier: 1 },
+    { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "22.04", tier: 2 },
+    { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "20.04", tier: 3 },
+    { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "18.04", tier: 4 },
+    { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", tier: 1 },
+    { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2", tier: 3 },
+    { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", tier: 1 },
+    { os: "linux", arch: "x64", distro: "amazonlinux", release: "2", tier: 3 },
+    { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", tier: 1 },
+    { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2", tier: 3 },
+    { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20", tier: 1 },
+    { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.17", tier: 2 },
+    { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20", tier: 1 },
+    { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.17", tier: 2 },
+    { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20", tier: 1 },
+    { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.17", tier: 2 },
+    { os: "windows", arch: "x64", release: "2019", tier: 1 },
+    { os: "windows", arch: "x64", baseline: true, release: "2019", tier: 1 },
   ];
 
   const imagePlatforms = new Map(

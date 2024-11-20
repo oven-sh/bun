@@ -341,8 +341,8 @@ export const aws = {
         name = `ubuntu/images/hvm-ssd*/ubuntu-*-${distroVersion || "*"}-${arch === "aarch64" ? "arm64" : "amd64"}-server-*`;
       } else if (distro === "amazonlinux") {
         owner = "amazon";
-        if (distroVersion === "1") {
-          // EOL
+        if (distroVersion === "1" && arch === "x64") {
+          name = `amzn-ami-2018.03.*`;
         } else if (distroVersion === "2") {
           name = `amzn2-ami-hvm-*-${arch === "aarch64" ? "arm64" : "x86_64"}-gp2`;
         } else {
@@ -438,7 +438,6 @@ export const aws = {
         "InstanceMetadataTags": "enabled",
       }),
       ["tag-specifications"]: JSON.stringify(tagSpecification),
-      ["key-name"]: "ashcon-bun",
     });
 
     return aws.toMachine(instance, { ...options, username });
@@ -705,24 +704,35 @@ function getCloudInit(cloudInit) {
       break;
   }
 
+  `
+    package_update: true
+    packages:
+      - curl
+      - ca-certificates
+      - openssh-server
+  `;
+
+  let users;
+  if (username === "root") {
+    users = [`root:${password}`];
+  } else {
+    users = [`root:${password}`, `${username}:${password}`];
+  }
+
   // https://cloudinit.readthedocs.io/en/stable/
   return `#cloud-config
-
     write_files:
       - path: /etc/ssh/sshd_config
         content: |
           PermitRootLogin yes
-          PasswordAuthentication yes
+          PasswordAuthentication no
+          PubkeyAuthentication yes
           Subsystem sftp ${sftpPath}
-
     chpasswd:
       expire: false
       list: |
-        root:${password}
-        ${username}:${password}
-
+        ${users.join("\n")}
     disable_root: false
-
     ssh_pwauth: true
     ssh_authorized_keys: ${authorizedKeys}
   `;

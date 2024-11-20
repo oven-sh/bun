@@ -12,8 +12,8 @@ const mem = std.mem;
 const os = std.os;
 const testing = std.testing;
 
-// Enabled because some CLI arguments are parsed with Clap into downstream commands like `bun create`
-pub var warn_on_unrecognized_flag = true;
+// Disabled because not all CLI arguments are parsed with Clap.
+pub var warn_on_unrecognized_flag = false;
 
 /// The result returned from StreamingClap.next
 pub fn Arg(comptime Id: type) type {
@@ -193,16 +193,14 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                 return Arg(Id){ .param = param, .value = arg[next_index..] };
             }
 
-            // Handle unrecognized flags
             if (warn_on_unrecognized_flag) {
                 Output.warn("unrecognized bun flag: -{c}, continuing to parse and evaluate flag downstream...\n", .{arg[index]});
                 Output.flush();
-                // Continue parsing after unrecognized flag
-                parser.state = .normal;
-                return parser.next();
             }
 
-            return parser.err(arg, .{ .short = arg[index] }, error.InvalidArgument);
+            // Continue parsing after unrecognized flag
+            parser.state = .normal;
+            return parser.next();
         }
 
         fn positionalParam(parser: *@This()) ?*const clap.Param(Id) {

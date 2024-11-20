@@ -55,14 +55,17 @@ const PathOrBlob = union(enum) {
             };
         }
 
-        const arg = args.nextEat() orelse return null;
-
+        const arg = args.nextEat() orelse {
+            _ = ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .undefined);
+            return null;
+        };
         if (arg.as(Blob)) |blob| {
             return PathOrBlob{
                 .blob = blob.*,
             };
         }
 
+        _ = ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);
         return null;
     }
 };

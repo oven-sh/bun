@@ -796,7 +796,7 @@ install_docker() {
 	*)
 		case "$distro-$release" in
 		amzn-2 | amzn-1)
-			execute amazon-linux-extras install docker
+			execute_sudo amazon-linux-extras install docker
 			;;
 		amzn-* | alpine-*)
 			install_packages docker

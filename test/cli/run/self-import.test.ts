@@ -5,6 +5,7 @@ import { join } from "path";
 import { writeFile } from "fs/promises";
 
 const testWord = "bunny";
+const testString = `${testWord} ${testWord}`;
 
 describe("bun", () => {
   test("should resolve self-imports by name", async () => {
@@ -30,7 +31,7 @@ describe("bun", () => {
         stdout: "pipe",
       });
       let out = await new Response(subprocess.stdout).text();
-      expect(out).toContain(`${testWord} ${testWord}`);
+      expect(out).toContain(testString);
 
       // should not resolve not exported files
       await writeFile(
@@ -47,7 +48,7 @@ describe("bun", () => {
         stdout: "pipe",
       });
       out = await new Response(subprocess.stdout).text();
-      expect(out).not.toContain(`${testWord} ${testWord}`);
+      expect(out).not.toContain(testString);
 
       // should resolve exported files
       await writeFile(
@@ -61,7 +62,7 @@ describe("bun", () => {
         stdout: "pipe",
       });
       out = await new Response(subprocess.stdout).text();
-      expect(out).toContain(`${testWord} ${testWord}`);
+      expect(out).toContain(testString);
     }
   });
 });

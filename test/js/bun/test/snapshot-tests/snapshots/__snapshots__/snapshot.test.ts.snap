@@ -540,3 +540,14 @@ exports[`snapshots #15283 unicode 1`] = `
 exports[\`Should work 1\`] = \`"😊This is \\\`wrong\\\`"\`;
 "
 `;
+
+exports[`snapshots replaces file that fails to parse when update flag is used 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`t1 1\`] = \`"abc def ghi jkl"\`;
+
+exports[\`t2 1\`] = \`"abc\\\`def"\`;
+
+exports[\`t3 1\`] = \`"abc def ghi"\`;
+"
+`;

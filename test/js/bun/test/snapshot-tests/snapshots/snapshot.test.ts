@@ -188,7 +188,7 @@ class SnapshotTester {
   }
   async update(
     contents: string,
-    opts: { shouldNotError?: boolean; shouldGrow?: boolean; skipSnapshot?: boolean } = {},
+    opts: { shouldNotError?: boolean; shouldGrow?: boolean; skipSnapshot?: boolean; forceUpdate?: boolean } = {},
   ) {
     const isFirst = this.isFirst;
     this.isFirst = false;
@@ -204,7 +204,7 @@ class SnapshotTester {
         );
       }
       // update snapshots now, using -u flag unless this is the first run
-      await $`cd ${this.dir} && ${bunExe()} test ${isFirst ? "" : "-u"} ./snapshot.test.ts`.quiet();
+      await $`cd ${this.dir} && ${bunExe()} test ${isFirst && !opts.forceUpdate ? "" : "-u"} ./snapshot.test.ts`.quiet();
       // make sure the snapshot changed & didn't grow
       const newContents = await this.getSnapshotContents();
       if (!isFirst) {
@@ -270,6 +270,21 @@ describe("snapshots", async () => {
       `);
     } catch (e) {}
     expect(await t.getSnapshotContents()).toBe("exports[`snap 1`] = `hello`goodbye`;");
+  });
+
+  test("replaces file that fails to parse when update flag is used", async () => {
+    await t.setSnapshotFile("exports[`snap 1`] = `hello`goodbye`;");
+    await t.update(
+      /*js*/ `
+        test("t1", () => {expect("abc def ghi jkl").toMatchSnapshot();})
+        test("t2", () => {expect("abc\`def").toMatchSnapshot();})
+        test("t3", () => {expect("abc def ghi").toMatchSnapshot();})
+      `,
+      { forceUpdate: true },
+    );
+    expect(await t.getSnapshotContents()).toBe(
+      '// Bun Snapshot v1, https://goo.gl/fbAQLP\n\nexports[`t1 1`] = `"abc def ghi jkl"`;\n\nexports[`t2 1`] = `"abc\\`def"`;\n\nexports[`t3 1`] = `"abc def ghi"`;\n',
+    );
   });
 
   test("grow file for new snapshot", async () => {

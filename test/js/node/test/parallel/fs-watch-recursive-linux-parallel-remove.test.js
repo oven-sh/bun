@@ -42,7 +42,7 @@ if (os.platform() !== "linux") {
       process.argv[0],
       [
         "-e",
-        `const fs = require('node:fs'); for (let i = 0; i < 10000; i++) { const fd = fs.openSync('${testFile}', 'w'); fs.writeSync(fd, Buffer.from('hello')); fs.rmSync('${testFile}') }`,
+        `var fs = require('node:fs'); for (let i = 0; i < 10000; i++) { const fd = fs.openSync('${testFile}', 'w'); fs.writeSync(fd, Buffer.from('hello')); fs.rmSync('${testFile}') }`,
       ],
       {
         stdio: "inherit",

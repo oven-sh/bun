@@ -98,11 +98,11 @@ pub const JSBundler = struct {
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
-            if (config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
+            if (try config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
                 this.experimental_css = if (enable_css.isBoolean())
                     enable_css.toBoolean()
                 else if (enable_css.isObject()) true: {
-                    if (enable_css.getTruthy(globalThis, "chunking")) |enable_chunking| {
+                    if (try enable_css.getTruthy(globalThis, "chunking")) |enable_chunking| {
                         this.css_chunking = if (enable_chunking.isBoolean()) enable_css.toBoolean() else false;
                     }
 
@@ -214,7 +214,7 @@ pub const JSBundler = struct {
                 try this.footer.appendSliceExact(slice.slice());
             }
 
-            if (config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
+            if (try config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
                 if (bun.FeatureFlags.breaking_changes_1_2 and config.isBoolean()) {
                     if (source_map_js == .true) {
                         this.source_map = if (has_out_dir)
@@ -247,7 +247,7 @@ pub const JSBundler = struct {
                 this.code_splitting = hot;
             }
 
-            if (config.getTruthy(globalThis, "minify")) |minify| {
+            if (try config.getTruthy(globalThis, "minify")) |minify| {
                 if (minify.isBoolean()) {
                     const value = minify.toBoolean();
                     this.minify.whitespace = value;
@@ -289,7 +289,7 @@ pub const JSBundler = struct {
                 this.ignore_dce_annotations = flag;
             }
 
-            if (config.getTruthy(globalThis, "conditions")) |conditions_value| {
+            if (try config.getTruthy(globalThis, "conditions")) |conditions_value| {
                 if (conditions_value.isString()) {
                     var slice = conditions_value.toSliceOrNull(globalThis) orelse {
                         return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
@@ -375,7 +375,7 @@ pub const JSBundler = struct {
                 try this.public_path.appendSliceExact(slice.slice());
             }
 
-            if (config.getTruthy(globalThis, "naming")) |naming| {
+            if (try config.getTruthy(globalThis, "naming")) |naming| {
                 if (naming.isString()) {
                     if (try config.getOptional(globalThis, "naming", ZigString.Slice)) |slice| {
                         defer slice.deinit();

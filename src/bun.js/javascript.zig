@@ -3686,7 +3686,7 @@ pub const VirtualMachine = struct {
 
         if (error_instance != .zero and error_instance.isCell() and error_instance.jsType().canGet()) {
             inline for (extra_fields) |field| {
-                if (error_instance.getTruthyComptime(this.global, field)) |value| {
+                if (try error_instance.getTruthyComptime(this.global, field)) |value| {
                     const kind = value.jsType();
                     if (kind.isStringLike()) {
                         if (value.toStringOrNull(this.global)) |str| {
@@ -4547,13 +4547,11 @@ comptime {
 pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const args = callframe.arguments(1).slice();
     if (args.len < 1) {
-        globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);
-        return JSValue.zero;
+        return globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);
     }
 
     if (!args[0].isNumber()) {
-        globalObject.throwInvalidArguments("setSyntheticAllocationLimitForTesting expects a number", .{});
-        return JSValue.zero;
+        return globalObject.throwInvalidArguments2("setSyntheticAllocationLimitForTesting expects a number", .{});
     }
 
     const limit: usize = @intCast(@max(args[0].coerceToInt64(globalObject), 1024 * 1024));

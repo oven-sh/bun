@@ -872,14 +872,16 @@ export function writeFile(filename, content, options = {}) {
  */
 export function which(command, options = {}) {
   const commands = Array.isArray(command) ? command : [command];
+  const executables = isWindows ? commands.flatMap(name => [name, `${name}.exe`, `${name}.cmd`]) : commands;
+
   const path = getEnv("PATH", false) || "";
   const binPaths = path.split(isWindows ? ";" : ":");
 
   for (const binPath of binPaths) {
-    for (const command of commands) {
-      const commandPath = join(binPath, command);
-      if (existsSync(commandPath)) {
-        return commandPath;
+    for (const executable of executables) {
+      const executablePath = join(binPath, executable);
+      if (existsSync(executablePath)) {
+        return executablePath;
       }
     }
   }
@@ -1250,6 +1252,14 @@ export function escapeCodeBlock(string) {
 }
 
 /**
+ * @param {string} string
+ * @returns {string}
+ */
+export function escapePowershell(string) {
+  return string.replace(/'/g, "''").replace(/`/g, "``");
+}
+
+/**
  * @returns {string}
  */
 export function tmpdir() {
@@ -1278,14 +1288,6 @@ export function tmpdir() {
   }
 
   return nodeTmpdir();
-}
-
-/**
- * @param {string} string
- * @returns {string}
- */
-function escapePowershell(string) {
-  return string.replace(/'/g, "''").replace(/`/g, "``");
 }
 
 /**
@@ -1697,7 +1699,7 @@ export function getDistro() {
     const releasePath = "/etc/os-release";
     if (existsSync(releasePath)) {
       const releaseFile = readFile(releasePath, { cache: true });
-      const match = releaseFile.match(/ID=\"(.*)\"/);
+      const match = releaseFile.match(/^ID=\"?(.*)\"?/m);
       if (match) {
         return match[1];
       }
@@ -1742,7 +1744,7 @@ export function getDistroVersion() {
     const releasePath = "/etc/os-release";
     if (existsSync(releasePath)) {
       const releaseFile = readFile(releasePath, { cache: true });
-      const match = releaseFile.match(/VERSION_ID=\"(.*)\"/);
+      const match = releaseFile.match(/^VERSION_ID=\"?(.*)\"?/m);
       if (match) {
         return match[1];
       }

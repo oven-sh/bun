@@ -288,21 +288,33 @@ pub const FFI = struct {
                     }
                 }
             } else if (Environment.isLinux) {
+                // On Debian/Ubuntu, the lib and include paths are suffixed with {arch}-linux-gnu
+                // e.g. x86_64-linux-gnu or aarch64-linux-gnu
+                // On Alpine and RHEL-based distros, the paths are not suffixed
+
                 if (Environment.isX64) {
                     if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include/x86_64-linux-gnu").isTrue()) {
                         cached_default_system_include_dir = "/usr/include/x86_64-linux-gnu";
+                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include").isTrue()) {
+                        cached_default_system_include_dir = "/usr/include";
                     }
 
                     if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib/x86_64-linux-gnu").isTrue()) {
                         cached_default_system_library_dir = "/usr/lib/x86_64-linux-gnu";
+                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib64").isTrue()) {
+                        cached_default_system_library_dir = "/usr/lib64";
                     }
                 } else if (Environment.isAarch64) {
                     if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include/aarch64-linux-gnu").isTrue()) {
                         cached_default_system_include_dir = "/usr/include/aarch64-linux-gnu";
+                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include").isTrue()) {
+                        cached_default_system_include_dir = "/usr/include";
                     }
 
                     if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib/aarch64-linux-gnu").isTrue()) {
                         cached_default_system_library_dir = "/usr/lib/aarch64-linux-gnu";
+                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib64").isTrue()) {
+                        cached_default_system_library_dir = "/usr/lib64";
                     }
                 }
             }
@@ -656,7 +668,7 @@ pub const FFI = struct {
             return error.JSError;
         }
 
-        if (object.getTruthy(globalThis, "flags")) |flags_value| {
+        if (try object.getTruthy(globalThis, "flags")) |flags_value| {
             if (flags_value.isArray()) {
                 var iter = flags_value.arrayIterator(globalThis);
 
@@ -693,7 +705,7 @@ pub const FFI = struct {
             return error.JSError;
         }
 
-        if (object.getTruthy(globalThis, "define")) |define_value| {
+        if (try object.getTruthy(globalThis, "define")) |define_value| {
             if (define_value.isObject()) {
                 const Iter = JSC.JSPropertyIterator(.{ .include_value = true, .skip_empty_name = true });
                 var iter = Iter.init(globalThis, define_value);
@@ -723,7 +735,7 @@ pub const FFI = struct {
             return error.JSError;
         }
 
-        if (object.getTruthy(globalThis, "include")) |include_value| {
+        if (try object.getTruthy(globalThis, "include")) |include_value| {
             compile_c.include_dirs = try StringArray.fromJS(globalThis, include_value, "include");
         }
 
@@ -1348,11 +1360,11 @@ pub const FFI = struct {
 
         var threadsafe = false;
 
-        if (value.getTruthy(global, "threadsafe")) |threadsafe_value| {
+        if (try value.getTruthy(global, "threadsafe")) |threadsafe_value| {
             threadsafe = threadsafe_value.toBoolean();
         }
 
-        if (value.getTruthy(global, "returns")) |ret_value| brk: {
+        if (try value.getTruthy(global, "returns")) |ret_value| brk: {
             if (ret_value.isAnyInt()) {
                 const int = ret_value.toInt32();
                 switch (int) {

@@ -288,21 +288,33 @@ pub const FFI = struct {
                     }
                 }
             } else if (Environment.isLinux) {
+                // On Debian/Ubuntu, the lib and include paths are suffixed with {arch}-linux-gnu
+                // e.g. x86_64-linux-gnu or aarch64-linux-gnu
+                // On Alpine and RHEL-based distros, the paths are not suffixed
+
                 if (Environment.isX64) {
                     if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include/x86_64-linux-gnu").isTrue()) {
                         cached_default_system_include_dir = "/usr/include/x86_64-linux-gnu";
+                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include").isTrue()) {
+                        cached_default_system_include_dir = "/usr/include";
                     }
 
                     if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib/x86_64-linux-gnu").isTrue()) {
                         cached_default_system_library_dir = "/usr/lib/x86_64-linux-gnu";
+                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib64").isTrue()) {
+                        cached_default_system_library_dir = "/usr/lib64";
                     }
                 } else if (Environment.isAarch64) {
                     if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include/aarch64-linux-gnu").isTrue()) {
                         cached_default_system_include_dir = "/usr/include/aarch64-linux-gnu";
+                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include").isTrue()) {
+                        cached_default_system_include_dir = "/usr/include";
                     }
 
                     if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib/aarch64-linux-gnu").isTrue()) {
                         cached_default_system_library_dir = "/usr/lib/aarch64-linux-gnu";
+                    } else if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib64").isTrue()) {
+                        cached_default_system_library_dir = "/usr/lib64";
                     }
                 }
             }

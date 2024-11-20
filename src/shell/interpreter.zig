@@ -1306,7 +1306,7 @@ pub const Interpreter = struct {
             for (lex_result.tokens, 0..) |token, i| {
                 if (i != 0) try log_buf.appendSlice(", ");
                 const tok_str = token.asHumanReadable(lex_result.strpool);
-                try log_buf.writer().print("\"{}\"", .{if (@hasDecl(bun.strings, "formatEscapes")) bun.strings.formatEscapes(tok_str, .{ .quote_char = '"' }) else bun.strings.QuoteEscapeFormat{ .data = tok_str }});
+                try log_buf.writer().print("\"{}\"", .{std.zig.fmtEscapes(tok_str)});
             }
             try log_buf.append(']');
             logscope.log("Shell command tokens: {s}", .{log_buf.items});
@@ -1334,7 +1334,89 @@ pub const Interpreter = struct {
         out_parser.* = try bun.shell.Parser.new(arena_allocator, lex_result, jsobjs);
 
         const script_ast = try out_parser.*.?.parse();
+        if (bun.Environment.enable_logs and logscope.isVisible()) {
+            var log_buf = std.ArrayList(u8).init(arena_allocator);
+            defer log_buf.deinit();
+            try log_buf.append('[');
+            for (script_ast.stmts) |stmt| {
+                try _debugFormatStatement(&log_buf, stmt);
+            }
+            try log_buf.append(']');
+            logscope.log("Shell AST: {s}", .{log_buf.items});
+        }
+
         return script_ast;
+    }
+    fn _debugFormatStatement(result: *std.ArrayList(u8), statement: ast.Stmt) error{OutOfMemory}!void {
+        try result.append('[');
+        for (statement.exprs, 0..) |expr, i| {
+            if (i != 0) try result.appendSlice(", ");
+            switch (expr) {
+                .cmd => |a| {
+                    try result.appendSlice(".cmd([");
+                    for (a.assigns) |assign| {
+                        try result.appendSlice(assign.label);
+                        try result.appendSlice("=");
+                        try _debugFormatAtom(result, assign.value);
+                    }
+                    try result.appendSlice("], [");
+                    for (a.name_and_args, 0..) |name_and_arg, j| {
+                        if (j != 0) try result.appendSlice(", ");
+                        try _debugFormatAtom(result, name_and_arg);
+                    }
+                    try result.appendSlice("]");
+                    if (a.redirect_file) |rf| {
+                        try result.appendSlice(", ");
+                        switch (rf) {
+                            .atom => |rf_a| try _debugFormatAtom(result, rf_a),
+                            .jsbuf => |_| try result.appendSlice(".jsbuf"),
+                        }
+                    }
+                    if (a.redirect.stdout) try result.appendSlice(", .stdout");
+                    if (a.redirect.stdin) try result.appendSlice(", .stdin");
+                    if (a.redirect.stderr) try result.appendSlice(", .stderr");
+                    if (a.redirect.duplicate_out) try result.appendSlice(", .duplicate_out");
+                    if (a.redirect.append) try result.appendSlice(", .append");
+                    try result.appendSlice(")");
+                },
+                else => try result.writer().print("(todo format: {s})", .{@tagName(expr)}),
+            }
+        }
+        try result.append(']');
+    }
+    fn _debugFormatSimpleAtom(result: *std.ArrayList(u8), atom: ast.SimpleAtom) error{OutOfMemory}!void {
+        switch (atom) {
+            .asterisk => try result.appendSlice("'*'"),
+            .brace_begin => try result.appendSlice("'{'"),
+            .brace_end => try result.appendSlice("'}'"),
+            .comma => try result.appendSlice("','"),
+            .double_asterisk => try result.appendSlice("'**'"),
+            .Text => |text| try result.writer().print("\"{}\"", .{std.zig.fmtEscapes(text)}),
+            .tilde => try result.appendSlice("'~'"),
+            .Var => |v| try result.writer().print("$\"{}\"", .{std.zig.fmtEscapes(v)}),
+            .VarArgv => |v_u8| try result.writer().print(".VarArgv({d})", .{v_u8}),
+            .cmd_subst => |cst| {
+                try result.writer().print(".cmd_subst(quoted={}", .{cst.quoted});
+                for (cst.script.stmts) |stmt| {
+                    try result.appendSlice(", ");
+                    try _debugFormatStatement(result, stmt);
+                }
+                try result.appendSlice(")");
+            },
+        }
+    }
+    fn _debugFormatAtom(result: *std.ArrayList(u8), atom: ast.Atom) error{OutOfMemory}!void {
+        switch (atom) {
+            .simple => |simple| try _debugFormatSimpleAtom(result, simple),
+            .compound => |compound| {
+                try result.writer().print("[brace={},glob={}", .{ compound.brace_expansion_hint, compound.glob_hint });
+                for (compound.atoms) |simple_atom| {
+                    try result.appendSlice(", ");
+                    try _debugFormatSimpleAtom(result, simple_atom);
+                }
+                try result.appendSlice("]");
+            },
+        }
     }
 
     /// If all initialization allocations succeed, the arena will be copied

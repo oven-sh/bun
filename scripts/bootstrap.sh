@@ -602,6 +602,14 @@ install_nodejs_headers() {
 }
 
 install_bun() {
+	case "$pm" in
+	apk)
+		install_packages \
+			libgcc \
+			libstdc++
+		;;
+	esac
+
 	bash="$(require bash)"
 	script=$(download_file "https://bun.sh/install")
 

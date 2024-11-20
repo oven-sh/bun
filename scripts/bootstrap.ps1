@@ -137,7 +137,7 @@ function Install-Package {
 
 function Install-Packages {
   foreach ($package in $args) {
-    Install-Package -Name $package
+    Install-Package $package
   }
 }
 

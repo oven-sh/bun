@@ -18,10 +18,11 @@ import {
   waitForPort,
   which,
   escapePowershell,
+  listFiles,
 } from "./utils.mjs";
 import { join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const docker = {
@@ -438,6 +439,7 @@ export const aws = {
         "InstanceMetadataTags": "enabled",
       }),
       ["tag-specifications"]: JSON.stringify(tagSpecification),
+      ["key-name"]: "ashcon-bun",
     });
 
     return aws.toMachine(instance, { ...options, username });
@@ -903,10 +905,8 @@ function getSshKeys() {
   /** @type {SshKey[]} */
   const sshKeys = [];
   if (existsSync(sshPath)) {
-    const sshFiles = readdirSync(sshPath, { withFileTypes: true });
-    const publicPaths = sshFiles
-      .filter(entry => entry.isFile() && entry.name.endsWith(".pub"))
-      .map(({ name }) => join(sshPath, name));
+    const sshFiles = listFiles(sshPath);
+    const publicPaths = sshFiles.filter(filename => filename.endsWith(".pub")).map(filename => join(sshPath, filename));
 
     sshKeys.push(
       ...publicPaths.map(publicPath => ({

@@ -7,8 +7,11 @@ describe("bun shell", () => {
   it.todo("does not segfault", async () => {
     await $`echo ${Array(1000000).fill("a")}`;
   });
-  it.todo("passes correct number of arguments with empties", async () => {
+  it("passes correct number of arguments with empty string substitutions", async () => {
     expect(await $`echo ${"1"} ${""} ${"2"}`.text()).toBe("1  2\n");
+  });
+  it("passes correct number of arguments with empty string quotes", async () => {
+    expect(await $`echo "1" "" "2"`.text()).toBe("1  2\n");
   });
   it("doesn't cause invalid js string ref error with a number after a string ref", async () => {
     expect(await $`echo ${'"'}1`.text()).toBe('"1\n');

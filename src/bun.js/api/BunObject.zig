@@ -1003,7 +1003,7 @@ fn doResolveWithArgs(
     if (comptime is_file_path) {
         VirtualMachine.resolveFilePathForAPI(
             &errorable,
-            ctx.ptr(),
+            ctx,
             specifier_decoded,
             from,
             &query_string,
@@ -1012,7 +1012,7 @@ fn doResolveWithArgs(
     } else {
         VirtualMachine.resolveForAPI(
             &errorable,
-            ctx.ptr(),
+            ctx,
             specifier_decoded,
             from,
             &query_string,

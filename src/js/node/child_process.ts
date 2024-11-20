@@ -563,6 +563,7 @@ function spawnSync(file, args, options) {
     stderr = null,
     success,
     exitCode,
+    signalCode,
   } = Bun.spawnSync({
     cmd: options.args,
     env: options.env || undefined,
@@ -573,7 +574,7 @@ function spawnSync(file, args, options) {
   });
 
   const result = {
-    signal: null,
+    signal: signalCode ?? null,
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     output: [null, stdout, stderr],

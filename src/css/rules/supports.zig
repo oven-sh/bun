@@ -319,22 +319,19 @@ pub const SupportsCondition = union(enum) {
 
                 const name = property_id.name();
                 var first = true;
-                inline for (std.meta.fields(css.VendorPrefix)) |field_| {
-                    const field: std.builtin.Type.StructField = field_;
-                    if (!(comptime std.mem.eql(u8, field.name, "__unused"))) {
-                        if (@field(prefix, field.name)) {
-                            if (first) {
-                                first = false;
-                            } else {
-                                try dest.writeStr(") or (");
-                            }
-
-                            var p = css.VendorPrefix{};
-                            @field(p, field.name) = true;
-                            css.serializer.serializeName(name, dest) catch return dest.addFmtError();
-                            try dest.delim(':', false);
-                            try dest.writeStr(value);
+                inline for (css.VendorPrefix.FIELDS) |field| {
+                    if (@field(prefix, field)) {
+                        if (first) {
+                            first = false;
+                        } else {
+                            try dest.writeStr(") or (");
                         }
+
+                        var p = css.VendorPrefix{};
+                        @field(p, field) = true;
+                        css.serializer.serializeName(name, dest) catch return dest.addFmtError();
+                        try dest.delim(':', false);
+                        try dest.writeStr(value);
                     }
                 }
 
@@ -400,7 +397,8 @@ pub fn SupportsRule(comptime R: type) type {
             _ = this; // autofix
             _ = context; // autofix
             _ = parent_is_unused; // autofix
-            @panic(css.todo_stuff.depth);
+            // TODO: Implement this
+            return;
         }
 
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {

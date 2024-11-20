@@ -475,3 +475,69 @@ it("--ignore-dce-annotations ignores DCE annotations", () => {
   expect(stderr.toString()).toBe("");
   expect(stdout.toString()).toBe("Hello, world!\n");
 });
+
+it("should pass arguments correctly in scripts", async () => {
+  const dir = tempDirWithFiles("test", {
+    "package.json": JSON.stringify({
+      workspaces: ["a", "b"],
+      scripts: { "root_script": "bun index.ts" },
+    }),
+    "index.ts": `for(const arg of Bun.argv) console.log(arg);`,
+    "a/package.json": JSON.stringify({ name: "a", scripts: { echo2: "echo" } }),
+    "b/package.json": JSON.stringify({ name: "b", scripts: { echo2: "npm run echo3", echo3: "echo" } }),
+  });
+
+  {
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "run", "root_script", "$HOME (!)", "argument two"].filter(Boolean),
+      cwd: dir,
+      env: bunEnv,
+    });
+
+    expect(stderr.toString()).toBe('$ bun index.ts "\\$HOME (!)" "argument two"\n');
+    expect(stdout.toString()).toEndWith("\n$HOME (!)\nargument two\n");
+    expect(exitCode).toBe(0);
+  }
+  {
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "--filter", "*", "echo2", "$HOME (!)", "argument two"].filter(Boolean),
+      cwd: dir,
+      env: bunEnv,
+    });
+
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().split("\n").sort().join("\n")).toBe(
+      [
+        "a echo2: $HOME (!) argument two",
+        "a echo2: Exited with code 0",
+        'b echo2: $ echo "\\$HOME (!)" "argument two"',
+        "b echo2: $HOME (!) argument two",
+        "b echo2: Exited with code 0",
+        "",
+      ]
+        .sort()
+        .join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  }
+});
+
+it("should run with bun instead of npm even with leading spaces", async () => {
+  const dir = tempDirWithFiles("test", {
+    "package.json": JSON.stringify({
+      workspaces: ["a", "b"],
+      scripts: { "root_script": "   npm run other_script    ", "other_script": "   echo hi    " },
+    }),
+  });
+  {
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "run", "root_script"],
+      cwd: dir,
+      env: bunEnv,
+    });
+
+    expect(stderr.toString()).toBe("$    bun run other_script    \n$    echo hi    \n");
+    expect(stdout.toString()).toEndWith("hi\n");
+    expect(exitCode).toBe(0);
+  }
+});

@@ -31,7 +31,7 @@ var testArray = [
   },
 ];
 
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 bench("structuredClone(array)", () => structuredClone(testArray));
 bench("structuredClone(123)", () => structuredClone(123));

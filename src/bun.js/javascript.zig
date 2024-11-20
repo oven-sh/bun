@@ -178,13 +178,14 @@ pub const SavedSourceMap = struct {
                         try fail.toData(path).writeFormat(
                             Output.errorWriter(),
                             logger.Kind.warn,
+                            false,
                             true,
                         );
                     } else {
                         try fail.toData(path).writeFormat(
                             Output.errorWriter(),
                             logger.Kind.warn,
-
+                            false,
                             false,
                         );
                     }
@@ -428,10 +429,14 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
 
 extern fn Bun__Process__queueNextTick1(*JSC.ZigGlobalObject, JSC.JSValue, JSC.JSValue) void;
 
-pub export fn Bun__Process__send(
+comptime {
+    const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
+    @export(Bun__Process__send, .{ .name = "Bun__Process__send" });
+}
+pub fn Bun__Process__send_(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
-) callconv(JSC.conv) JSValue {
+) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
     var message, var handle, var options_, var callback = callFrame.arguments(4).ptr;
 
@@ -452,7 +457,7 @@ pub export fn Bun__Process__send(
     }
 
     const S = struct {
-        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments_ = callframe.arguments(1).slice();
             const ex = arguments_[0];
             VirtualMachine.Process__emitErrorEvent(globalThis, ex);
@@ -783,7 +788,6 @@ pub const VirtualMachine = struct {
     main_resolved_path: bun.String = bun.String.empty,
     main_hash: u32 = 0,
     process: js.JSObjectRef = null,
-    flush_list: std.ArrayList(string),
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
@@ -1514,11 +1518,7 @@ pub const VirtualMachine = struct {
             this.global.handleRejectedPromises();
 
             if (this.log.msgs.items.len > 0) {
-                if (Output.enable_ansi_colors) {
-                    this.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                } else {
-                    this.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                }
+                this.log.print(Output.errorWriter()) catch {};
                 Output.prettyErrorln("\n", .{});
                 Output.flush();
             }
@@ -1657,7 +1657,6 @@ pub const VirtualMachine = struct {
             .bundler = bundler,
             .console = console,
             .log = log,
-            .flush_list = std.ArrayList(string).init(allocator),
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1765,7 +1764,6 @@ pub const VirtualMachine = struct {
             .bundler = bundler,
             .console = console,
             .log = log,
-            .flush_list = std.ArrayList(string).init(allocator),
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1860,7 +1858,7 @@ pub const VirtualMachine = struct {
             },
         }
 
-        if (debugger != .unspecified) {
+        if (this.debugger != null) {
             this.bundler.options.minify_identifiers = false;
             this.bundler.options.minify_syntax = false;
             this.bundler.options.minify_whitespace = false;
@@ -1901,7 +1899,6 @@ pub const VirtualMachine = struct {
             .bundler = bundler,
             .console = console,
             .log = log,
-            .flush_list = std.ArrayList(string).init(allocator),
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1964,7 +1961,7 @@ pub const VirtualMachine = struct {
         return vm;
     }
 
-    pub fn initKit(opts: Options) anyerror!*VirtualMachine {
+    pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         JSC.markBinding(@src());
         const allocator = opts.allocator;
         var log: *logger.Log = undefined;
@@ -1994,7 +1991,6 @@ pub const VirtualMachine = struct {
             .bundler = bundler,
             .console = console,
             .log = log,
-            .flush_list = std.ArrayList(string).init(allocator),
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -2204,7 +2200,6 @@ pub const VirtualMachine = struct {
                     if (!blob.needsToReadFile()) {
                         virtual_source_to_use = logger.Source{
                             .path = path,
-                            .key_path = path,
                             .contents = blob.sharedView(),
                         };
                     }
@@ -2349,7 +2344,7 @@ pub const VirtualMachine = struct {
                         const buster_name = name: {
                             if (std.fs.path.isAbsolute(normalized_specifier)) {
                                 if (std.fs.path.dirname(normalized_specifier)) |dir| {
-                                    // Normalized with trailing slash
+                                    // Normalized without trailing slash
                                     break :name bun.strings.normalizeSlashesOnly(&specifier_cache_resolver_buf, dir, std.fs.path.sep);
                                 }
                             }
@@ -2369,7 +2364,7 @@ pub const VirtualMachine = struct {
                         };
 
                         // Only re-query if we previously had something cached.
-                        if (jsc_vm.bundler.resolver.bustDirCache(buster_name)) {
+                        if (jsc_vm.bundler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(buster_name))) {
                             continue;
                         }
 
@@ -3544,7 +3539,7 @@ pub const VirtualMachine = struct {
                         "<r><b>{d} |<r> {}" ++ fmt,
                         allow_ansi_color,
                     ),
-                    .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                    .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
                 );
             } else {
                 try writer.print(
@@ -3552,7 +3547,7 @@ pub const VirtualMachine = struct {
                         "<r><b>{d} |<r> {}\n",
                         allow_ansi_color,
                     ),
-                    .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                    .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
                 );
             }
         }
@@ -3589,7 +3584,7 @@ pub const VirtualMachine = struct {
                             "<r><b>- |<r> {}" ++ fmt,
                             allow_ansi_color,
                         ),
-                        .{bun.fmt.fmtJavaScript(text, allow_ansi_color)},
+                        .{bun.fmt.fmtJavaScript(text, .{ .enable_colors = allow_ansi_color })},
                     );
                 } else {
                     try writer.print(
@@ -3597,7 +3592,7 @@ pub const VirtualMachine = struct {
                             "<r><d>- |<r> {}\n",
                             allow_ansi_color,
                         ),
-                        .{bun.fmt.fmtJavaScript(text, allow_ansi_color)},
+                        .{bun.fmt.fmtJavaScript(text, .{ .enable_colors = allow_ansi_color })},
                     );
                 }
 
@@ -3622,7 +3617,7 @@ pub const VirtualMachine = struct {
                             "<r><b>{d} |<r> {}" ++ fmt,
                             allow_ansi_color,
                         ),
-                        .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                        .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
                     );
                 } else {
                     try writer.print(
@@ -3630,7 +3625,7 @@ pub const VirtualMachine = struct {
                             "<r><b>{d} |<r> {}\n",
                             allow_ansi_color,
                         ),
-                        .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                        .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
                     );
 
                     if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
@@ -4376,9 +4371,6 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 // const path = Fs.PathName.init(file_path);
                 const current_hash = hashes[event.index];
 
-                // if (this.verbose)
-                //     std.debug.print("onFileUpdate {s} ({s}, {})\n", .{ file_path, @tagName(kind), event.op });
-
                 switch (kind) {
                     .file => {
                         if (event.op.delete or event.op.rename) {
@@ -4404,7 +4396,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             // on windows we receive file events for all items affected by a directory change
                             // so we only need to clear the directory cache. all other effects will be handled
                             // by the file events
-                            _ = this.ctx.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
+                            _ = this.ctx.bustDirCache(strings.withoutTrailingSlashWindowsPath(file_path));
                             continue;
                         }
                         var affected_buf: [128][]const u8 = undefined;
@@ -4454,7 +4446,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             }
                         }
 
-                        _ = this.ctx.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
+                        _ = this.ctx.bustDirCache(strings.withoutTrailingSlashWindowsPath(file_path));
 
                         if (entries_option) |dir_ent| {
                             var last_file_hash: GenericWatcher.HashType = std.math.maxInt(GenericWatcher.HashType);
@@ -4555,7 +4547,7 @@ comptime {
     @export(string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
 }
 
-pub export fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const args = callframe.arguments(1).slice();
     if (args.len < 1) {
         globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);

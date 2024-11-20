@@ -492,7 +492,7 @@ pub const RuntimeTranspilerStore = struct {
             if (is_node_override) {
                 if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
                     const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
-                    fallback_source = logger.Source{ .path = fallback_path, .contents = code, .key_path = fallback_path };
+                    fallback_source = logger.Source{ .path = fallback_path, .contents = code };
                     parse_options.virtual_source = &fallback_source;
                 }
             }
@@ -1638,7 +1638,7 @@ pub const ModuleLoader = struct {
                 if (is_node_override) {
                     if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
                         const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
-                        fallback_source = logger.Source{ .path = fallback_path, .contents = code, .key_path = fallback_path };
+                        fallback_source = logger.Source{ .path = fallback_path, .contents = code };
                         parse_options.virtual_source = &fallback_source;
                     }
                 }
@@ -1646,6 +1646,12 @@ pub const ModuleLoader = struct {
                 var parse_result: ParseResult = switch (disable_transpilying or
                     (loader == .json and !path.isJSONCFile())) {
                     inline else => |return_file_only| brk: {
+                        const heap_access = if (!disable_transpilying)
+                            jsc_vm.jsc.releaseHeapAccess()
+                        else
+                            JSC.VM.ReleaseHeapAccess{ .vm = jsc_vm.jsc, .needs_to_release = false };
+                        defer heap_access.acquire();
+
                         break :brk jsc_vm.bundler.parseMaybeReturnFileOnly(
                             parse_options,
                             null,
@@ -1761,7 +1767,7 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
-                        .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global, .{}) catch @panic("Unexpected JS error"),
+                        .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch @panic("Unexpected JS error"),
                         .tag = .exports_object,
                     };
                 }
@@ -2279,7 +2285,6 @@ pub const ModuleLoader = struct {
                     virtual_source_to_use = logger.Source{
                         .path = path,
                         .contents = blob.sharedView(),
-                        .key_path = path,
                     };
                     virtual_source = &virtual_source_to_use.?;
                 }
@@ -2467,7 +2472,7 @@ pub const ModuleLoader = struct {
                     return jsSyntheticModule(.@"bun:sql", specifier);
                 },
                 .@"bun:sqlite" => return jsSyntheticModule(.@"bun:sqlite", specifier),
-                .@"detect-libc" => return jsSyntheticModule(if (Environment.isLinux) .@"detect-libc/linux" else .@"detect-libc", specifier),
+                .@"detect-libc" => return jsSyntheticModule(if (!Environment.isLinux) .@"detect-libc" else if (!Environment.isMusl) .@"detect-libc/linux" else .@"detect-libc/musl", specifier),
                 .@"node:assert" => return jsSyntheticModule(.@"node:assert", specifier),
                 .@"node:assert/strict" => return jsSyntheticModule(.@"node:assert/strict", specifier),
                 .@"node:async_hooks" => return jsSyntheticModule(.@"node:async_hooks", specifier),
@@ -2813,7 +2818,7 @@ pub const HardcodedModule = enum {
     );
 
     pub const Alias = struct {
-        path: string,
+        path: [:0]const u8,
         tag: ImportRecord.Tag = .builtin,
     };
 

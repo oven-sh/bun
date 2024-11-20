@@ -160,7 +160,7 @@ pub const DisplayPair = struct {
             .{ "-moz-inline-box", DisplayPair{ .outside = .@"inline", .inside = .{ .box = css.VendorPrefix{ .moz = true } }, .is_list_item = false } },
             .{ "inline-grid", DisplayPair{ .outside = .@"inline", .inside = .grid, .is_list_item = false } },
         });
-        if (displayIdentMap.get(ident)) |pair| {
+        if (displayIdentMap.getASCIIICaseInsensitive(ident)) |pair| {
             return .{ .result = pair };
         }
 
@@ -257,7 +257,7 @@ pub const DisplayInside = union(enum) {
             .err => |e| return .{ .err = e },
         };
 
-        if (displayInsideMap.get(ident)) |value| {
+        if (displayInsideMap.getASCIIICaseInsensitive(ident)) |value| {
             return .{ .result = value };
         }
 

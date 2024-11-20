@@ -48,7 +48,7 @@ const PathOrBlob = union(enum) {
     path: JSC.Node.PathOrFileDescriptor,
     blob: Blob,
 
-    pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice) bun.JSError!?PathOrBlob {
+    pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice) bun.JSError!PathOrBlob {
         if (try JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator)) |path| {
             return PathOrBlob{
                 .path = path,
@@ -57,7 +57,7 @@ const PathOrBlob = union(enum) {
 
         const arg = args.nextEat() orelse {
             _ = ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .undefined);
-            return null;
+            return error.JSError;
         };
         if (arg.as(Blob)) |blob| {
             return PathOrBlob{
@@ -66,7 +66,7 @@ const PathOrBlob = union(enum) {
         }
 
         _ = ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);
-        return null;
+        return error.JSError;
     }
 };
 
@@ -969,19 +969,13 @@ pub const Blob = struct {
         unreachable;
     }
 
-    pub fn writeFile(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+    pub fn writeFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments(3).slice();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
 
         // accept a path or a blob
-        var path_or_blob = (try PathOrBlob.fromJSNoCopy(globalThis, &args)) orelse {
-            globalThis.throwInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{});
-            return .zero;
-        };
+        var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
         defer {
             if (path_or_blob == .path) {
                 path_or_blob.path.deinit();

@@ -6152,22 +6152,22 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                 if (arguments.len >= 2 and arguments[1].isObject()) {
                     var opts = arguments[1];
-                    if (opts.fastGet(ctx.ptr(), .method)) |method_| {
-                        var slice_ = method_.toSlice(ctx.ptr(), getAllocator(ctx));
+                    if (opts.fastGet(ctx, .method)) |method_| {
+                        var slice_ = method_.toSlice(ctx, getAllocator(ctx));
                         defer slice_.deinit();
                         method = HTTP.Method.which(slice_.slice()) orelse method;
                     }
 
-                    if (opts.fastGet(ctx.ptr(), .headers)) |headers_| {
+                    if (opts.fastGet(ctx, .headers)) |headers_| {
                         if (headers_.as(JSC.FetchHeaders)) |headers__| {
                             headers = headers__;
-                        } else if (JSC.FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
+                        } else if (JSC.FetchHeaders.createFromJS(ctx, headers_)) |headers__| {
                             headers = headers__;
                         }
                     }
 
-                    if (opts.fastGet(ctx.ptr(), .body)) |body__| {
-                        if (Blob.get(ctx.ptr(), body__, true, false)) |new_blob| {
+                    if (opts.fastGet(ctx, .body)) |body__| {
+                        if (Blob.get(ctx, body__, true, false)) |new_blob| {
                             body = .{ .Blob = new_blob };
                         } else |_| {
                             return JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() received invalid body").toErrorInstance(ctx));

@@ -453,7 +453,7 @@ pub const Response = struct {
             var url_string = ZigString.init("");
 
             if (@intFromEnum(url_string_value) != 0) {
-                url_string = url_string_value.getZigString(globalThis.ptr());
+                url_string = url_string_value.getZigString(globalThis);
             }
             url_string_slice = url_string.toSlice(getAllocator(globalThis));
             var did_succeed = false;
@@ -618,7 +618,7 @@ pub const Response = struct {
                         result.headers = orig.cloneThis(globalThis);
                     }
                 } else {
-                    result.headers = FetchHeaders.createFromJS(globalThis.ptr(), headers);
+                    result.headers = FetchHeaders.createFromJS(globalThis, headers);
                 }
             }
 
@@ -1961,7 +1961,7 @@ pub const Fetch = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        const globalThis = ctx.ptr();
+        const globalThis = ctx;
         const arguments = callframe.arguments(2);
         bun.Analytics.Features.fetch += 1;
         const vm = JSC.VirtualMachine.get();
@@ -2542,7 +2542,7 @@ pub const Fetch = struct {
             if (options_object) |options| {
                 if (options.fastGet(globalThis, .body)) |body__| {
                     if (!body__.isUndefined()) {
-                        var body_value = try Body.Value.fromJS(ctx.ptr(), body__);
+                        var body_value = try Body.Value.fromJS(ctx, body__);
                         break :extract_body body_value.useAsAnyBlob();
                     }
                 }
@@ -2566,7 +2566,7 @@ pub const Fetch = struct {
             if (request_init_object) |req| {
                 if (req.fastGet(globalThis, .body)) |body__| {
                     if (!body__.isUndefined()) {
-                        var body_value = try Body.Value.fromJS(ctx.ptr(), body__);
+                        var body_value = try Body.Value.fromJS(ctx, body__);
                         break :extract_body body_value.useAsAnyBlob();
                     }
                 }
@@ -2601,7 +2601,7 @@ pub const Fetch = struct {
                                 break :brk headers__;
                             }
 
-                            if (FetchHeaders.createFromJS(ctx.ptr(), headers_value)) |headers__| {
+                            if (FetchHeaders.createFromJS(ctx, headers_value)) |headers__| {
                                 fetch_headers_to_deref = headers__;
                                 break :brk headers__;
                             }
@@ -2635,7 +2635,7 @@ pub const Fetch = struct {
                                 break :brk headers__;
                             }
 
-                            if (FetchHeaders.createFromJS(ctx.ptr(), headers_value)) |headers__| {
+                            if (FetchHeaders.createFromJS(ctx, headers_value)) |headers__| {
                                 fetch_headers_to_deref = headers__;
                                 break :brk headers__;
                             }

@@ -3424,10 +3424,6 @@ pub const JSGlobalObject = opaque {
     }
     pub const ctx = ref;
 
-    pub inline fn ptr(this: *JSGlobalObject) *JSGlobalObject {
-        return this;
-    }
-
     extern fn JSC__JSGlobalObject__createAggregateError(*JSGlobalObject, [*]const JSValue, usize, *const ZigString) JSValue;
     pub fn createAggregateError(globalObject: *JSGlobalObject, errors: []const JSValue, message: *const ZigString) JSValue {
         return JSC__JSGlobalObject__createAggregateError(globalObject, errors.ptr, errors.len, message);

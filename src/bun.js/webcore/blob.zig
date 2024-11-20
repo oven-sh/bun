@@ -875,7 +875,7 @@ pub const Blob = struct {
                 }
             }
 
-            return JSC.JSPromise.resolvedPromiseValue(ctx.ptr(), JSC.JSValue.jsNumber(0));
+            return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(0));
         }
 
         const source_type = std.meta.activeTag(source_blob.store.?.data);
@@ -886,7 +886,7 @@ pub const Blob = struct {
             });
 
             if (comptime Environment.isWindows) {
-                var promise = JSPromise.create(ctx.ptr());
+                var promise = JSPromise.create(ctx);
                 const promise_value = promise.asValue(ctx);
                 promise_value.ensureStillAlive();
                 write_file_promise.promise.strong.set(ctx, promise_value);
@@ -910,9 +910,9 @@ pub const Blob = struct {
                 WriteFilePromise.run,
                 mkdirp_if_not_exists,
             ) catch unreachable;
-            var task = WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx.ptr(), file_copier) catch bun.outOfMemory();
+            var task = WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier) catch bun.outOfMemory();
             // Defer promise creation until we're just about to schedule the task
-            var promise = JSC.JSPromise.create(ctx.ptr());
+            var promise = JSC.JSPromise.create(ctx);
             const promise_value = promise.asValue(ctx);
             write_file_promise.promise.strong.set(ctx, promise_value);
             promise_value.ensureStillAlive();
@@ -937,7 +937,7 @@ pub const Blob = struct {
 
                 destination_blob.offset,
                 destination_blob.size,
-                ctx.ptr(),
+                ctx,
                 mkdirp_if_not_exists,
             ) catch unreachable;
             file_copier.schedule();
@@ -951,14 +951,14 @@ pub const Blob = struct {
             clone.allocator = bun.default_allocator;
             const cloned = Blob.new(clone);
             cloned.allocator = bun.default_allocator;
-            return JSPromise.resolvedPromiseValue(ctx.ptr(), cloned.toJS(ctx));
+            return JSPromise.resolvedPromiseValue(ctx, cloned.toJS(ctx));
         } else if (destination_type == .bytes and source_type == .file) {
             var fake_call_frame: [8]JSC.JSValue = undefined;
             @memset(@as([*]u8, @ptrCast(&fake_call_frame))[0..@sizeOf(@TypeOf(fake_call_frame))], 0);
             const blob_value = source_blob.getSlice(ctx, @as(*JSC.CallFrame, @ptrCast(&fake_call_frame))) catch .zero; // TODO:
 
             return JSPromise.resolvedPromiseValue(
-                ctx.ptr(),
+                ctx,
                 blob_value,
             );
         }

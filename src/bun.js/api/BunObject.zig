@@ -1004,7 +1004,7 @@ fn doResolveWithArgs(
     if (comptime is_file_path) {
         VirtualMachine.resolveFilePathForAPI(
             &errorable,
-            ctx.ptr(),
+            ctx,
             specifier_decoded,
             from,
             &query_string,
@@ -1013,7 +1013,7 @@ fn doResolveWithArgs(
     } else {
         VirtualMachine.resolveForAPI(
             &errorable,
-            ctx.ptr(),
+            ctx,
             specifier_decoded,
             from,
             &query_string,
@@ -4239,7 +4239,7 @@ pub const FFIObject = struct {
         _: *anyopaque,
         array: *JSC.JSUint8Array,
     ) callconv(JSC.conv) JSValue {
-        return JSValue.fromPtrAddress(@intFromPtr(array.ptr()));
+        return JSValue.fromPtrAddress(@intFromPtr(array));
     }
 
     fn ptr_(

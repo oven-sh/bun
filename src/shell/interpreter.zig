@@ -765,17 +765,13 @@ pub const ParsedShellScript = struct {
         return .undefined;
     }
 
-    pub fn createParsedShellScript(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
+    pub fn createParsedShellScript(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         var shargs = ShellArgs.init();
 
         const arguments_ = callframe.arguments(2);
         const arguments = arguments_.slice();
         if (arguments.len < 2) {
-            globalThis.throwNotEnoughArguments("Bun.$", 2, arguments.len);
-            return .zero;
+            return globalThis.throwNotEnoughArguments("Bun.$", 2, arguments.len);
         }
         const string_args = arguments[0];
         const template_args_js = arguments[1];
@@ -827,8 +823,7 @@ pub const ParsedShellScript = struct {
                 return .undefined;
             }
 
-            globalThis.throwError(err, "failed to lex/parse shell");
-            return .undefined;
+            return globalThis.throwError(err, "failed to lex/parse shell");
         };
 
         shargs.script_ast = script_ast;

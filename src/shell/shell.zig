@@ -4385,15 +4385,13 @@ pub const TestingAPIs = struct {
             if (bun.strings.isAllASCII(script.items[0..])) {
                 var lexer = LexerAscii.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
                 lexer.lex() catch |err| {
-                    globalThis.throwError(err, "failed to lex shell");
-                    return JSValue.undefined;
+                    return globalThis.throwError(err, "failed to lex shell");
                 };
                 break :brk lexer.get_result();
             }
             var lexer = LexerUnicode.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
             lexer.lex() catch |err| {
-                globalThis.throwError(err, "failed to lex shell");
-                return JSValue.undefined;
+                return globalThis.throwError(err, "failed to lex shell");
             };
             break :brk lexer.get_result();
         };
@@ -4487,8 +4485,7 @@ pub const TestingAPIs = struct {
                 return .undefined;
             }
 
-            globalThis.throwError(err, "failed to lex/parse shell");
-            return .undefined;
+            return globalThis.throwError(err, "failed to lex/parse shell");
         };
 
         const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{}) catch {

@@ -83,30 +83,30 @@ pub const ShellErr = union(enum) {
         }
     }
 
-    pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) void {
+    pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) bun.JSError {
         defer this.deinit(bun.default_allocator);
         switch (this.*) {
             .sys => {
                 const err = this.sys.toErrorInstance(globalThis);
-                globalThis.throwValue(err);
+                return globalThis.throwValue2(err);
             },
             .custom => {
                 var str = JSC.ZigString.init(this.custom);
                 str.markUTF8();
                 const err_value = str.toErrorInstance(globalThis);
-                globalThis.throwValue(err_value);
+                return globalThis.throwValue2(err_value);
                 // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
             .invalid_arguments => {
-                globalThis.throwInvalidArguments("{s}", .{this.invalid_arguments.val});
+                return globalThis.throwInvalidArguments2("{s}", .{this.invalid_arguments.val});
             },
             .todo => {
-                globalThis.throwTODO(this.todo);
+                return globalThis.throwTODO(this.todo);
             },
         }
     }
 
-    pub fn throwMini(this: @This()) void {
+    pub fn throwMini(this: @This()) noreturn {
         defer this.deinit(bun.default_allocator);
         switch (this) {
             .sys => |err| {

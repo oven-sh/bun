@@ -1632,7 +1632,7 @@ pub const Resolver = struct {
             }
         }
 
-        var is_self_import = false;
+        var is_self_reference = false;
 
         // Find the parent directory with the "package.json" file
         var dir_info_package_json: ?*DirInfo = dir_info;
@@ -1652,10 +1652,10 @@ pub const Resolver = struct {
             if (package_name) |_package_name| {
                 if (strings.eql(_package_name, package_json.name) and package_json.exports != null) {
                     if (r.debug_logs) |*debug| {
-                        debug.addNoteFmt("\"{s}\" is a self-import", .{import_path});
+                        debug.addNoteFmt("\"{s}\" is a self-reference", .{import_path});
                     }
                     dir_info = _dir_info_package_json;
-                    is_self_import = true;
+                    is_self_reference = true;
                 }
             }
         }
@@ -1667,13 +1667,13 @@ pub const Resolver = struct {
         const use_node_module_resolver = global_cache != .force;
 
         // Then check for the package in any enclosing "node_modules" directories
-        // or in the current directory if it's a self-import
+        // or in the package root directory if it's a self-reference
         while (use_node_module_resolver) {
             // Skip directories that are themselves called "node_modules", since we
             // don't ever want to search for "node_modules/node_modules"
-            if (dir_info.hasNodeModules() or is_self_import) {
+            if (dir_info.hasNodeModules() or is_self_reference) {
                 any_node_modules_folder = true;
-                const abs_path = if (is_self_import)
+                const abs_path = if (is_self_reference)
                     dir_info.abs_path
                 else brk: {
                     var _parts = [_]string{ dir_info.abs_path, "node_modules", import_path };
@@ -1688,7 +1688,7 @@ pub const Resolver = struct {
 
                 if (esm_) |esm| {
                     const abs_package_path = brk: {
-                        if (is_self_import) break :brk dir_info.abs_path;
+                        if (is_self_reference) break :brk dir_info.abs_path;
                         var parts = [_]string{ dir_info.abs_path, "node_modules", esm.name };
                         break :brk r.fs.absBuf(&parts, bufs(.esm_absolute_package_path));
                     };

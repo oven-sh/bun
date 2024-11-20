@@ -229,7 +229,6 @@ pub const Expect = struct {
                                     const message = "Expected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
                                     throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
                                 }
-                                bun.assert(globalThis.hasException());
                                 return error.JSError;
                             },
                             .none => unreachable,
@@ -242,7 +241,6 @@ pub const Expect = struct {
                                     const message = "Expected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
                                     throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
                                 }
-                                bun.assert(globalThis.hasException());
                                 return error.JSError;
                             },
                             .none => unreachable,
@@ -258,7 +256,6 @@ pub const Expect = struct {
                         const message = "Expected promise<r>\nReceived: <red>{any}<r>\n";
                         throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
                     }
-                    bun.assert(globalThis.hasException());
                     return error.JSError;
                 }
             },

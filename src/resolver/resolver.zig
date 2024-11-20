@@ -1640,22 +1640,21 @@ pub const Resolver = struct {
             dir_info_package_json = dir_info_package_json.?.getParent();
 
         // Check for subpath imports: https://nodejs.org/api/packages.html#subpath-imports
-        if (dir_info_package_json != null) {
-            if (strings.hasPrefixComptime(import_path, "#") and
-                !forbid_imports and
-                dir_info_package_json.?.package_json.?.imports != null)
-            {
-                return r.loadPackageImports(import_path, dir_info_package_json.?, kind, global_cache);
+        if (dir_info_package_json) |_dir_info_package_json| {
+            const package_json = _dir_info_package_json.package_json.?;
+
+            if (strings.hasPrefixComptime(import_path, "#") and !forbid_imports and package_json.imports != null) {
+                return r.loadPackageImports(import_path, _dir_info_package_json, kind, global_cache);
             }
 
             // https://nodejs.org/api/packages.html#packages_self_referencing_a_package_using_its_name
             const package_name = ESModule.Package.parseName(import_path);
-            if (dir_info_package_json.?.package_json) |package_json| {
-                if (strings.eql(package_name.?, package_json.name) and package_json.exports != null) {
+            if (package_name) |_package_name| {
+                if (strings.eql(_package_name, package_json.name) and package_json.exports != null) {
                     if (r.debug_logs) |*debug| {
-                        debug.addNoteFmt("\"{s}\" is a self-import", .{ import_path });
+                        debug.addNoteFmt("\"{s}\" is a self-import", .{import_path});
                     }
-                    dir_info = dir_info_package_json.?;
+                    dir_info = _dir_info_package_json;
                     is_self_import = true;
                 }
             }

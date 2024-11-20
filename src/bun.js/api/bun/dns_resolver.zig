@@ -2425,7 +2425,7 @@ pub const DNSResolver = struct {
         var port: u16 = 0;
 
         if (arguments.len > 1 and arguments.ptr[1].isCell()) {
-            if (arguments.ptr[1].get(globalThis, "port")) |port_value| {
+            if (try arguments.ptr[1].get(globalThis, "port")) |port_value| {
                 if (port_value.isNumber()) {
                     port = port_value.to(u16);
                 }

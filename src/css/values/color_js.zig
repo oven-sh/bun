@@ -232,17 +232,17 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                 },
             }
         } else if (args[0].isObject()) {
-            const r = colorIntFromJS(globalThis, args[0].get(globalThis, "r") orelse .zero, "r") orelse return .zero;
+            const r = colorIntFromJS(globalThis, try args[0].get(globalThis, "r") orelse .zero, "r") orelse return .zero;
 
             if (globalThis.hasException()) {
                 return .zero;
             }
-            const g = colorIntFromJS(globalThis, args[0].get(globalThis, "g") orelse .zero, "g") orelse return .zero;
+            const g = colorIntFromJS(globalThis, try args[0].get(globalThis, "g") orelse .zero, "g") orelse return .zero;
 
             if (globalThis.hasException()) {
                 return .zero;
             }
-            const b = colorIntFromJS(globalThis, args[0].get(globalThis, "b") orelse .zero, "b") orelse return .zero;
+            const b = colorIntFromJS(globalThis, try args[0].get(globalThis, "b") orelse .zero, "b") orelse return .zero;
 
             if (globalThis.hasException()) {
                 return .zero;

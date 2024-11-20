@@ -1786,7 +1786,7 @@ pub const Subprocess = struct {
 
                 {
                     var first_cmd = cmds_array.next().?;
-                    var arg0 = first_cmd.toSliceOrNullWithAllocator(globalThis, allocator) orelse return .zero;
+                    var arg0 = try first_cmd.toSliceOrNullWithAllocator(globalThis, allocator);
                     defer arg0.deinit();
 
                     if (argv0 == null) {
@@ -1913,7 +1913,7 @@ pub const Subprocess = struct {
                     };
                     env_array = envp_managed.moveToUnmanaged();
                 }
-                if (args.get(globalThis, "stdio")) |stdio_val| {
+                if (try args.get(globalThis, "stdio")) |stdio_val| {
                     if (!stdio_val.isEmptyOrUndefinedOrNull()) {
                         if (stdio_val.jsType().isArray()) {
                             var stdio_iter = stdio_val.arrayIterator(globalThis);
@@ -1952,44 +1952,44 @@ pub const Subprocess = struct {
                         }
                     }
                 } else {
-                    if (args.get(globalThis, "stdin")) |value| {
+                    if (try args.get(globalThis, "stdin")) |value| {
                         if (!stdio[0].extract(globalThis, 0, value))
                             return .zero;
                     }
 
-                    if (args.get(globalThis, "stderr")) |value| {
+                    if (try args.get(globalThis, "stderr")) |value| {
                         if (!stdio[2].extract(globalThis, 2, value))
                             return .zero;
                     }
 
-                    if (args.get(globalThis, "stdout")) |value| {
+                    if (try args.get(globalThis, "stdout")) |value| {
                         if (!stdio[1].extract(globalThis, 1, value))
                             return .zero;
                     }
                 }
 
                 if (comptime !is_sync) {
-                    if (args.get(globalThis, "lazy")) |lazy_val| {
+                    if (try args.get(globalThis, "lazy")) |lazy_val| {
                         if (lazy_val.isBoolean()) {
                             lazy = lazy_val.toBoolean();
                         }
                     }
                 }
 
-                if (args.get(globalThis, "detached")) |detached_val| {
+                if (try args.get(globalThis, "detached")) |detached_val| {
                     if (detached_val.isBoolean()) {
                         detached = detached_val.toBoolean();
                     }
                 }
 
                 if (Environment.isWindows) {
-                    if (args.get(globalThis, "windowsHide")) |val| {
+                    if (try args.get(globalThis, "windowsHide")) |val| {
                         if (val.isBoolean()) {
                             windows_hide = val.asBoolean();
                         }
                     }
 
-                    if (args.get(globalThis, "windowsVerbatimArguments")) |val| {
+                    if (try args.get(globalThis, "windowsVerbatimArguments")) |val| {
                         if (val.isBoolean()) {
                             windows_verbatim_arguments = val.asBoolean();
                         }
@@ -2413,7 +2413,7 @@ pub const Subprocess = struct {
             },
             .internal => |data| {
                 IPC.log("Received IPC internal message from child", .{});
-                node_cluster_binding.handleInternalMessagePrimary(this.globalThis, this, data);
+                node_cluster_binding.handleInternalMessagePrimary(this.globalThis, this, data) catch {};
             },
         }
     }

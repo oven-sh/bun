@@ -14,6 +14,7 @@ import {
   getChangedFiles,
   getCommit,
   getCommitMessage,
+  getEnv,
   getLastSuccessfulBuild,
   getMainBranch,
   getTargetBranch,
@@ -233,8 +234,8 @@ function getPipeline(options) {
    * @returns {boolean}
    */
   const isUsingNewAgent = platform => {
-    const { os, distro } = platform;
-    if (os === "linux" && distro === "alpine") {
+    const { os } = platform;
+    if (os === "linux") {
       return true;
     }
     return false;
@@ -360,6 +361,21 @@ function getPipeline(options) {
 
   /**
    * @param {Platform} platform
+   * @param {string} [step]
+   * @returns {string[]}
+   */
+  const getDependsOn = (platform, step) => {
+    if (imagePlatforms.has(getImageKey(platform))) {
+      const key = `${getImageKey(platform)}-build-image`;
+      if (key !== step) {
+        return [key];
+      }
+    }
+    return [];
+  };
+
+  /**
+   * @param {Platform} platform
    * @returns {Step}
    */
   const getBuildImageStep = platform => {
@@ -374,81 +390,85 @@ function getPipeline(options) {
       env: {
         DEBUG: "1",
       },
+      retry: getRetry(),
       command: `node ./scripts/machine.mjs ${action} --ci --cloud=aws --os=${os} --arch=${arch} --distro=${distro} --distro-version=${release}`,
     };
   };
 
   /**
-   * @param {Target} target
+   * @param {Platform} platform
    * @returns {Step}
    */
-  const getBuildVendorStep = target => {
+  const getBuildVendorStep = platform => {
     return {
-      key: `${getTargetKey(target)}-build-vendor`,
-      label: `${getTargetLabel(target)} - build-vendor`,
-      agents: getBuildAgent(target),
+      key: `${getTargetKey(platform)}-build-vendor`,
+      label: `${getTargetLabel(platform)} - build-vendor`,
+      depends_on: getDependsOn(platform),
+      agents: getBuildAgent(platform),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
-      env: getBuildEnv(target),
+      env: getBuildEnv(platform),
       command: "bun run build:ci --target dependencies",
     };
   };
 
   /**
-   * @param {Target} target
+   * @param {Platform} platform
    * @returns {Step}
    */
-  const getBuildCppStep = target => {
+  const getBuildCppStep = platform => {
     return {
-      key: `${getTargetKey(target)}-build-cpp`,
-      label: `${getTargetLabel(target)} - build-cpp`,
-      agents: getBuildAgent(target),
+      key: `${getTargetKey(platform)}-build-cpp`,
+      label: `${getTargetLabel(platform)} - build-cpp`,
+      depends_on: getDependsOn(platform),
+      agents: getBuildAgent(platform),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
       env: {
         BUN_CPP_ONLY: "ON",
-        ...getBuildEnv(target),
+        ...getBuildEnv(platform),
       },
       command: "bun run build:ci --target bun",
     };
   };
 
   /**
-   * @param {Target} target
+   * @param {Platform} platform
    * @returns {Step}
    */
-  const getBuildZigStep = target => {
-    const toolchain = getBuildToolchain(target);
+  const getBuildZigStep = platform => {
+    const toolchain = getBuildToolchain(platform);
     return {
-      key: `${getTargetKey(target)}-build-zig`,
-      label: `${getTargetLabel(target)} - build-zig`,
-      agents: getZigAgent(target),
+      key: `${getTargetKey(platform)}-build-zig`,
+      label: `${getTargetLabel(platform)} - build-zig`,
+      depends_on: getDependsOn(platform),
+      agents: getZigAgent(platform),
       retry: getRetry(1), // FIXME: Sometimes zig build hangs, so we need to retry once
       cancel_on_build_failing: isMergeQueue(),
-      env: getBuildEnv(target),
+      env: getBuildEnv(platform),
       command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
     };
   };
 
   /**
-   * @param {Target} target
+   * @param {Platform} platform
    * @returns {Step}
    */
-  const getBuildBunStep = target => {
+  const getBuildBunStep = platform => {
     return {
-      key: `${getTargetKey(target)}-build-bun`,
-      label: `${getTargetLabel(target)} - build-bun`,
+      key: `${getTargetKey(platform)}-build-bun`,
+      label: `${getTargetLabel(platform)} - build-bun`,
       depends_on: [
-        `${getTargetKey(target)}-build-vendor`,
-        `${getTargetKey(target)}-build-cpp`,
-        `${getTargetKey(target)}-build-zig`,
+        `${getTargetKey(platform)}-build-vendor`,
+        `${getTargetKey(platform)}-build-cpp`,
+        `${getTargetKey(platform)}-build-zig`,
       ],
-      agents: getBuildAgent(target),
+      agents: getBuildAgent(platform),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
       env: {
         BUN_LINK_ONLY: "ON",
-        ...getBuildEnv(target),
+        ...getBuildEnv(platform),
       },
       command: "bun run build:ci --target bun",
     };
@@ -472,8 +492,8 @@ function getPipeline(options) {
     } else {
       parallelism = 10;
     }
-    let depends;
     let env;
+    let depends = [];
     if (buildId) {
       env = {
         BUILDKITE_ARTIFACT_BUILD_ID: buildId,
@@ -487,14 +507,20 @@ function getPipeline(options) {
       // Because of this, we don't know if the run was fatal, or soft-failed.
       retry = getRetry(1);
     }
+    let soft_fail;
+    if (isMainBranch()) {
+      soft_fail = true;
+    } else {
+      soft_fail = [{ exit_status: 2 }];
+    }
     return {
       key: `${getPlatformKey(platform)}-test-bun`,
       label: `${getPlatformLabel(platform)} - test-bun`,
-      depends_on: depends,
+      depends_on: [...depends, ...getDependsOn(platform)],
       agents: getTestAgent(platform),
       retry,
       cancel_on_build_failing: isMergeQueue(),
-      soft_fail: isMainBranch(),
+      soft_fail,
       parallelism,
       command,
       env,
@@ -530,13 +556,13 @@ function getPipeline(options) {
     { os: "darwin", arch: "x64", release: "14" },
     { os: "darwin", arch: "x64", release: "13" },
     { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
-    // { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
+    { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
     // { os: "linux", arch: "aarch64", distro: "debian", release: "10" },
     { os: "linux", arch: "x64", distro: "debian", release: "12" },
-    // { os: "linux", arch: "x64", distro: "debian", release: "11" },
+    { os: "linux", arch: "x64", distro: "debian", release: "11" },
     // { os: "linux", arch: "x64", distro: "debian", release: "10" },
     { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12" },
-    // { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
+    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
     // { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "10" },
     // { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04" },
     { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
@@ -547,11 +573,11 @@ function getPipeline(options) {
     // { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04" },
     { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "20.04" },
-    // { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023" },
+    { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023" },
     // { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2" },
-    // { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023" },
+    { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023" },
     // { os: "linux", arch: "x64", distro: "amazonlinux", release: "2" },
-    // { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023" },
+    { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023" },
     // { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2" },
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
     // { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.17" },
@@ -614,15 +640,6 @@ function getPipeline(options) {
       continue;
     }
 
-    if (imagePlatforms.has(getImageKey(platform))) {
-      for (const step of platformSteps) {
-        if (step.agents?.["image-name"]) {
-          step.depends_on ??= [];
-          step.depends_on.push(`${getImageKey(platform)}-build-image`);
-        }
-      }
-    }
-
     steps.push({
       key: getTargetKey(platform),
       group: getTargetLabel(platform),
@@ -662,7 +679,9 @@ async function main() {
   }
 
   let changedFiles;
-  if (!isFork() && !isMainBranch()) {
+  // FIXME: Fix various bugs when calculating changed files
+  // false -> !isFork() && !isMainBranch()
+  if (false) {
     console.log("Checking changed files...");
     const baseRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
     console.log(" - Base Ref:", baseRef);
@@ -784,7 +803,10 @@ async function main() {
 
   console.log("Checking if build is a named release...");
   let buildRelease;
-  {
+  if (/^(1|true|on|yes)$/i.test(getEnv("RELEASE", false))) {
+    console.log(" - Yes, because RELEASE environment variable is set");
+    buildRelease = true;
+  } else {
     const message = getCommitMessage();
     const match = /\[(release|release build|build release)\]/i.exec(message);
     if (match) {

@@ -445,10 +445,7 @@ pub const PostgresSQLQuery = struct {
             return .zero;
         }
 
-        var ptr = bun.default_allocator.create(PostgresSQLQuery) catch |err| {
-            globalThis.throwError(err, "failed to allocate query");
-            return .zero;
-        };
+        var ptr = try bun.default_allocator.create(PostgresSQLQuery);
 
         const this_value = ptr.toJS(globalThis);
         this_value.ensureStillAlive();
@@ -502,16 +499,15 @@ pub const PostgresSQLQuery = struct {
 
         var signature = Signature.generate(globalObject, query_str.slice(), binding_value, columns_value) catch |err| {
             if (!globalObject.hasException())
-                globalObject.throwError(err, "failed to generate signature");
+                return globalObject.throwError(err, "failed to generate signature");
             return error.JSError;
         };
 
         var writer = connection.writer();
 
         const entry = connection.statements.getOrPut(bun.default_allocator, bun.hash(signature.name)) catch |err| {
-            globalObject.throwError(err, "failed to allocate statement");
             signature.deinit();
-            return error.JSError;
+            return globalObject.throwError(err, "failed to allocate statement");
         };
 
         const has_params = signature.fields.len > 0;
@@ -530,8 +526,7 @@ pub const PostgresSQLQuery = struct {
 
                     PostgresRequest.bindAndExecute(globalObject, this.statement.?, binding_value, columns_value, PostgresSQLConnection.Writer, writer) catch |err| {
                         if (!globalObject.hasException())
-                            globalObject.throwError(err, "failed to bind and execute query");
-
+                            return globalObject.throwError(err, "failed to bind and execute query");
                         return error.JSError;
                     };
                     did_write = true;
@@ -543,31 +538,30 @@ pub const PostgresSQLQuery = struct {
             // If it does not have params, we can write and execute immediately in one go
             if (!has_params) {
                 PostgresRequest.prepareAndQueryWithSignature(globalObject, query_str.slice(), binding_value, PostgresSQLConnection.Writer, writer, &signature) catch |err| {
-                    if (!globalObject.hasException())
-                        globalObject.throwError(err, "failed to prepare and query");
                     signature.deinit();
+                    if (!globalObject.hasException())
+                        return globalObject.throwError(err, "failed to prepare and query");
                     return error.JSError;
                 };
                 did_write = true;
             } else {
                 PostgresRequest.writeQuery(query_str.slice(), signature.name, signature.fields, PostgresSQLConnection.Writer, writer) catch |err| {
-                    if (!globalObject.hasException())
-                        globalObject.throwError(err, "failed to write query");
                     signature.deinit();
+                    if (!globalObject.hasException())
+                        return globalObject.throwError(err, "failed to write query");
                     return error.JSError;
                 };
                 writer.write(&protocol.Sync) catch |err| {
-                    if (!globalObject.hasException())
-                        globalObject.throwError(err, "failed to flush");
                     signature.deinit();
+                    if (!globalObject.hasException())
+                        return globalObject.throwError(err, "failed to flush");
                     return error.JSError;
                 };
             }
 
             {
                 const stmt = bun.default_allocator.create(PostgresSQLStatement) catch |err| {
-                    globalObject.throwError(err, "failed to allocate statement");
-                    return error.JSError;
+                    return globalObject.throwError(err, "failed to allocate statement");
                 };
 
                 stmt.* = .{ .signature = signature, .ref_count = 2, .status = PostgresSQLStatement.Status.parsing };
@@ -1475,14 +1469,7 @@ pub const PostgresSQLConnection = struct {
         const on_connect = arguments[8];
         const on_close = arguments[9];
 
-        var ptr = bun.default_allocator.create(PostgresSQLConnection) catch |err| {
-            globalObject.throwError(err, "failed to allocate connection");
-            tls_config.deinit();
-            if (tls_ctx) |ctx| {
-                ctx.deinit(true);
-            }
-            return .zero;
-        };
+        var ptr = try bun.default_allocator.create(PostgresSQLConnection);
 
         ptr.* = PostgresSQLConnection{
             .globalObject = globalObject,
@@ -1521,13 +1508,12 @@ pub const PostgresSQLConnection = struct {
             };
             ptr.socket = .{
                 .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
-                    globalObject.throwError(err, "failed to connect to postgresql");
                     tls_config.deinit();
                     if (tls_ctx) |tls| {
                         tls.deinit(true);
                     }
                     ptr.deinit();
-                    return .zero;
+                    return globalObject.throwError(err, "failed to connect to postgresql");
                 },
             };
         }

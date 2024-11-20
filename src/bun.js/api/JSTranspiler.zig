@@ -329,7 +329,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         return error.JSError;
     }
 
-    if (object.getTruthy(globalObject, "define")) |define| {
+    if (try object.getTruthy(globalObject, "define")) |define| {
         define: {
             if (define.isUndefinedOrNull()) {
                 break :define;
@@ -474,7 +474,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         else => false,
     };
 
-    if (object.getTruthy(globalThis, "macro")) |macros| {
+    if (try object.getTruthy(globalThis, "macro")) |macros| {
         macros: {
             if (macros.isUndefinedOrNull()) break :macros;
             if (macros.isBoolean()) {
@@ -529,7 +529,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         transpiler.dead_code_elimination = flag;
     }
 
-    if (object.getTruthy(globalThis, "minify")) |minify| {
+    if (try object.getTruthy(globalThis, "minify")) |minify| {
         if (minify.isBoolean()) {
             transpiler.minify_whitespace = minify.coerce(bool, globalThis);
             transpiler.minify_syntax = transpiler.minify_whitespace;
@@ -581,7 +581,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         trim_unused_imports = trimUnusedImports;
     }
 
-    if (object.getTruthy(globalThis, "exports")) |exports| {
+    if (try object.getTruthy(globalThis, "exports")) |exports| {
         if (!exports.isObject()) {
             globalObject.throwInvalidArguments("exports must be an object", .{});
             return error.JSError;
@@ -590,7 +590,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         var replacements = Runtime.Features.ReplaceableExport.Map{};
         errdefer replacements.clearAndFree(bun.default_allocator);
 
-        if (exports.getTruthy(globalThis, "eliminate")) |eliminate| {
+        if (try exports.getTruthy(globalThis, "eliminate")) |eliminate| {
             if (!eliminate.jsType().isArray()) {
                 globalObject.throwInvalidArguments("exports.eliminate must be an array", .{});
                 return error.JSError;
@@ -632,7 +632,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             }
         }
 
-        if (exports.getTruthy(globalThis, "replace")) |replace| {
+        if (try exports.getTruthy(globalThis, "replace")) |replace| {
             if (!replace.isObject()) {
                 globalObject.throwInvalidArguments("replace must be an object", .{});
                 return error.JSError;
@@ -709,7 +709,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         transpiler.runtime.replace_exports = replacements;
     }
 
-    if (object.getTruthy(globalThis, "logLevel")) |logLevel| {
+    if (try object.getTruthy(globalThis, "logLevel")) |logLevel| {
         if (logger.Log.Level.Map.fromJS(globalObject, logLevel)) |level| {
             transpiler.log.level = level;
         } else {
@@ -745,7 +745,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     const allocator = getAllocator(globalThis);
 
     if ((transpiler_options.log.warnings + transpiler_options.log.errors) > 0) {
-        return globalThis.throwValue2(transpiler_options.log.toJS(globalThis.ptr(), allocator, "Failed to create transpiler"));
+        return globalThis.throwValue2(transpiler_options.log.toJS(globalThis, allocator, "Failed to create transpiler"));
     }
 
     var log = try allocator.create(logger.Log);
@@ -757,22 +757,19 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
         JavaScript.VirtualMachine.get().bundler.env,
     ) catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue2(log.toJS(globalThis.ptr(), allocator, "Failed to create transpiler"));
+            return globalThis.throwValue2(log.toJS(globalThis, allocator, "Failed to create transpiler"));
         }
 
-        globalThis.throwError(err, "Error creating transpiler");
-        return error.JSError;
+        return globalThis.throwError(err, "Error creating transpiler");
     };
     bundler.options.no_macros = transpiler_options.no_macros;
     bundler.configureLinkerWithAutoJSX(false);
     bundler.options.env.behavior = .disable;
     bundler.configureDefines() catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue2(log.toJS(globalThis.ptr(), allocator, "Failed to load define"));
+            return globalThis.throwValue2(log.toJS(globalThis, allocator, "Failed to load define"));
         }
-
-        globalThis.throwError(err, "Failed to load define");
-        return error.JSError;
+        return globalThis.throwError(err, "Failed to load define");
     };
 
     if (transpiler_options.macro_map.count() > 0) {
@@ -1101,8 +1098,7 @@ pub fn transformSync(
     buffer_writer.reset();
     var printer = JSPrinter.BufferPrinter.init(buffer_writer);
     _ = this.bundler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii) catch |err| {
-        globalThis.throwError(err, "Failed to print code");
-        return .zero;
+        return globalThis.throwError(err, "Failed to print code");
     };
 
     // TODO: benchmark if pooling this way is faster or moving is faster
@@ -1244,8 +1240,7 @@ pub fn scanImports(
             return .zero;
         }
 
-        globalThis.throwError(err, "Failed to scan imports");
-        return .zero;
+        return globalThis.throwError(err, "Failed to scan imports");
     };
 
     defer this.scan_pass_result.reset();

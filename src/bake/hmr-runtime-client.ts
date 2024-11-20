@@ -75,7 +75,7 @@ initWebSocket({
       return;
     }
 
-    ws.send('h'); // HmrSocket.subscribe_hmr
+    ws.send('sh'); // HmrSocket.subscribe
   },
   [MessageId.hot_update](view) {
     const reader = new DataViewReader(view, 1);

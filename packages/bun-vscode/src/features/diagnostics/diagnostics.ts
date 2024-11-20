@@ -83,6 +83,10 @@ class BunDiagnosticsManager {
       this.editorState.clearAll();
     });
 
+    debugAdapter.on("Inspector.event", e => {
+      console.log(e.method);
+    });
+
     debugAdapter.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
 
     const dispose = async () => {
@@ -158,7 +162,7 @@ class BunDiagnosticsManager {
 
     this.context.subscriptions.push(
       // on did type
-      vscode.workspace.onDidChangeTextDocument(event => {
+      vscode.workspace.onDidChangeTextDocument(() => {
         if (this.knownOpenSockets.size === 0) {
           this.editorState.clearAll();
         }
@@ -169,9 +173,16 @@ class BunDiagnosticsManager {
   }
 }
 
+const description = new vscode.MarkdownString(
+  "Bun's VSCode extension communicates with Bun over a socket, which we set the url in your terminal with the `BUN_INSPECT_NOTIFY` environment variable",
+);
+
 export async function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
+  context.environmentVariableCollection.persistent = false;
+  context.environmentVariableCollection.description = description;
+
   const manager = await BunDiagnosticsManager.initialize(context);
+  context.environmentVariableCollection.replace("BUN_INSPECT_NOTIFY", manager.signalUrl);
 
   context.subscriptions.push(manager);
-  context.environmentVariableCollection.append("BUN_INSPECT_NOTIFY", manager.signalUrl);
 }

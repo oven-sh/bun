@@ -973,7 +973,7 @@ fn indexFailures(dev: *DevServer) !void {
                 dev.markAllRouteChildrenFailed(entry.route_index);
         }
 
-        dev.publish(HmrSocket.global_topic, payload.items, .binary);
+        dev.publish(.errors, payload.items, .binary);
     } else if (dev.incremental_result.failures_removed.items.len > 0) {
         var payload = try std.ArrayList(u8).initCapacity(sfa, @sizeOf(MessageId) + @sizeOf(u32) + dev.incremental_result.failures_removed.items.len * @sizeOf(u32));
         defer payload.deinit();
@@ -987,7 +987,7 @@ fn indexFailures(dev: *DevServer) !void {
             removed.deinit();
         }
 
-        dev.publish(HmrSocket.global_topic, payload.items, .binary);
+        dev.publish(.errors, payload.items, .binary);
     }
 
     dev.incremental_result.failures_removed.clearRetainingCapacity();
@@ -1333,6 +1333,7 @@ pub fn finalizeBundle(
             }
         }
 
+        // List 1
         var it = route_bits.iterator(.{ .kind = .set });
         while (it.next()) |bundled_route_index| {
             const bundle = &dev.route_bundles.items[bundled_route_index];
@@ -1384,9 +1385,11 @@ pub fn finalizeBundle(
     // these have active viewers, DevServer should inform them of CSS attachments
     if (has_route_bits_set and will_hear_hot_update) {
         var it = route_bits.iterator(.{ .kind = .set });
+        // List 2
         while (it.next()) |i| {
             const bundle = dev.routeBundlePtr(RouteBundle.Index.init(@intCast(i)));
             if (bundle.active_viewers == 0) continue;
+            try w.writeInt(i32, @intCast(i), .little);
             try w.writeInt(u32, @intCast(bundle.full_pattern.len), .little);
             try w.writeAll(bundle.full_pattern);
 
@@ -1396,6 +1399,7 @@ pub fn finalizeBundle(
                 gts.clear();
                 try dev.traceAllRouteImports(bundle, &gts, .{ .find_css = true });
                 const names = dev.client_graph.current_css_files.items;
+
                 try w.writeInt(u32, @intCast(names.len), .little);
                 for (names) |name| {
                     // These slices are url pathnames. The ID can be extracted
@@ -1430,7 +1434,7 @@ pub fn finalizeBundle(
             try w.writeInt(i32, 0, .little);
         }
 
-        dev.publish(HmrSocket.hmr_topic, hot_update_payload.items, .binary);
+        dev.publish(.hot_update, hot_update_payload.items, .binary);
     }
 
     if (dev.incremental_result.failures_added.items.len > 0) {
@@ -3467,7 +3471,7 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) !void {
 
     try dev.writeVisualizerMessage(&payload);
 
-    dev.publish(HmrSocket.visualizer_topic, payload.items, .binary);
+    dev.publish(.visualizer, payload.items, .binary);
 }
 
 fn writeVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !void {
@@ -3562,8 +3566,9 @@ pub const MessageId = enum(u8) {
     /// Sent on a successful bundle, containing client code, updates routes, and
     /// changed CSS files. Emitted on the `.hot_update` topic.
     ///
-    /// - `u32`: Number of server-side route updates. For each route:
+    /// - For each server-side updated route:
     ///   - `i32`: Route Bundle ID
+    /// - `i32`: -1 to indicate end of list
     /// - For each route stylesheet lists affected:
     ///   - `i32`: Route Bundle ID
     ///   - `u32`: Length of route pattern
@@ -3592,18 +3597,6 @@ pub const MessageId = enum(u8) {
     /// The JS payload is the remaining data. If defined, it can be passed to
     /// `eval`, resulting in an object of new module callables.
     hot_update = 'u',
-    /// Sent on a successful bundle, containing a list of routes that have
-    /// server changes. This is not sent when only client code changes.
-    ///
-    /// - `u32`: Number of updated routes. For each route:
-    ///   - `u32`: Route ID
-    ///   - `u32`: Length of route pattern
-    ///   - `[n]u8` UTF-8: Route pattern
-    ///
-    /// HMR Runtime contains code that performs route matching at runtime
-    /// against `location.pathname`. The server is unaware of its routing
-    /// state.
-    route_update = 'R',
     /// Sent when the list of errors changes.
     ///
     /// - `u32`: Removed errors. For Each:
@@ -3666,8 +3659,9 @@ pub const IncomingMessageId = enum(u8) {
 };
 
 const HmrTopic = enum(u8) {
-    visualizer = 'v',
     hot_update = 'h',
+    errors = '*',
+    visualizer = 'v',
     // route_manifest = 'r',
 
     /// Invalid data
@@ -4222,8 +4216,8 @@ pub fn onWatchError(_: *DevServer, err: bun.sys.Error) void {
     }
 }
 
-pub fn publish(dev: *DevServer, topic: []const u8, message: []const u8, opcode: uws.Opcode) void {
-    if (dev.server) |s| _ = s.publish(topic, message, opcode, false);
+pub fn publish(dev: *DevServer, topic: HmrTopic, message: []const u8, opcode: uws.Opcode) void {
+    if (dev.server) |s| _ = s.publish(&.{@intFromEnum(topic)}, message, opcode, false);
 }
 
 pub fn numSubscribers(dev: *DevServer, topic: HmrTopic) u32 {

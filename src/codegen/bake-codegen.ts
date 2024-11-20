@@ -84,11 +84,7 @@ async function run() {
 
       result = await Bun.build({
         entrypoints: [generated_entrypoint],
-        minify: {
-          syntax: true,
-          whitespace: !debug,
-          identifiers: !debug,
-        },
+        minify: !debug,
       });
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");

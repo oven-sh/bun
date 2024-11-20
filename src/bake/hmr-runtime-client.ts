@@ -75,53 +75,80 @@ initWebSocket({
       return;
     }
 
-    ws.send('sh'); // HmrSocket.subscribe
+    ws.send('she'); // IncomingMessageId.subscribe with hot_update and route_update
+    ws.send('n' + location.pathname); // IncomingMessageId.set_url
   },
   [MessageId.hot_update](view) {
+    console.log(view);
     const reader = new DataViewReader(view, 1);
 
-    const cssCount = reader.u32();
-    if (cssCount > 0) {
-      for (let i = 0; i < cssCount; i++) {
-        const moduleId = reader.stringWithLength(16);
-        let routeCount = reader.u32();
-        let appliesToThisRoute = false;
-        while (routeCount > 0) {
-          routeCount -= 1;
-          const routeId = reader.u32();
-          const routePattern = reader.string32();
-          if (routeMatch(routeId, routePattern)) {
-            appliesToThisRoute = true;
-          }
-        } 
-        const content = reader.string32();
-        if (appliesToThisRoute)
-          reloadCss(moduleId, content);
+    // The code genearting each list is annotated with equivalent "List n"
+    // comments in DevServer.zig's finalizeBundle function.
+
+    // List 1
+    const serverSideRoutesUpdated = new Set();
+    do {
+      const routeId = reader.i32();
+      if (routeId === -1 || routeId == undefined) break;
+      serverSideRoutesUpdated.add(routeId);
+    } while (true);
+    // List 2
+    do {
+      const routeId = reader.i32();
+      if (routeId === -1 || routeId == undefined) break;
+      const routePattern = reader.string32();
+      if (routeMatch(routeId, routePattern)) {
+        const isServerSide = serverSideRoutesUpdated.has(routeId);
+        const cssCount = reader.u32();
+        const cssArray = new Array<string>(cssCount);
+        for (let i = 0; i < cssCount; i++) {
+          cssArray[i] = reader.stringWithLength(16);
+        }
+        console.log('oh shit', { routePattern, cssArray, isServerSide });
+
+        // Skip to the last route
+        const nextRouteId = reader.i32();
+        while(nextRouteId != -1) {
+          reader.string32();
+          reader.cursor += 16 * reader.u32();
+        }
+        break;
+      } else {
+        // Skip to the next route
+        reader.cursor += 16 * reader.u32();
+      }
+    } while(true);
+    // List 3
+    {
+      let i = reader.u32();
+      while (i--) { 
+        const identifier = reader.stringWithLength(16);
+        const code = reader.string32();
+        console.log('css mutation', { code, identifier });
       }
     }
-
+    // JavaScript modules
     if (reader.hasMoreData()) {
       const code = td.decode(reader.rest());
       const modules = (0, eval)(code);
       replaceModules(modules);
     }
   },
-  [MessageId.route_update](view) {
-    const reader = new DataViewReader(view, 1);
-    let routeCount = reader.u32();
+  // [MessageId.route_update](view) {
+  //   const reader = new DataViewReader(view, 1);
+  //   let routeCount = reader.u32();
 
-    while (routeCount > 0) {
-      routeCount -= 1;
-      const routeId = reader.u32();
-      const routePattern = reader.string32();
-      if (routeMatch(routeId, routePattern)) {
-        performRouteReload();
-        break;
-      }
-    }
-  },
+  //   while (routeCount > 0) {
+  //     routeCount -= 1;
+  //     const routeId = reader.u32();
+  //     const routePattern = reader.string32();
+  //     if (routeMatch(routeId, routePattern)) {
+  //       performRouteReload();
+  //       break;
+  //     }
+  //   }
+  // },
   [MessageId.errors]: onErrorMessage,
-  [MessageId.errors_cleared]: onErrorClearedMessage,
 });
 
 function reloadCss(id: string, newContent: string) {

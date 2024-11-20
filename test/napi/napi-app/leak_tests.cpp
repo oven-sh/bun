@@ -147,10 +147,42 @@ private:
   std::string m_string;
 };
 
+// creates a threadsafe function wrapping the passed JavaScript function, and
+// then deletes it
+// parameter 1: JavaScript function
+// parameter 2: max queue size (0 means dynamic, like in
+// napi_create_threadsafe_function)
+// parameter 3: number of times to call the threadsafe function
+napi_value
+create_and_delete_threadsafe_function(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value js_func = info[0];
+  size_t max_queue_size = info[1].As<Napi::Number>().Uint32Value();
+  size_t num_calls = info[2].As<Napi::Number>().Uint32Value();
+  NODE_API_ASSERT(env, num_calls <= max_queue_size || max_queue_size == 0);
+  napi_threadsafe_function tsfn;
+  napi_value async_resource_name;
+  NODE_API_CALL(env,
+                napi_create_string_utf8(env, "name", 4, &async_resource_name));
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, js_func, nullptr, async_resource_name, max_queue_size,
+                    1, nullptr, nullptr, nullptr, nullptr, &tsfn));
+  for (size_t i = 0; i < num_calls; i++) {
+    // status should never be napi_queue_full, because we call this exactly as
+    // many times as there is capacity in the queue
+    NODE_API_CALL(env, napi_call_threadsafe_function(tsfn, nullptr,
+                                                     napi_tsfn_nonblocking));
+  }
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn, napi_tsfn_abort));
+  return env.Undefined();
+}
+
 void register_leak_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, add_weak_refs);
   REGISTER_FUNCTION(env, exports, clear_weak_refs);
   REGISTER_FUNCTION(env, exports, create_and_delete_strong_ref);
+  REGISTER_FUNCTION(env, exports, create_and_delete_threadsafe_function);
   exports.Set("wrapped_object_factory",
               Napi::Function::New(env, WrappedObject::factory));
   exports.Set("external_factory",

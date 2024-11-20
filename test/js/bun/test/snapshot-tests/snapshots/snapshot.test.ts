@@ -179,10 +179,17 @@ class SnapshotTester {
     this.dir = tempDirWithFiles("snapshotTester", { "snapshot.test.ts": "" });
     this.targetSnapshotContents = "";
   }
-  test(label: string, contents: string, opts: { shouldNotError: boolean } = { shouldNotError: false }) {
+  test(
+    label: string,
+    contents: string,
+    opts: { shouldNotError?: boolean; shouldGrow?: boolean; skipSnapshot?: boolean } = {},
+  ) {
     test(label, async () => await this.update(contents, opts));
   }
-  async update(contents: string, opts: { shouldNotError: boolean } = { shouldNotError: false }) {
+  async update(
+    contents: string,
+    opts: { shouldNotError?: boolean; shouldGrow?: boolean; skipSnapshot?: boolean } = {},
+  ) {
     const isFirst = this.isFirst;
     this.isFirst = false;
     await Bun.write(this.dir + "/snapshot.test.ts", contents);
@@ -202,13 +209,19 @@ class SnapshotTester {
       const newContents = await this.getSnapshotContents();
       if (!isFirst) {
         expect(newContents).not.toStartWith(this.targetSnapshotContents);
-        expect(newContents).toMatchSnapshot();
       }
+      if (!opts.skipSnapshot) expect(newContents).toMatchSnapshot();
       this.targetSnapshotContents = newContents;
     }
     // run, make sure snapshot does not change
     await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.quiet();
-    expect(await Bun.file(this.dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(this.targetSnapshotContents);
+    if (!opts.shouldGrow) {
+      expect(await Bun.file(this.dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(
+        this.targetSnapshotContents,
+      );
+    } else {
+      this.targetSnapshotContents = await this.getSnapshotContents();
+    }
   }
   async setSnapshotFile(contents: string) {
     await Bun.write(this.dir + "/__snapshots__/snapshot.test.ts.snap", contents);
@@ -221,7 +234,7 @@ class SnapshotTester {
 
 describe("snapshots", async () => {
   const t = new SnapshotTester();
-  await t.update(defaultWrap("''"));
+  await t.update(defaultWrap("''"), { skipSnapshot: true });
 
   t.test("dollars", defaultWrap("`\\$`"));
   t.test("backslash", defaultWrap("`\\\\`"));
@@ -259,8 +272,39 @@ describe("snapshots", async () => {
     expect(await t.getSnapshotContents()).toBe("exports[`snap 1`] = `hello`goodbye`;");
   });
 
+  test("grow file for new snapshot", async () => {
+    const t4 = new SnapshotTester();
+    await t4.update(/*js*/ `
+      test("abc", () => { expect("hello").toMatchSnapshot() });
+    `);
+    await t4.update(
+      /*js*/ `
+        test("abc", () => { expect("hello").toMatchSnapshot() });
+        test("def", () => { expect("goodbye").toMatchSnapshot() });
+      `,
+      { shouldNotError: true, shouldGrow: true },
+    );
+    await t4.update(/*js*/ `
+      test("abc", () => { expect("hello").toMatchSnapshot() });
+      test("def", () => { expect("hello").toMatchSnapshot() });
+    `);
+    await t4.update(/*js*/ `
+      test("abc", () => { expect("goodbye").toMatchSnapshot() });
+      test("def", () => { expect("hello").toMatchSnapshot() });
+    `);
+  });
+
   const t2 = new SnapshotTester();
   t2.test("backtick in test name", `test("\`", () => {expect("abc").toMatchSnapshot();})`);
   const t3 = new SnapshotTester();
   t3.test("dollars curly in test name", `test("\${}", () => {expect("abc").toMatchSnapshot();})`);
+
+  const t15283 = new SnapshotTester();
+  t15283.test(
+    "#15283",
+    `it("Should work", () => {
+      expect(\`This is \\\`wrong\\\`\`).toMatchSnapshot();
+    });`,
+  );
+  t15283.test("#15283 unicode", `it("Should work", () => {expect(\`😊This is \\\`wrong\\\`\`).toMatchSnapshot()});`);
 });

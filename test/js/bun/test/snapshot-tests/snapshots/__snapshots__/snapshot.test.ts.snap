@@ -487,3 +487,56 @@ exports[\`abc 1\`] = \`
 \`;
 "
 `;
+
+exports[`snapshots grow file for new snapshot 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"hello"\`;
+"
+`;
+
+exports[`snapshots grow file for new snapshot 2`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"hello"\`;
+
+exports[\`def 1\`] = \`"hello"\`;
+"
+`;
+
+exports[`snapshots grow file for new snapshot 3`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"goodbye"\`;
+
+exports[\`def 1\`] = \`"hello"\`;
+"
+`;
+
+exports[`snapshots backtick in test name 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`\\\` 1\`] = \`"abc"\`;
+"
+`;
+
+exports[`snapshots dollars curly in test name 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`\\\${} 1\`] = \`"abc"\`;
+"
+`;
+
+exports[`snapshots #15283 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`Should work 1\`] = \`"This is \\\`wrong\\\`"\`;
+"
+`;
+
+exports[`snapshots #15283 unicode 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`Should work 1\`] = \`"😊This is \\\`wrong\\\`"\`;
+"
+`;

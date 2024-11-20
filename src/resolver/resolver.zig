@@ -3283,7 +3283,7 @@ pub const Resolver = struct {
             return .zero;
         }
 
-        const in_str = argument.toBunString(globalThis);
+        const in_str = try argument.toBunString(globalThis);
         defer in_str.deref();
         const r = &globalThis.bunVM().bundler.resolver;
         return nodeModulePathsJSValue(r, in_str, globalThis);

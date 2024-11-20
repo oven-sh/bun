@@ -542,7 +542,7 @@ pub const Body = struct {
             const js_type = value.jsType();
 
             if (js_type.isStringLike()) {
-                var str = value.toBunString(globalThis);
+                var str = try value.toBunString(globalThis);
                 if (str.length() == 0) {
                     return Body.Value{
                         .Empty = {},

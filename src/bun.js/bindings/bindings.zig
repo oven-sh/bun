@@ -5092,13 +5092,7 @@ pub const JSValue = enum(i64) {
     }
 
     /// Increments the reference count, you must call `.deref()` or it will leak memory.
-    /// Returns String.Dead on error. Deprecated in favor of `toBunString2`
-    pub fn toBunString(this: JSValue, globalObject: *JSC.JSGlobalObject) bun.String {
-        return bun.String.fromJS(this, globalObject);
-    }
-
-    /// Increments the reference count, you must call `.deref()` or it will leak memory.
-    pub fn toBunString2(this: JSValue, globalObject: *JSC.JSGlobalObject) JSError!bun.String {
+    pub fn toBunString(this: JSValue, globalObject: *JSC.JSGlobalObject) JSError!bun.String {
         return bun.String.fromJS2(this, globalObject);
     }
 
@@ -5155,6 +5149,7 @@ pub const JSValue = enum(i64) {
     }
 
     /// Deprecated: replace with 'toBunString2'
+    ///
     pub inline fn getZigString(this: JSValue, global: *JSGlobalObject) ZigString {
         var str = ZigString.init("");
         this.toZigString(&str, global);
@@ -5831,7 +5826,7 @@ pub const JSValue = enum(i64) {
         globalObject: *JSC.JSGlobalObject,
 
         pub fn format(this: StringFormatter, comptime text: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            const str = this.value.toBunString(this.globalObject);
+            const str = try this.value.toBunString(this.globalObject);
             defer str.deref();
             try str.format(text, opts, writer);
         }
@@ -6756,6 +6751,7 @@ pub const CallFrame = opaque {
     pub fn arguments(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const len = self.argumentsCount();
         const ptr = self.argumentsPtr();
+        if (max > 10) @compileError(std.fmt.comptimePrint("arguments({d})", .{max}));
         return switch (@as(u4, @min(len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
             inline 1...10 => |count| Arguments(max).init(comptime @min(count, max), ptr),
@@ -6766,6 +6762,7 @@ pub const CallFrame = opaque {
     pub fn argumentsUndef(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const len = self.argumentsCount();
         const ptr = self.argumentsPtr();
+        if (max > 9) @compileError(std.fmt.comptimePrint("arguments({d})", .{max}));
         return switch (@as(u4, @min(len, max))) {
             0 => .{ .ptr = .{.undefined} ** max, .len = 0 },
             inline 1...9 => |count| Arguments(max).initUndef(@min(count, max), ptr),

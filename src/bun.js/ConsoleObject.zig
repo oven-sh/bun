@@ -536,7 +536,7 @@ pub const TablePrinter = struct {
             var properties_iter = JSC.JSArrayIterator.init(this.properties, globalObject);
             while (properties_iter.next()) |value| {
                 try columns.append(.{
-                    .name = value.toBunString(globalObject),
+                    .name = try value.toBunString(globalObject),
                 });
             }
         }

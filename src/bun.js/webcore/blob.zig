@@ -1065,7 +1065,7 @@ pub const Blob = struct {
                     const len = data.getLength(globalThis);
 
                     if (len < 256 * 1024) {
-                        const str = data.toBunString(globalThis);
+                        const str = try data.toBunString(globalThis);
                         defer str.deref();
 
                         const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
@@ -4598,7 +4598,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.DerivedStringObject,
                 => {
                     if (!fail_if_top_value_is_not_typed_array_like) {
-                        var str = top_value.toBunString(global);
+                        var str = try top_value.toBunString(global);
                         defer str.deref();
                         const bytes, const ascii = try str.toOwnedSliceReturningAllASCII(bun.default_allocator);
                         return Blob.initWithAllASCII(bytes, bun.default_allocator, global, ascii);

@@ -1026,7 +1026,7 @@ pub const JSFrameworkRouter = struct {
 
     pub fn match(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
         const path_js = callframe.argumentsAsArray(1)[0];
-        const path_str = try path_js.toBunString2(global);
+        const path_str = try path_js.toBunString(global);
         defer path_str.deref();
         const path_slice = path_str.toSlice(bun.default_allocator);
         defer path_slice.deinit();

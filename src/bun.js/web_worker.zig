@@ -82,7 +82,7 @@ pub const WebWorker = struct {
         str: []const u8,
         error_message: *bun.String,
         logger: *bun.logger.Log,
-    ) ?[]const u8 {
+    ) bun.JSError!?[]const u8 {
         if (parent.standalone_module_graph) |graph| {
             if (graph.find(str) != null) {
                 return str;
@@ -153,7 +153,7 @@ pub const WebWorker = struct {
         }
 
         var resolved_entry_point: bun.resolver.Result = parent.bundler.resolveEntryPoint(str) catch {
-            const out = logger.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
+            const out = try logger.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
             error_message.* = out;
             return null;
         };
@@ -197,15 +197,13 @@ pub const WebWorker = struct {
         else
             &.{};
 
-        const path = resolveEntryPointSpecifier(parent, spec_slice.slice(), error_message, &temp_log) orelse {
-            return null;
-        };
+        const path = (resolveEntryPointSpecifier(parent, spec_slice.slice(), error_message, &temp_log) catch return null) orelse return null;
 
         var preloads = std.ArrayList([]const u8).initCapacity(bun.default_allocator, preload_modules_len) catch bun.outOfMemory();
         for (preload_modules) |module| {
             const utf8_slice = module.toUTF8(bun.default_allocator);
             defer utf8_slice.deinit();
-            if (resolveEntryPointSpecifier(parent, utf8_slice.slice(), error_message, &temp_log)) |preload| {
+            if (resolveEntryPointSpecifier(parent, utf8_slice.slice(), error_message, &temp_log) catch return null) |preload| {
                 preloads.append(bun.default_allocator.dupe(u8, preload) catch bun.outOfMemory()) catch bun.outOfMemory();
             }
 
@@ -328,7 +326,7 @@ pub const WebWorker = struct {
         var vm = this.vm orelse return;
         if (vm.log.msgs.items.len == 0) return;
         const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker");
-        const str = err.toBunString(vm.global);
+        const str = err.toBunString(vm.global) catch bun.String.static("(threw exception creating message)");
         defer str.deref();
         WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);
     }

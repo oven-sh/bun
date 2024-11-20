@@ -263,7 +263,7 @@ pub const Framework = struct {
     ) !Framework {
         _ = bundler_options; // autofix
         if (opts.isString()) {
-            const str = try opts.toBunString2(global);
+            const str = try opts.toBunString(global);
             defer str.deref();
 
             // Deprecated
@@ -303,7 +303,7 @@ pub const Framework = struct {
                 return global.throwInvalidArguments2("'framework.reactFastRefresh' is missing 'importSource'", .{});
             };
 
-            const str = try prop.toBunString2(global);
+            const str = try prop.toBunString(global);
             defer str.deref();
 
             break :brk .{
@@ -556,7 +556,7 @@ fn getOptionalString(
         return null;
     if (value == .undefined or value == .null)
         return null;
-    const str = try value.toBunString2(global);
+    const str = try value.toBunString(global);
     return allocations.track(str.toUTF8(arena));
 }
 

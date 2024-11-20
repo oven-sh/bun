@@ -132,7 +132,7 @@ pub const UDPSocketConfig = struct {
                 if (!value.isString()) {
                     return globalThis.throwInvalidArguments2("Expected \"hostname\" to be a string", .{});
                 }
-                const str = value.toBunString(globalThis);
+                const str = try value.toBunString(globalThis);
                 defer str.deref();
                 break :brk str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
             } else {
@@ -209,7 +209,7 @@ pub const UDPSocketConfig = struct {
             };
             const connect_port = connect_port_js.coerceToInt32(globalThis);
 
-            const str = connect_host_js.toBunString(globalThis);
+            const str = try connect_host_js.toBunString(globalThis);
             defer str.deref();
             const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
 
@@ -422,7 +422,7 @@ pub const UDPSocket = struct {
                 continue;
             }
             if (i % 3 == 2) {
-                if (!this.parseAddr(globalThis, port, val, &addrs[slice_idx])) {
+                if (!try this.parseAddr(globalThis, port, val, &addrs[slice_idx])) {
                     globalThis.throwInvalidArguments("Invalid address", .{});
                     return .zero;
                 }
@@ -492,7 +492,7 @@ pub const UDPSocket = struct {
         var addr: std.posix.sockaddr.storage = std.mem.zeroes(std.posix.sockaddr.storage);
         const addr_ptr = brk: {
             if (dst) |dest| {
-                if (!this.parseAddr(globalThis, dest.port, dest.address, &addr)) {
+                if (!try this.parseAddr(globalThis, dest.port, dest.address, &addr)) {
                     globalThis.throwInvalidArguments("Invalid address", .{});
                     return .zero;
                 }
@@ -516,12 +516,12 @@ pub const UDPSocket = struct {
         port_val: JSValue,
         address_val: JSValue,
         storage: *std.posix.sockaddr.storage,
-    ) bool {
+    ) bun.JSError!bool {
         _ = this;
         const number = port_val.coerceToInt32(globalThis);
         const port: u16 = if (number < 1 or number > 0xffff) 0 else @intCast(number);
 
-        const str = address_val.toBunString(globalThis);
+        const str = try address_val.toBunString(globalThis);
         defer str.deref();
         const address_slice = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
         defer default_allocator.free(address_slice);
@@ -698,7 +698,7 @@ pub const UDPSocket = struct {
             return .zero;
         }
 
-        const str = args.ptr[0].toBunString(globalThis);
+        const str = try args.ptr[0].toBunString(globalThis);
         defer str.deref();
         const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
         defer default_allocator.free(connect_host);

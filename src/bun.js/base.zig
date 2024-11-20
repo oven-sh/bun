@@ -1419,7 +1419,7 @@ pub const BinaryType = enum(u4) {
 
     pub fn fromJSValue(globalThis: *JSC.JSGlobalObject, input: JSValue) bun.JSError!?BinaryType {
         if (input.isString()) {
-            return Map.getWithEql(try input.toBunString2(globalThis), bun.String.eqlComptime);
+            return Map.getWithEql(try input.toBunString(globalThis), bun.String.eqlComptime);
         }
 
         return null;

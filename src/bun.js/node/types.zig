@@ -954,7 +954,7 @@ pub const PathLike = union(enum) {
             JSC.JSValue.JSType.StringObject,
             JSC.JSValue.JSType.DerivedStringObject,
             => {
-                var str = arg.toBunString(ctx);
+                var str = try arg.toBunString(ctx);
                 defer str.deref();
 
                 arguments.eat();

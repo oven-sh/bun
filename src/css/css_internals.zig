@@ -46,7 +46,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
         globalThis.throw("minifyTestWithOptions: expected source to be a string", .{});
         return .undefined;
     }
-    const source_bunstr = source_arg.toBunString(globalThis);
+    const source_bunstr = try source_arg.toBunString(globalThis);
     defer source_bunstr.deref();
     const source = source_bunstr.toUTF8(bun.default_allocator);
     defer source.deinit();
@@ -59,7 +59,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
         globalThis.throw("minifyTestWithOptions: expected `expected` arg to be a string", .{});
         return .undefined;
     }
-    const expected_bunstr = expected_arg.toBunString(globalThis);
+    const expected_bunstr = try expected_arg.toBunString(globalThis);
     defer expected_bunstr.deref();
     const expected = expected_bunstr.toUTF8(bun.default_allocator);
     defer expected.deinit();
@@ -212,7 +212,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
         globalThis.throw("attrTest: expected source to be a string", .{});
         return .undefined;
     }
-    const source_bunstr = source_arg.toBunString(globalThis);
+    const source_bunstr = try source_arg.toBunString(globalThis);
     defer source_bunstr.deref();
     const source = source_bunstr.toUTF8(bun.default_allocator);
     defer source.deinit();
@@ -225,7 +225,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
         globalThis.throw("attrTest: expected `expected` arg to be a string", .{});
         return .undefined;
     }
-    const expected_bunstr = expected_arg.toBunString(globalThis);
+    const expected_bunstr = try expected_arg.toBunString(globalThis);
     defer expected_bunstr.deref();
     const expected = expected_bunstr.toUTF8(bun.default_allocator);
     defer expected.deinit();

@@ -368,7 +368,7 @@ pub const Expect = struct {
         var custom_label = bun.String.empty;
         if (arguments.len > 1) {
             if (arguments[1].isString() or arguments[1].implementsToString(globalThis)) {
-                const label = arguments[1].toBunString(globalThis);
+                const label = try arguments[1].toBunString(globalThis);
                 if (globalThis.hasException()) return .zero;
                 custom_label = label;
             }
@@ -3015,7 +3015,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const expected_type = expected.toBunString(globalThis);
+        const expected_type = try expected.toBunString(globalThis);
         defer expected_type.deref();
         incrementExpectCallCounter();
 
@@ -4708,7 +4708,7 @@ pub const Expect = struct {
         if (message.isUndefined()) {
             message_text = bun.String.static("No message was specified for this matcher.");
         } else if (message.isString()) {
-            message_text = message.toBunString(globalThis);
+            message_text = message.toBunString(globalThis) catch return false;
         } else {
             if (comptime Environment.allow_assert)
                 assert(message.isCallable(globalThis.vm())); // checked above
@@ -4877,19 +4877,18 @@ pub const Expect = struct {
         if (arg.isEmptyOrUndefinedOrNull()) {
             const error_value = bun.String.init("reached unreachable code").toErrorInstance(globalThis);
             error_value.put(globalThis, ZigString.static("name"), bun.String.init("UnreachableError").toJS(globalThis));
-            globalThis.throwValue(error_value);
-            return .zero;
+            return globalThis.throwValue2(error_value);
         }
 
         if (arg.isString()) {
-            const error_value = arg.toBunString(globalThis).toErrorInstance(globalThis);
+            const error_string = try arg.toBunString(globalThis);
+            defer error_string.deref();
+            const error_value = error_string.toErrorInstance(globalThis);
             error_value.put(globalThis, ZigString.static("name"), bun.String.init("UnreachableError").toJS(globalThis));
-            globalThis.throwValue(error_value);
-            return .zero;
+            return globalThis.throwValue2(error_value);
         }
 
-        globalThis.throwValue(arg);
-        return .zero;
+        return globalThis.throwValue2(arg);
     }
 };
 
@@ -5394,7 +5393,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
                     }
                     return err;
                 };
-                try writer.print("{}", .{result.toBunString(globalThis)});
+                try writer.print("{}", .{try result.toBunString(globalThis)});
             }
         }
         return false;
@@ -5547,7 +5546,7 @@ pub const ExpectMatcherUtils = struct {
             globalThis.throw("matcherHint: the first argument (matcher name) must be a string", .{});
             return .zero;
         }
-        const matcher_name = arguments[0].toBunString(globalThis);
+        const matcher_name = try arguments[0].toBunString(globalThis);
         defer matcher_name.deref();
 
         const received = if (arguments.len > 1) arguments[1] else bun.String.static("received").toJS(globalThis);

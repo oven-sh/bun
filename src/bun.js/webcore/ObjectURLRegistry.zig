@@ -119,14 +119,14 @@ fn Bun__revokeObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
     if (!arguments.ptr[0].isString()) {
         return globalObject.throwInvalidArguments2("revokeObjectURL expects a string", .{});
     }
-    const str = arguments.ptr[0].toBunString(globalObject);
+    const str = try arguments.ptr[0].toBunString(globalObject);
+    defer str.deref();
     if (!str.hasPrefixComptime("blob:")) {
         return JSC.JSValue.undefined;
     }
 
     const slice = str.toUTF8WithoutRef(bun.default_allocator);
     defer slice.deinit();
-    defer str.deref();
 
     const sliced = slice.slice();
     if (sliced.len < "blob:".len + UUID.stringLength) {
@@ -149,7 +149,7 @@ fn jsFunctionResolveObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JS
     if (arguments.len < 1) {
         return JSC.JSValue.undefined;
     }
-    const str = arguments.ptr[0].toBunString(globalObject);
+    const str = try arguments.ptr[0].toBunString(globalObject);
     defer str.deref();
 
     if (globalObject.hasException()) {

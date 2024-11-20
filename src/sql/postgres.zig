@@ -430,19 +430,17 @@ pub const PostgresSQLQuery = struct {
         const columns = arguments[3];
 
         if (!query.isString()) {
-            globalThis.throw("query must be a string", .{});
-            return .zero;
+            return globalThis.throw2("query must be a string", .{});
         }
 
         if (values.jsType() != .Array) {
-            globalThis.throw("values must be an array", .{});
-            return .zero;
+            return globalThis.throw2("values must be an array", .{});
         }
 
         const pending_value = arguments[2];
         if (!pending_value.jsType().isArrayLike()) {
             globalThis.throwInvalidArgumentType("query", "pendingValue", "Array");
-            return .zero;
+            return error.JSError;
         }
 
         var ptr = try bun.default_allocator.create(PostgresSQLQuery);
@@ -451,7 +449,7 @@ pub const PostgresSQLQuery = struct {
         this_value.ensureStillAlive();
 
         ptr.* = .{
-            .query = query.toBunString(globalThis),
+            .query = try query.toBunString(globalThis),
             .thisValue = this_value,
         };
         ptr.query.ref();
@@ -696,7 +694,7 @@ pub const PostgresRequest = struct {
                 },
                 .timestamp, .timestamptz => {
                     const l = try writer.length();
-                    try writer.int8(types.date.fromJS(globalObject, value));
+                    try writer.int8(try types.date.fromJS(globalObject, value));
                     try l.writeExcludingSelf();
                 },
                 .bytea => {
@@ -1369,15 +1367,15 @@ pub const PostgresSQLConnection = struct {
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var vm = globalObject.bunVM();
         const arguments = callframe.arguments(10).slice();
-        const hostname_str = arguments[0].toBunString(globalObject);
+        const hostname_str = try arguments[0].toBunString(globalObject);
         defer hostname_str.deref();
         const port = arguments[1].coerce(i32, globalObject);
 
-        const username_str = arguments[2].toBunString(globalObject);
+        const username_str = try arguments[2].toBunString(globalObject);
         defer username_str.deref();
-        const password_str = arguments[3].toBunString(globalObject);
+        const password_str = try arguments[3].toBunString(globalObject);
         defer password_str.deref();
-        const database_str = arguments[4].toBunString(globalObject);
+        const database_str = try arguments[4].toBunString(globalObject);
         defer database_str.deref();
         const ssl_mode: SSLMode = switch (arguments[5].toInt32()) {
             0 => .disable,
@@ -1439,7 +1437,7 @@ pub const PostgresSQLConnection = struct {
         var database: []const u8 = "";
         var options: []const u8 = "";
 
-        const options_str = arguments[7].toBunString(globalObject);
+        const options_str = try arguments[7].toBunString(globalObject);
         defer options_str.deref();
 
         const options_buf: []u8 = brk: {

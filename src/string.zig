@@ -1334,7 +1334,7 @@ pub const String = extern struct {
             return JSC.jsNumber(@as(i32, 0));
         }
 
-        const str = args[0].toBunString(globalObject);
+        const str = try args[0].toBunString(globalObject);
         defer str.deref();
 
         if (str.isEmpty()) {

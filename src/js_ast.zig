@@ -8358,7 +8358,7 @@ pub const Macro = struct {
                         return Expr.init(E.Number, E.Number{ .value = value.asNumber() }, this.caller.loc);
                     },
                     .String => {
-                        var bun_str = value.toBunString(this.global);
+                        var bun_str = try value.toBunString(this.global);
                         defer bun_str.deref();
 
                         // encode into utf16 so the printer escapes the string correctly
@@ -8941,7 +8941,7 @@ fn stringToEquivalentNumberValue(str: []const u8) f64 {
 // STry               | 384
 // -- ESBuild bit sizes
 
-const ToJSError = error{
+const ToJSError = bun.JSError || error{
     @"Cannot convert argument type to JS",
     @"Cannot convert identifier to JS. Try a statically-known value",
     MacroError,

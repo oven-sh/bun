@@ -45,7 +45,7 @@ const ValueRef = union(Tag) {
 
     const Tag = enum { jsvalue, bunstr };
 
-    pub fn asBunString(this: ValueRef, globalObject: *JSGlobalObject) bun.String {
+    pub fn asBunString(this: ValueRef, globalObject: *JSGlobalObject) bun.JSError!bun.String {
         return switch (this) {
             .jsvalue => |str| str.toBunString(globalObject),
             .bunstr => |str| return str,
@@ -98,7 +98,7 @@ const OptionToken = struct {
         /// Formats the raw name of the arg (includes any dashes and excludes inline values)
         pub fn format(this: RawNameFormatter, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
             const token = this.token;
-            const raw = token.raw.asBunString(this.globalThis);
+            const raw = try token.raw.asBunString(this.globalThis);
             if (token.optgroup_idx) |optgroup_idx| {
                 try raw.substringWithLen(optgroup_idx, optgroup_idx + 1).format(fmt, opts, writer);
             } else {
@@ -121,9 +121,9 @@ const OptionToken = struct {
     };
 
     /// Returns the raw name of the arg (includes any dashes and excludes inline values), as a JSValue
-    fn makeRawNameJSValue(this: OptionToken, globalThis: *JSGlobalObject) JSValue {
+    fn makeRawNameJSValue(this: OptionToken, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         if (this.optgroup_idx) |optgroup_idx| {
-            const raw = this.raw.asBunString(globalThis);
+            const raw = try this.raw.asBunString(globalThis);
             var buf: [8]u8 = undefined;
             const str = std.fmt.bufPrint(&buf, "-{}", .{raw.substringWithLen(optgroup_idx, optgroup_idx + 1)}) catch unreachable;
             return String.fromUTF8(str).toJS(globalThis);
@@ -133,12 +133,12 @@ const OptionToken = struct {
                     return this.raw.asJSValue(globalThis);
                 },
                 .short_option_and_value => {
-                    var raw = this.raw.asBunString(globalThis);
+                    var raw = try this.raw.asBunString(globalThis);
                     var substr = raw.substringWithLen(0, 2);
                     return substr.toJS(globalThis);
                 },
                 .long_option_and_value => {
-                    var raw = this.raw.asBunString(globalThis);
+                    var raw = try this.raw.asBunString(globalThis);
                     const equal_index = raw.indexOfAsciiChar('=').?;
                     var substr = raw.substringWithLen(0, equal_index);
                     return substr.toJS(globalThis);
@@ -184,12 +184,12 @@ fn getDefaultArgs(globalThis: *JSGlobalObject) !ArgsSlice {
 
 /// In strict mode, throw for possible usage errors like "--foo --bar" where foo was defined as a string-valued arg
 fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) bun.JSError!void {
-    if (!token.inline_value and isOptionLikeValue(token.value.asBunString(globalThis))) {
+    if (!token.inline_value and isOptionLikeValue(try token.value.asBunString(globalThis))) {
         const raw_name = OptionToken.RawNameFormatter{ .token = token, .globalThis = globalThis };
 
         // Only show short example if user used short option.
         var err: JSValue = undefined;
-        if (token.raw.asBunString(globalThis).hasPrefixComptime("--")) {
+        if ((try token.raw.asBunString(globalThis)).hasPrefixComptime("--")) {
             err = JSC.toTypeError(
                 .ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
                 "Option '{}' argument is ambiguous.\nDid you forget to specify the option argument for '{}'?\nTo specify an option argument starting with a dash use '{}=-XYZ'.",
@@ -197,7 +197,7 @@ fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) bun.JSE
                 globalThis,
             );
         } else {
-            const token_name = token.name.asBunString(globalThis);
+            const token_name = try token.name.asBunString(globalThis);
             err = JSC.toTypeError(
                 .ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
                 "Option '{}' argument is ambiguous.\nDid you forget to specify the option argument for '{}'?\nTo specify an option argument starting with a dash use '--{}=-XYZ' or '{}-XYZ'.",
@@ -223,7 +223,7 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
                         if (!option.short_name.isEmpty()) "-" else "",
                         option.short_name,
                         if (!option.short_name.isEmpty()) ", " else "",
-                        token.name.asBunString(globalThis),
+                        try token.name.asBunString(globalThis),
                     },
                     globalThis,
                 );
@@ -238,7 +238,7 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
                         if (!option.short_name.isEmpty()) "-" else "",
                         option.short_name,
                         if (!option.short_name.isEmpty()) ", " else "",
-                        token.name.asBunString(globalThis),
+                        try token.name.asBunString(globalThis),
                     },
                     globalThis,
                 );
@@ -271,8 +271,8 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
 /// - `option_value`: value from user args
 /// - `options`: option configs, from `parseArgs({ options })`
 /// - `values`: option values returned in `values` by parseArgs
-fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value: ValueRef, option_idx: ?usize, options: []const OptionDefinition, values: JSValue) void {
-    var key = option_name.asBunString(globalThis);
+fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value: ValueRef, option_idx: ?usize, options: []const OptionDefinition, values: JSValue) bun.JSError!void {
+    var key = try option_name.asBunString(globalThis);
     if (key.eqlComptime("__proto__")) {
         return;
     }
@@ -324,7 +324,7 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
 
         if (obj.getOwn(globalThis, "short")) |short_option| {
             try validateString(globalThis, short_option, "options.{s}.short", .{option.long_name});
-            var short_option_str = short_option.toBunString(globalThis);
+            var short_option_str = try short_option.toBunString(globalThis);
             if (short_option_str.length() != 1) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "options.{s}.short must be a single character", .{option.long_name}, globalThis);
                 globalThis.vm().throwError(globalThis, err);
@@ -392,7 +392,7 @@ fn tokenizeArgs(
     var index: u32 = 0;
     while (index < num_args) : (index += 1) {
         const arg_ref: ValueRef = ValueRef{ .jsvalue = args.get(globalThis, index) };
-        const arg = arg_ref.asBunString(globalThis);
+        const arg = try arg_ref.asBunString(globalThis);
 
         const token_rawtype = classifyToken(arg, options);
         log(" [Arg #{d}] {s} ({s})", .{ index, @tagName(token_rawtype), arg });
@@ -588,14 +588,14 @@ const ParseArgsState = struct {
                     try checkOptionUsage(globalThis, this.option_defs, this.allow_positionals, token);
                     try checkOptionLikeValue(globalThis, token);
                 }
-                storeOption(globalThis, token.name, token.value, token.option_idx, this.option_defs, this.values);
+                try storeOption(globalThis, token.name, token.value, token.option_idx, this.option_defs, this.values);
             },
             .positional => |token| {
                 if (!this.allow_positionals) {
                     const err = JSC.toTypeError(
                         .ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL,
                         "Unexpected argument '{s}'. This command does not take positional arguments",
-                        .{token.value.asBunString(globalThis)},
+                        .{try token.value.asBunString(globalThis)},
                         globalThis,
                     );
                     globalThis.vm().throwError(globalThis, err);
@@ -630,7 +630,7 @@ const ParseArgsState = struct {
                 .option => |token| {
                     obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
                     obj.put(globalThis, ZigString.static("name"), token.name.asJSValue(globalThis));
-                    obj.put(globalThis, ZigString.static("rawName"), token.makeRawNameJSValue(globalThis));
+                    obj.put(globalThis, ZigString.static("rawName"), try token.makeRawNameJSValue(globalThis));
 
                     // value exists only for string options, otherwise the property exists with "undefined" as value
                     var value = token.value.asJSValue(globalThis);

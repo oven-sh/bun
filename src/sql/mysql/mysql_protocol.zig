@@ -163,11 +163,11 @@ pub fn NewWriterWrap(
         }
 
         pub fn int4(this: @This(), value: MySQLInt32) !void {
-            try this.write(std.mem.asBytes(&@byteSwap(value)));
+            try this.write(std.mem.asBytes(value));
         }
 
         pub fn int8(this: @This(), value: MySQLInt64) !void {
-            try this.write(std.mem.asBytes(&@byteSwap(value)));
+            try this.write(std.mem.asBytes(value));
         }
 
         pub fn int1(this: @This(), value: u8) !void {
@@ -286,7 +286,7 @@ fn writeWrap(comptime Container: type, comptime writeFn: anytype) type {
 }
 
 fn Int32(value: anytype) [4]u8 {
-    return @bitCast(@byteSwap(@as(MySQLInt32, @intCast(value))));
+   return
 }
 
 // MySQL packet types
@@ -766,7 +766,7 @@ pub const StmtExecutePacket = struct {
         }
     }
 
-    pub fn writeInternal(this: *const StmtExecutePacket, comptime Context: type, writer: NewWriter(Context)) !void {
+    pub fn writeInternal(this: *const StmtExecutePacket, comptime Context: type, writer: NewWriter(Context), iter: *sql.QueryBindingIterator, ) !void {
         try writer.int1(@intFromEnum(this.command));
         try writer.int4(this.statement_id);
         try writer.int1(this.flags);
@@ -1155,15 +1155,15 @@ pub const Auth = struct {
             bun.sha.SHA1.hash(&stage1, &stage2, JSC.VirtualMachine.get().rareData().boringEngine());
 
             // Stage 3: SHA1(nonce + SHA1(SHA1(password)))
-            var combined = try bun.default_allocator.alloc(u8, nonce.len + stage2.len);
+            const combined = try bun.default_allocator.alloc(u8, nonce.len + stage2.len);
             defer bun.default_allocator.free(combined);
             @memcpy(combined[0..nonce.len], nonce);
             @memcpy(combined[nonce.len..], &stage2);
             bun.sha.SHA1.hash(combined, &stage3, JSC.VirtualMachine.get().rareData().boringEngine());
 
             // Final: stage1 XOR stage3
-            for (0..20) |i| {
-                result[i] = stage1[i] ^ stage3[i];
+            for (&result, &stage1, &stage3) |*out, d1, d3| {
+                out.* = d1 ^ d3;
             }
 
             return result;
@@ -1185,15 +1185,15 @@ pub const Auth = struct {
             bun.sha.SHA256.hash(&digest1, &digest2, JSC.VirtualMachine.get().rareData().boringEngine());
 
             // SHA256(SHA256(SHA256(password)) + nonce)
-            var combined = try bun.default_allocator.alloc(u8, nonce.len + digest2.len);
+            const combined = try bun.default_allocator.alloc(u8, nonce.len + digest2.len);
             defer bun.default_allocator.free(combined);
             @memcpy(combined[0..nonce.len], nonce);
             @memcpy(combined[nonce.len..], &digest2);
             bun.sha.SHA256.hash(combined, &digest3, JSC.VirtualMachine.get().rareData().boringEngine());
 
             // XOR(SHA256(password), digest3)
-            for (0..32) |i| {
-                result[i] = digest1[i] ^ digest3[i];
+            for (&result, &digest1, &digest3) |*out, d1, d3| {
+                out.* = d1 ^ d3;
             }
 
             return result;
@@ -1327,6 +1327,8 @@ pub const ResultSet = struct {
                 value.deinit(allocator);
             }
             allocator.free(this.values);
+
+            // this.columns is intentionally left out.
         }
 
         pub fn decodeInternal(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) !void {
@@ -1448,12 +1450,19 @@ pub const PreparedStatement = struct {
     };
 
     pub const Execute = struct {
+        /// Command type indicating this is a prepared statement execute command (0x17)
         command: CommandType = .COM_STMT_EXECUTE,
+        /// ID of the prepared statement to execute, returned from COM_STMT_PREPARE
         statement_id: u32,
+        /// Execution flags. Currently only CURSOR_TYPE_READ_ONLY (0x01) is supported
         flags: u8 = 0,
+        /// Number of times to execute the statement (usually 1)
         iteration_count: u32 = 1,
+        /// Whether to send parameter types. Set to true for first execution, false for subsequent executions
         new_params_bind_flag: bool = true,
+        /// Parameter values to bind to the prepared statement
         params: []const Data = &[_]Data{},
+        /// Types of each parameter in the prepared statement
         param_types: []const types.FieldType = &[_]types.FieldType{},
 
         pub fn deinit(this: *Execute) void {

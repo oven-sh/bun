@@ -182,7 +182,7 @@ pub const MySQLConnection = struct {
     last_message_start: u32 = 0,
     sequence_id: u8 = 0,
 
-    requests: std.ArrayList(*MySQLQuery) = undefined,
+    requests: std.fifo.LinearFifo(*MySQLQuery, .Dynamic) = std.fifo.LinearFifo(*MySQLQuery, .Dynamic).init(bun.default_allocator),
     statements: PreparedStatementsMap = .{},
 
     poll_ref: bun.Async.KeepAlive = .{},
@@ -236,7 +236,7 @@ pub const MySQLConnection = struct {
 
     fn updateHasPendingActivity(this: *MySQLConnection) void {
         @fence(.release);
-        const a: u32 = if (this.requests.items.len > 0) 1 else 0;
+        const a: u32 = if (this.requests.count > 0) 1 else 0;
         const b: u32 = if (this.status != .disconnected) 1 else 0;
         this.pending_activity_count.store(a + b, .release);
     }
@@ -341,8 +341,12 @@ pub const MySQLConnection = struct {
             this.status = .disconnected;
             this.poll_ref.disable();
 
+            const requests = this.requests.readableSlice(0);
+            this.requests.head = 0;
+            this.requests.count = 0;
+
             // Fail any pending requests
-            while (this.requests.popOrNull()) |request| {
+            for (requests) |request| {
                 request.onError(.{
                     .error_code = 2013, // CR_SERVER_LOST
                     .error_message = .{ .temporary = "Lost connection to MySQL server" },
@@ -359,7 +363,7 @@ pub const MySQLConnection = struct {
         bun.assert(this.ref_count == 0);
 
         // Clear any pending requests first
-        while (this.requests.popOrNull()) |request| {
+        for (this.requests.readableSlice(0)) |request| {
             request.onError(.{
                 .error_code = 2013,
                 .error_message = .{ .temporary = "Connection closed" },
@@ -382,11 +386,6 @@ pub const MySQLConnection = struct {
 
         this.poll_ref.ref(this.globalObject.bunVM());
         this.updateHasPendingActivity();
-
-        if (this.tls_status == .message_sent or this.tls_status == .pending) {
-            this.startTLS(socket);
-            return;
-        }
 
         this.start();
     }
@@ -809,7 +808,7 @@ pub const MySQLConnection = struct {
                 try ok.decode(Context, reader);
 
                 // Get the current request
-                const request = this.requests.items[0];
+                const request = this.requests.peekItem(0);
                 if (request.statement) |statement| {
                     statement.statement_id = ok.statement_id;
                     statement.status = .prepared;
@@ -819,10 +818,10 @@ pub const MySQLConnection = struct {
                         var params = try bun.default_allocator.alloc(types.FieldType, ok.num_params);
                         errdefer bun.default_allocator.free(params);
 
-                        for (0..ok.num_params) |i| {
+                        for (params) |*param| {
                             var column = protocol.ColumnDefinition41{};
                             try column.decode(Context, reader);
-                            params[i] = column.column_type;
+                            param.* = column.column_type;
                             column.deinit();
                         }
 
@@ -846,9 +845,7 @@ pub const MySQLConnection = struct {
                         statement.columns = columns;
                     }
 
-                    // Statement is ready to execute
-                    _ = this.requests.orderedRemove(0);
-                    request.onSuccess(0, 0, this.globalObject);
+                    try this.executeStatement(statement, request, this.globalObject);
                 }
             },
 
@@ -906,11 +903,12 @@ pub const MySQLConnection = struct {
                 var header = protocol.ResultSetHeader{};
                 try header.decode(Context, reader);
 
-                if (this.requests.items.len > 0) {
-                    const request = this.requests.items[0];
+
+                if (this.requests.readableLength() > 0) {
+                    const request = this.requests.peekItem(0);
 
                     // Read column definitions
-                    var columns = try bun.default_allocator.alloc(protocol.ColumnDefinition41, header.field_count);
+                    const columns = try bun.default_allocator.alloc(protocol.ColumnDefinition41, header.field_count);
                     errdefer {
                         for (columns) |*column| {
                             column.deinit();
@@ -918,13 +916,13 @@ pub const MySQLConnection = struct {
                         bun.default_allocator.free(columns);
                     }
 
-                    for (0..header.field_count) |i| {
-                        try columns[i].decode(Context, reader);
+                    for (columns) |*column| {
+                        try column.decode(Context, reader);
                     }
-
+const globalThis = this.globalObject;
                     // Start reading rows
                     while (true) {
-                        const row_first_byte = try reader.int(u8);
+                        const row_first_byte = try reader.byte();
                         try reader.skip(-1);
 
                         switch (row_first_byte) {
@@ -936,7 +934,7 @@ pub const MySQLConnection = struct {
                                 this.status_flags = eof.status_flags;
                                 this.is_ready_for_query = true;
 
-                                _ = this.requests.orderedRemove(0);
+                                this.requests.discard(1);
                                 request.onSuccess(0, 0, this.globalObject);
                                 break;
                             },
@@ -945,10 +943,8 @@ pub const MySQLConnection = struct {
                                 var err = protocol.ErrorPacket{};
                                 try err.decode(Context, reader);
                                 defer err.deinit();
-
-                                if (this.requests.popOrNull()) |req| {
-                                    req.onError(err, this.globalObject);
-                                }
+                                this.requests.discard(1);
+                                request.onError(err, this.globalObject);
                                 break;
                             },
 
@@ -959,12 +955,15 @@ pub const MySQLConnection = struct {
                                     .columns = columns,
                                     .binary = request.binary,
                                 };
-                                try row.decodeInternal(stack_fallback.get(), Context, reader);
-                                defer row.deinit();
+                                const allocator = stack_fallback.get();
+                                try row.decodeInternal(allocator, Context, reader);
+                                defer row.deinit(allocator);
 
                                 // Process row data
                                 // Note: You'll need to implement row processing logic
                                 // based on your application's needs
+
+                                row.toJS(request.statement.?.structure(request.thisValue, globalThis), request. globalThis);
 
                             },
                         }
@@ -980,15 +979,18 @@ pub const MySQLConnection = struct {
         }
     }
 
-    pub fn executeStatement(this: *MySQLConnection, statement: *MySQLStatement, values: []const Data) !void {
+    pub fn executeStatement(this: *MySQLConnection, statement: *MySQLStatement, globalObject: *JSC.JSGlobalObject) !void {
         var execute = protocol.PreparedStatement.Execute{
             .statement_id = statement.statement_id,
             .params = values,
             .param_types = statement.params,
+            .iteration_count = 1,
         };
         defer execute.deinit();
 
-        try execute.write(Writer, this.writer());
+        const array 
+
+        try execute.writeInternal()
         this.flushData();
     }
 

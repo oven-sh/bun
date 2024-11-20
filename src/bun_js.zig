@@ -339,19 +339,23 @@ pub const Run = struct {
                 Output.prettyErrorln("Error occurred loading entry point: {s}", .{@errorName(err)});
                 Output.flush();
             }
-            // TODO: Do a event loop tick when we figure out how to watch the file that wasn't found
-            //   under hot reload mode
-            vm.exit_handler.exit_code = 1;
-            vm.onExit();
-            if (run.any_unhandled) {
-                bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 
-                Output.prettyErrorln(
-                    "<r>\n<d>{s}<r>",
-                    .{Global.unhandled_error_bun_version_string},
-                );
+            if (vm.hot_reload != .none) {
+                vm.eventLoop().tick();
+                vm.eventLoop().tickPossiblyForever();
+            } else {
+                vm.exit_handler.exit_code = 1;
+                vm.onExit();
+                if (run.any_unhandled) {
+                    bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
+
+                    Output.prettyErrorln(
+                        "<r>\n<d>{s}<r>",
+                        .{Global.unhandled_error_bun_version_string},
+                    );
+                }
+                vm.globalExit();
             }
-            vm.globalExit();
         }
 
         // don't run the GC if we don't actually need to
@@ -367,9 +371,7 @@ pub const Run = struct {
         {
             if (this.vm.isWatcherEnabled()) {
                 var prev_promise = this.vm.pending_internal_promise;
-                if (prev_promise.status(vm.global.vm()) == .rejected) {
-                    _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                }
+                vm.global.handleRejectedPromises()
 
                 while (true) {
                     while (vm.isEventLoopAlive()) {

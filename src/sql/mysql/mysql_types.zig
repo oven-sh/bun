@@ -168,12 +168,7 @@ pub const FieldType = enum(u8) {
     }
 };
 
-// Will continue implementing:
-// - Value parsing functions for each type
-// - Binary format encoding/decoding
-// - Date/time handling
-// - Decimal handling
-// - JSON handling
+
 
 pub const Value = union(enum) {
     null,
@@ -187,11 +182,36 @@ pub const Value = union(enum) {
     float: f32,
     double: f64,
     string: []const u8,
+
     bytes: []const u8,
     date: DateTime,
     timestamp: Timestamp,
     time: Time,
     decimal: Decimal,
+
+    pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, field_type: FieldType, unsigned: bool) !Value {
+        _ = unsigned; // autofix
+        return switch (field_type) {
+            .MYSQL_TYPE_TINY => Value{ .bool = value.toBoolean() },
+            .MYSQL_TYPE_SHORT => Value{ .short = globalObject.validateIntegerRange(value, i16, 0, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) }) } orelse return error.JSError,
+            .MYSQL_TYPE_LONG => Value{ .int = globalObject.validateIntegerRange(value, i32, 0, .{ .min = std.math.minInt(i32), .max = std.math.maxInt(i32) }) } orelse return error.JSError,
+            .MYSQL_TYPE_LONGLONG => Value{ .long = globalObject.validateIntegerRange(value, i64, 0, .{ .min = std.math.minInt(i64), .max = std.math.maxInt(i64) }) } orelse return error.JSError,
+            .MYSQL_TYPE_FLOAT => Value{ .float = globalObject.validateFloatRange(value, f32, 0, .{ .min = std.math.minInt(f32), .max = std.math.maxInt(f32) }) } orelse return error.JSError,
+            .MYSQL_TYPE_DOUBLE => Value{ .double = globalObject.validateFloatRange(value, f64, 0, .{ .min = std.math.minInt(f64), .max = std.math.maxInt(f64) }) } orelse return error.JSError,
+            .MYSQL_TYPE_TIME => Value{ .time = try Time.fromJS(value, globalObject) },
+            .MYSQL_TYPE_DATE => Value{ .date = try DateTime.fromJS(value, globalObject) },
+            .MYSQL_TYPE_DATETIME => Value{ .date = try DateTime.fromJS(value, globalObject) },
+            .MYSQL_TYPE_TIMESTAMP => Value{ .timestamp = try Timestamp.fromJS(value, globalObject) },
+            .MYSQL_TYPE_TINY_BLOB,
+            .MYSQL_TYPE_MEDIUM_BLOB,
+            .MYSQL_TYPE_LONG_BLOB,
+            .MYSQL_TYPE_BLOB,
+            .MYSQL_TYPE_STRING,
+            .MYSQL_TYPE_VARCHAR,
+            .MYSQL_TYPE_VAR_STRING,
+            .MYSQL_TYPE_JSON => Value{ .bytes = enc  },
+        };
+    }
 
     pub const Timestamp = struct {
         seconds: u32,
@@ -205,6 +225,28 @@ pub const Value = union(enum) {
                 // Bytes 4-6: [microseconds] (24-bit little-endian unsigned integer)
                 .microseconds = if (val.len == 7) std.mem.readInt(u24, val[4..7], .little) else 0,
             };
+        }
+
+        pub fn fromUnixTimestamp(timestamp: i64) Timestamp {
+            return .{
+                .seconds = @truncate(timestamp),
+                .microseconds = @truncate(@mod(timestamp, 1_000_000)),
+            };
+        }
+
+        pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) !Timestamp {
+            if (value.isDate()) {
+                const ts = @divFloor(@as(i64, @intFromFloat(value.getUnixTimestamp())), 1000);
+                return Timestamp.fromUnixTimestamp(ts);
+            }
+
+            if (value.isNumber()) {
+                const double = value.asNumber();
+                return Timestamp.fromUnixTimestamp(@floatToInt(i64, double));
+            }
+
+            globalObject.throwInvalidArguments("Expected a date or number", .{});
+            return error.JSError;
         }
 
         pub fn toUnixTimestamp(this: Timestamp) f64 {
@@ -324,10 +366,19 @@ pub const Value = union(enum) {
             return JSValue.fromDateNumber(globalObject, @floatFromInt(ts * 1000));
         }
 
-        pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) DateTime {
-            _ = globalObject; // autofix
-            const ts = @divFloor(@as(i64, @intFromFloat(value.getUnixTimestamp())), 1000);
-            return DateTime.fromUnixTimestamp(ts);
+        pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) !DateTime {
+            if (value.isDate()) {
+                const ts = @divFloor(@as(i64, @intFromFloat(value.getUnixTimestamp())), 1000);
+                return DateTime.fromUnixTimestamp(ts);
+            }
+
+            if (value.isNumber()) {
+                const double = value.asNumber();
+                return DateTime.fromUnixTimestamp(@floatToInt(i64, double));
+            }
+
+            globalObject.throwInvalidArguments("Expected a date or number", .{});
+            return error.JSError;
         }
     };
 
@@ -338,6 +389,30 @@ pub const Value = union(enum) {
         minutes: u8 = 0,
         seconds: u8 = 0,
         microseconds: u32 = 0,
+
+        pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) !Time {
+            if (value.isDate()) {
+                const ts = @divFloor(@as(i64, @intFromFloat(value.getUnixTimestamp())), 1000);
+                return Time.fromUnixTimestamp(ts);
+            } else if (value.isAnyInt()) {
+                const int = value.toInt64();
+                return Time.fromUnixTimestamp(int);
+            } else {
+                globalObject.throwInvalidArguments("Expected a date or number", .{});
+                return error.JSError;
+            }
+        }
+
+        pub fn fromUnixTimestamp(timestamp: i64) Time {
+            var t: Time = .{};
+            t.negative = timestamp < 0;
+            t.days = @truncate(@divFloor(timestamp, 86400));
+            t.hours = @truncate(@divFloor(@mod(timestamp, 86400), 3600));
+            t.minutes = @truncate(@divFloor(@mod(timestamp, 3600), 60));
+            t.seconds = @truncate(@mod(timestamp, 60));
+            return t;
+        }
+
 
         pub fn fromBinary(val: []const u8) Time {
             if (val.len == 0) {
@@ -488,3 +563,5 @@ fn gregorianDate(days: i32) Date {
         .day = @intCast(d + 1),
     };
 }
+
+pub fn encodeBinary

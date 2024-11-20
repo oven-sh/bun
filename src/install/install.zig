@@ -3139,7 +3139,7 @@ pub const PackageManager = struct {
 
             builder.allocate() catch |err| return .{ .failure = err };
 
-            const dep = dummy.cloneWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
+            const dep = dummy.cloneWithDifferentBuffers(name, this, version_buf, @TypeOf(&builder), &builder) catch unreachable;
             builder.clamp();
             const index = this.lockfile.buffers.dependencies.items.len;
             this.lockfile.buffers.dependencies.append(this.allocator, dep) catch unreachable;
@@ -3656,10 +3656,25 @@ pub const PackageManager = struct {
 
     const Holder = struct {
         pub var ptr: *PackageManager = undefined;
+        pub var once = std.once(allocatePackageManagerInternal);
+
+        fn allocatePackageManagerInternal() void {
+            Holder.ptr = bun.default_allocator.create(PackageManager) catch bun.outOfMemory();
+        }
+
+        pub fn allocate() void {
+            Holder.once.call();
+        }
     };
+
     pub fn allocatePackageManager() void {
-        Holder.ptr = bun.default_allocator.create(PackageManager) catch bun.outOfMemory();
+        Holder.allocate();
     }
+
+    pub fn has() bool {
+        return Holder.once.done;
+    }
+
     pub fn get() *PackageManager {
         return Holder.ptr;
     }
@@ -10036,7 +10051,7 @@ pub const PackageManager = struct {
 
             var array = Array{};
 
-            const update_requests = parseWithError(allocator, &log, all_positionals.items, &array, .add, false) catch {
+            const update_requests = parseWithError(allocator, null, &log, all_positionals.items, &array, .add, false) catch {
                 return globalThis.throwValue2(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
             };
             if (update_requests.len == 0) return .undefined;
@@ -10058,16 +10073,18 @@ pub const PackageManager = struct {
 
         pub fn parse(
             allocator: std.mem.Allocator,
+            pm: ?*PackageManager,
             log: *logger.Log,
             positionals: []const string,
             update_requests: *Array,
             subcommand: Subcommand,
         ) []UpdateRequest {
-            return parseWithError(allocator, log, positionals, update_requests, subcommand, true) catch Global.crash();
+            return parseWithError(allocator, pm, log, positionals, update_requests, subcommand, true) catch Global.crash();
         }
 
         fn parseWithError(
             allocator: std.mem.Allocator,
+            pm: ?*PackageManager,
             log: *logger.Log,
             positionals: []const string,
             update_requests: *Array,
@@ -10118,6 +10135,7 @@ pub const PackageManager = struct {
                     null,
                     &SlicedString.init(input, value),
                     log,
+                    pm,
                 ) orelse {
                     if (fatal) {
                         Output.errGeneric("unrecognised dependency format: {s}", .{
@@ -10140,6 +10158,7 @@ pub const PackageManager = struct {
                         null,
                         &SlicedString.init(input, input),
                         log,
+                        pm,
                     )) |ver| {
                         alias = null;
                         version = ver;

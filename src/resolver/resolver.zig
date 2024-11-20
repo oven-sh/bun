@@ -563,6 +563,15 @@ pub const Resolver = struct {
 
     pub fn getPackageManager(this: *Resolver) *PackageManager {
         return this.package_manager orelse brk: {
+
+            // This is slightly racy.
+            if (PackageManager.has()) {
+                const pm = PackageManager.get();
+                pm.onWake = this.onWakePackageManager;
+                this.package_manager = pm;
+                break :brk pm;
+            }
+
             bun.HTTPThread.init(&.{});
             const pm = PackageManager.initWithRuntime(
                 this.log,
@@ -1852,6 +1861,7 @@ pub const Resolver = struct {
                                 esm.version,
                                 &sliced_string,
                                 r.log,
+                                manager,
                             ) orelse break :load_module_from_cache;
                         }
 

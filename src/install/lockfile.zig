@@ -799,6 +799,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
                                 sliced.slice,
                                 &sliced,
                                 null,
+                                pm,
                             ) orelse Dependency.Version{};
                         }
                     }
@@ -2639,6 +2640,7 @@ pub const OverrideMap = struct {
         lockfile: *Lockfile,
         root_package: *Lockfile.Package,
         source: logger.Source,
+        package_manager: ?*PackageManager,
         loc: logger.Loc,
         log: *logger.Log,
         key: []const u8,
@@ -2684,6 +2686,7 @@ pub const OverrideMap = struct {
                 literalSliced.slice,
                 &literalSliced,
                 log,
+                pm,
             ) orelse {
                 try log.addWarningFmt(&source, loc, lockfile.allocator, "Invalid " ++ field ++ " value \"{s}\"", .{value});
                 return null;
@@ -3960,6 +3963,7 @@ pub const Package = extern struct {
     fn parseDependency(
         lockfile: *Lockfile,
         allocator: Allocator,
+        pm: ?*PackageManager,
         log: *logger.Log,
         source: logger.Source,
         comptime group: DependencyGroup,
@@ -4008,6 +4012,7 @@ pub const Package = extern struct {
             tag,
             &sliced,
             log,
+            pm,
         ) orelse Dependency.Version{};
         var workspace_range: ?Semver.Query.Group = null;
         const name_hash = switch (dependency_version.tag) {
@@ -4078,6 +4083,7 @@ pub const Package = extern struct {
                             .workspace,
                             &path,
                             log,
+                            pm,
                         )) |dep| {
                             found_workspace = true;
                             dependency_version = dep;
@@ -5808,7 +5814,7 @@ const Buffers = struct {
         return error.@"Lockfile is missing resolution data";
     }
 
-    pub fn load(stream: *Stream, allocator: Allocator, log: *logger.Log) !Buffers {
+    pub fn load(stream: *Stream, allocator: Allocator, log: *logger.Log, pm: ?*PackageManager) !Buffers {
         var this = Buffers{};
         var external_dependency_list_: std.ArrayListUnmanaged(Dependency.External) = std.ArrayListUnmanaged(Dependency.External){};
 
@@ -5856,6 +5862,7 @@ const Buffers = struct {
             .log = log,
             .allocator = allocator,
             .buffer = string_buf,
+            .package_manager = pm,
         };
 
         this.dependencies.expandToCapacity();
@@ -6086,6 +6093,7 @@ pub const Serializer = struct {
         stream: *Stream,
         allocator: Allocator,
         log: *logger.Log,
+        manager: ?*PackageManager,
     ) !SerializerLoadResult {
         var res = SerializerLoadResult{};
         var reader = stream.reader();
@@ -6120,7 +6128,12 @@ pub const Serializer = struct {
         lockfile.packages = packages_load_result.list;
         res.packages_need_update = packages_load_result.needs_update;
 
-        lockfile.buffers = try Lockfile.Buffers.load(stream, allocator, log);
+        lockfile.buffers = try Lockfile.Buffers.load(
+            stream,
+            allocator,
+            log,
+            manager,
+        );
         if ((try stream.reader().readInt(u64, .little)) != 0) {
             return error.@"Lockfile is malformed (expected 0 at the end)";
         }

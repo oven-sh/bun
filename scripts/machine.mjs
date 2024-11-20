@@ -10,6 +10,7 @@ import {
   parseArch,
   parseOs,
   readFile,
+  readdir,
   spawn,
   spawnSafe,
   spawnSyncSafe,
@@ -18,7 +19,6 @@ import {
   waitForPort,
   which,
   escapePowershell,
-  listFiles,
 } from "./utils.mjs";
 import { join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -905,8 +905,10 @@ function getSshKeys() {
   /** @type {SshKey[]} */
   const sshKeys = [];
   if (existsSync(sshPath)) {
-    const sshFiles = listFiles(sshPath);
-    const publicPaths = sshFiles.filter(filename => filename.endsWith(".pub")).map(filename => join(sshPath, filename));
+    const sshFiles = readdir(sshPath);
+    const publicPaths = sshFiles
+      .filter(entry => entry.isFile() && entry.name.endsWith(".pub"))
+      .map(({ name }) => join(sshPath, name));
 
     sshKeys.push(
       ...publicPaths.map(publicPath => ({

@@ -1019,7 +1019,7 @@ pub const Blob = struct {
 
         if (args.nextEat()) |options_object| {
             if (options_object.isObject()) {
-                if (options_object.getTruthy(globalThis, "createPath")) |create_directory| {
+                if (try options_object.getTruthy(globalThis, "createPath")) |create_directory| {
                     if (!create_directory.isBoolean()) {
                         globalThis.throwInvalidArgumentType("write", "options.createPath", "boolean");
                         return .zero;
@@ -1422,10 +1422,16 @@ pub const Blob = struct {
         return blob.is_jsdom_file;
     }
 
-    pub export fn JSDOMFile__construct(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) ?*Blob {
+    export fn JSDOMFile__construct(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) ?*Blob {
+        return JSDOMFile__construct_(globalThis, callframe) catch |err| switch (err) {
+            error.JSError => null,
+            error.OutOfMemory => {
+                globalThis.throwOutOfMemory();
+                return null;
+            },
+        };
+    }
+    pub fn JSDOMFile__construct_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!?*Blob {
         JSC.markBinding(@src());
         const allocator = bun.default_allocator;
         var blob: Blob = undefined;
@@ -1502,7 +1508,7 @@ pub const Blob = struct {
                     }
                 }
 
-                if (options.getTruthy(globalThis, "lastModified")) |last_modified| {
+                if (try options.getTruthy(globalThis, "lastModified")) |last_modified| {
                     set_last_modified = true;
                     blob.last_modified = last_modified.coerce(f64, globalThis);
                 }
@@ -1554,7 +1560,6 @@ pub const Blob = struct {
     comptime {
         if (!JSC.is_bindgen) {
             _ = JSDOMFile__hasInstance;
-            _ = JSDOMFile__construct;
         }
     }
 
@@ -1579,7 +1584,7 @@ pub const Blob = struct {
             const opts = arguments[1];
 
             if (opts.isObject()) {
-                if (opts.getTruthy(globalObject, "type")) |file_type| {
+                if (try opts.getTruthy(globalObject, "type")) |file_type| {
                     inner: {
                         if (file_type.isString()) {
                             var allocator = bun.default_allocator;
@@ -1600,7 +1605,7 @@ pub const Blob = struct {
                         }
                     }
                 }
-                if (opts.getTruthy(globalObject, "lastModified")) |last_modified| {
+                if (try opts.getTruthy(globalObject, "lastModified")) |last_modified| {
                     blob.last_modified = last_modified.coerce(f64, globalObject);
                 }
             }

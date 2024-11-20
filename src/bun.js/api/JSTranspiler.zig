@@ -329,7 +329,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         return error.JSError;
     }
 
-    if (object.getTruthy(globalObject, "define")) |define| {
+    if (try object.getTruthy(globalObject, "define")) |define| {
         define: {
             if (define.isUndefinedOrNull()) {
                 break :define;
@@ -474,7 +474,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         else => false,
     };
 
-    if (object.getTruthy(globalThis, "macro")) |macros| {
+    if (try object.getTruthy(globalThis, "macro")) |macros| {
         macros: {
             if (macros.isUndefinedOrNull()) break :macros;
             if (macros.isBoolean()) {
@@ -529,7 +529,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         transpiler.dead_code_elimination = flag;
     }
 
-    if (object.getTruthy(globalThis, "minify")) |minify| {
+    if (try object.getTruthy(globalThis, "minify")) |minify| {
         if (minify.isBoolean()) {
             transpiler.minify_whitespace = minify.coerce(bool, globalThis);
             transpiler.minify_syntax = transpiler.minify_whitespace;
@@ -581,7 +581,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         trim_unused_imports = trimUnusedImports;
     }
 
-    if (object.getTruthy(globalThis, "exports")) |exports| {
+    if (try object.getTruthy(globalThis, "exports")) |exports| {
         if (!exports.isObject()) {
             globalObject.throwInvalidArguments("exports must be an object", .{});
             return error.JSError;
@@ -590,7 +590,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         var replacements = Runtime.Features.ReplaceableExport.Map{};
         errdefer replacements.clearAndFree(bun.default_allocator);
 
-        if (exports.getTruthy(globalThis, "eliminate")) |eliminate| {
+        if (try exports.getTruthy(globalThis, "eliminate")) |eliminate| {
             if (!eliminate.jsType().isArray()) {
                 globalObject.throwInvalidArguments("exports.eliminate must be an array", .{});
                 return error.JSError;
@@ -632,7 +632,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             }
         }
 
-        if (exports.getTruthy(globalThis, "replace")) |replace| {
+        if (try exports.getTruthy(globalThis, "replace")) |replace| {
             if (!replace.isObject()) {
                 globalObject.throwInvalidArguments("replace must be an object", .{});
                 return error.JSError;
@@ -709,7 +709,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         transpiler.runtime.replace_exports = replacements;
     }
 
-    if (object.getTruthy(globalThis, "logLevel")) |logLevel| {
+    if (try object.getTruthy(globalThis, "logLevel")) |logLevel| {
         if (logger.Log.Level.Map.fromJS(globalObject, logLevel)) |level| {
             transpiler.log.level = level;
         } else {

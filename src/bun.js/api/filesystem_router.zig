@@ -120,7 +120,7 @@ pub const FileSystemRouter = struct {
             }
         }
 
-        if (argument.getTruthy(globalThis, "assetPrefix")) |asset_prefix| {
+        if (try argument.getTruthy(globalThis, "assetPrefix")) |asset_prefix| {
             if (!asset_prefix.isString()) {
                 origin_str.deinit();
                 arena.deinit();

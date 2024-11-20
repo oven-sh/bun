@@ -5540,7 +5540,7 @@ pub const JSValue = enum(i64) {
     }
 
     // TODO: replace calls to this function with `getOptional`
-    pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
+    pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) bun.JSError!?JSValue {
         if (comptime bun.ComptimeEnumMap(BuiltinName).has(property)) {
             if (fastGet(this, global, @field(BuiltinName, property))) |prop| {
                 if (prop.isEmptyOrUndefinedOrNull()) return null;
@@ -5554,8 +5554,8 @@ pub const JSValue = enum(i64) {
     }
 
     // TODO: replace calls to this function with `getOptional`
-    pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
-        if (get(this, global, property)) |prop| {
+    pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?JSValue {
+        if (try get2(this, global, property)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull()) return null;
             return prop;
         }
@@ -5767,8 +5767,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub inline fn getOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
-        const prop = try this.get2(globalThis, property_name) orelse
-            return null;
+        const prop = try this.get2(globalThis, property_name) orelse return null;
         bun.assert(prop != .zero);
 
         if (!prop.isUndefinedOrNull()) {

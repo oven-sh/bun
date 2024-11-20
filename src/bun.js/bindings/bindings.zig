@@ -5446,7 +5446,7 @@ pub const JSValue = enum(i64) {
     /// Equivalent to `obj.property` in JavaScript.
     /// Reminder: `undefined` is a value!
     ///
-    /// Prefer `get2` in new code, as this function is incapable of returning an exception
+    /// Prefer `get` in new code, as this function is incapable of returning an exception
     pub fn get_unsafe(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         if (comptime bun.Environment.isDebug) {
             if (BuiltinName.has(property)) {
@@ -5465,8 +5465,6 @@ pub const JSValue = enum(i64) {
     /// calling `fastGet`, which use a more optimal code path. This function is
     /// marked `inline` to allow Zig to determine if `fastGet` should be used
     /// per invocation.
-    ///
-    /// This function will eventually replace `get`.
     pub inline fn get(target: JSValue, global: *JSGlobalObject, property: anytype) JSError!?JSValue {
         if (bun.Environment.allow_assert) bun.assert(target.isObject());
         const property_slice: []const u8 = property; // must be a slice!

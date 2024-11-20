@@ -38,21 +38,77 @@ describe("bun shell", () => {
   it("doesn't parse string refs inside substitution", async () => {
     expect(await $`echo ${"\x08__bunstr_123."}`.text()).toBe("\x08__bunstr_123.\n");
   });
-  it.todo("does not expand tilde in ${}", async () => {
+  it("does not expand tilde in ${}", async () => {
     expect(await $`echo ${"~"}`.text()).toBe("~\n");
   });
-  it.todo("does not expand tilde when escaped", async () => {
+  it("does not expand tilde when escaped", async () => {
     expect(await $`echo \~`.text()).toBe("~\n");
   });
-  it.todo("does not expand tilde when the slash is quoted", async () => {
+  it("does not expand tilde when the slash is quoted", async () => {
     expect(await $`echo ~"/"`.text()).toBe("~/\n");
   });
-  it.todo("expands tilde after equals", async () => {
-    expect(await $`echo a=~`.text()).toBe("a=" + process.env.HOME + "\n");
+  it("does not expand tilde when there's an empty string between", async () => {
+    expect(await $`echo ~""/`.text()).toBe("~/\n");
+  });
+  it("expands tilde", async () => {
+    expect(await $`echo ~`.text()).toBe(process.env.HOME + "\n");
+  });
+  it("expands with slash", async () => {
+    expect(await $`echo ~/`.text()).toBe(process.env.HOME + "/\n");
+  });
+  it("does not expand after escaped space", async () => {
+    expect(await $`echo \ ~`.text()).toBe(" ~\n");
+  });
+  it("expands tilde as middle argument", async () => {
+    expect(await $`echo a ~ b`.text()).toBe("a " + process.env.HOME + " b\n");
+  });
+  it.todo("expands tilde as middle argument 2", async () => {
+    expect(
+      await $`echo a ~\
+ b`.text(),
+    ).toBe("a " + process.env.HOME + " b\n");
+  });
+  it("expands as first argument", async () => {
+    expect((await $`~`.nothrow()).exitCode).not.toBe(0);
+  });
+  it("does not expand tilde with a non-slash after", async () => {
+    expect(await $`echo ~~`.text()).toBe("~~\n");
+  });
+  it("allow tilde expansion with backslash", async () => {
+    expect(await $`echo ~\\a`.text()).toBe(process.env.HOME + "\\a\n");
+  });
+  it("does not allow tilde expansion with non-backslash backslash", async () => {
+    expect(await $`echo ~\"a`.text()).toBe('~"a\n');
+  });
+  it("does not expand tilde with a non-slash after", async () => {
+    expect(await $`echo ~{a,b}`.text()).toBe("~a ~b\n");
+  });
+  it("does not expand tilde when the tilde is quoted", async () => {
+    expect(await $`echo "~"`.text()).toBe("~\n");
+  });
+  it("does not expand tilde after equals", async () => {
+    // expect(await $`echo --home=~`.text()).toBe("--home=" + process.env.HOME + "\n"); // bash feature, not in sh, zsh, csh, or fish
+    expect(await $`echo --home=~`.text()).toBe("--home=~\n"); // bash feature, not in sh
+  });
+  it("does not expand tilde after colon", async () => {
+    expect(await $`echo a:~`.text()).toBe("a:~\n");
   });
   it.todo("expands tilde in variable set", async () => {
     expect(await $`MYVAR=~/abc && echo $MYVAR`.text()).toBe(process.env.HOME + "/abc\n");
   });
+  it.todo("expands tilde in variable set list", async () => {
+    expect(await $`MYVAR=a:~:b && echo $MYVAR`.text()).toBe("a:" + process.env.HOME + ":b\n");
+  });
+  it("does not expand tilde in variable set list with non-split char", async () => {
+    expect(await $`MYVAR=a:~c:b && echo $MYVAR`.text()).toBe("a:~c:b\n");
+  });
+  it("does not expand tilde in variable set list with quotes", async () => {
+    expect(await $`MYVAR=a:"~":b && echo $MYVAR`.text()).toBe("a:~:b\n");
+  });
+  it("does not expand tilde second", async () => {
+    expect(await $`echo "a"~`.text()).toBe("a~\n");
+  });
+  // TODO: handle username (`~user` -> getpwnam(user) eg /home/user if the accont exists. but only if all unquoted, ie `~user"a"` <- not allowed)
 
   it("fails for bad surrogate pairs", async () => {
     expect(() => $`echo ${"😊".substring(0, 1)}`.text()).toThrowError("Shell script string contains invalid UTF-16");

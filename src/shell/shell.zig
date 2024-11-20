@@ -176,7 +176,8 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
 /// [1] => write end
 pub const Pipe = [2]bun.FileDescriptor;
 
-const log = bun.Output.scoped(.SHELL, true);
+const logscope = bun.Output.Scoped(.SHELL, true);
+const log = logscope.log;
 const logsys = bun.Output.scoped(.SYS, true);
 
 pub const GlobalJS = struct {
@@ -1652,6 +1653,14 @@ pub const Parser = struct {
                             break;
                         }
                     },
+                    .Tilde => {
+                        _ = self.expect(.Tilde);
+                        try atoms.append(.tilde);
+                        if (next_delimits) {
+                            _ = self.match(.Delimit);
+                            break;
+                        }
+                    },
                     .BraceBegin => {
                         has_brace_open = true;
                         _ = self.expect(.BraceBegin);
@@ -1700,16 +1709,8 @@ pub const Parser = struct {
                     },
                     .SingleQuotedText, .DoubleQuotedText, .Text => |txtrng| {
                         _ = self.advance();
-                        var txt = self.text(txtrng);
-                        if (peeked == .Text and txt.len > 0 and txt[0] == '~') {
-                            txt = txt[1..];
-                            try atoms.append(.tilde);
-                            if (txt.len > 0) {
-                                try atoms.append(.{ .Text = txt });
-                            }
-                        } else {
-                            try atoms.append(.{ .Text = txt });
-                        }
+                        const txt = self.text(txtrng);
+                        try atoms.append(.{ .Text = txt });
                         if (next_delimits) {
                             _ = self.match(.Delimit);
                             if (should_break) break;
@@ -1992,6 +1993,7 @@ pub const TokenTag = enum {
     Dollar,
     Asterisk,
     DoubleAsterisk,
+    Tilde,
     Eq,
     Semicolon,
     Newline,
@@ -2033,6 +2035,8 @@ pub const Token = union(TokenTag) {
     // `*`
     Asterisk,
     DoubleAsterisk,
+    // `~`
+    Tilde,
 
     /// =
     Eq,
@@ -2100,6 +2104,7 @@ pub const Token = union(TokenTag) {
             .Dollar => "`$`",
             .Asterisk => "`*`",
             .DoubleAsterisk => "`**`",
+            .Tilde => "`~`",
             .Eq => "`+`",
             .Semicolon => "`;`",
             .Newline => "`\\n`",
@@ -2437,6 +2442,26 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             try self.break_word(false);
                             try self.tokens.append(.Asterisk);
                             continue;
+                        },
+
+                        // home directory
+                        '~' => {
+                            comptime assertSpecialChar('~');
+
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            if (self.chars.prev != null and (self.chars.prev.?.char != ' ' or self.chars.prev.?.escaped)) break :escaped;
+                            // expand for:
+                            // ~/, ~\\, not ~\"
+                            if (self.peek()) |next| {
+                                if (next.char == '/' or next.char == '\\' or next.char == ' ') {
+                                    // allowed
+                                } else {
+                                    // not allowed
+                                    break :escaped;
+                                }
+                            }
+                            try self.break_word(false);
+                            try self.tokens.append(.Tilde);
                         },
 
                         // brace expansion syntax
@@ -2780,6 +2805,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 .BraceEnd,
                 .CmdSubstEnd,
                 .Asterisk,
+                .Tilde,
                 => true,
 
                 .Pipe,
@@ -3680,6 +3706,8 @@ pub const Test = struct {
         // *
         Asterisk,
         DoubleAsterisk,
+        // ~
+        Tilde,
         // =
         Eq,
         Semicolon,
@@ -3717,6 +3745,7 @@ pub const Test = struct {
                 .JSObjRef => |val| return .{ .JSObjRef = val },
                 .Pipe => return .Pipe,
                 .DoublePipe => return .DoublePipe,
+                .Tilde => return .Tilde,
                 .Ampersand => return .Ampersand,
                 .DoubleAmpersand => return .DoubleAmpersand,
                 .Redirect => |r| return .{ .Redirect = r },

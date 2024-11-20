@@ -1288,6 +1288,8 @@ pub const Interpreter = struct {
         out_parser: *?bun.shell.Parser,
         out_lex_result: *?shell.LexResult,
     ) !ast.Script {
+        logscope.log("[$] Shell script: \"{}\"", .{std.zig.fmtEscapes(script)});
+
         const lex_result = brk: {
             if (bun.strings.isAllASCII(script)) {
                 var lexer = bun.shell.LexerAscii.new(arena_allocator, script, jsstrings_to_escape);
@@ -1309,7 +1311,7 @@ pub const Interpreter = struct {
                 try log_buf.writer().print("\"{}\"", .{std.zig.fmtEscapes(tok_str)});
             }
             try log_buf.append(']');
-            logscope.log("Shell command tokens: {s}", .{log_buf.items});
+            logscope.log("[$] Shell command tokens: {s}", .{log_buf.items});
         }
 
         if (lex_result.errors.len > 0) {
@@ -1342,7 +1344,7 @@ pub const Interpreter = struct {
                 try _debugFormatStatement(&log_buf, stmt);
             }
             try log_buf.append(']');
-            logscope.log("Shell AST: {s}", .{log_buf.items});
+            logscope.log("[$] Shell AST: {s}", .{log_buf.items});
         }
 
         return script_ast;

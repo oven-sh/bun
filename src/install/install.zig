@@ -3656,23 +3656,10 @@ pub const PackageManager = struct {
 
     const Holder = struct {
         pub var ptr: *PackageManager = undefined;
-        pub var once = std.once(allocatePackageManagerInternal);
-
-        fn allocatePackageManagerInternal() void {
-            Holder.ptr = bun.default_allocator.create(PackageManager) catch bun.outOfMemory();
-        }
-
-        pub fn allocate() void {
-            Holder.once.call();
-        }
     };
 
     pub fn allocatePackageManager() void {
-        Holder.allocate();
-    }
-
-    pub fn has() bool {
-        return Holder.once.done;
+        Holder.ptr = bun.default_allocator.create(PackageManager) catch bun.outOfMemory();
     }
 
     pub fn get() *PackageManager {

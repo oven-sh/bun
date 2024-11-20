@@ -251,41 +251,9 @@ function Install-Visual-Studio {
     )
   }
 
-  Write-Output "Downloading Visual Studio installer..."
-  $vsInstaller = "$env:TEMP\vs_community.exe"
-  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-  Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_community.exe" -OutFile $vsInstaller
-
-  $arguments = @(
-    "--passive",
-    "--norestart",
-    "--wait",
-    "--includeRecommended"
-  )
-  $arguments += $components | ForEach-Object { "--add $_" }
-
-  Write-Output "Starting Visual Studio installation..."
-  $process = Start-Process -FilePath $vsInstaller -ArgumentList ($arguments -join ' ') `
-    -NoNewWindow -Wait -PassThru -Verb RunAs
-
-    if ($process.ExitCode -ne 0) {
-    throw "Installation failed with exit code: $($process.ExitCode)"
-  }
-
-  $paths = @(
-    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC",
-    "${env:ProgramFiles(x86)}\Windows Kits\10\Include",
-    "${env:ProgramFiles(x86)}\Windows Kits\10\Lib"
-  )
-
-  $missing = $paths | Where-Object { -not (Test-Path $_) }
-  if ($missing) {
-    Write-Output "Missing paths:"
-    $missing | ForEach-Object { Write-Output "  $_" }
-    throw "Visual Studio installation appears incomplete"
-  }
-
-  Write-Output "Visual Studio installation completed successfully"
+  $packageParameters = $components | ForEach-Object { "--add $_" }
+  Install-Package visualstudio2022community `
+    -ExtraArgs "--package-parameters '--add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --includeOptional'"
 }
 
 function Install-Rust {

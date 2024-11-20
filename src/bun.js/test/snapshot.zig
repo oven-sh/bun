@@ -99,14 +99,14 @@ pub const Snapshots = struct {
         return null;
     }
 
-    pub fn parseFile(this: *Snapshots) !void {
+    pub fn parseFile(this: *Snapshots, file: File) !void {
         if (this.file_buf.items.len == 0) return;
 
         const vm = VirtualMachine.get();
         const opts = js_parser.Parser.Options.init(vm.bundler.options.jsx, .js);
         var temp_log = logger.Log.init(this.allocator);
 
-        const test_file = Jest.runner.?.files.get(this._current_file.?.id);
+        const test_file = Jest.runner.?.files.get(file.id);
         const test_filename = test_file.source.path.name.filename;
         const dir_path = test_file.source.path.name.dirWithTrailingSlash();
 
@@ -247,6 +247,7 @@ pub const Snapshots = struct {
                 .id = file_id,
                 .file = fd.asFile(),
             };
+            errdefer file.file.close();
 
             if (this.update_snapshots) {
                 try this.file_buf.appendSlice(file_header);
@@ -265,11 +266,8 @@ pub const Snapshots = struct {
                 }
             }
 
+            try this.parseFile(file);
             this._current_file = file;
-            this.parseFile() catch |err| {
-                this._current_file = null;
-                return err;
-            };
         }
 
         return JSC.Maybe(void).success;

@@ -126,3 +126,11 @@ exports[`outdated NO_COLOR works 1`] = `
 |--------------------------------------|
 "
 `;
+
+exports[`auto-install symlinks (and junctions) are created correctly in the install cache 1`] = `
+"{
+  name: "is-number",
+  version: "2.0.0",
+}
+"
+`;

@@ -17,6 +17,21 @@ beforeEach(() => {
   cwd = hotPath;
 });
 
+it("preload not found should exit with code 1 and not time out", async () => {
+  const root = hotRunnerRoot;
+  const runner = spawn({
+    cmd: [bunExe(), "--preload=/dev/foobarbarbar", "--hot", root],
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  await runner.exited;
+  expect(runner.signalCode).toBe(null);
+  expect(runner.exitCode).toBe(1);
+  expect(await new Response(runner.stderr).text()).toContain("preload not found");
+});
+
 it(
   "should hot reload when file is overwritten",
   async () => {

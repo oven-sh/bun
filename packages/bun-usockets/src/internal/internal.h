@@ -64,10 +64,12 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 
 #ifdef _WIN32
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
+#define LIBUS_ERR WSAGetLastError()
 #else
+#include <errno.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
+#define LIBUS_ERR errno
 #endif
-
 /* Poll type and what it polls for */
 enum {
   /* Three first bits */
@@ -111,8 +113,7 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 
 
 /* Loop related */
-void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error,
-                                     int events);
+void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_free_closed_sockets(us_loop_r loop);
 void us_internal_loop_link(struct us_loop_t *loop,
@@ -164,9 +165,11 @@ struct us_socket_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p; // 4 bytes
   unsigned char timeout;                           // 1 byte
   unsigned char long_timeout;                      // 1 byte
-  unsigned short
+  unsigned char
       low_prio_state; /* 0 = not in low-prio queue, 1 = is in low-prio queue, 2
                          = was in low-prio queue in this iteration */
+  unsigned char allow_half_open; /* Allow to stay alive after FIN/EOF */
+
   struct us_socket_context_t *context;
   struct us_socket_t *prev, *next;
   struct us_socket_t *connect_next;
@@ -391,11 +394,11 @@ void us_internal_ssl_socket_context_on_socket_connect_error(
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
     us_internal_ssl_socket_context_r context, const char *host,
-    int port, int options, int socket_ext_size);
+    int port, int options, int socket_ext_size, int* error);
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
     us_internal_ssl_socket_context_r context, const char *path,
-    size_t pathlen, int options, int socket_ext_size);
+    size_t pathlen, int options, int socket_ext_size, int* error);
 
 struct us_connecting_socket_t *us_internal_ssl_socket_context_connect(
     us_internal_ssl_socket_context_r context, const char *host,

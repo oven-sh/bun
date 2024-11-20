@@ -10,7 +10,7 @@ import { decodeAndAppendError, onErrorMessage, updateErrorOverlay } from "./clie
 import { DataViewReader } from "./client/reader";
 import { routeMatch } from "./client/route";
 import { initWebSocket } from "./client/websocket";
-import { MessageId } from "./enums";
+import { MessageId } from "./generated";
 
 /** Injected by DevServer */
 declare const error: Uint8Array;

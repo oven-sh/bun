@@ -32,6 +32,7 @@ const Counter = std.AutoHashMapUnmanaged(u64, u32);
 const BufferedWriter = std.io.BufferedWriter(4096, Output.WriterType);
 error_writer: BufferedWriter,
 writer: BufferedWriter,
+default_indent: u16 = 0,
 
 counts: Counter = .{},
 
@@ -93,6 +94,17 @@ pub fn messageWithTypeAndLevel(
     }
 
     var console = global.bunVM().console;
+    defer console.default_indent +|= @as(u16, @intFromBool(message_type == .StartGroup));
+
+    if (message_type == .StartGroup and len == 0) {
+        // undefined is printed if passed explicitly.
+        return;
+    }
+
+    if (message_type == .EndGroup) {
+        console.default_indent -|= 1;
+        return;
+    }
 
     // Lock/unlock a mutex incase two JS threads are console.log'ing at the same time
     // We do this the slightly annoying way to avoid assigning a pointer
@@ -157,6 +169,7 @@ pub fn messageWithTypeAndLevel(
         .enable_colors = enable_colors,
         .add_newline = true,
         .flush = true,
+        .default_indent = console.default_indent,
     };
 
     if (message_type == .Table and len >= 1) {
@@ -170,6 +183,7 @@ pub fn messageWithTypeAndLevel(
                 tabular_data,
                 properties,
             );
+            table_printer.value_formatter.indent += console.default_indent;
 
             switch (enable_colors) {
                 inline else => |colors| table_printer.printTable(Writer, writer, colors) catch return,
@@ -439,7 +453,7 @@ pub const TablePrinter = struct {
                 value = row_value.getOwn(this.globalObject, col.name) orelse JSValue.zero;
             }
 
-            if (value.isEmpty()) {
+            if (value == .zero) {
                 try writer.writeByteNTimes(' ', col.width + (PADDING * 2));
             } else {
                 const len: u32 = this.getWidthForValue(value);
@@ -667,8 +681,9 @@ pub const FormatOptions = struct {
     quote_strings: bool = false,
     max_depth: u16 = 2,
     single_line: bool = false,
+    default_indent: u16 = 0,
 
-    pub fn fromJS(formatOptions: *FormatOptions, globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue) !void {
+    pub fn fromJS(formatOptions: *FormatOptions, globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue) bun.JSError!void {
         const arg1 = arguments[0];
 
         if (arg1.isObject()) {
@@ -690,14 +705,14 @@ pub const FormatOptions = struct {
                     }
                 }
             }
-            if (try arg1.getOptional(globalThis, "colors", bool)) |opt| {
+            if (try arg1.getBooleanLoose(globalThis, "colors")) |opt| {
                 formatOptions.enable_colors = opt;
             }
-            if (try arg1.getOptional(globalThis, "sorted", bool)) |opt| {
+            if (try arg1.getBooleanLoose(globalThis, "sorted")) |opt| {
                 formatOptions.ordered_properties = opt;
             }
 
-            if (try arg1.getOptional(globalThis, "compact", bool)) |opt| {
+            if (try arg1.getBooleanLoose(globalThis, "compact")) |opt| {
                 formatOptions.single_line = opt;
             }
         } else {
@@ -758,8 +773,10 @@ pub fn format2(
             .quote_strings = options.quote_strings,
             .max_depth = options.max_depth,
             .single_line = options.single_line,
+            .indent = options.default_indent,
         };
         const tag = ConsoleObject.Formatter.Tag.get(vals[0], global);
+        fmt.writeIndent(Writer, writer) catch return;
 
         if (tag.tag == .String) {
             if (options.enable_colors) {
@@ -836,8 +853,11 @@ pub fn format2(
         .ordered_properties = options.ordered_properties,
         .quote_strings = options.quote_strings,
         .single_line = options.single_line,
+        .indent = options.default_indent,
     };
     var tag: ConsoleObject.Formatter.Tag.Result = undefined;
+
+    fmt.writeIndent(Writer, writer) catch return;
 
     var any = false;
     if (options.enable_colors) {
@@ -952,7 +972,7 @@ pub const Formatter = struct {
     // For detecting circular references
     pub const Visited = struct {
         const ObjectPool = @import("../pool.zig").ObjectPool;
-        pub const Map = std.AutoHashMap(JSValue.Type, void);
+        pub const Map = std.AutoHashMap(JSValue, void);
         pub const Pool = ObjectPool(
             Map,
             struct {
@@ -1123,7 +1143,7 @@ pub const Formatter = struct {
                 };
             }
 
-            if (js_type.canGet()) {
+            if (js_type.canGet() and js_type != .ProxyObject) {
                 // Attempt to get custom formatter
                 if (value.fastGet(globalThis, .inspectCustom)) |callback_value| {
                     if (callback_value.isCallable(globalThis.vm())) {
@@ -1182,7 +1202,7 @@ pub const Formatter = struct {
             }
 
             // Is this a react element?
-            if (js_type.isObject()) {
+            if (js_type.isObject() and js_type != .ProxyObject) {
                 if (value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
                     var reactElement = ZigString.init("react.element");
                     var react_fragment = ZigString.init("react.fragment");
@@ -1642,8 +1662,8 @@ pub const Formatter = struct {
                     this.writer.writeAll(" ") catch unreachable;
                 }
                 if (!is_iterator) {
-                    const key = JSC.JSObject.getIndex(nextValue, globalObject, 0);
-                    const value = JSC.JSObject.getIndex(nextValue, globalObject, 1);
+                    const key = nextValue.getIndex(globalObject, 0);
+                    const value = nextValue.getIndex(globalObject, 1);
 
                     if (!single_line) {
                         this.formatter.writeIndent(Writer, this.writer) catch unreachable;
@@ -1929,7 +1949,7 @@ pub const Formatter = struct {
                 this.map = this.map_node.?.data;
             }
 
-            const entry = this.map.getOrPut(@intFromEnum(value)) catch unreachable;
+            const entry = this.map.getOrPut(value) catch unreachable;
             if (entry.found_existing) {
                 writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                 return;
@@ -1938,7 +1958,7 @@ pub const Formatter = struct {
 
         defer {
             if (comptime Format.canHaveCircularReferences()) {
-                _ = this.map.remove(@intFromEnum(value));
+                _ = this.map.remove(value);
             }
         }
 
@@ -2239,7 +2259,7 @@ pub const Formatter = struct {
                             this.addForNewLine(2);
                         }
 
-                        if (element.isEmpty()) {
+                        if (element == .zero) {
                             empty_start = 0;
                             break :first;
                         }
@@ -2258,7 +2278,7 @@ pub const Formatter = struct {
 
                     while (i < len) : (i += 1) {
                         const element = value.getDirectIndex(this.globalThis, i);
-                        if (element.isEmpty()) {
+                        if (element == .zero) {
                             if (empty_start == null) {
                                 empty_start = i;
                             }
@@ -2981,7 +3001,7 @@ pub const Formatter = struct {
 
                                                 var j: usize = 0;
                                                 while (j < length) : (j += 1) {
-                                                    const child = JSC.JSObject.getIndex(children, this.globalThis, @as(u32, @intCast(j)));
+                                                    const child = children.getIndex(this.globalThis, @as(u32, @intCast(j)));
                                                     this.format(Tag.getAdvanced(child, this.globalThis, .{ .hide_global = true }), Writer, writer_, child, this.globalThis, enable_ansi_colors);
                                                     if (j + 1 < length) {
                                                         writer.writeAll("\n");

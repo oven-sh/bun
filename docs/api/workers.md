@@ -50,6 +50,28 @@ const worker = new Worker("/not-found.js");
 
 The specifier passed to `Worker` is resolved relative to the project root (like typing `bun ./path/to/file.js`).
 
+### `preload` - load modules before the worker starts
+
+You can pass an array of module specifiers to the `preload` option to load modules before the worker starts. This is useful when you want to ensure some code is always loaded before the application starts, like loading OpenTelemetry, Sentry, DataDog, etc.
+
+```js
+const worker = new Worker("./worker.ts", {
+  preload: ["./load-sentry.js"],
+});
+```
+
+Like the `--preload` CLI argument, the `preload` option is processed before the worker starts.
+
+You can also pass a single string to the `preload` option:
+
+```js
+const worker = new Worker("./worker.ts", {
+  preload: "./load-sentry.js",
+});
+```
+
+This feature was added in Bun v1.1.35.
+
 ### `blob:` URLs
 
 As of Bun v1.1.13, you can also pass a `blob:` URL to `Worker`. This is useful for creating workers from strings or other sources.

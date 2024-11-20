@@ -147,8 +147,8 @@ pub const Ansi256 = struct {
     }
 };
 
-pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-    const args = callFrame.argumentsUndef(2).all();
+pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const args = callFrame.argumentsAsArray(2);
     if (args[0].isUndefined()) {
         globalThis.throwInvalidArgumentType("color", "input", "string, number, or object");
         return JSC.JSValue.jsUndefined();
@@ -169,7 +169,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                 return JSC.JSValue.jsUndefined();
             }
 
-            break :brk args[1].toEnum(globalThis, "format", OutputColorFormat) catch return .zero;
+            break :brk try args[1].toEnum(globalThis, "format", OutputColorFormat);
         }
 
         break :brk OutputColorFormat.css;

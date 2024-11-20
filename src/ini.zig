@@ -600,7 +600,7 @@ pub const IniTestingAPIs = struct {
     }
 
     pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments_ = callframe.arguments(1);
+        const arguments_ = callframe.arguments_old(1);
         const arguments = arguments_.slice();
 
         const jsstr = arguments[0];

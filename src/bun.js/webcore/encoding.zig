@@ -421,7 +421,7 @@ pub const TextEncoderStreamEncoder = struct {
     }
 
     pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
-        const arguments = callFrame.arguments(1).slice();
+        const arguments = callFrame.arguments_old(1).slice();
         if (arguments.len == 0) {
             return globalObject.throwNotEnoughArguments("TextEncoderStreamEncoder.encode", 1, arguments.len);
         }
@@ -760,7 +760,7 @@ pub const TextDecoder = struct {
     }
 
     pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments(2).slice();
+        const arguments = callframe.arguments_old(2).slice();
 
         const input_slice = input_slice: {
             if (arguments.len == 0 or arguments[0].isUndefined()) {
@@ -903,7 +903,7 @@ pub const TextDecoder = struct {
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*TextDecoder {
-        var args_ = callframe.arguments(2);
+        var args_ = callframe.arguments_old(2);
         var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
         var decoder = TextDecoder{};

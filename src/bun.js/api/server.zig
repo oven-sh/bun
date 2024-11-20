@@ -1371,7 +1371,7 @@ pub const ServerConfig = struct {
             if (global.hasException()) return error.JSError;
 
             if (arg.getTruthy(global, "app")) |bake_args_js| {
-                if (!bun.FeatureFlags.bake) {
+                if (!bun.FeatureFlags.bake()) {
                     return global.throwInvalidArguments2("To use the experimental \"app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
                 }
                 if (!allow_bake_config) {
@@ -6563,7 +6563,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const base_url = try bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/"));
             errdefer bun.default_allocator.free(base_url);
 
-            const dev_server = if (bun.FeatureFlags.bake) if (config.bake) |*bake_options| dev_server: {
+            const dev_server = if (config.bake) |*bake_options| dev_server: {
                 bun.bake.printWarning();
 
                 break :dev_server try bun.bake.DevServer.init(.{
@@ -6572,7 +6572,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     .framework = bake_options.framework,
                     .vm = global.bunVM(),
                 });
-            } else null else null;
+            } else null;
             errdefer if (dev_server) |d| d.deinit();
 
             var server = ThisServer.new(.{

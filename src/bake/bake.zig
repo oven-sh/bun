@@ -108,30 +108,6 @@ const BuildConfigSubset = struct {
     }
 };
 
-/// Temporary function to invoke dev server via JavaScript. Will be
-/// replaced with a user-facing API. Refs the event loop forever.
-pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-    _ = global;
-    _ = callframe;
-
-    if (!bun.FeatureFlags.bake) return .undefined;
-
-    bun.Output.errGeneric(
-        \\This api has moved to the `app` property of the default export.
-        \\
-        \\  export default {{
-        \\    port: 3000,
-        \\    app: {{
-        \\      framework: 'react'
-        \\    }},
-        \\  }};
-        \\
-    ,
-        .{},
-    );
-    return .undefined;
-}
-
 /// A "Framework" in our eyes is simply set of bundler options that a framework
 /// author would set in order to integrate the framework with the application.
 /// Since many fields have default values which may point to static memory, this
@@ -578,11 +554,6 @@ fn getOptionalString(
         return null;
     const str = try value.toBunString2(global);
     return allocations.track(str.toUTF8(arena));
-}
-
-export fn Bun__getTemporaryDevServer(global: *JSC.JSGlobalObject) JSValue {
-    if (!bun.FeatureFlags.bake) return .undefined;
-    return JSC.JSFunction.create(global, "wipDevServer", jsWipDevServer, 0, .{});
 }
 
 pub inline fn getHmrRuntime(side: Side) [:0]const u8 {

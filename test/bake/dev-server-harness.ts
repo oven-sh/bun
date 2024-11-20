@@ -92,6 +92,7 @@ export const Step = {
   write: (file: string, contents: string) =>
     Step.fn(`Update ${file}`, (dev: Dev) => {
       const wait = dev.waitForHotReload();
+      // TODO: consider using IncomingMessageId.virtual_file_change to reduce theoretical flakiness.
       fs.writeFileSync(dev.join(file), contents);
       return wait;
     }),
@@ -104,6 +105,7 @@ export const Step = {
       if (contents === fs.readFileSync(filename, "utf8")) {
         throw new Error(`Couldn't find and replace ${JSON.stringify(find)} in ${file}`);
       }
+      // TODO: consider using IncomingMessageId.virtual_file_change to reduce theoretical flakiness.
       fs.writeFileSync(filename, contents);
       return wait;
     }),

@@ -286,10 +286,9 @@ pub const Arguments = struct {
         clap.parseParam("--experimental-css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an affect when multiple entrypoints import CSS") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
-    } ++ if (FeatureFlags.bake) [_]ParamType{
-        clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake") catch unreachable,
+        clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
         clap.parseParam("--server-components              (EXPERIMENTAL) Enable server components") catch unreachable,
-        clap.parseParam("--define-client <STR>...         When --server-components is set, these defines are applied to client components. Same format as --define") catch unreachable,
+    } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
         clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
     } else .{};
     pub const build_params = build_only_params ++ transpiler_params_ ++ base_params_;
@@ -789,9 +788,15 @@ pub const Arguments = struct {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
             ctx.bundler_options.bytecode = args.flag("--bytecode");
 
-            if (FeatureFlags.bake and args.flag("--app")) {
+            if (args.flag("--app")) {
+                if (!bun.FeatureFlags.bake()) {
+                    Output.errGeneric("To use the experimental \"--app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
+                    Global.crash();
+                }
+
                 ctx.bundler_options.bake = true;
-                ctx.bundler_options.bake_debug_dump_server = args.flag("--debug-dump-server-files");
+                ctx.bundler_options.bake_debug_dump_server = bun.FeatureFlags.bake_debugging_features and
+                    args.flag("--debug-dump-server-files");
             }
 
             // TODO: support --format=esm
@@ -953,7 +958,7 @@ pub const Arguments = struct {
                 ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
-            if (bun.FeatureFlags.bake and args.flag("--server-components")) {
+            if (args.flag("--server-components")) {
                 ctx.bundler_options.server_components = true;
                 if (opts.target) |target| {
                     if (!bun.options.Target.from(target).isServerSide()) {

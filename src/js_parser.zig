@@ -3245,14 +3245,6 @@ pub const Parser = struct {
         var opts = ParseStatementOptions{ .is_module_scope = true };
         const parse_tracer = bun.tracy.traceNamed(@src(), "JSParser.parse");
 
-        if (self.options.features.hot_module_reloading) {
-            // Hot module reloading wraps everything in a closure. As a hack to
-            // prevent multiple files from interfering with each other, a fake
-            // scope is pushed to effectively wrap the file in a function.
-            // Locations -3 and -2 are used to avoid assertions.
-            // _ = try p.pushScopeForParsePass(.entry, logger.Loc.Empty);
-        }
-
         // Parsing seems to take around 2x as much time as visiting.
         // Which makes sense.
         // June 4: "Parsing took: 18028000"
@@ -3274,10 +3266,6 @@ pub const Parser = struct {
 
         const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
         try p.prepareForVisitPass();
-
-        if (self.options.features.hot_module_reloading) {
-            // try p.pushScopeForVisitPass(.entry, logger.Loc.Empty);
-        }
 
         // ESM is always strict mode. I don't think we need this.
         // // Strip off a leading "use strict" directive when not bundling

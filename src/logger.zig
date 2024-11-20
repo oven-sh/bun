@@ -731,7 +731,7 @@ pub const Log = struct {
         const msgs: []const Msg = this.msgs.items;
 
         // TODO: remove arbitrary upper limit. cannot use the heap because
-        // values could be GC'd to do this correctly, expose a binding that
+        // values could be GC'd. to do this correctly, expose a binding that
         // allows creating an AggregateError using an array
         var errors_stack: [256]JSC.JSValue = undefined;
 

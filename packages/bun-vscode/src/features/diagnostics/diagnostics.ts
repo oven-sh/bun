@@ -83,10 +83,6 @@ class BunDiagnosticsManager {
       this.editorState.clearAll();
     });
 
-    // debugAdapter.on("Inspector.event", async event => {
-    //   console.log(event.method);
-    // });
-
     debugAdapter.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
 
     const dispose = async () => {

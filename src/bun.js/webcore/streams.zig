@@ -3059,7 +3059,7 @@ pub const FileSink = struct {
     fn Bun__ForceFileSinkToBeSynchronousOnWindows(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) callconv(.C) void {
         comptime bun.assert(Environment.isWindows);
 
-        var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(globalObject, jsvalue) orelse return));
+        var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(jsvalue) orelse return));
         this.force_sync_on_windows = true;
     }
 

@@ -76,14 +76,14 @@ pub fn onInternalMessageChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.C
     const arguments = callframe.arguments(2).ptr;
     child_singleton.worker = JSC.Strong.create(arguments[0], globalThis);
     child_singleton.cb = JSC.Strong.create(arguments[1], globalThis);
-    child_singleton.flush(globalThis);
+    try child_singleton.flush(globalThis);
     return .undefined;
 }
 
-pub fn handleInternalMessageChild(globalThis: *JSC.JSGlobalObject, message: JSC.JSValue) void {
+pub fn handleInternalMessageChild(globalThis: *JSC.JSGlobalObject, message: JSC.JSValue) bun.JSError!void {
     log("handleInternalMessageChild", .{});
 
-    child_singleton.dispatch(message, globalThis);
+    try child_singleton.dispatch(message, globalThis);
 }
 
 //
@@ -111,21 +111,21 @@ pub const InternalMsgHolder = struct {
         new_item_ptr.* = JSC.Strong.create(message, globalThis);
     }
 
-    pub fn dispatch(this: *InternalMsgHolder, message: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
+    pub fn dispatch(this: *InternalMsgHolder, message: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
         if (!this.isReady()) {
             this.enqueue(message, globalThis);
             return;
         }
-        this.dispatchUnsafe(message, globalThis);
+        try this.dispatchUnsafe(message, globalThis);
     }
 
-    fn dispatchUnsafe(this: *InternalMsgHolder, message: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
+    fn dispatchUnsafe(this: *InternalMsgHolder, message: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
         const cb = this.cb.get().?;
         const worker = this.worker.get().?;
 
         const event_loop = globalThis.bunVM().eventLoop();
 
-        if (message.get(globalThis, "ack")) |p| {
+        if (try message.get(globalThis, "ack")) |p| {
             if (!p.isUndefined()) {
                 const ack = p.toInt32();
                 if (this.callbacks.getEntry(ack)) |entry| {
@@ -149,13 +149,13 @@ pub const InternalMsgHolder = struct {
         });
     }
 
-    pub fn flush(this: *InternalMsgHolder, globalThis: *JSC.JSGlobalObject) void {
+    pub fn flush(this: *InternalMsgHolder, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
         bun.assert(this.isReady());
         var messages = this.messages;
         this.messages = .{};
         for (messages.items) |*strong| {
             if (strong.get()) |message| {
-                this.dispatchUnsafe(message, globalThis);
+                try this.dispatchUnsafe(message, globalThis);
             }
             strong.deinit();
         }
@@ -217,12 +217,12 @@ pub fn onInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC
     return .undefined;
 }
 
-pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess: *JSC.Subprocess, message: JSC.JSValue) void {
+pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess: *JSC.Subprocess, message: JSC.JSValue) bun.JSError!void {
     const ipc_data = subprocess.ipc() orelse return;
 
     const event_loop = globalThis.bunVM().eventLoop();
 
-    if (message.get(globalThis, "ack")) |p| {
+    if (try message.get(globalThis, "ack")) |p| {
         if (!p.isUndefined()) {
             const ack = p.toInt32();
             if (ipc_data.internal_msg_queue.callbacks.getEntry(ack)) |entry| {

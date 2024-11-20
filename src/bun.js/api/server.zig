@@ -1140,7 +1140,7 @@ pub const ServerConfig = struct {
                     }
                 }
 
-                if (obj.get(global, "lowMemoryMode")) |low_memory_mode| {
+                if (try obj.get(global, "lowMemoryMode")) |low_memory_mode| {
                     if (low_memory_mode.isBoolean() or low_memory_mode.isUndefined()) {
                         result.low_memory_mode = low_memory_mode.toBoolean();
                         any = true;
@@ -1225,7 +1225,7 @@ pub const ServerConfig = struct {
                 return global.throwInvalidArguments2("Bun.serve expects an object", .{});
             }
 
-            if (arg.get(global, "static")) |static| {
+            if (try arg.get(global, "static")) |static| {
                 if (!static.isObject()) {
                     return global.throwInvalidArguments2("Bun.serve expects 'static' to be an object shaped like { [pathname: string]: Response }", .{});
                 }
@@ -1261,7 +1261,7 @@ pub const ServerConfig = struct {
 
             if (global.hasException()) return error.JSError;
 
-            if (arg.get(global, "idleTimeout")) |value| {
+            if (try arg.get(global, "idleTimeout")) |value| {
                 if (!value.isUndefinedOrNull()) {
                     if (!value.isAnyInt()) {
                         global.throwInvalidArguments("Bun.serve expects idleTimeout to be an integer", .{});
@@ -1346,7 +1346,7 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (arg.get(global, "id")) |id| {
+            if (try arg.get(global, "id")) |id| {
                 if (id.isUndefinedOrNull()) {
                     args.allow_hot = false;
                 } else {
@@ -1364,7 +1364,7 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (arg.get(global, "development")) |dev| {
+            if (try arg.get(global, "development")) |dev| {
                 args.development = dev.coerce(bool, global);
                 args.reuse_port = !args.development;
             }
@@ -1384,12 +1384,12 @@ pub const ServerConfig = struct {
                 args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global);
             }
 
-            if (arg.get(global, "reusePort")) |dev| {
+            if (try arg.get(global, "reusePort")) |dev| {
                 args.reuse_port = dev.coerce(bool, global);
             }
             if (global.hasException()) return error.JSError;
 
-            if (arg.get(global, "inspector")) |inspector| {
+            if (try arg.get(global, "inspector")) |inspector| {
                 args.inspector = inspector.coerce(bool, global);
 
                 if (args.inspector and !args.development) {
@@ -4309,7 +4309,7 @@ pub const WebSocketServer = struct {
         var server = WebSocketServer{};
         server.handler = try Handler.fromJS(globalObject, object);
 
-        if (object.get(globalObject, "perMessageDeflate")) |per_message_deflate| {
+        if (try object.get(globalObject, "perMessageDeflate")) |per_message_deflate| {
             getter: {
                 if (per_message_deflate.isUndefined()) {
                     break :getter;
@@ -4350,7 +4350,7 @@ pub const WebSocketServer = struct {
             }
         }
 
-        if (object.get(globalObject, "maxPayloadLength")) |value| {
+        if (try object.get(globalObject, "maxPayloadLength")) |value| {
             if (!value.isUndefinedOrNull()) {
                 if (!value.isAnyInt()) {
                     return globalObject.throwInvalidArguments2("websocket expects maxPayloadLength to be an integer", .{});
@@ -4359,7 +4359,7 @@ pub const WebSocketServer = struct {
             }
         }
 
-        if (object.get(globalObject, "idleTimeout")) |value| {
+        if (try object.get(globalObject, "idleTimeout")) |value| {
             if (!value.isUndefinedOrNull()) {
                 if (!value.isAnyInt()) {
                     return globalObject.throwInvalidArguments2("websocket expects idleTimeout to be an integer", .{});
@@ -4377,7 +4377,7 @@ pub const WebSocketServer = struct {
                 server.idleTimeout = idleTimeout;
             }
         }
-        if (object.get(globalObject, "backpressureLimit")) |value| {
+        if (try object.get(globalObject, "backpressureLimit")) |value| {
             if (!value.isUndefinedOrNull()) {
                 if (!value.isAnyInt()) {
                     return globalObject.throwInvalidArguments2("websocket expects backpressureLimit to be an integer", .{});
@@ -4387,7 +4387,7 @@ pub const WebSocketServer = struct {
             }
         }
 
-        if (object.get(globalObject, "closeOnBackpressureLimit")) |value| {
+        if (try object.get(globalObject, "closeOnBackpressureLimit")) |value| {
             if (!value.isUndefinedOrNull()) {
                 if (!value.isBoolean()) {
                     return globalObject.throwInvalidArguments2("websocket expects closeOnBackpressureLimit to be a boolean", .{});
@@ -4397,7 +4397,7 @@ pub const WebSocketServer = struct {
             }
         }
 
-        if (object.get(globalObject, "sendPings")) |value| {
+        if (try object.get(globalObject, "sendPings")) |value| {
             if (!value.isUndefinedOrNull()) {
                 if (!value.isBoolean()) {
                     return globalObject.throwInvalidArguments2("websocket expects sendPings to be a boolean", .{});
@@ -4407,7 +4407,7 @@ pub const WebSocketServer = struct {
             }
         }
 
-        if (object.get(globalObject, "publishToSelf")) |value| {
+        if (try object.get(globalObject, "publishToSelf")) |value| {
             if (!value.isUndefinedOrNull()) {
                 if (!value.isBoolean()) {
                     return globalObject.throwInvalidArguments2("websocket expects publishToSelf to be a boolean", .{});
@@ -5489,13 +5489,7 @@ pub const ServerWebSocket = struct {
 
         var message_value: ZigString.Slice = brk: {
             if (args.ptr[1] == .zero or args.ptr[1].isUndefined()) break :brk ZigString.Slice.empty;
-
-            if (args.ptr[1].toSliceOrNull(globalThis)) |slice| {
-                break :brk slice;
-            }
-
-            // toString() failed, that means an exception occurred.
-            return .zero;
+            break :brk try args.ptr[1].toSliceOrNull(globalThis);
         };
 
         defer message_value.deinit();

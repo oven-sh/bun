@@ -1101,7 +1101,7 @@ pub fn wrapInstanceMethod(
                     },
                     ?JSC.Cloudflare.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
-                            if (content_arg.get(globalThis, "html")) |html_val| {
+                            if (try content_arg.get(globalThis, "html")) |html_val| {
                                 args[i] = .{ .html = html_val.toBoolean() };
                             }
                         } else {
@@ -1269,7 +1269,7 @@ pub fn wrapStaticMethod(
                     },
                     ?JSC.Cloudflare.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
-                            if (content_arg.get(globalThis, "html")) |html_val| {
+                            if (try content_arg.get(globalThis, "html")) |html_val| {
                                 args[i] = .{ .html = html_val.toBoolean() };
                             }
                         } else {

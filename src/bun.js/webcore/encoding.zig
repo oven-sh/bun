@@ -933,7 +933,7 @@ pub const TextDecoder = struct {
                     return globalThis.throwInvalidArguments2("TextDecoder(options) is invalid", .{});
                 }
 
-                if (options.get(globalThis, "fatal")) |fatal| {
+                if (try options.get(globalThis, "fatal")) |fatal| {
                     if (fatal.isBoolean()) {
                         decoder.fatal = fatal.asBoolean();
                     } else {
@@ -941,7 +941,7 @@ pub const TextDecoder = struct {
                     }
                 }
 
-                if (options.get(globalThis, "ignoreBOM")) |ignoreBOM| {
+                if (try options.get(globalThis, "ignoreBOM")) |ignoreBOM| {
                     if (ignoreBOM.isBoolean()) {
                         decoder.ignore_bom = ignoreBOM.asBoolean();
                     } else {

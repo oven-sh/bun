@@ -44,6 +44,9 @@ describe("bun shell", () => {
   it.todo("does not expand tilde when the slash is quoted", async () => {
     expect(await $`echo ~"/"`.text()).toBe("~/\n");
   });
+  it.todo("expands tilde after equals", async () => {
+    expect(await $`echo a=~`.text()).toBe("a=" + process.env.HOME + "\n");
+  });
   it.todo("expands tilde in variable set", async () => {
     expect(await $`MYVAR=~/abc && echo $MYVAR`.text()).toBe(process.env.HOME + "/abc\n");
   });

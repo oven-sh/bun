@@ -1650,12 +1650,14 @@ pub const Resolver = struct {
 
             // https://nodejs.org/api/packages.html#packages_self_referencing_a_package_using_its_name
             const package_name = ESModule.Package.parseName(import_path);
-            if (strings.eql(package_name.?, dir_info_package_json.?.package_json.?.name)) {
-                if (r.debug_logs) |*debug| {
-                    debug.addNoteFmt("\"{s}\" is a self-import", .{import_path});
+            if (dir_info_package_json.?.package_json) |package_json| {
+                if (strings.eql(package_name.?, package_json.name) and package_json.exports != null) {
+                    if (r.debug_logs) |*debug| {
+                        debug.addNoteFmt("\"{s}\" is a self-import", .{ import_path });
+                    }
+                    dir_info = dir_info_package_json.?;
+                    is_self_import = true;
                 }
-                dir_info = dir_info_package_json.?;
-                is_self_import = true;
             }
         }
 

@@ -31,7 +31,7 @@ describe("bun", () => {
         stdout: "pipe",
       });
       let out = await new Response(subprocess.stdout).text();
-      expect(out).toContain(testString);
+      expect(out).not.toContain(testString);
 
       // should not resolve not exported files
       await writeFile(

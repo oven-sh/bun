@@ -35,6 +35,7 @@ const abortedSymbol = Symbol("aborted");
 const bodyStreamSymbol = Symbol("bodyStream");
 const closedSymbol = Symbol("closed");
 const controllerSymbol = Symbol("controller");
+const runSymbol = Symbol("run");
 const deferredSymbol = Symbol("deferred");
 const eofInProgress = Symbol("eofInProgress");
 const fakeSocketSymbol = Symbol("fakeSocket");
@@ -1807,6 +1808,7 @@ function ServerResponse(req, options) {
     this[controllerSymbol] = undefined;
     this[firstWriteSymbol] = undefined;
     this[deferredSymbol] = undefined;
+    this[finishedSymbol] = false;
     this.write = ServerResponse_writeDeprecated;
     this.end = ServerResponse_finalDeprecated;
   }
@@ -2136,7 +2138,12 @@ function ensureReadableStreamController(run) {
   if (thisController) return run(thisController);
   this.headersSent = true;
   let firstWrite = this[firstWriteSymbol];
-  this[controllerSymbol] = undefined;
+  const old_run = this[runSymbol];
+  if (old_run) {
+    old_run.push(run);
+    return;
+  }
+  this[runSymbol] = [run];
   this[kDeprecatedReplySymbol](
     new Response(
       new ReadableStream({
@@ -2145,7 +2152,9 @@ function ensureReadableStreamController(run) {
           this[controllerSymbol] = controller;
           if (firstWrite) controller.write(firstWrite);
           firstWrite = undefined;
-          run(controller);
+          for (let run of this[runSymbol]) {
+            run(controller);
+          }
           if (!this[finishedSymbol]) {
             const { promise, resolve } = $newPromiseCapability(GlobalPromise);
             this[deferredSymbol] = resolve;
@@ -2240,7 +2249,8 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
 
     let prom;
     if (chunk) {
-      prom = controller.end(chunk);
+      controller.write(chunk);
+      prom = controller.end();
     } else {
       prom = controller.end();
     }

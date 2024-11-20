@@ -1736,21 +1736,18 @@ pub const fmt_js_test_bindings = struct {
                     .check_for_unhighlighted_write = false,
                 });
                 std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
-                    globalThis.throwError(err, "Error formatting");
-                    return .zero;
+                    return globalThis.throwError(err, "Error formatting");
                 };
             },
             .escapePowershell => {
                 std.fmt.format(writer.writer(), "{}", .{escapePowershell(code.slice())}) catch |err| {
-                    globalThis.throwError(err, "Error formatting");
-                    return .zero;
+                    return globalThis.throwError(err, "Error formatting");
                 };
             },
         }
 
         writer.flush() catch |err| {
-            globalThis.throwError(err, "Error formatting");
-            return .zero;
+            return globalThis.throwError(err, "Error formatting");
         };
 
         var str = bun.String.createUTF8(buffer.list.items);

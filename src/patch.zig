@@ -1119,8 +1119,7 @@ pub const TestingAPIs = struct {
         defer new_folder.deinit();
 
         return switch (gitDiffInternal(bun.default_allocator, old_folder.slice(), new_folder.slice()) catch |e| {
-            globalThis.throwError(e, "failed to make diff");
-            return .undefined;
+            return globalThis.throwError(e, "failed to make diff");
         }) {
             .result => |s| {
                 defer s.deinit();
@@ -1174,10 +1173,10 @@ pub const TestingAPIs = struct {
 
         var patchfile = parsePatchFile(patchfile_src.slice()) catch |e| {
             if (e == error.hunk_header_integrity_check_failed) {
-                globalThis.throwError(e, "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)");
-            } else globalThis.throwError(e, "failed to parse patch file");
-
-            return .undefined;
+                return globalThis.throwError(e, "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)");
+            } else {
+                return globalThis.throwError(e, "failed to parse patch file");
+            }
         };
         defer patchfile.deinit(bun.default_allocator);
 
@@ -1223,7 +1222,7 @@ pub const TestingAPIs = struct {
             }
 
             patchfile_src.deinit();
-            globalThis.throwError(e, "failed to parse patchfile");
+            globalThis.throwError(e, "failed to parse patchfile") catch {};
             return .{ .err = .undefined };
         };
 

@@ -1999,8 +1999,7 @@ pub const Subprocess = struct {
         }
 
         if (!override_env and env_array.items.len == 0) {
-            env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch |err|
-                return globalThis.handleError(err, "in Bun.spawn");
+            env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch |err| return globalThis.throwError(err, "in Bun.spawn") catch return .zero;
             env_array.capacity = env_array.items.len;
         }
 
@@ -2034,7 +2033,7 @@ pub const Subprocess = struct {
             // And then one fd is assigned specifically and only for IPC. If the user dont specify it, we add one (default: 3).
             //
             // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
-            env_array.ensureUnusedCapacity(allocator, 3) catch |err| return globalThis.handleError(err, "in Bun.spawn");
+            env_array.ensureUnusedCapacity(allocator, 3) catch |err| return globalThis.throwError(err, "in Bun.spawn") catch return .zero;
             const ipc_fd: u32 = brk: {
                 if (ipc_channel == -1) {
                     // If the user didn't specify an IPC channel, we need to add one
@@ -2119,9 +2118,7 @@ pub const Subprocess = struct {
             @ptrCast(env_array.items.ptr),
         ) catch |err| {
             spawn_options.deinit();
-            globalThis.throwError(err, ": failed to spawn process");
-
-            return .zero;
+            return globalThis.throwError(err, ": failed to spawn process") catch return .zero;
         }) {
             .err => |err| {
                 spawn_options.deinit();

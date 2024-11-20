@@ -2186,6 +2186,7 @@ pub const Resolver = struct {
             if (package_json_) |package_json| {
                 package = Package.fromPackageJSON(
                     pm.lockfile,
+                    pm,
                     package_json,
                     Install.Features{
                         .dev_dependencies = true,

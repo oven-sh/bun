@@ -78,11 +78,11 @@ pub fn count(this: *const Dependency, buf: []const u8, comptime StringBuilder: t
     this.countWithDifferentBuffers(buf, buf, StringBuilder, builder);
 }
 
-pub fn clone(this: *const Dependency, package_manager: ?*PackageManager, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
+pub fn clone(this: *const Dependency, package_manager: *PackageManager, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
     return this.cloneWithDifferentBuffers(package_manager, buf, buf, StringBuilder, builder);
 }
 
-pub fn cloneWithDifferentBuffers(this: *const Dependency, package_manager: ?*PackageManager, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
+pub fn cloneWithDifferentBuffers(this: *const Dependency, package_manager: *PackageManager, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
     const out_slice = builder.lockfile.buffers.string_bytes.items;
     const new_literal = builder.append(String, this.version.literal.slice(version_buf));
     const sliced = new_literal.sliced(out_slice);
@@ -116,7 +116,7 @@ pub const Context = struct {
     allocator: std.mem.Allocator,
     log: *logger.Log,
     buffer: []const u8,
-    package_manager: ?*PackageManager = null,
+    package_manager: *PackageManager,
 };
 
 /// Get the name of the package as it should appear in a remote registry.
@@ -849,9 +849,10 @@ pub inline fn parse(
     dependency: string,
     sliced: *const SlicedString,
     log: ?*logger.Log,
+    manager: ?*PackageManager,
 ) ?Version {
     const dep = std.mem.trimLeft(u8, dependency, " \t\n\r");
-    return parseWithTag(allocator, alias, alias_hash, dep, Version.Tag.infer(dep), sliced, log);
+    return parseWithTag(allocator, alias, alias_hash, dep, Version.Tag.infer(dep), sliced, log, manager);
 }
 
 pub fn parseWithOptionalTag(

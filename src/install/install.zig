@@ -3139,7 +3139,7 @@ pub const PackageManager = struct {
 
             builder.allocate() catch |err| return .{ .failure = err };
 
-            const dep = dummy.cloneWithDifferentBuffers(name, this, version_buf, @TypeOf(&builder), &builder) catch unreachable;
+            const dep = dummy.cloneWithDifferentBuffers(this, name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
             builder.clamp();
             const index = this.lockfile.buffers.dependencies.items.len;
             this.lockfile.buffers.dependencies.append(this.allocator, dep) catch unreachable;
@@ -4237,6 +4237,7 @@ pub const PackageManager = struct {
 
         // appendPackage sets the PackageID on the package
         const package = try this.lockfile.appendPackage(try Lockfile.Package.fromNPM(
+            this,
             this.allocator,
             this.lockfile,
             this.log,
@@ -5997,6 +5998,7 @@ pub const PackageManager = struct {
 
                         pkg.parse(
                             manager.lockfile,
+                            manager,
                             manager.allocator,
                             manager.log,
                             package_json_source,
@@ -6075,6 +6077,7 @@ pub const PackageManager = struct {
 
                 package.parse(
                     manager.lockfile,
+                    manager,
                     manager.allocator,
                     manager.log,
                     package_json_source,
@@ -9033,7 +9036,7 @@ pub const PackageManager = struct {
                 };
                 lockfile.initEmpty(ctx.allocator);
 
-                try package.parse(&lockfile, ctx.allocator, manager.log, package_json_source, void, {}, Features.folder);
+                try package.parse(&lockfile, manager, ctx.allocator, manager.log, package_json_source, void, {}, Features.folder);
                 name = lockfile.str(&package.name);
                 if (name.len == 0) {
                     if (manager.options.log_level != .silent) {
@@ -9215,7 +9218,7 @@ pub const PackageManager = struct {
                 };
                 lockfile.initEmpty(ctx.allocator);
 
-                try package.parse(&lockfile, ctx.allocator, manager.log, package_json_source, void, {}, Features.folder);
+                try package.parse(&lockfile, manager, ctx.allocator, manager.log, package_json_source, void, {}, Features.folder);
                 name = lockfile.str(&package.name);
                 if (name.len == 0) {
                     if (manager.options.log_level != .silent) {
@@ -10412,7 +10415,7 @@ pub const PackageManager = struct {
         const updates: []UpdateRequest = if (manager.subcommand == .@"patch-commit" or manager.subcommand == .patch)
             &[_]UpdateRequest{}
         else
-            UpdateRequest.parse(ctx.allocator, ctx.log, manager.options.positionals[1..], &update_requests, manager.subcommand);
+            UpdateRequest.parse(ctx.allocator, manager, ctx.log, manager.options.positionals[1..], &update_requests, manager.subcommand);
         try manager.updatePackageJSONAndInstallWithManagerWithUpdates(
             ctx,
             updates,
@@ -11089,7 +11092,7 @@ pub const PackageManager = struct {
                 };
 
                 var package = Lockfile.Package{};
-                try package.parseWithJSON(lockfile, manager.allocator, manager.log, package_json_source, json, void, {}, Features.folder);
+                try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, {}, Features.folder);
 
                 const name = lockfile.str(&package.name);
                 const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
@@ -11502,7 +11505,7 @@ pub const PackageManager = struct {
                 };
 
                 var package = Lockfile.Package{};
-                try package.parseWithJSON(lockfile, manager.allocator, manager.log, package_json_source, json, void, {}, Features.folder);
+                try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, {}, Features.folder);
 
                 const name = lockfile.str(&package.name);
                 const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
@@ -14081,6 +14084,7 @@ pub const PackageManager = struct {
 
                     try maybe_root.parse(
                         &lockfile,
+                        manager,
                         manager.allocator,
                         manager.log,
                         root_package_json_source,
@@ -14092,6 +14096,7 @@ pub const PackageManager = struct {
                     @memset(mapping, invalid_package_id);
 
                     manager.summary = try Package.Diff.generate(
+                        manager,
                         manager.allocator,
                         manager.log,
                         manager.lockfile,
@@ -14151,7 +14156,7 @@ pub const PackageManager = struct {
                             break :brk all_name_hashes;
                         };
 
-                        manager.lockfile.overrides = try lockfile.overrides.clone(&lockfile, manager.lockfile, builder);
+                        manager.lockfile.overrides = try lockfile.overrides.clone(manager, &lockfile, manager.lockfile, builder);
 
                         manager.lockfile.trusted_dependencies = if (lockfile.trusted_dependencies) |trusted_dependencies|
                             try trusted_dependencies.clone(manager.lockfile.allocator)
@@ -14174,7 +14179,7 @@ pub const PackageManager = struct {
                         manager.lockfile.buffers.resolutions.items = manager.lockfile.buffers.resolutions.items.ptr[0 .. off + len];
 
                         for (new_dependencies, 0..) |new_dep, i| {
-                            dependencies[i] = try new_dep.clone(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                            dependencies[i] = try new_dep.clone(manager, lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
                             if (mapping[i] != invalid_package_id) {
                                 resolutions[i] = old_resolutions[mapping[i]];
                             }
@@ -14312,6 +14317,7 @@ pub const PackageManager = struct {
 
             try root.parse(
                 manager.lockfile,
+                manager,
                 manager.allocator,
                 manager.log,
                 root_package_json_source,

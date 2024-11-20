@@ -1470,10 +1470,12 @@ pub const ThreadSafeFunction = struct {
     finalizer: Finalizer = Finalizer{ .env = null, .fun = null, .data = null },
     // TODO(@190n) change to better type
     channel: Queue,
+    // allocator used to create the slice when the buffer size is fixed
+    allocator: std.mem.Allocator,
 
     ctx: ?*anyopaque = null,
 
-    callback: Callback = undefined,
+    callback: Callback,
 
     const ThreadSafeFunctionTask = JSC.AnyTask.New(@This(), call);
     pub const Queue = union(enum) {
@@ -1514,10 +1516,14 @@ pub const ThreadSafeFunction = struct {
             }
         }
 
-        pub fn deinit(this: *@This()) void {
+        pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
             switch (this.*) {
-                .sized => this.sized.deinit(),
-                .unsized => this.unsized.deinit(),
+                .sized => |*s| {
+                    // buffer was allocated in init with nonzero size
+                    allocator.free(s.buffer.buf);
+                    s.deinit();
+                },
+                .unsized => |*u| u.deinit(),
             }
         }
 
@@ -1610,7 +1616,7 @@ pub const ThreadSafeFunction = struct {
                 this.callback.c.js.unprotect();
             }
         }
-        this.channel.deinit();
+        this.channel.deinit(this.allocator);
         bun.default_allocator.destroy(this);
     }
 
@@ -1705,6 +1711,7 @@ pub export fn napi_create_threadsafe_function(
         .thread_count = initial_thread_count,
         .poll_ref = Async.KeepAlive.init(),
         .tracker = JSC.AsyncTaskTracker.init(vm),
+        .allocator = bun.default_allocator,
     };
 
     function.finalizer = .{ .env = env, .data = thread_finalize_data, .fun = thread_finalize_cb };

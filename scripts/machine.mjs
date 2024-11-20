@@ -730,8 +730,7 @@ function getCloudInit(cloudInit) {
           Subsystem sftp ${sftpPath}
     chpasswd:
       expire: false
-      list: |
-        ${users.join("\n")}
+      list: ${JSON.stringify(users)}
     disable_root: false
     ssh_pwauth: true
     ssh_authorized_keys: ${authorizedKeys}

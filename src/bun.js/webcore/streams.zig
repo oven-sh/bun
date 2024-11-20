@@ -3056,7 +3056,7 @@ pub const FileSink = struct {
     pub const IOWriter = bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose);
     pub const Poll = IOWriter;
 
-    fn Bun__ForceFileSinkToBeSynchronousOnWindows(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) callconv(.C) void {
+    fn Bun__ForceFileSinkToBeSynchronousOnWindows(jsvalue: JSC.JSValue) callconv(.C) void {
         comptime bun.assert(Environment.isWindows);
 
         var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(jsvalue) orelse return));

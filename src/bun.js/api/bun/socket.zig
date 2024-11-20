@@ -368,7 +368,7 @@ pub const SocketConfig = struct {
                     return globalObject.throwInvalidArguments2("Expected \"hostname\" to be a string", .{});
                 }
 
-                var port_value = opts.get(globalObject, "port") orelse JSValue.zero;
+                var port_value = try opts.get(globalObject, "port") orelse JSValue.zero;
                 hostname_or_unix = hostname.getZigString(globalObject).toSlice(bun.default_allocator);
 
                 if (port_value.isEmptyOrUndefinedOrNull() and hostname_or_unix.len > 0) {
@@ -412,7 +412,7 @@ pub const SocketConfig = struct {
         }
         errdefer hostname_or_unix.deinit();
 
-        var handlers = try Handlers.fromJS(globalObject, opts.get(globalObject, "socket") orelse JSValue.zero);
+        var handlers = try Handlers.fromJS(globalObject, try opts.get(globalObject, "socket") orelse JSValue.zero);
 
         if (opts.fastGet(globalObject, .data)) |default_data_value| {
             default_data = default_data_value;
@@ -559,7 +559,7 @@ pub const Listener = struct {
             return .zero;
         }
 
-        const socket_obj = opts.get(globalObject, "socket") orelse {
+        const socket_obj = try opts.get(globalObject, "socket") orelse {
             globalObject.throw("Expected \"socket\" object", .{});
             return .zero;
         };
@@ -2305,7 +2305,7 @@ fn NewSocket(comptime ssl: bool) type {
             const length_value = args[2];
 
             if (encoding_value != .undefined and (offset_value != .undefined or length_value != .undefined)) {
-                globalObject.throwTODO("Support encoding with offset and length altogether. Only either encoding or offset, length is supported, but not both combinations yet.");
+                globalObject.throwTODO("Support encoding with offset and length altogether. Only either encoding or offset, length is supported, but not both combinations yet.") catch {};
                 return .fail;
             }
 
@@ -2580,7 +2580,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            const socket_obj = opts.get(globalObject, "socket") orelse {
+            const socket_obj = try opts.get(globalObject, "socket") orelse {
                 globalObject.throw("Expected \"socket\" option", .{});
                 return .zero;
             };
@@ -2824,10 +2824,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            var label = label_arg.toSliceOrNull(globalObject) orelse {
-                globalObject.throw("Expected label to be a string", .{});
-                return .zero;
-            };
+            var label = try label_arg.toSliceOrNull(globalObject);
 
             defer label.deinit();
             const label_slice = label.slice();
@@ -3346,7 +3343,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            const socket_obj = opts.get(globalObject, "socket") orelse {
+            const socket_obj = try opts.get(globalObject, "socket") orelse {
                 globalObject.throw("Expected \"socket\" option", .{});
                 return .zero;
             };
@@ -4252,7 +4249,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
         return .zero;
     }
 
-    const socket_obj = opts.get(globalObject, "socket") orelse {
+    const socket_obj = try opts.get(globalObject, "socket") orelse {
         globalObject.throw("Expected \"socket\" option", .{});
         return .zero;
     };

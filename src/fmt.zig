@@ -1720,8 +1720,7 @@ pub const fmt_js_test_bindings = struct {
             return globalThis.throwNotEnoughArguments("code", 1, 0);
         }
 
-        const code = args.ptr[0].toSliceOrNull(globalThis) orelse
-            return .zero;
+        const code = try args.ptr[0].toSliceOrNull(globalThis);
         defer code.deinit();
 
         var buffer = bun.MutableString.initEmpty(bun.default_allocator);

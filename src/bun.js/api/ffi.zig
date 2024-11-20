@@ -1409,7 +1409,7 @@ pub const FFI = struct {
             .threadsafe = threadsafe,
         };
 
-        if (value.get(global, "ptr")) |ptr| {
+        if (try value.get(global, "ptr")) |ptr| {
             if (ptr.isNumber()) {
                 const num = ptr.asPtrAddress();
                 if (num > 0)

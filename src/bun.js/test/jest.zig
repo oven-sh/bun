@@ -1675,7 +1675,7 @@ inline fn createScope(
     comptime signature: string,
     comptime is_test: bool,
     comptime tag: Tag,
-) JSValue {
+) bun.JSError!JSValue {
     const this = callframe.this();
     const arguments = callframe.arguments(3);
     const args = arguments.slice();
@@ -1705,21 +1705,21 @@ inline fn createScope(
     if (options.isNumber()) {
         timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
-        if (options.get(globalThis, "timeout")) |timeout| {
+        if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
                 globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
                 return .zero;
             }
             timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
         }
-        if (options.get(globalThis, "retry")) |retries| {
+        if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
                 globalThis.throwPretty("{s} expects retry to be a number", .{signature});
                 return .zero;
             }
             // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
         }
-        if (options.get(globalThis, "repeats")) |repeats| {
+        if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
                 globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
                 return .zero;
@@ -1849,10 +1849,7 @@ fn consumeArg(
 ) !void {
     const allocator = getAllocator(globalThis);
     if (should_write) {
-        const owned_slice = arg.toSliceOrNull(globalThis) orelse {
-            bun.assert(globalThis.hasException());
-            return error.JSError;
-        };
+        const owned_slice = try arg.toSliceOrNull(globalThis);
         defer owned_slice.deinit();
         array_list.appendSlice(allocator, owned_slice.slice()) catch bun.outOfMemory();
     } else {
@@ -1932,10 +1929,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
 
 pub const EachData = struct { strong: JSC.Strong, is_test: bool };
 
-fn eachBind(
-    globalThis: *JSGlobalObject,
-    callframe: *CallFrame,
-) bun.JSError!JSValue {
+fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
     const signature = "eachBind";
     const callee = callframe.callee();
     const arguments = callframe.arguments(3);
@@ -1959,21 +1953,21 @@ fn eachBind(
     if (options.isNumber()) {
         timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
-        if (options.get(globalThis, "timeout")) |timeout| {
+        if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
                 globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
                 return .zero;
             }
             timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
         }
-        if (options.get(globalThis, "retry")) |retries| {
+        if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
                 globalThis.throwPretty("{s} expects retry to be a number", .{signature});
                 return .zero;
             }
             // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
         }
-        if (options.get(globalThis, "repeats")) |repeats| {
+        if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
                 globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
                 return .zero;

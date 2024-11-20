@@ -356,8 +356,7 @@ pub const Version = struct {
                 }
             },
             else => {
-                globalThis.throwTODO("Unsupported dependency type");
-                return error.JSError;
+                return globalThis.throwTODO("Unsupported dependency type");
             },
         }
 

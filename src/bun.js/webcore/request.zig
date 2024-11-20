@@ -678,7 +678,7 @@ pub const Request = struct {
             }
 
             if (!fields.contains(.signal)) {
-                if (value.getTruthy(globalThis, "signal")) |signal_| {
+                if (try value.getTruthy(globalThis, "signal")) |signal_| {
                     fields.insert(.signal);
                     if (AbortSignal.fromJS(signal_)) |signal| {
                         //Keep it alive

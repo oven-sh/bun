@@ -760,8 +760,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
             return globalThis.throwValue2(log.toJS(globalThis, allocator, "Failed to create transpiler"));
         }
 
-        globalThis.throwError(err, "Error creating transpiler");
-        return error.JSError;
+        return globalThis.throwError(err, "Error creating transpiler");
     };
     bundler.options.no_macros = transpiler_options.no_macros;
     bundler.configureLinkerWithAutoJSX(false);
@@ -770,9 +769,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
         if ((log.warnings + log.errors) > 0) {
             return globalThis.throwValue2(log.toJS(globalThis, allocator, "Failed to load define"));
         }
-
-        globalThis.throwError(err, "Failed to load define");
-        return error.JSError;
+        return globalThis.throwError(err, "Failed to load define");
     };
 
     if (transpiler_options.macro_map.count() > 0) {
@@ -1101,8 +1098,7 @@ pub fn transformSync(
     buffer_writer.reset();
     var printer = JSPrinter.BufferPrinter.init(buffer_writer);
     _ = this.bundler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii) catch |err| {
-        globalThis.throwError(err, "Failed to print code");
-        return .zero;
+        return globalThis.throwError(err, "Failed to print code");
     };
 
     // TODO: benchmark if pooling this way is faster or moving is faster
@@ -1244,8 +1240,7 @@ pub fn scanImports(
             return .zero;
         }
 
-        globalThis.throwError(err, "Failed to scan imports");
-        return .zero;
+        return globalThis.throwError(err, "Failed to scan imports");
     };
 
     defer this.scan_pass_result.reset();

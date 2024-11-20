@@ -823,8 +823,7 @@ pub const ParsedShellScript = struct {
                 return .undefined;
             }
 
-            globalThis.throwError(err, "failed to lex/parse shell");
-            return .undefined;
+            return globalThis.throwError(err, "failed to lex/parse shell");
         };
 
         shargs.script_ast = script_ast;

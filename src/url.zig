@@ -1031,10 +1031,7 @@ pub const FormData = struct {
             return .zero;
         }
 
-        return FormData.toJS(globalThis, input, encoding) catch |err| {
-            globalThis.throwError(err, "while parsing FormData");
-            return .zero;
-        };
+        return FormData.toJS(globalThis, input, encoding) catch |err| return globalThis.throwError(err, "while parsing FormData");
     }
 
     comptime {

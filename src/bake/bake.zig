@@ -55,8 +55,7 @@ pub const UserOptions = struct {
                     return error.JSError;
                 },
                 else => {
-                    global.throwError(err, "while querying current working directory");
-                    return error.JSError;
+                    return global.throwError(err, "while querying current working directory");
                 },
             };
 

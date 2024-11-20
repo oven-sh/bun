@@ -1115,13 +1115,15 @@ async function getExecPathFromBuildKite(target) {
 
   await unzip(zipPath, releasePath);
 
-  for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
+  const releaseFiles = readdirSync(releasePath, { recursive: true, encoding: "utf-8" });
+  for (const entry of releaseFiles) {
     const execPath = join(releasePath, entry);
-    if (/bun(?:\.exe)?$/i.test(entry) && isExecutable(execPath)) {
+    if (/bun(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
       return execPath;
     }
   }
 
+  console.warn(`Found ${releaseFiles.length} files in ${releasePath}:`, releaseFiles);
   throw new Error(`Could not find executable from BuildKite: ${releasePath}`);
 }
 

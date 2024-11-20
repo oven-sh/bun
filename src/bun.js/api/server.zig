@@ -226,8 +226,7 @@ const StaticRoute = struct {
 
                     .Blob, .InternalBlob, .WTFStringImpl => {
                         if (response.body.value == .Blob and response.body.value.Blob.needsToReadFile()) {
-                            globalThis.throwTODO("TODO: support Bun.file(path) in static routes");
-                            return error.JSError;
+                            return globalThis.throwTODO("TODO: support Bun.file(path) in static routes");
                         }
                         var blob = response.body.value.use();
                         blob.globalThis = globalThis;

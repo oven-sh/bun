@@ -2962,10 +2962,10 @@ pub const JSGlobalObject = opaque {
         return .zero;
     }
 
-    pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) void {
+    pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
         const err = this.createErrorInstance("{s}", .{msg});
         err.put(this, ZigString.static("name"), bun.String.static("TODOError").toJS(this));
-        this.throwValue(err);
+        return this.throwValue2(err);
     }
 
     pub const throwTerminationException = JSGlobalObject__throwTerminationException;
@@ -2980,21 +2980,13 @@ pub const JSGlobalObject = opaque {
     }
 
     /// Deprecated: use `throwInvalidArguments2`
-    pub fn throwInvalidArguments(
-        this: *JSGlobalObject,
-        comptime fmt: [:0]const u8,
-        args: anytype,
-    ) void {
+    pub fn throwInvalidArguments(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) void {
         const err = JSC.toInvalidArguments(fmt, args, this);
         this.vm().throwError(this, err);
     }
 
     /// New system for throwing errors: returning bun.JSError
-    pub fn throwInvalidArguments2(
-        this: *JSGlobalObject,
-        comptime fmt: [:0]const u8,
-        args: anytype,
-    ) bun.JSError {
+    pub fn throwInvalidArguments2(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
         const err = JSC.toInvalidArguments(fmt, args, this);
         return this.vm().throwError2(this, err);
     }

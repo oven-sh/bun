@@ -1717,7 +1717,7 @@ pub const fmt_js_test_bindings = struct {
     pub fn jsFunctionStringFormatter(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) bun.JSError!bun.JSC.JSValue {
         const args = callframe.arguments(2);
         if (args.len < 2) {
-            globalThis.throwNotEnoughArguments("code", 1, 0);
+            return globalThis.throwNotEnoughArguments("code", 1, 0);
         }
 
         const code = args.ptr[0].toSliceOrNull(globalThis) orelse

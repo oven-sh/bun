@@ -278,38 +278,29 @@ pub const Jest = struct {
 
     fn globalHook(comptime name: string) JSC.JSHostZigFunction {
         return struct {
-            pub fn appendGlobalFunctionCallback(
-                globalThis: *JSGlobalObject,
-                callframe: *CallFrame,
-            ) bun.JSError!JSValue {
+            pub fn appendGlobalFunctionCallback(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
                 const the_runner = runner orelse {
-                    globalThis.throw("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
-                    return .zero;
+                    return globalThis.throw2("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
                 };
 
                 const arguments = callframe.arguments(2);
                 if (arguments.len < 1) {
-                    globalThis.throwNotEnoughArguments("callback", 1, arguments.len);
-                    return .zero;
+                    return globalThis.throwNotEnoughArguments("callback", 1, arguments.len);
                 }
 
                 const function = arguments.ptr[0];
                 if (function.isEmptyOrUndefinedOrNull() or !function.isCallable(globalThis.vm())) {
                     globalThis.throwInvalidArgumentType(name, "callback", "function");
-                    return .zero;
+                    return error.JSError;
                 }
 
                 if (function.getLength(globalThis) > 0) {
-                    globalThis.throw("done() callback is not implemented in global hooks yet. Please make your function take no arguments", .{});
-                    return .zero;
+                    return globalThis.throw2("done() callback is not implemented in global hooks yet. Please make your function take no arguments", .{});
                 }
 
                 function.protect();
-                @field(the_runner.global_callbacks, name).append(
-                    bun.default_allocator,
-                    function,
-                ) catch unreachable;
-                return JSValue.jsUndefined();
+                @field(the_runner.global_callbacks, name).append(bun.default_allocator, function) catch unreachable;
+                return .undefined;
             }
         }.appendGlobalFunctionCallback;
     }
@@ -894,20 +885,16 @@ pub const DescribeScope = struct {
 
     fn createCallback(comptime hook: LifecycleHook) CallbackFn {
         return struct {
-            pub fn run(
-                globalThis: *JSGlobalObject,
-                callframe: *CallFrame,
-            ) bun.JSError!JSC.JSValue {
+            pub fn run(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSC.JSValue {
                 const arguments = callframe.arguments(2);
                 if (arguments.len < 1) {
-                    globalThis.throwNotEnoughArguments("callback", 1, arguments.len);
-                    return .zero;
+                    return globalThis.throwNotEnoughArguments("callback", 1, arguments.len);
                 }
 
                 const cb = arguments.ptr[0];
                 if (!cb.isObject() or !cb.isCallable(globalThis.vm())) {
                     globalThis.throwInvalidArgumentType(@tagName(hook), "callback", "function");
-                    return .zero;
+                    return error.JSError;
                 }
 
                 cb.protect();

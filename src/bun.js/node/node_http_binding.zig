@@ -10,8 +10,7 @@ const uv = bun.windows.libuv;
 pub fn getBunServerAllClosedPromise(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     if (arguments.len < 1) {
-        globalThis.throwNotEnoughArguments("getBunServerAllClosePromise", 1, arguments.len);
-        return .zero;
+        return globalThis.throwNotEnoughArguments("getBunServerAllClosePromise", 1, arguments.len);
     }
 
     const value = arguments[0];
@@ -39,8 +38,7 @@ pub fn getMaxHTTPHeaderSize(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
 pub fn setMaxHTTPHeaderSize(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     if (arguments.len < 1) {
-        globalThis.throwNotEnoughArguments("setMaxHTTPHeaderSize", 1, arguments.len);
-        return .zero;
+        return globalThis.throwNotEnoughArguments("setMaxHTTPHeaderSize", 1, arguments.len);
     }
     const value = arguments[0];
     const num = value.coerceToInt64(globalThis);

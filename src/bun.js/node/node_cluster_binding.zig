@@ -15,7 +15,7 @@ pub var child_singleton: InternalMsgHolder = .{};
 pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     log("sendHelperChild", .{});
 
-    const arguments = callframe.arguments(3).ptr;
+    const arguments = callframe.arguments_old(3).ptr;
     const message = arguments[0];
     const handle = arguments[1];
     const callback = arguments[2];
@@ -51,7 +51,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 
     const S = struct {
         fn impl(globalThis_: *JSC.JSGlobalObject, callframe_: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments_ = callframe_.arguments(1).slice();
+            const arguments_ = callframe_.arguments_old(1).slice();
             const ex = arguments_[0];
             Process__emitErrorEvent(globalThis_, ex);
             return .undefined;
@@ -73,7 +73,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 
 pub fn onInternalMessageChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     log("onInternalMessageChild", .{});
-    const arguments = callframe.arguments(2).ptr;
+    const arguments = callframe.arguments_old(2).ptr;
     child_singleton.worker = JSC.Strong.create(arguments[0], globalThis);
     child_singleton.cb = JSC.Strong.create(arguments[1], globalThis);
     try child_singleton.flush(globalThis);
@@ -175,7 +175,7 @@ pub const InternalMsgHolder = struct {
 pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     log("sendHelperPrimary", .{});
 
-    const arguments = callframe.arguments(4).ptr;
+    const arguments = callframe.arguments_old(4).ptr;
     const subprocess = arguments[0].as(bun.JSC.Subprocess).?;
     const message = arguments[1];
     const handle = arguments[2];
@@ -209,7 +209,7 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 }
 
 pub fn onInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(3).ptr;
+    const arguments = callframe.arguments_old(3).ptr;
     const subprocess = arguments[0].as(bun.JSC.Subprocess).?;
     const ipc_data = subprocess.ipc() orelse return .undefined;
     ipc_data.internal_msg_queue.worker = JSC.Strong.create(arguments[1], globalThis);
@@ -253,7 +253,7 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
 extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
 
 pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1).ptr;
+    const arguments = callframe.arguments_old(1).ptr;
 
     if (arguments.len == 0) {
         return globalObject.throwMissingArgumentsValue(&.{"enabled"});

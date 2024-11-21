@@ -294,7 +294,7 @@ fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
     JSC.markBinding(@src());
     var settings: FullSettingsPayload = .{};
 
-    const args_list = callframe.arguments(1);
+    const args_list = callframe.arguments_old(1);
     if (args_list.len < 1) {
         return settings.toJS(globalObject);
     }
@@ -326,7 +326,7 @@ fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
 }
 
 fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const args_list = callframe.arguments(1);
+    const args_list = callframe.arguments_old(1);
     if (args_list.len < 1) {
         globalObject.throw("Expected settings to be a object", .{});
         return .zero;
@@ -429,7 +429,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
 
 fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     var settings: FullSettingsPayload = .{};
-    const args_list = callframe.arguments(1);
+    const args_list = callframe.arguments_old(1);
 
     if (args_list.len > 0 and !args_list.ptr[0].isEmptyOrUndefinedOrNull()) {
         const options = args_list.ptr[0];
@@ -2334,7 +2334,7 @@ pub const H2FrameParser = struct {
 
     pub fn setEncoding(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(1);
+        const args_list = callframe.arguments_old(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected encoding argument", .{});
             return .zero;
@@ -2437,7 +2437,7 @@ pub const H2FrameParser = struct {
 
     pub fn updateSettings(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(1);
+        const args_list = callframe.arguments_old(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected settings argument", .{});
             return .zero;
@@ -2468,7 +2468,7 @@ pub const H2FrameParser = struct {
     }
     pub fn goaway(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(3);
+        const args_list = callframe.arguments_old(3);
         if (args_list.len < 1) {
             globalObject.throw("Expected errorCode argument", .{});
             return .zero;
@@ -2519,7 +2519,7 @@ pub const H2FrameParser = struct {
 
     pub fn ping(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(1);
+        const args_list = callframe.arguments_old(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected payload argument", .{});
             return .zero;
@@ -2543,7 +2543,7 @@ pub const H2FrameParser = struct {
 
     pub fn getEndAfterHeaders(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(1);
+        const args_list = callframe.arguments_old(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected stream argument", .{});
             return .zero;
@@ -2571,7 +2571,7 @@ pub const H2FrameParser = struct {
 
     pub fn isStreamAborted(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(1);
+        const args_list = callframe.arguments_old(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected stream argument", .{});
             return .zero;
@@ -2602,7 +2602,7 @@ pub const H2FrameParser = struct {
     }
     pub fn getStreamState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(1);
+        const args_list = callframe.arguments_old(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected stream argument", .{});
             return .zero;
@@ -2639,7 +2639,7 @@ pub const H2FrameParser = struct {
 
     pub fn setStreamPriority(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(2);
+        const args_list = callframe.arguments_old(2);
         if (args_list.len < 2) {
             globalObject.throw("Expected stream and options arguments", .{});
             return .zero;
@@ -2738,7 +2738,7 @@ pub const H2FrameParser = struct {
     }
     pub fn rstStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(2);
+        const args_list = callframe.arguments_old(2);
         if (args_list.len < 2) {
             globalObject.throw("Expected stream and code arguments", .{});
             return .zero;
@@ -2895,7 +2895,7 @@ pub const H2FrameParser = struct {
     }
     pub fn noTrailers(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(1);
+        const args_list = callframe.arguments_old(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected stream, headers and sensitiveHeaders arguments", .{});
             return .zero;
@@ -2936,7 +2936,7 @@ pub const H2FrameParser = struct {
 
     pub fn sendTrailers(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(3);
+        const args_list = callframe.arguments_old(3);
         if (args_list.len < 3) {
             return globalObject.throw2("Expected stream, headers and sensitiveHeaders arguments", .{});
         }
@@ -3168,7 +3168,7 @@ pub const H2FrameParser = struct {
 
     pub fn getStreamContext(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(1);
+        const args_list = callframe.arguments_old(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected stream_id argument", .{});
             return .zero;
@@ -3190,7 +3190,7 @@ pub const H2FrameParser = struct {
 
     pub fn setStreamContext(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(2);
+        const args_list = callframe.arguments_old(2);
         if (args_list.len < 2) {
             globalObject.throw("Expected stream_id and context arguments", .{});
             return .zero;
@@ -3251,7 +3251,7 @@ pub const H2FrameParser = struct {
     pub fn emitErrorToAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
-        const args_list = callframe.arguments(1);
+        const args_list = callframe.arguments_old(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected error argument", .{});
             return .undefined;
@@ -3283,7 +3283,7 @@ pub const H2FrameParser = struct {
     pub fn request(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
 
-        const args_list = callframe.arguments(5);
+        const args_list = callframe.arguments_old(5);
         if (args_list.len < 4) {
             globalObject.throw("Expected stream_id, stream_ctx, headers and sensitiveHeaders arguments", .{});
             return .zero;
@@ -3623,7 +3623,7 @@ pub const H2FrameParser = struct {
 
     pub fn read(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(1);
+        const args_list = callframe.arguments_old(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected 1 argument", .{});
             return .zero;
@@ -3665,7 +3665,7 @@ pub const H2FrameParser = struct {
 
     pub fn setNativeSocketFromJS(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(1);
+        const args_list = callframe.arguments_old(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected socket argument", .{});
             return .zero;
@@ -3716,7 +3716,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*H2FrameParser {
-        const args_list = callframe.arguments(1);
+        const args_list = callframe.arguments_old(1);
         if (args_list.len < 1) {
             return globalObject.throw2("Expected 1 argument", .{});
         }

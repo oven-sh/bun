@@ -362,7 +362,7 @@ pub const Expect = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments(2).slice();
+        const arguments = callframe.arguments_old(2).slice();
         const value = if (arguments.len < 1) JSValue.jsUndefined() else arguments[0];
 
         var custom_label = bun.String.empty;
@@ -422,7 +422,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
 
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         var _msg: ZigString = ZigString.Empty;
@@ -469,7 +469,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
 
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         var _msg: ZigString = ZigString.Empty;
@@ -512,7 +512,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callframe.this();
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -579,7 +579,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callframe.this();
-        const arguments_ = callframe.arguments(1);
+        const arguments_ = callframe.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -654,7 +654,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -740,7 +740,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -838,7 +838,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -894,7 +894,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -967,7 +967,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -1035,7 +1035,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -1103,7 +1103,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -1160,7 +1160,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -1227,7 +1227,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -1300,7 +1300,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -1367,7 +1367,7 @@ pub const Expect = struct {
     ) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -1658,7 +1658,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(1);
+        const _arguments = callFrame.arguments_old(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
@@ -1700,7 +1700,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(1);
+        const _arguments = callFrame.arguments_old(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
@@ -1737,7 +1737,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(2);
+        const _arguments = callFrame.arguments_old(2);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
@@ -1886,7 +1886,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(1);
+        const _arguments = callFrame.arguments_old(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
@@ -1949,7 +1949,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(1);
+        const _arguments = callFrame.arguments_old(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
@@ -2012,7 +2012,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(1);
+        const _arguments = callFrame.arguments_old(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
@@ -2075,7 +2075,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(1);
+        const _arguments = callFrame.arguments_old(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
@@ -2138,7 +2138,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const thisArguments = callFrame.arguments(2);
+        const thisArguments = callFrame.arguments_old(2);
         const arguments = thisArguments.ptr[0..thisArguments.len];
 
         if (arguments.len < 1) {
@@ -2273,7 +2273,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(1);
+        const _arguments = callFrame.arguments_old(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         incrementExpectCallCounter();
@@ -2650,7 +2650,7 @@ pub const Expect = struct {
     pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(2);
+        const _arguments = callFrame.arguments_old(2);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         incrementExpectCallCounter();
@@ -2926,7 +2926,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(1);
+        const _arguments = callFrame.arguments_old(1);
         const arguments = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
@@ -2997,7 +2997,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(1);
+        const _arguments = callFrame.arguments_old(1);
         const arguments = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
@@ -3308,7 +3308,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(2);
+        const _arguments = callFrame.arguments_old(2);
         const arguments = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
@@ -3371,7 +3371,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(1);
+        const _arguments = callFrame.arguments_old(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
@@ -3589,7 +3589,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -3646,7 +3646,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(2);
+        const arguments_ = callFrame.arguments_old(2);
         const arguments = arguments_.slice();
 
         if (arguments.len < 2) {
@@ -3757,7 +3757,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -3815,7 +3815,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -3872,7 +3872,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -3929,7 +3929,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(1);
+        const _arguments = callFrame.arguments_old(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
@@ -3978,7 +3978,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(1);
+        const _arguments = callFrame.arguments_old(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
@@ -4073,7 +4073,7 @@ pub const Expect = struct {
         JSC.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments_ = callframe.arguments(1);
+        const arguments_ = callframe.arguments_old(1);
         const arguments: []const JSValue = arguments_.slice();
         defer this.postMatch(globalThis);
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalledTimes", "<green>expected<r>");
@@ -4117,7 +4117,7 @@ pub const Expect = struct {
 
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
-        const args = callFrame.arguments(1).slice();
+        const args = callFrame.arguments_old(1).slice();
 
         incrementExpectCallCounter();
 
@@ -4381,7 +4381,7 @@ pub const Expect = struct {
         JSC.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments = callframe.arguments(1).slice();
+        const arguments = callframe.arguments_old(1).slice();
         defer this.postMatch(globalThis);
 
         const name = comptime if (known_index != null and known_index.? == 0) "toHaveReturned" else "toHaveReturnedTimes";
@@ -4521,7 +4521,7 @@ pub const Expect = struct {
 
     /// Implements `expect.extend({ ... })`
     pub fn extend(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-        const args = callFrame.arguments(1).slice();
+        const args = callFrame.arguments_old(1).slice();
 
         if (args.len == 0 or !args[0].isObject()) {
             globalThis.throwPretty("<d>expect.<r>extend<d>(<r>matchers<d>)<r>\n\nExpected an object containing matchers\n", .{});
@@ -4815,7 +4815,7 @@ pub const Expect = struct {
     pub fn assertions(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         defer globalThis.bunVM().autoGarbageCollect();
 
-        const arguments_ = callFrame.arguments(1);
+        const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
@@ -4872,7 +4872,7 @@ pub const Expect = struct {
     }
 
     pub fn doUnreachable(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arg = callframe.arguments(1).ptr[0];
+        const arg = callframe.arguments_old(1).ptr[0];
 
         if (arg.isEmptyOrUndefinedOrNull()) {
             const error_value = bun.String.init("reached unreachable code").toErrorInstance(globalThis);
@@ -5030,7 +5030,7 @@ pub const ExpectStringMatching = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-        const args = callFrame.arguments(1).slice();
+        const args = callFrame.arguments_old(1).slice();
 
         if (args.len == 0 or (!args[0].isString() and !args[0].isRegExp())) {
             const fmt = "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string or regular expression\n";
@@ -5067,7 +5067,7 @@ pub const ExpectCloseTo = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-        const args = callFrame.arguments(2).slice();
+        const args = callFrame.arguments_old(2).slice();
 
         if (args.len == 0 or !args[0].isNumber()) {
             globalThis.throwPretty("<d>expect.<r>closeTo<d>(<r>number<d>, precision?)<r>\n\nExpected a number value", .{});
@@ -5114,7 +5114,7 @@ pub const ExpectObjectContaining = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-        const args = callFrame.arguments(1).slice();
+        const args = callFrame.arguments_old(1).slice();
 
         if (args.len == 0 or !args[0].isObject()) {
             const fmt = "<d>expect.<r>objectContaining<d>(<r>object<d>)<r>\n\nExpected an object\n";
@@ -5151,7 +5151,7 @@ pub const ExpectStringContaining = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-        const args = callFrame.arguments(1).slice();
+        const args = callFrame.arguments_old(1).slice();
 
         if (args.len == 0 or !args[0].isString()) {
             const fmt = "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n";
@@ -5186,7 +5186,7 @@ pub const ExpectAny = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-        const _arguments = callFrame.arguments(1);
+        const _arguments = callFrame.arguments_old(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len == 0) {
@@ -5242,7 +5242,7 @@ pub const ExpectArrayContaining = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-        const args = callFrame.arguments(1).slice();
+        const args = callFrame.arguments_old(1).slice();
 
         if (args.len == 0 or !args[0].jsType().isArray()) {
             const fmt = "<d>expect.<r>arrayContaining<d>(<r>array<d>)<r>\n\nExpected a array\n";
@@ -5366,7 +5366,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
     }
 
     pub fn asymmetricMatch(this: *ExpectCustomAsymmetricMatcher, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments(1).slice();
+        const arguments = callframe.arguments_old(1).slice();
         const received_value = if (arguments.len < 1) JSValue.jsUndefined() else arguments[0];
         const matched = execute(this, callframe.this(), globalThis, received_value);
         return JSValue.jsBoolean(matched);
@@ -5453,7 +5453,7 @@ pub const ExpectMatcherContext = struct {
     }
 
     pub fn equals(_: *ExpectMatcherContext, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        var arguments = callframe.arguments(3);
+        var arguments = callframe.arguments_old(3);
         if (arguments.len < 2) {
             globalThis.throw("expect.extends matcher: this.util.equals expects at least 2 arguments", .{});
             return .zero;
@@ -5522,25 +5522,25 @@ pub const ExpectMatcherUtils = struct {
     }
 
     pub fn stringify(_: *ExpectMatcherUtils, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments(1).slice();
+        const arguments = callframe.arguments_old(1).slice();
         const value = if (arguments.len < 1) JSValue.jsUndefined() else arguments[0];
         return printValueCatched(globalThis, value, null);
     }
 
     pub fn printExpected(_: *ExpectMatcherUtils, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments(1).slice();
+        const arguments = callframe.arguments_old(1).slice();
         const value = if (arguments.len < 1) JSValue.jsUndefined() else arguments[0];
         return printValueCatched(globalThis, value, "<green>");
     }
 
     pub fn printReceived(_: *ExpectMatcherUtils, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments(1).slice();
+        const arguments = callframe.arguments_old(1).slice();
         const value = if (arguments.len < 1) JSValue.jsUndefined() else arguments[0];
         return printValueCatched(globalThis, value, "<red>");
     }
 
     pub fn matcherHint(_: *ExpectMatcherUtils, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments(4).slice();
+        const arguments = callframe.arguments_old(4).slice();
 
         if (arguments.len == 0 or !arguments[0].isString()) {
             globalThis.throw("matcherHint: the first argument (matcher name) must be a string", .{});

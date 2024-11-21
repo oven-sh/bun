@@ -704,7 +704,7 @@ pub const ParsedShellScript = struct {
     }
 
     pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const str_js = arguments.nextEat() orelse {
             globalThis.throw("$`...`.cwd(): expected a string argument", .{});
@@ -768,7 +768,7 @@ pub const ParsedShellScript = struct {
     pub fn createParsedShellScript(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         var shargs = ShellArgs.init();
 
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         const arguments = arguments_.slice();
         if (arguments.len < 2) {
             return globalThis.throwNotEnoughArguments("Bun.$", 2, arguments.len);
@@ -1182,7 +1182,7 @@ pub const Interpreter = struct {
 
     pub fn createShellInterpreter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const allocator = bun.default_allocator;
-        const arguments_ = callframe.arguments(3);
+        const arguments_ = callframe.arguments_old(3);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const resolve = arguments.nextEat() orelse return globalThis.throw2("shell: expected 3 arguments, got 0", .{});

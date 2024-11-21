@@ -6747,7 +6747,7 @@ pub const CallFrame = opaque {
         };
     }
 
-    pub fn arguments(self: *const CallFrame, comptime max: usize) Arguments(max) {
+    pub fn arguments_old(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const len = self.argumentsCount();
         const ptr = self.argumentsPtr();
         if (max > 10) @compileError(std.fmt.comptimePrint("arguments({d})", .{max}));

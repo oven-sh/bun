@@ -11,7 +11,6 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { connect } from "node:net";
@@ -864,34 +863,6 @@ export function writeFile(filename, content, options = {}) {
   if (options["mode"]) {
     chmodSync(filename, options["mode"]);
   }
-}
-
-/**
- * @param {string} [cwd]
- * @param {object} [options]
- * @param {boolean} [options.recursive]
- * @returns {import("node:fs").Dirent[]}
- */
-export function readdir(cwd, options) {
-  const results = [];
-
-  /**
-   * @param {string} filename
-   */
-  function readdirRecursive(filename) {
-    const entries = readdirSync(filename, { withFileTypes: true, encoding: "utf-8" });
-    for (const entry of entries) {
-      const path = join(filename, entry.name);
-      if (entry.isDirectory() && options?.recursive) {
-        readdirRecursive(path);
-      } else {
-        results.push(entry);
-      }
-    }
-  }
-
-  readdirRecursive(cwd || process.cwd());
-  return results;
 }
 
 /**

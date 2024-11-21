@@ -16,6 +16,7 @@ import {
   mkdirSync,
   accessSync,
   appendFileSync,
+  readdirSync,
   rmSync,
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
@@ -34,7 +35,6 @@ import {
   isMacOS,
   isWindows,
   printEnvironment,
-  readdir,
   startGroup,
   tmpdir,
   unzip,
@@ -821,7 +821,7 @@ function isHidden(path) {
 function getTests(cwd) {
   function* getFiles(cwd, path) {
     const dirname = join(cwd, path);
-    for (const entry of readdir(dirname)) {
+    for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
       const { name } = entry;
       const filename = join(path, name);
       if (isHidden(filename)) {
@@ -940,11 +940,11 @@ async function getVendorTests(cwd) {
           return true;
         };
 
-        const testPaths = readdir(testParentPath, { recursive: true })
-          .map(({ name }) => join(testPathPrefix, name))
+        const testPaths = readdirSync(testParentPath, { encoding: "utf-8", recursive: true })
           .filter(filename =>
             testExtensions ? testExtensions.some(ext => filename.endsWith(`.${ext}`)) : isTest(filename),
           )
+          .map(filename => join(testPathPrefix, filename))
           .filter(
             filename =>
               !filters?.length ||
@@ -1102,10 +1102,9 @@ async function getExecPathFromBuildKite(target) {
   });
 
   let zipPath;
-  for (const entry of readdir(releasePath, { recursive: true })) {
-    const { name } = entry;
-    if (entry.isFile() && /^bun.*\.zip$/i.test(name) && !name.includes("-profile.zip")) {
-      zipPath = join(releasePath, name);
+  for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
+    if (/^bun.*\.zip$/i.test(entry) && !entry.includes("-profile.zip")) {
+      zipPath = join(releasePath, entry);
       break;
     }
   }
@@ -1116,19 +1115,15 @@ async function getExecPathFromBuildKite(target) {
 
   await unzip(zipPath, releasePath);
 
-  const releaseFiles = readdir(releasePath, { recursive: true });
+  const releaseFiles = readdirSync(releasePath, { recursive: true, encoding: "utf-8" });
   for (const entry of releaseFiles) {
-    const { name } = entry;
-    const execPath = join(releasePath, name);
-    if (entry.isFile() && /bun(?:\.exe)?$/i.test(name)) {
+    const execPath = join(releasePath, entry);
+    if (/bun(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
       return execPath;
     }
   }
 
-  console.warn(
-    `Found ${releaseFiles.length} files in ${releasePath}:`,
-    releaseFiles.map(({ name }) => name),
-  );
+  console.warn(`Found ${releaseFiles.length} files in ${releasePath}:`);
   throw new Error(`Could not find executable from BuildKite: ${releasePath}`);
 }
 

@@ -10,7 +10,6 @@ import {
   parseArch,
   parseOs,
   readFile,
-  readdir,
   spawn,
   spawnSafe,
   spawnSyncSafe,
@@ -22,7 +21,7 @@ import {
 } from "./utils.mjs";
 import { join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const docker = {
@@ -852,7 +851,13 @@ function getDiskSize(options) {
     return diskSizeGb;
   }
 
-  return os === "windows" ? 50 : 30;
+  // After Visual Studio and dependencies are installed,
+  // there is ~50GB of used disk space.
+  if (os === "windows") {
+    return 60;
+  }
+
+  return 30;
 }
 
 /**
@@ -905,7 +910,7 @@ function getSshKeys() {
   /** @type {SshKey[]} */
   const sshKeys = [];
   if (existsSync(sshPath)) {
-    const sshFiles = readdir(sshPath);
+    const sshFiles = readdirSync(sshPath, { withFileTypes: true, encoding: "utf-8" });
     const publicPaths = sshFiles
       .filter(entry => entry.isFile() && entry.name.endsWith(".pub"))
       .map(({ name }) => join(sshPath, name));

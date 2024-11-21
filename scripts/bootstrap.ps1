@@ -209,7 +209,7 @@ function Install-Buildkite {
 }
 
 function Install-Build-Essentials {
-  # Install-Visual-Studio
+  Install-Visual-Studio
   Install-Packages `
     cmake `
     make `
@@ -219,41 +219,45 @@ function Install-Build-Essentials {
     golang `
     nasm `
     ruby `
+    strawberryperl `
     mingw
   Install-Rust
   Install-Llvm
 }
 
 function Install-Visual-Studio {
-  $components = @(
-    "Microsoft.VisualStudio.Workload.NativeDesktop",
-    "Microsoft.VisualStudio.Component.Windows10SDK.18362",
-    "Microsoft.VisualStudio.Component.Windows11SDK.22000",
-    "Microsoft.VisualStudio.Component.Windows11Sdk.WindowsPerformanceToolkit",
-    "Microsoft.VisualStudio.Component.VC.ASAN", # C++ AddressSanitizer
-    "Microsoft.VisualStudio.Component.VC.ATL", # C++ ATL for latest v143 build tools (x86 & x64)
-    "Microsoft.VisualStudio.Component.VC.DiagnosticTools", # C++ Diagnostic Tools
-    "Microsoft.VisualStudio.Component.VC.CLI.Support", # C++/CLI support for v143 build tools (Latest)
-    "Microsoft.VisualStudio.Component.VC.CoreIde", # C++ core features
-    "Microsoft.VisualStudio.Component.VC.Redist.14.Latest" # C++ 2022 Redistributable Update
+  param (
+    [Parameter(Mandatory = $false)]
+    [string]$Edition = "community"
   )
 
-  $arch = (Get-WmiObject Win32_Processor).Architecture
-  if ($arch -eq 9) {
-    $components += @(
-      "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", # MSVC v143 build tools (x86 & x64)
-      "Microsoft.VisualStudio.Component.VC.Modules.x86.x64" # MSVC v143 C++ Modules for latest v143 build tools (x86 & x64)
-    )
-  } elseif ($arch -eq 5) {
-    $components += @(
-      "Microsoft.VisualStudio.Component.VC.Tools.ARM64", # MSVC v143 build tools (ARM64)
-      "Microsoft.VisualStudio.Component.UWP.VC.ARM64" # C++ Universal Windows Platform support for v143 build tools (ARM64/ARM64EC)
-    )
+  $vsInstaller = "$env:TEMP\vs_$Edition.exe"
+  if (-not (Test-Path $vsInstaller)) {
+    Write-Output "Downloading Visual Studio installer..."
+    (New-Object System.Net.WebClient).DownloadFile("https://aka.ms/vs/17/release/vs_$Edition.exe", $vsInstaller)
   }
 
-  $packageParameters = $components | ForEach-Object { "--add $_" }
-  Install-Package visualstudio2022community `
-    -ExtraArgs "--package-parameters '--add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --includeOptional'"
+  Write-Output "Installing Visual Studio..."
+  $vsInstallArgs = @(
+    "--passive",
+    "--norestart",
+    "--wait",
+    "--force",
+    "--locale en-US",
+    "--add Microsoft.VisualStudio.Workload.NativeDesktop",
+    "--includeRecommended"
+  )
+  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $vsInstaller
+  $startInfo.Arguments = $vsInstallArgs -join ' '
+  $startInfo.CreateNoWindow = $true
+  $process = New-Object System.Diagnostics.Process
+  $process.StartInfo = $startInfo
+  $process.Start()
+  $process.WaitForExit()
+  if ($process.ExitCode -ne 0) {
+    throw "Failed to install Visual Studio: code $($process.ExitCode)"
+  }
 }
 
 function Install-Rust {

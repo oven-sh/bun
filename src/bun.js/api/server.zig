@@ -6219,9 +6219,6 @@ pub const NodeHTTPResponse = struct {
         this.markRequestAsDoneIfNecessary();
     }
 
-    pub fn Bun__NodeHTTPRequest__onResolve__Internal(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        return Bun__NodeHTTPRequest__onResolve(globalObject, callframe);
-    }
     pub export fn Bun__NodeHTTPRequest__onResolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         log("onResolve", .{});
         const arguments = callframe.arguments(2).slice();
@@ -6244,9 +6241,7 @@ pub const NodeHTTPResponse = struct {
 
         return .undefined;
     }
-    pub fn Bun__NodeHTTPRequest__onReject__Internal(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        return Bun__NodeHTTPRequest__onReject(globalObject, callframe);
-    }
+
     pub export fn Bun__NodeHTTPRequest__onReject(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2).slice();
         const err = arguments[0];
@@ -7898,7 +7893,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                                 const strong_self = node_response.getThisValue();
                                 node_response.promise = strong_promise;
                                 strong_promise = .{};
-                                result._then(globalThis, strong_self, NodeHTTPResponse.Bun__NodeHTTPRequest__onResolve__Internal, NodeHTTPResponse.Bun__NodeHTTPRequest__onReject__Internal);
+                                result._then2(globalThis, strong_self, NodeHTTPResponse.Bun__NodeHTTPRequest__onResolve, NodeHTTPResponse.Bun__NodeHTTPRequest__onReject);
                                 is_async = true;
                             }
 

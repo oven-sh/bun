@@ -2094,7 +2094,7 @@ pub const Arguments = struct {
                         recursive = boolean;
                     }
 
-                    if (val.get(ctx, "mode")) |mode_| {
+                    if (try val.get(ctx, "mode")) |mode_| {
                         mode = try JSC.Node.modeFromJS(ctx, mode_) orelse mode;
                     }
                 }
@@ -2748,7 +2748,7 @@ pub const Arguments = struct {
                         encoding = encoding_;
                     }
 
-                    if (arg.get(ctx, "bufferSize")) |buffer_size_| {
+                    if (try arg.get(ctx, "bufferSize")) |buffer_size_| {
                         buffer_size = buffer_size_.toInt32();
                         if (buffer_size < 0) {
                             return ctx.throwInvalidArguments2("bufferSize must be > 0", .{});

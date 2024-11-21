@@ -124,7 +124,7 @@ Use the `--bail` flag to abort the test run early after a pre-determined number 
 $ bun test --bail
 
 # bail after 10 failure
-$ bun test --bail 10
+$ bun test --bail=10
 ```
 
 ## Watch mode

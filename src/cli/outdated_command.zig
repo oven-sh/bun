@@ -590,7 +590,7 @@ pub const OutdatedCommand = struct {
 
                     var task = manager.getNetworkTask();
                     task.* = .{
-                        .package_manager = PackageManager.get(),
+                        .package_manager = manager,
                         .callback = undefined,
                         .task_id = task_id,
                         .allocator = manager.allocator,

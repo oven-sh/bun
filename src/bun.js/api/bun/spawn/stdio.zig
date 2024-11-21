@@ -387,12 +387,12 @@ pub const Stdio = union(enum) {
 
                 switch (req.ptr) {
                     .File, .Blob => {
-                        globalThis.throwTODO("Support fd/blob backed ReadableStream in spawn stdin. See https://github.com/oven-sh/bun/issues/8049");
+                        globalThis.throwTODO("Support fd/blob backed ReadableStream in spawn stdin. See https://github.com/oven-sh/bun/issues/8049") catch {};
                         return false;
                     },
                     .Direct, .JavaScript, .Bytes => {
                         // out_stdio.* = .{ .connect = req };
-                        globalThis.throwTODO("Re-enable ReadableStream support in spawn stdin. ");
+                        globalThis.throwTODO("Re-enable ReadableStream support in spawn stdin. ") catch {};
                         return false;
                     },
                     .Invalid => {

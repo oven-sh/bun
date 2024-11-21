@@ -1599,13 +1599,13 @@ pub const TestCommand = struct {
 
                 if (files.len > 1) {
                     for (files[0 .. files.len - 1]) |file_name| {
-                        TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch {};
+                        TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
                         reporter.jest.default_timeout_override = std.math.maxInt(u32);
                         Global.mimalloc_cleanup(false);
                     }
                 }
 
-                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator, true) catch {};
+                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator, true) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
             }
         };
 
@@ -1769,3 +1769,12 @@ pub const TestCommand = struct {
         }
     }
 };
+
+fn handleTopLevelTestErrorBeforeJavaScriptStart(err: anyerror) noreturn {
+    if (comptime Environment.isDebug) {
+        if (err != error.ModuleNotFound) {
+            Output.debugWarn("Unhandled error: {s}\n", .{@errorName(err)});
+        }
+    }
+    Global.exit(1);
+}

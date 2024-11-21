@@ -166,111 +166,133 @@ class BunDiagnosticsManager {
     });
   }
 
-  private static findMostRelevantErrors(error: JSC.LifecycleReporter.ErrorEvent) {
-    // Ideally we find at least 1 error which will be like in the user's file `src/index.ts` or something.
-    // Sometimes the error might ocurr inside of node modules, it's still useful for us to show that.
-    // BUT with that said, we also might want to show the error in the user's file as well.
-    // So with that in mind, this function should return an array of 0, 1, or 2 urls and line/columns.
-    // If there are no valid urls (empty string or undefined or whatever) we can't do shit so just reutrn null;
+  // private static findMostRelevantErrors(error: JSC.LifecycleReporter.ErrorEvent) {
+  //   // Ideally we find at least 1 error which will be like in the user's file `src/index.ts` or something.
+  //   // Sometimes the error might ocurr inside of node modules, it's still useful for us to show that.
+  //   // BUT with that said, we also might want to show the error in the user's file as well.
+  //   // So with that in mind, this function should return an array of 0, 1, or 2 urls and line/columns.
+  //   // If there are no valid urls (empty string or undefined or whatever) we can't do shit so just reutrn null;
 
-    const [firstUrl] = error.urls;
+  //   const [firstUrl] = error.urls;
 
-    if (!firstUrl) {
-      return [];
-    }
+  //   if (!firstUrl) {
+  //     return [];
+  //   }
 
-    const [firstUrlLine = null, firstUrlCol = null] = error.lineColumns;
+  //   const [firstUrlLine = null, firstUrlCol = null] = error.lineColumns;
 
-    if (firstUrlLine === null || firstUrlCol === null) {
-      return [];
-    }
+  //   if (firstUrlLine === null || firstUrlCol === null) {
+  //     return [];
+  //   }
 
-    const first = {
-      url: firstUrl,
-      line: firstUrlLine,
-      col: firstUrlCol,
-    };
+  //   const first = {
+  //     url: firstUrl,
+  //     line: firstUrlLine,
+  //     col: firstUrlCol,
+  //   };
 
-    const isInNodeModules = first.url.includes("node_modules/");
+  //   const isInNodeModules = first.url.includes("node_modules/");
 
-    if (!isInNodeModules) {
-      // Not node modules, so it's going to be the most relevant we'll get for the user
-      return [first];
-    }
+  //   if (!isInNodeModules) {
+  //     // Not node modules, so it's going to be the most relevant we'll get for the user
+  //     return [first];
+  //   }
 
-    // Find the first file in the stack frames that are not inside node_modules
-    const pathInUsersDirectory = BunDiagnosticsManager.findFirstUserlandURL(error.urls);
+  //   // Find the first file in the stack frames that are not inside node_modules
+  //   const pathInUsersDirectory = BunDiagnosticsManager.findFirstUserlandURL(error.urls);
 
-    // No other user files (lol?) so just reply with the node_modules path
-    if (!pathInUsersDirectory) {
-      return [first];
-    }
+  //   // No other user files (lol?) so just reply with the node_modules path
+  //   if (!pathInUsersDirectory) {
+  //     return [first];
+  //   }
 
-    const line = error.lineColumns[pathInUsersDirectory.index * 2] ?? null;
-    const col = error.lineColumns[pathInUsersDirectory.index * 2 + 1] ?? null;
+  //   const line = error.lineColumns[pathInUsersDirectory.index * 2] ?? null;
+  //   const col = error.lineColumns[pathInUsersDirectory.index * 2 + 1] ?? null;
 
-    // Best effort, but malformed data most likely. Better than returning invalid values below anyway
-    if (line === null || col === null) {
-      return [first];
-    }
+  //   // Best effort, but malformed data most likely. Better than returning invalid values below anyway
+  //   if (line === null || col === null) {
+  //     return [first];
+  //   }
 
-    return [
-      first,
-      {
-        url: pathInUsersDirectory.url,
-        line,
-        col,
-      },
-    ];
-  }
+  //   return [
+  //     first,
+  //     {
+  //       url: pathInUsersDirectory.url,
+  //       line,
+  //       col,
+  //     },
+  //   ];
+  // }
 
-  private static findFirstUserlandURL(urls: string[]) {
-    for (let i = 0; i < urls.length; i++) {
-      const url = urls[i];
+  // private static findFirstUserlandURL(urls: string[]) {
+  //   for (let i = 0; i < urls.length; i++) {
+  //     const url = urls[i];
 
-      if (url === "") {
-        continue;
-      }
+  //     if (url === "") {
+  //       continue;
+  //     }
 
-      if (url.includes("node_modules/")) {
-        continue;
-      }
+  //     if (url.includes("node_modules/")) {
+  //       continue;
+  //     }
 
-      return { url, index: i };
-    }
+  //     return { url, index: i };
+  //   }
 
-    return null;
-  }
+  //   return null;
+  // }
 
   private handleLifecycleError(event: JSC.LifecycleReporter.ErrorEvent) {
+    const message = stripAnsi(event.message).trim() || event.name || "Error";
+
     output.appendLine(
-      `Received error event: '{name:${event.name}} ${event.message.split("\n")[0].trim().substring(0, 100)}'`,
+      `Received error event: '{name:${event.name}} ${message.split("\n")[0].trim().substring(0, 100)}'`,
     );
 
-    const relevantErrors = BunDiagnosticsManager.findMostRelevantErrors(event);
+    const [url = null] = event.urls;
+    const [line = null, col = null] = event.lineColumns;
 
-    for (const error of relevantErrors) {
-      const uri = vscode.Uri.file(error.url);
-
-      // range is really just 1 character here..
-      const range = new vscode.Range(
-        new vscode.Position(error.line - 1, error.col - 1),
-        new vscode.Position(error.line - 1, error.col),
-      );
-
-      const document = vscode.workspace.textDocuments.find(doc => doc.uri.toString() === uri.toString());
-
-      // ...but we want to highlight the entire word after(inclusive) the character
-      const rangeOfWord = document?.getWordRangeAtPosition(range.start) ?? range; // Fallback to just the character if no editor or no word range is found
-
-      const diagnostic = new vscode.Diagnostic(
-        rangeOfWord,
-        stripAnsi(event.message).trim() || event.name || "Error",
-        vscode.DiagnosticSeverity.Error,
-      );
-
-      this.editorState.set(uri, diagnostic);
+    if (url === null || url.length === 0 || line === null || col === null) {
+      output.appendLine("No valid url or line/column found in error event");
+      output.appendLine(JSON.stringify(event));
+      return;
     }
+
+    const uri = vscode.Uri.file(url);
+
+    // range is really just 1 character here..
+    const range = new vscode.Range(new vscode.Position(line - 1, col - 1), new vscode.Position(line - 1, col));
+
+    const document = vscode.workspace.textDocuments.find(doc => doc.uri.toString() === uri.toString());
+
+    // ...but we want to highlight the entire word after(inclusive) the character
+    const rangeOfWord = document?.getWordRangeAtPosition(range.start) ?? range; // Fallback to just the character if no editor or no word range is found
+
+    const diagnostic = new vscode.Diagnostic(rangeOfWord, message, vscode.DiagnosticSeverity.Error);
+
+    diagnostic.source = "Bun";
+    diagnostic.relatedInformation = event.urls.flatMap((url, i) => {
+      if (i === 0 || url === "") {
+        return [];
+      }
+
+      const [line = null, col = null] = event.lineColumns.slice(i * 2, i * 2 + 2);
+
+      output.appendLine(`Adding related information for ${url} at ${line}:${col}`);
+
+      if (line === null || col === null) {
+        return [];
+      }
+
+      return [
+        new vscode.DiagnosticRelatedInformation(
+          new vscode.Location(vscode.Uri.file(url), new vscode.Position(line - 1, col - 1)),
+          message,
+        ),
+      ];
+    });
+
+    this.editorState.set(uri, diagnostic);
   }
 
   public dispose() {

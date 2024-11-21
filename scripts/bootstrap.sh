@@ -125,7 +125,6 @@ append_to_file() {
 }
 
 append_to_profile() {
-	echo >> $home/.profile
 	content="$1"
 	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
 	for profile in $profiles; do
@@ -968,8 +967,8 @@ install_chrome_dependencies() {
 }
 
 raise_file_descriptor_limit() {
-	ulimit -n 262144
-	append_to_profile "ulimit -n 262144"
+	append_to_file /etc/security/limits.conf '*  soft  nofile  262144'
+	append_to_file /etc/security/limits.conf '*  hard  nofile  262144'
 }
 
 main() {

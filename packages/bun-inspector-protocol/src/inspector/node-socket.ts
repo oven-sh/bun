@@ -1,5 +1,4 @@
 import { EventEmitter } from "node:events";
-import fs from "node:fs/promises";
 import { Socket } from "node:net";
 import { SocketFramer } from "../../../bun-debug-adapter-protocol/src/debugger/node-socket-framer.js";
 import type { JSC } from "../protocol";
@@ -85,20 +84,7 @@ export class NodeSocketInspector extends EventEmitter<InspectorEventMap> impleme
       }
     });
 
-    await fs.writeFile("./bytes.hex", "");
-
-    socket.on("data", async data => {
-      this.#framer.onData(data);
-
-      // void Bun.file("bytes")
-      // .text()
-      // .then(async t => {
-      //   await Bun.write("bytes", t + "\n\n" + data.toString("hex"));
-      // });
-
-      const text = await fs.readFile("./bytes.hex");
-      await fs.writeFile("./bytes.hex", text + "\n\n" + data.toString("hex"));
-    });
+    socket.on("data", async data => this.#framer.onData(data));
 
     socket.on("error", error => {
       this.#close(unknownToError(error));

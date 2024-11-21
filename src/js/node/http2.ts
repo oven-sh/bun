@@ -814,7 +814,6 @@ function onServerStream(Http2ServerRequest, Http2ServerResponse, stream, headers
   const server = this;
   const request = new Http2ServerRequest(stream, headers, undefined, rawHeaders);
   const response = new Http2ServerResponse(stream);
-  response.uncork();
 
   // Check for the CONNECT method
   const method = headers[HTTP2_HEADER_METHOD];

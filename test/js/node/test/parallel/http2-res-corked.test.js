@@ -16,7 +16,7 @@ try {
 (hasCrypto ? describe : describe.skip)("Http2ServerResponse#[writableCorked,cork,uncork]", () => {
   let server;
   let client;
-  let corksLeft = 0;
+  let corksLeft = 1;
 
   beforeAll(done => {
     server = http2.createServer((req, res) => {

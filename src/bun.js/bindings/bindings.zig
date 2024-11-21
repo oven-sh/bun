@@ -3665,7 +3665,7 @@ pub const JSGlobalObject = opaque {
         // when querying from JavaScript, 'func.len'
         comptime argument_count: u32,
     ) JSValue {
-        return NewRuntimeFunction(global, ZigString.static(display_name), argument_count, toJSHostFunction(function), false, false);
+        return NewRuntimeFunction(global, ZigString.static(display_name), argument_count, toJSHostFunction(function), false, false, null);
     }
 
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
@@ -6960,7 +6960,7 @@ pub fn NewFunction(
     strong: bool,
 ) JSValue {
     if (@TypeOf(functionPointer) == JSC.JSHostFunctionType) {
-        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, strong, false);
+        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, strong, false, null);
     }
     return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false, null);
 }

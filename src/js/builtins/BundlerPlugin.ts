@@ -61,24 +61,31 @@ export function runSetupFunction(
   this.promises = promises;
   var onLoadPlugins = new Map<string, [RegExp, AnyFunction][]>();
   var onResolvePlugins = new Map<string, [RegExp, AnyFunction][]>();
-  var onBeforeParsePlugins = new Map<string, [RegExp, AnyFunction, BeforeOnParseExternal | undefined][]>();
+  var onBeforeParsePlugins = new Map<
+    string,
+    [RegExp, napiModule: unknown, symbol: string, external?: undefined | unknown][]
+  >();
 
-  function validate(filterObject: PluginConstraints, callback, map, external) {
+  function validate(filterObject: PluginConstraints, callback, map, symbol, external) {
     if (!filterObject || !$isObject(filterObject)) {
       throw new TypeError('Expected an object with "filter" RegExp');
-    }
-
-    if (!callback || !$isCallable(callback)) {
-      throw new TypeError("callback must be a function");
     }
 
     let isOnBeforeParse = false;
     if (map === onBeforeParsePlugins) {
       isOnBeforeParse = true;
-      if (typeof callback.ptr !== "number" && typeof callback?.native?.ptr !== "number") {
-        throw new TypeError("onBeforeParse callback must be an FFI function");
+      // TODO: how to check if it a napi module here?
+      if (!callback) {
+        throw new TypeError("onBeforeParse `napiModule` must be a Napi module");
       }
-      // TODO: How do we know if it's a napi external??
+
+      if (typeof symbol !== "string") {
+        throw new TypeError("onBeforeParse `symbol` must be a string");
+      }
+    } else {
+      if (!callback || !$isCallable(callback)) {
+        throw new TypeError("lmao callback must be a function");
+      }
     }
 
     var { filter, namespace = "file" } = filterObject;
@@ -106,22 +113,25 @@ export function runSetupFunction(
     var callbacks = map.$get(namespace);
 
     if (!callbacks) {
-      map.$set(namespace, [isOnBeforeParse ? [filter, callback, external] : [filter, callback]]);
+      map.$set(namespace, [isOnBeforeParse ? [filter, callback, symbol, external] : [filter, callback]]);
     } else {
-      $arrayPush(callbacks, isOnBeforeParse ? [filter, callback, external] : [filter, callback]);
+      $arrayPush(callbacks, isOnBeforeParse ? [filter, callback, symbol, external] : [filter, callback]);
     }
   }
 
   function onLoad(filterObject, callback) {
-    validate(filterObject, callback, onLoadPlugins, undefined);
+    validate(filterObject, callback, onLoadPlugins, undefined, undefined);
   }
 
   function onResolve(filterObject, callback) {
-    validate(filterObject, callback, onResolvePlugins, undefined);
+    validate(filterObject, callback, onResolvePlugins, undefined, undefined);
   }
 
-  function onBeforeParse(filterObject, { handle, external }) {
-    validate(filterObject, handle, onBeforeParsePlugins, external);
+  function onBeforeParse(
+    filterObject,
+    { napiModule, external, symbol }: { napiModule: unknown; symbol: string; external?: undefined | unknown },
+  ) {
+    validate(filterObject, napiModule, onBeforeParsePlugins, symbol, external);
   }
 
   const self = this;
@@ -158,9 +168,9 @@ export function runSetupFunction(
       }
     }
 
-    for (var [namespace, callbacks] of onBeforeParsePlugins.entries()) {
-      for (var [filter, callback, external] of callbacks) {
-        this.onBeforeParse(filter, namespace, callback, external);
+    for (let [namespace, callbacks] of onBeforeParsePlugins.entries()) {
+      for (let [filter, addon, symbol, external] of callbacks) {
+        this.onBeforeParse(filter, namespace, addon, symbol, external);
         anyOnBeforeParse = true;
       }
     }

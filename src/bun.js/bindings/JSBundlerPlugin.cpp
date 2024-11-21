@@ -1,5 +1,6 @@
 #include "JSBundlerPlugin.h"
 
+#include "BunProcess.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -112,6 +113,7 @@ static const HashTableValue JSBundlerPluginHashTable[] = {
     { "generateDeferPromise"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_generateDeferPromise, 0 } },
 };
 
+
 class JSBundlerPlugin final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -156,6 +158,7 @@ public:
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onLoadFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onResolveFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> setupFunction;
+    WTF::HashMap<WTF::String, void*> onBeforeParseHandles;
 
 private:
     JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure, void* config, BunPluginTarget target,
@@ -286,13 +289,42 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
         namespaceStr = String();
     }
 
-    auto* callback = nativeCallbackFromJS(globalObject, callFrame->argument(2));
-    if (!callback) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected callback (2nd argument) to be an FFI function"_s);
+    JSC::JSValue node_addon = callFrame->argument(2);
+    if (!node_addon.isObject()) {
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected node_addon (2nd argument) to be an object"_s);
         return {};
     }
 
-    JSC::JSValue external = callFrame->argument(3);
+    JSC::JSValue on_before_parse_symbol_js = callFrame->argument(3);
+    if (!on_before_parse_symbol_js.isString()) {
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected on_before_parse_symbol (3rd argument) to be a string"_s);
+        return {};
+    }
+    WTF::String on_before_parse_symbol = on_before_parse_symbol_js.toWTFString(globalObject);
+
+    Bun::NapiExternal* napi_external = jsDynamicCast<Bun::NapiExternal*>(node_addon.getObject()->get(globalObject, WebCore::builtinNames(vm).napiDlopenHandlePrivateName()));
+    if (UNLIKELY(!napi_external)) {
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected node_addon (2nd argument) to have a napiDlopenHandle property"_s);
+        return {};
+    }
+    void* dlopen_handle = napi_external->value();
+
+    #if OS(WINDOWS)
+    BunString onbefore_parse_symbol_str = Bun::toString(on_before_parse_symbol);
+    void* on_before_parse_symbol_ptr = GetProcAddress(&onbefore_parse_symbol_str);
+#else
+    CString utf8 = on_before_parse_symbol.utf8();
+    void* on_before_parse_symbol_ptr = dlsym(dlopen_handle, utf8.data());
+#endif
+
+    if (!on_before_parse_symbol_ptr) {
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected on_before_parse_symbol (3rd argument) to be a valid symbol"_s);
+        return {};
+    }
+
+    JSBundlerPluginNativeOnBeforeParseCallback callback = reinterpret_cast<JSBundlerPluginNativeOnBeforeParseCallback>(on_before_parse_symbol_ptr);
+
+    JSC::JSValue external = callFrame->argument(4);
     NapiExternal* externalPtr = nullptr;
     if (!external.isUndefinedOrNull()) {
         externalPtr = jsDynamicCast<Bun::NapiExternal*>(external);
@@ -408,6 +440,7 @@ extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, 
 
 extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, void* context, uint8_t defaultLoaderId)
 {
+    printf("JSBundlerPlugin %p\n", plugin);
     WTF::String namespaceStringStr = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : WTF::String();
     WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
 

@@ -558,7 +558,7 @@ pub const Request = struct {
             url_or_object.as(JSC.DOMURL) != null;
 
         if (is_first_argument_a_url) {
-            const str = try bun.String.fromJS2(arguments[0], globalThis);
+            const str = try bun.String.fromJS(arguments[0], globalThis);
             req.url = str;
 
             if (!req.url.isEmpty())
@@ -660,7 +660,7 @@ pub const Request = struct {
 
             if (!fields.contains(.url)) {
                 if (value.fastGet(globalThis, .url)) |url| {
-                    req.url = bun.String.fromJS(url, globalThis);
+                    req.url = try bun.String.fromJS(url, globalThis);
                     if (!req.url.isEmpty())
                         fields.insert(.url);
 
@@ -668,7 +668,7 @@ pub const Request = struct {
                 } else if (@intFromEnum(value) == @intFromEnum(values_to_try[values_to_try.len - 1]) and !is_first_argument_a_url and
                     value.implementsToString(globalThis))
                 {
-                    const str = bun.String.tryFromJS(value, globalThis) orelse return error.JSError;
+                    const str = try bun.String.fromJS(value, globalThis);
                     req.url = str;
                     if (!req.url.isEmpty())
                         fields.insert(.url);

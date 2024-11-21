@@ -644,7 +644,7 @@ pub const Response = struct {
             }
 
             if (response_init.fastGet(globalThis, .statusText)) |status_text| {
-                result.status_text = bun.String.fromJS(status_text, globalThis);
+                result.status_text = try bun.String.fromJS(status_text, globalThis);
             }
 
             if (globalThis.hasException()) {
@@ -1953,7 +1953,7 @@ pub const Fetch = struct {
     const StringOrURL = struct {
         pub fn fromJS(value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!?bun.String {
             if (value.isString()) {
-                return try bun.String.fromJS2(value, globalThis);
+                return try bun.String.fromJS(value, globalThis);
             }
 
             const out = try JSC.URL.hrefFromJS(value, globalThis);
@@ -2113,7 +2113,7 @@ pub const Fetch = struct {
             if (request_init_object) |request_init| {
                 if (request_init.fastGet(globalThis, .url)) |url_| {
                     if (!url_.isUndefined()) {
-                        break :extract_url try bun.String.fromJS2(url_, globalThis);
+                        break :extract_url try bun.String.fromJS(url_, globalThis);
                     }
                 }
             }

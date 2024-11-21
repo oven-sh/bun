@@ -458,7 +458,7 @@ pub const StringOrBuffer = union(enum) {
             return try allocator.dupe(u8, array_buffer.byteSlice());
         }
 
-        const str = try bun.String.fromJS2(value, globalObject);
+        const str = try bun.String.fromJS(value, globalObject);
         defer str.deref();
 
         const result = try str.toOwnedSlice(allocator);
@@ -534,7 +534,7 @@ pub const StringOrBuffer = union(enum) {
             .StringObject,
             .DerivedStringObject,
             => {
-                const str = bun.String.fromJS(value, global);
+                const str = bun.String.fromJS_unsafe(value, global);
 
                 if (is_async) {
                     defer str.deref();
@@ -592,7 +592,7 @@ pub const StringOrBuffer = union(enum) {
             return fromJSMaybeAsync(global, allocator, value, is_async);
         }
 
-        var str = try bun.String.fromJS2(value, global);
+        var str = try bun.String.fromJS(value, global);
         defer str.deref();
         if (str.isEmpty()) {
             return fromJSMaybeAsync(global, allocator, value, is_async);
@@ -690,7 +690,7 @@ pub const Encoding = enum(u8) {
     }
 
     pub fn fromJSWithDefaultOnEmpty(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, default: Encoding) bun.JSError!?Encoding {
-        const str = try bun.String.fromJS2(value, globalObject);
+        const str = try bun.String.fromJS(value, globalObject);
         defer str.deref();
         if (str.isEmpty()) {
             return default;

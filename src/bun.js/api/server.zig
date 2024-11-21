@@ -5404,6 +5404,9 @@ pub const ServerWebSocket = struct {
                         return JSValue.jsNumber(0);
                     },
                 }
+            } else {
+                globalThis.throwPretty("{s} requires a string or BufferSource", .{name});
+                return .zero;
             }
         }
 

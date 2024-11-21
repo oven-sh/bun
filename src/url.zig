@@ -983,7 +983,7 @@ pub const FormData = struct {
     ) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
-        const args_ = callframe.arguments(2);
+        const args_ = callframe.arguments_old(2);
 
         const args = args_.ptr[0..2];
 

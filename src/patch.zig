@@ -1095,7 +1095,7 @@ const PatchLinesParser = struct {
 
 pub const TestingAPIs = struct {
     pub fn makeDiff(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const old_folder_jsval = arguments.nextEat() orelse {
@@ -1161,7 +1161,7 @@ pub const TestingAPIs = struct {
     }
     /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
     pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_src_js = arguments.nextEat() orelse {
@@ -1189,7 +1189,7 @@ pub const TestingAPIs = struct {
     }
 
     pub fn parseApplyArgs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSC.Node.Maybe(ApplyArgs, JSC.JSValue) {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_js = arguments.nextEat() orelse {

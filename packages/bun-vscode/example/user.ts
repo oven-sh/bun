@@ -5,7 +5,7 @@ interface User {
 }
 
 const user = {
-  // name: "Alistair",
+  name: "Alistair",
 } as User;
 
 console.log(`First letter us '${user.name.charAt(0)}'`);

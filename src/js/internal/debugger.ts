@@ -32,9 +32,8 @@ class SocketFramer {
     }
 
     socketFramerMessageLengthBuffer.writeUInt32BE(data.length, 0);
-    const a = socket.$write(socketFramerMessageLengthBuffer);
-    const r = socket.$write(data);
-    console.log(a, r, data.length);
+    socket.$write(socketFramerMessageLengthBuffer);
+    socket.$write(data);
   }
 
   onData(socket: Socket<{ framer: SocketFramer; backend: Writer }>, data: Buffer): void {

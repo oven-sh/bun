@@ -102,7 +102,8 @@ export class SocketFramer {
     }
 
     if (position > 0) {
-      this.bufferedData = position < this.bufferedData.length ? this.bufferedData.slice(position) : Buffer.from([]);
+      this.bufferedData =
+        position < this.bufferedData.length ? this.bufferedData.slice(position) : SocketFramer.emptyBuffer;
     }
 
     if (messagesToDeliver.length === 1) {
@@ -111,4 +112,6 @@ export class SocketFramer {
       this.onMessage(messagesToDeliver);
     }
   }
+
+  private static emptyBuffer = Buffer.from([]);
 }

@@ -54,8 +54,6 @@ class BunDiagnosticsManager {
   private readonly signal: UnixSignal | TCPSocketSignal;
   private readonly context: vscode.ExtensionContext;
 
-  private knownOpenSockets = new Set<Socket>();
-
   public get signalUrl() {
     return this.signal.url;
   }
@@ -74,18 +72,15 @@ class BunDiagnosticsManager {
   private async handleSignalReceived(socket: Socket) {
     const debugAdapter = new NodeSocketDebugAdapter(socket);
 
-    this.knownOpenSockets.add(socket);
-    socket.once("close", () => this.knownOpenSockets.delete(socket));
-
     this.editorState.clearAll();
 
     debugAdapter.on("LifecycleReporter.reload", async () => {
       this.editorState.clearAll();
     });
 
-    debugAdapter.on("Inspector.event", e => {
-      console.log(e.method);
-    });
+    // debugAdapter.on("Inspector.event", e => {
+    //   console.log(e.method);
+    // });
 
     debugAdapter.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
 
@@ -113,37 +108,109 @@ class BunDiagnosticsManager {
     });
   }
 
-  private handleLifecycleError(params: JSC.LifecycleReporter.ErrorEvent) {
-    // params.lineColumns is flat pairs of line and columns from each stack frame, we only care about the first one
-    const [line = null, column = null] = params.lineColumns;
+  private static findMostRelevantErrors(error: JSC.LifecycleReporter.ErrorEvent) {
+    // Ideally we find at least 1 error which will be like in the user's file `src/index.ts` or something.
+    // Sometimes the error might ocurr inside of node modules, it's still useful for us to show that.
+    // BUT with that said, we also might want to show the error in the user's file as well.
+    // So with that in mind, this function should return an array of 0, 1, or 2 urls and line/columns.
+    // If there are no valid urls (empty string or undefined or whatever) we can't do shit so just reutrn null;
 
-    if (line === null || column === null) {
-      return;
+    const [firstUrl] = error.urls;
+
+    if (!firstUrl) {
+      return [];
     }
 
-    // params.urls is the url from each stack frame, and again we only care about the first one
-    const [url = null] = params.urls;
-    if (!url) {
-      return;
+    const [firstUrlLine = null, firstUrlCol = null] = error.lineColumns;
+
+    if (firstUrlLine === null || firstUrlCol === null) {
+      return [];
     }
 
-    const uri = vscode.Uri.file(url);
+    const first = {
+      url: firstUrl,
+      line: firstUrlLine,
+      col: firstUrlCol,
+    };
 
-    // range is really just 1 character here..
-    const range = new vscode.Range(new vscode.Position(line - 1, column - 1), new vscode.Position(line - 1, column));
+    const isInNodeModules = first.url.includes("node_modules/");
 
-    const editor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
+    if (!isInNodeModules) {
+      // Not node modules, so it's going to be the most relevant we'll get for the user
+      return [first];
+    }
 
-    // ...but we want to highlight the entire word after(inclusive) the character
-    const rangeOfWord = editor?.document.getWordRangeAtPosition(range.start) ?? range; // Fallback to just the character if no editor or no word range is found
+    // Find the first file in the stack frames that are not inside node_modules
+    const pathInUsersDirectory = BunDiagnosticsManager.findFirstUserlandURL(error.urls);
 
-    const diagnostic = new vscode.Diagnostic(
-      rangeOfWord,
-      stripAnsi(params.message).trim() || params.name || "Error",
-      vscode.DiagnosticSeverity.Error,
-    );
+    // No other user files (lol?) so just reply with the node_modules path
+    if (!pathInUsersDirectory) {
+      return [first];
+    }
 
-    this.editorState.setDiagnostic(uri, diagnostic);
+    const line = error.lineColumns[pathInUsersDirectory.index * 2] ?? null;
+    const col = error.lineColumns[pathInUsersDirectory.index * 2 + 1] ?? null;
+
+    // Best effort, but malformed data most likely. Better than returning invalid values below anyway
+    if (line === null || col === null) {
+      return [first];
+    }
+
+    return [
+      first,
+      {
+        url: pathInUsersDirectory.url,
+        line,
+        col,
+      },
+    ];
+  }
+
+  private static findFirstUserlandURL(urls: string[]) {
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+
+      if (url === "") {
+        continue;
+      }
+
+      if (url.includes("node_modules/")) {
+        continue;
+      }
+
+      return { url, index: i };
+    }
+
+    return null;
+  }
+
+  private handleLifecycleError(event: JSC.LifecycleReporter.ErrorEvent) {
+    const relevantErrors = BunDiagnosticsManager.findMostRelevantErrors(event);
+
+    console.log(JSON.stringify(relevantErrors, null, 2));
+    console.log(JSON.stringify(event.urls, null, 2));
+
+    for (const error of relevantErrors) {
+      const uri = vscode.Uri.file(error.url);
+      const editor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
+
+      // range is really just 1 character here..
+      const range = new vscode.Range(
+        new vscode.Position(error.line - 1, error.col - 1),
+        new vscode.Position(error.line - 1, error.col),
+      );
+
+      // ...but we want to highlight the entire word after(inclusive) the character
+      const rangeOfWord = editor?.document.getWordRangeAtPosition(range.start) ?? range; // Fallback to just the character if no editor or no word range is found
+
+      const diagnostic = new vscode.Diagnostic(
+        rangeOfWord,
+        stripAnsi(event.message).trim() || event.name || "Error",
+        vscode.DiagnosticSeverity.Error,
+      );
+
+      this.editorState.setDiagnostic(uri, diagnostic);
+    }
   }
 
   public dispose() {
@@ -163,9 +230,7 @@ class BunDiagnosticsManager {
     this.context.subscriptions.push(
       // on did type
       vscode.workspace.onDidChangeTextDocument(() => {
-        if (this.knownOpenSockets.size === 0) {
-          this.editorState.clearAll();
-        }
+        this.editorState.clearAll();
       }),
     );
 

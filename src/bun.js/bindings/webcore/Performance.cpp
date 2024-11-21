@@ -240,6 +240,16 @@ void Performance::appendBufferedEntriesByType(const String& entryType, Vector<Re
     }
 }
 
+void Performance::markResourceTiming(ResourceTiming&& resourceTiming)
+{
+    /* TODO: empty, what is below AI recommends, but idk anything about zig or webkit
+    ASSERT(scriptExecutionContext());
+
+    auto entry = PerformanceResourceTiming::create(m_timeOrigin, WTFMove(resourceTiming));
+    queueEntry(*entry);
+    */
+}
+
 // void Performance::clearResourceTimings()
 // {
 //     m_resourceTimingBuffer.clear();

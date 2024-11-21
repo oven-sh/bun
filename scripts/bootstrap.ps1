@@ -57,13 +57,18 @@ function Download-File {
   param (
     [Parameter(Mandatory = $true, Position = 0)]
     [string]$Url,
-    [Parameter(Mandatory = $false, Position = 1)]
+    [Parameter(Mandatory = $false)]
+    [string]$Name,
+    [Parameter(Mandatory = $false)]
     [string]$Path
   )
 
+  if (-not $Name) {
+    $Name = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetRandomFileName(), [System.IO.Path]::GetExtension($Url))
+  }
+
   if (-not $Path) {
-    $Path = "$env:TEMP\$([System.IO.Path]::GetRandomFileName())"
-    $Path = [System.IO.Path]::ChangeExtension($Path, [System.IO.Path]::GetExtension($Url))
+    $Path = "$env:TEMP\$Name"
   }
 
   $client = New-Object System.Net.WebClient
@@ -301,7 +306,7 @@ function Install-Rust {
   }
 
   Write-Output "Downloading Rustup installer..."
-  $rustupInit = Download-File "https://win.rustup.rs/"
+  $rustupInit = Download-File "https://win.rustup.rs/" -Name "rustup-init.exe"
 
   Write-Output "Installing Rust..."
   Execute-Command $rustupInit -y

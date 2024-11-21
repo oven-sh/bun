@@ -2768,6 +2768,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         inline fn isImmediatelyEscapedQuote(self: *@This()) bool {
+            // this doesn't work and probably can't? maybe try to revamp string breaking?
+            // if this is going to be modified, it needs to support bunstr, single quoted strings, and bunstr inside strings
             return ((self.chars.state == .Double or self.chars.state == .Single) and
                 (self.chars.current != null and !self.chars.current.?.escaped and self.chars.current.?.char == '"') and
                 (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '"'));

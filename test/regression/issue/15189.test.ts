@@ -3,14 +3,19 @@ import { $ } from "bun";
 // consider porting bash tests: https://github.com/bminor/bash/tree/f3b6bd19457e260b65d11f2712ec3da56cef463f/tests
 // they're not too hard - add as .sh files, execute them with bun, and expect the results to be the same as the .right files
 
+// TODO benchmark:
+// before & after: ``await $`echo ${Array(10000).fill("a")}`;``
+
 describe("bun shell", () => {
-  it.todo("does not segfault 1", async () => {
-    await $`echo ${Array(1000000).fill("a")}`;
+  it("does not segfault 1", async () => {
+    expect(await $`echo ${Array(1000000).fill("a")}`.text()).toBe(Array(1000000).fill("a").join(" ") + "\n");
   });
-  it.todo("does not segfault 2", async () => {
-    await $({ raw: ["echo" + " a".repeat(1000000)] } as any);
+  it("does not segfault 2", async () => {
+    expect(await $({ raw: ["echo" + " a".repeat(1000000)] } as any).text()).toBe(
+      Array(1000000).fill("a").join(" ") + "\n",
+    );
   });
-  it.skip("does not segfault 3", async () => {
+  it("does not segfault 3", async () => {
     // slow
     expect(await $({ raw: ["echo " + 'a"a"'.repeat(1000000)] } as any).text()).toBe("aa".repeat(1000000) + "\n");
   });

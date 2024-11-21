@@ -226,7 +226,12 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
                         break :brk args;
                     };
-                    return @call(.auto, func, args);
+                    const ret = @call(.auto, func, args);
+                    if (Ret == void and @TypeOf(ret) == @import("shell/interpreter.zig").Interpreter.NextExec) {
+                        ret.executeTodoReview();
+                        return {};
+                    }
+                    return ret;
                 }
             }
             @panic("Invalid tag");

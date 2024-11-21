@@ -108,6 +108,7 @@ public:
     // void addNavigationTiming(DocumentLoader&, Document&, CachedResource&, const DocumentLoadTiming&, const NetworkLoadMetrics&);
     // void navigationFinished(const NetworkLoadMetrics&);
     // void addResourceTiming(ResourceTiming&&);
+    void markResourceTiming(ResourceTiming&&);
 
     // void reportFirstContentfulPaint();
 

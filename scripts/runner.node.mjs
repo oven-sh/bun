@@ -45,6 +45,7 @@ const testsPath = join(cwd, "test");
 const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
+const napiTimeout = 10 * 60_000;
 
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
@@ -579,6 +580,9 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
 function getTestTimeout(testPath) {
   if (/integration|3rd_party|docker/i.test(testPath)) {
     return integrationTimeout;
+  }
+  if (/napi/i.test(testPath)) {
+    return napiTimeout;
   }
   return testTimeout;
 }

@@ -1,4 +1,5 @@
 import { $ } from "bun";
+import { tempDirWithFiles } from "harness";
 
 // consider porting bash tests: https://github.com/bminor/bash/tree/f3b6bd19457e260b65d11f2712ec3da56cef463f/tests
 // they're not too hard - add as .sh files, execute them with bun, and expect the results to be the same as the .right files
@@ -156,5 +157,23 @@ b"`.text(),
     expect(() => $`echo ${"😊".substring(0, 1)}`.text()).toThrowError("Shell script string contains invalid UTF-16");
     expect(() => $`echo ${"😊".substring(1, 2)}`.text()).toThrowError("Shell script string contains invalid UTF-16");
     expect(await $`echo ${"😊".substring(0, 2)}`.text()).toBe("😊\n");
+  });
+
+  const this_filename = import.meta.dirname + "/15189.test.ts";
+  it("works with files", async () => {
+    expect(await $`cat ${this_filename} | cat | cat | cat`.text()).toBe(await Bun.file(this_filename).text());
+  });
+  it("works with files 2", async () => {
+    expect(await $`cat < ${Bun.file(this_filename)} | cat | cat | cat`.text()).toBe(
+      await Bun.file(this_filename).text(),
+    );
+  });
+  it("works with files 3", async () => {
+    expect(await $`cat < ${this_filename} | cat | cat | cat`.text()).toBe(await Bun.file(this_filename).text());
+  });
+  it("works with files 4", async () => {
+    const tmpdir = tempDirWithFiles("works-with-files", {});
+    await $`cat < ${this_filename} | cat | cat | cat > ${tmpdir}/outfile.txt`;
+    expect(await Bun.file(tmpdir + "/outfile.txt").text()).toBe(await Bun.file(this_filename).text());
   });
 });

@@ -1143,20 +1143,22 @@ pub const Interpreter = struct {
             enqueueCb: fn (c: @TypeOf(ctx)) void,
             comptime fmt: []const u8,
             args: anytype,
-        ) void {
+        ) NextExec {
             const io: *IO.OutKind = &@field(ctx.io, "stderr");
             switch (io.*) {
                 .fd => |x| {
                     enqueueCb(ctx);
                     x.writer.enqueueFmt(ctx, x.captured, fmt, args);
+                    return .scheduled;
                 },
                 .pipe => {
                     const bufio: *bun.ByteList = this.buffered_stderr();
                     bufio.appendFmt(bun.default_allocator, fmt, args) catch bun.outOfMemory();
-                    ctx.parent.childDone(ctx, 1).executeTodoReview();
+                    return ctx.parent.childDone(ctx, 1);
                 },
                 .ignore => {},
             }
+            return .failing_error;
         }
     };
 
@@ -1717,6 +1719,8 @@ pub const Interpreter = struct {
     pub const NextExec = union(enum) {
         scheduled,
         failing_error,
+        done,
+        unclear,
         todo_review: if (review_time) @compileError("must be removed") else void,
         should_be_unreachable: if (review_time) @compileError("must be removed") else void,
         script: *Script,
@@ -1724,7 +1728,9 @@ pub const Interpreter = struct {
         cmd: *Cmd,
         assigns: *Assigns,
         expansion: *Expansion,
+        @"if": *If,
 
+        /// search project for regex: \.todo_review|executeTodoReview
         const review_time = false;
         threadlocal var _dbg_catch_exec_within_exec = false;
 
@@ -1732,7 +1738,9 @@ pub const Interpreter = struct {
             if (review_time) bun.assert(!_dbg_catch_exec_within_exec);
             _dbg_catch_exec_within_exec = true;
             defer _dbg_catch_exec_within_exec = false;
-
+            return self.executeAllowInner();
+        }
+        fn executeAllowInner(self: NextExec) void {
             var next_exec = self;
             while (true) switch (next_exec) {
                 .script => |a| next_exec = a._executeNext(),
@@ -1740,8 +1748,9 @@ pub const Interpreter = struct {
                 .cmd => |a| next_exec = a._executeNext(),
                 .assigns => |a| next_exec = a._executeNext(),
                 .expansion => |a| next_exec = a._executeNext(),
+                .@"if" => |a| next_exec = a._executeNext(),
                 // inline else => |a| next_exec = a._executeNext()
-                .scheduled, .failing_error, .todo_review, .should_be_unreachable => break,
+                .scheduled, .failing_error, .done, .unclear, .todo_review, .should_be_unreachable => break,
             };
         }
         pub fn executeTodoReview(self: NextExec) void {
@@ -1783,22 +1792,22 @@ pub const Interpreter = struct {
         @"async".actuallyDeinit();
         this.async_commands_executing -= 1;
         if (this.async_commands_executing == 0 and this.exit_code != null) {
-            this.finish(this.exit_code.?);
+            this.finish(this.exit_code.?).executeTodoReview();
         }
     }
 
-    fn childDone(this: *ThisInterpreter, child: InterpreterChildPtr, exit_code: ExitCode) void {
+    fn childDone(this: *ThisInterpreter, child: InterpreterChildPtr, exit_code: ExitCode) NextExec {
         if (child.ptr.is(Script)) {
             const script = child.as(Script);
             script.deinitFromInterpreter();
             this.exit_code = exit_code;
-            if (this.async_commands_executing == 0) this.finish(exit_code);
-            return;
+            if (this.async_commands_executing == 0) return this.finish(exit_code);
+            return .scheduled;
         }
         @panic("Bad child");
     }
 
-    fn finish(this: *ThisInterpreter, exit_code: ExitCode) void {
+    fn finish(this: *ThisInterpreter, exit_code: ExitCode) NextExec {
         log("finish {d}", .{exit_code});
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
@@ -1827,6 +1836,7 @@ pub const Interpreter = struct {
             this.flags.done = true;
             this.exit_code = exit_code;
         }
+        return .done;
     }
 
     fn errored(this: *ThisInterpreter, the_error: ShellError) void {
@@ -2197,9 +2207,7 @@ pub const Interpreter = struct {
                         }
 
                         while (this.word_idx < this.node.atomsLen()) {
-                            const is_cmd_subst = this.expandVarAndCmdSubst(this.word_idx);
-                            // yield execution
-                            if (is_cmd_subst) return .todo_review;
+                            if (this.expandVarAndCmdSubst(this.word_idx)) |v| return v;
                         }
 
                         if (this.word_idx >= this.node.atomsLen()) {
@@ -2276,9 +2284,7 @@ pub const Interpreter = struct {
                         }
                     },
                     .glob => {
-                        this.transitionToGlobState();
-                        // yield
-                        return .todo_review;
+                        return this.transitionToGlobState();
                     },
                     .done, .err => unreachable,
                 }
@@ -2296,7 +2302,7 @@ pub const Interpreter = struct {
             return .should_be_unreachable;
         }
 
-        fn transitionToGlobState(this: *Expansion) void {
+        fn transitionToGlobState(this: *Expansion) NextExec {
             var arena = Arena.init(this.base.interpreter.allocator);
             this.child_state = .{ .glob = .{ .walker = .{} } };
             const pattern = this.current_out.items[0..];
@@ -2317,16 +2323,16 @@ pub const Interpreter = struct {
                 .result => {},
                 .err => |e| {
                     this.state = .{ .err = bun.shell.ShellErr.newSys(e) };
-                    (NextExec{ .expansion = this }).executeTodoReview();
-                    return;
+                    return .{ .expansion = this };
                 },
             }
 
             var task = ShellGlobTask.createOnMainThread(this.base.interpreter.allocator, &this.child_state.glob.walker, this);
             task.schedule();
+            return .scheduled;
         }
 
-        pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) bool {
+        pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) ?NextExec {
             switch (this.node.*) {
                 .simple => |*simp| {
                     const is_cmd_subst = this.expandSimpleNoIO(simp, &this.current_out, true);
@@ -2340,7 +2346,7 @@ pub const Interpreter = struct {
                             .result => |s| s,
                             .err => |e| {
                                 this.base.throw(&bun.shell.ShellErr.newSys(e));
-                                return false;
+                                return null;
                             },
                         };
                         var script = Script.init(this.base.interpreter, shell_state, &this.node.simple.cmd_subst.script, Script.ParentPtr.init(this), io);
@@ -2350,8 +2356,7 @@ pub const Interpreter = struct {
                                 .quoted = simp.cmd_subst.quoted,
                             },
                         };
-                        script.start().executeTodoReview();
-                        return true;
+                        return script.start();
                     } else {
                         this.word_idx += 1;
                     }
@@ -2373,7 +2378,7 @@ pub const Interpreter = struct {
                                 .result => |s| s,
                                 .err => |e| {
                                     this.base.throw(&bun.shell.ShellErr.newSys(e));
-                                    return false;
+                                    return null;
                                 },
                             };
                             var script = Script.init(this.base.interpreter, shell_state, &simple_atom.cmd_subst.script, Script.ParentPtr.init(this), io);
@@ -2383,8 +2388,7 @@ pub const Interpreter = struct {
                                     .quoted = simple_atom.cmd_subst.quoted,
                                 },
                             };
-                            script.start().executeTodoReview();
-                            return true;
+                            return script.start();
                         } else {
                             this.word_idx += 1;
                             this.child_state = .idle;
@@ -2393,7 +2397,7 @@ pub const Interpreter = struct {
                 },
             }
 
-            return false;
+            return null;
         }
 
         /// Remove a set of values from the beginning and end of a slice.
@@ -2524,7 +2528,7 @@ pub const Interpreter = struct {
             @panic("Invalid child to Expansion, this indicates a bug in Bun. Please file a report on Github.");
         }
 
-        fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) void {
+        fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) NextExec {
             log("{} onGlobWalkDone", .{this});
             if (comptime bun.Environment.allow_assert) {
                 assert(this.child_state == .glob);
@@ -2550,8 +2554,7 @@ pub const Interpreter = struct {
                     this.child_state.glob.walker.deinit(true);
                     this.child_state = .idle;
                     this.state = .done;
-                    (NextExec{ .expansion = this }).executeTodoReview();
-                    return;
+                    return .{ .expansion = this };
                 }
 
                 const msg = std.fmt.allocPrint(bun.default_allocator, "no matches found: {s}", .{this.child_state.glob.walker.pattern}) catch bun.outOfMemory();
@@ -2562,8 +2565,7 @@ pub const Interpreter = struct {
                 };
                 this.child_state.glob.walker.deinit(true);
                 this.child_state = .idle;
-                (NextExec{ .expansion = this }).executeTodoReview();
-                return;
+                return .{ .expansion = this };
             }
 
             for (task.result.items) |sentinel_str| {
@@ -2576,7 +2578,7 @@ pub const Interpreter = struct {
             this.child_state.glob.walker.deinit(true);
             this.child_state = .idle;
             this.state = .done;
-            (NextExec{ .expansion = this }).executeTodoReview();
+            return .{ .expansion = this };
         }
 
         /// If the atom is actually a command substitution then does nothing and returns true
@@ -2828,7 +2830,7 @@ pub const Interpreter = struct {
 
             pub fn runFromMainThread(this: *This) void {
                 debug("runFromJS", .{});
-                this.expansion.onGlobWalkDone(this);
+                this.expansion.onGlobWalkDone(this).executeTodoReview();
                 this.ref.unref(this.event_loop);
             }
 
@@ -2951,20 +2953,18 @@ pub const Interpreter = struct {
         fn finish(this: *Script, exit_code: ExitCode) NextExec {
             if (this.parent.ptr.is(ThisInterpreter)) {
                 log("Interpreter script finish", .{});
-                this.base.interpreter.childDone(InterpreterChildPtr.init(this), exit_code);
-                return .todo_review;
+                return this.base.interpreter.childDone(InterpreterChildPtr.init(this), exit_code);
             }
 
             return this.parent.childDone(this, exit_code);
         }
 
-        pub fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) void {
+        pub fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) NextExec {
             child.deinit();
             if (this.state.normal.idx >= this.node.stmts.len) {
-                this.finish(exit_code).executeTodoReview();
-                return;
+                return this.finish(exit_code);
             }
-            (NextExec{ .script = this }).executeTodoReview();
+            return .{ .script = this };
         }
 
         pub fn deinit(this: *Script) void {
@@ -3222,8 +3222,7 @@ pub const Interpreter = struct {
                 .binary => {
                     const binary = Binary.init(this.base.interpreter, this.base.shell, child.binary, Binary.ParentPtr.init(this), this.io.copy());
                     this.currently_executing = ChildPtr.init(binary);
-                    binary.start();
-                    return .todo_review;
+                    return binary.start();
                 },
                 .cmd => {
                     const cmd = Cmd.init(this.base.interpreter, this.base.shell, child.cmd, Cmd.ParentPtr.init(this), this.io.copy());
@@ -3233,8 +3232,7 @@ pub const Interpreter = struct {
                 .pipeline => {
                     const pipeline = Pipeline.init(this.base.interpreter, this.base.shell, child.pipeline, Pipeline.ParentPtr.init(this), this.io.copy());
                     this.currently_executing = ChildPtr.init(pipeline);
-                    pipeline.start();
-                    return .todo_review;
+                    return pipeline.start();
                 },
                 .assign => |assigns| {
                     var assign_machine = this.base.interpreter.allocator.create(Assigns) catch bun.outOfMemory();
@@ -3245,8 +3243,7 @@ pub const Interpreter = struct {
                     switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, this.io, .subshell)) {
                         .result => |shell_state| {
                             var script = Subshell.init(this.base.interpreter, shell_state, child.subshell, Subshell.ParentPtr.init(this), this.io.copy());
-                            script.start();
-                            return .todo_review;
+                            return script.start();
                         },
                         .err => |e| {
                             this.base.throw(&bun.shell.ShellErr.newSys(e));
@@ -3255,8 +3252,7 @@ pub const Interpreter = struct {
                 },
                 .@"if" => {
                     const if_clause = If.init(this.base.interpreter, this.base.shell, child.@"if", If.ParentPtr.init(this), this.io.copy());
-                    if_clause.start();
-                    return .todo_review;
+                    return if_clause.start();
                 },
                 .condexpr => {
                     const condexpr = CondExpr.init(this.base.interpreter, this.base.shell, child.condexpr, CondExpr.ParentPtr.init(this), this.io.copy());
@@ -3265,14 +3261,13 @@ pub const Interpreter = struct {
                 },
                 .@"async" => {
                     const @"async" = Async.init(this.base.interpreter, this.base.shell, child.@"async", Async.ParentPtr.init(this), this.io.copy());
-                    @"async".start();
-                    return .todo_review;
+                    return @"async".start();
                 },
             }
             return .should_be_unreachable;
         }
 
-        pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: ExitCode) void {
+        pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: ExitCode) NextExec {
             const data = child.ptr.repr.data;
             log("child done Stmt {x} child({s})={x} exit={d}", .{ @intFromPtr(this), child.tagName(), @as(usize, @intCast(child.ptr.repr._ptr)), exit_code });
             this.last_exit_code = exit_code;
@@ -3281,7 +3276,7 @@ pub const Interpreter = struct {
             log("{d} {d}", .{ data, data2 });
             child.deinit();
             this.currently_executing = null;
-            (NextExec{ .stmt = this }).executeTodoReview();
+            return NextExec{ .stmt = this };
         }
 
         pub fn deinit(this: *Stmt) void {
@@ -3339,7 +3334,7 @@ pub const Interpreter = struct {
             return binary;
         }
 
-        fn start(this: *Binary) void {
+        fn start(this: *Binary) NextExec {
             log("binary start {x} ({s})", .{ @intFromPtr(this), @tagName(this.node.op) });
             if (comptime bun.Environment.allow_assert) {
                 assert(this.left == null);
@@ -3353,8 +3348,9 @@ pub const Interpreter = struct {
                 this.left = 0;
             }
             if (this.currently_executing) |exec| {
-                exec.start();
+                return exec.start();
             }
+            return .unclear;
         }
 
         fn makeChild(this: *Binary, left: bool) ?ChildPtr {
@@ -3404,7 +3400,7 @@ pub const Interpreter = struct {
             }
         }
 
-        pub fn childDone(this: *Binary, child: ChildPtr, exit_code: ExitCode) void {
+        pub fn childDone(this: *Binary, child: ChildPtr, exit_code: ExitCode) NextExec {
             if (comptime bun.Environment.allow_assert) {
                 assert(this.left == null or this.right == null);
                 assert(this.currently_executing != null);
@@ -3417,23 +3413,20 @@ pub const Interpreter = struct {
             if (this.left == null) {
                 this.left = exit_code;
                 if ((this.node.op == .And and exit_code != 0) or (this.node.op == .Or and exit_code == 0)) {
-                    this.parent.childDone(this, exit_code).executeTodoReview();
-                    return;
+                    return this.parent.childDone(this, exit_code);
                 }
 
                 this.currently_executing = this.makeChild(false);
                 if (this.currently_executing == null) {
                     this.right = 0;
-                    this.parent.childDone(this, 0).executeTodoReview();
-                    return;
+                    return this.parent.childDone(this, 0);
                 } else {
-                    this.currently_executing.?.start();
+                    return this.currently_executing.?.start();
                 }
-                return;
             }
 
             this.right = exit_code;
-            this.parent.childDone(this, exit_code).executeTodoReview();
+            return this.parent.childDone(this, exit_code);
         }
 
         pub fn deinit(this: *Binary) void {
@@ -3524,7 +3517,7 @@ pub const Interpreter = struct {
                     ctx.state = .waiting_write_err;
                 }
             };
-            this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
+            this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args).executeTodoReview();
         }
 
         fn setupCommands(this: *Pipeline) CoroutineResult {
@@ -3596,14 +3589,13 @@ pub const Interpreter = struct {
             return .cont;
         }
 
-        pub fn start(this: *Pipeline) void {
-            if (this.setupCommands() == .yield) return;
+        pub fn start(this: *Pipeline) NextExec {
+            if (this.setupCommands() == .yield) return .scheduled;
 
-            if (this.state == .waiting_write_err or this.state == .done) return;
+            if (this.state == .waiting_write_err or this.state == .done) return .todo_review;
             const cmds = this.cmds orelse {
                 this.state = .done;
-                this.parent.childDone(this, 0).executeTodoReview();
-                return;
+                return this.parent.childDone(this, 0);
             };
 
             if (comptime bun.Environment.allow_assert) {
@@ -3612,16 +3604,18 @@ pub const Interpreter = struct {
             log("pipeline start {x} (count={d})", .{ @intFromPtr(this), this.node.items.len });
             if (this.node.items.len == 0) {
                 this.state = .done;
-                this.parent.childDone(this, 0).executeTodoReview();
-                return;
+                return this.parent.childDone(this, 0);
             }
 
             for (cmds) |*cmd_or_result| {
                 assert(cmd_or_result.* == .cmd);
                 log("Pipeline start cmd", .{});
                 var cmd = cmd_or_result.cmd;
-                cmd.call("start", .{}, void);
+                // alternatively, return NextExec{ .cmd, .queue_after_break = .{.pipeline = .{ .value = this, .cmd_index = i + 1 }} }
+                // that would add the queued item to a list that is popped if the while loop is going to exit
+                cmd.call("start", .{}, NextExec).executeAllowInner();
             }
+            return .scheduled;
         }
 
         pub fn onIOWriterChunk(this: *Pipeline, _: usize, err: ?JSC.SystemError) void {
@@ -3821,10 +3815,10 @@ pub const Interpreter = struct {
             });
         }
 
-        pub fn start(this: *Subshell) void {
+        pub fn start(this: *Subshell) NextExec {
             log("{} start", .{this});
             const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
-            script.start().executeTodoReview();
+            return script.start();
         }
 
         pub fn next(this: *Subshell) void {
@@ -3930,7 +3924,7 @@ pub const Interpreter = struct {
                     ctx.state = .wait_write_err;
                 }
             };
-            this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
+            this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args).executeTodoReview();
         }
     };
 
@@ -3983,10 +3977,10 @@ pub const Interpreter = struct {
             });
         }
 
-        pub fn start(this: *Async) void {
+        pub fn start(this: *Async) NextExec {
             log("{} start", .{this});
             this.enqueueSelf();
-            this.parent.childDone(this, 0).executeTodoReview();
+            return this.parent.childDone(this, 0);
         }
 
         pub fn next(this: *Async) void {
@@ -3998,7 +3992,7 @@ pub const Interpreter = struct {
                 },
                 .exec => {
                     if (this.state.exec.child) |child| {
-                        child.start();
+                        child.start().executeTodoReview();
                         return;
                     }
 
@@ -4336,7 +4330,7 @@ pub const Interpreter = struct {
                     ctx.state = .waiting_write_err;
                 }
             };
-            this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
+            this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args).executeTodoReview();
         }
 
         pub fn onIOWriterChunk(this: *CondExpr, _: usize, err: ?JSC.SystemError) void {
@@ -4408,11 +4402,11 @@ pub const Interpreter = struct {
             });
         }
 
-        pub fn start(this: *If) void {
-            this.next();
+        pub fn start(this: *If) NextExec {
+            return .{ .@"if" = this };
         }
 
-        fn next(this: *If) void {
+        fn _executeNext(this: *If) NextExec {
             while (this.state != .done) {
                 switch (this.state) {
                     .idle => {
@@ -4434,8 +4428,7 @@ pub const Interpreter = struct {
                                     }
                                     switch (this.node.else_parts.len()) {
                                         0 => {
-                                            this.parent.childDone(this, 0).executeTodoReview();
-                                            return;
+                                            return this.parent.childDone(this, 0);
                                         },
                                         1 => {
                                             this.state.exec.state = .@"else";
@@ -4453,8 +4446,7 @@ pub const Interpreter = struct {
                                 },
                                 // done
                                 .then => {
-                                    this.parent.childDone(this, this.state.exec.last_exit_code).executeTodoReview();
-                                    return;
+                                    return this.parent.childDone(this, this.state.exec.last_exit_code);
                                 },
                                 // if succesful, execute the elif's then branch
                                 // otherwise, move to the next elif, or to the final else if it exists
@@ -4469,8 +4461,7 @@ pub const Interpreter = struct {
                                     this.state.exec.state.elif.idx += 2;
 
                                     if (this.state.exec.state.elif.idx >= this.node.else_parts.len()) {
-                                        this.parent.childDone(this, 0).executeTodoReview();
-                                        return;
+                                        return this.parent.childDone(this, 0);
                                     }
 
                                     if (this.state.exec.state.elif.idx == this.node.else_parts.len() -| 1) {
@@ -4485,8 +4476,7 @@ pub const Interpreter = struct {
                                     continue;
                                 },
                                 .@"else" => {
-                                    this.parent.childDone(this, this.state.exec.last_exit_code).executeTodoReview();
-                                    return;
+                                    return this.parent.childDone(this, this.state.exec.last_exit_code);
                                 },
                             }
                         }
@@ -4495,15 +4485,14 @@ pub const Interpreter = struct {
                         this.state.exec.stmt_idx += 1;
                         const stmt = this.state.exec.stmts.getConst(idx);
                         var newstmt = Stmt.init(this.base.interpreter, this.base.shell, stmt, this, this.io.copy());
-                        newstmt.start().executeTodoReview();
-                        return;
+                        return newstmt.start();
                     },
-                    .waiting_write_err => return, // yield execution
+                    .waiting_write_err => return .unclear, // yield execution
                     .done => @panic("This code should not be reachable"),
                 }
             }
 
-            this.parent.childDone(this, 0).executeTodoReview();
+            return this.parent.childDone(this, 0);
         }
 
         pub fn deinit(this: *If) void {
@@ -4512,7 +4501,7 @@ pub const Interpreter = struct {
             bun.destroy(this);
         }
 
-        pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) void {
+        pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) NextExec {
             defer child.deinit();
 
             if (this.state != .exec) {
@@ -4523,8 +4512,8 @@ pub const Interpreter = struct {
             exec.last_exit_code = exit_code;
 
             switch (exec.state) {
-                .cond => this.next(),
-                .then => this.next(),
+                .cond => return .{ .@"if" = this },
+                .then => return .{ .@"if" = this },
                 .elif => {
                     // if (exit_code == 0) {
                     //     exec.stmts = this.node.else_parts.getConst(exec.state.elif.idx + 1);
@@ -4533,10 +4522,9 @@ pub const Interpreter = struct {
                     //     this.next();
                     //     return;
                     // }
-                    this.next();
-                    return;
+                    return .{ .@"if" = this };
                 },
-                .@"else" => this.next(),
+                .@"else" => return .{ .@"if" = this },
             }
         }
     };
@@ -4756,7 +4744,7 @@ pub const Interpreter = struct {
                     ctx.state = .waiting_write_err;
                 }
             };
-            this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
+            this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args).executeTodoReview();
         }
 
         pub fn init(
@@ -4796,7 +4784,7 @@ pub const Interpreter = struct {
                         return this.state.expanding_assigns.start();
                     },
                     .expanding_assigns => {
-                        return .todo_review;
+                        return .unclear;
                     },
                     .expanding_redirect => {
                         if (this.state.expanding_redirect.idx >= 1) {
@@ -4839,9 +4827,7 @@ pub const Interpreter = struct {
                     },
                     .expanding_args => {
                         if (this.state.expanding_args.idx >= this.node.name_and_args.len) {
-                            this.transitionToExecStateAndYield();
-                            // yield execution to subproc
-                            return .todo_review;
+                            return this.transitionToExecStateAndYield();
                         }
 
                         this.args.ensureUnusedCapacity(1) catch bun.outOfMemory();
@@ -4862,11 +4848,11 @@ pub const Interpreter = struct {
                         return this.state.expanding_args.expansion.start();
                     },
                     .waiting_write_err => {
-                        return .todo_review;
+                        return .unclear;
                     },
                     .exec => {
                         // yield execution to subproc/builtin
-                        return .todo_review;
+                        return .unclear;
                     },
                     .done => unreachable,
                 }
@@ -4879,9 +4865,10 @@ pub const Interpreter = struct {
             return this.parent.childDone(this, 1);
         }
 
-        fn transitionToExecStateAndYield(this: *Cmd) void {
+        fn transitionToExecStateAndYield(this: *Cmd) NextExec {
             this.state = .exec;
             this.initSubproc();
+            return .scheduled;
         }
 
         pub fn start(this: *Cmd) NextExec {
@@ -12101,7 +12088,7 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
             return Type.ChildPtr;
         }
 
-        pub fn start(this: @This()) void {
+        pub fn start(this: @This()) Interpreter.NextExec {
             const tags = comptime std.meta.fields(Ptr.Tag);
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {
@@ -12109,11 +12096,12 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
                     Ptr.assert_type(Ty);
                     var casted = this.as(Ty);
                     const result_type = casted.start();
-                    if (@TypeOf(result_type) != void) result_type.executeTodoReview();
-                    return;
+                    if (@TypeOf(result_type) == void) return .todo_review;
+                    return result_type;
                 }
             }
             unknownTag(this.tagInt());
+            return .should_be_unreachable;
         }
 
         pub fn deinit(this: @This()) void {

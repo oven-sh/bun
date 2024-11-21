@@ -231,6 +231,9 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
                         ret.executeTodoReview();
                         return {};
                     }
+                    if (Ret == @import("shell/interpreter.zig").Interpreter.NextExec and @TypeOf(ret) == void) {
+                        return .todo_review;
+                    }
                     return ret;
                 }
             }

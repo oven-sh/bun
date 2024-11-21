@@ -983,51 +983,51 @@ const ServerPrototype = {
         //
         // We want to avoid triggering the getter for these properties because
         // that will cause the data to be cloned twice, which costs memory & performance.
-        fetch(req, _server) {
-          var pendingResponse;
-          var pendingError;
-          var reject = err => {
-            if (pendingError) return;
-            pendingError = err;
-            if (rejectFunction) rejectFunction(err);
-          };
-          var reply = function (resp) {
-            if (pendingResponse) return;
-            pendingResponse = resp;
-            if (resolveFunction) resolveFunction(resp);
-          };
-          const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
-          isNextIncomingMessageHTTPS = isHTTPS;
-          const http_req = new RequestClass(req, {
-            [typeSymbol]: NodeHTTPIncomingRequestType.FetchRequest,
-          });
-          assignEventCallback(req, onRequestEvent.bind(http_req));
-          isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
+        // fetch(req, _server) {
+        //   var pendingResponse;
+        //   var pendingError;
+        //   var reject = err => {
+        //     if (pendingError) return;
+        //     pendingError = err;
+        //     if (rejectFunction) rejectFunction(err);
+        //   };
+        //   var reply = function (resp) {
+        //     if (pendingResponse) return;
+        //     pendingResponse = resp;
+        //     if (resolveFunction) resolveFunction(resp);
+        //   };
+        //   const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
+        //   isNextIncomingMessageHTTPS = isHTTPS;
+        //   const http_req = new RequestClass(req, {
+        //     [typeSymbol]: NodeHTTPIncomingRequestType.FetchRequest,
+        //   });
+        //   assignEventCallback(req, onRequestEvent.bind(http_req));
+        //   isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
 
-          const upgrade = http_req.headers.upgrade;
-          const http_res = new ResponseClass(http_req, { [kDeprecatedReplySymbol]: reply });
-          http_req.socket[kInternalSocketData] = [server, http_res, req];
-          server.emit("connection", http_req.socket);
-          const rejectFn = err => reject(err);
-          http_req.once("error", rejectFn);
-          http_res.once("error", rejectFn);
-          if (upgrade) {
-            server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
-          } else {
-            server.emit("request", http_req, http_res);
-          }
+        //   const upgrade = http_req.headers.upgrade;
+        //   const http_res = new ResponseClass(http_req, { [kDeprecatedReplySymbol]: reply });
+        //   http_req.socket[kInternalSocketData] = [server, http_res, req];
+        //   server.emit("connection", http_req.socket);
+        //   const rejectFn = err => reject(err);
+        //   http_req.once("error", rejectFn);
+        //   http_res.once("error", rejectFn);
+        //   if (upgrade) {
+        //     server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
+        //   } else {
+        //     server.emit("request", http_req, http_res);
+        //   }
 
-          if (pendingError) {
-            throw pendingError;
-          }
+        //   if (pendingError) {
+        //     throw pendingError;
+        //   }
 
-          if (pendingResponse) {
-            return pendingResponse;
-          }
+        //   if (pendingResponse) {
+        //     return pendingResponse;
+        //   }
 
-          var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
-          return promise;
-        },
+        //   var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
+        //   return promise;
+        // },
       });
       getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
       isHTTPS = this[serverSymbol].protocol === "https";

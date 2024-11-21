@@ -1466,7 +1466,7 @@ pub const ServerConfig = struct {
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
                 JSC.C.JSValueProtect(global, onRequest.asObjectRef());
                 args.onRequest = onRequest;
-            } else if (args.bake == null) {
+            } else if (args.bake == null and args.onNodeHTTPRequest == .zero) {
                 if (global.hasException()) return error.JSError;
                 global.throwInvalidArguments("Expected fetch() to be a function", .{});
                 return error.JSError;
@@ -8272,8 +8272,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
                 );
             }
-
-            if (this.config.onNodeHTTPRequest != .zero) {
+            if (this.dev_server) |dev| {
+                dev.attachRoutes(this) catch bun.outOfMemory();
+            } else if (this.config.onNodeHTTPRequest != .zero) {
                 app.any("/*", *ThisServer, this, onNodeHTTPRequest);
                 NodeHTTP_assignOnCloseFunction(@intFromBool(ssl_enabled), app);
             } else if (this.config.onRequest != .zero) {
@@ -8288,13 +8289,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 }
 
                 app.get("/src:/*", *ThisServer, this, onSrcRequest);
-            }
-
-            if (this.dev_server) |dev| {
-                dev.attachRoutes(this) catch bun.outOfMemory();
-            } else {
-                bun.assert(this.config.onRequest != .zero);
-                app.any("/*", *ThisServer, this, onRequest);
             }
         }
 

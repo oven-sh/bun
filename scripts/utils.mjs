@@ -684,7 +684,7 @@ export function isMergeQueue(cwd) {
 export function getGithubToken() {
   const cachedToken = getSecret("GITHUB_TOKEN", { required: false });
 
-  if (typeof cachedToken === "string") {
+  if (typeof cachedToken === "string" || !which("gh")) {
     return cachedToken || undefined;
   }
 

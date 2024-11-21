@@ -18,6 +18,10 @@ import {
   waitForPort,
   which,
   escapePowershell,
+  curl,
+  getGithubUrl,
+  getGithubApiUrl,
+  curlSafe,
 } from "./utils.mjs";
 import { join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -744,7 +748,7 @@ function getCloudInit(cloudInit) {
  */
 function getWindowsStartupScript(cloudInit) {
   const { sshKeys } = cloudInit;
-  const authorizedKeys = sshKeys.filter(({ publicKey }) => publicKey).map(({ publicKey }) => publicKey);
+  const authorizedKeys = sshKeys.map(({ publicKey }) => publicKey);
 
   return `
     $ErrorActionPreference = "Stop"
@@ -860,8 +864,8 @@ function getDiskSize(options) {
 
 /**
  * @typedef SshKey
- * @property {string} privatePath
- * @property {string} publicPath
+ * @property {string} [privatePath]
+ * @property {string} [publicPath]
  * @property {string} publicKey
  */
 
@@ -930,6 +934,38 @@ function getSshKeys() {
 
   return sshKeys;
 }
+
+/**
+ * @param {string} username
+ * @returns {Promise<SshKey[]>}
+ */
+async function getGithubUserSshKeys(username) {
+  const url = new URL(`${username}.keys`, getGithubUrl());
+  const publicKeys = await curlSafe(url);
+  return publicKeys
+    .split("\n")
+    .filter(key => key.length)
+    .map(key => ({ publicKey: `${key} github@${username}` }));
+}
+
+/**
+ * @param {string} organization
+ * @returns {Promise<SshKey[]>}
+ */
+async function getGithubOrgSshKeys(organization) {
+  const url = new URL(`orgs/${encodeURIComponent(organization)}/members`, getGithubApiUrl());
+  const members = await curlSafe(url, { json: true });
+
+  /** @type {SshKey[][]} */
+  const sshKeys = await Promise.all(
+    members.filter(({ type, login }) => type === "User" && login).map(({ login }) => getGithubUserSshKeys(login)),
+  );
+
+  return sshKeys.flat();
+}
+
+console.log(await getGithubOrgSshKeys("oven-sh"));
+process.exit(0);
 
 /**
  * @typedef SshOptions
@@ -1166,7 +1202,7 @@ async function main() {
     detached: !!args["detached"],
     bootstrap: args["no-bootstrap"] !== true,
     ci: !!args["ci"],
-    sshKeys: getSshKeys(),
+    sshKeys: isCI ? await getGithubOrgSshKeys("oven-sh") : getSshKeys(),
   };
 
   const { cloud, detached, bootstrap, ci, os, arch, distro, distroVersion } = options;

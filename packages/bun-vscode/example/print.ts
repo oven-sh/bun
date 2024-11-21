@@ -1,4 +1,5 @@
 function getOldestPersonInBooking(ages: number[]): number {
+  console.log("ok");
   throw new Error("TODO! Perhaps we can use Math.max() for this?");
 }
 

@@ -195,7 +195,8 @@ class BunDiagnosticsManager {
     const diagnostic = new vscode.Diagnostic(rangeOfWord, message, vscode.DiagnosticSeverity.Error);
 
     diagnostic.source = "Bun";
-    diagnostic.relatedInformation = event.urls.flatMap((url, i) => {
+
+    const relatedInformation = event.urls.flatMap((url, i) => {
       if (i === 0 || url === "") {
         return [];
       }
@@ -215,6 +216,12 @@ class BunDiagnosticsManager {
         ),
       ];
     });
+
+    diagnostic.relatedInformation = relatedInformation;
+
+    for (const relatedInfo of relatedInformation) {
+      //
+    }
 
     this.editorState.set(uri, diagnostic);
   }
@@ -249,19 +256,10 @@ const description = new vscode.MarkdownString(
 );
 
 export async function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
-  context.environmentVariableCollection.clear();
-  context.environmentVariableCollection.persistent = false;
   context.environmentVariableCollection.description = description;
 
   const manager = await BunDiagnosticsManager.initialize(context);
   context.environmentVariableCollection.replace("BUN_INSPECT_NOTIFY", manager.signalUrl);
 
   context.subscriptions.push(manager);
-
-  context.subscriptions.push({
-    dispose() {
-      // context.environmentVariableCollection.replace("BUN_INSPECT_NOTIFY", "");
-      context.environmentVariableCollection.clear();
-    },
-  });
 }

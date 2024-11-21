@@ -35,7 +35,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) bun.JSError!JSC.JSValue {
-            var arguments = callframe.arguments(8);
+            var arguments = callframe.arguments_old(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
             defer slice.deinit();
@@ -80,7 +80,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     const Arguments = comptime function.params[1].type.?;
     const NodeBindingClosure = struct {
         pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            var arguments = callframe.arguments(8);
+            var arguments = callframe.arguments_old(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
             slice.will_be_async = true;
@@ -240,7 +240,7 @@ pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
 }
 
 pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callFrame.arguments(1);
+    const arguments = callFrame.arguments_old(1);
 
     if (arguments.len < 1) {
         return .undefined;

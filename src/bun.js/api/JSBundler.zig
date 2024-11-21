@@ -577,7 +577,7 @@ pub const JSBundler = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(1);
+        const arguments = callframe.arguments_old(1);
         return build(globalThis, arguments.slice());
     }
 

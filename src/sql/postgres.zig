@@ -424,7 +424,7 @@ pub const PostgresSQLQuery = struct {
     }
 
     pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(4).slice();
+        const arguments = callframe.arguments_old(4).slice();
         const query = arguments[0];
         const values = arguments[1];
         const columns = arguments[3];
@@ -478,7 +478,7 @@ pub const PostgresSQLQuery = struct {
     }
 
     pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        var arguments_ = callframe.arguments(2);
+        var arguments_ = callframe.arguments_old(2);
         const arguments = arguments_.slice();
         var connection = arguments[0].as(PostgresSQLConnection) orelse {
             globalObject.throw("connection must be a PostgresSQLConnection", .{});
@@ -1368,7 +1368,7 @@ pub const PostgresSQLConnection = struct {
 
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var vm = globalObject.bunVM();
-        const arguments = callframe.arguments(10).slice();
+        const arguments = callframe.arguments_old(10).slice();
         const hostname_str = arguments[0].toBunString(globalObject);
         defer hostname_str.deref();
         const port = arguments[1].coerce(i32, globalObject);

@@ -260,7 +260,7 @@ const Braces = @import("../../shell/braces.zig");
 const Shell = @import("../../shell/shell.zig");
 
 pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1);
+    const arguments = callframe.arguments_old(1);
     if (arguments.len < 1) {
         globalThis.throw("shell escape expected at least 1 argument", .{});
         return .undefined;
@@ -291,7 +291,7 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 }
 
 pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments_ = callframe.arguments(2);
+    const arguments_ = callframe.arguments_old(2);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
@@ -392,7 +392,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 }
 
 pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments_ = callframe.arguments(2);
+    const arguments_ = callframe.arguments_old(2);
     var path_buf: bun.PathBuffer = undefined;
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
@@ -532,7 +532,7 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
 }
 
 pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(4).slice();
+    const arguments = callframe.arguments_old(4).slice();
     if (arguments.len == 0)
         return bun.String.empty.toJS(globalThis);
 
@@ -598,7 +598,7 @@ pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSVal
 }
 
 pub fn registerMacro(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments_ = callframe.arguments(2);
+    const arguments_ = callframe.arguments_old(2);
     const arguments = arguments_.slice();
     if (arguments.len != 2 or !arguments[0].isNumber()) {
         globalObject.throwInvalidArguments("Internal error registering macros: invalid args", .{});
@@ -731,7 +731,7 @@ const Editor = @import("../../open.zig").Editor;
 
 pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     var edit = &VirtualMachine.get().rareData().editor_context;
-    const args = callframe.arguments(4);
+    const args = callframe.arguments_old(4);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args.slice());
     defer arguments.deinit();
     var path: string = "";
@@ -848,7 +848,7 @@ pub fn getPublicPathWithAssetPrefix(
 }
 
 pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1);
+    const arguments = callframe.arguments_old(1);
 
     // Expect at least one argument.  We allow more than one but ignore them; this
     //  is useful for supporting things like `[1, 2].map(sleepSync)`
@@ -879,7 +879,7 @@ pub fn generateHeapSnapshot(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame
 }
 
 pub fn runGC(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments_ = callframe.arguments(1);
+    const arguments_ = callframe.arguments_old(1);
     const arguments = arguments_.slice();
     return globalObject.bunVM().garbageCollect(arguments.len > 0 and arguments[0].isBoolean() and arguments[0].toBoolean());
 }
@@ -990,12 +990,12 @@ fn doResolveWithArgs(ctx: js.JSContextRef, specifier: bun.String, from: bun.Stri
 }
 
 pub fn resolveSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(3);
+    const arguments = callframe.arguments_old(3);
     return try doResolve(globalObject, arguments.slice());
 }
 
 pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(3);
+    const arguments = callframe.arguments_old(3);
     const value = doResolve(globalObject, arguments.slice()) catch {
         const err = globalObject.tryTakeException().?;
         return JSC.JSPromise.rejectedPromiseValue(globalObject, err);
@@ -1050,7 +1050,7 @@ fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSErr
 }
 
 pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments_ = callframe.arguments(2);
+    const arguments_ = callframe.arguments_old(2);
     const arguments = arguments_.slice();
     if (arguments.len == 0) {
         return JSC.JSValue.jsNumberFromInt32(-1);
@@ -2114,7 +2114,7 @@ pub const Crypto = struct {
 
         // Once we have bindings generator, this should be replaced with a generated function
         pub fn JSPasswordObject__hash(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments_ = callframe.arguments(2);
+            const arguments_ = callframe.arguments_old(2);
             const arguments = arguments_.ptr[0..arguments_.len];
 
             if (arguments.len < 1) {
@@ -2145,7 +2145,7 @@ pub const Crypto = struct {
 
         // Once we have bindings generator, this should be replaced with a generated function
         pub fn JSPasswordObject__hashSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments_ = callframe.arguments(2);
+            const arguments_ = callframe.arguments_old(2);
             const arguments = arguments_.ptr[0..arguments_.len];
 
             if (arguments.len < 1) {
@@ -2262,7 +2262,7 @@ pub const Crypto = struct {
 
         // Once we have bindings generator, this should be replaced with a generated function
         pub fn JSPasswordObject__verify(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments_ = callframe.arguments(3);
+            const arguments_ = callframe.arguments_old(3);
             const arguments = arguments_.ptr[0..arguments_.len];
 
             if (arguments.len < 2) {
@@ -2313,7 +2313,7 @@ pub const Crypto = struct {
 
         // Once we have bindings generator, this should be replaced with a generated function
         pub fn JSPasswordObject__verifySync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments_ = callframe.arguments(3);
+            const arguments_ = callframe.arguments_old(3);
             const arguments = arguments_.ptr[0..arguments_.len];
 
             if (arguments.len < 2) {
@@ -2514,7 +2514,7 @@ pub const Crypto = struct {
 
         // Bun.CryptoHasher(algorithm, hmacKey?: string | Buffer)
         pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*CryptoHasher {
-            const arguments = callframe.arguments(2);
+            const arguments = callframe.arguments_old(2);
             if (arguments.len == 0) {
                 return globalThis.throwInvalidArguments2("Expected an algorithm name as an argument", .{});
             }
@@ -2586,7 +2586,7 @@ pub const Crypto = struct {
 
         pub fn update(this: *CryptoHasher, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const thisValue = callframe.this();
-            const arguments = callframe.arguments(2);
+            const arguments = callframe.arguments_old(2);
             const input = arguments.ptr[0];
             if (input.isEmptyOrUndefinedOrNull()) {
                 return globalThis.throwInvalidArguments2("expected blob, string or buffer", .{});
@@ -3166,7 +3166,7 @@ pub fn nanoseconds(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSErr
 }
 
 pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(2).slice();
+    const arguments = callframe.arguments_old(2).slice();
     var config: JSC.API.ServerConfig = brk: {
         var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
         var config: JSC.API.ServerConfig = .{};
@@ -3353,7 +3353,7 @@ comptime {
 }
 
 pub fn allocUnsafe(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1);
+    const arguments = callframe.arguments_old(1);
     const size = arguments.ptr[0];
     if (!size.isUInt32AsAnyInt()) {
         globalThis.throwInvalidArguments("Expected a positive number", .{});
@@ -3368,7 +3368,7 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
         return globalThis.throwTODO("mmapFile is not supported on Windows");
     }
 
-    const arguments_ = callframe.arguments(2);
+    const arguments_ = callframe.arguments_old(2);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer args.deinit();
 
@@ -3489,7 +3489,7 @@ const HashObject = struct {
         return struct {
             const Hasher = Hasher_;
             pub fn hash(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-                const arguments = callframe.arguments(2).slice();
+                const arguments = callframe.arguments_old(2).slice();
                 var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
                 defer args.deinit();
 
@@ -3636,7 +3636,7 @@ const UnsafeObject = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         const ret = JSValue.jsNumber(@as(i32, @intFromEnum(globalThis.bunVM().aggressive_garbage_collection)));
-        const value = callframe.arguments(1).ptr[0];
+        const value = callframe.arguments_old(1).ptr[0];
 
         if (!value.isEmptyOrUndefinedOrNull()) {
             switch (value.coerce(i32, globalThis)) {
@@ -3653,7 +3653,7 @@ const UnsafeObject = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const args = callframe.arguments(2).slice();
+        const args = callframe.arguments_old(2).slice();
         if (args.len < 1 or !args[0].isCell() or !args[0].jsType().isTypedArray()) {
             globalThis.throwInvalidArguments("Expected an ArrayBuffer", .{});
             return .zero;
@@ -3702,7 +3702,7 @@ const TOMLObject = struct {
         const allocator = arena.allocator();
         defer arena.deinit();
         var log = logger.Log.init(default_allocator);
-        const arguments = callframe.arguments(1).slice();
+        const arguments = callframe.arguments_old(1).slice();
         if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
             globalThis.throwInvalidArguments("Expected a string to parse", .{});
             return .zero;
@@ -4379,7 +4379,7 @@ pub const FFIObject = struct {
 };
 
 fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(2).slice();
+    const arguments = callframe.arguments_old(2).slice();
     const value = if (arguments.len > 0) arguments[0] else .undefined;
     const options_object = if (arguments.len > 1) arguments[1] else .undefined;
 
@@ -4493,7 +4493,7 @@ pub const JSZlib = struct {
 
     // This has to be `inline` due to the callframe.
     inline fn getOptions(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) ?struct { JSC.Node.StringOrBuffer, ?JSValue } {
-        const arguments = callframe.arguments(2).slice();
+        const arguments = callframe.arguments_old(2).slice();
         const buffer_value = if (arguments.len > 0) arguments[0] else .undefined;
         const options_val: ?JSValue =
             if (arguments.len > 1 and arguments[1].isObject())
@@ -4802,7 +4802,7 @@ pub usingnamespace @import("./bun/subprocess.zig");
 
 const InternalTestingAPIs = struct {
     pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         if (args.len < 1) {
             globalThis.throwNotEnoughArguments("code", 1, 0);
         }

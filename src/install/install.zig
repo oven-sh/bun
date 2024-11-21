@@ -3193,7 +3193,7 @@ pub const PackageManager = struct {
                                             };
 
                                             if (PackageManager.verbose_install and manager.pendingTaskCount() > 0) {
-                                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.get().pendingTaskCount()});
+                                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{closure.manager.pendingTaskCount()});
                                             }
                                         }
 
@@ -4352,7 +4352,7 @@ pub const PackageManager = struct {
         try network_task.forTarball(
             this.allocator,
             &.{
-                .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
+                .package_manager = this,
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(
                     this.lockfile.str(&package.name),
                     *FileSystem.FilenameStore,
@@ -4765,7 +4765,7 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
-            .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
+            .package_manager = this,
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.package_manifest,
             .request = .{
@@ -4787,7 +4787,7 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
-            .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
+            .package_manager = this,
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.extract,
             .request = .{
@@ -4814,7 +4814,7 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
-            .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
+            .package_manager = this,
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.git_clone,
             .request = .{
@@ -4862,7 +4862,7 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
-            .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
+            .package_manager = this,
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.git_checkout,
             .request = .{
@@ -4915,13 +4915,13 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
-            .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
+            .package_manager = this,
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.local_tarball,
             .request = .{
                 .local_tarball = .{
                     .tarball = .{
-                        .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
+                        .package_manager = this,
                         .name = strings.StringOrTinyString.initAppendIfNeeded(
                             name,
                             *FileSystem.FilenameStore,
@@ -4964,7 +4964,6 @@ pub const PackageManager = struct {
         var printer = Lockfile.Printer{
             .lockfile = this.lockfile,
             .options = this.options,
-            .manager = this,
         };
 
         var tmpname_buf: [512]u8 = undefined;
@@ -5293,7 +5292,7 @@ pub const PackageManager = struct {
 
                                     var network_task = this.getNetworkTask();
                                     network_task.* = .{
-                                        .package_manager = PackageManager.get(), // https://github.com/ziglang/zig/issues/14005
+                                        .package_manager = this,
                                         .callback = undefined,
                                         .task_id = task_id,
                                         .allocator = this.allocator,
@@ -12379,7 +12378,7 @@ pub const PackageManager = struct {
                         if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.monotonic)});
                     }
 
-                    PackageManager.get().sleep();
+                    this.manager.sleep();
                 }
 
                 const optional = entry.optional;
@@ -12421,7 +12420,7 @@ pub const PackageManager = struct {
                     }
                 }
 
-                PackageManager.get().sleep();
+                this.manager.sleep();
             }
         }
 
@@ -13818,8 +13817,11 @@ pub const PackageManager = struct {
                             return true;
                         }
 
-                        if (PackageManager.verbose_install and PackageManager.get().pendingTaskCount() > 0) {
-                            if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.get().pendingTaskCount()});
+                        if (PackageManager.verbose_install and closure.manager.pendingTaskCount() > 0) {
+                            const pending_task_count = closure.manager.pendingTaskCount();
+                            if (pending_task_count > 0 and PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) {
+                                Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{pending_task_count});
+                            }
                         }
 
                         return closure.manager.pendingTaskCount() == 0 and closure.manager.hasNoMorePendingLifecycleScripts();
@@ -14717,12 +14719,11 @@ pub const PackageManager = struct {
                     .options = manager.options,
                     .updates = manager.update_requests,
                     .successfully_installed = install_summary.successfully_installed,
-                    .manager = manager,
                 };
 
                 switch (Output.enable_ansi_colors) {
                     inline else => |enable_ansi_colors| {
-                        try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), enable_ansi_colors, log_level);
+                        try Lockfile.Printer.Tree.print(&printer, manager, Output.WriterType, Output.writer(), enable_ansi_colors, log_level);
                     },
                 }
 

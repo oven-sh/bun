@@ -1194,8 +1194,6 @@ pub const Printer = struct {
     options: PackageManager.Options,
     successfully_installed: ?Bitset = null,
 
-    manager: ?*PackageManager,
-
     updates: []const PackageManager.UpdateRequest = &[_]PackageManager.UpdateRequest{},
 
     pub const Format = enum { yarn };
@@ -1315,7 +1313,6 @@ pub const Printer = struct {
         var printer = Printer{
             .lockfile = lockfile,
             .options = options,
-            .manager = null,
         };
 
         switch (format) {
@@ -1328,6 +1325,7 @@ pub const Printer = struct {
     pub const Tree = struct {
         fn printInstalledWorkspaceSection(
             this: *const Printer,
+            manager: *PackageManager,
             comptime Writer: type,
             writer: Writer,
             comptime enable_ansi_colors: bool,
@@ -1351,7 +1349,7 @@ pub const Printer = struct {
 
             // find the updated packages
             for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
-                switch (shouldPrintPackageInstall(this, @intCast(dep_id), installed, id_map)) {
+                switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map)) {
                     .yes, .no, .@"return" => {},
                     .update => |update_info| {
                         printed_new_install.* = true;
@@ -1373,7 +1371,7 @@ pub const Printer = struct {
             }
 
             for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
-                switch (shouldPrintPackageInstall(this, @intCast(dep_id), installed, id_map)) {
+                switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map)) {
                     .@"return" => return,
                     .yes => {},
                     .no, .update => continue,
@@ -1398,7 +1396,7 @@ pub const Printer = struct {
                     printed_update = false;
                     try writer.writeAll("\n");
                 }
-                try printInstalledPackage(this, &dep, package_id, enable_ansi_colors, Writer, writer);
+                try printInstalledPackage(this, manager, &dep, package_id, enable_ansi_colors, Writer, writer);
             }
         }
 
@@ -1418,6 +1416,7 @@ pub const Printer = struct {
 
         fn shouldPrintPackageInstall(
             this: *const Printer,
+            manager: *PackageManager,
             dep_id: DependencyID,
             installed: *const Bitset,
             id_map: ?[]DependencyID,
@@ -1444,22 +1443,20 @@ pub const Printer = struct {
 
             if (!installed.isSet(package_id)) return .no;
 
-            if (this.manager) |manager| {
-                const resolution = this.lockfile.packages.items(.resolution)[package_id];
-                if (resolution.tag == .npm) {
-                    const name = dependency.name.slice(this.lockfile.buffers.string_bytes.items);
-                    if (manager.updating_packages.get(name)) |entry| {
-                        if (entry.original_version) |original_version| {
-                            if (!original_version.eql(resolution.value.npm.version)) {
-                                return .{
-                                    .update = .{
-                                        .version = original_version,
-                                        .version_buf = entry.original_version_string_buf,
-                                        .resolution = resolution,
-                                        .dependency_id = dep_id,
-                                    },
-                                };
-                            }
+            const resolution = this.lockfile.packages.items(.resolution)[package_id];
+            if (resolution.tag == .npm) {
+                const name = dependency.name.slice(this.lockfile.buffers.string_bytes.items);
+                if (manager.updating_packages.get(name)) |entry| {
+                    if (entry.original_version) |original_version| {
+                        if (!original_version.eql(resolution.value.npm.version)) {
+                            return .{
+                                .update = .{
+                                    .version = original_version,
+                                    .version_buf = entry.original_version_string_buf,
+                                    .resolution = resolution,
+                                    .dependency_id = dep_id,
+                                },
+                            };
                         }
                     }
                 }
@@ -1497,6 +1494,7 @@ pub const Printer = struct {
 
         fn printInstalledPackage(
             this: *const Printer,
+            manager: *PackageManager,
             dependency: *const Dependency,
             package_id: PackageID,
             comptime enable_ansi_colors: bool,
@@ -1508,27 +1506,25 @@ pub const Printer = struct {
             const resolution: Resolution = packages_slice.items(.resolution)[package_id];
             const name = dependency.name.slice(string_buf);
 
-            if (this.manager) |manager| {
-                const package_name = packages_slice.items(.name)[package_id].slice(string_buf);
-                if (manager.formatLaterVersionInCache(package_name, dependency.name_hash, resolution)) |later_version_fmt| {
-                    const fmt = comptime brk: {
-                        if (enable_ansi_colors) {
-                            break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
-                        } else {
-                            break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
-                        }
-                    };
-                    try writer.print(
-                        fmt,
-                        .{
-                            name,
-                            resolution.fmt(string_buf, .posix),
-                            later_version_fmt,
-                        },
-                    );
+            const package_name = packages_slice.items(.name)[package_id].slice(string_buf);
+            if (manager.formatLaterVersionInCache(package_name, dependency.name_hash, resolution)) |later_version_fmt| {
+                const fmt = comptime brk: {
+                    if (enable_ansi_colors) {
+                        break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
+                    } else {
+                        break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
+                    }
+                };
+                try writer.print(
+                    fmt,
+                    .{
+                        name,
+                        resolution.fmt(string_buf, .posix),
+                        later_version_fmt,
+                    },
+                );
 
-                    return;
-                }
+                return;
             }
 
             const fmt = comptime brk: {
@@ -1552,6 +1548,7 @@ pub const Printer = struct {
         /// - Prints a leading and trailing blank newline with diffs
         pub fn print(
             this: *const Printer,
+            manager: *PackageManager,
             comptime Writer: type,
             writer: Writer,
             comptime enable_ansi_colors: bool,
@@ -1591,7 +1588,7 @@ pub const Printer = struct {
                     for (workspaces_to_print.items) |workspace_dep_id| {
                         const workspace_package_id = resolutions_buffer[workspace_dep_id];
                         for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
-                            switch (shouldPrintPackageInstall(this, @intCast(dep_id), installed, id_map)) {
+                            switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map)) {
                                 .yes => found_workspace_to_print = true,
                                 else => {},
                             }
@@ -1600,6 +1597,7 @@ pub const Printer = struct {
 
                     try printInstalledWorkspaceSection(
                         this,
+                        manager,
                         Writer,
                         writer,
                         enable_ansi_colors,
@@ -1613,6 +1611,7 @@ pub const Printer = struct {
                     for (workspaces_to_print.items) |workspace_dep_id| {
                         try printInstalledWorkspaceSection(
                             this,
+                            manager,
                             Writer,
                             writer,
                             enable_ansi_colors,
@@ -1626,7 +1625,7 @@ pub const Printer = struct {
                 } else {
                     // just print installed packages for the current workspace
                     var workspace_package_id: DependencyID = 0;
-                    if (PackageManager.get().workspace_name_hash) |workspace_name_hash| {
+                    if (manager.workspace_name_hash) |workspace_name_hash| {
                         for (resolutions_list[0].begin()..resolutions_list[0].end()) |dep_id| {
                             const dep = dependencies_buffer[dep_id];
                             if (dep.behavior.isWorkspace() and dep.name_hash == workspace_name_hash) {
@@ -1638,6 +1637,7 @@ pub const Printer = struct {
 
                     try printInstalledWorkspaceSection(
                         this,
+                        manager,
                         Writer,
                         writer,
                         enable_ansi_colors,
@@ -1732,7 +1732,6 @@ pub const Printer = struct {
 
                         {
                             const fmt = comptime Output.prettyFmt("<r> <d>- <r><b>{s}<r>\n", enable_ansi_colors);
-                            const manager = PackageManager.get();
 
                             if (manager.track_installed_bin == .pending) {
                                 if (iterator.next() catch null) |bin_name| {
@@ -3862,7 +3861,7 @@ pub const Package = extern struct {
 
                                 var workspace = Package{};
 
-                                const json = PackageManager.get().workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
+                                const json = pm.workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
 
                                 try workspace.parseWithJSON(
                                     to_lockfile,
@@ -4817,7 +4816,7 @@ pub const Package = extern struct {
                         total_dependencies_count += try processWorkspaceNamesArray(
                             &workspace_names,
                             allocator,
-                            &PackageManager.get().workspace_package_json_cache,
+                            &pm.workspace_package_json_cache,
                             log,
                             arr,
                             &source,
@@ -4841,7 +4840,7 @@ pub const Package = extern struct {
                                     total_dependencies_count += try processWorkspaceNamesArray(
                                         &workspace_names,
                                         allocator,
-                                        &PackageManager.get().workspace_package_json_cache,
+                                        &pm.workspace_package_json_cache,
                                         log,
                                         packages_query.data.e_array,
                                         &source,
@@ -5848,7 +5847,7 @@ const Buffers = struct {
             if (comptime Type == @TypeOf(this.dependencies)) {
                 external_dependency_list_ = try readArray(stream, allocator, std.ArrayListUnmanaged(Dependency.External));
 
-                if (PackageManager.get().options.log_level.isVerbose()) {
+                if (pm.options.log_level.isVerbose()) {
                     Output.prettyErrorln("Loaded {d} {s}", .{ external_dependency_list_.items.len, name });
                 }
             } else if (comptime Type == @TypeOf(this.trees)) {
@@ -5862,7 +5861,7 @@ const Buffers = struct {
                 }
             } else {
                 @field(this, name) = try readArray(stream, allocator, Type);
-                if (PackageManager.get().options.log_level.isVerbose()) {
+                if (pm.options.log_level.isVerbose()) {
                     Output.prettyErrorln("Loaded {d} {s}", .{ @field(this, name).items.len, name });
                 }
             }

@@ -14929,8 +14929,8 @@ pub const bun_install_js_bindings = struct {
         var log = logger.Log.init(allocator);
         defer log.deinit();
 
-        const args = callFrame.arguments(1).slice();
-        const cwd = args[0].toSliceOrNull(globalObject) orelse return .zero;
+        const args = callFrame.arguments_old(1).slice();
+        const cwd = try args[0].toSliceOrNull(globalObject);
         defer cwd.deinit();
 
         const lockfile_path = Path.joinAbsStringZ(cwd.slice(), &[_]string{"bun.lockb"}, .auto);

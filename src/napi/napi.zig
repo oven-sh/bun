@@ -1426,94 +1426,129 @@ pub const ThreadSafeFunction = struct {
     /// prevent it from being destroyed.
     poll_ref: Async.KeepAlive,
 
-    thread_count: usize = 0,
-    owning_thread_lock: Lock = .{},
+    // User implementation error can cause this number to go negative.
+    thread_count: std.atomic.Value(i64) = std.atomic.Value(i64).init(0),
+    lock: std.Thread.Mutex = .{},
     event_loop: *JSC.EventLoop,
     tracker: JSC.AsyncTaskTracker,
 
     env: napi_env,
 
     finalizer: Finalizer = Finalizer{ .fun = null, .data = null },
-    channel: Queue,
+    queue: Queue = .{ .unsized = .{} },
 
     ctx: ?*anyopaque = null,
 
     callback: Callback = undefined,
+    dispatch_state: DispatchState.Atomic = DispatchState.Atomic.init(.{}),
+    blocking_condvar: std.Thread.Condition = .{},
+    closing: std.atomic.Value(ClosingState) = std.atomic.Value(ClosingState).init(.not_closing),
 
-    const ThreadSafeFunctionTask = JSC.AnyTask.New(@This(), call);
-    pub const Queue = union(enum) {
-        sized: Channel(?*anyopaque, .Slice),
-        unsized: Channel(?*anyopaque, .Dynamic),
+    const ClosingState = enum {
+        not_closing,
+        closing,
+        closed,
+    };
 
-        pub fn isClosed(this: *const @This()) bool {
-            return @atomicLoad(
-                bool,
-                switch (this.*) {
-                    .sized => &this.sized.is_closed,
-                    .unsized => &this.unsized.is_closed,
-                },
-                .seq_cst,
-            );
+    pub const DispatchState = enum {
+        idle,
+        running,
+        pending,
+
+        pub const Atomic = std.atomic.Value(DispatchState);
+    };
+
+    pub const Queue = struct {
+        data: std.fifo.LinearFifo(?*anyopaque, .Dynamic),
+        max_queue_size: usize,
+        count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+        pub fn init(max_queue_size: usize, allocator: std.mem.Allocator) Queue {
+            return .{ .data = std.fifo.LinearFifo(?*anyopaque, .Dynamic).init(allocator), .max_queue_size = max_queue_size };
         }
 
-        pub fn close(this: *@This()) void {
-            switch (this.*) {
-                .sized => this.sized.close(),
-                .unsized => this.unsized.close(),
-            }
+        pub fn deinit(this: *Queue) void {
+            this.data.deinit();
         }
 
-        pub fn init(size: usize, allocator: std.mem.Allocator) @This() {
-            switch (size) {
-                0 => {
-                    return .{
-                        .unsized = Channel(?*anyopaque, .Dynamic).init(allocator),
-                    };
-                },
-                else => {
-                    const slice = allocator.alloc(?*anyopaque, size) catch unreachable;
-                    return .{
-                        .sized = Channel(?*anyopaque, .Slice).init(slice),
-                    };
-                },
-            }
-        }
-
-        pub fn writeItem(this: *@This(), value: ?*anyopaque) !void {
-            switch (this.*) {
-                .sized => try this.sized.writeItem(value),
-                .unsized => try this.unsized.writeItem(value),
-            }
-        }
-
-        pub fn readItem(this: *@This()) !?*anyopaque {
-            return switch (this.*) {
-                .sized => try this.sized.readItem(),
-                .unsized => try this.unsized.readItem(),
-            };
-        }
-
-        pub fn tryWriteItem(this: *@This(), value: ?*anyopaque) !bool {
-            return switch (this.*) {
-                .sized => try this.sized.tryWriteItem(value),
-                .unsized => try this.unsized.tryWriteItem(value),
-            };
-        }
-
-        pub fn tryReadItem(this: *@This()) !??*anyopaque {
-            return switch (this.*) {
-                .sized => try this.sized.tryReadItem(),
-                .unsized => try this.unsized.tryReadItem(),
-            };
+        pub fn isBlocked(this: *const Queue) bool {
+            return this.max_queue_size > 0 and this.count.load(.relaxed) >= this.max_queue_size;
         }
     };
 
-    pub fn call(this: *ThreadSafeFunction) void {
-        const task = this.channel.tryReadItem() catch null orelse return;
+    pub fn broadcast(this: *ThreadSafeFunction) void {
+        this.blocking_condvar.signal();
+    }
+
+    const Sized = std.fifo.LinearFifo(?*anyopaque, .Slice);
+    const Unsized = std.fifo.LinearFifo(?*anyopaque, .Dynamic);
+
+    pub fn onDispatch(this: *ThreadSafeFunction) void {
+        if (this.closing.load(.relaxed) == .closed) {
+            this.finalize(this);
+            return;
+        }
+
+        while (true) {
+            this.dispatch_state.store(.running, .relaxed);
+            if (this.dispatchOne()) {
+                this.dispatch_state.store(.pending, .relaxed);
+            } else {
+                this.dispatch_state.store(.idle, .relaxed);
+                break;
+            }
+        }
+    }
+
+    pub fn isClosing(this: *const ThreadSafeFunction) bool {
+        return this.closing.load(.monotonic) != .not_closing;
+    }
+
+    fn maybeQueueFinalizer(this: *ThreadSafeFunction) void {
+        switch (this.closing.swap(.closed, .relaxed)) {
+            .not_closing => {},
+            .closing => {
+                this.event_loop.enqueueTask(JSC.Task.init(this));
+            },
+            .closed => {
+                // already scheduled.
+            },
+        }
+    }
+
+    pub fn dispatchOne(this: *ThreadSafeFunction) bool {
+        const has_more, const task = brk: {
+            this.lock.lock();
+            defer this.lock.unlock();
+            const was_blocked = this.queue.isBlocked();
+            const t = this.queue.data.readItem() orelse {
+                if (this.thread_count == 0) {
+                    if (this.queue.max_queue_size > 0) {
+                        this.blocking_condvar.broadcast();
+                    }
+                    this.maybeQueueFinalizer();
+                }
+                return false;
+            };
+            _ = this.queue.count.fetchSub(1, .relaxed);
+
+            if (was_blocked and !this.queue.isBlocked()) {
+                this.blocking_condvar.broadcast();
+            }
+            break :brk .{ !this.isClosing(), t };
+        };
+
+        this.call(task, has_more);
+
+        return has_more;
+    }
+
+    pub fn call(this: *ThreadSafeFunction, task: *anyopaque, has_more: bool) void {
         const globalObject = this.env;
 
         this.tracker.willDispatch(globalObject);
         defer this.tracker.didDispatch(globalObject);
+        const event_loop = this.event_loop;
 
         switch (this.callback) {
             .js => |js_function| {
@@ -1523,6 +1558,10 @@ pub const ThreadSafeFunction = struct {
 
                 _ = js_function.call(globalObject, .undefined, &.{}) catch |err|
                     globalObject.reportActiveExceptionAsUnhandled(err);
+
+                if (has_more) {
+                    event_loop.drainMicrotasks(globalObject);
+                }
             },
             .c => |cb| {
                 if (comptime bun.Environment.isDebug) {
@@ -1534,20 +1573,54 @@ pub const ThreadSafeFunction = struct {
                 const handle_scope = NapiHandleScope.open(globalObject, false);
                 defer if (handle_scope) |scope| scope.close(globalObject);
                 cb.napi_threadsafe_function_call_js(globalObject, napi_value.create(globalObject, cb.js), this.ctx, task);
+
+                if (has_more) {
+                    event_loop.drainMicrotasks(globalObject);
+                }
             },
         }
     }
 
-    pub fn enqueue(this: *ThreadSafeFunction, ctx: ?*anyopaque, block: bool) !void {
+    pub fn enqueue(this: *ThreadSafeFunction, ctx: ?*anyopaque, block: bool) !napi_status {
         if (block) {
-            try this.channel.writeItem(ctx);
+            while (this.queue.isBlocked()) {
+                this.blocking_condvar.wait(&this.lock);
+            }
         } else {
-            if (!try this.channel.tryWriteItem(ctx)) {
-                return error.WouldBlock;
+            if (this.queue.isBlocked()) {
+                return .queue_full;
             }
         }
 
-        this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
+        this.lock.unlock();
+        defer this.lock.unlock();
+
+        if (this.isClosing()) {
+            if (this.thread_count.load(.relaxed) == 0) {
+                return .invalid_arg;
+            }
+            _ = this.thread_count.fetchSub(1, .relaxed);
+            return .closing;
+        }
+
+        _ = this.queue.count.fetchAdd(1, .relaxed);
+        try this.queue.data.writeItem(ctx);
+        this.scheduleDispatch();
+        return .ok;
+    }
+
+    fn scheduleDispatch(this: *ThreadSafeFunction) void {
+        switch (this.dispatch_state.swap(.pending, .monotonic)) {
+            .idle => {
+                this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
+            },
+            .running => {
+                // it will check if it has more work to do
+            },
+            .pending => {
+                // we've already scheduled it to run
+            },
+        }
     }
 
     pub fn finalize(opaq: *anyopaque) void {
@@ -1567,6 +1640,7 @@ pub const ThreadSafeFunction = struct {
                 this.callback.c.js.unprotect();
             }
         }
+        this.queue.deinit();
         bun.default_allocator.destroy(this);
     }
 
@@ -1578,34 +1652,36 @@ pub const ThreadSafeFunction = struct {
         this.poll_ref.unrefConcurrentlyFromEventLoop(this.event_loop);
     }
 
-    pub fn acquire(this: *ThreadSafeFunction) !void {
-        this.owning_thread_lock.lock();
-        defer this.owning_thread_lock.unlock();
-        if (this.channel.isClosed())
-            return error.Closed;
-        this.thread_count += 1;
+    pub fn acquire(this: *ThreadSafeFunction) napi_status {
+        this.lock.lock();
+        defer this.lock.unlock();
+        if (this.isClosing()) {
+            return .closing;
+        }
+        _ = this.thread_count.fetchAdd(1, .relaxed);
+        return .ok;
     }
 
     pub fn release(this: *ThreadSafeFunction, mode: napi_threadsafe_function_release_mode) napi_status {
-        this.owning_thread_lock.lock();
-        defer this.owning_thread_lock.unlock();
+        this.lock.lock();
+        defer this.lock.unlock();
 
-        if (this.thread_count == 0) {
-            return invalidArg();
+        if (this.thread_count.load(.monotonic) < 0) {
+            return .invalid_arg;
         }
 
-        this.thread_count -= 1;
+        const remaining = this.thread_count.fetchSub(1, .relaxed);
 
-        if (this.channel.isClosed()) {
-            return .ok;
-        }
-
-        if (mode == .abort) {
-            this.channel.close();
-        }
-
-        if (mode == .abort or this.thread_count == 0) {
-            this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, finalize));
+        if (mode == .abort or remaining == 0) {
+            if (!this.isClosing()) {
+                if (mode == .abort) {
+                    this.closing.store(.closing, .relaxed);
+                    if (this.queue.max_queue_size > 0) {
+                        this.blocking_condvar.broadcast();
+                    }
+                }
+                this.scheduleDispatch();
+            }
         }
 
         return .ok;

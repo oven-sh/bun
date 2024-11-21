@@ -553,7 +553,7 @@ it("WebSocketServer should handle backpressure", async () => {
   }
 });
 
-it("Server should be able to send empty pings", async () => {
+it.only("Server should be able to send empty pings", async () => {
   // WebSocket frame creation function with masking
   function createWebSocketFrame(message: string) {
     const messageBuffer = Buffer.from(message);
@@ -600,7 +600,7 @@ it("Server should be able to send empty pings", async () => {
         incoming.on("message", value => {
           try {
             expect(value.toString()).toBe(helloMessage);
-            if (pingMessage) {
+            if (arguments.length > 1) {
               incoming.ping(pingMessage);
             } else {
               incoming.ping();
@@ -692,6 +692,17 @@ it("Server should be able to send empty pings", async () => {
   {
     // test without any payload
     const pingMessage = await checkPing("");
+    expect(pingMessage).toBe("");
+  }
+  {
+    // test with null payload
+    //@ts-ignore
+    const pingMessage = await checkPing("", null);
+    expect(pingMessage).toBe("");
+  }
+  {
+    // test with undefined payload
+    const pingMessage = await checkPing("", undefined);
     expect(pingMessage).toBe("");
   }
   {

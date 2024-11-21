@@ -1943,7 +1943,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             ctxLog("onResolve", .{});
 
-            const arguments = callframe.arguments(2);
+            const arguments = callframe.arguments_old(2);
             var ctx = arguments.ptr[1].asPromisePtr(@This());
             defer ctx.deref();
 
@@ -2088,7 +2088,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onReject(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             ctxLog("onReject", .{});
 
-            const arguments = callframe.arguments(2);
+            const arguments = callframe.arguments_old(2);
             const ctx = arguments.ptr[1].asPromisePtr(@This());
             const err = arguments.ptr[0];
             defer ctx.deref();
@@ -3305,7 +3305,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             streamLog("onResolveStream", .{});
-            var args = callframe.arguments(2);
+            var args = callframe.arguments_old(2);
             var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
             defer req.deref();
             req.handleResolveStream();
@@ -3313,7 +3313,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
         pub fn onRejectStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             streamLog("onRejectStream", .{});
-            const args = callframe.arguments(2);
+            const args = callframe.arguments_old(2);
             var req = args.ptr[args.len - 1].asPromisePtr(@This());
             const err = args.ptr[0];
             defer req.deref();
@@ -4767,7 +4767,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(4);
+        const args = callframe.arguments_old(4);
         if (args.len < 1) {
             log("publish()", .{});
             globalThis.throw("publish requires at least 1 argument", .{});
@@ -4852,7 +4852,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(4);
+        const args = callframe.arguments_old(4);
 
         if (args.len < 1) {
             log("publish()", .{});
@@ -4915,7 +4915,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(4);
+        const args = callframe.arguments_old(4);
 
         if (args.len < 1) {
             log("publishBinary()", .{});
@@ -5068,7 +5068,7 @@ pub const ServerWebSocket = struct {
         // make sure the `this` value is up to date.
         this_value: JSC.JSValue,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         this.this_value = this_value;
 
         if (args.len < 1) {
@@ -5106,7 +5106,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(2);
+        const args = callframe.arguments_old(2);
 
         if (args.len < 1) {
             log("send()", .{});
@@ -5180,7 +5180,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(2);
+        const args = callframe.arguments_old(2);
 
         if (args.len < 1) {
             log("sendText()", .{});
@@ -5264,7 +5264,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(2);
+        const args = callframe.arguments_old(2);
 
         if (args.len < 1) {
             log("sendBinary()", .{});
@@ -5360,7 +5360,7 @@ pub const ServerWebSocket = struct {
         comptime name: string,
         comptime opcode: uws.Opcode,
     ) JSValue {
-        const args = callframe.arguments(2);
+        const args = callframe.arguments_old(2);
 
         if (this.isClosed()) {
             return JSValue.jsNumber(0);
@@ -5464,7 +5464,7 @@ pub const ServerWebSocket = struct {
         // Since close() can lead to the close() callback being called, let's always ensure the `this` value is up to date.
         this_value: JSC.JSValue,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(2);
+        const args = callframe.arguments_old(2);
         log("close()", .{});
         this.this_value = this_value;
 
@@ -5506,7 +5506,7 @@ pub const ServerWebSocket = struct {
         this_value: JSC.JSValue,
     ) bun.JSError!JSValue {
         _ = globalThis;
-        const args = callframe.arguments(2);
+        const args = callframe.arguments_old(2);
         _ = args;
         log("terminate()", .{});
 
@@ -5577,7 +5577,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         if (args.len < 1) {
             globalThis.throw("subscribe requires at least 1 argument", .{});
             return .zero;
@@ -5614,7 +5614,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         if (args.len < 1) {
             globalThis.throw("unsubscribe requires at least 1 argument", .{});
             return .zero;
@@ -5651,7 +5651,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         if (args.len < 1) {
             globalThis.throw("isSubscribed requires at least 1 argument", .{});
             return .zero;
@@ -5754,7 +5754,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doTimeout = JSC.wrapInstanceMethod(ThisServer, "timeout", false);
 
         pub fn doSubscriberCount(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments = callframe.arguments(1);
+            const arguments = callframe.arguments_old(1);
             if (arguments.len < 1) {
                 return globalThis.throwNotEnoughArguments("subscriberCount", 1, 0);
             }
@@ -6076,7 +6076,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn onReload(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments = callframe.arguments(1).slice();
+            const arguments = callframe.arguments_old(1).slice();
             if (arguments.len < 1) {
                 return globalThis.throwNotEnoughArguments("reload", 1, 0);
             }
@@ -6102,7 +6102,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             callframe: *JSC.CallFrame,
         ) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
-            const arguments = callframe.arguments(2).slice();
+            const arguments = callframe.arguments_old(2).slice();
             if (arguments.len == 0) {
                 const fetch_error = WebCore.Fetch.fetch_error_no_args;
                 return JSPromise.rejectedPromiseValue(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));

@@ -1564,7 +1564,7 @@ pub fn Bun__canonicalizeIP_(
 ) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
 
-    const arguments = callframe.arguments(1);
+    const arguments = callframe.arguments_old(1);
 
     if (arguments.len == 0) {
         globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});

@@ -6753,7 +6753,7 @@ pub const CallFrame = opaque {
         };
     }
 
-    pub fn arguments(self: *const CallFrame, comptime max: usize) Arguments(max) {
+    pub fn arguments_old(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const len = self.argumentsCount();
         const ptr = self.argumentsPtr();
         return switch (@as(u4, @min(len, max))) {

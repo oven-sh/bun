@@ -1,4 +1,4 @@
-import { file, listen, Socket, spawn } from "bun";
+import { file, listen, Socket, spawn, write } from "bun";
 import {
   afterAll,
   afterEach,
@@ -2048,95 +2048,154 @@ it("should handle matching workspaces from dependencies", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
-it("should edit package json correctly with git dependencies", async () => {
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
-  const package_json = JSON.stringify({
-    name: "foo",
-    version: "0.0.1",
-    dependencies: {},
+describe("git dependnecy package.json editing", () => {
+  test("add two git dependencies", async () => {
+    await write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+      }),
+    );
+
+    console.log({ package_dir, execPath: bunExe() });
+
+    let { stderr, exited } = spawn({
+      cmd: [bunExe(), "add", "dylan-conway/install-test-2", "github:dylan-conway/install-test-3"],
+      cwd: package_dir,
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "@install/test-2": "dylan-conway/install-test-2",
+        "install-test-3": "github:dylan-conway/install-test-3",
+      },
+    });
+
+    expect(await exited).toBe(0);
+
+    // installing again doesn't duplicate
+    ({ stderr, exited } = spawn({
+      cmd: [
+        bunExe(),
+        "i",
+        "github:dylan-conway/install-test-3",
+        "dylan-conway/install-test-2",
+        "dylan-conway/install-test-4",
+      ],
+      cwd: package_dir,
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "@install/test-2": "dylan-conway/install-test-2",
+        "install-test-3": "github:dylan-conway/install-test-3",
+        "install-test-4": "dylan-conway/install-test-4",
+      },
+    });
   });
-  await writeFile(join(package_dir, "package.json"), package_json);
-  var { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "i", "dylan-conway/install-test2"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
+
+  it("should edit package json correctly with git dependencies", async () => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    const package_json = JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {},
+    });
+    await writeFile(join(package_dir, "package.json"), package_json);
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "i", "dylan-conway/install-test2"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    var err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "install-test2": "dylan-conway/install-test2",
+      },
+    });
+    await writeFile(join(package_dir, "package.json"), package_json);
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "i", "dylan-conway/install-test2#HEAD"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+    err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "install-test2": "dylan-conway/install-test2#HEAD",
+      },
+    });
+    await writeFile(join(package_dir, "package.json"), package_json);
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "i", "github:dylan-conway/install-test2"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+    err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "install-test2": "github:dylan-conway/install-test2",
+      },
+    });
+    await writeFile(join(package_dir, "package.json"), package_json);
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "i", "github:dylan-conway/install-test2#HEAD"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+    err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "install-test2": "github:dylan-conway/install-test2#HEAD",
+      },
+    });
+    await access(join(package_dir, "bun.lockb"));
   });
-  var err = await new Response(stderr).text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("error:");
-  expect(await exited).toBe(0);
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "foo",
-    version: "0.0.1",
-    dependencies: {
-      "install-test2": "dylan-conway/install-test2",
-    },
-  });
-  await writeFile(join(package_dir, "package.json"), package_json);
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "i", "dylan-conway/install-test2#HEAD"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  }));
-  err = await new Response(stderr).text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("error:");
-  expect(await exited).toBe(0);
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "foo",
-    version: "0.0.1",
-    dependencies: {
-      "install-test2": "dylan-conway/install-test2#HEAD",
-    },
-  });
-  await writeFile(join(package_dir, "package.json"), package_json);
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "i", "github:dylan-conway/install-test2"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  }));
-  err = await new Response(stderr).text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("error:");
-  expect(await exited).toBe(0);
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "foo",
-    version: "0.0.1",
-    dependencies: {
-      "install-test2": "github:dylan-conway/install-test2",
-    },
-  });
-  await writeFile(join(package_dir, "package.json"), package_json);
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "i", "github:dylan-conway/install-test2#HEAD"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  }));
-  err = await new Response(stderr).text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("error:");
-  expect(await exited).toBe(0);
-  expect(await file(join(package_dir, "package.json")).json()).toEqual({
-    name: "foo",
-    version: "0.0.1",
-    dependencies: {
-      "install-test2": "github:dylan-conway/install-test2#HEAD",
-    },
-  });
-  await access(join(package_dir, "bun.lockb"));
 });
 
 it("should handle ^0.0.2-rc in dependencies", async () => {

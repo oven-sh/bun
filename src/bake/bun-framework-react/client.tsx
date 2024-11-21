@@ -209,7 +209,9 @@ function initCssMap() {
 function ensureCssIsReady(cssList: string[]) {
   const wait: Promise<void>[] = [];
   for (const href of cssList) {
+    console.log("check", href);
     const existing = cssFiles.get(href);
+    console.log("get", existing);
     if (existing) {
       const { promise } = existing;
       if (promise) {

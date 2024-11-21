@@ -43,3 +43,24 @@ devTest('css file with syntax error does not kill old styles', {
       await dev.fetch('/').expect(css_url);
   },
 });
+// devTest('css file with initial syntax error gets recovered', {
+//   framework: minimalFramework,
+//   files: {
+//     'routes/styles.css': `
+//       body {
+//         color: red;
+//     `,
+//     'routes/index.ts': `
+//       import { expect } from 'bun:test';
+//       import './styles.css';
+//       export default function (req, meta) {
+//         const input = req.json();
+//         expect(meta.styles).toHaveLength(input.len);
+//         return new Response('' + meta.styles[0]);
+//       }
+//     `,
+//   },
+//   async test(dev) {
+//     await dev.fetchJSON('/', { len: 1 }).expect('undefined');
+//   },
+// });

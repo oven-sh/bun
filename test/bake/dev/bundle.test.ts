@@ -16,16 +16,16 @@ devTest('import identifier doesnt get renamed', {
       }
     `,
   },
-  steps: [
-    Step.fetch('/').expect('Hello, 123, 987!'),
-    Step.write('db.ts', `export const abc = "456";`),
-    Step.fetch('/').expect('Hello, 123, 987!'),
-    Step.patch('routes/index.ts', {
+  async test(dev) {
+    await dev.fetch('/').expect('Hello, 123!');
+    await dev.write('db.ts', `export const abc = "456";`);
+    await dev.fetch('/').expect('Hello, 456!');
+    await dev.patch('routes/index.ts', {
       find: 'Hello',
       replace: 'Bun',
-    }),
-    Step.fetch('/').expect('Bun, 456, 987!'),
-  ],
+    });
+    await dev.fetch('/').expect('Bun, 456!');
+  },
 });
 devTest('symbol collision with import identifier', {
   framework: minimalFramework,
@@ -43,9 +43,9 @@ devTest('symbol collision with import identifier', {
       }
     `,
   },
-  steps: [
-    Step.fetch('/').expect('Hello, 123, 987!'),
-    Step.write('db.ts', `export const abc = "456";`),
-    Step.fetch('/').expect('Hello, 123, 987!'),
-  ],
+  async test(dev) {
+    await dev.fetch('/').expect('Hello, 123, 987!');
+    await dev.write('db.ts', `export const abc = "456";`);
+    await dev.fetch('/').expect('Hello, 456, 987!');
+  }
 });

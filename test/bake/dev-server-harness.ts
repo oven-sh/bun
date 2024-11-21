@@ -65,6 +65,16 @@ export class Dev {
     return new DevFetchPromise((resolve, reject) => fetch(new URL(url, this.baseUrl).toString(), init).then(resolve, reject));
   }
 
+  fetchJSON(url: string, object: any) {
+    return this.fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(object),
+    });
+  }
+
   write(file: string, contents: string) {
     const wait = this.waitForHotReload();
     // TODO: consider using IncomingMessageId.virtual_file_change to reduce theoretical flakiness.
@@ -260,10 +270,11 @@ export function devTest(description: string, options: DevServerTest) {
   // Capture the caller name as part of the test tempdir
   const callerLocation = snapshotCallerLocation();
   const caller = stackTraceFileName(callerLocation);
+  const jest = (Bun as any).jest(caller);
   assert(caller.startsWith(devTestRoot), "dev server tests must be in test/bake/dev");
   const basename = path.basename(caller, '.test' + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
-  test(`DevServer > ${basename}.${count}: ${description}`, async () => {
+  jest.test(`DevServer > ${basename}.${count}: ${description}`, async () => {
     const root = path.join(tempDir, basename + count);
     writeAll(root, options.files);
     if (options.files["bun.app.ts"] == undefined) {

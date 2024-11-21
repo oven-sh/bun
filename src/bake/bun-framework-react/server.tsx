@@ -58,12 +58,12 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
   // - Standard browser navigation
   // - Client-side navigation
   //
-  // For React, this means we will always perform `renderToReadableStream` to
-  // generate the RSC payload, but only generate HTML for the former of these
-  // rendering modes. This is signaled by `client.tsx` via the `Accept` header.
+  // For React, this means calling `renderToReadableStream` to generate the RSC
+  // payload, but only generate HTML for the former of these rendering modes.
+  // This is signaled by `client.tsx` via the `Accept` header.
   const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
 
-  // Do not render <link> tags if we are skipping SSR.
+  // Do not render <link> tags if the request is skipping SSR.
   const page = getPage(meta, skipSSR ? [] : meta.styles);
 
   // TODO: write a lightweight version of PassThrough
@@ -81,7 +81,17 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
   }
 
   // This renders Server Components to a ReadableStream "RSC Payload"
-  renderToPipeableStream(page, serverManifest).pipe(rscPayload);
+  let pipe;
+  const signal: MiniAbortSignal = { aborted: false, abort: null! };
+  ({ pipe, abort: signal.abort } = renderToPipeableStream(page, serverManifest, {
+    onError: (err) => {
+      if(signal.aborted) return;
+      console.error(err);
+    },
+    filterStackFrame: () => false,
+  }));
+  pipe(rscPayload)
+
   if (skipSSR) {
     return new Response(rscPayload as any, {
       status: 200,
@@ -89,8 +99,8 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
     });
   }
 
-  // Then the RSC payload is rendered into HTML
-  return new Response(await renderToHtml(rscPayload, meta.modules), {
+  // The RSC payload is rendered into HTML
+  return new Response(await renderToHtml(rscPayload, meta.modules, signal), {
     headers: {
       "Content-Type": "text/html; charset=utf8",
     },
@@ -143,3 +153,10 @@ export const contentTypeToStaticFile = {
   "text/html": "index.html",
   "text/x-component": "index.rsc",
 };
+
+/** Instead of using AbortController, this is used */
+export interface MiniAbortSignal {
+  aborted: boolean;
+  /** Caller must set `aborted` to true before calling. */
+  abort: () => void
+}

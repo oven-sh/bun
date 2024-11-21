@@ -703,7 +703,7 @@ fn ensureRouteIsBundled(
             .loaded => break,
         }
 
-        // this error is here to make sure the above is explicit and we are not looping accidentally
+        // this error is here to make sure there are no accidental loop exits
         @compileError("all branches above should `return`, `break` or `continue`");
     }
 
@@ -2664,9 +2664,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
             const values = g.bundled_files.values();
             for (paths) |path| {
                 const index = g.bundled_files.getIndex(path) orelse {
-                    // cannot enqueue because we don't know what targets to
-                    // bundle for. instead, a failing bundle must retrieve the
-                    // list of files and add them as stale.
+                    // Cannot enqueue because it's impossible to know what
+                    // targets to bundle for. Instead, a failing bundle must
+                    // retrieve the list of files and add them as stale.
                     continue;
                 };
                 g.stale_files.set(index);

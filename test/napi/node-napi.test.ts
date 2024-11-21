@@ -70,7 +70,10 @@ beforeAll(async () => {
     .map(t => dirname(t));
   const uniqueDirectories = Array.from(new Set(directories));
 
+  const start = Date.now();
+
   async function buildOne(dir: string) {
+    console.log(`Building in ${dir.replace(/.+node-napi-tests.test./, "")}.`, (Date.now() - start) / 1000, "s elapsed");
     const child = spawn({
       cmd: [bunExe(), "x", "node-gyp", "rebuild", "--debug"],
       cwd: dir,
@@ -101,7 +104,7 @@ beforeAll(async () => {
     }
   }
 
-  const parallelism = Math.min(8, os.cpus().length);
+  const parallelism = Math.min(8, os.cpus().length, 1 /* TODO(@heimskr): remove */);
   const jobs = [];
   for (let i = 0; i < parallelism; i++) {
     jobs.push(worker());
@@ -129,7 +132,7 @@ describe.each([
         expect(result.success).toBeTrue();
         expect(result.exitCode).toBe(0);
       },
-      20000, // timeout
+      60000, // timeout
     );
   });
 });

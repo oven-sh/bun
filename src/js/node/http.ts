@@ -1515,24 +1515,30 @@ class ClientRequest extends OutgoingMessage {
 
   _write(chunk, encoding, callback) {
     if (!this.#bodyChunks) {
-      this.#bodyChunks = chunk instanceof Buffer ? [chunk] : [chunk.chunk];
+      this.#bodyChunks = [chunk];
       process.nextTick(callback);
       // callback();
       return;
     }
-    this.#bodyChunks.push(chunk instanceof Buffer ? chunk : chunk.chunk);
+    this.#bodyChunks.push(chunk);
     process.nextTick(callback);
     // callback();
   }
 
   _writev(chunks, callback) {
+    // The weird unwrapped chunks is because when we have
+    // to put a write into the Writable's buffer, those writes
+    // are stored as an object like { chunk, encoding, callback }
+    // so when that buffer is cleared (_writev is called with the buffer)
+    // we get all of those objects. So we unwrap them
+    const unwrappedChunks = chunks.map(c => (c instanceof Buffer ? c : c.chunk));
     if (!this.#bodyChunks) {
-      this.#bodyChunks = chunks.map(c => (c instanceof Buffer ? c : c.chunk));
+      this.#bodyChunks = unwrappedChunks;
       process.nextTick(callback);
       // callback();
       return;
     }
-    this.#bodyChunks.push(...chunks.map(c => (c instanceof Buffer ? c : c.chunk)));
+    this.#bodyChunks.push(...unwrappedChunks);
     process.nextTick(callback);
     // callback();
   }
@@ -1566,8 +1572,6 @@ class ClientRequest extends OutgoingMessage {
     if (this.#signal?.aborted) {
       this[kAbortController].abort();
     }
-
-    console.log(this.#bodyChunks);
 
     var method = this.#method,
       body = this.#bodyChunks?.length === 1 ? this.#bodyChunks[0] : Buffer.concat(this.#bodyChunks || []);

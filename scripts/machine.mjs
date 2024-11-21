@@ -964,9 +964,6 @@ async function getGithubOrgSshKeys(organization) {
   return sshKeys.flat();
 }
 
-console.log(await getGithubOrgSshKeys("oven-sh"));
-process.exit(0);
-
 /**
  * @typedef SshOptions
  * @property {string} hostname

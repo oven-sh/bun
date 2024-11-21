@@ -623,7 +623,7 @@ pub const FFI = struct {
     };
 
     pub fn Bun__FFI__cc(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(1).slice();
+        const arguments = callframe.arguments_old(1).slice();
         if (arguments.len == 0 or !arguments[0].isObject()) {
             return globalThis.throwInvalidArguments2("Expected object", .{});
         }
@@ -1409,7 +1409,7 @@ pub const FFI = struct {
             .threadsafe = threadsafe,
         };
 
-        if (value.get(global, "ptr")) |ptr| {
+        if (try value.get(global, "ptr")) |ptr| {
             if (ptr.isNumber()) {
                 const num = ptr.asPtrAddress();
                 if (num > 0)

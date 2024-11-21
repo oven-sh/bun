@@ -402,14 +402,11 @@ fn initServerRuntime(dev: *DevServer) !void {
         @panic("Server runtime failed to start. The above error is always a bug in Bun");
     };
 
-    if (!interface.isObject())
-        @panic("Internal assertion failure: expected interface from HMR runtime to be an object");
-    const fetch_function: JSValue = interface.get(dev.vm.global, "handleRequest") orelse
-        @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
+    if (!interface.isObject()) @panic("Internal assertion failure: expected interface from HMR runtime to be an object");
+    const fetch_function: JSValue = try interface.get(dev.vm.global, "handleRequest") orelse @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
     bun.assert(fetch_function.isCallable(dev.vm.jsc));
     dev.server_fetch_function_callback = JSC.Strong.create(fetch_function, dev.vm.global);
-    const register_update = interface.get(dev.vm.global, "registerUpdate") orelse
-        @panic("Internal assertion failure: expected interface from HMR runtime to contain registerUpdate");
+    const register_update = try interface.get(dev.vm.global, "registerUpdate") orelse @panic("Internal assertion failure: expected interface from HMR runtime to contain registerUpdate");
     dev.server_register_update_callback = JSC.Strong.create(register_update, dev.vm.global);
 
     fetch_function.ensureStillAlive();

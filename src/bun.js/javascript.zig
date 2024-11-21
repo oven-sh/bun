@@ -438,7 +438,7 @@ pub fn Bun__Process__send_(
     callFrame: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
-    var message, var handle, var options_, var callback = callFrame.arguments(4).ptr;
+    var message, var handle, var options_, var callback = callFrame.arguments_old(4).ptr;
 
     if (message == .zero) message = .undefined;
     if (handle == .zero) handle = .undefined;
@@ -458,7 +458,7 @@ pub fn Bun__Process__send_(
 
     const S = struct {
         fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments_ = callframe.arguments(1).slice();
+            const arguments_ = callframe.arguments_old(1).slice();
             const ex = arguments_[0];
             VirtualMachine.Process__emitErrorEvent(globalThis, ex);
             return .undefined;
@@ -2558,7 +2558,8 @@ pub const VirtualMachine = struct {
         query_string: ?*ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false) catch {};
+        // TODO: handle js exception
     }
 
     pub fn resolveFilePathForAPI(
@@ -2569,7 +2570,8 @@ pub const VirtualMachine = struct {
         query_string: ?*ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true) catch {};
+        // TODO: handle js exception
     }
 
     pub fn resolve(
@@ -2580,7 +2582,8 @@ pub const VirtualMachine = struct {
         query_string: ?*ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true) catch {};
+        // TODO: handle js exception
     }
 
     fn normalizeSource(source: []const u8) []const u8 {
@@ -2591,15 +2594,7 @@ pub const VirtualMachine = struct {
         return source;
     }
 
-    fn resolveMaybeNeedsTrailingSlash(
-        res: *ErrorableString,
-        global: *JSGlobalObject,
-        specifier: bun.String,
-        source: bun.String,
-        query_string: ?*ZigString,
-        is_esm: bool,
-        comptime is_a_file_path: bool,
-    ) void {
+    fn resolveMaybeNeedsTrailingSlash(res: *ErrorableString, global: *JSGlobalObject, specifier: bun.String, source: bun.String, query_string: ?*ZigString, is_esm: bool, comptime is_a_file_path: bool) bun.JSError!void {
         if (is_a_file_path and specifier.length() > comptime @as(u32, @intFromFloat(@trunc(@as(f64, @floatFromInt(bun.MAX_PATH_BYTES)) * 1.5)))) {
             const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
             defer specifier_utf8.deinit();
@@ -2637,7 +2632,7 @@ pub const VirtualMachine = struct {
                 else
                     specifier_utf8.slice()[namespace.len + 1 .. specifier_utf8.len];
 
-                if (plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.fromUTF8(after_namespace), source, .bun)) |resolved_path| {
+                if (try plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.fromUTF8(after_namespace), source, .bun)) |resolved_path| {
                     res.* = resolved_path;
                     return;
                 }
@@ -4168,7 +4163,7 @@ pub const VirtualMachine = struct {
                     IPC.log("Received IPC internal message from parent", .{});
                     event_loop.enter();
                     defer event_loop.exit();
-                    node_cluster_binding.handleInternalMessageChild(globalThis, data);
+                    node_cluster_binding.handleInternalMessageChild(globalThis, data) catch return;
                 },
             }
         }
@@ -4724,7 +4719,7 @@ comptime {
 }
 
 pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-    const args = callframe.arguments(1).slice();
+    const args = callframe.arguments_old(1).slice();
     if (args.len < 1) {
         return globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);
     }

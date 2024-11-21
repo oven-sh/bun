@@ -284,7 +284,7 @@ pub const Jest = struct {
                     return globalThis.throw2("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
                 };
 
-                const arguments = callframe.arguments(2);
+                const arguments = callframe.arguments_old(2);
                 if (arguments.len < 1) {
                     return globalThis.throwNotEnoughArguments("callback", 1, arguments.len);
                 }
@@ -524,7 +524,7 @@ pub const Jest = struct {
             return Bun__Jest__testPreloadObject(globalObject);
         }
 
-        const arguments = callframe.arguments(2).slice();
+        const arguments = callframe.arguments_old(2).slice();
 
         if (arguments.len < 1 or !arguments[0].isString()) {
             globalObject.throw("Bun.jest() expects a string filename", .{});
@@ -547,7 +547,7 @@ pub const Jest = struct {
     }
 
     fn jsSetDefaultTimeout(globalObject: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments(1).slice();
+        const arguments = callframe.arguments_old(1).slice();
         if (arguments.len < 1 or !arguments[0].isNumber()) {
             globalObject.throw("setTimeout() expects a number (milliseconds)", .{});
             return .zero;
@@ -630,7 +630,7 @@ pub const TestScope = struct {
 
     pub fn onReject(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         debug("onReject", .{});
-        const arguments = callframe.arguments(2);
+        const arguments = callframe.arguments_old(2);
         const err = arguments.ptr[0];
         _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
@@ -642,7 +642,7 @@ pub const TestScope = struct {
 
     pub fn onResolve(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         debug("onResolve", .{});
-        const arguments = callframe.arguments(2);
+        const arguments = callframe.arguments_old(2);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
         task.handleResult(.{ .pass = expect.active_test_expectation_counter.actual }, .promise);
         globalThis.bunVM().autoGarbageCollect();
@@ -655,7 +655,7 @@ pub const TestScope = struct {
         callframe: *CallFrame,
     ) bun.JSError!JSValue {
         const function = callframe.callee();
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         defer globalThis.bunVM().autoGarbageCollect();
 
         if (JSC.getFunctionData(function)) |data| {
@@ -895,7 +895,7 @@ pub const DescribeScope = struct {
     fn createCallback(comptime hook: LifecycleHook) CallbackFn {
         return struct {
             pub fn run(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSC.JSValue {
-                const arguments = callframe.arguments(2);
+                const arguments = callframe.arguments_old(2);
                 if (arguments.len < 1) {
                     return globalThis.throwNotEnoughArguments("callback", 1, arguments.len);
                 }
@@ -918,7 +918,7 @@ pub const DescribeScope = struct {
         callframe: *CallFrame,
     ) bun.JSError!JSValue {
         const function = callframe.callee();
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         defer ctx.bunVM().autoGarbageCollect();
 
         if (JSC.getFunctionData(function)) |data| {
@@ -1705,9 +1705,9 @@ inline fn createScope(
     comptime signature: string,
     comptime is_test: bool,
     comptime tag: Tag,
-) JSValue {
+) bun.JSError!JSValue {
     const this = callframe.this();
-    const arguments = callframe.arguments(3);
+    const arguments = callframe.arguments_old(3);
     const args = arguments.slice();
 
     if (args.len == 0) {
@@ -1735,21 +1735,21 @@ inline fn createScope(
     if (options.isNumber()) {
         timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
-        if (options.get(globalThis, "timeout")) |timeout| {
+        if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
                 globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
                 return .zero;
             }
             timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
         }
-        if (options.get(globalThis, "retry")) |retries| {
+        if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
                 globalThis.throwPretty("{s} expects retry to be a number", .{signature});
                 return .zero;
             }
             // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
         }
-        if (options.get(globalThis, "repeats")) |repeats| {
+        if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
                 globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
                 return .zero;
@@ -1859,7 +1859,7 @@ inline fn createIfScope(
     comptime Scope: type,
     comptime tag: Tag,
 ) JSValue {
-    const arguments = callframe.arguments(1);
+    const arguments = callframe.arguments_old(1);
     const args = arguments.slice();
 
     if (args.len == 0) {
@@ -1894,10 +1894,7 @@ fn consumeArg(
 ) !void {
     const allocator = getAllocator(globalThis);
     if (should_write) {
-        const owned_slice = arg.toSliceOrNull(globalThis) orelse {
-            bun.assert(globalThis.hasException());
-            return error.JSError;
-        };
+        const owned_slice = try arg.toSliceOrNull(globalThis);
         defer owned_slice.deinit();
         array_list.appendSlice(allocator, owned_slice.slice()) catch bun.outOfMemory();
     } else {
@@ -1977,13 +1974,10 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
 
 pub const EachData = struct { strong: JSC.Strong, is_test: bool };
 
-fn eachBind(
-    globalThis: *JSGlobalObject,
-    callframe: *CallFrame,
-) bun.JSError!JSValue {
+fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
     const signature = "eachBind";
     const callee = callframe.callee();
-    const arguments = callframe.arguments(3);
+    const arguments = callframe.arguments_old(3);
     const args = arguments.slice();
 
     if (args.len < 2) {
@@ -2004,21 +1998,21 @@ fn eachBind(
     if (options.isNumber()) {
         timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
-        if (options.get(globalThis, "timeout")) |timeout| {
+        if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
                 globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
                 return .zero;
             }
             timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
         }
-        if (options.get(globalThis, "retry")) |retries| {
+        if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
                 globalThis.throwPretty("{s} expects retry to be a number", .{signature});
                 return .zero;
             }
             // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
         }
-        if (options.get(globalThis, "repeats")) |repeats| {
+        if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
                 globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
                 return .zero;
@@ -2154,7 +2148,7 @@ inline fn createEach(
     comptime signature: string,
     comptime is_test: bool,
 ) JSValue {
-    const arguments = callframe.arguments(1);
+    const arguments = callframe.arguments_old(1);
     const args = arguments.slice();
 
     if (args.len == 0) {

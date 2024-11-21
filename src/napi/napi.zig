@@ -1522,6 +1522,8 @@ pub const ThreadSafeFunction = struct {
         }
     };
 
+    /// From the JS thread, handle one call to the underlying function that was requested
+    /// by another thread (this is called by the event loop)
     pub fn call(this: *ThreadSafeFunction) void {
         const task = this.channel.tryReadItem() catch null orelse return;
         const globalObject = this.env;
@@ -1581,7 +1583,7 @@ pub const ThreadSafeFunction = struct {
                 this.callback.c.js.unprotect();
             }
         }
-        this.channel.deinit(this.allocator);
+        // this.channel.deinit(this.allocator);
         bun.default_allocator.destroy(this);
     }
 

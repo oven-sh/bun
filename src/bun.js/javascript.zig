@@ -4549,7 +4549,7 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObj
     }
 
     if (!args[0].isNumber()) {
-        return globalObject.throwInvalidArguments2("setSyntheticAllocationLimitForTesting expects a number", .{});
+        return globalObject.throwInvalidArguments("setSyntheticAllocationLimitForTesting expects a number", .{});
     }
 
     const limit: usize = @intCast(@max(args[0].coerceToInt64(globalObject), 1024 * 1024));

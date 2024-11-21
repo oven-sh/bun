@@ -118,20 +118,20 @@ pub const JSBundler = struct {
                 var i: usize = 0;
                 while (iter.next()) |plugin| : (i += 1) {
                     if (!plugin.isObject()) {
-                        return globalThis.throwInvalidArguments2("Expected plugin to be an object", .{});
+                        return globalThis.throwInvalidArguments("Expected plugin to be an object", .{});
                     }
 
                     if (try plugin.getOptional(globalThis, "name", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (slice.len == 0) {
-                            return globalThis.throwInvalidArguments2("Expected plugin to have a non-empty name", .{});
+                            return globalThis.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
                         }
                     } else {
-                        return globalThis.throwInvalidArguments2("Expected plugin to have a name", .{});
+                        return globalThis.throwInvalidArguments("Expected plugin to have a name", .{});
                     }
 
                     const function = try plugin.getFunction(globalThis, "setup") orelse {
-                        return globalThis.throwInvalidArguments2("Expected plugin to have a setup() function", .{});
+                        return globalThis.throwInvalidArguments("Expected plugin to have a setup() function", .{});
                     };
 
                     var bun_plugins: *Plugin = plugins.* orelse brk: {
@@ -193,7 +193,7 @@ pub const JSBundler = struct {
                 this.target = target;
 
                 if (target != .bun and this.bytecode) {
-                    return globalThis.throwInvalidArguments2("target must be 'bun' when bytecode is true", .{});
+                    return globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
                 }
             }
 
@@ -239,7 +239,7 @@ pub const JSBundler = struct {
                 this.format = format;
 
                 if (this.bytecode and format != .cjs) {
-                    return globalThis.throwInvalidArguments2("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+                    return globalThis.throwInvalidArguments("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
                 }
             }
 
@@ -264,7 +264,7 @@ pub const JSBundler = struct {
                         this.minify.identifiers = syntax;
                     }
                 } else {
-                    return globalThis.throwInvalidArguments2("Expected minify to be a boolean or an object", .{});
+                    return globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
                 }
             }
 
@@ -276,7 +276,7 @@ pub const JSBundler = struct {
                     try this.entry_points.insert(slice.slice());
                 }
             } else {
-                return globalThis.throwInvalidArguments2("Expected entrypoints to be an array of strings", .{});
+                return globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
             }
 
             if (try config.getBooleanLoose(globalThis, "emitDCEAnnotations")) |flag| {
@@ -300,7 +300,7 @@ pub const JSBundler = struct {
                         try this.conditions.insert(slice.slice());
                     }
                 } else {
-                    return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
+                    return globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
                 }
             }
 
@@ -403,13 +403,13 @@ pub const JSBundler = struct {
                         this.names.asset.data = this.names.owned_asset.list.items;
                     }
                 } else {
-                    return globalThis.throwInvalidArguments2("Expected naming to be a string or an object", .{});
+                    return globalThis.throwInvalidArguments("Expected naming to be a string or an object", .{});
                 }
             }
 
             if (try config.getOwnObject(globalThis, "define")) |define| {
                 if (!define.isObject()) {
-                    return globalThis.throwInvalidArguments2("define must be an object", .{});
+                    return globalThis.throwInvalidArguments("define must be an object", .{});
                 }
 
                 var define_iter = JSC.JSPropertyIterator(.{
@@ -423,7 +423,7 @@ pub const JSBundler = struct {
                     const value_type = property_value.jsType();
 
                     if (!value_type.isStringLike()) {
-                        return globalThis.throwInvalidArguments2("define \"{s}\" must be a JSON string", .{prop});
+                        return globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
                     }
 
                     var val = JSC.ZigString.init("");
@@ -457,7 +457,7 @@ pub const JSBundler = struct {
 
                 while (loader_iter.next()) |prop| {
                     if (!prop.hasPrefixComptime(".") or prop.length() < 2) {
-                        return globalThis.throwInvalidArguments2("loader property names must be file extensions, such as '.txt'", .{});
+                        return globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
                     }
 
                     loader_values[loader_iter.i] = try loader_iter.value.toEnumFromMap(
@@ -538,10 +538,9 @@ pub const JSBundler = struct {
     fn build(
         globalThis: *JSC.JSGlobalObject,
         arguments: []const JSC.JSValue,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         if (arguments.len == 0 or !arguments[0].isObject()) {
-            globalThis.throwInvalidArguments("Expected a config object to be passed to Bun.build", .{});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected a config object to be passed to Bun.build", .{});
         }
 
         var plugins: ?*Plugin = null;

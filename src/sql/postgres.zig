@@ -1398,8 +1398,7 @@ pub const PostgresSQLConnection = struct {
             else if (tls_object.isObject())
                 (JSC.API.ServerConfig.SSLConfig.fromJS(vm, globalObject, tls_object) catch return .zero) orelse .{}
             else {
-                globalObject.throwInvalidArguments("tls must be a boolean or an object", .{});
-                return .zero;
+                return globalObject.throwInvalidArguments("tls must be a boolean or an object", .{});
             };
 
             if (globalObject.hasException()) {

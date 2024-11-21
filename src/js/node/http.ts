@@ -1515,24 +1515,24 @@ class ClientRequest extends OutgoingMessage {
 
   _write(chunk, encoding, callback) {
     if (!this.#bodyChunks) {
-      this.#bodyChunks = [chunk];
+      this.#bodyChunks = chunk instanceof Buffer ? [chunk] : [chunk.chunk];
       process.nextTick(callback);
       // callback();
       return;
     }
-    this.#bodyChunks.push(chunk);
+    this.#bodyChunks.push(chunk instanceof Buffer ? chunk : chunk.chunk);
     process.nextTick(callback);
     // callback();
   }
 
   _writev(chunks, callback) {
     if (!this.#bodyChunks) {
-      this.#bodyChunks = chunks;
+      this.#bodyChunks = chunks.map(c => (c instanceof Buffer ? c : c.chunk));
       process.nextTick(callback);
       // callback();
       return;
     }
-    this.#bodyChunks.push(...chunks);
+    this.#bodyChunks.push(...chunks.map(c => (c instanceof Buffer ? c : c.chunk)));
     process.nextTick(callback);
     // callback();
   }
@@ -1566,6 +1566,8 @@ class ClientRequest extends OutgoingMessage {
     if (this.#signal?.aborted) {
       this[kAbortController].abort();
     }
+
+    console.log(this.#bodyChunks);
 
     var method = this.#method,
       body = this.#bodyChunks?.length === 1 ? this.#bodyChunks[0] : Buffer.concat(this.#bodyChunks || []);

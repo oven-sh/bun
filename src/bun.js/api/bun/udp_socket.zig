@@ -360,7 +360,7 @@ pub const UDPSocket = struct {
             globalThis.throw("Socket is closed", .{});
             return .zero;
         }
-        const arguments = callframe.arguments(1);
+        const arguments = callframe.arguments_old(1);
         if (arguments.len != 1) {
             globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
             return .zero;
@@ -450,7 +450,7 @@ pub const UDPSocket = struct {
             globalThis.throw("Socket is closed", .{});
             return .zero;
         }
-        const arguments = callframe.arguments(3);
+        const arguments = callframe.arguments_old(3);
         const dst: ?Destination = brk: {
             if (this.connect_info != null) {
                 if (arguments.len == 1) {
@@ -573,7 +573,7 @@ pub const UDPSocket = struct {
     }
 
     pub fn reload(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
 
         if (args.len < 1) {
             return globalThis.throwInvalidArguments2("Expected 1 argument", .{});
@@ -676,7 +676,7 @@ pub const UDPSocket = struct {
     }
 
     pub fn jsConnect(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const args = callFrame.arguments(2);
+        const args = callFrame.arguments_old(2);
 
         const this = callFrame.this().as(UDPSocket) orelse {
             globalThis.throwInvalidArguments("Expected UDPSocket as 'this'", .{});

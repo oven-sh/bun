@@ -1005,7 +1005,7 @@ pub fn wrapInstanceMethod(
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) bun.JSError!JSC.JSValue {
-            const arguments = callframe.arguments(FunctionTypeInfo.params.len);
+            const arguments = callframe.arguments_old(FunctionTypeInfo.params.len);
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
 
@@ -1178,7 +1178,7 @@ pub fn wrapStaticMethod(
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) bun.JSError!JSC.JSValue {
-            const arguments = callframe.arguments(FunctionTypeInfo.params.len);
+            const arguments = callframe.arguments_old(FunctionTypeInfo.params.len);
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
 

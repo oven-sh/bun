@@ -613,7 +613,7 @@ pub const Subprocess = struct {
     ) bun.JSError!JSValue {
         this.this_jsvalue = callframe.this();
 
-        var arguments = callframe.arguments(1);
+        var arguments = callframe.arguments_old(1);
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
         const sig: i32 = brk: {

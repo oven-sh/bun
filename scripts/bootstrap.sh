@@ -125,6 +125,7 @@ append_to_file() {
 }
 
 append_to_profile() {
+	echo >> $home/.profile
 	content="$1"
 	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
 	for profile in $profiles; do
@@ -883,7 +884,7 @@ create_buildkite_user() {
 		execute_sudo mkdir -p "$path"
 		execute_sudo chown -R "$user:$group" "$path"
 	done
-	
+
 	files="/var/run/buildkite-agent/buildkite-agent.pid"
 	for file in $files; do
 		execute_sudo touch "$file"
@@ -985,6 +986,11 @@ install_chrome_dependencies() {
 	esac
 }
 
+raise_file_descriptor_limit() {
+	ulimit -n 262144
+	append_to_profile "ulimit -n 262144"
+}
+
 main() {
 	check_features "$@"
 	check_operating_system
@@ -995,6 +1001,7 @@ main() {
 	install_common_software
 	install_build_essentials
 	install_chrome_dependencies
+	raise_file_descriptor_limit # XXX: temporary
 }
 
 main "$@"

@@ -664,9 +664,7 @@ async function main() {
   }
 
   let changedFiles;
-  // FIXME: Fix various bugs when calculating changed files
-  // false -> !isFork() && !isMainBranch()
-  if (false) {
+  if (!isFork() && !isMainBranch()) {
     console.log("Checking changed files...");
     const baseRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
     console.log(" - Base Ref:", baseRef);

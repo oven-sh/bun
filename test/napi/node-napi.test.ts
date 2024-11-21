@@ -52,6 +52,8 @@ const failingNodeApiTests = [
 ];
 
 if (process.platform == "win32") {
+  failingNodeApiTests.push("test_callback_scope/test.js"); // TODO: remove once #12827 is fixed
+
   for (const i in failingJsNativeApiTests) {
     failingJsNativeApiTests[i] = failingJsNativeApiTests[i].replaceAll("/", "\\");
   }

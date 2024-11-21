@@ -2075,7 +2075,7 @@ pub const Process = struct {
         return bun.String.toJSArray(globalObject, args_list.items);
     }
 
-    pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
+    pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         return JSC.toJSHostValue(globalObject, getCwd_(globalObject));
     }
     fn getCwd_(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
@@ -2088,7 +2088,7 @@ pub const Process = struct {
         }
     }
 
-    pub fn setCwd(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) callconv(JSC.conv) JSC.JSValue {
+    pub fn setCwd(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) callconv(.C) JSC.JSValue {
         return JSC.toJSHostValue(globalObject, setCwd_(globalObject, to));
     }
     fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JSC.JSValue {

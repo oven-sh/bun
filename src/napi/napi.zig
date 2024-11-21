@@ -1474,7 +1474,10 @@ pub const ThreadSafeFunction = struct {
 
     pub const Queue = struct {
         data: std.fifo.LinearFifo(?*anyopaque, .Dynamic),
+
+        // This value will never change after initialization.
         max_queue_size: usize,
+
         count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
         pub fn init(max_queue_size: usize, allocator: std.mem.Allocator) Queue {
@@ -1494,24 +1497,35 @@ pub const ThreadSafeFunction = struct {
         this.blocking_condvar.signal();
     }
 
-    const Sized = std.fifo.LinearFifo(?*anyopaque, .Slice);
-    const Unsized = std.fifo.LinearFifo(?*anyopaque, .Dynamic);
-
+    // This has two states:
+    // 1. We need to run potentially multiple tasks.
+    // 2. We need to finalize the ThreadSafeFunction.
     pub fn onDispatch(this: *ThreadSafeFunction) void {
         if (this.closing.load(.monotonic) == .closed) {
+            // Finalize the ThreadSafeFunction.
             this.deinit();
             return;
         }
 
+        var is_first = true;
+
+        // Run the tasks.
         while (true) {
             this.dispatch_state.store(.running, .monotonic);
-            if (this.dispatchOne()) {
+            if (this.dispatchOne(is_first)) {
+                is_first = false;
                 this.dispatch_state.store(.pending, .monotonic);
             } else {
+                // We're done running tasks, for now.
                 this.dispatch_state.store(.idle, .monotonic);
                 break;
             }
         }
+
+        // Node sets a maximum number of runs per ThreadSafeFunction to 1,000.
+        // We don't set a max. I would like to see an issue caused by not
+        // setting a max before we do set a max. It is better for performance to
+        // not add unnecessary event loop ticks.
     }
 
     pub fn isClosing(this: *const ThreadSafeFunction) bool {
@@ -1521,6 +1535,7 @@ pub const ThreadSafeFunction = struct {
     fn maybeQueueFinalizer(this: *ThreadSafeFunction) void {
         switch (this.closing.swap(.closed, .monotonic)) {
             .closing, .not_closing => {
+                // TODO: is this boolean necessary? Can we rely just on the closing value?
                 if (!this.has_queued_finalizer) {
                     this.has_queued_finalizer = true;
                     this.callback.deinit();
@@ -1534,12 +1549,15 @@ pub const ThreadSafeFunction = struct {
         }
     }
 
-    pub fn dispatchOne(this: *ThreadSafeFunction) bool {
+    pub fn dispatchOne(this: *ThreadSafeFunction, is_first: bool) bool {
         const has_more, const task = brk: {
             this.lock.lock();
             defer this.lock.unlock();
             const was_blocked = this.queue.isBlocked();
             const t = this.queue.data.readItem() orelse {
+                // When there are no tasks and the number of threads that have
+                // references reaches zero, we prepare to finalize the
+                // ThreadSafeFunction.
                 if (this.thread_count.load(.monotonic) == 0) {
                     if (this.queue.max_queue_size > 0) {
                         this.blocking_condvar.broadcast();
@@ -1553,20 +1571,26 @@ pub const ThreadSafeFunction = struct {
             if (was_blocked and !this.queue.isBlocked()) {
                 this.blocking_condvar.broadcast();
             }
+
             break :brk .{ !this.isClosing(), t };
         };
 
-        this.call(task, has_more);
+        this.call(task, !is_first);
 
         return has_more;
     }
 
-    pub fn call(this: *ThreadSafeFunction, task: ?*anyopaque, has_more: bool) void {
+    /// This function can be called multiple times in one tick of the event loop.
+    /// See: https://github.com/nodejs/node/pull/38506
+    /// In that case, we need to drain microtasks.
+    fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) void {
         const globalObject = this.env;
+        if (!is_first) {
+            this.event_loop.drainMicrotasks();
+        }
 
         this.tracker.willDispatch(globalObject);
         defer this.tracker.didDispatch(globalObject);
-        const event_loop = this.event_loop;
 
         switch (this.callback) {
             .js => |strong| {
@@ -1577,10 +1601,6 @@ pub const ThreadSafeFunction = struct {
 
                 _ = js.call(globalObject, .undefined, &.{}) catch |err|
                     globalObject.reportActiveExceptionAsUnhandled(err);
-
-                if (has_more) {
-                    event_loop.drainMicrotasks();
-                }
             },
             .c => |cb| {
                 const js = cb.js.get() orelse .undefined;
@@ -1588,10 +1608,6 @@ pub const ThreadSafeFunction = struct {
                 const handle_scope = NapiHandleScope.open(globalObject, false);
                 defer if (handle_scope) |scope| scope.close(globalObject);
                 cb.napi_threadsafe_function_call_js(globalObject, napi_value.create(globalObject, js), this.ctx, task);
-
-                if (has_more) {
-                    event_loop.drainMicrotasks();
-                }
             },
         }
     }

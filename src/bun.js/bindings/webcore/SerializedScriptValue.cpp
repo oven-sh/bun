@@ -3223,7 +3223,7 @@ private:
         str = String({ reinterpret_cast<const UChar*>(ptr), length });
         ptr += length * sizeof(UChar);
 #else
-        UChar* characters;
+        std::span<UChar> characters;
         str = String::createUninitialized(length, characters);
         for (unsigned i = 0; i < length; ++i) {
             uint16_t c;
@@ -3269,7 +3269,7 @@ private:
         str = Identifier::fromString(vm, { reinterpret_cast<const UChar*>(ptr), length });
         ptr += length * sizeof(UChar);
 #else
-        UChar* characters;
+        std::span<UChar> characters;
         str = String::createUninitialized(length, characters);
         for (unsigned i = 0; i < length; ++i) {
             uint16_t c;
@@ -5595,7 +5595,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     if (arrayBufferContentsArray.hasException())
         return arrayBufferContentsArray.releaseException();
 
-        // auto backingStores = ImageBitmap::detachBitmaps(WTFMove(imageBitmaps));
+    // auto backingStores = ImageBitmap::detachBitmaps(WTFMove(imageBitmaps));
 
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
     Vector<std::unique_ptr<DetachedOffscreenCanvas>> detachedCanvases;

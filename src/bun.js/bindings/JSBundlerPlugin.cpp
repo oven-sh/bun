@@ -27,8 +27,8 @@
 #include <JavaScriptCore/JSPromise.h>
 namespace Bun {
 
-#define WRAP_BUNDLER_PLUGIN(argName) jsNumber(bitwise_cast<double>(reinterpret_cast<uintptr_t>(argName)))
-#define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(bitwise_cast<uintptr_t>(callFrame->argument(0).asDouble()))
+#define WRAP_BUNDLER_PLUGIN(argName) jsNumber(__bit_cast<double>(reinterpret_cast<uintptr_t>(argName)))
+#define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(__bit_cast<uintptr_t>(callFrame->argument(0).asDouble()))
 
 /// These are callbacks defined in Zig and to be run after their associated JS version is run
 extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);

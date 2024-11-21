@@ -762,11 +762,9 @@ function getWindowsStartupScript(cloudInit) {
         $pwshPath = Get-Command powershell -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path
       }
 
-      if (-not (Get-Service -Name sshd -ErrorAction SilentlyContinue)) {
-        Write-Output "Enabling OpenSSH server..."
-        Set-Service -Name sshd -StartupType Automatic
-        Start-Service sshd
-      }
+      Write-Output "Enabling OpenSSH server..."
+      Set-Service -Name sshd -StartupType Automatic
+      Start-Service sshd
 
       if ($pwshPath) {
         Write-Output "Setting default shell to $pwshPath..."
@@ -1242,12 +1240,11 @@ async function main() {
 
     if (agentPath) {
       if (os === "windows") {
-        // TODO
-        // const remotePath = "C:\\Windows\\Temp\\agent.mjs";
-        // await startGroup("Installing agent...", async () => {
-        //   await machine.upload(agentPath, remotePath);
-        //   await machine.spawnSafe(["node", remotePath, "install"], { stdio: "inherit" });
-        // });
+        const remotePath = "C:\\buildkite-agent\\agent.mjs";
+        await startGroup("Installing agent...", async () => {
+          await machine.upload(agentPath, remotePath);
+          await machine.spawnSafe(["node", remotePath, "install"], { stdio: "inherit" });
+        });
       } else {
         const tmpPath = "/tmp/agent.mjs";
         const remotePath = "/var/lib/buildkite-agent/agent.mjs";

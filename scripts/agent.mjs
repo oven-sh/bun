@@ -3,7 +3,7 @@
 // An agent that starts buildkite-agent and runs others services.
 
 import { join } from "node:path";
-import { realpathSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import {
   isWindows,
   getOs,
@@ -49,16 +49,26 @@ async function doBuildkiteAgent(action) {
     const args = [realpathSync(process.argv[1]), "start"];
 
     if (isWindows) {
-      const serviceCommand = [
-        "New-Service",
-        "-Name",
-        "buildkite-agent",
-        "-StartupType",
-        "Automatic",
-        "-BinaryPathName",
-        `${escape(command)} ${escape(args.map(escape).join(" "))}`,
+      mkdirSync(logsPath, { recursive: true });
+
+      const pwsh = which(["pwsh", "powershell"], { required: true });
+      const startProcess = [
+        "Start-Process",
+        `-FilePath ${escape(command)}`,
+        `-ArgumentList ${args.map(escape).join(",")}`,
+        `-RedirectStandardOutput ${escape(agentLogPath)}`,
+        `-RedirectStandardError ${escape(`${agentLogPath}.err`)}`,
+        "-NoNewWindow",
+        "-Wait",
       ];
-      await spawnSafe(["powershell", "-Command", serviceCommand.join(" ")], { stdio: "inherit" });
+      const newService = [
+        "New-Service",
+        "-Name buildkite-agent",
+        "-DependsOn NetLogon",
+        "-StartupType Automatic",
+        `-BinaryPathName '${[escape(pwsh), ...startProcess].join(" ")}'`,
+      ];
+      await spawnSafe([pwsh, "-Command", newService.join(" ")], { stdio: "inherit" });
     }
 
     if (isOpenRc()) {

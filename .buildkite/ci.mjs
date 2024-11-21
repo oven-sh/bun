@@ -244,7 +244,7 @@ function getPipeline(options) {
    */
   const isUsingNewAgent = platform => {
     const { os } = platform;
-    if (os === "linux") {
+    if (os === "linux" || os === "windows") {
       return true;
     }
     return false;

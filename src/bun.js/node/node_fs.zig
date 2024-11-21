@@ -1852,7 +1852,7 @@ pub const Arguments = struct {
                     // will automatically be normalized to absolute path.
                     if (next_val.isString()) {
                         arguments.eat();
-                        var str = next_val.toBunString(ctx);
+                        var str = try next_val.toBunString(ctx);
                         defer str.deref();
                         if (str.eqlComptime("dir")) break :link_type .dir;
                         if (str.eqlComptime("file")) break :link_type .file;

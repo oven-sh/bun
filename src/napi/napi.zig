@@ -1692,9 +1692,9 @@ pub const ThreadSafeFunction = struct {
             return .invalid_arg;
         }
 
-        const remaining = this.thread_count.fetchSub(1, .monotonic);
+        const prev_remaining = this.thread_count.fetchSub(1, .monotonic);
 
-        if (mode == .abort or remaining == 0) {
+        if (mode == .abort or prev_remaining == 1) {
             if (!this.isClosing()) {
                 if (mode == .abort) {
                     this.closing.store(.closing, .monotonic);

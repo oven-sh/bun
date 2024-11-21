@@ -2,6 +2,8 @@
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const { addServerName } = require("../internal/net");
 const net = require("node:net");
+const { Duplex } = require("node:stream");
+
 const { Server: NetServer, [Symbol.for("::bunternal::")]: InternalTCPSocket } = net;
 
 const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
@@ -326,21 +328,22 @@ const TLSSocket = (function (InternalTLSSocket) {
   class TLSSocket extends InternalTCPSocket {
     #secureContext;
     ALPNProtocols;
-    #socket;
     #checkServerIdentity;
     #session;
     alpnProtocol = null;
 
     constructor(socket, options) {
-      super(socket instanceof InternalTCPSocket ? options : options || socket);
+      super(socket instanceof InternalTCPSocket || socket instanceof Duplex ? options : options || socket);
       options = options || socket || {};
       if (typeof options === "object") {
         const { ALPNProtocols } = options;
         if (ALPNProtocols) {
           convertALPNProtocols(ALPNProtocols, this);
         }
-        if (socket instanceof InternalTCPSocket) {
-          this.#socket = socket;
+        if (socket instanceof InternalTCPSocket || socket instanceof Duplex) {
+          this._handle = socket;
+          // keep compatibility with http2-wrapper or other places that try to grab JSStreamSocket in node.js, with here is just the TLSSocket
+          this._handle._parentWrap = this;
         }
       }
 
@@ -373,31 +376,31 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
 
     getSession() {
-      return this._handle?.getSession();
+      return this._handle?.getSession?.();
     }
 
     getEphemeralKeyInfo() {
-      return this._handle?.getEphemeralKeyInfo();
+      return this._handle?.getEphemeralKeyInfo?.();
     }
 
     getCipher() {
-      return this._handle?.getCipher();
+      return this._handle?.getCipher?.();
     }
 
     getSharedSigalgs() {
-      return this._handle?.getSharedSigalgs();
+      return this._handle?.getSharedSigalgs?.();
     }
 
     getProtocol() {
-      return this._handle?.getTLSVersion();
+      return this._handle?.getTLSVersion?.();
     }
 
     getFinished() {
-      return this._handle?.getTLSFinishedMessage() || undefined;
+      return this._handle?.getTLSFinishedMessage?.() || undefined;
     }
 
     getPeerFinished() {
-      return this._handle?.getTLSPeerFinishedMessage() || undefined;
+      return this._handle?.getTLSPeerFinishedMessage?.() || undefined;
     }
     isSessionReused() {
       return !!this.#session;
@@ -424,13 +427,13 @@ const TLSSocket = (function (InternalTLSSocket) {
         if (options.rejectUnauthorized !== undefined) rejectUnauthorized = !!options.rejectUnauthorized;
 
         if (requestCert !== this._requestCert || rejectUnauthorized !== this._rejectUnauthorized) {
-          socket.setVerifyMode(requestCert, rejectUnauthorized);
+          socket.setVerifyMode?.(requestCert, rejectUnauthorized);
           this._requestCert = requestCert;
           this._rejectUnauthorized = rejectUnauthorized;
         }
       }
       try {
-        socket.renegotiate();
+        socket.renegotiate?.();
         // if renegotiate is successful should emit secure event when done
         typeof callback === "function" && this.once("secure", () => callback(null));
         return true;
@@ -444,21 +447,21 @@ const TLSSocket = (function (InternalTLSSocket) {
     disableRenegotiation() {
       this.#renegotiationDisabled = true;
       // disable renegotiation on the socket
-      return this._handle?.disableRenegotiation();
+      return this._handle?.disableRenegotiation?.();
     }
 
     getTLSTicket() {
-      return this._handle?.getTLSTicket();
+      return this._handle?.getTLSTicket?.();
     }
     exportKeyingMaterial(length, label, context) {
       if (context) {
-        return this._handle?.exportKeyingMaterial(length, label, context);
+        return this._handle?.exportKeyingMaterial?.(length, label, context);
       }
-      return this._handle?.exportKeyingMaterial(length, label);
+      return this._handle?.exportKeyingMaterial?.(length, label);
     }
 
     setMaxSendFragment(size) {
-      return this._handle?.setMaxSendFragment(size) || false;
+      return this._handle?.setMaxSendFragment?.(size) || false;
     }
 
     // only for debug purposes so we just mock for now
@@ -472,23 +475,23 @@ const TLSSocket = (function (InternalTLSSocket) {
       }
       // if the socket is detached we can't set the servername but we set this property so when open will auto set to it
       this.servername = name;
-      this._handle?.setServername(name);
+      this._handle?.setServername?.(name);
     }
     setSession(session) {
       this.#session = session;
       if (typeof session === "string") session = Buffer.from(session, "latin1");
-      return this._handle?.setSession(session);
+      return this._handle?.setSession?.(session);
     }
     getPeerCertificate(abbreviated) {
       const cert =
-        arguments.length < 1 ? this._handle?.getPeerCertificate() : this._handle?.getPeerCertificate(abbreviated);
+        arguments.length < 1 ? this._handle?.getPeerCertificate?.() : this._handle?.getPeerCertificate?.(abbreviated);
       if (cert) {
         return translatePeerCertificate(cert);
       }
     }
     getCertificate() {
       // need to implement certificate on socket.zig
-      const cert = this._handle?.getCertificate();
+      const cert = this._handle?.getCertificate?.();
       if (cert) {
         // It's not a peer cert, but the formatting is identical.
         return translatePeerCertificate(cert);
@@ -503,7 +506,7 @@ const TLSSocket = (function (InternalTLSSocket) {
 
     [buntls](port, host) {
       return {
-        socket: this.#socket,
+        socket: this._handle,
         ALPNProtocols: this.ALPNProtocols,
         serverName: this.servername || host || "localhost",
         checkServerIdentity: this.#checkServerIdentity,

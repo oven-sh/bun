@@ -11,7 +11,7 @@ import {
 import type { JSC } from "../../../../bun-inspector-protocol";
 import { typedGlobalState } from "../../global-state";
 
-const output = vscode.window.createOutputChannel("Bun");
+const output = vscode.window.createOutputChannel("Bun - Diagnostics");
 
 const ansiRegex = (() => {
   const ST = "(?:\\u0007|\\u001B\\u005C|\\u009C)";

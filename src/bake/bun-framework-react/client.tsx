@@ -7,13 +7,26 @@ import { hydrateRoot } from "react-dom/client";
 import { createFromReadableStream } from "react-server-dom-bun/client.browser";
 import { bundleRouteForDevelopment } from "bun:bake/client";
 
-let encoder = new TextEncoder();
-let promise = createFromReadableStream(
+const te = new TextEncoder();
+const td = new TextDecoder();
+
+// It is the framework's responsibility to ensure that client-side navigation
+// loads CSS files. The implementation here loads all CSS files as <link> tags,
+// and uses the ".disabled" property to enable/disable them.
+const cssFiles = new Map<string, { promise: Promise<void> | null; link: HTMLLinkElement }>();
+
+// The initial RSC payload is put into inline <script> tags that follow the pattern
+// `(self.__bun_f ??= []).push(chunk)`, which is converted into a ReadableStream
+// here for React hydration. Since inline scripts are executed immediately, and
+// this file is loaded asynchronously, the `__bun_f` becomes a clever way to
+// stream the arbitrary data while HTML is loading. In a static build, this is
+// setup as an array with one string.
+let rscPayload: any = createFromReadableStream(
   new ReadableStream({
     start(controller) {
       let handleChunk = chunk =>
         typeof chunk === "string" //
-          ? controller.enqueue(encoder.encode(chunk))
+          ? controller.enqueue(te.encode(chunk))
           : controller.enqueue(chunk);
 
       (self.__bun_f ||= []).forEach((__bun_f.push = handleChunk));
@@ -21,9 +34,11 @@ let promise = createFromReadableStream(
       if (document.readyState === "loading") {
         document.addEventListener("DOMContentLoaded", () => {
           controller.close();
+          initCssMap();
         });
       } else {
         controller.close();
+        initCssMap();
       }
     },
   }),
@@ -32,37 +47,77 @@ let promise = createFromReadableStream(
 // This is a function component that uses the `use` hook, which unwraps a
 // promise.  The promise results in a component containing suspense boundaries.
 // This is the same logic that happens on the server, except there is also a
-// hook to update the promise when the client navigates.
+// hook to update the promise when the client navigates. The `Root` component
+// also updates CSS files when navigating between routes.
 let setPage;
+let abortOnRender: AbortController | undefined;
+let currentCssList: string[] | undefined = undefined;
 const Root = () => {
-  setPage = React.useState(promise)[1];
-  return React.use(promise);
+  setPage = React.useState(rscPayload)[1];
+
+  // Layout effects are executed right before the browser paints,
+  // which is the perfect time to make CSS visible.
+  React.useLayoutEffect(() => {
+    if (abortOnRender) {
+      abortOnRender.abort();
+      abortOnRender = undefined;
+    }
+    if (currentCssList) updateCssStatus();
+  });
+
+  // Unwrap the promise if it is one
+  return rscPayload.then ? React.use(rscPayload) : rscPayload;
 };
 const root = hydrateRoot(document, <Root />, {
-  // handle `onUncaughtError` here
+  // TODO: handle `onUncaughtError` here
 });
 
-// Client side navigation is implemented by updating the app's `useState` with a
-// new RSC payload promise. An abort controller is used to cancel a previous
-// navigation. Callers of `goto` are expected to manage history state.
-let currentReloadCtrl: AbortController | null = null;
-async function goto(href: string) {
-  // TODO: this abort signal stuff doesnt work
-  // if (currentReloadCtrl) {
-  //   currentReloadCtrl.abort();
-  // }
-  // const signal = (currentReloadCtrl = new AbortController()).signal;
-
-  // Due to the current implementation of the Dev Server, it must be informed of
-  // client-side routing so it can load client components. This is not necessary
-  // in production, and calling this in that situation will fail to compile.
-  if (import.meta.env.DEV) {
-    await bundleRouteForDevelopment(href, {
-      // signal
+// Keep a cache of page objects to avoid re-fetching a page when pressing the
+// back button. The cache is indexed by the date it was created.
+const cachedPages = new Map<number, Page>();
+const defaultPageExpiryTime = 1000 * 60 * 5; // 5 minutes
+interface Page {
+  css: string[];
+  element: unknown;
+}
+let currentPageId = Date.now();
+{
+  const firstPageId = currentPageId;
+  rscPayload.then((result) => {
+    if (lastNavigationId > 0) return;
+    cachedPages.set(currentPageId, { 
+      css: currentCssList!,
+      element: result,
     });
+  });
+}
+
+let lastNavigationId = 0;
+let lastNavigationController: AbortController;
+
+// Client side navigation is implemented by updating the app's `useState` with a
+// new RSC payload promise. Callers of `goto` are expected to manage history state.
+// A navigation id is used
+async function goto(href: string, cacheId?: number) {
+  const thisNavigationId = ++lastNavigationId;
+  const olderController = lastNavigationController;
+  lastNavigationController = new AbortController();
+  const signal = lastNavigationController.signal;
+  signal.addEventListener("abort", () => {
+    olderController?.abort();
+  });
+
+  // If the page is cached, use the cached promise instead of fetching it again.
+  const cached = cacheId && cachedPages.get(cacheId);
+  if (cached) {
+    currentCssList = cached.css;
+    setPage?.(cached.element);
+    if (olderController?.signal.aborted === false)
+      abortOnRender = olderController;
+    return;
   }
 
-  let response;
+  let response: Response;
   try {
     // When using static builds, it isn't possible for the server to reliably
     // branch on the `Accept` header. Instead, a static build creates a `.rsc`
@@ -75,35 +130,118 @@ async function goto(href: string) {
         headers: {
           Accept: "text/x-component",
         },
-        // signal: signal,
+        signal,
       },
     );
     if (!response.ok) {
       throw new Error(`Failed to fetch ${href}: ${response.status} ${response.statusText}`);
     }
   } catch (err) {
-    // Bail out to browser navigation if this fetch fails.
-    console.error(err);
-    location.href = href;
+    if (thisNavigationId === lastNavigationId) {
+      // Bail out to browser navigation if this fetch fails.
+      console.error(err);
+      location.href = href;
+    }
+
     return;
   }
 
-  // if (signal.aborted) return;
+  // If the navigation id has changed, this fetch is no longer relevant.
+  if (thisNavigationId !== lastNavigationId) return;
+  const stream = response.body!;
 
-  // TODO: error handling? abort handling?
-  const p = createFromReadableStream(response.body!);
+  // Read the css metadata at the start. Using BYOB reader allows reading an
+  // exact amount of bytes, which allows passing the stream to react without
+  // creating a wrapped stream.
+  const reader = stream.getReader({ mode: "byob" });
+  const header = (await reader.read(new Uint32Array(1))).value;
+  if (!header) {
+    throw new Error("Failed to read the CSS metadata");
+  }
+  if (header[0] > 0) {
+    const cssRaw = (await reader.read(new Uint8Array(header[0]))).value;
+    if (!cssRaw) {
+      throw new Error("Failed to read the CSS metadata");
+    }
+    currentCssList = td.decode(cssRaw).split("\n");
+    const p = ensureCssIsReady(currentCssList);
+    if (p) await p;
+  } else {
+    currentCssList = [];
+  }
+  reader.releaseLock();
+  if (thisNavigationId !== lastNavigationId) return;
 
-  // TODO: ensure CSS is ready
-  // Right now you can see a flash of unstyled content, since react does not
-  // wait for new link tags to load before they are injected.
+  const p = await createFromReadableStream(stream);
+  if (thisNavigationId !== lastNavigationId) return;
 
-  // Use a react transition to update the page promise.
-  // TODO: How to get this show after 100ms, it hangs until all suspenses resolve
-  // React.startTransition(() => {
-  //   if (signal.aborted) return;
-  //   setPage((promise = p));
-  // });
-  setPage?.((promise = p));
+  // Save this promise so that pressing the back button in the browser navigates
+  // to the same instance of the old page, instead of re-fetching it.
+  if (cacheId) {
+    cachedPages.set(cacheId, { css: currentCssList, element: p });
+  }
+
+  // Defer aborting a previous request until VERY late. If a previous stream is
+  // aborted while rendering, it will cancel the render, resulting in a flash of
+  // a blank page.
+  if (olderController?.signal.aborted === false) {
+    abortOnRender = olderController;
+  }
+
+  // Tell react about the new page promise
+  setPage?.((rscPayload = p));
+}
+
+function initCssMap() {
+  const links = document.querySelectorAll<HTMLLinkElement>("link[rel=stylesheet]");
+  currentCssList = [];
+  for (let i = 0; i < links.length; i++) {
+    const link = links[i];
+    const href = new URL(link.href).pathname;
+    cssFiles.set(href, { promise: null, link });
+    currentCssList.push(href);
+  }
+  console.log("initCssMap", currentCssList);
+}
+
+// This function blocks until all CSS files are loaded. It does not change the
+// visibility state of any of the link tags.
+function ensureCssIsReady(cssList: string[]) {
+  const wait: Promise<void>[] = [];
+  for (const href of cssList) {
+    const existing = cssFiles.get(href);
+    if (existing) {
+      const { promise } = existing;
+      if (promise) {
+        wait.push(promise);
+      }
+    } else {
+      const link = document.createElement("link");
+      let entry;
+      const promise = new Promise<void>((resolve, reject) => {
+        link.rel = "stylesheet";
+        link.href = href;
+        link.onload = resolve as any;
+        link.onerror = reject;
+        link.disabled = true;
+        document.head.appendChild(link);
+      }).then(() => {
+        entry.promise = null;
+      });
+      entry = { promise, link };
+      cssFiles.set(href, entry);
+      wait.push(promise);
+    }
+  }
+  if (wait.length === 0) return;
+  return Promise.all(wait);
+}
+
+function updateCssStatus() {
+  // TODO: create a list of files that should be updated instead of a full loop
+  for (const [href, { link }] of cssFiles) {
+    link.disabled = !currentCssList!.includes(href);
+  }
 }
 
 // Instead of relying on a "<Link />" component, a global event listener on all
@@ -156,8 +294,9 @@ document.addEventListener("click", async (event, element = event.target as HTMLA
       }
 
       const href = url.href;
-      history.pushState({}, "", href);
-      goto(href);
+      history.pushState(currentPageId, "", href);
+      currentPageId = Date.now();
+      goto(href, currentPageId);
 
       return event.preventDefault();
     }
@@ -168,10 +307,19 @@ document.addEventListener("click", async (event, element = event.target as HTMLA
 });
 
 // Handle browser navigation events
-window.addEventListener("popstate", () => goto(location.href));
+window.addEventListener("popstate", (event) => {
+  console.log("popstate", event);
+  let state = event.state;
+  if (typeof state !== "number") {
+    state = undefined;
+  }
+  goto(location.href, state) 
+});
 
 // Frameworks can export a `onServerSideReload` function to hook into server-side
 // hot module reloading. This export is not used in production and tree-shaken.
 export async function onServerSideReload() {
-  await goto(location.href);
+  const state = Date.now();
+  history.replaceState(state, "", location.href);
+  await goto(location.href, state);
 }

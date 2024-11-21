@@ -870,7 +870,7 @@ fn startAsyncBundle(
 ) bun.OOM!void {
     assert(dev.current_bundle == null);
     assert(entry_points.set.count() > 0);
-    assert(!dev.log.hasAny());
+    dev.log.clearAndFree();
 
     dev.incremental_result.reset();
 
@@ -1198,7 +1198,7 @@ pub fn finalizeBundle(
             false, // TODO: sourcemaps true
         );
 
-        // Create an asset entry for this file.
+        // Create an entry for this file.
         const abs_path = ctx.sources[index.get()].path.text;
         // Later code needs to retrieve the CSS content
         // The hack is to use `entry_point_id`, which is otherwise unused, to store an index.
@@ -1382,13 +1382,19 @@ pub fn finalizeBundle(
     }
 
     // `route_bits` will have all of the routes that were modified. If any of
-    // these have active viewers, DevServer should inform them of CSS attachments
-    if (has_route_bits_set and will_hear_hot_update) {
+    // these have active viewers, DevServer should inform them of CSS attachments. These
+    // route bundles also need to be invalidated of their css attachments.
+    if (has_route_bits_set and
+        (will_hear_hot_update or dev.incremental_result.had_adjusted_edges))
+    {
         var it = route_bits.iterator(.{ .kind = .set });
         // List 2
         while (it.next()) |i| {
             const bundle = dev.routeBundlePtr(RouteBundle.Index.init(@intCast(i)));
-            if (bundle.active_viewers == 0) continue;
+            if (dev.incremental_result.had_adjusted_edges) {
+                bundle.cached_css_file_array.clear();
+            }
+            if (bundle.active_viewers == 0 or !will_hear_hot_update) continue;
             try w.writeInt(i32, @intCast(i), .little);
             try w.writeInt(u32, @intCast(bundle.full_pattern.len), .little);
             try w.writeAll(bundle.full_pattern);
@@ -1400,15 +1406,15 @@ pub fn finalizeBundle(
                 try dev.traceAllRouteImports(bundle, &gts, .{ .find_css = true });
                 const names = dev.client_graph.current_css_files.items;
 
-                try w.writeInt(u32, @intCast(names.len), .little);
+                try w.writeInt(i32, @intCast(names.len), .little);
                 for (names) |name| {
                     // These slices are url pathnames. The ID can be extracted
-                    bun.assert(name.len == (css_prefix ++ ".css").len + 16);
-                    bun.assert(bun.strings.hasPrefix(name, css_prefix));
+                    bun.assert(name.len == (css_prefix ++ "/.css").len + 16);
+                    bun.assert(bun.strings.hasPrefix(name, css_prefix ++ "/"));
                     try w.writeAll(name[css_prefix.len..][0..16]);
                 }
             } else {
-                try w.writeInt(u32, 0, .little);
+                try w.writeInt(i32, -1, .little);
             }
         }
     }
@@ -1595,17 +1601,28 @@ pub fn handleParseTaskFailure(
             .client => try dev.client_graph.onFileDeleted(abs_path, log),
         }
     } else {
-        // Print each error only once
-        Output.prettyErrorln("<red><b>Errors while bundling '{s}':<r>", .{
-            dev.relativePath(abs_path),
-        });
-        Output.flush();
-        log.print(Output.errorWriter()) catch {};
+        // TODO: CSS parser causes this code to crash.
+        // - css logs are not useful.
+        // - css parser emits garbage memory in log message.
+        // For these reasons, printing CSS errors is disabled
+        if (bun.strings.hasSuffixComptime(abs_path, ".css")) {
+            Output.prettyErrorln("<red><b>Error{s} while bundling \"{s}\"<r>", .{
+                if (log.errors +| log.warnings != 1) "s" else "",
+                dev.relativePath(abs_path),
+            });
+        } else {
+            Output.prettyErrorln("<red><b>Error{s} while bundling \"{s}\":<r>", .{
+                if (log.errors +| log.warnings != 1) "s" else "",
+                dev.relativePath(abs_path),
+            });
+            Output.flush();
+            log.print(Output.errorWriter()) catch {};
 
-        switch (graph) {
-            .server => try dev.server_graph.insertFailure(abs_path, log, false),
-            .ssr => try dev.server_graph.insertFailure(abs_path, log, true),
-            .client => try dev.client_graph.insertFailure(abs_path, log, false),
+            switch (graph) {
+                .server => try dev.server_graph.insertFailure(abs_path, log, false),
+                .ssr => try dev.server_graph.insertFailure(abs_path, log, true),
+                .client => try dev.client_graph.insertFailure(abs_path, log, false),
+            }
         }
     }
 }
@@ -3604,6 +3621,14 @@ pub const MessageId = enum(u8) {
     /// - Remainder are added errors. For Each:
     ///   - `SerializedFailure`: Error Data
     errors = 'e',
+    /// A message from the browser. This is used to communicate.
+    /// - `u32`: Unique ID for the browser tab. Each tab gets a different ID
+    /// - `[n]u8`: Opaque bytes, untouched from `IncomingMessageId.browser_error`
+    browser_message = 'b',
+    /// Sent to clear the messages from `browser_error`
+    /// - For each removed ID:
+    ///   - `u32`: Unique ID for the browser tab.
+    browser_message_clear = 'B',
     /// Sent when a request handler error is emitted. Each route will own at
     /// most 1 error, where sending a new request clears the original one.
     ///
@@ -3653,6 +3678,9 @@ pub const IncomingMessageId = enum(u8) {
     /// Emitted on client-side navigations.
     /// Rest of payload is a UTF-8 string.
     set_url = 'n',
+    /// Emit a message from the browser. Payload is opaque bytes that DevServer
+    /// does not care about. In practice, the payload is a JSON object.
+    browser_message = 'm',
 
     /// Invalid data
     _,
@@ -3660,7 +3688,8 @@ pub const IncomingMessageId = enum(u8) {
 
 const HmrTopic = enum(u8) {
     hot_update = 'h',
-    errors = '*',
+    errors = 'e',
+    browser_error = 'E',
     visualizer = 'v',
     // route_manifest = 'r',
 
@@ -3695,17 +3724,15 @@ const HmrTopic = enum(u8) {
 
 const HmrSocket = struct {
     dev: *DevServer,
-    is_from_localhost: bool,
     subscriptions: HmrTopic.Bits,
+    /// Allows actions which inspect or mutate sensitive DevServer state.
+    is_from_localhost: bool,
+    /// By telling DevServer the active route, this enables receiving detailed
+    /// `hot_update` events for when the route is updated.
     active_route: RouteBundle.Index.Optional,
-
-    pub const global_topic = "*";
-    pub const visualizer_topic = "v";
-    pub const hmr_topic = "u";
-
+    /// Files which the client definitely has and should not be re-sent
     pub fn onOpen(s: *HmrSocket, ws: AnyWebSocket) void {
         _ = ws.send(&(.{MessageId.version.char()} ++ s.dev.configuration_hash_key), .binary, false, true);
-        _ = ws.subscribe(global_topic);
     }
 
     pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {

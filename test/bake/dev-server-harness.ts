@@ -1,7 +1,7 @@
 /// <reference path="../../src/bake/bake.d.ts" />
 import { Bake, Subprocess } from "bun";
 import fs from "node:fs";
-import path from "node:path";
+import path, { resolve } from "node:path";
 import os from "node:os";
 import assert from "node:assert";
 import { test } from "bun:test";
@@ -35,19 +35,13 @@ export interface DevServerTest {
   framework?: Bake.Framework | "react";
   /** Starting files */
   files: FileObject;
-  /**
-   * The dev server tests are abstracted into "steps", which are functions run
-   * in order. This allows quickly writing very complicated tests, while
-   * abstracting bindings to DevServer. See `Step.*` functions and examples
-   * in the `dev` directory (where all dev server tests are).
-   */
-  steps: Step[];
+  test: (dev: Dev) => Promise<void>;
 }
 
 type FileObject = Record<string, string | Buffer>;
 
 export class Dev {
-  root: string;
+  rootDir: string;
   port: number;
   baseUrl: string;
   panicked = false;
@@ -57,7 +51,7 @@ export class Dev {
   output: OutputLineStream;
 
   constructor(root: string, port: number, process: Subprocess<"pipe", "pipe", "pipe">, stream: OutputLineStream) {
-    this.root = root;
+    this.rootDir = root;
     this.port = port;
     this.baseUrl = `http://localhost:${port}`;
     this.devProcess = process;
@@ -67,8 +61,32 @@ export class Dev {
     });
   }
 
+  fetch(url: string, init?: RequestInit) {
+    return new DevFetchPromise((resolve, reject) => fetch(new URL(url, this.baseUrl).toString(), init).then(resolve, reject));
+  }
+
+  write(file: string, contents: string) {
+    const wait = this.waitForHotReload();
+    // TODO: consider using IncomingMessageId.virtual_file_change to reduce theoretical flakiness.
+    fs.writeFileSync(this.join(file), contents);
+    return wait;
+  }
+
+  patch(file: string, { find, replace }: { find: string; replace: string }) {
+    const wait = this.waitForHotReload();
+    const filename = this.join(file);
+    const source = fs.readFileSync(filename, "utf8");
+    const contents = source.replace(find, replace);
+    if (contents === source) {
+      throw new Error(`Couldn't find and replace ${JSON.stringify(find)} in ${file}`);
+    }
+    // TODO: consider using IncomingMessageId.virtual_file_change to reduce theoretical flakiness.
+    fs.writeFileSync(filename, contents);
+    return wait;
+  }
+
   join(file: string) {
-    return path.join(this.root, file);
+    return path.join(this.rootDir, file);
   }
 
   async waitForHotReload() {
@@ -86,62 +104,20 @@ export interface Step {
   name?: string;
 }
 
-export const Step = {
-  fn: (name: string, cb: StepFn) => ({ run: cb, caller: snapshotCallerLocation(), name } as Step),
-
-  write: (file: string, contents: string) =>
-    Step.fn(`Update ${file}`, (dev: Dev) => {
-      const wait = dev.waitForHotReload();
-      // TODO: consider using IncomingMessageId.virtual_file_change to reduce theoretical flakiness.
-      fs.writeFileSync(dev.join(file), contents);
-      return wait;
-    }),
-
-  patch: (file: string, { find, replace }: { find: string; replace: string }) =>
-    Step.fn(`Update ${file}`, (dev: Dev) => {
-      const wait = dev.waitForHotReload();
-      const filename = dev.join(file);
-      const contents = fs.readFileSync(filename, "utf8").replace(find, replace);
-      if (contents === fs.readFileSync(filename, "utf8")) {
-        throw new Error(`Couldn't find and replace ${JSON.stringify(find)} in ${file}`);
-      }
-      // TODO: consider using IncomingMessageId.virtual_file_change to reduce theoretical flakiness.
-      fs.writeFileSync(filename, contents);
-      return wait;
-    }),
-
-  fetch: (url: string) => new FetchStep(url),
-};
-
-class FetchStep implements Step {
-  url: string;
-  expected: string | null;
-  caller: string;
-
-  get name() {
-    return `Fetch ${JSON.stringify(this.url)}`;
+class DevFetchPromise extends Promise<Response> {
+  expect(result: string) {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      const res = await this;
+      expect(res.ok).toBe(true);
+      const text = (await res.text()).trim();
+      expect(text).toBe(result.trim());
+    });
   }
-
-  constructor(url: string) {
-    this.url = url;
-    this.expected = null;
-    this.caller = snapshotCallerLocation();
+  async text() {
+    return (await this).text();
   }
-
-  expect(expected: string) {
-    this.expected = expected;
-    return this;
-  }
-
-  async run(dev: Dev) {
-    const res = await fetch(dev.baseUrl + this.url);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch ${this.url}: ${res.status}`);
-    }
-    if (this.expected !== null) {
-      const text = await res.text();
-      expect(text).toBe(this.expected);
-    }
+  async json() {
+    return (await this).json();
   }
 }
 
@@ -159,6 +135,18 @@ function snapshotCallerLocation(): string {
 
 function stackTraceFileName(line: string): string {
   return / \((.*?)[:)]/.exec(line)![1];
+}
+
+async function withAnnotatedStack<T>(stackLine: string, cb: () => Promise<T>): Promise<T> {
+  try {
+    return await cb();
+  } catch (err: any) {
+    console.log();
+    const oldStack = err.stack;
+    const newError = new Error(err?.message ?? oldStack.slice(0, oldStack.indexOf("\n    at ")));
+    newError.stack = `${newError.message}\n${stackLine}\n    at \x1b[1moriginal stack:\x1b[0m ()\n${oldStack}`;
+    throw newError;
+  }
 }
 
 const tempDir = fs.mkdtempSync(
@@ -270,7 +258,8 @@ class OutputLineStream extends EventEmitter {
 
 export function devTest(description: string, options: DevServerTest) {
   // Capture the caller name as part of the test tempdir
-  const caller = stackTraceFileName(snapshotCallerLocation());
+  const callerLocation = snapshotCallerLocation();
+  const caller = stackTraceFileName(callerLocation);
   assert(caller.startsWith(devTestRoot), "dev server tests must be in test/bake/dev");
   const basename = path.basename(caller, '.test' + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
@@ -319,23 +308,17 @@ export function devTest(description: string, options: DevServerTest) {
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
     await using dev = new Dev(root, port, devProcess, stream);
 
-    let n = 0;
-    for (const step of options.steps) {
-      console.log(`\x1b[95mStep ${n}${step.name ? `: ${step.name}` : ""}\x1b[0m`);
-      n++;
-      try {
-        await step.run(dev);
-      } catch (err: any) {
-        console.log();
-        const oldStack = err.stack;
-        const editedCallerStep = step.caller.replace(/\w*at.*?\(/, "at step defined at (");
-        const main = dev.panicked
-        ? `caused a DevServer crash`
-        : `failed: ${oldStack.slice(0, oldStack.indexOf("\n    at "))}`;
-        const newError = new Error(`Step ${n} ${main}`);
-        newError.stack = `${newError.message}\n${editedCallerStep}\n    at \x1b[1moriginal stack:\x1b[0m ()\n${oldStack}`;
-        throw newError;
-      }
+    try {
+      await options.test(dev);
+    } catch (err: any) {
+      // const oldStack = err.stack;
+      // const editedCallerStep = callerLocation.replace(/\w*at.*?\(/, "at test defined at (");
+      // const main = dev.panicked
+      // ? `caused a DevServer crash`
+      // : `failed: ${oldStack.slice(0, oldStack.indexOf("\n    at "))}`;
+      // const newError = new Error(`Step ${n} ${main}`);
+      // newError.stack = `${newError.message}\n${editedCallerStep}\n    at \x1b[1moriginal stack:\x1b[0m ()\n${oldStack}`;
+      throw err;
     }
   });
 }

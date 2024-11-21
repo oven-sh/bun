@@ -2115,9 +2115,13 @@ pub const BundleV2 = struct {
                         }
 
                         // Discover all CSS roots.
-                        for (import_records.slice()) |record| {
+                        for (import_records.slice()) |*record| {
                             if (record.tag != .css) continue;
                             if (!record.source_index.isValid()) continue;
+                            if (asts.items(.parts)[record.source_index.get()].len == 0) {
+                                record.source_index = Index.invalid;
+                                continue;
+                            }
 
                             const gop = start.css_entry_points.getOrPutAssumeCapacity(record.source_index);
                             if (target != .browser)
@@ -2128,6 +2132,8 @@ pub const BundleV2 = struct {
                     } else {
                         css_total_files.appendAssumeCapacity(Index.init(index));
                     }
+                } else {
+                    _ = start.css_entry_points.swapRemove(Index.init(index));
                 }
             }
 
@@ -3614,8 +3620,7 @@ pub const ParseTask = struct {
                     // unique_key_for_additional_file.* = unique_key;
                     var import_records = BabyList(ImportRecord){};
                     const source_code = source.contents;
-                    var css_ast =
-                        switch (bun.css.BundlerStyleSheet.parseBundler(
+                    var css_ast = switch (bun.css.BundlerStyleSheet.parseBundler(
                         allocator,
                         source_code,
                         bun.css.ParserOptions.default(allocator, bundler.log),

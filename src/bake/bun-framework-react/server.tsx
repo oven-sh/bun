@@ -12,9 +12,7 @@ function assertReactComponent(Component: any) {
 }
 
 // This function converts the route information into a React component tree.
-function getPage(meta: Bake.RouteMetadata) {
-  const { styles } = meta;
-
+function getPage(meta: Bake.RouteMetadata, styles: readonly string[]) {
   let route = component(meta.pageModule);
   for (const layout of meta.layouts) {
     const Layout = layout.default;
@@ -42,16 +40,13 @@ function component(mod: any) {
   if (import.meta.env.DEV) assertReactComponent(Page);
 
   let method;
-  if (
-    ((import.meta.env.DEV || import.meta.env.STATIC) && 
-      (method = mod.getStaticProps))
-  ) {
+  if ((import.meta.env.DEV || import.meta.env.STATIC) && (method = mod.getStaticProps)) {
     if (mod.getServerSideProps) {
       throw new Error("Cannot have both getStaticProps and getServerSideProps");
     }
 
     props = method();
-  } 
+  }
 
   return <Page {...props} />;
 }
@@ -68,12 +63,25 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
   // rendering modes. This is signaled by `client.tsx` via the `Accept` header.
   const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
 
-  const page = getPage(meta);
+  // Do not render <link> tags if we are skipping SSR.
+  const page = getPage(meta, skipSSR ? [] : meta.styles);
+
+  // TODO: write a lightweight version of PassThrough
+  const rscPayload = new PassThrough();
+
+  if (skipSSR) {
+    // "client.tsx" reads the start of the response to determine the
+    // CSS files to load. The styles are loaded before the new page
+    // is presented, to avoid a flash of unstyled content.
+    const int = Buffer.allocUnsafe(4);
+    const str = meta.styles.join("\n");
+    int.writeUInt32LE(str.length, 0);
+    rscPayload.write(int);
+    rscPayload.write(str);
+  }
 
   // This renders Server Components to a ReadableStream "RSC Payload"
-  const rscPayload = renderToPipeableStream(page, serverManifest)
-    // TODO: write a lightweight version of PassThrough
-    .pipe(new PassThrough());
+  renderToPipeableStream(page, serverManifest).pipe(rscPayload);
   if (skipSSR) {
     return new Response(rscPayload as any, {
       status: 200,
@@ -93,13 +101,15 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
 // function returns no files, the route is always dynamic. When building an app
 // to static files, all routes get pre-rendered (build failure if not possible).
 export async function prerender(meta: Bake.RouteMetadata) {
-  const page = getPage(meta);
+  const page = getPage(meta, meta.styles);
 
   const rscPayload = renderToPipeableStream(page, serverManifest)
     // TODO: write a lightweight version of PassThrough
     .pipe(new PassThrough());
 
-  let rscChunks: Uint8Array[] = [];
+  const int = new Uint32Array(1);
+  int[0] = meta.styles.length;
+  let rscChunks: Array<BlobPart> = [int.buffer as ArrayBuffer, meta.styles.join("\n")];
   rscPayload.on("data", chunk => rscChunks.push(chunk));
 
   const html = await renderToStaticHtml(rscPayload, meta.modules);

@@ -8,16 +8,30 @@ import { DataViewReader } from "./client/reader";
 import { routeMatch } from "./client/route";
 import { initWebSocket } from "./client/websocket";
 import { MessageId } from "./generated";
+import { editCssContent, editCssArray } from "./client/css-reloader";
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
 
+let isPerformingRouteReload = false;
+let shouldPerformAnotherRouteReload = false;
+
 async function performRouteReload() {
   console.info("[Bun] Server-side code changed, reloading!");
+  if (isPerformingRouteReload) {
+    shouldPerformAnotherRouteReload = true;
+    return;
+  }
+
   if (onServerSideReload) {
     try {
-      await onServerSideReload();
+      isPerformingRouteReload = true;
+      do {
+        shouldPerformAnotherRouteReload = false;
+        await onServerSideReload();
+      } while (shouldPerformAnotherRouteReload);
+      isPerformingRouteReload = false;
       return;
     } catch (err) {
       console.error("Failed to perform Server-side reload.");
@@ -49,12 +63,6 @@ try {
   console.error(e);
 }
 
-/**
- * Map between CSS identifier and its style tag.
- * If a file is not present in this map, it might exist as a link tag in the HTML.
- */
-const cssStore = new Map<string, CSSStyleSheet>();
-
 let isFirstRun = true;
 initWebSocket({
   [MessageId.version](view, ws) {
@@ -75,8 +83,8 @@ initWebSocket({
       return;
     }
 
-    ws.send('she'); // IncomingMessageId.subscribe with hot_update and route_update
-    ws.send('n' + location.pathname); // IncomingMessageId.set_url
+    ws.send("she"); // IncomingMessageId.subscribe with hot_update and route_update
+    ws.send("n" + location.pathname); // IncomingMessageId.set_url
   },
   [MessageId.hot_update](view) {
     console.log(view);
@@ -93,38 +101,43 @@ initWebSocket({
       serverSideRoutesUpdated.add(routeId);
     } while (true);
     // List 2
+    let isServerSideRouteUpdate = false;
     do {
       const routeId = reader.i32();
       if (routeId === -1 || routeId == undefined) break;
       const routePattern = reader.string32();
       if (routeMatch(routeId, routePattern)) {
-        const isServerSide = serverSideRoutesUpdated.has(routeId);
-        const cssCount = reader.u32();
-        const cssArray = new Array<string>(cssCount);
-        for (let i = 0; i < cssCount; i++) {
-          cssArray[i] = reader.stringWithLength(16);
+        isServerSideRouteUpdate = serverSideRoutesUpdated.has(routeId);
+        const cssCount = reader.i32();
+        if (cssCount !== -1) {
+          const cssArray = new Array<string>(cssCount);
+          for (let i = 0; i < cssCount; i++) {
+            cssArray[i] = reader.stringWithLength(16);
+          }
+          editCssArray(cssArray);
+          console.log("oh shit", { routePattern, cssArray });
         }
-        console.log('oh shit', { routePattern, cssArray, isServerSide });
 
         // Skip to the last route
-        const nextRouteId = reader.i32();
-        while(nextRouteId != -1) {
+        let nextRouteId = reader.i32();
+        while (nextRouteId != null && nextRouteId !== -1) {
           reader.string32();
           reader.cursor += 16 * reader.u32();
+          nextRouteId = reader.i32();
         }
         break;
       } else {
         // Skip to the next route
         reader.cursor += 16 * reader.u32();
       }
-    } while(true);
+    } while (true);
     // List 3
     {
       let i = reader.u32();
-      while (i--) { 
+      while (i--) {
         const identifier = reader.stringWithLength(16);
         const code = reader.string32();
-        console.log('css mutation', { code, identifier });
+        editCssContent(identifier, code);
       }
     }
     // JavaScript modules
@@ -132,6 +145,9 @@ initWebSocket({
       const code = td.decode(reader.rest());
       const modules = (0, eval)(code);
       replaceModules(modules);
+    }
+    if (isServerSideRouteUpdate) {
+      performRouteReload();
     }
   },
   // [MessageId.route_update](view) {
@@ -150,22 +166,3 @@ initWebSocket({
   // },
   [MessageId.errors]: onErrorMessage,
 });
-
-function reloadCss(id: string, newContent: string) {
-  console.log(`[Bun] Reloading CSS: ${id}`);
-
-  // TODO: can any of the following operations throw?
-  let sheet = cssStore.get(id);
-  if (!sheet) {
-    sheet = new CSSStyleSheet();
-    sheet.replace(newContent);
-    document.adoptedStyleSheets.push(sheet);
-    cssStore.set(id, sheet);
-
-    // Delete the link tag if it exists
-    document.querySelector(`link[href="/_bun/css/${id}.css"]`)?.remove();
-    return;
-  }
-
-  sheet.replace(newContent);
-}

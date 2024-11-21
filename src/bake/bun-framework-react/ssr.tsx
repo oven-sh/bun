@@ -204,8 +204,7 @@ class RscInjectionStream extends EventEmitter {
     // TODO:
   }
 
-  end() {
-  }
+  end() {}
 }
 
 class StaticRscInjectionStream extends EventEmitter {

@@ -275,7 +275,7 @@ pub const Registry = struct {
             return name[1..];
         }
 
-        pub fn fromAPI(name: string, registry_: Api.NpmRegistry, allocator: std.mem.Allocator, env: *DotEnv.Loader) !Scope {
+        pub fn fromAPI(name: string, registry_: Api.NpmRegistry, allocator: std.mem.Allocator, env: *DotEnv.Loader) OOM!Scope {
             var registry = registry_;
 
             // Support $ENV_VAR for registry URLs

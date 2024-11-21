@@ -108,7 +108,7 @@ beforeAll(async () => {
   }
 
   await Promise.all(jobs);
-});
+}, 600000);
 
 describe.each([
   ["js-native-api", jsNativeApiTests, jsNativeApiRoot, failingJsNativeApiTests],

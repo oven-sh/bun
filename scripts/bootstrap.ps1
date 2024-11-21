@@ -43,6 +43,42 @@ function Which {
   }
 }
 
+function Execute-Script {
+  param (
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$Path
+  )
+
+  $pwsh = Which pwsh powershell -Required
+  Execute-Command $pwsh $Path
+}
+
+function Download-File {
+  param (
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$Url,
+    [Parameter(Mandatory = $false, Position = 1)]
+    [string]$Path
+  )
+
+  if (-not $Path) {
+    $Path = "$env:TEMP\$([System.IO.Path]::GetRandomFileName())"
+    $Path = [System.IO.Path]::ChangeExtension($Path, [System.IO.Path]::GetExtension($Url))
+  }
+
+  $client = New-Object System.Net.WebClient
+  for ($i = 0; $i -lt 10 -and -not (Test-Path $Path); $i++) {
+    try {
+      $client.DownloadFile($Url, $Path)
+    } catch {
+      Write-Warning "Failed to download $Url, retry $i..."
+      Start-Sleep -s $i
+    }
+  }
+
+  return $Path
+}
+
 function Install-Chocolatey {
   if (Which choco) {
     return
@@ -50,7 +86,8 @@ function Install-Chocolatey {
 
   Write-Output "Installing Chocolatey..."
   [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-  iex -Command ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+  $installScript = Download-File "https://community.chocolatey.org/install.ps1"
+  Execute-Script $installScript
   Refresh-Path
 }
 
@@ -204,7 +241,8 @@ function Install-Buildkite {
 
   Write-Output "Installing Buildkite agent..."
   $env:buildkiteAgentToken = "xxx"
-  iex ((New-Object System.Net.WebClient).DownloadString("https://raw.githubusercontent.com/buildkite/agent/main/install.ps1"))
+  $installScript = Download-File "https://raw.githubusercontent.com/buildkite/agent/main/install.ps1"
+  Execute-Script $installScript
   Refresh-Path
 }
 
@@ -231,11 +269,8 @@ function Install-Visual-Studio {
     [string]$Edition = "community"
   )
 
-  $vsInstaller = "$env:TEMP\vs_$Edition.exe"
-  if (-not (Test-Path $vsInstaller)) {
-    Write-Output "Downloading Visual Studio installer..."
-    (New-Object System.Net.WebClient).DownloadFile("https://aka.ms/vs/17/release/vs_$Edition.exe", $vsInstaller)
-  }
+  Write-Output "Downloading Visual Studio installer..."
+  $vsInstaller = Download-File "https://aka.ms/vs/17/release/vs_$Edition.exe"
 
   Write-Output "Installing Visual Studio..."
   $vsInstallArgs = @(
@@ -265,9 +300,10 @@ function Install-Rust {
     return
   }
 
+  Write-Output "Downloading Rustup installer..."
+  $rustupInit = Download-File "https://win.rustup.rs/"
+
   Write-Output "Installing Rust..."
-  $rustupInit = "$env:TEMP\rustup-init.exe"
-  (New-Object System.Net.WebClient).DownloadFile("https://win.rustup.rs/", $rustupInit)
   Execute-Command $rustupInit -y
   Add-To-Path "$env:USERPROFILE\.cargo\bin"
 }

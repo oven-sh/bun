@@ -1170,7 +1170,7 @@ async function main() {
   };
 
   const { cloud, detached, bootstrap, ci, os, arch, distro, distroVersion } = options;
-  const name = `${os}-${arch}-${distro}-${distroVersion}`;
+  const name = distro ? `${os}-${arch}-${distro}-${distroVersion}` : `${os}-${arch}-${distroVersion}`;
 
   let bootstrapPath, agentPath;
   if (bootstrap) {

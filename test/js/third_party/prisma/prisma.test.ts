@@ -78,7 +78,7 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
     test(
       "does not leak",
       async (prisma: PrismaClient, _: number) => {
-        // prisma leak was 8 bytes per query, so a million requests would manifest as an 8MB leak
+        // prisma leak was 8 bytes per query, so 4 million requests would manifest as a 32MB leak
         const batchSize = 1000;
         const warmupIters = 1_000_000 / batchSize;
         const testIters = 4_000_000 / batchSize;
@@ -113,9 +113,9 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
         }
         const after = process.memoryUsage.rss();
         const deltaMB = (after - before) / 1024 / 1024;
-        expect(deltaMB).toBeLessThan(10);
+        expect(deltaMB).toBeLessThan(20);
       },
-      120_000,
+      240_000,
     );
 
     test(

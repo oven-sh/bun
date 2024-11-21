@@ -8,6 +8,7 @@ static int cleanup_hook_count = 0;
 static void cleanup(void* arg) {
   cleanup_hook_count++;
   printf("cleanup(%d)\n", *(int*)(arg));
+  fflush(stdout);
 }
 
 static int secret = 42;

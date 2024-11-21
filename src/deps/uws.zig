@@ -223,7 +223,7 @@ pub const UpgradedDuplex = struct {
         log("onReceivedData", .{});
 
         const function = callframe.callee();
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
 
         if (JSC.getFunctionData(function)) |self| {
             const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
@@ -2640,12 +2640,36 @@ pub const create_bun_socket_error_t = enum(i32) {
     load_ca_file,
     invalid_ca_file,
     invalid_ca,
+
+    pub fn toJS(this: create_bun_socket_error_t, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return switch (this) {
+            .none => brk: {
+                bun.debugAssert(false);
+                break :brk .null;
+            },
+            .load_ca_file => globalObject.ERR_BORINGSSL("Failed to load CA file", .{}).toJS(),
+            .invalid_ca_file => globalObject.ERR_BORINGSSL("Invalid CA file", .{}).toJS(),
+            .invalid_ca => globalObject.ERR_BORINGSSL("Invalid CA", .{}).toJS(),
+        };
+    }
 };
 
 pub const us_bun_verify_error_t = extern struct {
     error_no: i32 = 0,
     code: [*c]const u8 = null,
     reason: [*c]const u8 = null,
+
+    pub fn toJS(this: *const us_bun_verify_error_t, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        const code = if (this.code == null) "" else this.code[0..bun.len(this.code)];
+        const reason = if (this.reason == null) "" else this.reason[0..bun.len(this.reason)];
+
+        const fallback = JSC.SystemError{
+            .code = bun.String.createUTF8(code),
+            .message = bun.String.createUTF8(reason),
+        };
+
+        return fallback.toErrorInstance(globalObject);
+    }
 };
 pub extern fn us_ssl_socket_verify_error_from_ssl(ssl: *BoringSSL.SSL) us_bun_verify_error_t;
 
@@ -4521,3 +4545,5 @@ pub fn onThreadExit() void {
 }
 
 extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
+
+pub extern fn us_socket_upgrade_to_tls(s: *Socket, new_context: *SocketContext, sni: ?[*:0]const u8) ?*Socket;

@@ -359,14 +359,14 @@ pub const FSWatcher = struct {
 
                 // options
                 if (options_or_callable.isObject()) {
-                    if (options_or_callable.getTruthy(ctx, "persistent")) |persistent_| {
+                    if (try options_or_callable.getTruthy(ctx, "persistent")) |persistent_| {
                         if (!persistent_.isBoolean()) {
                             return ctx.throwInvalidArguments2("persistent must be a boolean", .{});
                         }
                         persistent = persistent_.toBoolean();
                     }
 
-                    if (options_or_callable.getTruthy(ctx, "verbose")) |verbose_| {
+                    if (try options_or_callable.getTruthy(ctx, "verbose")) |verbose_| {
                         if (!verbose_.isBoolean()) {
                             return ctx.throwInvalidArguments2("verbose must be a boolean", .{});
                         }
@@ -377,7 +377,7 @@ pub const FSWatcher = struct {
                         encoding = try JSC.Node.Encoding.assert(encoding_, ctx, encoding);
                     }
 
-                    if (options_or_callable.getTruthy(ctx, "recursive")) |recursive_| {
+                    if (try options_or_callable.getTruthy(ctx, "recursive")) |recursive_| {
                         if (!recursive_.isBoolean()) {
                             return ctx.throwInvalidArguments2("recursive must be a boolean", .{});
                         }
@@ -385,7 +385,7 @@ pub const FSWatcher = struct {
                     }
 
                     // abort signal
-                    if (options_or_callable.getTruthy(ctx, "signal")) |signal_| {
+                    if (try options_or_callable.getTruthy(ctx, "signal")) |signal_| {
                         if (JSC.AbortSignal.fromJS(signal_)) |signal_obj| {
                             //Keep it alive
                             signal_.ensureStillAlive();

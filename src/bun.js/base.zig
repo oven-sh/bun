@@ -193,7 +193,7 @@ fn toTypeErrorWithCode(
         zig_str.mark();
     }
     const code_str = ZigString.init(code);
-    return JSC.JSValue.createTypeError(&zig_str, &code_str, ctx.ptr());
+    return JSC.JSValue.createTypeError(&zig_str, &code_str, ctx);
 }
 
 pub fn toTypeError(
@@ -413,7 +413,7 @@ pub const ArrayBuffer = extern struct {
 
     pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);
-        const was = value.asArrayBuffer_(ctx.ptr(), &out);
+        const was = value.asArrayBuffer_(ctx, &out);
         bun.assert(was);
         out.value = value;
         return out;
@@ -1005,7 +1005,7 @@ pub fn wrapInstanceMethod(
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) bun.JSError!JSC.JSValue {
-            const arguments = callframe.arguments(FunctionTypeInfo.params.len);
+            const arguments = callframe.arguments_old(FunctionTypeInfo.params.len);
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
 
@@ -1028,7 +1028,7 @@ pub fn wrapInstanceMethod(
                         args[i] = this;
                     },
                     *JSC.JSGlobalObject => {
-                        args[i] = globalThis.ptr();
+                        args[i] = globalThis;
                     },
                     *JSC.CallFrame => {
                         args[i] = callframe;
@@ -1039,7 +1039,7 @@ pub fn wrapInstanceMethod(
                             iter.deinit();
                             return JSC.JSValue.zero;
                         };
-                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
                             globalThis.throwInvalidArguments("expected string or buffer", .{});
                             iter.deinit();
                             return JSC.JSValue.zero;
@@ -1048,7 +1048,7 @@ pub fn wrapInstanceMethod(
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
                             if (!arg.isEmptyOrUndefinedOrNull()) {
-                                args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                                args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
                                     globalThis.throwInvalidArguments("expected string or buffer", .{});
                                     iter.deinit();
                                     return JSC.JSValue.zero;
@@ -1062,7 +1062,7 @@ pub fn wrapInstanceMethod(
                     },
                     JSC.ArrayBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = arg.asArrayBuffer(globalThis.ptr()) orelse {
+                            args[i] = arg.asArrayBuffer(globalThis) orelse {
                                 globalThis.throwInvalidArguments("expected TypedArray", .{});
                                 iter.deinit();
                                 return JSC.JSValue.zero;
@@ -1075,7 +1075,7 @@ pub fn wrapInstanceMethod(
                     },
                     ?JSC.ArrayBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = arg.asArrayBuffer(globalThis.ptr()) orelse {
+                            args[i] = arg.asArrayBuffer(globalThis) orelse {
                                 globalThis.throwInvalidArguments("expected TypedArray", .{});
                                 iter.deinit();
                                 return JSC.JSValue.zero;
@@ -1097,11 +1097,11 @@ pub fn wrapInstanceMethod(
                             return JSC.JSValue.zero;
                         }
 
-                        args[i] = string_value.getZigString(globalThis.ptr());
+                        args[i] = string_value.getZigString(globalThis);
                     },
                     ?JSC.Cloudflare.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
-                            if (content_arg.get(globalThis.ptr(), "html")) |html_val| {
+                            if (try content_arg.get(globalThis, "html")) |html_val| {
                                 args[i] = .{ .html = html_val.toBoolean() };
                             }
                         } else {
@@ -1178,7 +1178,7 @@ pub fn wrapStaticMethod(
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) bun.JSError!JSC.JSValue {
-            const arguments = callframe.arguments(FunctionTypeInfo.params.len);
+            const arguments = callframe.arguments_old(FunctionTypeInfo.params.len);
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
 
@@ -1186,7 +1186,7 @@ pub fn wrapStaticMethod(
                 const ArgType = param.type.?;
                 switch (param.type.?) {
                     *JSC.JSGlobalObject => {
-                        args[i] = globalThis.ptr();
+                        args[i] = globalThis;
                     },
                     JSC.Node.StringOrBuffer => {
                         const arg = iter.nextEat() orelse {
@@ -1194,7 +1194,7 @@ pub fn wrapStaticMethod(
                             iter.deinit();
                             return JSC.JSValue.zero;
                         };
-                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
                             globalThis.throwInvalidArguments("expected string or buffer", .{});
                             iter.deinit();
                             return JSC.JSValue.zero;
@@ -1202,7 +1202,7 @@ pub fn wrapStaticMethod(
                     },
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse brk: {
+                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse brk: {
                                 if (arg == .undefined) {
                                     break :brk null;
                                 }
@@ -1217,7 +1217,7 @@ pub fn wrapStaticMethod(
                     },
                     JSC.Node.BlobOrStringOrBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                            args[i] = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse {
                                 globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
                                 iter.deinit();
                                 return JSC.JSValue.zero;
@@ -1230,7 +1230,7 @@ pub fn wrapStaticMethod(
                     },
                     JSC.ArrayBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = arg.asArrayBuffer(globalThis.ptr()) orelse {
+                            args[i] = arg.asArrayBuffer(globalThis) orelse {
                                 globalThis.throwInvalidArguments("expected TypedArray", .{});
                                 iter.deinit();
                                 return JSC.JSValue.zero;
@@ -1243,7 +1243,7 @@ pub fn wrapStaticMethod(
                     },
                     ?JSC.ArrayBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = arg.asArrayBuffer(globalThis.ptr()) orelse {
+                            args[i] = arg.asArrayBuffer(globalThis) orelse {
                                 globalThis.throwInvalidArguments("expected TypedArray", .{});
                                 iter.deinit();
                                 return JSC.JSValue.zero;
@@ -1265,11 +1265,11 @@ pub fn wrapStaticMethod(
                             return JSC.JSValue.zero;
                         }
 
-                        args[i] = string_value.getZigString(globalThis.ptr());
+                        args[i] = string_value.getZigString(globalThis);
                     },
                     ?JSC.Cloudflare.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
-                            if (content_arg.get(globalThis.ptr(), "html")) |html_val| {
+                            if (try content_arg.get(globalThis, "html")) |html_val| {
                                 args[i] = .{ .html = html_val.toBoolean() };
                             }
                         } else {

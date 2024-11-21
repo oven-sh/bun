@@ -678,7 +678,7 @@ pub const Request = struct {
             }
 
             if (!fields.contains(.signal)) {
-                if (value.getTruthy(globalThis, "signal")) |signal_| {
+                if (try value.getTruthy(globalThis, "signal")) |signal_| {
                     fields.insert(.signal);
                     if (AbortSignal.fromJS(signal_)) |signal| {
                         //Keep it alive
@@ -768,7 +768,7 @@ pub const Request = struct {
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Request {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         const arguments = arguments_.ptr[0..arguments_.len];
 
         const request = try constructInto(globalThis, arguments);

@@ -50,7 +50,7 @@ pub const FileSystemRouter = struct {
     pub usingnamespace JSC.Codegen.JSFileSystemRouter;
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*FileSystemRouter {
-        const argument_ = callframe.arguments(1);
+        const argument_ = callframe.arguments_old(1);
         if (argument_.len == 0) {
             return globalThis.throwInvalidArguments2("Expected object", .{});
         }
@@ -67,7 +67,7 @@ pub const FileSystemRouter = struct {
         var asset_prefix_slice: ZigString.Slice = .{};
 
         var out_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
-        if (argument.get(globalThis, "style")) |style_val| {
+        if (try argument.get(globalThis, "style")) |style_val| {
             if (!style_val.getZigString(globalThis).eqlComptime("nextjs")) {
                 return globalThis.throwInvalidArguments2("Only 'nextjs' style is currently implemented", .{});
             }
@@ -75,7 +75,7 @@ pub const FileSystemRouter = struct {
             return globalThis.throwInvalidArguments2("Expected 'style' option (ex: \"style\": \"nextjs\")", .{});
         }
 
-        if (argument.get(globalThis, "dir")) |dir| {
+        if (try argument.get(globalThis, "dir")) |dir| {
             if (!dir.isString()) {
                 return globalThis.throwInvalidArguments2("Expected dir to be a string", .{});
             }
@@ -98,7 +98,7 @@ pub const FileSystemRouter = struct {
         arena.* = bun.ArenaAllocator.init(globalThis.allocator());
         const allocator = arena.allocator();
         var extensions = std.ArrayList(string).init(allocator);
-        if (argument.get(globalThis, "fileExtensions")) |file_extensions| {
+        if (try argument.get(globalThis, "fileExtensions")) |file_extensions| {
             if (!file_extensions.jsType().isArray()) {
                 origin_str.deinit();
                 arena.deinit();
@@ -120,7 +120,7 @@ pub const FileSystemRouter = struct {
             }
         }
 
-        if (argument.getTruthy(globalThis, "assetPrefix")) |asset_prefix| {
+        if (try argument.getTruthy(globalThis, "assetPrefix")) |asset_prefix| {
             if (!asset_prefix.isString()) {
                 origin_str.deinit();
                 arena.deinit();
@@ -162,7 +162,7 @@ pub const FileSystemRouter = struct {
             return globalThis.throwValue2(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         };
 
-        if (argument.get(globalThis, "origin")) |origin| {
+        if (try argument.get(globalThis, "origin")) |origin| {
             if (!origin.isString()) {
                 arena.deinit();
                 globalThis.allocator().destroy(arena);
@@ -246,7 +246,7 @@ pub const FileSystemRouter = struct {
     }
 
     pub fn match(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const argument_ = callframe.arguments(2);
+        const argument_ = callframe.arguments_old(2);
         if (argument_.len == 0) {
             globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
             return JSValue.zero;

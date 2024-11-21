@@ -98,11 +98,11 @@ pub const JSBundler = struct {
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
-            if (config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
+            if (try config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
                 this.experimental_css = if (enable_css.isBoolean())
                     enable_css.toBoolean()
                 else if (enable_css.isObject()) true: {
-                    if (enable_css.getTruthy(globalThis, "chunking")) |enable_chunking| {
+                    if (try enable_css.getTruthy(globalThis, "chunking")) |enable_chunking| {
                         this.css_chunking = if (enable_chunking.isBoolean()) enable_css.toBoolean() else false;
                     }
 
@@ -214,7 +214,7 @@ pub const JSBundler = struct {
                 try this.footer.appendSliceExact(slice.slice());
             }
 
-            if (config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
+            if (try config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
                 if (bun.FeatureFlags.breaking_changes_1_2 and config.isBoolean()) {
                     if (source_map_js == .true) {
                         this.source_map = if (has_out_dir)
@@ -247,7 +247,7 @@ pub const JSBundler = struct {
                 this.code_splitting = hot;
             }
 
-            if (config.getTruthy(globalThis, "minify")) |minify| {
+            if (try config.getTruthy(globalThis, "minify")) |minify| {
                 if (minify.isBoolean()) {
                     const value = minify.toBoolean();
                     this.minify.whitespace = value;
@@ -271,9 +271,7 @@ pub const JSBundler = struct {
             if (try config.getArray(globalThis, "entrypoints") orelse try config.getArray(globalThis, "entryPoints")) |entry_points| {
                 var iter = entry_points.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
-                    var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                        return globalThis.throwInvalidArguments2("Expected entrypoints to be an array of strings", .{});
-                    };
+                    var slice = try entry_point.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.entry_points.insert(slice.slice());
                 }
@@ -289,19 +287,15 @@ pub const JSBundler = struct {
                 this.ignore_dce_annotations = flag;
             }
 
-            if (config.getTruthy(globalThis, "conditions")) |conditions_value| {
+            if (try config.getTruthy(globalThis, "conditions")) |conditions_value| {
                 if (conditions_value.isString()) {
-                    var slice = conditions_value.toSliceOrNull(globalThis) orelse {
-                        return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
-                    };
+                    var slice = try conditions_value.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.conditions.insert(slice.slice());
                 } else if (conditions_value.jsType().isArray()) {
                     var iter = conditions_value.arrayIterator(globalThis);
                     while (iter.next()) |entry_point| {
-                        var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                            return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
-                        };
+                        var slice = try entry_point.toSliceOrNull(globalThis);
                         defer slice.deinit();
                         try this.conditions.insert(slice.slice());
                     }
@@ -344,9 +338,7 @@ pub const JSBundler = struct {
             if (try config.getOwnArray(globalThis, "external")) |externals| {
                 var iter = externals.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
-                    var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                        return globalThis.throwInvalidArguments2("Expected external to be an array of strings", .{});
-                    };
+                    var slice = try entry_point.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.external.insert(slice.slice());
                 }
@@ -355,9 +347,7 @@ pub const JSBundler = struct {
             if (try config.getOwnArray(globalThis, "drop")) |drops| {
                 var iter = drops.arrayIterator(globalThis);
                 while (iter.next()) |entry| {
-                    var slice = entry.toSliceOrNull(globalThis) orelse {
-                        return globalThis.throwInvalidArguments2("Expected drop to be an array of strings", .{});
-                    };
+                    var slice = try entry.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.drop.insert(slice.slice());
                 }
@@ -375,7 +365,7 @@ pub const JSBundler = struct {
                 try this.public_path.appendSliceExact(slice.slice());
             }
 
-            if (config.getTruthy(globalThis, "naming")) |naming| {
+            if (try config.getTruthy(globalThis, "naming")) |naming| {
                 if (naming.isString()) {
                     if (try config.getOptional(globalThis, "naming", ZigString.Slice)) |slice| {
                         defer slice.deinit();
@@ -587,7 +577,7 @@ pub const JSBundler = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(1);
+        const arguments = callframe.arguments_old(1);
         return build(globalThis, arguments.slice());
     }
 

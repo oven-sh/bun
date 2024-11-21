@@ -5404,13 +5404,10 @@ pub const ServerWebSocket = struct {
                         return JSValue.jsNumber(0);
                     },
                 }
-            } else {
-                globalThis.throwPretty("{s} requires a string or BufferSource", .{name});
-                return .zero;
             }
         }
 
-        switch (this.websocket().send(&.{}, opcode, false, true)) {
+        switch (this.websocket().send("", opcode, false, true)) {
             .backpressure => {
                 log("{s}() backpressure ({d} bytes)", .{ name, 0 });
                 return JSValue.jsNumber(-1);

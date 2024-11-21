@@ -2120,9 +2120,11 @@ const ServerResponse_writeDeprecated = function _write(chunk, encoding, callback
   if (!$isCallable(callback)) {
     callback = undefined;
   }
+  if (encoding && encoding !== "buffer") {
+    chunk = Buffer.from(chunk, encoding);
+  }
   if (this.destroyed || this.finished) {
     if (chunk) {
-      console.error("???");
       emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Cannot write after end"), callback);
     }
     return false;
@@ -2203,13 +2205,16 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
   if (!$isCallable(callback)) {
     callback = undefined;
   }
+
   if (this.destroyed || this.finished) {
     if (chunk) {
       emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Cannot write after end"), callback);
     }
     return false;
   }
-
+  if (encoding && encoding !== "buffer") {
+    chunk = Buffer.from(chunk, encoding);
+  }
   const req = this.req;
   const shouldEmitClose = req && req.emit && !this[finishedSymbol];
   if (!this.headersSent) {

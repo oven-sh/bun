@@ -187,12 +187,8 @@ class BunDiagnosticsManager {
   private handleLifecycleError(event: JSC.LifecycleReporter.ErrorEvent) {
     const relevantErrors = BunDiagnosticsManager.findMostRelevantErrors(event);
 
-    console.log(JSON.stringify(relevantErrors, null, 2));
-    console.log(JSON.stringify(event.urls, null, 2));
-
     for (const error of relevantErrors) {
       const uri = vscode.Uri.file(error.url);
-      const editor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
 
       // range is really just 1 character here..
       const range = new vscode.Range(
@@ -200,8 +196,10 @@ class BunDiagnosticsManager {
         new vscode.Position(error.line - 1, error.col),
       );
 
+      const document = vscode.workspace.textDocuments.find(doc => doc.uri.toString() === uri.toString());
+
       // ...but we want to highlight the entire word after(inclusive) the character
-      const rangeOfWord = editor?.document.getWordRangeAtPosition(range.start) ?? range; // Fallback to just the character if no editor or no word range is found
+      const rangeOfWord = document?.getWordRangeAtPosition(range.start) ?? range; // Fallback to just the character if no editor or no word range is found
 
       const diagnostic = new vscode.Diagnostic(
         rangeOfWord,

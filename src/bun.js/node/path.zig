@@ -958,7 +958,7 @@ pub fn formatJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator
     return if (isWindows) formatWindowsJS_T(T, globalObject, pathObject, buf) else formatPosixJS_T(T, globalObject, pathObject, buf);
 }
 
-pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
+pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) bun.JSError!JSC.JSValue {
     const pathObject_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateObject(globalObject, pathObject_ptr, "pathObject", .{}, .{}) catch {
@@ -970,24 +970,24 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
     const allocator = stack_fallback.get();
 
     var root: []const u8 = "";
-    if (pathObject_ptr.getTruthy(globalObject, "root")) |jsValue| {
+    if (try pathObject_ptr.getTruthy(globalObject, "root")) |jsValue| {
         root = jsValue.toSlice(globalObject, allocator).slice();
     }
     var dir: []const u8 = "";
-    if (pathObject_ptr.getTruthy(globalObject, "dir")) |jsValue| {
+    if (try pathObject_ptr.getTruthy(globalObject, "dir")) |jsValue| {
         dir = jsValue.toSlice(globalObject, allocator).slice();
     }
     var base: []const u8 = "";
-    if (pathObject_ptr.getTruthy(globalObject, "base")) |jsValue| {
+    if (try pathObject_ptr.getTruthy(globalObject, "base")) |jsValue| {
         base = jsValue.toSlice(globalObject, allocator).slice();
     }
     // Prefix with _ to avoid shadowing the identifier in the outer scope.
     var _name: []const u8 = "";
-    if (pathObject_ptr.getTruthy(globalObject, "name")) |jsValue| {
+    if (try pathObject_ptr.getTruthy(globalObject, "name")) |jsValue| {
         _name = jsValue.toSlice(globalObject, allocator).slice();
     }
     var ext: []const u8 = "";
-    if (pathObject_ptr.getTruthy(globalObject, "ext")) |jsValue| {
+    if (try pathObject_ptr.getTruthy(globalObject, "ext")) |jsValue| {
         ext = jsValue.toSlice(globalObject, allocator).slice();
     }
     return formatJS_T(u8, globalObject, allocator, isWindows, .{ .root = root, .dir = dir, .base = base, .ext = ext, .name = _name });
@@ -2953,7 +2953,7 @@ comptime {
     @export(Path.basename, .{ .name = shim.symbolName("basename") });
     @export(Path.dirname, .{ .name = shim.symbolName("dirname") });
     @export(Path.extname, .{ .name = shim.symbolName("extname") });
-    @export(Path.format, .{ .name = shim.symbolName("format") });
+    @export(path_format, .{ .name = shim.symbolName("format") });
     @export(Path.isAbsolute, .{ .name = shim.symbolName("isAbsolute") });
     @export(Path.join, .{ .name = shim.symbolName("join") });
     @export(Path.normalize, .{ .name = shim.symbolName("normalize") });
@@ -2961,4 +2961,11 @@ comptime {
     @export(Path.relative, .{ .name = shim.symbolName("relative") });
     @export(Path.resolve, .{ .name = shim.symbolName("resolve") });
     @export(Path.toNamespacedPath, .{ .name = shim.symbolName("toNamespacedPath") });
+}
+
+fn path_format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
+    return Path.format(globalObject, isWindows, args_ptr, args_len) catch |err| switch (err) {
+        error.JSError => .zero,
+        error.OutOfMemory => globalObject.throwOutOfMemoryValue(),
+    };
 }

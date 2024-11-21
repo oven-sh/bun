@@ -94,14 +94,12 @@ comptime {
     @export(Bun__createObjectURL, .{ .name = "Bun__createObjectURL" });
 }
 fn Bun__createObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1);
+    const arguments = callframe.arguments_old(1);
     if (arguments.len < 1) {
-        globalObject.throwNotEnoughArguments("createObjectURL", 1, arguments.len);
-        return JSC.JSValue.undefined;
+        return globalObject.throwNotEnoughArguments("createObjectURL", 1, arguments.len);
     }
     const blob = arguments.ptr[0].as(JSC.WebCore.Blob) orelse {
-        globalObject.throwInvalidArguments("createObjectURL expects a Blob object", .{});
-        return JSC.JSValue.undefined;
+        return globalObject.throwInvalidArguments2("createObjectURL expects a Blob object", .{});
     };
     const registry = ObjectURLRegistry.singleton();
     const uuid = registry.register(globalObject.bunVM(), blob);
@@ -114,14 +112,12 @@ comptime {
     @export(Bun__revokeObjectURL, .{ .name = "Bun__revokeObjectURL" });
 }
 fn Bun__revokeObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1);
+    const arguments = callframe.arguments_old(1);
     if (arguments.len < 1) {
-        globalObject.throwNotEnoughArguments("revokeObjectURL", 1, arguments.len);
-        return JSC.JSValue.undefined;
+        return globalObject.throwNotEnoughArguments("revokeObjectURL", 1, arguments.len);
     }
     if (!arguments.ptr[0].isString()) {
-        globalObject.throwInvalidArguments("revokeObjectURL expects a string", .{});
-        return JSC.JSValue.undefined;
+        return globalObject.throwInvalidArguments2("revokeObjectURL expects a string", .{});
     }
     const str = arguments.ptr[0].toBunString(globalObject);
     if (!str.hasPrefixComptime("blob:")) {
@@ -145,7 +141,7 @@ comptime {
     @export(jsFunctionResolveObjectURL, .{ .name = "jsFunctionResolveObjectURL" });
 }
 fn jsFunctionResolveObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1);
+    const arguments = callframe.arguments_old(1);
 
     // Errors are ignored.
     // Not thrown.

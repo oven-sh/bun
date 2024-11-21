@@ -48,22 +48,25 @@ const PathOrBlob = union(enum) {
     path: JSC.Node.PathOrFileDescriptor,
     blob: Blob,
 
-    pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice) bun.JSError!?PathOrBlob {
+    pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice) bun.JSError!PathOrBlob {
         if (try JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator)) |path| {
             return PathOrBlob{
                 .path = path,
             };
         }
 
-        const arg = args.nextEat() orelse return null;
-
+        const arg = args.nextEat() orelse {
+            _ = ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .undefined);
+            return error.JSError;
+        };
         if (arg.as(Blob)) |blob| {
             return PathOrBlob{
                 .blob = blob.*,
             };
         }
 
-        return null;
+        _ = ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);
+        return error.JSError;
     }
 };
 
@@ -875,7 +878,7 @@ pub const Blob = struct {
                 }
             }
 
-            return JSC.JSPromise.resolvedPromiseValue(ctx.ptr(), JSC.JSValue.jsNumber(0));
+            return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(0));
         }
 
         const source_type = std.meta.activeTag(source_blob.store.?.data);
@@ -886,7 +889,7 @@ pub const Blob = struct {
             });
 
             if (comptime Environment.isWindows) {
-                var promise = JSPromise.create(ctx.ptr());
+                var promise = JSPromise.create(ctx);
                 const promise_value = promise.asValue(ctx);
                 promise_value.ensureStillAlive();
                 write_file_promise.promise.strong.set(ctx, promise_value);
@@ -910,9 +913,9 @@ pub const Blob = struct {
                 WriteFilePromise.run,
                 mkdirp_if_not_exists,
             ) catch unreachable;
-            var task = WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx.ptr(), file_copier) catch bun.outOfMemory();
+            var task = WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier) catch bun.outOfMemory();
             // Defer promise creation until we're just about to schedule the task
-            var promise = JSC.JSPromise.create(ctx.ptr());
+            var promise = JSC.JSPromise.create(ctx);
             const promise_value = promise.asValue(ctx);
             write_file_promise.promise.strong.set(ctx, promise_value);
             promise_value.ensureStillAlive();
@@ -937,7 +940,7 @@ pub const Blob = struct {
 
                 destination_blob.offset,
                 destination_blob.size,
-                ctx.ptr(),
+                ctx,
                 mkdirp_if_not_exists,
             ) catch unreachable;
             file_copier.schedule();
@@ -951,14 +954,14 @@ pub const Blob = struct {
             clone.allocator = bun.default_allocator;
             const cloned = Blob.new(clone);
             cloned.allocator = bun.default_allocator;
-            return JSPromise.resolvedPromiseValue(ctx.ptr(), cloned.toJS(ctx));
+            return JSPromise.resolvedPromiseValue(ctx, cloned.toJS(ctx));
         } else if (destination_type == .bytes and source_type == .file) {
             var fake_call_frame: [8]JSC.JSValue = undefined;
             @memset(@as([*]u8, @ptrCast(&fake_call_frame))[0..@sizeOf(@TypeOf(fake_call_frame))], 0);
             const blob_value = source_blob.getSlice(ctx, @as(*JSC.CallFrame, @ptrCast(&fake_call_frame))) catch .zero; // TODO:
 
             return JSPromise.resolvedPromiseValue(
-                ctx.ptr(),
+                ctx,
                 blob_value,
             );
         }
@@ -966,19 +969,13 @@ pub const Blob = struct {
         unreachable;
     }
 
-    pub fn writeFile(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(3).slice();
+    pub fn writeFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const arguments = callframe.arguments_old(3).slice();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
 
         // accept a path or a blob
-        var path_or_blob = (try PathOrBlob.fromJSNoCopy(globalThis, &args)) orelse {
-            globalThis.throwInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{});
-            return .zero;
-        };
+        var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
         defer {
             if (path_or_blob == .path) {
                 path_or_blob.path.deinit();
@@ -1019,7 +1016,7 @@ pub const Blob = struct {
 
         if (args.nextEat()) |options_object| {
             if (options_object.isObject()) {
-                if (options_object.getTruthy(globalThis, "createPath")) |create_directory| {
+                if (try options_object.getTruthy(globalThis, "createPath")) |create_directory| {
                     if (!create_directory.isBoolean()) {
                         globalThis.throwInvalidArgumentType("write", "options.createPath", "boolean");
                         return .zero;
@@ -1422,14 +1419,20 @@ pub const Blob = struct {
         return blob.is_jsdom_file;
     }
 
-    pub export fn JSDOMFile__construct(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) ?*Blob {
+    export fn JSDOMFile__construct(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) ?*Blob {
+        return JSDOMFile__construct_(globalThis, callframe) catch |err| switch (err) {
+            error.JSError => null,
+            error.OutOfMemory => {
+                globalThis.throwOutOfMemory();
+                return null;
+            },
+        };
+    }
+    pub fn JSDOMFile__construct_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!?*Blob {
         JSC.markBinding(@src());
         const allocator = bun.default_allocator;
         var blob: Blob = undefined;
-        var arguments = callframe.arguments(3);
+        var arguments = callframe.arguments_old(3);
         const args = arguments.slice();
 
         if (args.len < 2) {
@@ -1480,7 +1483,7 @@ pub const Blob = struct {
                 // representing the media type of the Blob.
                 // Normative conditions for this member are provided
                 // in the § 3.1 Constructors.
-                if (options.get(globalThis, "type")) |content_type| {
+                if (try options.get(globalThis, "type")) |content_type| {
                     inner: {
                         if (content_type.isString()) {
                             var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
@@ -1502,7 +1505,7 @@ pub const Blob = struct {
                     }
                 }
 
-                if (options.getTruthy(globalThis, "lastModified")) |last_modified| {
+                if (try options.getTruthy(globalThis, "lastModified")) |last_modified| {
                     set_last_modified = true;
                     blob.last_modified = last_modified.coerce(f64, globalThis);
                 }
@@ -1554,7 +1557,6 @@ pub const Blob = struct {
     comptime {
         if (!JSC.is_bindgen) {
             _ = JSDOMFile__hasInstance;
-            _ = JSDOMFile__construct;
         }
     }
 
@@ -1563,7 +1565,7 @@ pub const Blob = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         var vm = globalObject.bunVM();
-        const arguments = callframe.arguments(2).slice();
+        const arguments = callframe.arguments_old(2).slice();
         var args = JSC.Node.ArgumentsSlice.init(vm, arguments);
         defer args.deinit();
 
@@ -1579,7 +1581,7 @@ pub const Blob = struct {
             const opts = arguments[1];
 
             if (opts.isObject()) {
-                if (opts.getTruthy(globalObject, "type")) |file_type| {
+                if (try opts.getTruthy(globalObject, "type")) |file_type| {
                     inner: {
                         if (file_type.isString()) {
                             var allocator = bun.default_allocator;
@@ -1600,7 +1602,7 @@ pub const Blob = struct {
                         }
                     }
                 }
-                if (opts.getTruthy(globalObject, "lastModified")) |last_modified| {
+                if (try opts.getTruthy(globalObject, "lastModified")) |last_modified| {
                     blob.last_modified = last_modified.coerce(f64, globalObject);
                 }
             }
@@ -3261,7 +3263,7 @@ pub const Blob = struct {
             return cached;
         }
         var recommended_chunk_size: SizeType = 0;
-        var arguments_ = callframe.arguments(2);
+        var arguments_ = callframe.arguments_old(2);
         var arguments = arguments_.ptr[0..arguments_.len];
         if (arguments.len > 0) {
             if (!arguments[0].isNumber() and !arguments[0].isUndefinedOrNull()) {
@@ -3300,7 +3302,7 @@ pub const Blob = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         const this = callframe.this().as(Blob) orelse @panic("this is not a Blob");
-        const args = callframe.arguments(1).slice();
+        const args = callframe.arguments_old(1).slice();
 
         return JSC.WebCore.ReadableStream.fromFileBlobWithOffset(
             globalThis,
@@ -3465,7 +3467,7 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        var arguments_ = callframe.arguments(1);
+        var arguments_ = callframe.arguments_old(1);
         var arguments = arguments_.ptr[0..arguments_.len];
 
         if (!arguments.ptr[0].isEmptyOrUndefinedOrNull() and !arguments.ptr[0].isObject()) {
@@ -3595,7 +3597,7 @@ pub const Blob = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         const allocator = bun.default_allocator;
-        var arguments_ = callframe.arguments(3);
+        var arguments_ = callframe.arguments_old(3);
         var args = arguments_.ptr[0..arguments_.len];
 
         if (this.size == 0) {
@@ -3941,7 +3943,7 @@ pub const Blob = struct {
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Blob {
         const allocator = bun.default_allocator;
         var blob: Blob = undefined;
-        var arguments = callframe.arguments(2);
+        var arguments = callframe.arguments_old(2);
         const args = arguments.slice();
 
         switch (args.len) {
@@ -3962,7 +3964,7 @@ pub const Blob = struct {
                         // representing the media type of the Blob.
                         // Normative conditions for this member are provided
                         // in the § 3.1 Constructors.
-                        if (options.get(globalThis, "type")) |content_type| {
+                        if (try options.get(globalThis, "type")) |content_type| {
                             inner: {
                                 if (content_type.isString()) {
                                     var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);

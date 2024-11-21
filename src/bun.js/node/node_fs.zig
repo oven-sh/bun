@@ -2094,7 +2094,7 @@ pub const Arguments = struct {
                         recursive = boolean;
                     }
 
-                    if (val.get(ctx, "mode")) |mode_| {
+                    if (try val.get(ctx, "mode")) |mode_| {
                         mode = try JSC.Node.modeFromJS(ctx, mode_) orelse mode;
                     }
                 }
@@ -2278,11 +2278,11 @@ pub const Arguments = struct {
                 arguments.eat();
 
                 if (val.isObject()) {
-                    if (val.getTruthy(ctx, "flags")) |flags_| {
+                    if (try val.getTruthy(ctx, "flags")) |flags_| {
                         flags = try FileSystemFlags.fromJS(ctx, flags_) orelse flags;
                     }
 
-                    if (val.getTruthy(ctx, "mode")) |mode_| {
+                    if (try val.getTruthy(ctx, "mode")) |mode_| {
                         mode = try JSC.Node.modeFromJS(ctx, mode_) orelse mode;
                     }
                 } else if (val != .zero) {
@@ -2543,20 +2543,20 @@ pub const Arguments = struct {
                         }
                     }
                 } else if (current.isObject()) {
-                    if (current.getTruthy(ctx, "offset")) |num| {
+                    if (try current.getTruthy(ctx, "offset")) |num| {
                         if (num.isNumber() or num.isBigInt()) {
                             args.offset = num.to(u52);
                         }
                     }
 
-                    if (current.getTruthy(ctx, "length")) |num| {
+                    if (try current.getTruthy(ctx, "length")) |num| {
                         if (num.isNumber() or num.isBigInt()) {
                             args.length = num.to(u52);
                         }
                         defined_length = true;
                     }
 
-                    if (current.getTruthy(ctx, "position")) |num| {
+                    if (try current.getTruthy(ctx, "position")) |num| {
                         if (num.isNumber() or num.isBigInt()) {
                             args.position = num.to(i52);
                         }
@@ -2617,7 +2617,7 @@ pub const Arguments = struct {
                 } else if (arg.isObject()) {
                     encoding = try getEncoding(arg, ctx, encoding);
 
-                    if (arg.getTruthy(ctx, "flag")) |flag_| {
+                    if (try arg.getTruthy(ctx, "flag")) |flag_| {
                         flag = try FileSystemFlags.fromJS(ctx, flag_) orelse {
                             return ctx.throwInvalidArguments2("Invalid flag", .{});
                         };
@@ -2687,13 +2687,13 @@ pub const Arguments = struct {
                 } else if (arg.isObject()) {
                     encoding = try getEncoding(arg, ctx, encoding);
 
-                    if (arg.getTruthy(ctx, "flag")) |flag_| {
+                    if (try arg.getTruthy(ctx, "flag")) |flag_| {
                         flag = try FileSystemFlags.fromJS(ctx, flag_) orelse {
                             return ctx.throwInvalidArguments2("Invalid flag", .{});
                         };
                     }
 
-                    if (arg.getTruthy(ctx, "mode")) |mode_| {
+                    if (try arg.getTruthy(ctx, "mode")) |mode_| {
                         mode = try JSC.Node.modeFromJS(ctx, mode_) orelse {
                             return ctx.throwInvalidArguments2("Invalid mode", .{});
                         };
@@ -2748,7 +2748,7 @@ pub const Arguments = struct {
                         encoding = encoding_;
                     }
 
-                    if (arg.get(ctx, "bufferSize")) |buffer_size_| {
+                    if (try arg.get(ctx, "bufferSize")) |buffer_size_| {
                         buffer_size = buffer_size_.toInt32();
                         if (buffer_size < 0) {
                             return ctx.throwInvalidArguments2("bufferSize must be > 0", .{});

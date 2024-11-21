@@ -573,7 +573,7 @@ pub const Resolver = struct {
 
                 .{},
                 this.env_loader.?,
-            ) catch @panic("Failed to initialize package manager");
+            );
             pm.onWake = this.onWakePackageManager;
             this.package_manager = pm;
             break :brk pm;
@@ -1852,6 +1852,7 @@ pub const Resolver = struct {
                                 esm.version,
                                 &sliced_string,
                                 r.log,
+                                manager,
                             ) orelse break :load_module_from_cache;
                         }
 
@@ -2176,6 +2177,7 @@ pub const Resolver = struct {
             if (package_json_) |package_json| {
                 package = Package.fromPackageJSON(
                     pm.lockfile,
+                    pm,
                     package_json,
                     Install.Features{
                         .dev_dependencies = true,

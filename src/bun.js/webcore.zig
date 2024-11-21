@@ -24,7 +24,7 @@ pub const Lifetime = enum {
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1).slice();
+    const arguments = callframe.arguments_old(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
 
@@ -74,7 +74,7 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSErr
 }
 
 fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1).slice();
+    const arguments = callframe.arguments_old(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
 
@@ -212,7 +212,7 @@ pub const Prompt = struct {
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(3).slice();
+        const arguments = callframe.arguments_old(3).slice();
         var state = std.heap.stackFallback(2048, bun.default_allocator);
         const allocator = state.get();
         var output = bun.Output.writer();
@@ -370,7 +370,7 @@ pub const Crypto = struct {
         salt: JSC.Node.StringOrBuffer,
         keylen_value: JSC.JSValue,
         options: ?JSC.JSValue,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const password_string = password.slice();
         const salt_string = salt.slice();
 
@@ -404,22 +404,17 @@ pub const Crypto = struct {
                 return .zero;
             }
 
-            if (options_value.getTruthy(globalThis, "cost") orelse options_value.getTruthy(globalThis, "N")) |N_value| {
+            if (try options_value.getTruthy(globalThis, "cost") orelse try options_value.getTruthy(globalThis, "N")) |N_value| {
                 if (cost != null) return throwInvalidParameter(globalThis);
                 const N_int = N_value.to(i64);
                 if (N_int < 0 or !N_value.isNumber()) {
-                    return throwInvalidParams(
-                        globalThis,
-                        .RangeError,
-                        "Invalid scrypt params\n\n N must be a positive integer\n",
-                        .{},
-                    );
+                    return throwInvalidParams(globalThis, .RangeError, "Invalid scrypt params\n\n N must be a positive integer\n", .{});
                 } else if (N_int != 0) {
                     cost = @as(usize, @intCast(N_int));
                 }
             }
 
-            if (options_value.getTruthy(globalThis, "blockSize") orelse options_value.getTruthy(globalThis, "r")) |r_value| {
+            if (try options_value.getTruthy(globalThis, "blockSize") orelse try options_value.getTruthy(globalThis, "r")) |r_value| {
                 if (blockSize != null) return throwInvalidParameter(globalThis);
                 const r_int = r_value.to(i64);
                 if (r_int < 0 or !r_value.isNumber()) {
@@ -434,7 +429,7 @@ pub const Crypto = struct {
                 }
             }
 
-            if (options_value.getTruthy(globalThis, "parallelization") orelse options_value.getTruthy(globalThis, "p")) |p_value| {
+            if (try options_value.getTruthy(globalThis, "parallelization") orelse try options_value.getTruthy(globalThis, "p")) |p_value| {
                 if (parallelization != null) return throwInvalidParameter(globalThis);
                 const p_int = p_value.to(i64);
                 if (p_int < 0 or !p_value.isNumber()) {
@@ -449,7 +444,7 @@ pub const Crypto = struct {
                 }
             }
 
-            if (options_value.getTruthy(globalThis, "maxmem")) |value| {
+            if (try options_value.getTruthy(globalThis, "maxmem")) |value| {
                 const p_int = value.to(i64);
                 if (p_int < 0 or !value.isNumber()) {
                     return throwInvalidParams(
@@ -555,7 +550,7 @@ pub const Crypto = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(2).slice();
+        const arguments = callframe.arguments_old(2).slice();
 
         if (arguments.len < 2) {
             globalThis.throwInvalidArguments("Expected 2 typed arrays but got nothing", .{});
@@ -605,7 +600,7 @@ pub const Crypto = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(1).slice();
+        const arguments = callframe.arguments_old(1).slice();
         if (arguments.len == 0) {
             globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
             return .undefined;

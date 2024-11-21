@@ -1559,13 +1559,12 @@ comptime {
     @export(Bun__canonicalizeIP, .{ .name = "Bun__canonicalizeIP" });
 }
 pub fn Bun__canonicalizeIP_(
-    ctx: *JSC.JSGlobalObject,
+    globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
 
-    const globalThis = ctx.ptr();
-    const arguments = callframe.arguments(1);
+    const arguments = callframe.arguments_old(1);
 
     if (arguments.len == 0) {
         globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});

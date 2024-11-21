@@ -1808,7 +1808,6 @@ function ServerResponse(req, options) {
     this[controllerSymbol] = undefined;
     this[firstWriteSymbol] = undefined;
     this[deferredSymbol] = undefined;
-    this[finishedSymbol] = false;
     this.write = ServerResponse_writeDeprecated;
     this.end = ServerResponse_finalDeprecated;
   }
@@ -2121,6 +2120,13 @@ const ServerResponse_writeDeprecated = function _write(chunk, encoding, callback
   if (!$isCallable(callback)) {
     callback = undefined;
   }
+  if (this.destroyed || this.finished) {
+    if (chunk) {
+      console.error("???");
+      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Cannot write after end"), callback);
+    }
+    return false;
+  }
   if (this[firstWriteSymbol] === undefined && !this.headersSent) {
     this[firstWriteSymbol] = chunk;
     if (callback) callback();
@@ -2198,8 +2204,10 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
     callback = undefined;
   }
   if (this.destroyed || this.finished) {
-    if (callback) callback();
-    return;
+    if (chunk) {
+      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Cannot write after end"), callback);
+    }
+    return false;
   }
 
   const req = this.req;

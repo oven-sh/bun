@@ -1513,8 +1513,7 @@ pub const Arguments = struct {
 
                 arguments.eat();
                 if (!uid_value.isNumber()) {
-                    _ = ctx.throwInvalidArgumentTypeValue("uid", "number", uid_value);
-                    return error.JSError;
+                    return ctx.throwInvalidArgumentTypeValue("uid", "number", uid_value);
                 }
                 break :brk @as(uid_t, @intCast(uid_value.toInt32()));
             };
@@ -1526,8 +1525,7 @@ pub const Arguments = struct {
 
                 arguments.eat();
                 if (!gid_value.isNumber()) {
-                    _ = ctx.throwInvalidArgumentTypeValue("gid", "number", gid_value);
-                    return error.JSError;
+                    return ctx.throwInvalidArgumentTypeValue("gid", "number", gid_value);
                 }
                 break :brk @as(gid_t, @intCast(gid_value.toInt32()));
             };
@@ -2412,12 +2410,10 @@ pub const Arguments = struct {
             const buffer = StringOrBuffer.fromJS(ctx, bun.default_allocator, buffer_value orelse {
                 return ctx.throwInvalidArguments2("data is required", .{});
             }) orelse {
-                _ = ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
-                return error.JSError;
+                return ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
             };
             if (buffer_value.?.isString() and !buffer_value.?.isStringLiteral()) {
-                _ = ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
-                return error.JSError;
+                return ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
             }
 
             var args = Write{
@@ -2507,8 +2503,7 @@ pub const Arguments = struct {
             const buffer = Buffer.fromJS(ctx, buffer_value orelse {
                 return ctx.throwInvalidArguments2("buffer is required", .{});
             }) orelse {
-                _ = ctx.throwInvalidArgumentTypeValue("buffer", "TypedArray", buffer_value.?);
-                return error.JSError;
+                return ctx.throwInvalidArgumentTypeValue("buffer", "TypedArray", buffer_value.?);
             };
             arguments.eat();
 

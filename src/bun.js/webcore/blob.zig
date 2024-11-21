@@ -56,17 +56,14 @@ const PathOrBlob = union(enum) {
         }
 
         const arg = args.nextEat() orelse {
-            _ = ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .undefined);
-            return error.JSError;
+            return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .undefined);
         };
         if (arg.as(Blob)) |blob| {
             return PathOrBlob{
                 .blob = blob.*,
             };
         }
-
-        _ = ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);
-        return error.JSError;
+        return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);
     }
 };
 
@@ -1428,7 +1425,7 @@ pub const Blob = struct {
             },
         };
     }
-    pub fn JSDOMFile__construct_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!?*Blob {
+    pub fn JSDOMFile__construct_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Blob {
         JSC.markBinding(@src());
         const allocator = bun.default_allocator;
         var blob: Blob = undefined;
@@ -1437,26 +1434,22 @@ pub const Blob = struct {
 
         if (args.len < 2) {
             globalThis.throwInvalidArguments("new File(bits, name) expects at least 2 arguments", .{});
-            return null;
+            return error.JSError;
         }
         {
             const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
                 if (!globalThis.hasException()) {
                     globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
                 }
-                return null;
+                return error.JSError;
             };
             defer name_value_str.deref();
 
             blob = get(globalThis, args[0], false, true) catch |err| switch (err) {
-                error.JSError => return null,
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory();
-                    return null;
-                },
+                error.JSError, error.OutOfMemory => |e| return e,
                 error.InvalidArguments => {
                     globalThis.throwInvalidArguments("new Blob() expects an Array", .{});
-                    return null;
+                    return error.JSError;
                 },
             };
 

@@ -113,7 +113,7 @@ const ScanOpts = struct {
                 return out;
             }
             globalThis.throw("{s}: expected first argument to be an object", .{fnName});
-            return null;
+            return error.JSError;
         }
 
         if (try optsObj.getTruthy(globalThis, "onlyFiles")) |only_files| {
@@ -135,7 +135,7 @@ const ScanOpts = struct {
         if (try optsObj.getTruthy(globalThis, "cwd")) |cwdVal| {
             if (!cwdVal.isString()) {
                 globalThis.throw("{s}: invalid `cwd`, not a string", .{fnName});
-                return null;
+                return error.JSError;
             }
 
             {

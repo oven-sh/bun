@@ -590,8 +590,7 @@ pub const FFI = struct {
                         bun.default_allocator.free(@constCast(item));
                     }
                     items.deinit();
-                    _ = globalThis.throwInvalidArgumentTypeValue(property, "array of strings", val);
-                    return error.JSError;
+                    return globalThis.throwInvalidArgumentTypeValue(property, "array of strings", val);
                 }
                 const str = val.getZigString(globalThis);
                 if (str.isEmpty()) continue;
@@ -604,8 +603,7 @@ pub const FFI = struct {
         pub fn fromJSString(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, comptime property: []const u8) bun.JSError!StringArray {
             if (value == .undefined) return .{};
             if (!value.isString()) {
-                _ = globalThis.throwInvalidArgumentTypeValue(property, "array of strings", value);
-                return error.JSError;
+                return globalThis.throwInvalidArgumentTypeValue(property, "array of strings", value);
             }
             const str = value.getZigString(globalThis);
             if (str.isEmpty()) return .{};
@@ -641,8 +639,7 @@ pub const FFI = struct {
 
         const symbols_object = object.getOwn(globalThis, "symbols") orelse .undefined;
         if (!globalThis.hasException() and (symbols_object == .zero or !symbols_object.isObject())) {
-            _ = globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
-            return error.JSError;
+            return globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
         }
 
         if (globalThis.hasException()) {

@@ -1419,8 +1419,7 @@ pub const Crypto = struct {
                 }
 
                 if (!arguments[3].isAnyInt()) {
-                    _ = globalThis.throwInvalidArgumentTypeValue("keylen", "integer", arguments[3]);
-                    return error.JSError;
+                    return globalThis.throwInvalidArgumentTypeValue("keylen", "integer", arguments[3]);
                 }
 
                 const length = arguments[3].coerce(i64, globalThis);
@@ -1434,8 +1433,7 @@ pub const Crypto = struct {
                 }
 
                 if (!arguments[2].isAnyInt()) {
-                    _ = globalThis.throwInvalidArgumentTypeValue("iteration count", "integer", arguments[2]);
-                    return error.JSError;
+                    return globalThis.throwInvalidArgumentTypeValue("iteration count", "integer", arguments[2]);
                 }
 
                 const iteration_count = arguments[2].coerce(i64, globalThis);
@@ -1450,8 +1448,7 @@ pub const Crypto = struct {
 
                 const algorithm = brk: {
                     if (!arguments[4].isString()) {
-                        _ = globalThis.throwInvalidArgumentTypeValue("algorithm", "string", arguments[4]);
-                        return error.JSError;
+                        return globalThis.throwInvalidArgumentTypeValue("algorithm", "string", arguments[4]);
                     }
 
                     break :brk EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arguments[4]) orelse {
@@ -1480,8 +1477,7 @@ pub const Crypto = struct {
                 }
 
                 out.salt = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[1], is_async) orelse {
-                    _ = globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arguments[1]);
-                    return error.JSError;
+                    return globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arguments[1]);
                 };
 
                 if (out.salt.slice().len > std.math.maxInt(i32)) {
@@ -1490,7 +1486,7 @@ pub const Crypto = struct {
 
                 out.password = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[0], is_async) orelse {
                     if (!globalThis.hasException()) {
-                        _ = globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arguments[0]);
+                        return globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arguments[0]);
                     }
                     return error.JSError;
                 };

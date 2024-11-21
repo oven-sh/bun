@@ -106,6 +106,7 @@ const capabilities: DAP.Capabilities = {
 type InitializeRequest = DAP.InitializeRequest & {
   supportsConfigurationDoneRequest?: boolean;
   enableControlFlowProfiler?: boolean;
+  enableDebugger?: boolean;
 } & (
     | {
         enableLifecycleAgentReporter?: false;
@@ -469,12 +470,17 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
       }
     }
 
-    this.send("Debugger.enable").catch(error => {
-      const { message } = unknownToError(error);
-      if (message !== "Debugger domain already enabled") {
-        throw error;
-      }
-    });
+    // use !== false because by default if unspecified we want to enable the debugger
+    // and this option didn't exist beforehand, so we can't make it non-optional
+    if (request.enableDebugger !== false) {
+      this.send("Debugger.enable").catch(error => {
+        const { message } = unknownToError(error);
+        if (message !== "Debugger domain already enabled") {
+          throw error;
+        }
+      });
+    }
+
     this.send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
 
     const { clientID, supportsConfigurationDoneRequest } = request;

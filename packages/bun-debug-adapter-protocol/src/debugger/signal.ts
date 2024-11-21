@@ -23,7 +23,7 @@ export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
   #server: Server;
   #ready: Promise<void>;
 
-  constructor(path?: string | URL) {
+  constructor(path?: string | URL | undefined) {
     super();
     this.#path = path ? parseUnixPath(path) : randomUnixPath();
     this.#server = createServer();

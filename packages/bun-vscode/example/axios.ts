@@ -1,5 +1,10 @@
-import axios from "axios";
+import * as axios from "axios";
 
-const res = await axios.get("http://127.0.0.1:8080/status/400");
+console.log(axios);
 
-console.log(res.statusText);
+// const res = await axios("https://httpbin.org/status/500");
+// const res = await fetch("https://httpbin.org/status/500");
+
+// if ("res.ok") {
+//   throw new Error("Fucked it");
+// }

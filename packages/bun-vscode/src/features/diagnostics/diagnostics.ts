@@ -1,3 +1,4 @@
+import * as fs from "node:fs/promises";
 import { Socket } from "node:net";
 import * as os from "node:os";
 import * as vscode from "vscode";
@@ -8,6 +9,9 @@ import {
   UnixSignal,
 } from "../../../../bun-debug-adapter-protocol";
 import type { JSC } from "../../../../bun-inspector-protocol";
+import { typedGlobalState } from "../../global-state";
+
+const output = vscode.window.createOutputChannel("Bun");
 
 const ansiRegex = (() => {
   const ST = "(?:\\u0007|\\u001B\\u005C|\\u009C)";
@@ -31,20 +35,32 @@ class EditorStateManager {
     this.diagnosticCollection = vscode.languages.createDiagnosticCollection("BunDiagnostics");
   }
 
-  clearDiagnostics() {
+  getVisibleEditorsWithErrors() {
+    return vscode.window.visibleTextEditors.filter(editor => {
+      const diagnostics = this.diagnosticCollection.get(editor.document.uri);
+
+      return diagnostics && diagnostics.length > 0;
+    });
+  }
+
+  clearInFile(uri: vscode.Uri) {
+    if (this.diagnosticCollection.has(uri)) {
+      output.appendLine(`Clearing diagnostics for ${uri.toString()}`);
+      this.diagnosticCollection.delete(uri);
+    }
+  }
+
+  clearAll(reason: string) {
+    output.appendLine("Clearing all because: " + reason);
     this.diagnosticCollection.clear();
   }
 
-  clearAll() {
-    this.clearDiagnostics();
-  }
-
-  setDiagnostic(uri: vscode.Uri, diagnostic: vscode.Diagnostic) {
+  set(uri: vscode.Uri, diagnostic: vscode.Diagnostic) {
     this.diagnosticCollection.set(uri, [diagnostic]);
   }
 
   dispose() {
-    this.clearAll();
+    this.clearAll("Editor state was disposed");
     this.disposables.forEach(d => d.dispose());
   }
 }
@@ -58,8 +74,56 @@ class BunDiagnosticsManager {
     return this.signal.url;
   }
 
+  private static async getOrRecreateSignal(context: vscode.ExtensionContext) {
+    const globalState = typedGlobalState(context.globalState);
+    const existing = globalState.get("BUN_INSPECT_NOTIFY");
+
+    const isWin = os.platform() === "win32";
+
+    if (existing) {
+      if (existing.type === "unix") {
+        output.appendLine(`Reusing existing unix socket: ${existing.url}`);
+
+        if ("url" in existing) {
+          await fs.unlink(existing.url).catch(() => {
+            // ? lol
+          });
+        }
+
+        return new UnixSignal(existing.url);
+      } else {
+        output.appendLine(`Reusing existing tcp socket on: ${existing.port}`);
+        return new TCPSocketSignal(existing.port);
+      }
+    }
+
+    if (isWin) {
+      const port = await getAvailablePort();
+
+      await globalState.update("BUN_INSPECT_NOTIFY", {
+        type: "tcp",
+        port,
+      });
+
+      output.appendLine(`Created new tcp socket on: ${port}`);
+
+      return new TCPSocketSignal(port);
+    } else {
+      const signal = new UnixSignal();
+
+      await globalState.update("BUN_INSPECT_NOTIFY", {
+        type: "unix",
+        url: signal.url,
+      });
+
+      output.appendLine(`Created new unix socket: ${signal.url}`);
+
+      return signal;
+    }
+  }
+
   public static async initialize(context: vscode.ExtensionContext) {
-    const signal = os.platform() !== "win32" ? new UnixSignal() : new TCPSocketSignal(await getAvailablePort());
+    const signal = await BunDiagnosticsManager.getOrRecreateSignal(context);
 
     await signal.ready;
 
@@ -69,34 +133,27 @@ class BunDiagnosticsManager {
   /**
    * Called when Bun pings BUN_INSPECT_NOTIFY (indicating a program has started).
    */
-  private async handleSignalReceived(socket: Socket) {
+  private async handleSocketConnection(socket: Socket) {
     const debugAdapter = new NodeSocketDebugAdapter(socket);
 
-    this.editorState.clearAll();
+    this.editorState.clearAll("A new socket connected");
 
     debugAdapter.on("LifecycleReporter.reload", async () => {
-      this.editorState.clearAll();
+      this.editorState.clearAll("LifecycleReporter reported a reload event");
     });
 
-    // debugAdapter.on("Inspector.event", e => {
-    //   console.log(e.method);
-    // });
+    debugAdapter.on("Inspector.event", e => {
+      output.appendLine(`Received inspector event: ${e.method}`);
+    });
 
     debugAdapter.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
-
-    const dispose = async () => {
-      await debugAdapter.send("LifecycleReporter.stopPreventingExit").catch(() => {
-        // Probably already exited
-      });
-
-      debugAdapter.removeAllListeners();
-    };
 
     const ok = await debugAdapter.start();
 
     if (!ok) {
       await vscode.window.showErrorMessage("Failed to start debug adapter");
-      await dispose();
+      debugAdapter.removeAllListeners();
+
       return;
     }
 
@@ -105,6 +162,7 @@ class BunDiagnosticsManager {
       enableControlFlowProfiler: true,
       enableLifecycleAgentReporter: true,
       sendImmediatePreventExit: false,
+      enableDebugger: false, // Performance overhead when debugger is enabled
     });
   }
 
@@ -185,6 +243,10 @@ class BunDiagnosticsManager {
   }
 
   private handleLifecycleError(event: JSC.LifecycleReporter.ErrorEvent) {
+    output.appendLine(
+      `Received error event: '{name:${event.name}} ${event.message.split("\n")[0].trim().substring(0, 100)}'`,
+    );
+
     const relevantErrors = BunDiagnosticsManager.findMostRelevantErrors(event);
 
     for (const error of relevantErrors) {
@@ -207,7 +269,7 @@ class BunDiagnosticsManager {
         vscode.DiagnosticSeverity.Error,
       );
 
-      this.editorState.setDiagnostic(uri, diagnostic);
+      this.editorState.set(uri, diagnostic);
     }
   }
 
@@ -227,20 +289,21 @@ class BunDiagnosticsManager {
 
     this.context.subscriptions.push(
       // on did type
-      vscode.workspace.onDidChangeTextDocument(() => {
-        this.editorState.clearAll();
+      vscode.workspace.onDidChangeTextDocument(e => {
+        this.editorState.clearInFile(e.document.uri);
       }),
     );
 
-    this.signal.on("Signal.Socket.connect", this.handleSignalReceived.bind(this));
+    this.signal.on("Signal.Socket.connect", this.handleSocketConnection.bind(this));
   }
 }
 
 const description = new vscode.MarkdownString(
-  "Bun's VSCode extension communicates with Bun over a socket, which we set the url in your terminal with the `BUN_INSPECT_NOTIFY` environment variable",
+  "Bun's VSCode extension communicates with Bun over a socket. We set the url in your terminal with the `BUN_INSPECT_NOTIFY` environment variable",
 );
 
 export async function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
+  context.environmentVariableCollection.clear();
   context.environmentVariableCollection.persistent = false;
   context.environmentVariableCollection.description = description;
 
@@ -248,4 +311,11 @@ export async function registerDiagnosticsSocket(context: vscode.ExtensionContext
   context.environmentVariableCollection.replace("BUN_INSPECT_NOTIFY", manager.signalUrl);
 
   context.subscriptions.push(manager);
+
+  context.subscriptions.push({
+    dispose() {
+      // context.environmentVariableCollection.replace("BUN_INSPECT_NOTIFY", "");
+      context.environmentVariableCollection.clear();
+    },
+  });
 }

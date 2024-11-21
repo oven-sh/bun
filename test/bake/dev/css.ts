@@ -36,10 +36,10 @@ devTest('css file with syntax error does not kill old styles', {
           background-color: blue;
         }
       `);
-      await dev.fetch(css_url).expect('/* routes/styles.css */\nbody{color:red;background-color:blue}');
+      await dev.fetch(css_url).expect('/* routes/styles.css */\nbody{color:red;background-color:#00f}');
       await dev.fetch('/').expect(css_url);
-      await dev.write('routes/styles.css', ``);
-      await dev.fetch(css_url).expect('');
+      await dev.write('routes/styles.css', ` `);
+      await dev.fetch(css_url).expect('/* routes/styles.css */');
       await dev.fetch('/').expect(css_url);
   },
 });

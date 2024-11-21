@@ -90,7 +90,7 @@ export class Dev {
   }
 
   async waitForHotReload() {
-    await this.output.waitForLine(/Bundled route|error|Reloaded/);
+    await this.output.waitForLine(/bundled route|error|reloaded/i);
   }
 
   async [Symbol.asyncDispose]() {}

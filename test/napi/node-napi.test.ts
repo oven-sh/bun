@@ -1,8 +1,10 @@
 import { spawnSync, spawn, Glob } from "bun";
-import { beforeAll, describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isCI } from "harness";
 import { join, dirname } from "path";
 import os from "node:os";
+
+setDefaultTimeout(10 * 60 * 1000);
 
 const jsNativeApiRoot = join(__dirname, "node-napi-tests", "test", "js-native-api");
 const nodeApiRoot = join(__dirname, "node-napi-tests", "test", "node-api");

@@ -1,4 +1,4 @@
-import { bunExe } from "harness";
+import { bunExe, bunEnv } from "harness";
 import { test, expect } from "bun:test";
 
 test("parsing npm alises without package manager does not crash", () => {
@@ -8,6 +8,7 @@ test("parsing npm alises without package manager does not crash", () => {
     cmd: [bunExe(), "x", "bunbunbunbunbun@npm:another-bun@1.0.0"],
     stdout: "pipe",
     stderr: "pipe",
+    env: bunEnv,
   });
 
   expect(exitCode).toBe(1);

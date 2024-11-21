@@ -1443,6 +1443,9 @@ pub const ThreadSafeFunction = struct {
 
     callback: Callback,
 
+    freeing: bool = false,
+    freed: bool = false,
+
     const ThreadSafeFunctionTask = JSC.AnyTask.New(@This(), call);
     pub const Queue = union(enum) {
         sized: Channel(?*anyopaque, .Slice),
@@ -1525,6 +1528,7 @@ pub const ThreadSafeFunction = struct {
     /// From the JS thread, handle one call to the underlying function that was requested
     /// by another thread (this is called by the event loop)
     pub fn call(this: *ThreadSafeFunction) void {
+        if (this.freed) @panic("napi tsfn use after free");
         const task = this.channel.tryReadItem() catch null orelse return;
         const globalObject = this.env;
 
@@ -1555,6 +1559,7 @@ pub const ThreadSafeFunction = struct {
     }
 
     pub fn enqueue(this: *ThreadSafeFunction, ctx: ?*anyopaque, block: bool) !void {
+        if (this.freeing) @panic("napi tsfn use after free");
         if (block) {
             try this.channel.writeItem(ctx);
         } else {
@@ -1568,6 +1573,7 @@ pub const ThreadSafeFunction = struct {
 
     pub fn finalize(opaq: *anyopaque) void {
         var this = bun.cast(*ThreadSafeFunction, opaq);
+        this.freed = true;
         this.unref();
 
         if (this.finalizer.fun) |fun| {
@@ -1583,7 +1589,7 @@ pub const ThreadSafeFunction = struct {
                 this.callback.c.js.unprotect();
             }
         }
-        // this.channel.deinit(this.allocator);
+        this.channel.deinit(this.allocator);
         bun.default_allocator.destroy(this);
     }
 
@@ -1622,6 +1628,8 @@ pub const ThreadSafeFunction = struct {
         }
 
         if (mode == .abort or this.thread_count == 0) {
+            if (this.freeing) @panic("napi tsfn double free");
+            this.freeing = true;
             this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, finalize));
         }
 

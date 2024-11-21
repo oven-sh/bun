@@ -219,10 +219,6 @@ class BunDiagnosticsManager {
 
     diagnostic.relatedInformation = relatedInformation;
 
-    for (const relatedInfo of relatedInformation) {
-      //
-    }
-
     this.editorState.set(uri, diagnostic);
   }
 

@@ -8119,6 +8119,9 @@ pub const PackageManager = struct {
                             request.e_string = new_dependencies[k].value.?.data.e_string;
 
                             if (request.is_aliased) continue :outer;
+
+                            // if package name is unknown continue
+                            if ((request.version.tag == .git or request.version.tag == .github or request.version.tag == .tarball or request.version.tag == .folder) and request.name.len == 0) continue :outer;
                         }
                     }
                 }

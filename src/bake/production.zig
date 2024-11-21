@@ -148,7 +148,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 Output.panic("TODO: print this error better, default export is not an object", .{});
             }
 
-            const app = try default.get2(vm.global, "app") orelse {
+            const app = try default.get(vm.global, "app") orelse {
                 Output.panic("TODO: print this error better, default export needs an 'app' object", .{});
             };
 

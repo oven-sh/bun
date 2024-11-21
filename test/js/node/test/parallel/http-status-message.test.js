@@ -25,7 +25,7 @@
 "use strict";
 const http = require("http");
 const net = require("net");
-
+const { once } = require("events");
 test("HTTP status message", async () => {
   const s = http.createServer(function (req, res) {
     res.statusCode = 200;
@@ -33,23 +33,24 @@ test("HTTP status message", async () => {
     res.end("");
   });
 
-  await new Promise(resolve => {
-    s.listen(0, () => {
-      const bufs = [];
-      const client = net.connect(s.address().port, function () {
-        client.write("GET / HTTP/1.1\r\n" + "Host: example.com\r\n" + "Connection: close\r\n\r\n");
-      });
-      client.on("data", function (chunk) {
-        bufs.push(chunk);
-      });
-      client.on("end", function () {
-        const head = Buffer.concat(bufs).toString("latin1").split("\r\n")[0];
-        expect(head).toBe("HTTP/1.1 200 Custom Message");
-        s.close();
-        resolve();
-      });
-    });
+  await once(s.listen(0), "listening");
+
+  const bufs = [];
+  const client = net.connect(s.address().port, function () {
+    client.write("GET / HTTP/1.1\r\n" + "Host: example.com\r\n" + "Connection: close\r\n\r\n");
   });
+  client.on("data", function (chunk) {
+    bufs.push(chunk);
+  });
+
+  const { promise, resolve } = Promise.withResolvers();
+  client.on("end", function () {
+    const head = Buffer.concat(bufs).toString("latin1").split("\r\n")[0];
+    resolve(head);
+    s.close();
+  });
+
+  expect(await promise).toBe("HTTP/1.1 200 Custom Message");
 });
 
 //<#END_FILE: test-http-status-message.js

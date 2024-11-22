@@ -346,12 +346,12 @@ pub fn crashHandler(
                     writer.writeAll(trace_str_buf.slice()) catch std.posix.abort();
 
                     writer.writeAll("\n") catch std.posix.abort();
+                    writer.writeAll(Output.prettyFmt("<r>\n", true)) catch std.posix.abort();
 
                     if (bun.Environment.is_canary) {
                         WTFReportBacktrace();
+                        writer.writeAll("\n") catch std.posix.abort();
                     }
-
-                    writer.writeAll("\n") catch std.posix.abort();
                 }
 
                 if (Output.enable_ansi_colors) {

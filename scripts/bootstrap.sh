@@ -30,11 +30,24 @@ execute() {
 	fi
 }
 
+execute_lax() {
+	print "$ $@" >&2
+	"$@"
+}
+
 execute_sudo() {
 	if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then
 		execute "$@"
 	else
 		execute sudo -n "$@"
+	fi
+}
+
+execute_sudo_lax() {
+	if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then
+		execute_lax "$@"
+	else
+		execute_lax sudo -n "$@"
 	fi
 }
 
@@ -344,7 +357,7 @@ check_package_manager() {
 	case "$pm" in
 	apt)
 		export DEBIAN_FRONTEND=noninteractive
-		execute_sudo killall -9 apt-get
+		execute_sudo_lax killall -9 apt-get
 		package_manager update -y
 		;;
 	apk)

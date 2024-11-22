@@ -293,7 +293,7 @@ pub const Linker = struct {
 
                     if (linker.plugin_runner) |runner| {
                         if (PluginRunner.couldBePlugin(import_record.path.text)) {
-                            if (runner.onResolve(
+                            if (try runner.onResolve(
                                 import_record.path.text,
                                 file_path.text,
                                 linker.log,

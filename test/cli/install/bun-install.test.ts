@@ -2343,7 +2343,7 @@ it("should handle caret range in dependencies when the registry has prereleased 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ bar@6.3.0",
+    expect.stringContaining("+ bar@6.3.0"),
     "",
     "1 package installed",
   ]);
@@ -5261,7 +5261,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ baz@0.0.3",
+    expect.stringContaining("+ baz@0.0.3"),
     "",
     "1 package installed",
   ]);
@@ -5560,7 +5560,7 @@ it("should de-duplicate dependencies alongside tarball URL", async () => {
     expect.stringContaining("bun install v1."),
     "",
     `+ @barn/moo@${root_url}/moo-0.1.0.tgz`,
-    "+ bar@0.0.2",
+    expect.stringContaining("+ bar@0.0.2"),
     "",
     "3 packages installed",
   ]);
@@ -6349,10 +6349,10 @@ cache = false
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     `bun install ${Bun.version_with_sha}`,
     "",
-    "+ conditional-type-checks@1.0.6",
-    "+ prettier@2.8.8",
-    "+ tsd@0.22.0",
-    "+ typescript@5.0.4",
+    expect.stringContaining("+ conditional-type-checks@1.0.6"),
+    expect.stringContaining("+ prettier@2.8.8"),
+    expect.stringContaining("+ tsd@0.22.0"),
+    expect.stringContaining("+ typescript@5.0.4"),
     "",
     "112 packages installed",
   ]);
@@ -8163,7 +8163,7 @@ it("should install correct version of peer dependency from root package", async 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ baz@0.0.3",
+    expect.stringContaining("+ baz@0.0.3"),
     "",
     "1 package installed",
   ]);

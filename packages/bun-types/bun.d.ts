@@ -4534,6 +4534,11 @@ declare module "bun" {
     unix: string;
   }
 
+  interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    tls?: TLSOptions;
+    fd: number;
+  }
+
   /**
    * Create a TCP client that connects to a server
    *

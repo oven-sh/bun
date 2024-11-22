@@ -259,11 +259,8 @@ const SemverObject = @import("../../install/semver.zig").SemverObject;
 const Braces = @import("../../shell/braces.zig");
 const Shell = @import("../../shell/shell.zig");
 
-pub fn shellEscape(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1);
+pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const arguments = callframe.arguments_old(1);
     if (arguments.len < 1) {
         globalThis.throw("shell escape expected at least 1 argument", .{});
         return .undefined;
@@ -293,11 +290,8 @@ pub fn shellEscape(
     return jsval;
 }
 
-pub fn braces(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
-    const arguments_ = callframe.arguments(2);
+pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const arguments_ = callframe.arguments_old(2);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
@@ -317,11 +311,11 @@ pub fn braces(
     if (arguments.nextEat()) |opts_val| {
         if (opts_val.isObject()) {
             if (comptime bun.Environment.allow_assert) {
-                if (opts_val.getTruthy(globalThis, "tokenize")) |tokenize_val| {
+                if (try opts_val.getTruthy(globalThis, "tokenize")) |tokenize_val| {
                     tokenize = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
                 }
 
-                if (opts_val.getTruthy(globalThis, "parse")) |tokenize_val| {
+                if (try opts_val.getTruthy(globalThis, "parse")) |tokenize_val| {
                     parse = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
                 }
             }
@@ -333,13 +327,11 @@ pub fn braces(
     defer arena.deinit();
 
     var lexer_output = Braces.Lexer.tokenize(arena.allocator(), brace_slice.slice()) catch |err| {
-        globalThis.throwError(err, "failed to tokenize braces");
-        return .undefined;
+        return globalThis.throwError(err, "failed to tokenize braces");
     };
 
     const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]) catch |err| {
-        globalThis.throwError(err, "failed to calculate brace expansion amount");
-        return .undefined;
+        return globalThis.throwError(err, "failed to calculate brace expansion amount");
     };
 
     if (tokenize) {
@@ -354,8 +346,7 @@ pub fn braces(
     if (parse) {
         var parser = Braces.Parser.init(lexer_output.tokens.items[0..], arena.allocator());
         const ast_node = parser.parse() catch |err| {
-            globalThis.throwError(err, "failed to parse braces");
-            return .undefined;
+            return globalThis.throwError(err, "failed to parse braces");
         };
         const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, ast_node, .{}) catch {
             globalThis.throwOutOfMemory();
@@ -400,11 +391,8 @@ pub fn braces(
     return bun.String.toJSArray(globalThis, out_strings[0..]);
 }
 
-pub fn which(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
-    const arguments_ = callframe.arguments(2);
+pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const arguments_ = callframe.arguments_old(2);
     var path_buf: bun.PathBuffer = undefined;
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
@@ -449,11 +437,11 @@ pub fn which(
 
     if (arguments.nextEat()) |arg| {
         if (!arg.isEmptyOrUndefinedOrNull() and arg.isObject()) {
-            if (arg.get(globalThis, "PATH")) |str_| {
+            if (try arg.get(globalThis, "PATH")) |str_| {
                 path_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
             }
 
-            if (arg.get(globalThis, "cwd")) |str_| {
+            if (try arg.get(globalThis, "cwd")) |str_| {
                 cwd_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
             }
         }
@@ -471,10 +459,7 @@ pub fn which(
     return JSC.JSValue.jsNull();
 }
 
-pub fn inspectTable(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     var args_buf = callframe.argumentsUndef(5);
     var all_arguments = args_buf.mut();
     if (all_arguments[0].isUndefined() or all_arguments[0].isNull())
@@ -546,11 +531,8 @@ pub fn inspectTable(
     return out.transferToJS(globalThis);
 }
 
-pub fn inspect(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(4).slice();
+pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const arguments = callframe.arguments_old(4).slice();
     if (arguments.len == 0)
         return bun.String.empty.toJS(globalThis);
 
@@ -615,20 +597,15 @@ pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSVal
     return fun;
 }
 
-pub fn registerMacro(
-    globalObject: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
-    const arguments_ = callframe.arguments(2);
+pub fn registerMacro(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const arguments_ = callframe.arguments_old(2);
     const arguments = arguments_.slice();
     if (arguments.len != 2 or !arguments[0].isNumber()) {
-        globalObject.throwInvalidArguments("Internal error registering macros: invalid args", .{});
-        return .undefined;
+        return globalObject.throwInvalidArguments("Internal error registering macros: invalid args", .{});
     }
     const id = arguments[0].toInt32();
     if (id == -1 or id == 0) {
-        globalObject.throwInvalidArguments("Internal error registering macros: invalid id", .{});
-        return .undefined;
+        return globalObject.throwInvalidArguments("Internal error registering macros: invalid id", .{});
     }
 
     if (!arguments[1].isCell() or !arguments[1].isCallable(globalObject.vm())) {
@@ -648,24 +625,15 @@ pub fn registerMacro(
     return .undefined;
 }
 
-pub fn getCWD(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn getCWD(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return ZigString.init(VirtualMachine.get().bundler.fs.top_level_dir).toJS(globalThis);
 }
 
-pub fn getOrigin(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn getOrigin(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return ZigString.init(VirtualMachine.get().origin.origin).toJS(globalThis);
 }
 
-pub fn getStdin(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn getStdin(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stdin();
     store.ref();
@@ -676,10 +644,7 @@ pub fn getStdin(
     return blob.toJS(globalThis);
 }
 
-pub fn getStderr(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn getStderr(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stderr();
     store.ref();
@@ -690,10 +655,7 @@ pub fn getStderr(
     return blob.toJS(globalThis);
 }
 
-pub fn getStdout(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn getStdout(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stdout();
     store.ref();
@@ -704,17 +666,12 @@ pub fn getStdout(
     return blob.toJS(globalThis);
 }
 
-pub fn enableANSIColors(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn enableANSIColors(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     _ = globalThis;
     return JSValue.jsBoolean(Output.enable_ansi_colors);
 }
-pub fn getMain(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+
+pub fn getMain(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     const vm = globalThis.bunVM();
 
     // Attempt to use the resolved filesystem path
@@ -764,20 +721,15 @@ pub fn getMain(
     return ZigString.init(vm.main).toJS(globalThis);
 }
 
-pub fn getArgv(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn getArgv(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return JSC.Node.Process.getArgv(globalThis);
 }
 
 const Editor = @import("../../open.zig").Editor;
-pub fn openInEditor(
-    globalThis: js.JSContextRef,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSValue {
+
+pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     var edit = &VirtualMachine.get().rareData().editor_context;
-    const args = callframe.arguments(4);
+    const args = callframe.arguments_old(4);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args.slice());
     defer arguments.deinit();
     var path: string = "";
@@ -791,7 +743,7 @@ pub fn openInEditor(
 
     if (arguments.nextEat()) |opts| {
         if (!opts.isUndefinedOrNull()) {
-            if (opts.getTruthy(globalThis, "editor")) |editor_val| {
+            if (try opts.getTruthy(globalThis, "editor")) |editor_val| {
                 var sliced = editor_val.toSlice(globalThis, arguments.arena.allocator());
                 const prev_name = edit.name;
 
@@ -811,11 +763,11 @@ pub fn openInEditor(
                 }
             }
 
-            if (opts.getTruthy(globalThis, "line")) |line_| {
+            if (try opts.getTruthy(globalThis, "line")) |line_| {
                 line = line_.toSlice(globalThis, arguments.arena.allocator()).slice();
             }
 
-            if (opts.getTruthy(globalThis, "column")) |column_| {
+            if (try opts.getTruthy(globalThis, "column")) |column_| {
                 column = column_.toSlice(globalThis, arguments.arena.allocator()).slice();
             }
         }
@@ -894,13 +846,12 @@ pub fn getPublicPathWithAssetPrefix(
 }
 
 pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1);
+    const arguments = callframe.arguments_old(1);
 
     // Expect at least one argument.  We allow more than one but ignore them; this
     //  is useful for supporting things like `[1, 2].map(sleepSync)`
     if (arguments.len < 1) {
-        globalObject.throwNotEnoughArguments("sleepSync", 1, 0);
-        return .undefined;
+        return globalObject.throwNotEnoughArguments("sleepSync", 1, 0);
     }
     const arg = arguments.slice()[0];
 
@@ -913,8 +864,7 @@ pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     //NOTE: if argument is > max(i32) then it will be truncated
     const milliseconds = arg.coerce(i32, globalObject);
     if (milliseconds < 0) {
-        globalObject.throwInvalidArguments("argument to sleepSync must not be negative, got {d}", .{milliseconds});
-        return .undefined;
+        return globalObject.throwInvalidArguments("argument to sleepSync must not be negative, got {d}", .{milliseconds});
     }
 
     std.time.sleep(@as(u64, @intCast(milliseconds)) * std.time.ns_per_ms);
@@ -926,7 +876,7 @@ pub fn generateHeapSnapshot(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame
 }
 
 pub fn runGC(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments_ = callframe.arguments(1);
+    const arguments_ = callframe.arguments_old(1);
     const arguments = arguments_.slice();
     return globalObject.bunVM().garbageCollect(arguments.len > 0 and arguments[0].isBoolean() and arguments[0].toBoolean());
 }
@@ -936,30 +886,23 @@ pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!
     return .undefined;
 }
 
-fn doResolve(
-    globalThis: *JSC.JSGlobalObject,
-    arguments: []const JSValue,
-) bun.JSError!JSC.JSValue {
+fn doResolve(globalThis: *JSC.JSGlobalObject, arguments: []const JSValue) bun.JSError!JSC.JSValue {
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const specifier = args.protectEatNext() orelse {
-        globalThis.throwInvalidArguments("Expected a specifier and a from path", .{});
-        return error.JSError;
+        return globalThis.throwInvalidArguments("Expected a specifier and a from path", .{});
     };
 
     if (specifier.isUndefinedOrNull()) {
-        globalThis.throwInvalidArguments("specifier must be a string", .{});
-        return error.JSError;
+        return globalThis.throwInvalidArguments("specifier must be a string", .{});
     }
 
     const from = args.protectEatNext() orelse {
-        globalThis.throwInvalidArguments("Expected a from path", .{});
-        return error.JSError;
+        return globalThis.throwInvalidArguments("Expected a from path", .{});
     };
 
     if (from.isUndefinedOrNull()) {
-        globalThis.throwInvalidArguments("from must be a string", .{});
-        return error.JSError;
+        return globalThis.throwInvalidArguments("from must be a string", .{});
     }
 
     var is_esm = true;
@@ -967,8 +910,7 @@ fn doResolve(
         if (next.isBoolean()) {
             is_esm = next.toBoolean();
         } else {
-            globalThis.throwInvalidArguments("esm must be a boolean", .{});
-            return error.JSError;
+            return globalThis.throwInvalidArguments("esm must be a boolean", .{});
         }
     }
 
@@ -985,13 +927,7 @@ fn doResolve(
     );
 }
 
-fn doResolveWithArgs(
-    ctx: js.JSContextRef,
-    specifier: bun.String,
-    from: bun.String,
-    is_esm: bool,
-    comptime is_file_path: bool,
-) bun.JSError!JSC.JSValue {
+fn doResolveWithArgs(ctx: js.JSContextRef, specifier: bun.String, from: bun.String, is_esm: bool, comptime is_file_path: bool) bun.JSError!JSC.JSValue {
     var errorable: ErrorableString = undefined;
     var query_string = ZigString.Empty;
 
@@ -1004,7 +940,7 @@ fn doResolveWithArgs(
     if (comptime is_file_path) {
         VirtualMachine.resolveFilePathForAPI(
             &errorable,
-            ctx.ptr(),
+            ctx,
             specifier_decoded,
             from,
             &query_string,
@@ -1013,7 +949,7 @@ fn doResolveWithArgs(
     } else {
         VirtualMachine.resolveForAPI(
             &errorable,
-            ctx.ptr(),
+            ctx,
             specifier_decoded,
             from,
             &query_string,
@@ -1046,12 +982,12 @@ fn doResolveWithArgs(
 }
 
 pub fn resolveSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(3);
+    const arguments = callframe.arguments_old(3);
     return try doResolve(globalObject, arguments.slice());
 }
 
 pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(3);
+    const arguments = callframe.arguments_old(3);
     const value = doResolve(globalObject, arguments.slice()) catch {
         const err = globalObject.tryTakeException().?;
         return JSC.JSPromise.rejectedPromiseValue(globalObject, err);
@@ -1059,12 +995,7 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
     return JSC.JSPromise.resolvedPromiseValue(globalObject, value);
 }
 
-export fn Bun__resolve(
-    global: *JSGlobalObject,
-    specifier: JSValue,
-    source: JSValue,
-    is_esm: bool,
-) JSC.JSValue {
+export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
     const specifier_str = specifier.toBunString(global);
     defer specifier_str.deref();
 
@@ -1079,12 +1010,7 @@ export fn Bun__resolve(
     return JSC.JSPromise.resolvedPromiseValue(global, value);
 }
 
-export fn Bun__resolveSync(
-    global: *JSGlobalObject,
-    specifier: JSValue,
-    source: JSValue,
-    is_esm: bool,
-) JSC.JSValue {
+export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
     const specifier_str = specifier.toBunString(global);
     defer specifier_str.deref();
 
@@ -1094,22 +1020,12 @@ export fn Bun__resolveSync(
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true));
 }
 
-export fn Bun__resolveSyncWithStrings(
-    global: *JSGlobalObject,
-    specifier: *bun.String,
-    source: *bun.String,
-    is_esm: bool,
-) JSC.JSValue {
+export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, is_esm: bool) JSC.JSValue {
     Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier.*, source.*, is_esm, true));
 }
 
-export fn Bun__resolveSyncWithSource(
-    global: *JSGlobalObject,
-    specifier: JSValue,
-    source: *bun.String,
-    is_esm: bool,
-) JSC.JSValue {
+export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue, source: *bun.String, is_esm: bool) JSC.JSValue {
     const specifier_str = specifier.toBunString(global);
     defer specifier_str.deref();
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true));
@@ -1126,7 +1042,7 @@ fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSErr
 }
 
 pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments_ = callframe.arguments(2);
+    const arguments_ = callframe.arguments_old(2);
     const arguments = arguments_.slice();
     if (arguments.len == 0) {
         return JSC.JSValue.jsNumberFromInt32(-1);
@@ -1491,8 +1407,7 @@ pub const Crypto = struct {
 
             pub fn fromJS(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue, is_async: bool) bun.JSError!PBKDF2 {
                 if (arguments.len < 5) {
-                    globalThis.throwNotEnoughArguments("pbkdf2", 5, arguments.len);
-                    return error.JSError;
+                    return globalThis.throwNotEnoughArguments("pbkdf2", 5, arguments.len);
                 }
 
                 if (!arguments[3].isAnyInt()) {
@@ -1503,7 +1418,7 @@ pub const Crypto = struct {
                 const length = arguments[3].coerce(i64, globalThis);
 
                 if (!globalThis.hasException() and (length < 0 or length > std.math.maxInt(i32))) {
-                    return globalThis.throwInvalidArguments2("keylen must be > 0 and < {d}", .{std.math.maxInt(i32)});
+                    return globalThis.throwInvalidArguments("keylen must be > 0 and < {d}", .{std.math.maxInt(i32)});
                 }
 
                 if (globalThis.hasException()) {
@@ -1518,7 +1433,7 @@ pub const Crypto = struct {
                 const iteration_count = arguments[2].coerce(i64, globalThis);
 
                 if (!globalThis.hasException() and (iteration_count < 1 or iteration_count > std.math.maxInt(u32))) {
-                    return globalThis.throwInvalidArguments2("iteration count must be >= 1 and <= maxInt", .{});
+                    return globalThis.throwInvalidArguments("iteration count must be >= 1 and <= maxInt", .{});
                 }
 
                 if (globalThis.hasException()) {
@@ -1562,7 +1477,7 @@ pub const Crypto = struct {
                 };
 
                 if (out.salt.slice().len > std.math.maxInt(i32)) {
-                    return globalThis.throwInvalidArguments2("salt is too long", .{});
+                    return globalThis.throwInvalidArguments("salt is too long", .{});
                 }
 
                 out.password = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[0], is_async) orelse {
@@ -1573,7 +1488,7 @@ pub const Crypto = struct {
                 };
 
                 if (out.password.slice().len > std.math.maxInt(i32)) {
-                    return globalThis.throwInvalidArguments2("password is too long", .{});
+                    return globalThis.throwInvalidArguments("password is too long", .{});
                 }
 
                 return out;
@@ -1696,7 +1611,7 @@ pub const Crypto = struct {
 
                 pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!Value {
                     if (value.isObject()) {
-                        if (value.getTruthy(globalObject, "algorithm")) |algorithm_value| {
+                        if (try value.getTruthy(globalObject, "algorithm")) |algorithm_value| {
                             if (!algorithm_value.isString()) {
                                 globalObject.throwInvalidArgumentType("hash", "algorithm", "string");
                                 return error.JSError;
@@ -1713,7 +1628,7 @@ pub const Crypto = struct {
                                         .bcrypt = PasswordObject.Algorithm.Value.bcrpyt_default,
                                     };
 
-                                    if (value.getTruthy(globalObject, "cost")) |rounds_value| {
+                                    if (try value.getTruthy(globalObject, "cost")) |rounds_value| {
                                         if (!rounds_value.isNumber()) {
                                             globalObject.throwInvalidArgumentType("hash", "cost", "number");
                                             return error.JSError;
@@ -1722,7 +1637,7 @@ pub const Crypto = struct {
                                         const rounds = rounds_value.coerce(i32, globalObject);
 
                                         if (rounds < 4 or rounds > 31) {
-                                            return globalObject.throwInvalidArguments2("Rounds must be between 4 and 31", .{});
+                                            return globalObject.throwInvalidArguments("Rounds must be between 4 and 31", .{});
                                         }
 
                                         algorithm.bcrypt = @as(u6, @intCast(rounds));
@@ -1733,7 +1648,7 @@ pub const Crypto = struct {
                                 inline .argon2id, .argon2d, .argon2i => |tag| {
                                     var argon = Algorithm.Argon2Params{};
 
-                                    if (value.getTruthy(globalObject, "timeCost")) |time_value| {
+                                    if (try value.getTruthy(globalObject, "timeCost")) |time_value| {
                                         if (!time_value.isNumber()) {
                                             globalObject.throwInvalidArgumentType("hash", "timeCost", "number");
                                             return error.JSError;
@@ -1742,13 +1657,13 @@ pub const Crypto = struct {
                                         const time_cost = time_value.coerce(i32, globalObject);
 
                                         if (time_cost < 1) {
-                                            return globalObject.throwInvalidArguments2("Time cost must be greater than 0", .{});
+                                            return globalObject.throwInvalidArguments("Time cost must be greater than 0", .{});
                                         }
 
                                         argon.time_cost = @as(u32, @intCast(time_cost));
                                     }
 
-                                    if (value.getTruthy(globalObject, "memoryCost")) |memory_value| {
+                                    if (try value.getTruthy(globalObject, "memoryCost")) |memory_value| {
                                         if (!memory_value.isNumber()) {
                                             globalObject.throwInvalidArgumentType("hash", "memoryCost", "number");
                                             return error.JSError;
@@ -1757,7 +1672,7 @@ pub const Crypto = struct {
                                         const memory_cost = memory_value.coerce(i32, globalObject);
 
                                         if (memory_cost < 1) {
-                                            return globalObject.throwInvalidArguments2("Memory cost must be greater than 0", .{});
+                                            return globalObject.throwInvalidArguments("Memory cost must be greater than 0", .{});
                                         }
 
                                         argon.memory_cost = @as(u32, @intCast(memory_cost));
@@ -2190,16 +2105,12 @@ pub const Crypto = struct {
         }
 
         // Once we have bindings generator, this should be replaced with a generated function
-        pub fn JSPasswordObject__hash(
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSC.JSValue {
-            const arguments_ = callframe.arguments(2);
+        pub fn JSPasswordObject__hash(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            const arguments_ = callframe.arguments_old(2);
             const arguments = arguments_.ptr[0..arguments_.len];
 
             if (arguments.len < 1) {
-                globalObject.throwNotEnoughArguments("hash", 1, 0);
-                return error.JSError;
+                return globalObject.throwNotEnoughArguments("hash", 1, 0);
             }
 
             var algorithm = PasswordObject.Algorithm.Value.default;
@@ -2217,24 +2128,19 @@ pub const Crypto = struct {
             errdefer bun.default_allocator.free(password_to_hash);
 
             if (password_to_hash.len == 0) {
-                globalObject.throwInvalidArguments("password must not be empty", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments("password must not be empty", .{});
             }
 
             return hash(globalObject, password_to_hash, algorithm, false);
         }
 
         // Once we have bindings generator, this should be replaced with a generated function
-        pub fn JSPasswordObject__hashSync(
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSC.JSValue {
-            const arguments_ = callframe.arguments(2);
+        pub fn JSPasswordObject__hashSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            const arguments_ = callframe.arguments_old(2);
             const arguments = arguments_.ptr[0..arguments_.len];
 
             if (arguments.len < 1) {
-                globalObject.throwNotEnoughArguments("hash", 1, 0);
-                return error.JSError;
+                return globalObject.throwNotEnoughArguments("hash", 1, 0);
             }
 
             var algorithm = PasswordObject.Algorithm.Value.default;
@@ -2252,7 +2158,7 @@ pub const Crypto = struct {
             defer string_or_buffer.deinit();
 
             if (string_or_buffer.slice().len == 0) {
-                return globalObject.throwInvalidArguments2("password must not be empty", .{});
+                return globalObject.throwInvalidArguments("password must not be empty", .{});
             }
 
             return hash(globalObject, string_or_buffer.slice(), algorithm, true);
@@ -2346,16 +2252,12 @@ pub const Crypto = struct {
         };
 
         // Once we have bindings generator, this should be replaced with a generated function
-        pub fn JSPasswordObject__verify(
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSC.JSValue {
-            const arguments_ = callframe.arguments(3);
+        pub fn JSPasswordObject__verify(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            const arguments_ = callframe.arguments_old(3);
             const arguments = arguments_.ptr[0..arguments_.len];
 
             if (arguments.len < 2) {
-                globalObject.throwNotEnoughArguments("verify", 2, 0);
-                return error.JSError;
+                return globalObject.throwNotEnoughArguments("verify", 2, 0);
             }
 
             var algorithm: ?PasswordObject.Algorithm = null;
@@ -2401,16 +2303,12 @@ pub const Crypto = struct {
         }
 
         // Once we have bindings generator, this should be replaced with a generated function
-        pub fn JSPasswordObject__verifySync(
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSC.JSValue {
-            const arguments_ = callframe.arguments(3);
+        pub fn JSPasswordObject__verifySync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            const arguments_ = callframe.arguments_old(3);
             const arguments = arguments_.ptr[0..arguments_.len];
 
             if (arguments.len < 2) {
-                globalObject.throwNotEnoughArguments("verify", 2, 0);
-                return JSC.JSValue.undefined;
+                return globalObject.throwNotEnoughArguments("verify", 2, 0);
             }
 
             var algorithm: ?PasswordObject.Algorithm = null;
@@ -2508,12 +2406,7 @@ pub const Crypto = struct {
             return JSC.JSValue.createStringArray(globalThis_, &values, values.len, true);
         }
 
-        fn hashToEncoding(
-            globalThis: *JSGlobalObject,
-            evp: *EVP,
-            input: JSC.Node.BlobOrStringOrBuffer,
-            encoding: JSC.Node.Encoding,
-        ) JSC.JSValue {
+        fn hashToEncoding(globalThis: *JSGlobalObject, evp: *EVP, input: JSC.Node.BlobOrStringOrBuffer, encoding: JSC.Node.Encoding) bun.JSError!JSC.JSValue {
             var output_digest_buf: Digest = undefined;
             defer input.deinit();
 
@@ -2532,12 +2425,7 @@ pub const Crypto = struct {
             return encoding.encodeWithMaxSize(globalThis, BoringSSL.EVP_MAX_MD_SIZE, output_digest_buf[0..len]);
         }
 
-        fn hashToBytes(
-            globalThis: *JSGlobalObject,
-            evp: *EVP,
-            input: JSC.Node.BlobOrStringOrBuffer,
-            output: ?JSC.ArrayBuffer,
-        ) JSC.JSValue {
+        fn hashToBytes(globalThis: *JSGlobalObject, evp: *EVP, input: JSC.Node.BlobOrStringOrBuffer, output: ?JSC.ArrayBuffer) bun.JSError!JSC.JSValue {
             var output_digest_buf: Digest = undefined;
             var output_digest_slice: []u8 = &output_digest_buf;
             defer input.deinit();
@@ -2551,8 +2439,7 @@ pub const Crypto = struct {
                 const size = evp.size();
                 var bytes = output_buf.byteSlice();
                 if (bytes.len < size) {
-                    globalThis.throwInvalidArguments("TypedArray must be at least {d} bytes", .{size});
-                    return JSC.JSValue.zero;
+                    return globalThis.throwInvalidArguments("TypedArray must be at least {d} bytes", .{size});
                 }
                 output_digest_slice = bytes[0..size];
             }
@@ -2578,10 +2465,9 @@ pub const Crypto = struct {
             algorithm: ZigString,
             input: JSC.Node.BlobOrStringOrBuffer,
             output: ?JSC.Node.StringOrBuffer,
-        ) JSC.JSValue {
-            var evp = EVP.byName(algorithm, globalThis) orelse return CryptoHasherZig.hashByName(globalThis, algorithm, input, output) orelse {
-                globalThis.throwInvalidArguments("Unsupported algorithm \"{any}\"", .{algorithm});
-                return .zero;
+        ) bun.JSError!JSC.JSValue {
+            var evp = EVP.byName(algorithm, globalThis) orelse return try CryptoHasherZig.hashByName(globalThis, algorithm, input, output) orelse {
+                return globalThis.throwInvalidArguments("Unsupported algorithm \"{any}\"", .{algorithm});
             };
             defer evp.deinit();
 
@@ -2591,7 +2477,7 @@ pub const Crypto = struct {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
                             globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
-                            return JSC.JSValue.zero;
+                            return error.JSError;
                         };
 
                         return hashToEncoding(globalThis, &evp, input, encoding);
@@ -2607,20 +2493,20 @@ pub const Crypto = struct {
 
         // Bun.CryptoHasher(algorithm, hmacKey?: string | Buffer)
         pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*CryptoHasher {
-            const arguments = callframe.arguments(2);
+            const arguments = callframe.arguments_old(2);
             if (arguments.len == 0) {
-                return globalThis.throwInvalidArguments2("Expected an algorithm name as an argument", .{});
+                return globalThis.throwInvalidArguments("Expected an algorithm name as an argument", .{});
             }
 
             const algorithm_name = arguments.ptr[0];
             if (algorithm_name.isEmptyOrUndefinedOrNull() or !algorithm_name.isString()) {
-                return globalThis.throwInvalidArguments2("algorithm must be a string", .{});
+                return globalThis.throwInvalidArguments("algorithm must be a string", .{});
             }
 
             const algorithm = algorithm_name.getZigString(globalThis);
 
             if (algorithm.len == 0) {
-                return globalThis.throwInvalidArguments2("Invalid algorithm name", .{});
+                return globalThis.throwInvalidArguments("Invalid algorithm name", .{});
             }
 
             const hmac_value = arguments.ptr[1];
@@ -2633,7 +2519,7 @@ pub const Crypto = struct {
 
             if (!hmac_value.isEmptyOrUndefinedOrNull()) {
                 hmac_key = JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, hmac_value) orelse {
-                    return globalThis.throwInvalidArguments2("key must be a string or buffer", .{});
+                    return globalThis.throwInvalidArguments("key must be a string or buffer", .{});
                 };
             }
 
@@ -2654,8 +2540,7 @@ pub const Crypto = struct {
                                     BoringSSL.ERR_clear_error();
                                     return globalThis.throwValue2(instance);
                                 } else {
-                                    globalThis.throwTODO("HMAC is not supported for this algorithm yet");
-                                    return error.JSError;
+                                    return globalThis.throwTODO("HMAC is not supported for this algorithm yet");
                                 }
                             }
                             return error.JSError;
@@ -2665,7 +2550,7 @@ pub const Crypto = struct {
 
                 break :brk .{
                     .evp = EVP.byName(algorithm, globalThis) orelse return CryptoHasherZig.constructor(algorithm) orelse {
-                        return globalThis.throwInvalidArguments2("Unsupported algorithm {any}", .{algorithm});
+                        return globalThis.throwInvalidArguments("Unsupported algorithm {any}", .{algorithm});
                     },
                 };
             });
@@ -2680,14 +2565,14 @@ pub const Crypto = struct {
 
         pub fn update(this: *CryptoHasher, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const thisValue = callframe.this();
-            const arguments = callframe.arguments(2);
+            const arguments = callframe.arguments_old(2);
             const input = arguments.ptr[0];
             if (input.isEmptyOrUndefinedOrNull()) {
-                return globalThis.throwInvalidArguments2("expected blob, string or buffer", .{});
+                return globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
             }
             const encoding = arguments.ptr[1];
             const buffer = try JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValue(globalThis, globalThis.bunVM().allocator, input, encoding) orelse {
-                if (!globalThis.hasException()) globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
+                if (!globalThis.hasException()) return globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
                 return error.JSError;
             };
             defer buffer.deinit();
@@ -2756,18 +2641,14 @@ pub const Crypto = struct {
             return CryptoHasher.new(new).toJS(globalObject);
         }
 
-        pub fn digest_(
-            this: *CryptoHasher,
-            globalThis: *JSGlobalObject,
-            output: ?JSC.Node.StringOrBuffer,
-        ) JSC.JSValue {
+        pub fn digest_(this: *CryptoHasher, globalThis: *JSGlobalObject, output: ?JSC.Node.StringOrBuffer) bun.JSError!JSC.JSValue {
             if (output) |string_or_buffer| {
                 switch (string_or_buffer) {
                     inline else => |*str| {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
                             globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
-                            return JSC.JSValue.zero;
+                            return error.JSError;
                         };
 
                         return this.digestToEncoding(globalThis, encoding);
@@ -2784,14 +2665,13 @@ pub const Crypto = struct {
             }
         }
 
-        fn digestToBytes(this: *CryptoHasher, globalThis: *JSGlobalObject, output: ?JSC.ArrayBuffer) JSC.JSValue {
+        fn digestToBytes(this: *CryptoHasher, globalThis: *JSGlobalObject, output: ?JSC.ArrayBuffer) bun.JSError!JSC.JSValue {
             var output_digest_buf: EVP.Digest = undefined;
             var output_digest_slice: []u8 = &output_digest_buf;
             if (output) |output_buf| {
                 var bytes = output_buf.byteSlice();
                 if (bytes.len < output_digest_buf.len) {
-                    globalThis.throwInvalidArguments(comptime std.fmt.comptimePrint("TypedArray must be at least {d} bytes", .{output_digest_buf.len}), .{});
-                    return JSC.JSValue.zero;
+                    return globalThis.throwInvalidArguments(comptime std.fmt.comptimePrint("TypedArray must be at least {d} bytes", .{output_digest_buf.len}), .{});
                 }
                 output_digest_slice = bytes[0..bytes.len];
             } else {
@@ -2800,7 +2680,7 @@ pub const Crypto = struct {
 
             const result = this.final(globalThis, output_digest_slice) catch return .zero;
             if (globalThis.hasException()) {
-                return JSC.JSValue.zero;
+                return error.JSError;
             }
 
             if (output) |output_buf| {
@@ -2811,12 +2691,12 @@ pub const Crypto = struct {
             }
         }
 
-        fn digestToEncoding(this: *CryptoHasher, globalThis: *JSGlobalObject, encoding: JSC.Node.Encoding) JSC.JSValue {
+        fn digestToEncoding(this: *CryptoHasher, globalThis: *JSGlobalObject, encoding: JSC.Node.Encoding) bun.JSError!JSC.JSValue {
             var output_digest_buf: EVP.Digest = std.mem.zeroes(EVP.Digest);
             const output_digest_slice: []u8 = &output_digest_buf;
             const out = this.final(globalThis, output_digest_slice) catch return .zero;
             if (globalThis.hasException()) {
-                return JSC.JSValue.zero;
+                return error.JSError;
             }
             return encoding.encodeWithMaxSize(globalThis, BoringSSL.EVP_MAX_MD_SIZE, out);
         }
@@ -2877,28 +2757,23 @@ pub const Crypto = struct {
             };
         }
 
-        pub fn hashByName(
-            globalThis: *JSGlobalObject,
-            algorithm: ZigString,
-            input: JSC.Node.BlobOrStringOrBuffer,
-            output: ?JSC.Node.StringOrBuffer,
-        ) ?JSC.JSValue {
+        pub fn hashByName(globalThis: *JSGlobalObject, algorithm: ZigString, input: JSC.Node.BlobOrStringOrBuffer, output: ?JSC.Node.StringOrBuffer) bun.JSError!?JSC.JSValue {
             inline for (algo_map) |item| {
                 if (bun.strings.eqlComptime(algorithm.slice(), item[0])) {
-                    return hashByNameInner(globalThis, item[1], input, output);
+                    return try hashByNameInner(globalThis, item[1], input, output);
                 }
             }
             return null;
         }
 
-        fn hashByNameInner(globalThis: *JSGlobalObject, comptime Algorithm: type, input: JSC.Node.BlobOrStringOrBuffer, output: ?JSC.Node.StringOrBuffer) JSC.JSValue {
+        fn hashByNameInner(globalThis: *JSGlobalObject, comptime Algorithm: type, input: JSC.Node.BlobOrStringOrBuffer, output: ?JSC.Node.StringOrBuffer) bun.JSError!JSC.JSValue {
             if (output) |string_or_buffer| {
                 switch (string_or_buffer) {
                     inline else => |*str| {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
                             globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
-                            return JSC.JSValue.zero;
+                            return error.JSError;
                         };
 
                         if (encoding == .buffer) {
@@ -2932,7 +2807,7 @@ pub const Crypto = struct {
             return encoding.encodeWithSize(globalThis, digestLength(Algorithm), &out);
         }
 
-        fn hashByNameInnerToBytes(globalThis: *JSGlobalObject, comptime Algorithm: type, input: JSC.Node.BlobOrStringOrBuffer, output: ?JSC.ArrayBuffer) JSC.JSValue {
+        fn hashByNameInnerToBytes(globalThis: *JSGlobalObject, comptime Algorithm: type, input: JSC.Node.BlobOrStringOrBuffer, output: ?JSC.ArrayBuffer) bun.JSError!JSC.JSValue {
             defer input.deinit();
 
             if (input == .blob and input.blob.isBunFile()) {
@@ -2945,8 +2820,7 @@ pub const Crypto = struct {
 
             if (output) |output_buf| {
                 if (output_buf.byteSlice().len < digest_length_comptime) {
-                    globalThis.throwInvalidArguments("TypedArray must be at least {d} bytes", .{digest_length_comptime});
-                    return JSC.JSValue.zero;
+                    return globalThis.throwInvalidArguments("TypedArray must be at least {d} bytes", .{digest_length_comptime});
                 }
             }
 
@@ -3066,18 +2940,13 @@ pub const Crypto = struct {
                 return encoding.encodeWithSize(globalThis, Hasher.digest, &output_digest_buf);
             }
 
-            fn hashToBytes(
-                globalThis: *JSGlobalObject,
-                input: JSC.Node.BlobOrStringOrBuffer,
-                output: ?JSC.ArrayBuffer,
-            ) JSC.JSValue {
+            fn hashToBytes(globalThis: *JSGlobalObject, input: JSC.Node.BlobOrStringOrBuffer, output: ?JSC.ArrayBuffer) bun.JSError!JSC.JSValue {
                 var output_digest_buf: Hasher.Digest = undefined;
                 var output_digest_slice: *Hasher.Digest = &output_digest_buf;
                 if (output) |output_buf| {
                     var bytes = output_buf.byteSlice();
                     if (bytes.len < Hasher.digest) {
-                        globalThis.throwInvalidArguments(comptime std.fmt.comptimePrint("TypedArray must be at least {d} bytes", .{Hasher.digest}), .{});
-                        return JSC.JSValue.zero;
+                        return globalThis.throwInvalidArguments(comptime std.fmt.comptimePrint("TypedArray must be at least {d} bytes", .{Hasher.digest}), .{});
                     }
                     output_digest_slice = bytes[0..Hasher.digest];
                 }
@@ -3100,12 +2969,11 @@ pub const Crypto = struct {
                 globalThis: *JSGlobalObject,
                 input: JSC.Node.BlobOrStringOrBuffer,
                 output: ?JSC.Node.StringOrBuffer,
-            ) JSC.JSValue {
+            ) bun.JSError!JSC.JSValue {
                 defer input.deinit();
 
                 if (input == .blob and input.blob.isBunFile()) {
-                    globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
-                    return .zero;
+                    return globalThis.throw2("Bun.file() is not supported here yet (it needs an async version)", .{});
                 }
 
                 if (output) |string_or_buffer| {
@@ -3114,7 +2982,7 @@ pub const Crypto = struct {
                             defer str.deinit();
                             const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
                                 globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
-                                return JSC.JSValue.zero;
+                                return error.JSError;
                             };
 
                             return hashToEncoding(globalThis, input, encoding);
@@ -3149,8 +3017,7 @@ pub const Crypto = struct {
                 const thisValue = callframe.this();
                 const input = callframe.argument(0);
                 const buffer = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, input) orelse {
-                    globalThis.throwInvalidArguments("expected blob or string or buffer", .{});
-                    return JSC.JSValue.zero;
+                    return globalThis.throwInvalidArguments("expected blob or string or buffer", .{});
                 };
                 defer buffer.deinit();
 
@@ -3166,7 +3033,7 @@ pub const Crypto = struct {
                 this: *@This(),
                 globalThis: *JSGlobalObject,
                 output: ?JSC.Node.StringOrBuffer,
-            ) JSC.JSValue {
+            ) bun.JSError!JSC.JSValue {
                 if (this.digested) {
                     globalThis.ERR_INVALID_STATE(name ++ " hasher already digested, create a new instance to digest again", .{}).throw();
                     return .zero;
@@ -3177,7 +3044,7 @@ pub const Crypto = struct {
                             defer str.deinit();
                             const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
                                 globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
-                                return JSC.JSValue.zero;
+                                return error.JSError;
                             };
 
                             return this.digestToEncoding(globalThis, encoding);
@@ -3194,14 +3061,13 @@ pub const Crypto = struct {
                 }
             }
 
-            fn digestToBytes(this: *@This(), globalThis: *JSGlobalObject, output: ?JSC.ArrayBuffer) JSC.JSValue {
+            fn digestToBytes(this: *@This(), globalThis: *JSGlobalObject, output: ?JSC.ArrayBuffer) bun.JSError!JSC.JSValue {
                 var output_digest_buf: Hasher.Digest = undefined;
                 var output_digest_slice: *Hasher.Digest = &output_digest_buf;
                 if (output) |output_buf| {
                     var bytes = output_buf.byteSlice();
                     if (bytes.len < Hasher.digest) {
-                        globalThis.throwInvalidArguments(comptime std.fmt.comptimePrint("TypedArray must be at least {d} bytes", .{Hasher.digest}), .{});
-                        return JSC.JSValue.zero;
+                        return globalThis.throwInvalidArguments(comptime std.fmt.comptimePrint("TypedArray must be at least {d} bytes", .{Hasher.digest}), .{});
                     }
                     output_digest_slice = bytes[0..Hasher.digest];
                 } else {
@@ -3260,7 +3126,7 @@ pub fn nanoseconds(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSErr
 }
 
 pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(2).slice();
+    const arguments = callframe.arguments_old(2).slice();
     var config: JSC.API.ServerConfig = brk: {
         var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
         var config: JSC.API.ServerConfig = .{};
@@ -3446,30 +3312,22 @@ comptime {
     }
 }
 
-pub fn allocUnsafe(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1);
+pub fn allocUnsafe(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const arguments = callframe.arguments_old(1);
     const size = arguments.ptr[0];
     if (!size.isUInt32AsAnyInt()) {
-        globalThis.throwInvalidArguments("Expected a positive number", .{});
-        return JSC.JSValue.zero;
+        return globalThis.throwInvalidArguments("Expected a positive number", .{});
     }
 
     return JSC.JSValue.createUninitializedUint8Array(globalThis, size.toUInt64NoTruncate());
 }
 
-pub fn mmapFile(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     if (comptime Environment.isWindows) {
-        globalThis.throwTODO("mmapFile is not supported on Windows");
-        return JSC.JSValue.zero;
+        return globalThis.throwTODO("mmapFile is not supported on Windows");
     }
 
-    const arguments_ = callframe.arguments(2);
+    const arguments_ = callframe.arguments_old(2);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer args.deinit();
 
@@ -3479,15 +3337,13 @@ pub fn mmapFile(
             if (path.isString()) {
                 const path_str = path.toSlice(globalThis, args.arena.allocator());
                 if (path_str.len > bun.MAX_PATH_BYTES) {
-                    globalThis.throwInvalidArguments("Path too long", .{});
-                    return JSC.JSValue.zero;
+                    return globalThis.throwInvalidArguments("Path too long", .{});
                 }
                 const paths = &[_]string{path_str.slice()};
                 break :brk bun.path.joinAbsStringBuf(bun.fs.FileSystem.instance.top_level_dir, &buf, paths, .auto);
             }
         }
-        globalThis.throwInvalidArguments("Expected a path", .{});
-        return JSC.JSValue.zero;
+        return globalThis.throwInvalidArguments("Expected a path", .{});
     };
 
     buf[path.len] = 0;
@@ -3501,23 +3357,23 @@ pub fn mmapFile(
     var map_size: ?usize = null;
 
     if (args.nextEat()) |opts| {
-        flags.TYPE = if ((opts.get(globalThis, "shared") orelse JSValue.true).toBoolean())
+        flags.TYPE = if ((try opts.get(globalThis, "shared") orelse JSValue.true).toBoolean())
             .SHARED
         else
             .PRIVATE;
 
         if (@hasField(std.c.MAP, "SYNC")) {
-            if ((opts.get(globalThis, "sync") orelse JSValue.false).toBoolean()) {
+            if ((try opts.get(globalThis, "sync") orelse JSValue.false).toBoolean()) {
                 flags.TYPE = .SHARED_VALIDATE;
                 flags.SYNC = true;
             }
         }
 
-        if (opts.get(globalThis, "size")) |value| {
+        if (try opts.get(globalThis, "size")) |value| {
             map_size = @as(usize, @intCast(value.toInt64()));
         }
 
-        if (opts.get(globalThis, "offset")) |value| {
+        if (try opts.get(globalThis, "offset")) |value| {
             offset = @as(usize, @intCast(value.toInt64()));
             offset = std.mem.alignBackwardAnyAlign(offset, std.mem.page_size);
         }
@@ -3539,24 +3395,15 @@ pub fn mmapFile(
     }.x, @as(?*anyopaque, @ptrFromInt(map.len)), null).?.value();
 }
 
-pub fn getTranspilerConstructor(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn getTranspilerConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return JSC.API.JSTranspiler.getConstructor(globalThis);
 }
 
-pub fn getFileSystemRouter(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn getFileSystemRouter(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return JSC.API.FileSystemRouter.getConstructor(globalThis);
 }
 
-pub fn getHashObject(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn getHashObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return HashObject.create(globalThis);
 }
 
@@ -3599,7 +3446,7 @@ const HashObject = struct {
         return struct {
             const Hasher = Hasher_;
             pub fn hash(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-                const arguments = callframe.arguments(2).slice();
+                const arguments = callframe.arguments_old(2).slice();
                 var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
                 defer args.deinit();
 
@@ -3628,8 +3475,7 @@ const HashObject = struct {
                             .DataView,
                             => {
                                 var array_buffer = arg.asArrayBuffer(globalThis) orelse {
-                                    globalThis.throwInvalidArguments("ArrayBuffer conversion error", .{});
-                                    return .zero;
+                                    return globalThis.throwInvalidArguments("ArrayBuffer conversion error", .{});
                                 };
                                 input = array_buffer.byteSlice();
                             },
@@ -3674,24 +3520,15 @@ const HashObject = struct {
     }
 };
 
-pub fn getTOMLObject(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn getTOMLObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return TOMLObject.create(globalThis);
 }
 
-pub fn getGlobConstructor(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn getGlobConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return JSC.API.Glob.getConstructor(globalThis);
 }
 
-pub fn getEmbeddedFiles(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     const vm = globalThis.bunVM();
     const graph = vm.standalone_module_graph orelse return JSC.JSValue.createEmptyArray(globalThis, 0);
 
@@ -3724,17 +3561,11 @@ pub fn getEmbeddedFiles(
     return array;
 }
 
-pub fn getSemver(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn getSemver(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return SemverObject.create(globalThis);
 }
 
-pub fn getUnsafe(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
+pub fn getUnsafe(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return UnsafeObject.create(globalThis);
 }
 
@@ -3761,7 +3592,7 @@ const UnsafeObject = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         const ret = JSValue.jsNumber(@as(i32, @intFromEnum(globalThis.bunVM().aggressive_garbage_collection)));
-        const value = callframe.arguments(1).ptr[0];
+        const value = callframe.arguments_old(1).ptr[0];
 
         if (!value.isEmptyOrUndefinedOrNull()) {
             switch (value.coerce(i32, globalThis)) {
@@ -3778,10 +3609,9 @@ const UnsafeObject = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const args = callframe.arguments(2).slice();
+        const args = callframe.arguments_old(2).slice();
         if (args.len < 1 or !args[0].isCell() or !args[0].jsType().isTypedArray()) {
-            globalThis.throwInvalidArguments("Expected an ArrayBuffer", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("Expected an ArrayBuffer", .{});
         }
 
         const array_buffer = JSC.ArrayBuffer.fromTypedArray(globalThis, args[0]);
@@ -3827,10 +3657,9 @@ const TOMLObject = struct {
         const allocator = arena.allocator();
         defer arena.deinit();
         var log = logger.Log.init(default_allocator);
-        const arguments = callframe.arguments(1).slice();
+        const arguments = callframe.arguments_old(1).slice();
         if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
-            globalThis.throwInvalidArguments("Expected a string to parse", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("Expected a string to parse", .{});
         }
 
         var input_slice = arguments[0].toSlice(globalThis, bun.default_allocator);
@@ -3939,10 +3768,9 @@ pub const FFIObject = struct {
             globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (arguments.len == 0 or !arguments[0].isNumber()) {
-                globalObject.throwInvalidArguments("Expected a pointer", .{});
-                return .zero;
+                return globalObject.throwInvalidArguments("Expected a pointer", .{});
             }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) u8, @ptrFromInt(addr)).*;
@@ -3952,10 +3780,9 @@ pub const FFIObject = struct {
             globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (arguments.len == 0 or !arguments[0].isNumber()) {
-                globalObject.throwInvalidArguments("Expected a pointer", .{});
-                return .zero;
+                return globalObject.throwInvalidArguments("Expected a pointer", .{});
             }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) u16, @ptrFromInt(addr)).*;
@@ -3965,10 +3792,9 @@ pub const FFIObject = struct {
             globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (arguments.len == 0 or !arguments[0].isNumber()) {
-                globalObject.throwInvalidArguments("Expected a pointer", .{});
-                return .zero;
+                return globalObject.throwInvalidArguments("Expected a pointer", .{});
             }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) u32, @ptrFromInt(addr)).*;
@@ -3978,10 +3804,9 @@ pub const FFIObject = struct {
             globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (arguments.len == 0 or !arguments[0].isNumber()) {
-                globalObject.throwInvalidArguments("Expected a pointer", .{});
-                return .zero;
+                return globalObject.throwInvalidArguments("Expected a pointer", .{});
             }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
@@ -3991,10 +3816,9 @@ pub const FFIObject = struct {
             globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (arguments.len == 0 or !arguments[0].isNumber()) {
-                globalObject.throwInvalidArguments("Expected a pointer", .{});
-                return .zero;
+                return globalObject.throwInvalidArguments("Expected a pointer", .{});
             }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) i8, @ptrFromInt(addr)).*;
@@ -4004,10 +3828,9 @@ pub const FFIObject = struct {
             globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (arguments.len == 0 or !arguments[0].isNumber()) {
-                globalObject.throwInvalidArguments("Expected a pointer", .{});
-                return .zero;
+                return globalObject.throwInvalidArguments("Expected a pointer", .{});
             }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) i16, @ptrFromInt(addr)).*;
@@ -4017,10 +3840,9 @@ pub const FFIObject = struct {
             globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (arguments.len == 0 or !arguments[0].isNumber()) {
-                globalObject.throwInvalidArguments("Expected a pointer", .{});
-                return .zero;
+                return globalObject.throwInvalidArguments("Expected a pointer", .{});
             }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) i32, @ptrFromInt(addr)).*;
@@ -4030,10 +3852,9 @@ pub const FFIObject = struct {
             globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (arguments.len == 0 or !arguments[0].isNumber()) {
-                globalObject.throwInvalidArguments("Expected a pointer", .{});
-                return .zero;
+                return globalObject.throwInvalidArguments("Expected a pointer", .{});
             }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
@@ -4044,10 +3865,9 @@ pub const FFIObject = struct {
             globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (arguments.len == 0 or !arguments[0].isNumber()) {
-                globalObject.throwInvalidArguments("Expected a pointer", .{});
-                return .zero;
+                return globalObject.throwInvalidArguments("Expected a pointer", .{});
             }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) f32, @ptrFromInt(addr)).*;
@@ -4058,10 +3878,9 @@ pub const FFIObject = struct {
             globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (arguments.len == 0 or !arguments[0].isNumber()) {
-                globalObject.throwInvalidArguments("Expected a pointer", .{});
-                return .zero;
+                return globalObject.throwInvalidArguments("Expected a pointer", .{});
             }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) f64, @ptrFromInt(addr)).*;
@@ -4072,10 +3891,9 @@ pub const FFIObject = struct {
             globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (arguments.len == 0 or !arguments[0].isNumber()) {
-                globalObject.throwInvalidArguments("Expected a pointer", .{});
-                return .zero;
+                return globalObject.throwInvalidArguments("Expected a pointer", .{});
             }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
@@ -4086,10 +3904,9 @@ pub const FFIObject = struct {
             globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (arguments.len == 0 or !arguments[0].isNumber()) {
-                globalObject.throwInvalidArguments("Expected a pointer", .{});
-                return .zero;
+                return globalObject.throwInvalidArguments("Expected a pointer", .{});
             }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
@@ -4504,7 +4321,7 @@ pub const FFIObject = struct {
 };
 
 fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(2).slice();
+    const arguments = callframe.arguments_old(2).slice();
     const value = if (arguments.len > 0) arguments[0] else .undefined;
     const options_object = if (arguments.len > 1) arguments[1] else .undefined;
 
@@ -4519,11 +4336,11 @@ fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
     var ambiguous_as_wide = false;
 
     if (options_object.isObject()) {
-        if (options_object.getTruthy(globalObject, "countAnsiEscapeCodes")) |count_ansi_escapes_value| {
+        if (try options_object.getTruthy(globalObject, "countAnsiEscapeCodes")) |count_ansi_escapes_value| {
             if (count_ansi_escapes_value.isBoolean())
                 count_ansi_escapes = count_ansi_escapes_value.toBoolean();
         }
-        if (options_object.getTruthy(globalObject, "ambiguousIsNarrow")) |ambiguous_is_narrow| {
+        if (try options_object.getTruthy(globalObject, "ambiguousIsNarrow")) |ambiguous_is_narrow| {
             if (ambiguous_is_narrow.isBoolean())
                 ambiguous_as_wide = !ambiguous_is_narrow.toBoolean();
         }
@@ -4617,67 +4434,48 @@ pub const JSZlib = struct {
     };
 
     // This has to be `inline` due to the callframe.
-    inline fn getOptions(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) ?struct { JSC.Node.StringOrBuffer, ?JSValue } {
-        const arguments = callframe.arguments(2).slice();
+    inline fn getOptions(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!struct { JSC.Node.StringOrBuffer, ?JSValue } {
+        const arguments = callframe.arguments_old(2).slice();
         const buffer_value = if (arguments.len > 0) arguments[0] else .undefined;
         const options_val: ?JSValue =
             if (arguments.len > 1 and arguments[1].isObject())
             arguments[1]
         else if (arguments.len > 1 and !arguments[1].isUndefined()) {
-            globalThis.throwInvalidArguments("Expected options to be an object", .{});
-            return null;
+            return globalThis.throwInvalidArguments("Expected options to be an object", .{});
         } else null;
 
         if (JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer_value)) |buffer| {
             return .{ buffer, options_val };
         }
 
-        globalThis.throwInvalidArguments("Expected buffer to be a string or buffer", .{});
-        return null;
+        return globalThis.throwInvalidArguments("Expected buffer to be a string or buffer", .{});
     }
 
-    pub fn gzipSync(
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        const buffer, const options_val = getOptions(globalThis, callframe) orelse return .zero;
+    pub fn gzipSync(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const buffer, const options_val = try getOptions(globalThis, callframe);
         defer buffer.deinit();
         return gzipOrDeflateSync(globalThis, buffer, options_val, true);
     }
 
-    pub fn inflateSync(
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        const buffer, const options_val = getOptions(globalThis, callframe) orelse return .zero;
+    pub fn inflateSync(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const buffer, const options_val = try getOptions(globalThis, callframe);
         defer buffer.deinit();
         return gunzipOrInflateSync(globalThis, buffer, options_val, false);
     }
 
-    pub fn deflateSync(
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        const buffer, const options_val = getOptions(globalThis, callframe) orelse return .zero;
+    pub fn deflateSync(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const buffer, const options_val = try getOptions(globalThis, callframe);
         defer buffer.deinit();
         return gzipOrDeflateSync(globalThis, buffer, options_val, false);
     }
 
-    pub fn gunzipSync(
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSValue {
-        const buffer, const options_val = getOptions(globalThis, callframe) orelse return .zero;
+    pub fn gunzipSync(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const buffer, const options_val = try getOptions(globalThis, callframe);
         defer buffer.deinit();
         return gunzipOrInflateSync(globalThis, buffer, options_val, true);
     }
 
-    pub fn gunzipOrInflateSync(
-        globalThis: *JSGlobalObject,
-        buffer: JSC.Node.StringOrBuffer,
-        options_val_: ?JSValue,
-        is_gzip: bool,
-    ) JSValue {
+    pub fn gunzipOrInflateSync(globalThis: *JSGlobalObject, buffer: JSC.Node.StringOrBuffer, options_val_: ?JSValue, is_gzip: bool) bun.JSError!JSValue {
         var opts = zlib.Options{
             .gzip = is_gzip,
             .windowBits = if (is_gzip) 31 else -15,
@@ -4685,34 +4483,32 @@ pub const JSZlib = struct {
 
         var library: Library = .zlib;
         if (options_val_) |options_val| {
-            if (options_val.get(globalThis, "windowBits")) |window| {
+            if (try options_val.get(globalThis, "windowBits")) |window| {
                 opts.windowBits = window.coerce(i32, globalThis);
                 library = .zlib;
             }
 
-            if (options_val.get(globalThis, "level")) |level| {
+            if (try options_val.get(globalThis, "level")) |level| {
                 opts.level = level.coerce(i32, globalThis);
             }
 
-            if (options_val.get(globalThis, "memLevel")) |memLevel| {
+            if (try options_val.get(globalThis, "memLevel")) |memLevel| {
                 opts.memLevel = memLevel.coerce(i32, globalThis);
                 library = .zlib;
             }
 
-            if (options_val.get(globalThis, "strategy")) |strategy| {
+            if (try options_val.get(globalThis, "strategy")) |strategy| {
                 opts.strategy = strategy.coerce(i32, globalThis);
                 library = .zlib;
             }
 
-            if (options_val.getTruthy(globalThis, "library")) |library_value| {
+            if (try options_val.getTruthy(globalThis, "library")) |library_value| {
                 if (!library_value.isString()) {
-                    globalThis.throwInvalidArguments("Expected library to be a string", .{});
-                    return .zero;
+                    return globalThis.throwInvalidArguments("Expected library to be a string", .{});
                 }
 
                 library = Library.map.fromJS(globalThis, library_value) orelse {
-                    globalThis.throwInvalidArguments("Expected library to be one of 'zlib' or 'libdeflate'", .{});
-                    return .zero;
+                    return globalThis.throwInvalidArguments("Expected library to be one of 'zlib' or 'libdeflate'", .{});
                 };
             }
         }
@@ -4756,8 +4552,7 @@ pub const JSZlib = struct {
                         return .zero;
                     }
 
-                    globalThis.throwError(err, "Zlib error");
-                    return .zero;
+                    return globalThis.throwError(err, "Zlib error") catch return .zero;
                 };
 
                 reader.readAll() catch {
@@ -4826,24 +4621,22 @@ pub const JSZlib = struct {
         var windowBits: i32 = 0;
 
         if (options_val_) |options_val| {
-            if (options_val.get(globalThis, "windowBits")) |window| {
+            if (try options_val.get(globalThis, "windowBits")) |window| {
                 windowBits = window.coerce(i32, globalThis);
                 library = .zlib;
             }
 
-            if (options_val.getTruthy(globalThis, "library")) |library_value| {
+            if (try options_val.getTruthy(globalThis, "library")) |library_value| {
                 if (!library_value.isString()) {
-                    globalThis.throwInvalidArguments("Expected library to be a string", .{});
-                    return .zero;
+                    return globalThis.throwInvalidArguments("Expected library to be a string", .{});
                 }
 
                 library = Library.map.fromJS(globalThis, library_value) orelse {
-                    globalThis.throwInvalidArguments("Expected library to be one of 'zlib' or 'libdeflate'", .{});
-                    return .zero;
+                    return globalThis.throwInvalidArguments("Expected library to be one of 'zlib' or 'libdeflate'", .{});
                 };
             }
 
-            if (options_val.get(globalThis, "level")) |level_value| {
+            if (try options_val.get(globalThis, "level")) |level_value| {
                 level = level_value.coerce(i32, globalThis);
                 if (globalThis.hasException()) return .zero;
             }
@@ -4875,8 +4668,7 @@ pub const JSZlib = struct {
                         return .zero;
                     }
 
-                    globalThis.throwError(err, "Zlib error");
-                    return .zero;
+                    return globalThis.throwError(err, "Zlib error");
                 };
 
                 reader.readAll() catch {
@@ -4934,7 +4726,7 @@ pub usingnamespace @import("./bun/subprocess.zig");
 
 const InternalTestingAPIs = struct {
     pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         if (args.len < 1) {
             globalThis.throwNotEnoughArguments("code", 1, 0);
         }
@@ -4949,13 +4741,11 @@ const InternalTestingAPIs = struct {
             .check_for_unhighlighted_write = false,
         });
         std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
-            globalThis.throwError(err, "Error formatting code");
-            return .zero;
+            return globalThis.throwError(err, "Error formatting code");
         };
 
         writer.flush() catch |err| {
-            globalThis.throwError(err, "Error formatting code");
-            return .zero;
+            return globalThis.throwError(err, "Error formatting code");
         };
 
         var str = bun.String.createUTF8(buffer.list.items);

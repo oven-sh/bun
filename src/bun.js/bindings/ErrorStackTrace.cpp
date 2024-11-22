@@ -36,7 +36,7 @@ static ImplementationVisibility getImplementationVisibility(JSC::CodeBlock* code
     return ImplementationVisibility::Public;
 }
 
-static bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor)
+bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor)
 {
     ImplementationVisibility implementationVisibility = [&]() -> ImplementationVisibility {
         if (visitor->callee().isCell()) {
@@ -63,7 +63,7 @@ static bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor)
     return implementationVisibility != ImplementationVisibility::Public;
 }
 
-static bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
+bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
 {
     ImplementationVisibility implementationVisibility = [&]() -> ImplementationVisibility {
 

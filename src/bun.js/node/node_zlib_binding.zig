@@ -8,7 +8,7 @@ const ZigString = JSC.ZigString;
 const validators = @import("./util/validators.zig");
 
 pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(2).ptr;
+    const arguments = callframe.arguments_old(2).ptr;
 
     const data: ZigString.Slice = blk: {
         const data: JSC.JSValue = arguments[0];

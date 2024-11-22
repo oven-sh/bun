@@ -1769,7 +1769,7 @@ describe("optionalDependencies", () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
-      "+ no-deps@1.0.0",
+      expect.stringContaining("+ no-deps@1.0.0"),
       "",
       "1 package installed",
     ]);
@@ -2228,7 +2228,7 @@ test("dependency from root satisfies range from dependency", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ no-deps@1.0.0",
+    expect.stringContaining("+ no-deps@1.0.0"),
     "+ one-range-dep@1.0.0",
     "",
     "2 packages installed",
@@ -2259,7 +2259,7 @@ test("dependency from root satisfies range from dependency", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ no-deps@1.0.0",
+    expect.stringContaining("+ no-deps@1.0.0"),
     "+ one-range-dep@1.0.0",
     "",
     "2 packages installed",
@@ -2466,7 +2466,7 @@ test("peerDependency in child npm dependency should not maintain old version whe
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ no-deps@1.0.0",
+    expect.stringContaining("+ no-deps@1.0.0"),
     "+ peer-deps-fixed@1.0.0",
     "",
     "2 packages installed",
@@ -2511,7 +2511,7 @@ test("peerDependency in child npm dependency should not maintain old version whe
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ no-deps@1.0.1",
+    expect.stringContaining("+ no-deps@1.0.1"),
     "",
     "1 package installed",
   ]);
@@ -2590,7 +2590,7 @@ test("package added after install", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ no-deps@1.0.0",
+    expect.stringContaining("+ no-deps@1.0.0"),
     "",
     "2 packages installed",
   ]);
@@ -2626,7 +2626,7 @@ test("package added after install", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ no-deps@1.0.0",
+    expect.stringContaining("+ no-deps@1.0.0"),
     "+ one-range-dep@1.0.0",
     "",
     "3 packages installed",
@@ -2687,7 +2687,7 @@ test("--production excludes devDependencies in workspaces", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ no-deps@1.0.0",
+    expect.stringContaining("+ no-deps@1.0.0"),
     "",
     "4 packages installed",
   ]);
@@ -2708,7 +2708,7 @@ test("--production excludes devDependencies in workspaces", async () => {
     expect.stringContaining("bun install v1."),
     "",
     "+ a1@1.0.0",
-    "+ no-deps@1.0.0",
+    expect.stringContaining("+ no-deps@1.0.0"),
     "",
     "7 packages installed",
   ]);
@@ -2719,7 +2719,7 @@ test("--production excludes devDependencies in workspaces", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ no-deps@1.0.0",
+    expect.stringContaining("+ no-deps@1.0.0"),
     "",
     "4 packages installed",
   ]);
@@ -2760,7 +2760,7 @@ test("--production without a lockfile will install and not save lockfile", async
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ no-deps@1.0.0",
+    expect.stringContaining("+ no-deps@1.0.0"),
     "",
     "1 package installed",
   ]);
@@ -2824,8 +2824,8 @@ describe("binaries", () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
-      "+ uses-what-bin@1.5.0",
-      "+ what-bin@1.0.0",
+      expect.stringContaining("+ uses-what-bin@1.5.0"),
+      expect.stringContaining("+ what-bin@1.0.0"),
       "",
       "3 packages installed",
       "",
@@ -2854,8 +2854,8 @@ describe("binaries", () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
-      "+ uses-what-bin@1.5.0",
-      "+ what-bin@1.0.0",
+      expect.stringContaining("+ uses-what-bin@1.5.0"),
+      expect.stringContaining("+ what-bin@1.0.0"),
       "",
       "3 packages installed",
       "",
@@ -2948,7 +2948,7 @@ describe("binaries", () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
-      "+ bin-change-dir@1.0.0",
+      expect.stringContaining("+ bin-change-dir@1.0.0"),
       "",
       "1 package installed",
     ]);
@@ -2989,7 +2989,7 @@ describe("binaries", () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
-      "+ bin-change-dir@1.0.1",
+      expect.stringContaining("+ bin-change-dir@1.0.1"),
       "",
       "1 package installed",
     ]);
@@ -3261,17 +3261,17 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     expect.stringContaining("bun install v1."),
     "",
     "+ dep-loop-entry@1.0.0",
-    "+ dep-with-tags@3.0.0",
+    expect.stringContaining("+ dep-with-tags@3.0.0"),
     "+ dev-deps@1.0.0",
     "+ left-pad@1.0.0",
     "+ native@1.0.0",
     "+ no-deps-bins@2.0.0",
-    "+ one-fixed-dep@2.0.0",
+    expect.stringContaining("+ one-fixed-dep@2.0.0"),
     "+ optional-native@1.0.0",
     "+ peer-deps-too@1.0.0",
     "+ two-range-deps@1.0.0",
-    "+ uses-what-bin@1.5.0",
-    "+ what-bin@1.0.0",
+    expect.stringContaining("+ uses-what-bin@1.5.0"),
+    expect.stringContaining("+ what-bin@1.0.0"),
     "",
     "19 packages installed",
     "",
@@ -3305,7 +3305,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     expect.stringContaining("bun install v1."),
     "",
     "+ dep-loop-entry@1.0.0",
-    "+ dep-with-tags@3.0.0",
+    expect.stringContaining("+ dep-with-tags@3.0.0"),
     "+ dev-deps@1.0.0",
     "+ left-pad@1.0.0",
     "+ native@1.0.0",
@@ -3314,8 +3314,8 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     "+ optional-native@1.0.0",
     "+ peer-deps-too@1.0.0",
     "+ two-range-deps@1.0.0",
-    "+ uses-what-bin@1.5.0",
-    "+ what-bin@1.0.0",
+    expect.stringContaining("+ uses-what-bin@1.5.0"),
+    expect.stringContaining("+ what-bin@1.0.0"),
     "",
     "19 packages installed",
     "",
@@ -3777,7 +3777,7 @@ describe("hoisting", async () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
-      "+ no-deps@1.0.0",
+      expect.stringContaining("+ no-deps@1.0.0"),
       "+ peer-deps-fixed@1.0.0",
       "",
       "2 packages installed",
@@ -4004,7 +4004,7 @@ describe("hoisting", async () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
-      "+ no-deps@1.0.0",
+      expect.stringContaining("+ no-deps@1.0.0"),
       "",
       "1 package installed",
     ]);
@@ -5060,7 +5060,7 @@ describe("transitive file dependencies", () => {
       "+ @scoped/file-dep@1.0.0",
       "+ aliased-file-dep@1.0.1",
       "+ dep-file-dep@1.0.0",
-      "+ file-dep@1.0.0",
+      expect.stringContaining("+ file-dep@1.0.0"),
       "+ missing-file-dep@1.0.0",
       "+ self-file-dep@1.0.0",
       "",
@@ -5091,7 +5091,7 @@ describe("transitive file dependencies", () => {
       "+ @scoped/file-dep@1.0.0",
       "+ aliased-file-dep@1.0.1",
       "+ dep-file-dep@1.0.0",
-      "+ file-dep@1.0.0",
+      expect.stringContaining("+ file-dep@1.0.0"),
       "+ missing-file-dep@1.0.0",
       "+ self-file-dep@1.0.0",
       "",
@@ -5153,7 +5153,7 @@ describe("transitive file dependencies", () => {
       "+ @scoped/file-dep@1.0.1",
       "+ aliased-file-dep@1.0.1",
       "+ dep-file-dep@1.0.1",
-      "+ file-dep@1.0.1",
+      expect.stringContaining("+ file-dep@1.0.1"),
       "+ missing-file-dep@1.0.1",
       "+ self-file-dep@1.0.1",
       "",
@@ -5176,7 +5176,7 @@ describe("transitive file dependencies", () => {
       "+ @scoped/file-dep@1.0.1",
       "+ aliased-file-dep@1.0.1",
       "+ dep-file-dep@1.0.1",
-      "+ file-dep@1.0.1",
+      expect.stringContaining("+ file-dep@1.0.1"),
       "+ missing-file-dep@1.0.1",
       "+ self-file-dep@1.0.1",
       "",
@@ -5211,7 +5211,7 @@ describe("transitive file dependencies", () => {
       "+ @scoped/file-dep@1.0.0",
       "+ aliased-file-dep@1.0.1",
       "+ dep-file-dep@1.0.0",
-      "+ file-dep@1.0.0",
+      expect.stringContaining("+ file-dep@1.0.0"),
       "+ missing-file-dep@1.0.0",
       "+ self-file-dep@1.0.0",
       "",
@@ -5242,7 +5242,7 @@ describe("transitive file dependencies", () => {
       "+ @scoped/file-dep@1.0.0",
       "+ aliased-file-dep@1.0.1",
       "+ dep-file-dep@1.0.0",
-      "+ file-dep@1.0.0",
+      expect.stringContaining("+ file-dep@1.0.0"),
       "+ missing-file-dep@1.0.0",
       "+ self-file-dep@1.0.0",
       "",
@@ -5297,7 +5297,7 @@ describe("transitive file dependencies", () => {
       "+ @scoped/file-dep@1.0.0",
       "+ aliased-file-dep@1.0.1",
       "+ dep-file-dep@1.0.0",
-      "+ file-dep@1.0.0",
+      expect.stringContaining("+ file-dep@1.0.0"),
       "+ missing-file-dep@1.0.0",
       "+ self-file-dep@1.0.0",
       "",
@@ -5924,7 +5924,13 @@ describe("update", () => {
     let { out } = await runBunUpdate(env, packageDir, ["--no-save"]);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(out).toEqual([expect.stringContaining("bun update v1."), "", "+ a-dep@1.0.1", "", "1 package installed"]);
+    expect(out).toEqual([
+      expect.stringContaining("bun update v1."),
+      "",
+      expect.stringContaining("+ a-dep@1.0.1"),
+      "",
+      "1 package installed",
+    ]);
     expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
@@ -5945,7 +5951,13 @@ describe("update", () => {
     ({ out } = await runBunUpdate(env, packageDir, ["--no-save"]));
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(out).toEqual([expect.stringContaining("bun update v1."), "", "+ a-dep@1.0.10", "", "1 package installed"]);
+    expect(out).toEqual([
+      expect.stringContaining("bun update v1."),
+      "",
+      expect.stringContaining("+ a-dep@1.0.10"),
+      "",
+      "1 package installed",
+    ]);
     expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
@@ -6075,17 +6087,17 @@ describe("update", () => {
       "",
       "+ a-dep@1.0.10",
       "+ dep-loop-entry@1.0.0",
-      "+ dep-with-tags@2.0.1",
+      expect.stringContaining("+ dep-with-tags@2.0.1"),
       "+ dev-deps@1.0.0",
       "+ left-pad@1.0.0",
       "+ native@1.0.0",
       "+ no-deps-bins@2.0.0",
-      "+ one-fixed-dep@1.0.0",
+      expect.stringContaining("+ one-fixed-dep@1.0.0"),
       "+ optional-native@1.0.0",
       "+ peer-deps-too@1.0.0",
       "+ two-range-deps@1.0.0",
-      "+ uses-what-bin@1.5.0",
-      "+ what-bin@1.5.0",
+      expect.stringContaining("+ uses-what-bin@1.5.0"),
+      expect.stringContaining("+ what-bin@1.5.0"),
       "",
       // Due to optional-native dependency, this can be either 20 or 19 packages
       expect.stringMatching(/(?:20|19) packages installed/),
@@ -6223,7 +6235,7 @@ describe("update", () => {
         expect(out).toEqual([
           expect.stringContaining("bun update v1."),
           "",
-          args ? "installed a-dep@1.0.10" : "+ a-dep@1.0.10",
+          args ? "installed a-dep@1.0.10" : expect.stringContaining("+ a-dep@1.0.10"),
           "",
           "1 package installed",
         ]);
@@ -6646,7 +6658,7 @@ test("missing package on reinstall, some with binaries", async () => {
     expect.stringContaining("bun install v1."),
     "",
     "+ dep-loop-entry@1.0.0",
-    "+ dep-with-tags@3.0.0",
+    expect.stringContaining("+ dep-with-tags@3.0.0"),
     "+ dev-deps@1.0.0",
     "+ left-pad@1.0.0",
     "+ native@1.0.0",
@@ -6655,8 +6667,8 @@ test("missing package on reinstall, some with binaries", async () => {
     "+ optional-native@1.0.0",
     "+ peer-deps-too@1.0.0",
     "+ two-range-deps@1.0.0",
-    "+ uses-what-bin@1.5.0",
-    "+ what-bin@1.0.0",
+    expect.stringContaining("+ uses-what-bin@1.5.0"),
+    expect.stringContaining("+ what-bin@1.0.0"),
     "",
     "19 packages installed",
     "",
@@ -7181,7 +7193,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
-        "+ what-bin@1.0.0",
+        expect.stringContaining("+ what-bin@1.0.0"),
         "",
         "1 package installed",
       ]);
@@ -7244,7 +7256,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
-        "+ what-bin@1.0.0",
+        expect.stringContaining("+ what-bin@1.0.0"),
         "",
         "1 package installed",
       ]);
@@ -8129,7 +8141,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
-        "+ uses-what-bin@1.0.0",
+        expect.stringContaining("+ uses-what-bin@1.0.0"),
         "+ what-bin@1.5.0",
         "",
         "3 packages installed",
@@ -8210,8 +8222,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
-        "+ uses-what-bin@1.5.0",
-        "+ what-bin@1.0.0",
+        expect.stringContaining("+ uses-what-bin@1.5.0"),
+        expect.stringContaining("+ what-bin@1.0.0"),
         "",
         "3 packages installed",
       ]);
@@ -8330,7 +8342,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect.stringContaining("bun install v1."),
         "",
         "+ electron@1.0.0",
-        "+ uses-what-bin@1.0.0",
+        expect.stringContaining("+ uses-what-bin@1.0.0"),
         "",
         "3 packages installed",
         "",
@@ -8380,7 +8392,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect.stringContaining("bun install v1."),
         "",
         "+ electron@1.0.0",
-        "+ uses-what-bin@1.0.0",
+        expect.stringContaining("+ uses-what-bin@1.0.0"),
         "",
         "3 packages installed",
         "",
@@ -8428,7 +8440,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect.stringContaining("bun install v1."),
         "",
         "+ electron@1.0.0",
-        "+ uses-what-bin@1.0.0",
+        expect.stringContaining("+ uses-what-bin@1.0.0"),
         "",
         "3 packages installed",
         "",
@@ -8861,7 +8873,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           expect.stringContaining("bun install v1."),
           "",
-          "+ uses-what-bin@1.0.0",
+          expect.stringContaining("+ uses-what-bin@1.0.0"),
           "",
           "2 packages installed",
         ]);
@@ -8934,7 +8946,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           expect.stringContaining("bun install v1."),
           "",
-          "+ uses-what-bin@1.0.0",
+          expect.stringContaining("+ uses-what-bin@1.0.0"),
           "",
           "2 packages installed",
         ]);
@@ -9189,7 +9201,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
-        "+ uses-what-bin@1.5.0",
+        expect.stringContaining("+ uses-what-bin@1.5.0"),
         "",
         "2 packages installed",
         "",
@@ -9270,8 +9282,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun install v1."),
             "",
-            "+ no-deps@1.0.0",
-            "+ uses-what-bin@1.0.0",
+            expect.stringContaining("+ no-deps@1.0.0"),
+            expect.stringContaining("+ uses-what-bin@1.0.0"),
             "",
             "3 packages installed",
             "",
@@ -9390,7 +9402,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expected = withRm
             ? [
                 "",
-                "+ uses-what-bin@1.0.0",
+                expect.stringContaining("+ uses-what-bin@1.0.0"),
                 "",
                 "1 package installed",
                 "",
@@ -9594,7 +9606,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "install stdout 🚀",
         "prepare stdout done ✅",
         "",
-        "+ no-deps@1.0.0",
+        expect.stringContaining("+ no-deps@1.0.0"),
         "",
         "1 package installed",
       ]);
@@ -9682,7 +9694,7 @@ describe("pm trust", async () => {
       expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
-        "+ uses-what-bin@1.0.0",
+        expect.stringContaining("+ uses-what-bin@1.0.0"),
         "",
         "2 packages installed",
         "",
@@ -9757,7 +9769,7 @@ test("it should be able to find binary in node_modules/.bin from parent director
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "+ what-bin@1.0.0",
+    expect.stringContaining("+ what-bin@1.0.0"),
     "",
     "1 package installed",
   ]);
@@ -9896,7 +9908,7 @@ describe("semver", () => {
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
-        `+ dep-with-tags@${expected}`,
+        expect.stringContaining(`+ dep-with-tags@${expected}`),
         "",
         "1 package installed",
       ]);
@@ -10881,7 +10893,7 @@ describe("yarn tests", () => {
       expect.stringContaining("bun install v1."),
       "",
       "+ first@1.0.0",
-      "+ no-deps@1.0.0",
+      expect.stringContaining("+ no-deps@1.0.0"),
       "+ second@1.0.0",
       "",
       "2 packages installed",
@@ -11072,7 +11084,7 @@ describe("yarn tests", () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
-      "+ no-deps@1.0.0",
+      expect.stringContaining("+ no-deps@1.0.0"),
       "+ peer-deps-fixed@1.0.0",
       "",
       "2 packages installed",
@@ -11329,7 +11341,7 @@ describe("yarn tests", () => {
       "",
       "+ forward-peer-deps@1.0.0",
       "+ forward-peer-deps-too@1.0.0",
-      "+ no-deps@1.0.0",
+      expect.stringContaining("+ no-deps@1.0.0"),
       "",
       "4 packages installed",
     ]);
@@ -11393,7 +11405,7 @@ describe("yarn tests", () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
-      "+ no-deps@1.0.0",
+      expect.stringContaining("+ no-deps@1.0.0"),
       "+ peer-deps@1.0.0",
       "+ peer-deps-too@1.0.0",
       "",

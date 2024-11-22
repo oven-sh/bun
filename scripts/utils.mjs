@@ -2135,7 +2135,7 @@ export function printEnvironment() {
     console.log("Working Directory:", process.cwd());
     console.log("Temporary Directory:", tmpdir());
   });
-  if (isLinux) {
+  if (isPosix) {
     startGroup("ulimit -a", () => {
       const { stdout, stderr, exitCode, signalCode, error } = spawnSync(["ulimit", "-a"]);
       console.log("--stdout--");

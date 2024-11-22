@@ -5345,45 +5345,47 @@ pub const ServerWebSocket = struct {
 
         if (args.len > 0) {
             var value = args.ptr[0];
-            if (value.asArrayBuffer(globalThis)) |data| {
-                const buffer = data.slice();
+            if (!value.isEmptyOrUndefinedOrNull()) {
+                if (value.asArrayBuffer(globalThis)) |data| {
+                    const buffer = data.slice();
 
-                switch (this.websocket().send(buffer, opcode, false, true)) {
-                    .backpressure => {
-                        log("{s}() backpressure ({d} bytes)", .{ name, buffer.len });
-                        return JSValue.jsNumber(-1);
-                    },
-                    .success => {
-                        log("{s}() success ({d} bytes)", .{ name, buffer.len });
-                        return JSValue.jsNumber(buffer.len);
-                    },
-                    .dropped => {
-                        log("{s}() dropped ({d} bytes)", .{ name, buffer.len });
-                        return JSValue.jsNumber(0);
-                    },
-                }
-            } else if (value.isString()) {
-                var string_value = value.toString(globalThis).toSlice(globalThis, bun.default_allocator);
-                defer string_value.deinit();
-                const buffer = string_value.slice();
+                    switch (this.websocket().send(buffer, opcode, false, true)) {
+                        .backpressure => {
+                            log("{s}() backpressure ({d} bytes)", .{ name, buffer.len });
+                            return JSValue.jsNumber(-1);
+                        },
+                        .success => {
+                            log("{s}() success ({d} bytes)", .{ name, buffer.len });
+                            return JSValue.jsNumber(buffer.len);
+                        },
+                        .dropped => {
+                            log("{s}() dropped ({d} bytes)", .{ name, buffer.len });
+                            return JSValue.jsNumber(0);
+                        },
+                    }
+                } else if (value.isString()) {
+                    var string_value = value.toString(globalThis).toSlice(globalThis, bun.default_allocator);
+                    defer string_value.deinit();
+                    const buffer = string_value.slice();
 
-                switch (this.websocket().send(buffer, opcode, false, true)) {
-                    .backpressure => {
-                        log("{s}() backpressure ({d} bytes)", .{ name, buffer.len });
-                        return JSValue.jsNumber(-1);
-                    },
-                    .success => {
-                        log("{s}() success ({d} bytes)", .{ name, buffer.len });
-                        return JSValue.jsNumber(buffer.len);
-                    },
-                    .dropped => {
-                        log("{s}() dropped ({d} bytes)", .{ name, buffer.len });
-                        return JSValue.jsNumber(0);
-                    },
+                    switch (this.websocket().send(buffer, opcode, false, true)) {
+                        .backpressure => {
+                            log("{s}() backpressure ({d} bytes)", .{ name, buffer.len });
+                            return JSValue.jsNumber(-1);
+                        },
+                        .success => {
+                            log("{s}() success ({d} bytes)", .{ name, buffer.len });
+                            return JSValue.jsNumber(buffer.len);
+                        },
+                        .dropped => {
+                            log("{s}() dropped ({d} bytes)", .{ name, buffer.len });
+                            return JSValue.jsNumber(0);
+                        },
+                    }
+                } else {
+                    globalThis.throwPretty("{s} requires a string or BufferSource", .{name});
+                    return .zero;
                 }
-            } else {
-                globalThis.throwPretty("{s} requires a string or BufferSource", .{name});
-                return .zero;
             }
         }
 

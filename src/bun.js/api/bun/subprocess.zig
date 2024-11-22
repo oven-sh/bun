@@ -625,18 +625,15 @@ pub const Subprocess = struct {
 
                 // This matches node behavior, minus some details with the error messages: https://gist.github.com/Jarred-Sumner/23ba38682bf9d84dff2f67eb35c42ab6
                 if (std.math.isInf(sig64) or @trunc(sig64) != sig64) {
-                    globalThis.throwInvalidArguments("Unknown signal", .{});
-                    return .zero;
+                    return globalThis.throwInvalidArguments("Unknown signal", .{});
                 }
 
                 if (sig64 < 0) {
-                    globalThis.throwInvalidArguments("Invalid signal: must be >= 0", .{});
-                    return .zero;
+                    return globalThis.throwInvalidArguments("Invalid signal: must be >= 0", .{});
                 }
 
                 if (sig64 > 31) {
-                    globalThis.throwInvalidArguments("Invalid signal: must be < 32", .{});
-                    return .zero;
+                    return globalThis.throwInvalidArguments("Invalid signal: must be < 32", .{});
                 }
 
                 break :brk @intFromFloat(sig64);
@@ -647,8 +644,7 @@ pub const Subprocess = struct {
                 const signal_code = try arguments.ptr[0].toEnum(globalThis, "signal", SignalCode);
                 break :brk @intFromEnum(signal_code);
             } else if (!arguments.ptr[0].isEmptyOrUndefinedOrNull()) {
-                globalThis.throwInvalidArguments("Invalid signal: must be a string or an integer", .{});
-                return .zero;
+                return globalThis.throwInvalidArguments("Invalid signal: must be a string or an integer", .{});
             }
 
             break :brk SignalCode.default;
@@ -726,8 +722,7 @@ pub const Subprocess = struct {
         });
 
         if (callFrame.argumentsCount() == 0) {
-            global.throwInvalidArguments("Subprocess.send() requires one argument", .{});
-            return .zero;
+            return global.throwInvalidArguments("Subprocess.send() requires one argument", .{});
         }
 
         const value = callFrame.argument(0);
@@ -1724,8 +1719,7 @@ pub const Subprocess = struct {
 
         {
             if (args.isEmptyOrUndefinedOrNull()) {
-                globalThis.throwInvalidArguments("cmd must be an array", .{});
-                return .zero;
+                return globalThis.throwInvalidArguments("cmd must be an array", .{});
             }
 
             const args_type = args.jsType();
@@ -1733,13 +1727,11 @@ pub const Subprocess = struct {
                 cmd_value = args;
                 args = secondaryArgsValue orelse JSValue.zero;
             } else if (!args.isObject()) {
-                globalThis.throwInvalidArguments("cmd must be an array", .{});
-                return .zero;
+                return globalThis.throwInvalidArguments("cmd must be an array", .{});
             } else if (try args.getTruthy(globalThis, "cmd")) |cmd_value_| {
                 cmd_value = cmd_value_;
             } else {
-                globalThis.throwInvalidArguments("cmd must be an array", .{});
-                return .zero;
+                return globalThis.throwInvalidArguments("cmd must be an array", .{});
             }
 
             if (args.isObject()) {
@@ -1775,13 +1767,11 @@ pub const Subprocess = struct {
                 };
 
                 if (cmd_value.isEmptyOrUndefinedOrNull()) {
-                    globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
-                    return .zero;
+                    return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
                 }
 
                 if (cmds_array.len == 0) {
-                    globalThis.throwInvalidArguments("cmd must not be empty", .{});
-                    return .zero;
+                    return globalThis.throwInvalidArguments("cmd must not be empty", .{});
                 }
 
                 {
@@ -1792,8 +1782,7 @@ pub const Subprocess = struct {
                     if (argv0 == null) {
                         var path_buf: bun.PathBuffer = undefined;
                         const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
-                            globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
-                            return .zero;
+                            return globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
                         };
                         argv0 = allocator.dupeZ(u8, resolved) catch {
                             globalThis.throwOutOfMemory();
@@ -1802,8 +1791,7 @@ pub const Subprocess = struct {
                     } else {
                         var path_buf: bun.PathBuffer = undefined;
                         const resolved = Which.which(&path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
-                            globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
-                            return .zero;
+                            return globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
                         };
                         argv0 = allocator.dupeZ(u8, resolved) catch {
                             globalThis.throwOutOfMemory();
@@ -1831,8 +1819,7 @@ pub const Subprocess = struct {
                 }
 
                 if (argv.items.len == 0) {
-                    globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
-                    return .zero;
+                    return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
                 }
             }
 
@@ -1846,9 +1833,9 @@ pub const Subprocess = struct {
                                     if (mode_val.isString()) {
                                         break :ipc_mode IPC.Mode.fromJS(globalThis, mode_val) orelse {
                                             if (!globalThis.hasException()) {
-                                                globalThis.throwInvalidArguments("serialization must be \"json\" or \"advanced\"", .{});
+                                                return globalThis.throwInvalidArguments("serialization must be \"json\" or \"advanced\"", .{});
                                             }
-                                            return .zero;
+                                            return error.JSError;
                                         };
                                     } else {
                                         if (!globalThis.hasException()) {
@@ -1875,8 +1862,7 @@ pub const Subprocess = struct {
 
                 if (try args.getTruthy(globalThis, "onDisconnect")) |onDisconnect_| {
                     if (!onDisconnect_.isCell() or !onDisconnect_.isCallable(globalThis.vm())) {
-                        globalThis.throwInvalidArguments("onDisconnect must be a function or undefined", .{});
-                        return .zero;
+                        return globalThis.throwInvalidArguments("onDisconnect must be a function or undefined", .{});
                     }
 
                     on_disconnect_callback = if (comptime is_sync)
@@ -1887,8 +1873,7 @@ pub const Subprocess = struct {
 
                 if (try args.getTruthy(globalThis, "onExit")) |onExit_| {
                     if (!onExit_.isCell() or !onExit_.isCallable(globalThis.vm())) {
-                        globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
-                        return .zero;
+                        return globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
                     }
 
                     on_exit_callback = if (comptime is_sync)
@@ -1899,8 +1884,7 @@ pub const Subprocess = struct {
 
                 if (try args.getTruthy(globalThis, "env")) |object| {
                     if (!object.isObject()) {
-                        globalThis.throwInvalidArguments("env must be an object", .{});
-                        return .zero;
+                        return globalThis.throwInvalidArguments("env must be an object", .{});
                     }
 
                     override_env = true;
@@ -1919,8 +1903,7 @@ pub const Subprocess = struct {
                             var stdio_iter = stdio_val.arrayIterator(globalThis);
                             var i: u32 = 0;
                             while (stdio_iter.next()) |value| : (i += 1) {
-                                if (!stdio[i].extract(globalThis, i, value))
-                                    return .undefined;
+                                try stdio[i].extract(globalThis, i, value);
                                 if (i == 2)
                                     break;
                             }
@@ -1928,9 +1911,7 @@ pub const Subprocess = struct {
 
                             while (stdio_iter.next()) |value| : (i += 1) {
                                 var new_item: Stdio = undefined;
-                                if (!new_item.extract(globalThis, i, value)) {
-                                    return .undefined;
-                                }
+                                try new_item.extract(globalThis, i, value);
 
                                 const opt = switch (new_item.asSpawnOption(i)) {
                                     .result => |opt| opt,
@@ -1947,24 +1928,20 @@ pub const Subprocess = struct {
                                 };
                             }
                         } else {
-                            globalThis.throwInvalidArguments("stdio must be an array", .{});
-                            return .zero;
+                            return globalThis.throwInvalidArguments("stdio must be an array", .{});
                         }
                     }
                 } else {
                     if (try args.get(globalThis, "stdin")) |value| {
-                        if (!stdio[0].extract(globalThis, 0, value))
-                            return .zero;
+                        try stdio[0].extract(globalThis, 0, value);
                     }
 
                     if (try args.get(globalThis, "stderr")) |value| {
-                        if (!stdio[2].extract(globalThis, 2, value))
-                            return .zero;
+                        try stdio[2].extract(globalThis, 2, value);
                     }
 
                     if (try args.get(globalThis, "stdout")) |value| {
-                        if (!stdio[1].extract(globalThis, 1, value))
-                            return .zero;
+                        try stdio[1].extract(globalThis, 1, value);
                     }
                 }
 

@@ -523,7 +523,7 @@ pub const Response = struct {
                 break :brk try Init.init(globalThis, arguments[1]) orelse unreachable;
             }
             if (!globalThis.hasException()) {
-                return globalThis.throwInvalidArguments2("Failed to construct 'Response': The provided body value is not of type 'ResponseInit'", .{});
+                return globalThis.throwInvalidArguments("Failed to construct 'Response': The provided body value is not of type 'ResponseInit'", .{});
             }
             return error.JSError;
         });
@@ -1929,9 +1929,8 @@ pub const Fetch = struct {
 
         const url = ZigURL.parse(url_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory());
         if (!url.isHTTP() and !url.isHTTPS()) {
-            globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
             bun.default_allocator.free(url.href);
-            return .zero;
+            return globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
         }
 
         if (url.hostname.len == 0) {
@@ -1941,9 +1940,8 @@ pub const Fetch = struct {
         }
 
         if (!url.hasValidPort()) {
-            globalObject.throwInvalidArguments("Invalid port", .{});
             bun.default_allocator.free(url.href);
-            return .zero;
+            return globalObject.throwInvalidArguments("Invalid port", .{});
         }
 
         bun.http.AsyncHTTP.preconnect(url, true);

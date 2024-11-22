@@ -1475,7 +1475,7 @@ pub const ThreadSafeFunction = struct {
     pub const Queue = struct {
         data: std.fifo.LinearFifo(?*anyopaque, .Dynamic),
 
-        // This value will never change after initialization.
+        /// This value will never change after initialization. Zero means the size is unlimited.
         max_queue_size: usize,
 
         count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),

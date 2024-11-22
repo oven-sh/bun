@@ -232,7 +232,7 @@ export const aws = {
    */
   async waitInstances(action, ...instanceIds) {
     await aws.spawn($`ec2 wait ${action} --instance-ids ${instanceIds}`, {
-      retryOnError: error => !/max attempts exceeded/i.test(inspect(error)),
+      retryOnError: error => /max attempts exceeded/i.test(inspect(error)),
     });
   },
 
@@ -331,7 +331,7 @@ export const aws = {
    */
   async waitImage(action, ...imageIds) {
     await aws.spawn($`ec2 wait ${action} --image-ids ${imageIds}`, {
-      retryOnError: error => !/max attempts exceeded/i.test(inspect(error)),
+      retryOnError: error => /max attempts exceeded/i.test(inspect(error)),
     });
   },
 

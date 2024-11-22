@@ -696,12 +696,6 @@ if(LINUX)
   if(NOT HAVE_SYS_QUEUE_H)
     target_include_directories(${bun} PRIVATE vendor/lshpack/compat/queue)
   endif()
-
-  target_compile_options(${bun} PRIVATE -fno-semantic-interposition)
-
-  if (LTO)
-    target_compile_options(${bun} PRIVATE -fembed-bitcode)
-  endif()
 endif()
 
 # --- C/C++ Definitions ---

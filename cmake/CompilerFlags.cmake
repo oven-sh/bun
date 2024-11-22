@@ -247,6 +247,18 @@ if(ENABLE_LTO)
     -flto ${WIN32}
   )
 
+  if (LINUX)
+    register_compiler_flags(
+      DESCRIPTION "Disable semantic interposition"
+      -fno-semantic-interposition
+    )
+
+    register_compiler_flags(
+      DESCRIPTION "Embed bitcode"
+      -fembed-bitcode
+    )
+  endif()
+
   if(UNIX)
     register_compiler_flags(
       DESCRIPTION "Enable virtual tables"

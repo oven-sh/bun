@@ -120,6 +120,7 @@ export function setEnv(name, value) {
  * @property {number} [timeout]
  * @property {Record<string, string | undefined>} [env]
  * @property {boolean | ((error: Error) => boolean)} [throwOnError]
+ * @property {(error: Error) => boolean} [retryOnError]
  * @property {string} [stdin]
  * @property {boolean} [privileged]
  */
@@ -282,9 +283,16 @@ export async function spawn(command, options = {}) {
   }
 
   if (error) {
+    const retryOnError = options["retryOnError"];
+    if (typeof retryOnError === "function") {
+      if (retryOnError(error)) {
+        return spawn(command, options);
+      }
+    }
+
     const throwOnError = options["throwOnError"];
     if (typeof throwOnError === "function") {
-      if (throwOnError(error) || (error.cause && throwOnError(error.cause))) {
+      if (throwOnError(error)) {
         throw error;
       }
     } else if (throwOnError) {
@@ -371,9 +379,16 @@ export function spawnSync(command, options = {}) {
   }
 
   if (error) {
+    const retryOnError = options["retryOnError"];
+    if (typeof retryOnError === "function") {
+      if (retryOnError(error)) {
+        return spawn(command, options);
+      }
+    }
+
     const throwOnError = options["throwOnError"];
     if (typeof throwOnError === "function") {
-      if (throwOnError(error) || (error.cause && throwOnError(error.cause))) {
+      if (throwOnError(error)) {
         throw error;
       }
     } else if (throwOnError) {

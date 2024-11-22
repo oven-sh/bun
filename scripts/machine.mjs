@@ -232,7 +232,7 @@ export const aws = {
    */
   async waitInstances(action, ...instanceIds) {
     await aws.spawn($`ec2 wait ${action} --instance-ids ${instanceIds}`, {
-      throwOnError: error => !/max attempts exceeded/i.test(inspect(error)),
+      retryOnError: error => !/max attempts exceeded/i.test(inspect(error)),
     });
   },
 
@@ -331,7 +331,7 @@ export const aws = {
    */
   async waitImage(action, ...imageIds) {
     await aws.spawn($`ec2 wait ${action} --image-ids ${imageIds}`, {
-      throwOnError: error => !/max attempts exceeded/i.test(inspect(error)),
+      retryOnError: error => !/max attempts exceeded/i.test(inspect(error)),
     });
   },
 
@@ -1105,7 +1105,7 @@ async function spawnSsh(options, spawnOptions = {}) {
   });
 
   const logPath = mkdtemp("ssh-", "ssh.log");
-  const command = ["ssh", hostname, "-C", "-E", logPath, "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"];
+  const command = ["ssh", hostname, "-v", "-C", "-E", logPath, "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"];
   if (port) {
     command.push("-p", port);
   }
@@ -1124,7 +1124,6 @@ async function spawnSsh(options, spawnOptions = {}) {
   let result;
   for (let i = 0; i < retries; i++) {
     result = await spawn(command, { stdio, ...spawnOptions, throwOnError: undefined });
-    console.log("SSH log:", readFile(logPath, { encoding: "utf-8" }));
 
     const { exitCode } = result;
     if (exitCode !== 255) {
@@ -1132,6 +1131,11 @@ async function spawnSsh(options, spawnOptions = {}) {
     }
 
     await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+  }
+
+  const { error } = result;
+  if (error) {
+    console.warn("SSH logs:", readFile(logPath, { encoding: "utf-8" }));
   }
 
   return result;

@@ -226,7 +226,7 @@ pub const LoadFromDiskResult = union(enum) {
 
 pub fn loadFromDisk(
     this: *Lockfile,
-    manager: *PackageManager,
+    manager: ?*PackageManager,
     allocator: Allocator,
     log: *logger.Log,
     filename: stringZ,
@@ -241,14 +241,16 @@ pub fn loadFromDisk(
         return switch (err) {
             error.EACCESS, error.EPERM, error.ENOENT => {
                 if (comptime attempt_loading_from_other_lockfile) {
-                    // Attempt to load from "package-lock.json", "yarn.lock", etc.
-                    return migration.detectAndLoadOtherLockfile(
-                        this,
-                        manager,
-                        allocator,
-                        log,
-                        filename,
-                    );
+                    if (manager) |pm| {
+                        // Attempt to load from "package-lock.json", "yarn.lock", etc.
+                        return migration.detectAndLoadOtherLockfile(
+                            this,
+                            pm,
+                            allocator,
+                            log,
+                            filename,
+                        );
+                    }
                 }
 
                 return LoadFromDiskResult{
@@ -263,7 +265,7 @@ pub fn loadFromDisk(
     return this.loadFromBytes(manager, buf, allocator, log);
 }
 
-pub fn loadFromBytes(this: *Lockfile, pm: *PackageManager, buf: []u8, allocator: Allocator, log: *logger.Log) LoadFromDiskResult {
+pub fn loadFromBytes(this: *Lockfile, pm: ?*PackageManager, buf: []u8, allocator: Allocator, log: *logger.Log) LoadFromDiskResult {
     var stream = Stream{ .buffer = buf, .pos = 0 };
 
     this.format = FormatVersion.current;
@@ -1233,11 +1235,7 @@ pub const Printer = struct {
 
         var lockfile = try allocator.create(Lockfile);
 
-        PackageManager.allocatePackageManager();
-        // TODO remove the need for manager when migrating from package-lock.json
-        const manager = PackageManager.get();
-
-        const load_from_disk = lockfile.loadFromDisk(manager, allocator, log, lockfile_path, false);
+        const load_from_disk = lockfile.loadFromDisk(null, allocator, log, lockfile_path, false);
         switch (load_from_disk) {
             .err => |cause| {
                 switch (cause.step) {
@@ -1994,7 +1992,7 @@ pub fn verifyData(this: *const Lockfile) !void {
     }
 }
 
-pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
+pub fn saveToDisk(this: *Lockfile, filename: stringZ, verbose_log: bool) void {
     if (comptime Environment.allow_assert) {
         this.verifyData() catch |err| {
             Output.prettyErrorln("<r><red>error:<r> failed to verify lockfile: {s}", .{@errorName(err)});
@@ -2009,7 +2007,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     {
         var total_size: usize = 0;
         var end_pos: usize = 0;
-        Lockfile.Serializer.save(this, &bytes, &total_size, &end_pos) catch |err| {
+        Lockfile.Serializer.save(this, verbose_log, &bytes, &total_size, &end_pos) catch |err| {
             Output.err(err, "failed to serialize lockfile", .{});
             Global.crash();
         };
@@ -5726,6 +5724,7 @@ const Buffers = struct {
 
     pub fn save(
         lockfile: *Lockfile,
+        verbose_log: bool,
         allocator: Allocator,
         comptime StreamType: type,
         stream: StreamType,
@@ -5734,7 +5733,7 @@ const Buffers = struct {
     ) !void {
         const buffers = lockfile.buffers;
         inline for (sizes.names) |name| {
-            if (PackageManager.get().options.log_level.isVerbose()) {
+            if (verbose_log) {
                 Output.prettyErrorln("Saving {d} {s}", .{ @field(buffers, name).items.len, name });
             }
 
@@ -5832,7 +5831,7 @@ const Buffers = struct {
         return error.@"Lockfile is missing resolution data";
     }
 
-    pub fn load(stream: *Stream, allocator: Allocator, log: *logger.Log, pm: *PackageManager) !Buffers {
+    pub fn load(stream: *Stream, allocator: Allocator, log: *logger.Log, pm_: ?*PackageManager) !Buffers {
         var this = Buffers{};
         var external_dependency_list_: std.ArrayListUnmanaged(Dependency.External) = std.ArrayListUnmanaged(Dependency.External){};
 
@@ -5846,9 +5845,10 @@ const Buffers = struct {
 
             if (comptime Type == @TypeOf(this.dependencies)) {
                 external_dependency_list_ = try readArray(stream, allocator, std.ArrayListUnmanaged(Dependency.External));
-
-                if (pm.options.log_level.isVerbose()) {
-                    Output.prettyErrorln("Loaded {d} {s}", .{ external_dependency_list_.items.len, name });
+                if (pm_) |pm| {
+                    if (pm.options.log_level.isVerbose()) {
+                        Output.prettyErrorln("Loaded {d} {s}", .{ external_dependency_list_.items.len, name });
+                    }
                 }
             } else if (comptime Type == @TypeOf(this.trees)) {
                 var tree_list = try readArray(stream, allocator, std.ArrayListUnmanaged(Tree.External));
@@ -5861,8 +5861,10 @@ const Buffers = struct {
                 }
             } else {
                 @field(this, name) = try readArray(stream, allocator, Type);
-                if (pm.options.log_level.isVerbose()) {
-                    Output.prettyErrorln("Loaded {d} {s}", .{ @field(this, name).items.len, name });
+                if (pm_) |pm| {
+                    if (pm.options.log_level.isVerbose()) {
+                        Output.prettyErrorln("Loaded {d} {s}", .{ @field(this, name).items.len, name });
+                    }
                 }
             }
 
@@ -5880,7 +5882,7 @@ const Buffers = struct {
             .log = log,
             .allocator = allocator,
             .buffer = string_buf,
-            .package_manager = pm,
+            .package_manager = pm_,
         };
 
         this.dependencies.expandToCapacity();
@@ -5928,7 +5930,7 @@ pub const Serializer = struct {
     const has_empty_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "eMpTrUsT".*));
     const has_overrides_tag: u64 = @bitCast(@as([8]u8, "oVeRriDs".*));
 
-    pub fn save(this: *Lockfile, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
+    pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
 
         // we clone packages with the z_allocator to make sure bytes are zeroed.
         // TODO: investigate if we still need this now that we have `padding_checker.zig`
@@ -5983,7 +5985,7 @@ pub const Serializer = struct {
         }
 
         try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(writer), writer);
-        try Lockfile.Buffers.save(this, z_allocator, StreamType, stream, @TypeOf(writer), writer);
+        try Lockfile.Buffers.save(this, verbose_log, z_allocator, StreamType, stream, @TypeOf(writer), writer);
         try writer.writeInt(u64, 0, .little);
 
         // < Bun v1.0.4 stopped right here when reading the lockfile
@@ -6111,7 +6113,7 @@ pub const Serializer = struct {
         stream: *Stream,
         allocator: Allocator,
         log: *logger.Log,
-        manager: *PackageManager,
+        manager: ?*PackageManager,
     ) !SerializerLoadResult {
         var res = SerializerLoadResult{};
         var reader = stream.reader();

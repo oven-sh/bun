@@ -1547,6 +1547,7 @@ pub const ThreadSafeFunction = struct {
     }
 
     pub fn dispatchOne(this: *ThreadSafeFunction, is_first: bool) bool {
+        var queue_finalizer_after_call = false;
         const has_more, const task = brk: {
             this.lock.lock();
             defer this.lock.unlock();
@@ -1569,7 +1570,7 @@ pub const ThreadSafeFunction = struct {
                 if (this.queue.max_queue_size > 0) {
                     this.blocking_condvar.signal();
                 }
-                this.maybeQueueFinalizer();
+                queue_finalizer_after_call = true;
             } else if (was_blocked and !this.queue.isBlocked()) {
                 this.blocking_condvar.signal();
             }
@@ -1578,6 +1579,10 @@ pub const ThreadSafeFunction = struct {
         };
 
         this.call(task, !is_first);
+
+        if (queue_finalizer_after_call) {
+            this.maybeQueueFinalizer();
+        }
 
         return has_more;
     }

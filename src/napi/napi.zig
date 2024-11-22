@@ -1489,7 +1489,7 @@ pub const ThreadSafeFunction = struct {
         }
 
         pub fn isBlocked(this: *const Queue) bool {
-            return this.max_queue_size > 0 and this.count.load(.monotonic) >= this.max_queue_size;
+            return this.max_queue_size > 0 and this.count.load(.seq_cst) >= this.max_queue_size;
         }
     };
 
@@ -1497,7 +1497,7 @@ pub const ThreadSafeFunction = struct {
     // 1. We need to run potentially multiple tasks.
     // 2. We need to finalize the ThreadSafeFunction.
     pub fn onDispatch(this: *ThreadSafeFunction) void {
-        if (this.closing.load(.monotonic) == .closed) {
+        if (this.closing.load(.seq_cst) == .closed) {
             // Finalize the ThreadSafeFunction.
             this.deinit();
             return;
@@ -1507,13 +1507,13 @@ pub const ThreadSafeFunction = struct {
 
         // Run the tasks.
         while (true) {
-            this.dispatch_state.store(.running, .monotonic);
+            this.dispatch_state.store(.running, .seq_cst);
             if (this.dispatchOne(is_first)) {
                 is_first = false;
-                this.dispatch_state.store(.pending, .monotonic);
+                this.dispatch_state.store(.pending, .seq_cst);
             } else {
                 // We're done running tasks, for now.
-                this.dispatch_state.store(.idle, .monotonic);
+                this.dispatch_state.store(.idle, .seq_cst);
                 break;
             }
         }
@@ -1525,11 +1525,11 @@ pub const ThreadSafeFunction = struct {
     }
 
     pub fn isClosing(this: *const ThreadSafeFunction) bool {
-        return this.closing.load(.monotonic) != .not_closing;
+        return this.closing.load(.seq_cst) != .not_closing;
     }
 
     fn maybeQueueFinalizer(this: *ThreadSafeFunction) void {
-        switch (this.closing.swap(.closed, .monotonic)) {
+        switch (this.closing.swap(.closed, .seq_cst)) {
             .closing, .not_closing => {
                 // TODO: is this boolean necessary? Can we rely just on the closing value?
                 if (!this.has_queued_finalizer) {
@@ -1554,7 +1554,7 @@ pub const ThreadSafeFunction = struct {
                 // When there are no tasks and the number of threads that have
                 // references reaches zero, we prepare to finalize the
                 // ThreadSafeFunction.
-                if (this.thread_count.load(.monotonic) == 0) {
+                if (this.thread_count.load(.seq_cst) == 0) {
                     if (this.queue.max_queue_size > 0) {
                         this.blocking_condvar.signal();
                     }
@@ -1563,8 +1563,8 @@ pub const ThreadSafeFunction = struct {
                 return false;
             };
 
-            if (this.queue.count.fetchSub(1, .monotonic) == 1 and this.thread_count.load(.monotonic) == 0) {
-                this.closing.store(.closing, .monotonic);
+            if (this.queue.count.fetchSub(1, .seq_cst) == 1 and this.thread_count.load(.seq_cst) == 0) {
+                this.closing.store(.closing, .seq_cst);
                 if (this.queue.max_queue_size > 0) {
                     this.blocking_condvar.signal();
                 }
@@ -1627,21 +1627,21 @@ pub const ThreadSafeFunction = struct {
         }
 
         if (this.isClosing()) {
-            if (this.thread_count.load(.acquire) <= 0) {
+            if (this.thread_count.load(.seq_cst) <= 0) {
                 return .invalid_arg;
             }
             _ = this.release(.release, true);
             return .closing;
         }
 
-        _ = this.queue.count.fetchAdd(1, .monotonic);
+        _ = this.queue.count.fetchAdd(1, .seq_cst);
         this.queue.data.writeItem(ctx) catch bun.outOfMemory();
         this.scheduleDispatch();
         return .ok;
     }
 
     fn scheduleDispatch(this: *ThreadSafeFunction) void {
-        switch (this.dispatch_state.swap(.pending, .monotonic)) {
+        switch (this.dispatch_state.swap(.pending, .seq_cst)) {
             .idle => {
                 this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
             },
@@ -1682,7 +1682,7 @@ pub const ThreadSafeFunction = struct {
         if (this.isClosing()) {
             return .closing;
         }
-        _ = this.thread_count.fetchAdd(1, .monotonic);
+        _ = this.thread_count.fetchAdd(1, .seq_cst);
         return .ok;
     }
 
@@ -1690,16 +1690,16 @@ pub const ThreadSafeFunction = struct {
         if (!already_locked) this.lock.lock();
         defer if (!already_locked) this.lock.unlock();
 
-        if (this.thread_count.load(.monotonic) < 0) {
+        if (this.thread_count.load(.seq_cst) < 0) {
             return .invalid_arg;
         }
 
-        const prev_remaining = this.thread_count.fetchSub(1, .monotonic);
+        const prev_remaining = this.thread_count.fetchSub(1, .seq_cst);
 
         if (mode == .abort or prev_remaining == 1) {
             if (!this.isClosing()) {
                 if (mode == .abort) {
-                    this.closing.store(.closing, .monotonic);
+                    this.closing.store(.closing, .seq_cst);
                     if (this.queue.max_queue_size > 0) {
                         this.blocking_condvar.signal();
                     }

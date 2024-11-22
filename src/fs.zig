@@ -788,7 +788,9 @@ pub const FileSystem = struct {
 
         pub const Limit = struct {
             pub var handles: usize = 0;
+            pub var handles_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
             pub var stack: usize = 0;
+            pub var stack_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
         };
 
         // Always try to max out how many files we can keep open
@@ -800,6 +802,9 @@ pub const FileSystem = struct {
             const LIMITS = [_]std.posix.rlimit_resource{ std.posix.rlimit_resource.STACK, std.posix.rlimit_resource.NOFILE };
             inline for (LIMITS, 0..) |limit_type, i| {
                 const limit = try std.posix.getrlimit(limit_type);
+
+                if (i == 0) Limit.stack_before = limit;
+                if (i == 1) Limit.handles_before = limit;
 
                 if (limit.cur < limit.max) {
                     var new_limit = std.mem.zeroes(std.posix.rlimit);

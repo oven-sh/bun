@@ -5595,7 +5595,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     if (arrayBufferContentsArray.hasException())
         return arrayBufferContentsArray.releaseException();
 
-    // auto backingStores = ImageBitmap::detachBitmaps(WTFMove(imageBitmaps));
+        // auto backingStores = ImageBitmap::detachBitmaps(WTFMove(imageBitmaps));
 
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
     Vector<std::unique_ptr<DetachedOffscreenCanvas>> detachedCanvases;

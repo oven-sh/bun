@@ -2979,14 +2979,7 @@ pub const JSGlobalObject = opaque {
         return @enumFromInt(@intFromPtr(globalThis));
     }
 
-    /// Deprecated: use `throwInvalidArguments2`
-    pub fn throwInvalidArguments(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) void {
-        const err = JSC.toInvalidArguments(fmt, args, this);
-        this.vm().throwError(this, err);
-    }
-
-    /// New system for throwing errors: returning bun.JSError
-    pub fn throwInvalidArguments2(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
+    pub fn throwInvalidArguments(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
         const err = JSC.toInvalidArguments(fmt, args, this);
         return this.vm().throwError2(this, err);
     }
@@ -5532,8 +5525,7 @@ pub const JSValue = enum(i64) {
         comptime StringMap: anytype,
     ) JSError!Enum {
         if (!this.isString()) {
-            globalThis.throwInvalidArguments(property_name ++ " must be a string", .{});
-            return error.JSError;
+            return globalThis.throwInvalidArguments(property_name ++ " must be a string", .{});
         }
 
         return StringMap.fromJS(globalThis, this) orelse {
@@ -5555,7 +5547,7 @@ pub const JSValue = enum(i64) {
                 pub const label = property_name ++ " must be one of " ++ list;
             }.label;
             if (!globalThis.hasException())
-                globalThis.throwInvalidArguments(one_of, .{});
+                return globalThis.throwInvalidArguments(one_of, .{});
             return error.JSError;
         };
     }
@@ -5609,7 +5601,7 @@ pub const JSValue = enum(i64) {
 
     pub fn coerceToArray(prop: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
         if (!prop.jsTypeLoose().isArray()) {
-            return globalThis.throwInvalidArguments2(property_name ++ " must be an array", .{});
+            return globalThis.throwInvalidArguments(property_name ++ " must be an array", .{});
         }
 
         if (prop.getLength(globalThis) == 0) {
@@ -5638,8 +5630,7 @@ pub const JSValue = enum(i64) {
     pub fn getObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
         if (try this.getOptional(globalThis, property_name, JSValue)) |prop| {
             if (!prop.jsTypeLoose().isObject()) {
-                globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
-                return error.JSError;
+                return globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
             }
 
             return prop;
@@ -5651,8 +5642,7 @@ pub const JSValue = enum(i64) {
     pub fn getOwnObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
         if (getOwnTruthy(this, globalThis, property_name)) |prop| {
             if (!prop.jsTypeLoose().isObject()) {
-                globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
-                return error.JSError;
+                return globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
             }
 
             return prop;
@@ -5664,8 +5654,7 @@ pub const JSValue = enum(i64) {
     pub fn getFunction(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
         if (try this.getOptional(globalThis, property_name, JSValue)) |prop| {
             if (!prop.isCell() or !prop.isCallable(globalThis.vm())) {
-                globalThis.throwInvalidArguments(property_name ++ " must be a function", .{});
-                return error.JSError;
+                return globalThis.throwInvalidArguments(property_name ++ " must be a function", .{});
             }
 
             return prop;
@@ -5677,8 +5666,7 @@ pub const JSValue = enum(i64) {
     pub fn getOwnFunction(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
         if (getOwnTruthy(this, globalThis, property_name)) |prop| {
             if (!prop.isCell() or !prop.isCallable(globalThis.vm())) {
-                globalThis.throwInvalidArguments(property_name ++ " must be a function", .{});
-                return error.JSError;
+                return globalThis.throwInvalidArguments(property_name ++ " must be a function", .{});
             }
 
             return prop;

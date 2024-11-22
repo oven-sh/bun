@@ -593,7 +593,7 @@ const Handlers = struct {
         };
 
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-            return globalObject.throwInvalidArguments2("Expected \"handlers\" to be an object", .{});
+            return globalObject.throwInvalidArguments("Expected \"handlers\" to be an object", .{});
         }
 
         const pairs = .{
@@ -616,7 +616,7 @@ const Handlers = struct {
         inline for (pairs) |pair| {
             if (try opts.getTruthy(globalObject, pair.@"1")) |callback_value| {
                 if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
-                    return globalObject.throwInvalidArguments2("Expected \"{s}\" callback to be a function", .{pair[1]});
+                    return globalObject.throwInvalidArguments("Expected \"{s}\" callback to be a function", .{pair[1]});
                 }
 
                 @field(handlers, pair.@"0") = callback_value;
@@ -625,7 +625,7 @@ const Handlers = struct {
 
         if (opts.fastGet(globalObject, .@"error")) |callback_value| {
             if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
-                return globalObject.throwInvalidArguments2("Expected \"error\" callback to be a function", .{});
+                return globalObject.throwInvalidArguments("Expected \"error\" callback to be a function", .{});
             }
 
             handlers.onError = callback_value;
@@ -633,16 +633,16 @@ const Handlers = struct {
 
         // onWrite is required for duplex support or if more than 1 parser is attached to the same socket (unliked)
         if (handlers.onWrite == .zero) {
-            return globalObject.throwInvalidArguments2("Expected at least \"write\" callback", .{});
+            return globalObject.throwInvalidArguments("Expected at least \"write\" callback", .{});
         }
 
         if (try opts.getTruthy(globalObject, "binaryType")) |binary_type_value| {
             if (!binary_type_value.isString()) {
-                return globalObject.throwInvalidArguments2("Expected \"binaryType\" to be a string", .{});
+                return globalObject.throwInvalidArguments("Expected \"binaryType\" to be a string", .{});
             }
 
             handlers.binary_type = try BinaryType.fromJSValue(globalObject, binary_type_value) orelse {
-                return globalObject.throwInvalidArguments2("Expected 'binaryType' to be 'ArrayBuffer', 'Uint8Array', or 'Buffer'", .{});
+                return globalObject.throwInvalidArguments("Expected 'binaryType' to be 'ArrayBuffer', 'Uint8Array', or 'Buffer'", .{});
             };
         }
 
@@ -3723,7 +3723,7 @@ pub const H2FrameParser = struct {
 
         const options = args_list.ptr[0];
         if (options.isEmptyOrUndefinedOrNull() or options.isBoolean() or !options.isObject()) {
-            return globalObject.throwInvalidArguments2("expected options as argument", .{});
+            return globalObject.throwInvalidArguments("expected options as argument", .{});
         }
 
         const context_obj = try options.get(globalObject, "context") orelse {

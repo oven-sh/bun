@@ -257,7 +257,7 @@ if(ENABLE_LTO)
 
     register_compiler_flags(
       DESCRIPTION "Embed bitcode"
-      -Xclang -emit-llvm
+      -emit-llvm
     )
   endif()
 

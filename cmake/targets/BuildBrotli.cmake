@@ -10,7 +10,7 @@ register_repository(
 # Tests fail with "BrotliDecompressionError" when LTO is enabled
 # only on Linux x64 (non-baseline). It's a mystery.
 if(LINUX AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64" AND NOT ENABLE_BASELINE)
-  set(BROTLI_CMAKE_ARGS "-DCMAKE_C_FLAGS=-fno-lto")
+  set(BROTLI_CMAKE_C_FLAGS "-fno-lto")
 endif()
 
 register_cmake_command(
@@ -25,7 +25,8 @@ register_cmake_command(
     -DBROTLI_BUILD_TOOLS=OFF
     -DBROTLI_EMSCRIPTEN=OFF
     -DBROTLI_DISABLE_TESTS=ON
-    ${BROTLI_CMAKE_ARGS}
   INCLUDES
     c/include
+  ADDITIONAL_CMAKE_C_FLAGS
+    ${BROTLI_CMAKE_C_FLAGS}
 )

@@ -672,9 +672,11 @@ endfunction()
 #   TARGETS                   string[] - The targets to build from CMake
 #   LIBRARIES                 string[] - The libraries that are built
 #   INCLUDES                  string[] - The include paths
+#   ADDITIONAL_CMAKE_C_FLAGS  string   - Additional C flags
+#   ADDITIONAL_CMAKE_CXX_FLAGS string   - Additional C++ flags
 function(register_cmake_command)
   set(args TARGET CWD BUILD_PATH LIB_PATH)
-  set(multiArgs ARGS TARGETS LIBRARIES INCLUDES)
+  set(multiArgs ARGS TARGETS LIBRARIES INCLUDES ADDITIONAL_CMAKE_C_FLAGS ADDITIONAL_CMAKE_CXX_FLAGS)
   # Use "MAKE" instead of "CMAKE" to prevent conflicts with CMake's own CMAKE_* variables
   cmake_parse_arguments(MAKE "" "${args}" "${multiArgs}" ${ARGN})
 
@@ -735,6 +737,16 @@ function(register_cmake_command)
       set(MAKE_${flag} ${CMAKE_${flag}})
     endif()
   endforeach()
+
+  # Handle additional C flags
+  if(MAKE_ADDITIONAL_CMAKE_C_FLAGS)
+    set(MAKE_C_FLAGS "${MAKE_C_FLAGS} ${MAKE_ADDITIONAL_CMAKE_C_FLAGS}")
+  endif()
+
+  # Handle additional CXX flags
+  if(MAKE_ADDITIONAL_CMAKE_CXX_FLAGS)
+    set(MAKE_CXX_FLAGS "${MAKE_CXX_FLAGS} ${MAKE_ADDITIONAL_CMAKE_CXX_FLAGS}")
+  endif()
 
   if(MAKE_POSITION_INDEPENDENT_CODE AND NOT WIN32)
     set(MAKE_C_FLAGS "${MAKE_C_FLAGS} -fPIC")

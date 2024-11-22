@@ -167,7 +167,7 @@ pub const ErrorLocation = struct {
     pub fn toLocation(this: @This(), source: *const logger.Source, allocator: Allocator) !logger.Location {
         return logger.Location{
             .file = source.path.text,
-            .namespace = source.path.namespace;
+            .namespace = source.path.namespace,
             .line = @intCast(this.line + 1),
             .column = @intCast(this.column),
             .line_text = if (bun.strings.getLinesInText(source.contents, this.line, 1)) |lines| try allocator.dupe(u8, lines.buffer[0]) else null,

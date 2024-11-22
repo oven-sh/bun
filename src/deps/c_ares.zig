@@ -1561,7 +1561,7 @@ comptime {
 pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
 
-    const arguments = callframe.arguments_old(1);
+    const arguments = callframe.deprecatedArguments(1);
 
     if (arguments.len == 0) {
         return globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});

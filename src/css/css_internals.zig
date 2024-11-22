@@ -36,7 +36,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     defer arena.reset();
     const alloc = arena.allocator();
 
-    const arguments_ = callframe.arguments_old(3);
+    const arguments_ = callframe.deprecatedArguments(3);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
         globalThis.throw("minifyTestWithOptions: expected 2 arguments, got 0", .{});
@@ -202,7 +202,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     defer arena.reset();
     const alloc = arena.allocator();
 
-    const arguments_ = callframe.arguments_old(4);
+    const arguments_ = callframe.deprecatedArguments(4);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
         globalThis.throw("attrTest: expected 3 arguments, got 0", .{});

@@ -8,7 +8,7 @@ const ZigString = JSC.ZigString;
 const validators = @import("./util/validators.zig");
 
 pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(2).ptr;
+    const arguments = callframe.deprecatedArguments(2).ptr;
 
     const data: ZigString.Slice = blk: {
         const data: JSC.JSValue = arguments[0];
@@ -60,7 +60,7 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 pub fn CompressionStream(comptime T: type) type {
     return struct {
         pub fn write(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments = callframe.argumentsUndef(7).slice();
+            const arguments = callframe.arguments(7).slice();
 
             if (arguments.len != 7) {
                 globalThis.ERR_MISSING_ARGS("write(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
@@ -152,7 +152,7 @@ pub fn CompressionStream(comptime T: type) type {
         }
 
         pub fn writeSync(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments = callframe.argumentsUndef(7).slice();
+            const arguments = callframe.arguments(7).slice();
 
             if (arguments.len != 7) {
                 globalThis.ERR_MISSING_ARGS("writeSync(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
@@ -322,7 +322,7 @@ pub const SNativeZlib = struct {
     task: JSC.WorkPoolTask = .{ .callback = undefined },
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*@This() {
-        const arguments = callframe.argumentsUndef(4).ptr;
+        const arguments = callframe.arguments(4).ptr;
 
         var mode = arguments[0];
         if (!mode.isNumber()) {
@@ -356,7 +356,7 @@ pub const SNativeZlib = struct {
     // }
 
     pub fn init(this: *SNativeZlib, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.argumentsUndef(7).slice();
+        const arguments = callframe.arguments(7).slice();
 
         if (arguments.len != 7) {
             globalThis.ERR_MISSING_ARGS("init(windowBits, level, memLevel, strategy, writeResult, writeCallback, dictionary)", .{}).throw();
@@ -381,7 +381,7 @@ pub const SNativeZlib = struct {
     }
 
     pub fn params(this: *SNativeZlib, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.argumentsUndef(2).slice();
+        const arguments = callframe.arguments(2).slice();
 
         if (arguments.len != 2) {
             globalThis.ERR_MISSING_ARGS("params(level, strategy)", .{}).throw();
@@ -682,7 +682,7 @@ pub const SNativeBrotli = struct {
     },
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*@This() {
-        const arguments = callframe.argumentsUndef(1).ptr;
+        const arguments = callframe.arguments(1).ptr;
 
         var mode = arguments[0];
         if (!mode.isNumber()) {
@@ -720,7 +720,7 @@ pub const SNativeBrotli = struct {
     }
 
     pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.argumentsUndef(3).slice();
+        const arguments = callframe.arguments(3).slice();
         if (arguments.len != 3) {
             globalThis.ERR_MISSING_ARGS("init(params, writeResult, writeCallback)", .{}).throw();
             return .zero;

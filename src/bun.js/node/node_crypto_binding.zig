@@ -13,7 +13,7 @@ const PBKDF2 = EVP.PBKDF2;
 const JSValue = JSC.JSValue;
 const validators = @import("./util/validators.zig");
 fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(2).slice();
+    const arguments = callframe.deprecatedArguments(2).slice();
 
     //min, max
     if (!arguments[0].isNumber()) return globalThis.throwInvalidArgumentTypeValue("min", "safe integer", arguments[0]);
@@ -42,7 +42,7 @@ fn pbkdf2(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(5);
+    const arguments = callframe.deprecatedArguments(5);
 
     const data = try PBKDF2.fromJS(globalThis, arguments.slice(), true);
 
@@ -54,7 +54,7 @@ fn pbkdf2Sync(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(5);
+    const arguments = callframe.deprecatedArguments(5);
 
     var data = try PBKDF2.fromJS(globalThis, arguments.slice(), false);
     defer data.deinit();

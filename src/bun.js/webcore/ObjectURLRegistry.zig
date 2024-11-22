@@ -94,7 +94,7 @@ comptime {
     @export(Bun__createObjectURL, .{ .name = "Bun__createObjectURL" });
 }
 fn Bun__createObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(1);
+    const arguments = callframe.deprecatedArguments(1);
     if (arguments.len < 1) {
         return globalObject.throwNotEnoughArguments("createObjectURL", 1, arguments.len);
     }
@@ -112,7 +112,7 @@ comptime {
     @export(Bun__revokeObjectURL, .{ .name = "Bun__revokeObjectURL" });
 }
 fn Bun__revokeObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(1);
+    const arguments = callframe.deprecatedArguments(1);
     if (arguments.len < 1) {
         return globalObject.throwNotEnoughArguments("revokeObjectURL", 1, arguments.len);
     }
@@ -141,7 +141,7 @@ comptime {
     @export(jsFunctionResolveObjectURL, .{ .name = "jsFunctionResolveObjectURL" });
 }
 fn jsFunctionResolveObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(1);
+    const arguments = callframe.deprecatedArguments(1);
 
     // Errors are ignored.
     // Not thrown.

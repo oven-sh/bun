@@ -24,7 +24,7 @@ pub fn getDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) JSC.JSValue {
 pub fn setDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSFunction.create(global, "setDefaultAutoSelectFamily", (struct {
         fn setter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments = callframe.arguments_old(1);
+            const arguments = callframe.deprecatedArguments(1);
             if (arguments.len < 1) {
                 return globalThis.throw2("missing argument", .{});
             }
@@ -57,7 +57,7 @@ pub fn getDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
 pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSFunction.create(global, "setDefaultAutoSelectFamilyAttemptTimeout", (struct {
         fn setter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments = callframe.arguments_old(1);
+            const arguments = callframe.deprecatedArguments(1);
             if (arguments.len < 1) {
                 return globalThis.throw2("missing argument", .{});
             }

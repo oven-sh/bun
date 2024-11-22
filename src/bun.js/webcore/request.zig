@@ -768,7 +768,7 @@ pub const Request = struct {
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Request {
-        const arguments_ = callframe.arguments_old(2);
+        const arguments_ = callframe.deprecatedArguments(2);
         const arguments = arguments_.ptr[0..arguments_.len];
 
         const request = try constructInto(globalThis, arguments);

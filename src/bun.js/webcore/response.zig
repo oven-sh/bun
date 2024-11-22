@@ -364,7 +364,7 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args_list = callframe.arguments_old(2);
+        const args_list = callframe.deprecatedArguments(2);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
@@ -432,7 +432,7 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        var args_list = callframe.arguments_old(4);
+        var args_list = callframe.deprecatedArguments(4);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
@@ -1904,7 +1904,7 @@ pub const Fetch = struct {
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments_old(1).slice();
+        const arguments = callframe.deprecatedArguments(1).slice();
 
         if (arguments.len < 1) {
             return globalObject.throwNotEnoughArguments("fetch.preconnect", 1, arguments.len);
@@ -1970,7 +1970,7 @@ pub const Fetch = struct {
     ) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
         const globalThis = ctx;
-        const arguments = callframe.arguments_old(2);
+        const arguments = callframe.deprecatedArguments(2);
         bun.Analytics.Features.fetch += 1;
         const vm = JSC.VirtualMachine.get();
 

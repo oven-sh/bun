@@ -546,7 +546,7 @@ pub const Listener = struct {
     };
 
     pub fn reload(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const args = callframe.arguments_old(1);
+        const args = callframe.deprecatedArguments(1);
 
         if (args.len < 1 or (this.listener == .none and this.handlers.active_connections == 0)) {
             globalObject.throw("Expected 1 argument", .{});
@@ -911,7 +911,7 @@ pub const Listener = struct {
     }
 
     pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments_old(1);
+        const arguments = callframe.deprecatedArguments(1);
         log("close", .{});
 
         this.doStop(if (arguments.len > 0 and arguments.ptr[0].isBoolean()) arguments.ptr[0].toBoolean() else false);
@@ -1454,7 +1454,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn setKeepAlive(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
-            const args = callframe.arguments_old(2);
+            const args = callframe.deprecatedArguments(2);
 
             const enabled: bool = brk: {
                 if (args.len >= 1) {
@@ -1483,7 +1483,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn setNoDelay(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
 
-            const args = callframe.arguments_old(1);
+            const args = callframe.deprecatedArguments(1);
             const enabled: bool = brk: {
                 if (args.len >= 1) {
                     break :brk args.ptr[0].coerce(bool, globalThis);
@@ -2017,7 +2017,7 @@ fn NewSocket(comptime ssl: bool) type {
             callframe: *JSC.CallFrame,
         ) bun.JSError!JSValue {
             JSC.markBinding(@src());
-            const args = callframe.arguments_old(1);
+            const args = callframe.deprecatedArguments(1);
             if (this.socket.isDetached()) return JSValue.jsUndefined();
             if (args.len == 0) {
                 globalObject.throw("Expected 1 argument, got 0", .{});
@@ -2076,7 +2076,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsNumber(@as(i32, -1));
             }
 
-            var args = callframe.argumentsUndef(5);
+            var args = callframe.arguments(5);
 
             return switch (this.writeOrEnd(globalObject, args.mut(), false, false)) {
                 .fail => .zero,
@@ -2152,7 +2152,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsBoolean(false);
             }
 
-            const args = callframe.argumentsUndef(2);
+            const args = callframe.arguments(2);
 
             return switch (this.writeOrEndBuffered(globalObject, args.ptr[0], args.ptr[1], false)) {
                 .fail => .zero,
@@ -2170,7 +2170,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsBoolean(false);
             }
 
-            const args = callframe.argumentsUndef(2);
+            const args = callframe.arguments(2);
 
             return switch (this.writeOrEndBuffered(globalObject, args.ptr[0], args.ptr[1], false)) {
                 .fail => .zero,
@@ -2463,7 +2463,7 @@ fn NewSocket(comptime ssl: bool) type {
             callframe: *JSC.CallFrame,
         ) bun.JSError!JSValue {
             JSC.markBinding(@src());
-            const args = callframe.arguments_old(1);
+            const args = callframe.deprecatedArguments(1);
             this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
             if (args.len > 0 and args.ptr[0].toBoolean()) {
                 this.socket.shutdownRead();
@@ -2481,7 +2481,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) bun.JSError!JSValue {
             JSC.markBinding(@src());
 
-            var args = callframe.argumentsUndef(5);
+            var args = callframe.arguments(5);
 
             log("end({d} args)", .{args.len});
 
@@ -2557,7 +2557,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn reload(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-            const args = callframe.arguments_old(1);
+            const args = callframe.deprecatedArguments(1);
 
             if (args.len < 1) {
                 globalObject.throw("Expected 1 argument", .{});
@@ -2614,7 +2614,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            const args = callframe.arguments_old(2);
+            const args = callframe.deprecatedArguments(2);
 
             if (args.len < 2) {
                 globalObject.throw("Expected requestCert and rejectUnauthorized arguments", .{});
@@ -2696,7 +2696,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            const args = callframe.arguments_old(1);
+            const args = callframe.deprecatedArguments(1);
 
             if (args.len < 1) {
                 globalObject.throw("Expected session to be a string, Buffer or TypedArray", .{});
@@ -2795,7 +2795,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            const args = callframe.arguments_old(3);
+            const args = callframe.deprecatedArguments(3);
             if (args.len < 2) {
                 globalObject.throw("Expected length and label to be provided", .{});
                 return .zero;
@@ -3145,7 +3145,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsBoolean(false);
             }
 
-            const args = callframe.arguments_old(1);
+            const args = callframe.deprecatedArguments(1);
 
             if (args.len < 1) {
                 globalObject.throw("Expected size to be a number", .{});
@@ -3180,7 +3180,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            const args = callframe.arguments_old(1);
+            const args = callframe.deprecatedArguments(1);
             var abbreviated: bool = true;
             if (args.len > 0) {
                 const arg = args.ptr[0];
@@ -3268,7 +3268,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            const args = callframe.arguments_old(1);
+            const args = callframe.deprecatedArguments(1);
             if (args.len < 1) {
                 globalObject.throw("Expected 1 argument", .{});
                 return .zero;
@@ -3322,7 +3322,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (this.socket.isDetached() or this.socket.isNamedPipe()) {
                 return JSValue.jsUndefined();
             }
-            const args = callframe.arguments_old(1);
+            const args = callframe.deprecatedArguments(1);
 
             if (args.len < 1) {
                 globalObject.throw("Expected 1 arguments", .{});
@@ -4211,7 +4211,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
 pub fn jsAddServerName(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     JSC.markBinding(@src());
 
-    const arguments = callframe.arguments_old(3);
+    const arguments = callframe.deprecatedArguments(3);
     if (arguments.len < 3) {
         return global.throwNotEnoughArguments("addServerName", 3, arguments.len);
     }
@@ -4225,7 +4225,7 @@ pub fn jsAddServerName(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     JSC.markBinding(@src());
 
-    const args = callframe.arguments_old(2);
+    const args = callframe.deprecatedArguments(2);
     if (args.len < 2) {
         globalObject.throw("Expected 2 arguments", .{});
         return .zero;
@@ -4336,7 +4336,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
 pub fn jsIsNamedPipeSocket(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     JSC.markBinding(@src());
 
-    const arguments = callframe.arguments_old(3);
+    const arguments = callframe.deprecatedArguments(3);
     if (arguments.len < 1) {
         return global.throwNotEnoughArguments("isNamedPipeSocket", 1, arguments.len);
     }

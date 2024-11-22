@@ -708,7 +708,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 
 pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Transpiler {
     var temp = bun.ArenaAllocator.init(getAllocator(globalThis));
-    const arguments = callframe.arguments_old(3);
+    const arguments = callframe.deprecatedArguments(3);
     var args = JSC.Node.ArgumentsSlice.init(
         globalThis.bunVM(),
         arguments.slice(),
@@ -838,7 +838,7 @@ pub fn scan(
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
-    const arguments = callframe.arguments_old(3);
+    const arguments = callframe.deprecatedArguments(3);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.deinit();
     const code_arg = args.next() orelse {
@@ -919,7 +919,7 @@ pub fn transform(
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
-    const arguments = callframe.arguments_old(3);
+    const arguments = callframe.deprecatedArguments(3);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.arena.deinit();
     const code_arg = args.next() orelse {
@@ -968,7 +968,7 @@ pub fn transformSync(
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
-    const arguments = callframe.arguments_old(3);
+    const arguments = callframe.deprecatedArguments(3);
 
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.arena.deinit();
@@ -1139,7 +1139,7 @@ fn namedImportsToJS(
 }
 
 pub fn scanImports(this: *Transpiler, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(2);
+    const arguments = callframe.deprecatedArguments(2);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.deinit();
 

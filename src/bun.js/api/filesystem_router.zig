@@ -50,7 +50,7 @@ pub const FileSystemRouter = struct {
     pub usingnamespace JSC.Codegen.JSFileSystemRouter;
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*FileSystemRouter {
-        const argument_ = callframe.arguments_old(1);
+        const argument_ = callframe.deprecatedArguments(1);
         if (argument_.len == 0) {
             return globalThis.throwInvalidArguments("Expected object", .{});
         }
@@ -246,7 +246,7 @@ pub const FileSystemRouter = struct {
     }
 
     pub fn match(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const argument_ = callframe.arguments_old(2);
+        const argument_ = callframe.deprecatedArguments(2);
         if (argument_.len == 0) {
             return globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
         }

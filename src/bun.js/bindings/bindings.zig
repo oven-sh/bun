@@ -6707,7 +6707,8 @@ pub const CallFrame = opaque {
         };
     }
 
-    pub fn arguments_old(self: *const CallFrame, comptime max: usize) Arguments(max) {
+    /// Copy arguments into a buffer of `JSValue.zero` values
+    pub fn deprecatedArguments(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const len = self.argumentsCount();
         const ptr = self.argumentsPtr();
         return switch (@as(u4, @min(len, max))) {
@@ -6717,7 +6718,8 @@ pub const CallFrame = opaque {
         };
     }
 
-    pub fn argumentsUndef(self: *const CallFrame, comptime max: usize) Arguments(max) {
+    /// Copy arguments into a buffer of `JSValue.undefined` values
+    pub fn arguments(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const len = self.argumentsCount();
         const ptr = self.argumentsPtr();
         return switch (@as(u4, @min(len, max))) {

@@ -1328,7 +1328,7 @@ pub const String = extern struct {
     }
 
     pub fn jsGetStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const args = callFrame.arguments_old(1).slice();
+        const args = callFrame.deprecatedArguments(1).slice();
 
         if (args.len == 0 or !args.ptr[0].isString()) {
             return JSC.jsNumber(@as(i32, 0));

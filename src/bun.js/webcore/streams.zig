@@ -1756,7 +1756,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 }
             }
 
-            const args_list = callframe.arguments_old(4);
+            const args_list = callframe.deprecatedArguments(4);
             const args = args_list.ptr[0..args_list.len];
 
             if (args.len == 0) {
@@ -1826,7 +1826,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 }
             }
 
-            const args_list = callframe.arguments_old(4);
+            const args_list = callframe.deprecatedArguments(4);
             const args = args_list.ptr[0..args_list.len];
             if (args.len == 0 or !args[0].isString()) {
                 const err = JSC.toTypeError(
@@ -2839,7 +2839,7 @@ pub fn ReadableStreamSource(
             pub fn pull(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 JSC.markBinding(@src());
                 const this_jsvalue = callFrame.this();
-                const arguments = callFrame.arguments_old(2);
+                const arguments = callFrame.deprecatedArguments(2);
                 const view = arguments.ptr[0];
                 view.ensureStillAlive();
                 this.this_jsvalue = this_jsvalue;

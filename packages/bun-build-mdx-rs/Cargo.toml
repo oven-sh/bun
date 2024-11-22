@@ -9,3 +9,4 @@ crate-type = ["cdylib"]
 [dependencies]
 libc = "0.2"
 mdxjs = "0.2.11"
+napi = "2.16.13"

@@ -818,6 +818,7 @@ pub const FileSystem = struct {
                 const limit = try std.posix.getrlimit(resource);
                 Limit.handles_before = limit;
                 file_limit = limit.max;
+                Limit.handles = file_limit;
                 if (limit.cur < limit.max or limit.max < 163840) {
                     var new_limit = std.mem.zeroes(std.posix.rlimit);
                     new_limit.cur = @max(limit.max, 163840);

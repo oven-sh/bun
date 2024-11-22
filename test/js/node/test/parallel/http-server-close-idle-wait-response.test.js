@@ -16,11 +16,13 @@ test("HTTP server close idle connections after response", async () => {
       }, 1000);
     }),
   );
+  // lets make this test better my checking if finish is actually called
   let finishCalled = 0;
   await new Promise(resolve => {
     server.listen(0, () => {
       const port = server.address().port;
       get(`http://localhost:${port}`, res => {
+        // lets improve this by making clear that the server is closed
         server.close(resolve);
       }).on("finish", () => {
         setTimeout(() => {

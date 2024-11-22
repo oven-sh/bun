@@ -2137,7 +2137,11 @@ export function printEnvironment() {
   });
   if (isLinux) {
     startGroup("ulimit -a", () => {
-      spawnSync(["ulimit", "-a"], { stdio: ["ignore", "inherit", "inherit"] });
+      const { stdout, stderr } = spawnSync(["ulimit", "-a"]);
+      console.log("--stdout--");
+      console.log(stdout);
+      console.log("--stderr--");
+      console.log(stderr);
     });
   }
 

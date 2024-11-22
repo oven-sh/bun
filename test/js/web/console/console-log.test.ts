@@ -56,3 +56,14 @@ it("long arrays get cutoff", () => {
       "",
   );
 });
+
+it("console.group", async () => {
+  const proc = Bun.spawnSync({
+    cmd: [bunExe(), join(import.meta.dir, "console-group.fixture.js")],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  expect(proc.exitCode).toBe(0);
+  expect(proc.stderr.toString("utf8").replaceAll("\r\n", "\n").trim()).toMatchSnapshot("console-group-error");
+  expect(proc.stdout.toString("utf8").replaceAll("\r\n", "\n").trim()).toMatchSnapshot("console-group-output");
+});

@@ -19,16 +19,12 @@ pub const BuildMessage = struct {
 
     pub usingnamespace JSC.Codegen.JSBuildMessage;
 
-    pub fn constructor(
-        globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) ?*BuildMessage {
-        globalThis.throw("BuildMessage is not constructable", .{});
-        return null;
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*BuildMessage {
+        return globalThis.throw2("BuildMessage is not constructable", .{});
     }
 
     pub fn getNotes(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const notes: []const logger.Data = this.msg.notes orelse &[_]logger.Data{};
+        const notes = this.msg.notes;
         const array = JSC.JSValue.createEmptyArray(globalThis, notes.len);
         for (notes, 0..) |note, i| {
             const cloned = note.clone(bun.default_allocator) catch {
@@ -81,7 +77,7 @@ pub const BuildMessage = struct {
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return this.toStringFn(globalThis);
     }
 
@@ -89,8 +85,8 @@ pub const BuildMessage = struct {
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
-        const args_ = callframe.arguments(1);
+    ) bun.JSError!JSC.JSValue {
+        const args_ = callframe.arguments_old(1);
         const args = args_.ptr[0..args_.len];
         if (args.len > 0) {
             if (!args[0].isString()) {
@@ -110,7 +106,7 @@ pub const BuildMessage = struct {
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         var object = JSC.JSValue.createEmptyObject(globalThis, 4);
         object.put(globalThis, ZigString.static("name"), bun.String.static("BuildMessage").toJS(globalThis));
         object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));

@@ -4,15 +4,15 @@
 
 #if !OS(WINDOWS)
 #include <sys/resource.h>
-#include <sys/fcntl.h>
+#include <fcntl.h>
 #include <sys/stat.h>
-#include <sys/signal.h>
+#include <signal.h>
 #include <unistd.h>
 #include <cstring>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
-#include <sys/termios.h>
+#include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #else
@@ -557,7 +557,7 @@ extern "C" void bun_initialize_process()
 
 #if OS(DARWIN)
     atexit(Bun__onExit);
-#else
+#elif !OS(WINDOWS)
     at_quick_exit(Bun__onExit);
 #endif
 }

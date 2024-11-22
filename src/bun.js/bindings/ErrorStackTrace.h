@@ -211,4 +211,6 @@ private:
     }
 };
 
+bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor);
+bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame);
 }

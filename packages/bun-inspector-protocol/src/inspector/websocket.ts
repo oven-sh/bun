@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
-import type { Inspector, InspectorEventMap } from ".";
+import type { Inspector, InspectorEventMap } from "./index";
 import type { JSC } from "../protocol";
 
 /**

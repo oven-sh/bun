@@ -2651,13 +2651,13 @@ pub const SemverObject = struct {
     pub fn order(
         globalThis: *JSC.JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback = std.heap.stackFallback(512, arena.allocator());
         const allocator = stack_fallback.get();
 
-        const arguments = callFrame.arguments(2).slice();
+        const arguments = callFrame.arguments_old(2).slice();
         if (arguments.len < 2) {
             globalThis.throw("Expected two arguments", .{});
             return .zero;
@@ -2703,13 +2703,13 @@ pub const SemverObject = struct {
     pub fn satisfies(
         globalThis: *JSC.JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback = std.heap.stackFallback(512, arena.allocator());
         const allocator = stack_fallback.get();
 
-        const arguments = callFrame.arguments(2).slice();
+        const arguments = callFrame.arguments_old(2).slice();
         if (arguments.len < 2) {
             globalThis.throw("Expected two arguments", .{});
             return .zero;

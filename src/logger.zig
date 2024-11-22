@@ -18,9 +18,10 @@ const unicode = std.unicode;
 const Ref = @import("./ast/base.zig").Ref;
 const expect = std.testing.expect;
 const assert = bun.assert;
-const ArrayList = std.ArrayList;
 const StringBuilder = @import("./string_builder.zig");
 const Index = @import("./ast/base.zig").Index;
+const OOM = bun.OOM;
+const JSError = bun.JSError;
 
 pub const Kind = enum(u8) {
     err = 0,
@@ -210,7 +211,7 @@ pub const Data = struct {
         allocator.free(d.text);
     }
 
-    pub fn cloneLineText(this: Data, should: bool, allocator: std.mem.Allocator) !Data {
+    pub fn cloneLineText(this: Data, should: bool, allocator: std.mem.Allocator) OOM!Data {
         if (!should or this.location == null or this.location.?.line_text == null)
             return this;
 
@@ -223,7 +224,7 @@ pub const Data = struct {
         };
     }
 
-    pub fn clone(this: Data, allocator: std.mem.Allocator) !Data {
+    pub fn clone(this: Data, allocator: std.mem.Allocator) OOM!Data {
         return Data{
             .text = if (this.text.len > 0) try allocator.dupe(u8, this.text) else "",
             .location = if (this.location != null) try this.location.?.clone(allocator) else null,
@@ -253,6 +254,7 @@ pub const Data = struct {
         this: *const Data,
         to: anytype,
         kind: Kind,
+        redact_sensitive_information: bool,
         comptime enable_ansi_colors: bool,
     ) !void {
         if (this.text.len == 0) return;
@@ -293,7 +295,10 @@ pub const Data = struct {
                         line_offset_for_second_line += std.fmt.count("{d} | ", .{location.line});
                     }
 
-                    try to.print("{}\n", .{bun.fmt.fmtJavaScript(line_text, enable_ansi_colors)});
+                    try to.print("{}\n", .{bun.fmt.fmtJavaScript(line_text, .{
+                        .enable_colors = enable_ansi_colors,
+                        .redact_sensitive_information = redact_sensitive_information,
+                    })});
 
                     try to.writeByteNTimes(' ', line_offset_for_second_line);
                     if ((comptime enable_ansi_colors) and message_color.len > 0) {
@@ -379,11 +384,11 @@ pub const BabyString = packed struct {
 pub const Msg = struct {
     kind: Kind = Kind.err,
     data: Data,
-    metadata: Metadata = .{ .build = 0 },
-    // TODO: make this non-optional, empty slice for no notes
-    notes: ?[]Data = null,
+    metadata: Metadata = .build,
+    notes: []Data = &.{},
+    redact_sensitive_information: bool = false,
 
-    pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) !Msg {
+    pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) OOM!Msg {
         var zig_exception_holder: bun.JSC.ZigException.Holder = bun.JSC.ZigException.Holder.init();
         if (err.toError()) |value| {
             value.toZigException(globalObject, zig_exception_holder.zigException());
@@ -410,22 +415,17 @@ pub const Msg = struct {
 
     pub fn count(this: *const Msg, builder: *StringBuilder) void {
         this.data.count(builder);
-        if (this.notes) |notes| {
-            for (notes) |note| {
-                note.count(builder);
-            }
+        for (this.notes) |note| {
+            note.count(builder);
         }
     }
 
-    pub fn clone(this: *const Msg, allocator: std.mem.Allocator) !Msg {
+    pub fn clone(this: *const Msg, allocator: std.mem.Allocator) OOM!Msg {
         return Msg{
             .kind = this.kind,
             .data = try this.data.clone(allocator),
             .metadata = this.metadata,
-            .notes = if (this.notes != null and this.notes.?.len > 0)
-                try bun.clone(this.notes.?, allocator)
-            else
-                null,
+            .notes = try bun.clone(this.notes, allocator),
         };
     }
 
@@ -434,22 +434,18 @@ pub const Msg = struct {
             .kind = this.kind,
             .data = this.data.cloneWithBuilder(builder),
             .metadata = this.metadata,
-            .notes = if (this.notes != null and this.notes.?.len > 0) brk: {
-                for (this.notes.?, 0..) |note, i| {
+            .notes = if (this.notes.len > 0) brk: {
+                for (this.notes, 0..) |note, i| {
                     notes[i] = note.cloneWithBuilder(builder);
                 }
-                break :brk notes[0..this.notes.?.len];
-            } else null,
+                break :brk notes[0..this.notes.len];
+            } else &.{},
         };
     }
 
-    pub const Metadata = union(Tag) {
-        build: u0,
+    pub const Metadata = union(enum) {
+        build,
         resolve: Resolve,
-        pub const Tag = enum(u8) {
-            build = 1,
-            resolve = 2,
-        };
 
         pub const Resolve = struct {
             specifier: BabyString,
@@ -458,34 +454,29 @@ pub const Msg = struct {
         };
     };
 
-    pub fn toAPI(this: *const Msg, allocator: std.mem.Allocator) !Api.Message {
-        const notes_len = if (this.notes != null) this.notes.?.len else 0;
-        var _notes = try allocator.alloc(
+    pub fn toAPI(this: *const Msg, allocator: std.mem.Allocator) OOM!Api.Message {
+        var notes = try allocator.alloc(
             Api.MessageData,
-            notes_len,
+            this.notes.len,
         );
         const msg = Api.Message{
             .level = this.kind.toAPI(),
             .data = this.data.toAPI(),
-            .notes = _notes,
+            .notes = notes,
             .on = Api.MessageMeta{
                 .resolve = if (this.metadata == .resolve) this.metadata.resolve.specifier.slice(this.data.text) else "",
                 .build = this.metadata == .build,
             },
         };
 
-        if (this.notes) |notes| {
-            if (notes.len > 0) {
-                for (notes, 0..) |note, i| {
-                    _notes[i] = note.toAPI();
-                }
-            }
+        for (this.notes, 0..) |note, i| {
+            notes[i] = note.toAPI();
         }
 
         return msg;
     }
 
-    pub fn toAPIFromList(comptime ListType: type, list: ListType, allocator: std.mem.Allocator) ![]Api.Message {
+    pub fn toAPIFromList(comptime ListType: type, list: ListType, allocator: std.mem.Allocator) OOM![]Api.Message {
         var out_list = try allocator.alloc(Api.Message, list.items.len);
         for (list.items, 0..) |item, i| {
             out_list[i] = try item.toAPI(allocator);
@@ -496,15 +487,13 @@ pub const Msg = struct {
 
     pub fn deinit(msg: *Msg, allocator: std.mem.Allocator) void {
         msg.data.deinit(allocator);
-        if (msg.notes) |notes| {
-            for (notes) |*note| {
-                note.deinit(allocator);
-            }
-
-            allocator.free(notes);
+        for (msg.notes) |*note| {
+            note.deinit(allocator);
         }
 
-        msg.notes = null;
+        allocator.free(msg.notes);
+
+        msg.notes = &.{};
     }
 
     pub fn writeFormat(
@@ -512,18 +501,16 @@ pub const Msg = struct {
         to: anytype,
         comptime enable_ansi_colors: bool,
     ) !void {
-        try msg.data.writeFormat(to, msg.kind, enable_ansi_colors);
+        try msg.data.writeFormat(to, msg.kind, msg.redact_sensitive_information, enable_ansi_colors);
 
-        if (msg.notes) |notes| {
-            if (notes.len > 0) {
-                try to.writeAll("\n");
-            }
+        if (msg.notes.len > 0) {
+            try to.writeAll("\n");
+        }
 
-            for (notes) |note| {
-                try to.writeAll("\n");
+        for (msg.notes) |note| {
+            try to.writeAll("\n");
 
-                try note.writeFormat(to, .note, enable_ansi_colors);
-            }
+            try note.writeFormat(to, .note, msg.redact_sensitive_information, enable_ansi_colors);
         }
     }
 
@@ -599,12 +586,9 @@ pub const Range = struct {
 };
 
 pub const Log = struct {
-    debug: bool = false,
-    // TODO: make u32
-    warnings: usize = 0,
-    // TODO: make u32
-    errors: usize = 0,
-    msgs: ArrayList(Msg),
+    warnings: u32 = 0,
+    errors: u32 = 0,
+    msgs: std.ArrayList(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
 
     clone_line_text: bool = false,
@@ -668,14 +652,13 @@ pub const Log = struct {
             .{ "error", Level.err },
         });
 
-        pub fn fromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) !?Level {
+        pub fn fromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) JSError!?Level {
             if (value == .zero or value == .undefined) {
                 return null;
             }
 
             if (!value.isString()) {
-                globalThis.throwInvalidArguments("Expected logLevel to be a string", .{});
-                return error.JSError;
+                return globalThis.throwInvalidArguments("Expected logLevel to be a string", .{});
             }
 
             return Map.fromJS(globalThis, value);
@@ -684,28 +667,28 @@ pub const Log = struct {
 
     pub fn init(allocator: std.mem.Allocator) Log {
         return Log{
-            .msgs = ArrayList(Msg).init(allocator),
+            .msgs = std.ArrayList(Msg).init(allocator),
             .level = default_log_level,
         };
     }
 
     pub fn initComptime(allocator: std.mem.Allocator) Log {
         return Log{
-            .msgs = ArrayList(Msg).init(allocator),
+            .msgs = std.ArrayList(Msg).init(allocator),
         };
     }
 
-    pub fn addDebugFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+    pub fn addDebugFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         if (!Kind.shouldPrint(.debug, log.level)) return;
 
         @setCold(true);
         try log.addMsg(.{
             .kind = .debug,
-            .data = try rangeData(source, Range{ .loc = l }, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            .data = try rangeData(source, Range{ .loc = l }, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
-    pub fn addVerbose(log: *Log, source: ?*const Source, loc: Loc, text: string) !void {
+    pub fn addVerbose(log: *Log, source: ?*const Source, loc: Loc, text: string) OOM!void {
         if (!Kind.shouldPrint(.verbose, log.level)) return;
 
         @setCold(true);
@@ -757,15 +740,13 @@ pub const Log = struct {
         return arr;
     }
 
-    pub fn cloneTo(self: *Log, other: *Log) !void {
+    pub fn cloneTo(self: *Log, other: *Log) OOM!void {
         var notes_count: usize = 0;
 
         for (self.msgs.items) |msg_| {
             const msg: Msg = msg_;
-            if (msg.notes) |notes| {
-                for (notes) |note| {
-                    notes_count += @as(usize, @intCast(@intFromBool(note.text.len > 0)));
-                }
+            for (msg.notes) |note| {
+                notes_count += @as(usize, @intCast(@intFromBool(note.text.len > 0)));
             }
         }
 
@@ -773,14 +754,12 @@ pub const Log = struct {
             var notes = try other.msgs.allocator.alloc(Data, notes_count);
             var note_i: usize = 0;
             for (self.msgs.items) |*msg| {
-                if (msg.notes) |current_notes| {
-                    const start_note_i: usize = note_i;
-                    for (current_notes) |note| {
-                        notes[note_i] = note;
-                        note_i += 1;
-                    }
-                    msg.notes = notes[start_note_i..note_i];
+                const start_note_i: usize = note_i;
+                for (msg.notes) |note| {
+                    notes[note_i] = note;
+                    note_i += 1;
                 }
+                msg.notes = notes[start_note_i..note_i];
             }
         }
 
@@ -789,12 +768,12 @@ pub const Log = struct {
         other.errors += self.errors;
     }
 
-    pub fn appendTo(self: *Log, other: *Log) !void {
+    pub fn appendTo(self: *Log, other: *Log) OOM!void {
         try self.cloneTo(other);
         self.msgs.clearAndFree();
     }
 
-    pub fn cloneToWithRecycled(self: *Log, other: *Log, recycled: bool) !void {
+    pub fn cloneToWithRecycled(self: *Log, other: *Log, recycled: bool) OOM!void {
         try other.msgs.appendSlice(self.msgs.items);
         other.warnings += self.warnings;
         other.errors += self.errors;
@@ -806,9 +785,7 @@ pub const Log = struct {
                 for (self.msgs.items) |msg| {
                     msg.count(&string_builder);
 
-                    if (msg.notes) |notes| {
-                        notes_count += notes.len;
-                    }
+                    notes_count += msg.notes.len;
                 }
             }
 
@@ -819,18 +796,18 @@ pub const Log = struct {
             {
                 for (self.msgs.items, (other.msgs.items.len - self.msgs.items.len)..) |msg, j| {
                     other.msgs.items[j] = msg.cloneWithBuilder(notes_buf[note_i..], &string_builder);
-                    note_i += (msg.notes orelse &[_]Data{}).len;
+                    note_i += msg.notes.len;
                 }
             }
         }
     }
 
-    pub fn appendToWithRecycled(self: *Log, other: *Log, recycled: bool) !void {
+    pub fn appendToWithRecycled(self: *Log, other: *Log, recycled: bool) OOM!void {
         try self.cloneToWithRecycled(other, recycled);
         self.msgs.clearAndFree();
     }
 
-    pub fn appendToMaybeRecycled(self: *Log, other: *Log, source: *const Source) !void {
+    pub fn appendToMaybeRecycled(self: *Log, other: *Log, source: *const Source) OOM!void {
         return self.appendToWithRecycled(other, source.contents_is_recycled);
     }
 
@@ -838,7 +815,7 @@ pub const Log = struct {
         self.msgs.clearAndFree();
     }
 
-    pub fn addVerboseWithNotes(log: *Log, source: ?*const Source, loc: Loc, text: string, notes: []Data) !void {
+    pub fn addVerboseWithNotes(log: *Log, source: ?*const Source, loc: Loc, text: string, notes: []Data) OOM!void {
         @setCold(true);
         if (!Kind.shouldPrint(.verbose, log.level)) return;
 
@@ -849,13 +826,13 @@ pub const Log = struct {
         });
     }
 
-    inline fn allocPrint(allocator: std.mem.Allocator, comptime fmt: string, args: anytype) !string {
+    inline fn allocPrint(allocator: std.mem.Allocator, comptime fmt: string, args: anytype) OOM!string {
         return try switch (Output.enable_ansi_colors) {
             inline else => |enable_ansi_colors| std.fmt.allocPrint(allocator, Output.prettyFmt(fmt, enable_ansi_colors), args),
         };
     }
 
-    inline fn _addResolveErrorWithLevel(
+    inline fn addResolveErrorWithLevel(
         log: *Log,
         source: ?*const Source,
         r: Range,
@@ -864,13 +841,13 @@ pub const Log = struct {
         args: anytype,
         import_kind: ImportKind,
         comptime dupe_text: bool,
-        comptime is_error: bool,
+        comptime kind: enum { err, warn },
         err: anyerror,
-    ) !void {
+    ) OOM!void {
         const text = try allocPrint(allocator, fmt, args);
         // TODO: fix this. this is stupid, it should be returned in allocPrint.
         const specifier = BabyString.in(text, args.@"0");
-        if (comptime is_error) {
+        if (comptime kind == .err) {
             log.errors += 1;
         } else {
             log.warnings += 1;
@@ -884,7 +861,7 @@ pub const Log = struct {
             );
             if (_data.location != null) {
                 if (_data.location.?.line_text) |line| {
-                    _data.location.?.line_text = allocator.dupe(u8, line) catch unreachable;
+                    _data.location.?.line_text = try allocator.dupe(u8, line);
                 }
             }
             break :brk _data;
@@ -895,7 +872,8 @@ pub const Log = struct {
         );
 
         const msg = Msg{
-            .kind = if (comptime is_error) Kind.err else Kind.warn,
+            // .kind = if (comptime error_type == .err) Kind.err else Kind.warn,
+            .kind = @field(Kind, @tagName(kind)),
             .data = data,
             .metadata = .{ .resolve = Msg.Metadata.Resolve{
                 .specifier = specifier,
@@ -907,34 +885,6 @@ pub const Log = struct {
         try log.addMsg(msg);
     }
 
-    inline fn _addResolveError(
-        log: *Log,
-        source: ?*const Source,
-        r: Range,
-        allocator: std.mem.Allocator,
-        comptime fmt: string,
-        args: anytype,
-        import_kind: ImportKind,
-        comptime dupe_text: bool,
-        err: anyerror,
-    ) !void {
-        return _addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, dupe_text, true, err);
-    }
-
-    inline fn _addResolveWarn(
-        log: *Log,
-        source: ?*const Source,
-        r: Range,
-        allocator: std.mem.Allocator,
-        comptime fmt: string,
-        args: anytype,
-        import_kind: ImportKind,
-        comptime dupe_text: bool,
-        err: anyerror,
-    ) !void {
-        return _addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, dupe_text, false, err);
-    }
-
     pub fn addResolveError(
         log: *Log,
         source: ?*const Source,
@@ -944,9 +894,9 @@ pub const Log = struct {
         args: anytype,
         import_kind: ImportKind,
         err: anyerror,
-    ) !void {
+    ) OOM!void {
         @setCold(true);
-        return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, false, err);
+        return try addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, false, .err, err);
     }
 
     pub fn addResolveErrorWithTextDupe(
@@ -957,30 +907,12 @@ pub const Log = struct {
         comptime fmt: string,
         args: anytype,
         import_kind: ImportKind,
-    ) !void {
+    ) OOM!void {
         @setCold(true);
-        return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, true, error.ModuleNotFound);
+        return try addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, true, .err, error.ModuleNotFound);
     }
 
-    pub fn addResolveErrorWithTextDupeMaybeWarn(
-        log: *Log,
-        source: ?*const Source,
-        r: Range,
-        allocator: std.mem.Allocator,
-        comptime fmt: string,
-        args: anytype,
-        import_kind: ImportKind,
-        warn: bool,
-    ) !void {
-        @setCold(true);
-        if (warn) {
-            return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, true, error.ModuleNotFound);
-        } else {
-            return try _addResolveWarn(log, source, r, allocator, fmt, args, import_kind, true, error.ModuleNotFound);
-        }
-    }
-
-    pub fn addRangeError(log: *Log, source: ?*const Source, r: Range, text: string) !void {
+    pub fn addRangeError(log: *Log, source: ?*const Source, r: Range, text: string) OOM!void {
         @setCold(true);
         log.errors += 1;
         try log.addMsg(.{
@@ -989,44 +921,55 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeErrorFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+    pub fn addRangeErrorFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         @setCold(true);
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
-            .data = try rangeData(source, r, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            .data = try rangeData(source, r, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
-    pub fn addRangeErrorFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime fmt: string, args: anytype) !void {
+    pub fn addRangeErrorFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime fmt: string, args: anytype) OOM!void {
         @setCold(true);
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
-            .data = try rangeData(source, r, allocPrint(allocator, fmt, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            .data = try rangeData(source, r, try allocPrint(allocator, fmt, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
     }
 
-    pub fn addErrorFmtNoLoc(log: *Log, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
-        try log.addErrorFmt(null, Loc.Empty, allocator, text, args);
-    }
-
-    pub fn addErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+    pub fn addErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         @setCold(true);
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
-            .data = try rangeData(source, Range{ .loc = l }, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            .data = try rangeData(source, .{ .loc = l }, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
-    pub fn addZigErrorWithNote(log: *Log, allocator: std.mem.Allocator, err: anyerror, comptime noteFmt: string, args: anytype) !void {
+    // TODO(dylan-conway): rename and replace `addErrorFmt`
+    pub fn addErrorFmtOpts(log: *Log, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, opts: AddErrorOptions) OOM!void {
+        @setCold(true);
+        log.errors += 1;
+        try log.addMsg(.{
+            .kind = .err,
+            .data = try rangeData(
+                opts.source,
+                .{ .loc = opts.loc, .len = opts.len },
+                try allocPrint(allocator, fmt, args),
+            ).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            .redact_sensitive_information = opts.redact_sensitive_information,
+        });
+    }
+
+    pub fn addZigErrorWithNote(log: *Log, allocator: std.mem.Allocator, err: anyerror, comptime noteFmt: string, args: anytype) OOM!void {
         @setCold(true);
         log.errors += 1;
 
         var notes = try allocator.alloc(Data, 1);
-        notes[0] = rangeData(null, Range.None, allocPrint(allocator, noteFmt, args) catch unreachable);
+        notes[0] = rangeData(null, Range.None, try allocPrint(allocator, noteFmt, args));
 
         try log.addMsg(.{
             .kind = .err,
@@ -1035,7 +978,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeWarning(log: *Log, source: ?*const Source, r: Range, text: string) !void {
+    pub fn addRangeWarning(log: *Log, source: ?*const Source, r: Range, text: string) OOM!void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
@@ -1045,17 +988,17 @@ pub const Log = struct {
         });
     }
 
-    pub fn addWarningFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+    pub fn addWarningFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(.{
             .kind = .warn,
-            .data = try rangeData(source, Range{ .loc = l }, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            .data = try rangeData(source, Range{ .loc = l }, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
-    pub fn addWarningFmtLineCol(log: *Log, filepath: []const u8, line: u32, col: u32, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+    pub fn addWarningFmtLineCol(log: *Log, filepath: []const u8, line: u32, col: u32, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
@@ -1064,24 +1007,24 @@ pub const Log = struct {
 
         try log.addMsg(.{
             .kind = .warn,
-            .data = Data.cloneLineText(Data{
-                .text = allocPrint(allocator, text, args) catch unreachable,
+            .data = try Data.cloneLineText(Data{
+                .text = try allocPrint(allocator, text, args),
                 .location = Location{
                     .file = filepath,
                     .line = @intCast(line),
                     .column = @intCast(col),
                 },
-            }, log.clone_line_text, allocator) catch unreachable,
+            }, log.clone_line_text, allocator),
         });
     }
 
-    pub fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+    pub fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(.{
             .kind = .warn,
-            .data = try rangeData(source, r, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            .data = try rangeData(source, r, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
@@ -1095,27 +1038,27 @@ pub const Log = struct {
         comptime note_fmt: string,
         note_args: anytype,
         note_range: Range,
-    ) !void {
+    ) OOM!void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
 
         var notes = try allocator.alloc(Data, 1);
-        notes[0] = rangeData(source, note_range, allocPrint(allocator, note_fmt, note_args) catch unreachable);
+        notes[0] = rangeData(source, note_range, try allocPrint(allocator, note_fmt, note_args));
 
         try log.addMsg(.{
             .kind = .warn,
-            .data = rangeData(source, r, allocPrint(allocator, fmt, args) catch unreachable),
+            .data = rangeData(source, r, try allocPrint(allocator, fmt, args)),
             .notes = notes,
         });
     }
 
-    pub fn addRangeWarningFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime fmt: string, args: anytype) !void {
+    pub fn addRangeWarningFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime fmt: string, args: anytype) OOM!void {
         @setCold(true);
         log.warnings += 1;
         try log.addMsg(.{
             .kind = .warn,
-            .data = try rangeData(source, r, allocPrint(allocator, fmt, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            .data = try rangeData(source, r, try allocPrint(allocator, fmt, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
     }
@@ -1130,22 +1073,22 @@ pub const Log = struct {
         comptime note_fmt: string,
         note_args: anytype,
         note_range: Range,
-    ) !void {
+    ) OOM!void {
         @setCold(true);
         if (!Kind.shouldPrint(.err, log.level)) return;
         log.errors += 1;
 
         var notes = try allocator.alloc(Data, 1);
-        notes[0] = rangeData(source, note_range, allocPrint(allocator, note_fmt, note_args) catch unreachable);
+        notes[0] = rangeData(source, note_range, try allocPrint(allocator, note_fmt, note_args));
 
         try log.addMsg(.{
             .kind = .err,
-            .data = rangeData(source, r, allocPrint(allocator, fmt, args) catch unreachable),
+            .data = rangeData(source, r, try allocPrint(allocator, fmt, args)),
             .notes = notes,
         });
     }
 
-    pub fn addWarning(log: *Log, source: ?*const Source, l: Loc, text: string) !void {
+    pub fn addWarning(log: *Log, source: ?*const Source, l: Loc, text: string) OOM!void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
@@ -1155,13 +1098,13 @@ pub const Log = struct {
         });
     }
 
-    pub fn addWarningWithNote(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, warn: string, comptime note_fmt: string, note_args: anytype) !void {
+    pub fn addWarningWithNote(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, warn: string, comptime note_fmt: string, note_args: anytype) OOM!void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
 
         var notes = try allocator.alloc(Data, 1);
-        notes[0] = rangeData(source, Range{ .loc = l }, allocPrint(allocator, note_fmt, note_args) catch unreachable);
+        notes[0] = rangeData(source, Range{ .loc = l }, try allocPrint(allocator, note_fmt, note_args));
 
         try log.addMsg(.{
             .kind = .warn,
@@ -1170,7 +1113,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeDebug(log: *Log, source: ?*const Source, r: Range, text: string) !void {
+    pub fn addRangeDebug(log: *Log, source: ?*const Source, r: Range, text: string) OOM!void {
         @setCold(true);
         if (!Kind.shouldPrint(.debug, log.level)) return;
         try log.addMsg(.{
@@ -1179,7 +1122,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeDebugWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) !void {
+    pub fn addRangeDebugWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) OOM!void {
         @setCold(true);
         if (!Kind.shouldPrint(.debug, log.level)) return;
         // log.de += 1;
@@ -1190,7 +1133,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeErrorWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) !void {
+    pub fn addRangeErrorWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) OOM!void {
         @setCold(true);
         log.errors += 1;
         try log.addMsg(.{
@@ -1200,7 +1143,7 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeWarningWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) !void {
+    pub fn addRangeWarningWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) OOM!void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
@@ -1211,17 +1154,35 @@ pub const Log = struct {
         });
     }
 
-    pub inline fn addMsg(self: *Log, msg: Msg) !void {
+    pub fn addMsg(self: *Log, msg: Msg) OOM!void {
         try self.msgs.append(msg);
     }
 
-    pub fn addError(self: *Log, _source: ?*const Source, loc: Loc, text: string) !void {
+    pub fn addError(self: *Log, _source: ?*const Source, loc: Loc, text: string) OOM!void {
         @setCold(true);
         self.errors += 1;
         try self.addMsg(.{ .kind = .err, .data = rangeData(_source, Range{ .loc = loc }, text) });
     }
 
-    pub fn addSymbolAlreadyDeclaredError(self: *Log, allocator: std.mem.Allocator, source: *const Source, name: string, new_loc: Loc, old_loc: Loc) !void {
+    const AddErrorOptions = struct {
+        source: ?*const Source = null,
+        loc: Loc = Loc.Empty,
+        len: i32 = 0,
+        redact_sensitive_information: bool = false,
+    };
+
+    // TODO(dylan-conway): rename and replace `addError`
+    pub fn addErrorOpts(self: *Log, text: string, opts: AddErrorOptions) OOM!void {
+        @setCold(true);
+        self.errors += 1;
+        try self.addMsg(.{
+            .kind = .err,
+            .data = rangeData(opts.source, .{ .loc = opts.loc, .len = opts.len }, text),
+            .redact_sensitive_information = opts.redact_sensitive_information,
+        });
+    }
+
+    pub fn addSymbolAlreadyDeclaredError(self: *Log, allocator: std.mem.Allocator, source: *const Source, name: string, new_loc: Loc, old_loc: Loc) OOM!void {
         var notes = try allocator.alloc(Data, 1);
         notes[0] = rangeData(
             source,
@@ -1239,13 +1200,13 @@ pub const Log = struct {
         );
     }
 
-    pub fn printForLogLevel(self: *Log, to: anytype) !void {
+    pub fn print(self: *Log, to: anytype) !void {
         return switch (Output.enable_ansi_colors) {
-            inline else => |enable_ansi_colors| self.printForLogLevelWithEnableAnsiColors(to, enable_ansi_colors),
+            inline else => |enable_ansi_colors| self.printWithEnableAnsiColors(to, enable_ansi_colors),
         };
     }
 
-    pub fn printForLogLevelWithEnableAnsiColors(self: *const Log, to: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn printWithEnableAnsiColors(self: *const Log, to: anytype, comptime enable_ansi_colors: bool) !void {
         var needs_newline = false;
         if (self.warnings > 0 and self.errors > 0) {
             // Print warnings at the top
@@ -1283,14 +1244,6 @@ pub const Log = struct {
         }
 
         if (needs_newline) _ = try to.write("\n");
-    }
-
-    pub fn printForLogLevelColorsRuntime(self: *Log, to: anytype, enable_ansi_colors: bool) !void {
-        if (enable_ansi_colors) {
-            return self.printForLogLevelWithEnableAnsiColors(to, true);
-        } else {
-            return self.printForLogLevelWithEnableAnsiColors(to, false);
-        }
     }
 
     pub fn toZigException(this: *const Log, allocator: std.mem.Allocator) *js.ZigException.Holder {

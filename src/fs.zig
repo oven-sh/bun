@@ -189,13 +189,13 @@ pub const FileSystem = struct {
                 const name = try strings.StringOrTinyString.initAppendIfNeeded(
                     name_slice,
                     *FileSystem.FilenameStore,
-                    &FileSystem.FilenameStore.instance,
+                    FileSystem.FilenameStore.instance,
                 );
 
                 const name_lowercased = try strings.StringOrTinyString.initLowerCaseAppendIfNeeded(
                     name_slice,
                     *FileSystem.FilenameStore,
-                    &FileSystem.FilenameStore.instance,
+                    FileSystem.FilenameStore.instance,
                 );
 
                 break :brk EntryStore.instance.append(.{
@@ -1033,7 +1033,7 @@ pub const FileSystem = struct {
             comptime Iterator: type,
             iterator: Iterator,
         ) !*EntriesOption {
-            var dir = bun.strings.pathWithoutTrailingSlashOne(dir_maybe_trail_slash);
+            var dir = bun.strings.withoutTrailingSlashWindowsPath(dir_maybe_trail_slash);
 
             bun.resolver.Resolver.assertValidCacheKey(dir);
             var cache_result: ?allocators.Result = null;

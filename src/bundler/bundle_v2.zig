@@ -104,7 +104,7 @@ const ThisBundler = @import("../bundler.zig").Bundler;
 const Dependency = js_ast.Dependency;
 const JSAst = js_ast.BundledAst;
 const Loader = options.Loader;
-const Index = @import("../ast/base.zig").Index;
+pub const Index = @import("../ast/base.zig").Index;
 const Batcher = bun.Batcher;
 const Symbol = js_ast.Symbol;
 const EventLoop = bun.JSC.AnyEventLoop;
@@ -128,6 +128,8 @@ const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
 const Loc = Logger.Loc;
 const bake = bun.bake;
+
+const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
 
@@ -322,10 +324,8 @@ const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 pub const BakeEntryPoint = struct {
     path: []const u8,
     graph: bake.Graph,
-
     css: bool = false,
     client_wrapped: bool = false,
-    route_index: bake.DevServer.Route.Index.Optional = .none,
 
     pub fn init(path: []const u8, graph: bake.Graph) BakeEntryPoint {
         return .{ .path = path, .graph = graph };
@@ -335,7 +335,7 @@ pub const BakeEntryPoint = struct {
         return .{ .path = path, .graph = graph, .client_wrapped = true };
     }
 
-    pub fn route(path: []const u8, index: bake.DevServer.Route.Index) BakeEntryPoint {
+    pub fn route(path: []const u8, index: bake.DevServer.RouteBundle.Index) BakeEntryPoint {
         return .{
             .path = path,
             .graph = .server,
@@ -347,7 +347,23 @@ pub const BakeEntryPoint = struct {
         return .{ .path = path, .graph = .client, .css = true };
     }
 };
+fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, top_level_dir: string, allocator: std.mem.Allocator) !Fs.Path {
+    // TODO: outbase
+    var buf: bun.PathBuffer = undefined;
+    const rel = bun.path.relativePlatform(top_level_dir, path.text, .loose, false);
+    var path_clone = path;
 
+    // stack-allocated temporary is not leaked because dupeAlloc on the path will
+    // move .pretty into the heap. that function also fixes some slash issues.
+    if (target == .bake_server_components_ssr) {
+        // the SSR graph needs different pretty names or else HMR mode will
+        // confuse the two modules.
+        path_clone.pretty = std.fmt.bufPrint(&buf, "ssr:{s}", .{rel}) catch buf[0..];
+    } else {
+        path_clone.pretty = rel;
+    }
+    return path_clone.dupeAllocFixPretty(allocator);
+}
 pub const BundleV2 = struct {
     bundler: *Bundler,
     /// When Server Component is enabled, this is used for the client bundles
@@ -373,6 +389,8 @@ pub const BundleV2 = struct {
     /// See the comment in `Chunk.OutputPiece`
     unique_key: u64 = 0,
     dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
+
+    drain_defer_task: DeferredBatchTask = .{},
 
     const BakeOptions = struct {
         framework: bake.Framework,
@@ -562,7 +580,13 @@ pub const BundleV2 = struct {
     }
 
     fn isDone(this: *BundleV2) bool {
-        return @atomicLoad(usize, &this.graph.parse_pending, .monotonic) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .monotonic) == 0;
+        if (@atomicLoad(usize, &this.graph.parse_pending, .acquire) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .monotonic) == 0) {
+            if (this.graph.drainDeferredTasks(this) > 0) {
+                return false;
+            }
+            return true;
+        }
+        return false;
     }
 
     pub fn waitForParse(this: *BundleV2) void {
@@ -999,10 +1023,6 @@ pub const BundleV2 = struct {
 
                         try this.graph.entry_points.append(this.graph.allocator, Index.source(source_index));
 
-                        if (entry_point.route_index.unwrap()) |route_index| {
-                            _ = try this.bundler.options.dev_server.?.server_graph.insertStaleExtra(resolved.path_pair.primary.text, false, true, route_index);
-                        }
-
                         if (entry_point.css) {
                             try data.css_data.putNoClobber(this.graph.allocator, Index.init(source_index), .{ .imported_on_server = false });
                         }
@@ -1058,16 +1078,14 @@ pub const BundleV2 = struct {
     }
 
     /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
-    /// at the same time in one pass over the SBC list.
-    ///
-    ///
+    /// at the same time in one pass over the SCB list.
     pub fn processServerComponentManifestFiles(this: *BundleV2) OOM!void {
         // If a server components is not configured, do nothing
         const fw = this.framework orelse return;
         const sc = fw.server_components orelse return;
 
-        if (this.graph.kit_referenced_client_data) bun.todoPanic(@src(), "implement generation for 'bun:bake/client'", .{});
-        if (!this.graph.kit_referenced_server_data) return;
+        if (!this.graph.kit_referenced_server_data and
+            !this.graph.kit_referenced_client_data) return;
 
         const alloc = this.graph.allocator;
 
@@ -1136,7 +1154,7 @@ pub const BundleV2 = struct {
                         .key = server.newExpr(E.String{ .data = server_key_string }),
                         .value = server.newExpr(E.Object{
                             .properties = try G.Property.List.fromSlice(alloc, &.{
-                                .{ .key = id_string, .value = ssr_path },
+                                .{ .key = id_string, .value = client_path },
                                 .{ .key = name_string, .value = export_name },
                                 .{ .key = chunks_string, .value = empty_array },
                             }),
@@ -1147,14 +1165,14 @@ pub const BundleV2 = struct {
                         .value = server.newExpr(E.Object{
                             .properties = try G.Property.List.fromSlice(alloc, &.{
                                 .{ .key = name_string, .value = export_name },
-                                .{ .key = specifier_string, .value = client_path },
+                                .{ .key = specifier_string, .value = ssr_path },
                             }),
                         }),
                     };
                 }
 
                 try client_manifest_props.append(alloc, .{
-                    .key = ssr_path,
+                    .key = client_path,
                     .value = server.newExpr(E.Object{
                         .properties = G.Property.List.init(client_manifest_items),
                     }),
@@ -1249,8 +1267,8 @@ pub const BundleV2 = struct {
             .source = source,
             .loader = loader,
             .side_effects = switch (loader) {
-                .text, .json, .toml, .file => _resolver.SideEffects.no_side_effects__pure_data,
-                else => _resolver.SideEffects.has_side_effects,
+                .text, .json, .toml, .file => .no_side_effects__pure_data,
+                else => .has_side_effects,
             },
         }) catch bun.outOfMemory();
         var task = this.graph.allocator.create(ParseTask) catch bun.outOfMemory();
@@ -1594,7 +1612,6 @@ pub const BundleV2 = struct {
             bundler.options.entry_points = config.entry_points.keys();
             bundler.options.jsx = config.jsx;
             bundler.options.no_macros = config.no_macros;
-            bundler.options.server_components = config.server_components.client.items.len > 0 or config.server_components.server.items.len > 0;
             bundler.options.loaders = try options.loadersFromTransformOptions(allocator, config.loaders, config.target);
             bundler.options.entry_naming = config.names.entry_point.data;
             bundler.options.chunk_naming = config.names.chunk.data;
@@ -1635,6 +1652,7 @@ pub const BundleV2 = struct {
         pub fn deref(this: *JSBundleCompletionTask) void {
             if (this.ref_count.fetchSub(1, .monotonic) == 1) {
                 this.config.deinit(bun.default_allocator);
+                debug("Deinit JSBundleCompletionTask(0{x})", .{@intFromPtr(this)});
                 bun.default_allocator.destroy(this);
             }
         }
@@ -1798,11 +1816,19 @@ pub const BundleV2 = struct {
                 _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .monotonic);
             },
             .success => |code| {
+                const should_copy_for_bundling = load.parse_task.defer_copy_for_bundling and code.loader.shouldCopyForBundling(this.bundler.options.experimental_css);
+                if (should_copy_for_bundling) {
+                    const source_index = load.source_index;
+                    var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
+                    additional_files.push(this.graph.allocator, .{ .source_index = source_index.get() }) catch unreachable;
+                    this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
+                    this.graph.estimated_file_loader_count += 1;
+                }
                 this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
                 this.graph.input_files.items(.source)[load.source_index.get()].contents = code.source_code;
                 var parse_task = load.parse_task;
                 parse_task.loader = code.loader;
-                this.free_list.append(code.source_code) catch unreachable;
+                if (!should_copy_for_bundling) this.free_list.append(code.source_code) catch unreachable;
                 parse_task.contents_or_fd = .{
                     .contents = code.source_code,
                 };
@@ -1810,8 +1836,8 @@ pub const BundleV2 = struct {
             },
             .err => |err| {
                 log.msgs.append(err) catch unreachable;
-                log.errors += @as(usize, @intFromBool(err.kind == .err));
-                log.warnings += @as(usize, @intFromBool(err.kind == .warn));
+                log.errors += @as(u32, @intFromBool(err.kind == .err));
+                log.warnings += @as(u32, @intFromBool(err.kind == .warn));
 
                 // An error occurred, prevent spinning the event loop forever
                 _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .monotonic);
@@ -1965,8 +1991,8 @@ pub const BundleV2 = struct {
             },
             .err => |err| {
                 log.msgs.append(err) catch unreachable;
-                log.errors += @as(usize, @intFromBool(err.kind == .err));
-                log.warnings += @as(usize, @intFromBool(err.kind == .warn));
+                log.errors += @as(u32, @intFromBool(err.kind == .err));
+                log.warnings += @as(u32, @intFromBool(err.kind == .warn));
             },
             .pending, .consumed => unreachable,
         }
@@ -2241,6 +2267,9 @@ pub const BundleV2 = struct {
     pub fn enqueueOnLoadPluginIfNeeded(this: *BundleV2, parse: *ParseTask) bool {
         if (this.plugins) |plugins| {
             if (plugins.hasAnyMatches(&parse.path, true)) {
+                if (parse.is_entry_point and parse.loader != null and parse.loader.?.shouldCopyForBundling(this.bundler.options.experimental_css)) {
+                    parse.defer_copy_for_bundling = true;
+                }
                 // This is where onLoad plugins are enqueued
                 debug("enqueue onLoad: {s}:{s}", .{
                     parse.path.namespace,
@@ -2263,25 +2292,7 @@ pub const BundleV2 = struct {
     }
 
     fn pathWithPrettyInitialized(this: *BundleV2, path: Fs.Path, target: options.Target) !Fs.Path {
-        if (path.pretty.ptr != path.text.ptr) {
-            // TODO(@paperdave): there is a high chance this dupe is no longer required
-            return path.dupeAlloc(this.graph.allocator);
-        }
-
-        // TODO: outbase
-        var buf: bun.PathBuffer = undefined;
-        const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-        var path_clone = path;
-        // stack-allocated temporary is not leaked because dupeAlloc on the path will
-        // move .pretty into the heap. that function also fixes some slash issues.
-        if (target == .bake_server_components_ssr) {
-            // the SSR graph needs different pretty names or else HMR mode will
-            // confuse the two modules.
-            path_clone.pretty = std.fmt.bufPrint(&buf, "ssr:{s}", .{rel}) catch buf[0..];
-        } else {
-            path_clone.pretty = rel;
-        }
-        return path_clone.dupeAllocFixPretty(this.graph.allocator);
+        return genericPathWithPrettyInitialized(path, target, this.bundler.fs.top_level_dir, this.graph.allocator);
     }
 
     fn reserveSourceIndexesForBake(this: *BundleV2) !void {
@@ -2932,7 +2943,7 @@ pub const BundleV2 = struct {
                         this.bundler.log.addErrorFmt(
                             null,
                             Logger.Loc.Empty,
-                            bun.default_allocator,
+                            this.bundler.log.msgs.allocator,
                             "{s} while {s}",
                             .{ @errorName(err.err), @tagName(err.step) },
                         ) catch unreachable;
@@ -3129,16 +3140,66 @@ pub fn BundleThread(CompletionStruct: type) type {
 const UseDirective = js_ast.UseDirective;
 const ServerComponentBoundary = js_ast.ServerComponentBoundary;
 
+/// This task is run once all parse and resolve tasks have been complete
+/// and we have deferred onLoad plugins that we need to resume
+///
+/// It enqueues a task to be run on the JS thread which resolves the promise
+/// for every onLoad callback which called `.defer()`.
+pub const DeferredBatchTask = struct {
+    running: if (Environment.isDebug) bool else u0 = if (Environment.isDebug) false else 0,
+
+    const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
+
+    pub fn init(this: *DeferredBatchTask) void {
+        if (comptime Environment.isDebug) bun.debugAssert(!this.running);
+        this.* = .{
+            .running = if (comptime Environment.isDebug) false else 0,
+        };
+    }
+
+    pub fn getCompletion(this: *DeferredBatchTask) ?*bun.BundleV2.JSBundleCompletionTask {
+        const bundler: *BundleV2 = @alignCast(@fieldParentPtr("drain_defer_task", this));
+        return bundler.completion;
+    }
+
+    pub fn schedule(this: *DeferredBatchTask) void {
+        if (comptime Environment.isDebug) {
+            bun.assert(!this.running);
+            this.running = false;
+        }
+        this.getCompletion().?.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
+    }
+
+    pub fn deinit(this: *DeferredBatchTask) void {
+        if (comptime Environment.isDebug) {
+            this.running = false;
+        }
+    }
+
+    pub fn runOnJSThread(this: *DeferredBatchTask) void {
+        defer this.deinit();
+        var completion: *bun.BundleV2.JSBundleCompletionTask = this.getCompletion() orelse {
+            return;
+        };
+
+        completion.bundler.plugins.?.drainDeferred(completion.result == .err);
+    }
+};
+
+const ContentsOrFd = union(Tag) {
+    fd: struct {
+        dir: StoredFileDescriptorType,
+        file: StoredFileDescriptorType,
+    },
+    contents: string,
+
+    const Tag = enum { fd, contents };
+};
+
 pub const ParseTask = struct {
     path: Fs.Path,
     secondary_path_for_commonjs_interop: ?Fs.Path = null,
-    contents_or_fd: union(enum) {
-        fd: struct {
-            dir: StoredFileDescriptorType,
-            file: StoredFileDescriptorType,
-        },
-        contents: string,
-    },
+    contents_or_fd: ContentsOrFd,
     side_effects: _resolver.SideEffects,
     loader: ?Loader = null,
     jsx: options.JSX.Pragma,
@@ -3151,6 +3212,10 @@ pub const ParseTask = struct {
     ctx: *BundleV2,
     package_version: string = "",
     is_entry_point: bool = false,
+    /// This is set when the file is an entrypoint, and it has an onLoad plugin.
+    /// In this case we want to defer adding this to additional_files until after
+    /// the onLoad plugin has finished.
+    defer_copy_for_bundling: bool = false,
 
     /// The information returned to the Bundler thread when a parse finishes.
     pub const Result = struct {
@@ -3439,11 +3504,11 @@ pub const ParseTask = struct {
             .toml => {
                 const trace = tracer(@src(), "ParseTOML");
                 defer trace.end();
-                const root = try TOML.parse(&source, log, allocator);
+                const root = try TOML.parse(&source, log, allocator, false);
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .text => {
-                const root = Expr.init(E.UTF8String, E.UTF8String{
+                const root = Expr.init(E.String, E.String{
                     .data = source.contents,
                 }, Logger.Loc{ .start = 0 });
                 var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
@@ -3549,11 +3614,10 @@ pub const ParseTask = struct {
                 if (bundler.options.experimental_css) {
                     // const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                     // unique_key_for_additional_file.* = unique_key;
-                    const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
                     var import_records = BabyList(ImportRecord){};
                     const source_code = source.contents;
                     var css_ast =
-                        switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parseBundler(
+                        switch (bun.css.BundlerStyleSheet.parseBundler(
                         allocator,
                         source_code,
                         bun.css.ParserOptions.default(allocator, bundler.log),
@@ -3561,7 +3625,7 @@ pub const ParseTask = struct {
                     )) {
                         .result => |v| v,
                         .err => |e| {
-                            log.addErrorFmt(&source, Logger.Loc.Empty, allocator, "{?}: {}", .{ if (e.loc) |l| l.withFilename(source.path.pretty) else null, e.kind }) catch unreachable;
+                            try e.addToLogger(log, &source);
                             return error.SyntaxError;
                         },
                     };
@@ -3569,9 +3633,10 @@ pub const ParseTask = struct {
                         .targets = .{},
                         .unused_symbols = .{},
                     }).asErr()) |e| {
-                        log.addErrorFmt(&source, Logger.Loc.Empty, allocator, "{?}: {}", .{ if (e.loc) |l| l.withFilename(source.path.pretty) else null, e.kind }) catch unreachable;
+                        try e.addToLogger(log, &source);
                         return error.MinifyError;
                     }
+                    const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
                     const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
                     var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
                     ast.css = css_ast_heap;
@@ -3676,7 +3741,31 @@ pub const ParseTask = struct {
             },
         };
 
-        errdefer if (task.contents_or_fd == .fd) entry.deinit(allocator);
+        // WARNING: Do not change the variant of `task.contents_or_fd` from
+        // `.fd` to `.contents` (or back) after this point!
+        //
+        // When `task.contents_or_fd == .fd`, `entry.contents` is an owned string.
+        // When `task.contents_or_fd == .contents`, `entry.contents` is NOT owned! Freeing it here will cause a double free!
+        //
+        // Changing from `.contents` to `.fd` will cause a double free.
+        // This was the case in the situation where the ParseTask receives its `.contents` from an onLoad plugin, which caused it to be
+        // allocated by `bun.default_allocator` and then freed in `BundleV2.deinit` (and also by `entry.deinit(allocator)` below).
+        const debug_original_variant_check: if (bun.Environment.isDebug) ContentsOrFd.Tag else u0 =
+            if (bun.Environment.isDebug)
+            @as(ContentsOrFd.Tag, task.contents_or_fd)
+        else
+            0;
+        errdefer {
+            if (comptime bun.Environment.isDebug) {
+                if (@as(ContentsOrFd.Tag, task.contents_or_fd) != debug_original_variant_check) {
+                    std.debug.panic("BUG: `task.contents_or_fd` changed in a way that will cause a double free or memory to leak!\n\n    Original = {s}\n    New = {s}\n", .{
+                        @tagName(debug_original_variant_check),
+                        @tagName(task.contents_or_fd),
+                    });
+                }
+            }
+            if (task.contents_or_fd == .fd) entry.deinit(allocator);
+        }
 
         const will_close_file_descriptor = task.contents_or_fd == .fd and
             entry.fd.isValid() and !entry.fd.isStdio() and
@@ -3684,7 +3773,7 @@ pub const ParseTask = struct {
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
             task.contents_or_fd = .{ .fd = .{ .file = bun.invalid_fd, .dir = bun.invalid_fd } };
-        } else {
+        } else if (task.contents_or_fd == .fd) {
             task.contents_or_fd = .{ .fd = .{
                 .file = entry.fd,
                 .dir = bun.invalid_fd,
@@ -3784,7 +3873,7 @@ pub const ParseTask = struct {
         var ast: JSAst = if (!is_empty)
             try getAST(log, bundler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file)
         else switch (opts.module_type == .esm) {
-            inline else => |as_undefined| if (loader == .css) try getEmptyCSSAST(
+            inline else => |as_undefined| if (loader == .css and this.ctx.bundler.options.experimental_css) try getEmptyCSSAST(
                 log,
                 bundler,
                 opts,
@@ -3827,6 +3916,7 @@ pub const ParseTask = struct {
         const this: *ParseTask = @fieldParentPtr("task", task);
         var worker = ThreadPool.Worker.get(this.ctx);
         defer worker.unget();
+        debug("ParseTask(0x{x}, {s}) callback", .{ @intFromPtr(this), this.path.text });
 
         var step: ParseTask.Result.Error.Step = .pending;
         var log = Logger.Log.init(worker.allocator);
@@ -4301,6 +4391,9 @@ pub const Graph = struct {
     // using u32, since Ref does not support addressing sources above maxInt(u31)
     parse_pending: usize = 0,
     resolve_pending: usize = 0,
+    /// This is incremented whenever an onLoad plugin calls `.defer()`
+    /// And then is correspondingly decremented whenever we resume that onLoad plugin
+    deferred_pending: std.atomic.Value(usize) = .{ .raw = 0 },
 
     /// Maps a hashed path string to a source index, if it exists in the compilation.
     /// Instead of accessing this directly, consider using BundleV2.pathToSourceIndexMap
@@ -4347,6 +4440,21 @@ pub const Graph = struct {
         unique_key_for_additional_file: string = "",
         content_hash_for_additional_file: u64 = 0,
     };
+
+    /// Schedule a task to be run on the JS thread which resolves the promise of each `.defer()` called in an
+    /// onLoad plugin.
+    ///
+    /// Returns the amount of deferred tasks to resume.
+    pub fn drainDeferredTasks(this: *@This(), bundler: *BundleV2) usize {
+        const pending_deferred = this.deferred_pending.swap(0, .acq_rel);
+        if (pending_deferred > 0) {
+            _ = @atomicRmw(usize, &this.parse_pending, .Add, pending_deferred, .acq_rel);
+            bundler.drain_defer_task.init();
+            bundler.drain_defer_task.schedule();
+            return pending_deferred;
+        }
+        return pending_deferred;
+    }
 };
 
 pub const AdditionalFile = union(enum) {
@@ -4896,6 +5004,10 @@ pub const LinkerContext = struct {
     /// Used by Bake to extract []CompileResult before it is joined
     dev_server: ?*bun.bake.DevServer = null,
     framework: ?*const bake.Framework = null,
+
+    fn pathWithPrettyInitialized(this: *LinkerContext, path: Fs.Path) !Fs.Path {
+        return genericPathWithPrettyInitialized(path, this.options.target, this.resolver.fs.top_level_dir, this.graph.allocator);
+    }
 
     pub const LinkerOptions = struct {
         output_format: options.Format = .esm,
@@ -5756,7 +5868,7 @@ pub const LinkerContext = struct {
                     source_index,
                 ) catch bun.outOfMemory();
 
-                const repr: *const bun.css.BundlerStyleSheet = visitor.css_asts[source_index.get()].?;
+                const repr: *const bun.css.BundlerStyleSheet = visitor.css_asts[source_index.get()] orelse return; // Sanity check
                 const top_level_rules = &repr.rules;
 
                 // TODO: should we even do this? @import rules have to be the first rules in the stylesheet, why even allow pre-import layers?
@@ -9461,13 +9573,17 @@ pub const LinkerContext = struct {
         if (chunk.content == .javascript) {
             const sources = c.parse_graph.input_files.items(.source);
             for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
-                const source: Logger.Source = sources[part_range.source_index.get()];
+                const source: *Logger.Source = &sources[part_range.source_index.get()];
 
                 const file_path = brk: {
                     if (source.path.isFile()) {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
+                        if (source.path.text.ptr == source.path.pretty.ptr) {
+                            source.path = c.pathWithPrettyInitialized(source.path) catch bun.outOfMemory();
+                        }
                         source.path.assertPrettyIsValid();
+
                         break :brk source.path.pretty;
                     } else {
                         // If this isn't in the "file" namespace, just use the full path text
@@ -12185,7 +12301,8 @@ pub const LinkerContext = struct {
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
 
-                    const additional_files: []AdditionalFile = c.parse_graph.input_files.items(.additional_files)[piece.query.index].slice();
+                    const source_index = piece.query.index;
+                    const additional_files: []AdditionalFile = c.parse_graph.input_files.items(.additional_files)[source_index].slice();
                     bun.assert(additional_files.len > 0);
                     switch (additional_files[0]) {
                         .output_file => |output_file_id| {

@@ -97,7 +97,7 @@ test.skip("wat", () => {
 
 ## `test.todo`
 
-Mark a test as a todo with `test.todo`. These tests _will_ be run, and the test runner will expect them to fail. If they pass, you will be prompted to mark it as a regular test.
+Mark a test as a todo with `test.todo`. These tests will not be run.
 
 ```ts
 import { expect, test } from "bun:test";
@@ -107,11 +107,21 @@ test.todo("fix this", () => {
 });
 ```
 
-To exclusively run tests marked as _todo_, use `bun test --todo`.
+To run todo tests and find any which are passing, use `bun test --todo`.
 
 ```sh
 $ bun test --todo
+my.test.ts:
+✗ unimplemented feature
+  ^ this test is marked as todo but passes. Remove `.todo` or check that test is correct.
+
+ 0 pass
+ 1 fail
+ 1 expect() calls
 ```
+
+With this flag, failing todo tests will not cause an error, but todo tests which pass will be marked as failing so you can remove the todo mark or
+fix the test.
 
 ## `test.only`
 

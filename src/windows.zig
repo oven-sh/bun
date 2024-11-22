@@ -3387,8 +3387,8 @@ pub fn winSockErrorToZigError(err: std.os.windows.ws2_32.WinsockError) !void {
     };
 }
 
-pub fn WSAGetLastError() !void {
-    return winSockErrorToZigError(std.os.windows.ws2_32.WSAGetLastError());
+pub fn WSAGetLastError() ?SystemErrno {
+    return SystemErrno.init(@intFromEnum(std.os.windows.ws2_32.WSAGetLastError()));
 }
 
 // BOOL CreateDirectoryExW(

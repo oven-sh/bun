@@ -18,12 +18,8 @@ pub const ResolveMessage = struct {
 
     pub usingnamespace JSC.Codegen.JSResolveMessage;
 
-    pub fn constructor(
-        globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) ?*ResolveMessage {
-        globalThis.throw("ResolveMessage is not constructable", .{});
-        return null;
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*ResolveMessage {
+        return globalThis.throw2("ResolveMessage is not constructable", .{});
     }
 
     pub fn getCode(this: *ResolveMessage, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -111,7 +107,7 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return this.toStringFn(globalThis);
     }
 
@@ -119,8 +115,8 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
-        const args_ = callframe.arguments(1);
+    ) bun.JSError!JSC.JSValue {
+        const args_ = callframe.arguments_old(1);
         const args = args_.ptr[0..args_.len];
         if (args.len > 0) {
             if (!args[0].isString()) {
@@ -140,7 +136,7 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         var object = JSC.JSValue.createEmptyObject(globalThis, 7);
         object.put(globalThis, ZigString.static("name"), bun.String.static("ResolveMessage").toJS(globalThis));
         object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));

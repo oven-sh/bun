@@ -310,7 +310,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) ?JSAst.Ex
     return null;
 }
 
-fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std.mem.Allocator, args: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) !TranspilerOptions {
+fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std.mem.Allocator, args: *JSC.Node.ArgumentsSlice) (bun.JSError || bun.OOM)!TranspilerOptions {
     const globalThis = globalObject;
     const object = args.next() orelse return TranspilerOptions{ .log = logger.Log.init(temp_allocator) };
     if (object.isUndefinedOrNull()) return TranspilerOptions{ .log = logger.Log.init(temp_allocator) };
@@ -325,19 +325,17 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     };
 
     if (!object.isObject()) {
-        JSC.throwInvalidArguments("Expected an object", .{}, globalObject, exception);
-        return transpiler;
+        return globalObject.throwInvalidArguments("Expected an object", .{});
     }
 
-    if (object.getTruthy(globalObject, "define")) |define| {
+    if (try object.getTruthy(globalObject, "define")) |define| {
         define: {
             if (define.isUndefinedOrNull()) {
                 break :define;
             }
 
             if (!define.isObject()) {
-                JSC.throwInvalidArguments("define must be an object", .{}, globalObject, exception);
-                return transpiler;
+                return globalObject.throwInvalidArguments("define must be an object", .{});
             }
 
             var define_iter = JSC.JSPropertyIterator(.{
@@ -358,8 +356,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 const value_type = property_value.jsType();
 
                 if (!value_type.isStringLike()) {
-                    JSC.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop}, globalObject, exception);
-                    return transpiler;
+                    return globalObject.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
                 }
 
                 names[define_iter.i] = prop.toOwnedSlice(allocator) catch unreachable;
@@ -378,7 +375,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.get(globalThis, "external")) |external| {
+    if (try object.get(globalThis, "external")) |external| {
         external: {
             if (external.isUndefinedOrNull()) break :external;
 
@@ -399,8 +396,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 var i: usize = 0;
                 while (iter.next()) |entry| {
                     if (!entry.jsType().isStringLike()) {
-                        JSC.throwInvalidArguments("external must be a string or string[]", .{}, globalObject, exception);
-                        return transpiler;
+                        return globalObject.throwInvalidArguments("external must be a string or string[]", .{});
                     }
 
                     var zig_str = JSC.ZigString.init("");
@@ -412,38 +408,28 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 
                 transpiler.transform.external = externals[0..i];
             } else {
-                JSC.throwInvalidArguments("external must be a string or string[]", .{}, globalObject, exception);
-                return transpiler;
+                return globalObject.throwInvalidArguments("external must be a string or string[]", .{});
             }
         }
     }
 
-    if (object.get(globalThis, "loader")) |loader| {
-        if (Loader.fromJS(globalThis, loader, exception)) |resolved| {
+    if (try object.get(globalThis, "loader")) |loader| {
+        if (try Loader.fromJS(globalThis, loader)) |resolved| {
             if (!resolved.isJavaScriptLike()) {
-                JSC.throwInvalidArguments("only JavaScript-like loaders supported for now", .{}, globalObject, exception);
-                return transpiler;
+                return globalObject.throwInvalidArguments("only JavaScript-like loaders supported for now", .{});
             }
 
             transpiler.default_loader = resolved;
         }
-
-        if (exception.* != null) {
-            return transpiler;
-        }
     }
 
-    if (object.get(globalThis, "target")) |target| {
-        if (Target.fromJS(globalThis, target, exception)) |resolved| {
+    if (try object.get(globalThis, "target")) |target| {
+        if (try Target.fromJS(globalThis, target)) |resolved| {
             transpiler.transform.target = resolved.toAPI();
         }
-
-        if (exception.* != null) {
-            return transpiler;
-        }
     }
 
-    if (object.get(globalThis, "tsconfig")) |tsconfig| {
+    if (try object.get(globalThis, "tsconfig")) |tsconfig| {
         tsconfig: {
             if (tsconfig.isUndefinedOrNull()) break :tsconfig;
             const kind = tsconfig.jsType();
@@ -451,8 +437,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             defer out.deref();
 
             if (kind.isArray()) {
-                JSC.throwInvalidArguments("tsconfig must be a string or object", .{}, globalObject, exception);
-                return transpiler;
+                return globalObject.throwInvalidArguments("tsconfig must be a string or object", .{});
             }
 
             if (!kind.isStringLike()) {
@@ -482,7 +467,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         else => false,
     };
 
-    if (object.getTruthy(globalThis, "macro")) |macros| {
+    if (try object.getTruthy(globalThis, "macro")) |macros| {
         macros: {
             if (macros.isUndefinedOrNull()) break :macros;
             if (macros.isBoolean()) {
@@ -492,8 +477,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             const kind = macros.jsType();
             const is_object = kind.isObject();
             if (!(kind.isStringLike() or is_object)) {
-                JSC.throwInvalidArguments("macro must be an object", .{}, globalObject, exception);
-                return transpiler;
+                return globalObject.throwInvalidArguments("macro must be an object", .{});
             }
 
             var out = bun.String.empty;
@@ -517,48 +501,47 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.getOptional(globalThis, "autoImportJSX", bool) catch return transpiler) |flag| {
+    if (try object.getBooleanLoose(globalThis, "autoImportJSX")) |flag| {
         transpiler.runtime.auto_import_jsx = flag;
     }
 
-    if (object.getOptional(globalThis, "allowBunRuntime", bool) catch return transpiler) |flag| {
+    if (try object.getBooleanLoose(globalThis, "allowBunRuntime")) |flag| {
         transpiler.runtime.allow_runtime = flag;
     }
 
-    if (object.getOptional(globalThis, "inline", bool) catch return transpiler) |flag| {
+    if (try object.getBooleanLoose(globalThis, "inline")) |flag| {
         transpiler.runtime.inlining = flag;
     }
 
-    if (object.getOptional(globalThis, "minifyWhitespace", bool) catch return transpiler) |flag| {
+    if (try object.getBooleanLoose(globalThis, "minifyWhitespace")) |flag| {
         transpiler.minify_whitespace = flag;
     }
 
-    if (object.getOptional(globalThis, "deadCodeElimination", bool) catch return transpiler) |flag| {
+    if (try object.getBooleanLoose(globalThis, "deadCodeElimination")) |flag| {
         transpiler.dead_code_elimination = flag;
     }
 
-    if (object.getTruthy(globalThis, "minify")) |hot| {
-        if (hot.isBoolean()) {
-            transpiler.minify_whitespace = hot.coerce(bool, globalThis);
+    if (try object.getTruthy(globalThis, "minify")) |minify| {
+        if (minify.isBoolean()) {
+            transpiler.minify_whitespace = minify.coerce(bool, globalThis);
             transpiler.minify_syntax = transpiler.minify_whitespace;
             transpiler.minify_identifiers = transpiler.minify_syntax;
-        } else if (hot.isObject()) {
-            if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
+        } else if (minify.isObject()) {
+            if (try minify.getBooleanLoose(globalThis, "whitespace")) |whitespace| {
                 transpiler.minify_whitespace = whitespace;
             }
-            if (try hot.getOptional(globalThis, "syntax", bool)) |syntax| {
+            if (try minify.getBooleanLoose(globalThis, "syntax")) |syntax| {
                 transpiler.minify_syntax = syntax;
             }
-            if (try hot.getOptional(globalThis, "identifiers", bool)) |syntax| {
+            if (try minify.getBooleanLoose(globalThis, "identifiers")) |syntax| {
                 transpiler.minify_identifiers = syntax;
             }
         } else {
-            JSC.throwInvalidArguments("Expected minify to be a boolean or an object", .{}, globalObject, exception);
-            return transpiler;
+            return globalObject.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
         }
     }
 
-    if (object.get(globalThis, "sourcemap")) |flag| {
+    if (try object.get(globalThis, "sourcemap")) |flag| {
         if (flag.isBoolean() or flag.isUndefinedOrNull()) {
             if (flag.toBoolean()) {
                 transpiler.transform.source_map = .@"inline";
@@ -569,8 +552,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             if (options.SourceMapOption.Map.fromJS(globalObject, flag)) |source| {
                 transpiler.transform.source_map = source.toAPI();
             } else {
-                JSC.throwInvalidArguments("sourcemap must be one of \"inline\", \"linked\", \"external\", or \"none\"", .{}, globalObject, exception);
-                return transpiler;
+                return globalObject.throwInvalidArguments("sourcemap must be one of \"inline\", \"linked\", \"external\", or \"none\"", .{});
             }
         }
     }
@@ -580,28 +562,26 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     }
 
     var tree_shaking: ?bool = null;
-    if (object.getOptional(globalThis, "treeShaking", bool) catch return transpiler) |treeShaking| {
+    if (try object.getBooleanLoose(globalThis, "treeShaking")) |treeShaking| {
         tree_shaking = treeShaking;
     }
 
     var trim_unused_imports: ?bool = null;
-    if (object.getOptional(globalThis, "trimUnusedImports", bool) catch return transpiler) |trimUnusedImports| {
+    if (try object.getBooleanLoose(globalThis, "trimUnusedImports")) |trimUnusedImports| {
         trim_unused_imports = trimUnusedImports;
     }
 
-    if (object.getTruthy(globalThis, "exports")) |exports| {
+    if (try object.getTruthy(globalThis, "exports")) |exports| {
         if (!exports.isObject()) {
-            JSC.throwInvalidArguments("exports must be an object", .{}, globalObject, exception);
-            return transpiler;
+            return globalObject.throwInvalidArguments("exports must be an object", .{});
         }
 
         var replacements = Runtime.Features.ReplaceableExport.Map{};
         errdefer replacements.clearAndFree(bun.default_allocator);
 
-        if (exports.getTruthy(globalThis, "eliminate")) |eliminate| {
+        if (try exports.getTruthy(globalThis, "eliminate")) |eliminate| {
             if (!eliminate.jsType().isArray()) {
-                JSC.throwInvalidArguments("exports.eliminate must be an array", .{}, globalObject, exception);
-                return transpiler;
+                return globalObject.throwInvalidArguments("exports.eliminate must be an array", .{});
             }
 
             var total_name_buf_len: u32 = 0;
@@ -628,8 +608,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                         const str = value.getZigString(globalThis);
                         if (str.len == 0) continue;
                         const name = std.fmt.bufPrint(buf.items.ptr[buf.items.len..buf.capacity], "{}", .{str}) catch {
-                            JSC.throwInvalidArguments("Error reading exports.eliminate. TODO: utf-16", .{}, globalObject, exception);
-                            return transpiler;
+                            return globalObject.throwInvalidArguments("Error reading exports.eliminate. TODO: utf-16", .{});
                         };
                         buf.items.len += name.len;
                         if (name.len > 0) {
@@ -640,10 +619,9 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             }
         }
 
-        if (exports.getTruthy(globalThis, "replace")) |replace| {
+        if (try exports.getTruthy(globalThis, "replace")) |replace| {
             if (!replace.isObject()) {
-                JSC.throwInvalidArguments("replace must be an object", .{}, globalObject, exception);
-                return transpiler;
+                return globalObject.throwInvalidArguments("replace must be an object", .{});
             }
 
             var iter = JSC.JSPropertyIterator(.{
@@ -657,7 +635,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 
                 // We cannot set the exception before `try` because it could be
                 // a double free with the `errdefer`.
-                defer if (exception.* != null) {
+                defer if (globalThis.hasException()) {
                     iter.deinit();
                     for (replacements.keys()) |key| {
                         bun.default_allocator.free(@constCast(key));
@@ -667,14 +645,13 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 
                 while (iter.next()) |key_| {
                     const value = iter.value;
-                    if (value.isEmpty()) continue;
+                    if (value == .zero) continue;
 
                     const key = try key_.toOwnedSlice(bun.default_allocator);
 
                     if (!JSLexer.isIdentifier(key)) {
-                        JSC.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{key}, globalObject, exception);
                         bun.default_allocator.free(key);
-                        return transpiler;
+                        return globalObject.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{key});
                     }
 
                     const entry = replacements.getOrPutAssumeCapacity(key);
@@ -692,9 +669,8 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                             const replacement_name = slice.slice();
 
                             if (!JSLexer.isIdentifier(replacement_name)) {
-                                JSC.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{replacement_name}, globalObject, exception);
                                 slice.deinit();
-                                return transpiler;
+                                return globalObject.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{replacement_name});
                             }
 
                             entry.value_ptr.* = .{
@@ -707,8 +683,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                         }
                     }
 
-                    JSC.throwInvalidArguments("exports.replace values can only be string, null, undefined, number or boolean", .{}, globalObject, exception);
-                    return transpiler;
+                    return globalObject.throwInvalidArguments("exports.replace values can only be string, null, undefined, number or boolean", .{});
                 }
             }
         }
@@ -717,12 +692,11 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         transpiler.runtime.replace_exports = replacements;
     }
 
-    if (object.getTruthy(globalThis, "logLevel")) |logLevel| {
+    if (try object.getTruthy(globalThis, "logLevel")) |logLevel| {
         if (logger.Log.Level.Map.fromJS(globalObject, logLevel)) |level| {
             transpiler.log.level = level;
         } else {
-            JSC.throwInvalidArguments("logLevel must be one of \"verbose\", \"debug\", \"info\", \"warn\", or \"error\"", .{}, globalObject, exception);
-            return transpiler;
+            return globalObject.throwInvalidArguments("logLevel must be one of \"verbose\", \"debug\", \"info\", \"warn\", or \"error\"", .{});
         }
     }
 
@@ -732,44 +706,31 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     return transpiler;
 }
 
-pub fn constructor(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) ?*Transpiler {
+pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Transpiler {
     var temp = bun.ArenaAllocator.init(getAllocator(globalThis));
-    const arguments = callframe.arguments(3);
+    const arguments = callframe.arguments_old(3);
     var args = JSC.Node.ArgumentsSlice.init(
         globalThis.bunVM(),
         arguments.slice(),
     );
 
     defer temp.deinit();
-    var exception_ref = [_]JSC.C.JSValueRef{null};
-    const exception = &exception_ref[0];
     const transpiler_options: TranspilerOptions = if (arguments.len > 0)
-        transformOptionsFromJSC(globalThis, temp.allocator(), &args, exception) catch {
-            JSC.throwInvalidArguments("Failed to create transpiler", .{}, globalThis, exception);
-            return null;
-        }
+        try transformOptionsFromJSC(globalThis, temp.allocator(), &args)
     else
         TranspilerOptions{ .log = logger.Log.init(getAllocator(globalThis)) };
 
-    if (exception.* != null) {
-        globalThis.throwValue(JSC.JSValue.c(exception.*));
-        return null;
+    if (globalThis.hasException()) {
+        return error.JSError;
     }
 
     const allocator = getAllocator(globalThis);
 
     if ((transpiler_options.log.warnings + transpiler_options.log.errors) > 0) {
-        globalThis.throwValue(
-            transpiler_options.log.toJS(globalThis.ptr(), allocator, "Failed to create transpiler"),
-        );
-
-        return null;
+        return globalThis.throwValue2(transpiler_options.log.toJS(globalThis, allocator, "Failed to create transpiler"));
     }
 
-    var log = allocator.create(logger.Log) catch unreachable;
+    var log = try allocator.create(logger.Log);
     log.* = transpiler_options.log;
     var bundler = Bundler.Bundler.init(
         allocator,
@@ -778,30 +739,19 @@ pub fn constructor(
         JavaScript.VirtualMachine.get().bundler.env,
     ) catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            globalThis.throwValue(
-                log.toJS(globalThis.ptr(), allocator, "Failed to create transpiler"),
-            );
-
-            return null;
+            return globalThis.throwValue2(log.toJS(globalThis, allocator, "Failed to create transpiler"));
         }
 
-        globalThis.throwError(err, "Error creating transpiler");
-        return null;
+        return globalThis.throwError(err, "Error creating transpiler");
     };
     bundler.options.no_macros = transpiler_options.no_macros;
     bundler.configureLinkerWithAutoJSX(false);
     bundler.options.env.behavior = .disable;
     bundler.configureDefines() catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            globalThis.throwValue(
-                log.toJS(globalThis.ptr(), allocator, "Failed to load define"),
-            );
-
-            return null;
+            return globalThis.throwValue2(log.toJS(globalThis, allocator, "Failed to load define"));
         }
-
-        globalThis.throwError(err, "Failed to load define");
-        return null;
+        return globalThis.throwError(err, "Failed to load define");
     };
 
     if (transpiler_options.macro_map.count() > 0) {
@@ -828,7 +778,7 @@ pub fn constructor(
     bundler.options.hot_module_reloading = transpiler_options.runtime.hot_module_reloading;
     bundler.options.react_fast_refresh = false;
 
-    const transpiler = allocator.create(Transpiler) catch unreachable;
+    const transpiler = try allocator.create(Transpiler);
     transpiler.* = Transpiler{
         .transpiler_options = transpiler_options,
         .bundler = bundler,
@@ -886,9 +836,9 @@ pub fn scan(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
-    const arguments = callframe.arguments(3);
+    const arguments = callframe.arguments_old(3);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.deinit();
     const code_arg = args.next() orelse {
@@ -903,20 +853,17 @@ pub fn scan(
     defer code_holder.deinit();
     const code = code_holder.slice();
     args.eat();
-    var exception_ref = [_]JSC.C.JSValueRef{null};
-    const exception: JSC.C.ExceptionRef = &exception_ref;
 
     const loader: ?Loader = brk: {
         if (args.next()) |arg| {
             args.eat();
-            break :brk Loader.fromJS(globalThis, arg, exception);
+            break :brk try Loader.fromJS(globalThis, arg);
         }
 
         break :brk null;
     };
 
-    if (exception.* != null) {
-        globalThis.throwValue(JSC.JSValue.c(exception.*));
+    if (globalThis.hasException()) {
         return .zero;
     }
 
@@ -957,12 +904,7 @@ pub fn scan(
     const named_imports_value = namedImportsToJS(
         globalThis,
         parse_result.ast.import_records.slice(),
-        exception,
     );
-    if (exception.* != null) {
-        globalThis.throwValue(JSC.JSValue.c(exception.*));
-        return .zero;
-    }
 
     const named_exports_value = namedExportsToJS(
         globalThis,
@@ -971,51 +913,35 @@ pub fn scan(
     return JSC.JSValue.createObject2(globalThis, imports_label, exports_label, named_imports_value, named_exports_value);
 }
 
-// pub fn build(
-//     this: *Transpiler,
-//     ctx: js.JSContextRef,
-//     _: js.JSObjectRef,
-//     _: js.JSObjectRef,
-//     arguments: []const js.JSValueRef,
-//     exception: js.ExceptionRef,
-// ) JSC.C.JSObjectRef {}
-
 pub fn transform(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
-    var exception_ref = [_]JSC.C.JSValueRef{null};
-    const exception: JSC.C.ExceptionRef = &exception_ref;
-    const arguments = callframe.arguments(3);
+    const arguments = callframe.arguments_old(3);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.arena.deinit();
     const code_arg = args.next() orelse {
         globalThis.throwInvalidArgumentType("transform", "code", "string or Uint8Array");
-        return .zero;
+        return error.JSError;
     };
 
-    var code = JSC.Node.StringOrBuffer.fromJSWithEncodingMaybeAsync(globalThis, bun.default_allocator, code_arg, .utf8, true) orelse {
+    var code = try JSC.Node.StringOrBuffer.fromJSWithEncodingMaybeAsync(globalThis, bun.default_allocator, code_arg, .utf8, true) orelse {
         globalThis.throwInvalidArgumentType("transform", "code", "string or Uint8Array");
-        return .zero;
+        return error.JSError;
     };
+    errdefer code.deinit();
 
     args.eat();
     const loader: ?Loader = brk: {
         if (args.next()) |arg| {
             args.eat();
-            break :brk Loader.fromJS(globalThis, arg, exception);
+            break :brk try Loader.fromJS(globalThis, arg);
         }
 
         break :brk null;
     };
-
-    if (exception.* != null) {
-        code.deinit();
-        globalThis.throwValue(JSC.JSValue.c(exception.*));
-        return .zero;
-    }
 
     if (code == .buffer) {
         code_arg.protect();
@@ -1030,7 +956,7 @@ pub fn transform(
             code_arg.unprotect();
         }
         globalThis.throwOutOfMemory();
-        return .zero;
+        return error.JSError;
     };
     task.schedule();
     return task.promise.value();
@@ -1040,11 +966,9 @@ pub fn transformSync(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
-    var exception_value = [_]JSC.C.JSValueRef{null};
-    const exception: JSC.C.ExceptionRef = &exception_value;
-    const arguments = callframe.arguments(3);
+    const arguments = callframe.arguments_old(3);
 
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.arena.deinit();
@@ -1070,7 +994,7 @@ pub fn transformSync(
         if (args.next()) |arg| {
             args.eat();
             if (arg.isNumber() or arg.isString()) {
-                break :brk Loader.fromJS(globalThis, arg, exception);
+                break :brk try Loader.fromJS(globalThis, arg);
             }
 
             if (arg.isObject()) {
@@ -1090,19 +1014,14 @@ pub fn transformSync(
             return .zero;
         }
     }
-    if (!js_ctx_value.isEmpty()) {
+    if (js_ctx_value != .zero) {
         js_ctx_value.ensureStillAlive();
     }
 
     defer {
-        if (!js_ctx_value.isEmpty()) {
+        if (js_ctx_value != .zero) {
             js_ctx_value.ensureStillAlive();
         }
-    }
-
-    if (exception.* != null) {
-        globalThis.throwValue(JSC.JSValue.c(exception.*));
-        return .zero;
     }
 
     JSAst.Stmt.Data.Store.reset();
@@ -1161,8 +1080,7 @@ pub fn transformSync(
     buffer_writer.reset();
     var printer = JSPrinter.BufferPrinter.init(buffer_writer);
     _ = this.bundler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii) catch |err| {
-        globalThis.throwError(err, "Failed to print code");
-        return .zero;
+        return globalThis.throwError(err, "Failed to print code");
     };
 
     // TODO: benchmark if pooling this way is faster or moving is faster
@@ -1201,7 +1119,6 @@ const ImportRecord = @import("../../import_record.zig").ImportRecord;
 fn namedImportsToJS(
     global: *JSGlobalObject,
     import_records: []const ImportRecord,
-    _: JSC.C.ExceptionRef,
 ) JSC.JSValue {
     const path_label = JSC.ZigString.static("path");
     const kind_label = JSC.ZigString.static("kind");
@@ -1221,14 +1138,8 @@ fn namedImportsToJS(
     return array;
 }
 
-pub fn scanImports(
-    this: *Transpiler,
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) JSC.JSValue {
-    const arguments = callframe.arguments(2);
-    var exception_val = [_]JSC.C.JSValueRef{null};
-    const exception: JSC.C.ExceptionRef = &exception_val;
+pub fn scanImports(this: *Transpiler, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const arguments = callframe.arguments_old(2);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.deinit();
 
@@ -1238,12 +1149,9 @@ pub fn scanImports(
     };
 
     const code_holder = JSC.Node.StringOrBuffer.fromJS(globalThis, args.arena.allocator(), code_arg) orelse {
-        if (exception.* == null) {
+        if (!globalThis.hasException()) {
             globalThis.throwInvalidArgumentType("scanImports", "code", "string or Uint8Array");
-        } else {
-            globalThis.throwValue(JSC.JSValue.c(exception.*));
         }
-
         return .zero;
     };
     args.eat();
@@ -1252,20 +1160,14 @@ pub fn scanImports(
 
     var loader: Loader = this.transpiler_options.default_loader;
     if (args.next()) |arg| {
-        if (Loader.fromJS(globalThis, arg, exception)) |_loader| {
+        if (try Loader.fromJS(globalThis, arg)) |_loader| {
             loader = _loader;
         }
         args.eat();
     }
 
     if (!loader.isJavaScriptLike()) {
-        globalThis.throwInvalidArguments("Only JavaScript-like files support this fast path", .{});
-        return .zero;
-    }
-
-    if (exception.* != null) {
-        globalThis.throwValue(JSC.JSValue.c(exception.*));
-        return .zero;
+        return globalThis.throwInvalidArguments("Only JavaScript-like files support this fast path", .{});
     }
 
     var arena = Mimalloc.Arena.init() catch unreachable;
@@ -1315,8 +1217,7 @@ pub fn scanImports(
             return .zero;
         }
 
-        globalThis.throwError(err, "Failed to scan imports");
-        return .zero;
+        return globalThis.throwError(err, "Failed to scan imports");
     };
 
     defer this.scan_pass_result.reset();
@@ -1329,11 +1230,6 @@ pub fn scanImports(
     const named_imports_value = namedImportsToJS(
         globalThis,
         this.scan_pass_result.import_records.items,
-        exception,
     );
-    if (exception.* != null) {
-        globalThis.throwValue(JSC.JSValue.c(exception.*));
-        return .zero;
-    }
     return named_imports_value;
 }

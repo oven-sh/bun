@@ -194,7 +194,6 @@ pub const RunCommand = struct {
                     delimiter = 0;
                 },
 
-                // do we need to escape?
                 ' ' => {
                     delimiter = ' ';
                 },
@@ -235,24 +234,6 @@ pub const RunCommand = struct {
                     }
 
                     delimiter = 0;
-                },
-                // TODO: handle escape sequences properly
-                // https://github.com/oven-sh/bun/issues/53
-                '\\' => {
-                    delimiter = 0;
-
-                    if (entry_i + 1 < script.len) {
-                        switch (script[entry_i + 1]) {
-                            '"', '\'' => {
-                                entry_i += 1;
-                                continue;
-                            },
-                            '\\' => {
-                                entry_i += 1;
-                            },
-                            else => {},
-                        }
-                    }
                 },
                 else => {
                     delimiter = 0;
@@ -832,20 +813,12 @@ pub const RunCommand = struct {
 
         const root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
             if (!log_errors) return error.CouldntReadCurrentDirectory;
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
+            ctx.log.print(Output.errorWriter()) catch {};
             Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> loading directory {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = this_bundler.fs.top_level_dir } });
             Output.flush();
             return err;
         } orelse {
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
+            ctx.log.print(Output.errorWriter()) catch {};
             Output.prettyErrorln("error loading current directory", .{});
             Output.flush();
             return error.CouldntReadCurrentDirectory;
@@ -1296,7 +1269,7 @@ pub const RunCommand = struct {
             Run.boot(ctx, ".") catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
-                ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+                ctx.log.print(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     script_name_to_search,
@@ -1391,7 +1364,7 @@ pub const RunCommand = struct {
                     Run.boot(ctx, out_path) catch |err| {
                         bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
-                        ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+                        ctx.log.print(Output.errorWriter()) catch {};
 
                         Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                             std.fs.path.basename(file_path),
@@ -1488,7 +1461,7 @@ pub const RunCommand = struct {
             Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
-                ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+                ctx.log.print(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     std.fs.path.basename(script_name_to_search),
@@ -1514,7 +1487,7 @@ pub const RunCommand = struct {
             const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
 
             Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false) catch |err| {
-                ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+                ctx.log.print(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     std.fs.path.basename(script_name_to_search),
@@ -1631,7 +1604,7 @@ pub const RunCommand = struct {
         };
 
         Run.boot(ctx, normalized_filename) catch |err| {
-            ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+            ctx.log.print(Output.errorWriter()) catch {};
 
             Output.err(err, "Failed to run script \"<b>{s}<r>\"", .{std.fs.path.basename(normalized_filename)});
             Global.exit(1);
@@ -1704,7 +1677,7 @@ pub const BunXFastPath = struct {
             wpath,
         ) catch return;
         Run.boot(ctx, utf8) catch |err| {
-            ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+            ctx.log.print(Output.errorWriter()) catch {};
             Output.err(err, "Failed to run bin \"<b>{s}<r>\"", .{std.fs.path.basename(utf8)});
             Global.exit(1);
         };

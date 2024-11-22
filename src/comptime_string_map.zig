@@ -173,7 +173,8 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                 }
             }
 
-            const str = bun.String.tryFromJS(input, globalThis) orelse return null;
+            const str = bun.String.fromJS(input, globalThis);
+            bun.assert(str.tag != .Dead);
             defer str.deref();
             return getWithEql(str, bun.String.eqlComptime);
         }
@@ -186,7 +187,8 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                 }
             }
 
-            const str = bun.String.tryFromJS(input, globalThis) orelse return null;
+            const str = bun.String.fromJS(input, globalThis);
+            bun.assert(str.tag != .Dead);
             defer str.deref();
             return str.inMapCaseInsensitive(@This());
         }

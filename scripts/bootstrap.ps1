@@ -9,15 +9,15 @@
 # increment the version comment to indicate that a new image should be built.
 # Otherwise, the existing image will be retroactively updated.
 
-$ErrorActionPreference = "Stop"
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-
 param (
   [Parameter(Mandatory = $false)]
   [switch]$CI = $false,
   [Parameter(Mandatory = $false)]
   [switch]$Optimize = $CI
 )
+
+$ErrorActionPreference = "Stop"
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 function Execute-Command {
   $command = $args -join ' '

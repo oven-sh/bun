@@ -1622,10 +1622,10 @@ pub const ThreadSafeFunction = struct {
         }
 
         if (this.isClosing()) {
-            if (this.thread_count.load(.acquire) == 0) {
+            if (this.thread_count.load(.acquire) <= 0) {
                 return .invalid_arg;
             }
-            _ = this.thread_count.fetchSub(1, .monotonic);
+            _ = this.release(.release, true);
             return .closing;
         }
 
@@ -1681,9 +1681,9 @@ pub const ThreadSafeFunction = struct {
         return .ok;
     }
 
-    pub fn release(this: *ThreadSafeFunction, mode: napi_threadsafe_function_release_mode) napi_status {
-        this.lock.lock();
-        defer this.lock.unlock();
+    pub fn release(this: *ThreadSafeFunction, mode: napi_threadsafe_function_release_mode, already_locked: bool) napi_status {
+        if (!already_locked) this.lock.lock();
+        defer if (!already_locked) this.lock.unlock();
 
         if (this.thread_count.load(.monotonic) < 0) {
             return .invalid_arg;
@@ -1772,7 +1772,7 @@ pub export fn napi_acquire_threadsafe_function(func: napi_threadsafe_function) n
 }
 pub export fn napi_release_threadsafe_function(func: napi_threadsafe_function, mode: napi_threadsafe_function_release_mode) napi_status {
     log("napi_release_threadsafe_function", .{});
-    return func.release(mode);
+    return func.release(mode, false);
 }
 pub export fn napi_unref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status {
     log("napi_unref_threadsafe_function", .{});

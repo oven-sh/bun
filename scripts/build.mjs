@@ -3,6 +3,7 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync, readFileSync, mkdirSync, cpSync, chmodSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { isCI, printEnvironment } from "./utils.mjs";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
 const generateFlags = [
@@ -35,6 +36,10 @@ async function build(args) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
     return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args]);
+  }
+
+  if (isCI) {
+    printEnvironment();
   }
 
   const env = {

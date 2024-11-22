@@ -663,8 +663,8 @@ export const google = {
    * @param {Record<string, string | undefined>} [options]
    * @returns {string[]}
    */
-  getFilters(options) {
-    const filter = Object.entries(options || {})
+  getFilters(options = {}) {
+    const filter = Object.entries(options)
       .filter(([, value]) => value !== undefined)
       .map(([key, value]) => [value.includes("*") ? `${key}~${value}` : `${key}=${value}`])
       .join(" AND ");
@@ -678,7 +678,33 @@ export const google = {
   getFlags(options) {
     return Object.entries(options)
       .filter(([, value]) => value !== undefined)
-      .flatMap(([key, value]) => (typeof value === "boolean" ? `--${key}` : `--${key}=${value}`));
+      .flatMap(([key, value]) => {
+        if (typeof value === "boolean") {
+          return value ? [`--${key}`] : [];
+        }
+        return [`--${key}=${value}`];
+      });
+  },
+
+  /**
+   * @param {Record<string, string | boolean | undefined>} options
+   * @returns {string}
+   * @link https://cloud.google.com/sdk/gcloud/reference/topic/escaping
+   */
+  getMetadata(options) {
+    const delimiter = Math.random().toString(36).substring(2, 15);
+    const entries = Object.entries(options)
+      .map(([key, value]) => `${key}=${value}`)
+      .join(delimiter);
+    return `^${delimiter}^${entries}`;
+  },
+
+  /**
+   * @param {string} name
+   * @returns {string}
+   */
+  getLabel(name) {
+    return name.replace(/[^a-z0-9_-]/g, "-").toLowerCase();
   },
 
   /**
@@ -743,39 +769,34 @@ export const google = {
    * @returns {Promise<GoogleInstance>}
    * @link https://cloud.google.com/sdk/gcloud/reference/compute/instances/create
    */
-  async createInstance(options = {}) {
-    const { name, ...otherOptions } = options;
+  async createInstance(options) {
+    const { name, ...otherOptions } = options || {};
     const flags = this.getFlags(otherOptions);
     const instanceId = name || "i-" + Math.random().toString(36).substring(2, 15);
-    return this.spawn($`compute instances create ${instanceId} ${flags}`);
+    const [instance] = await this.spawn($`compute instances create ${instanceId} ${flags}`);
+    return instance;
   },
 
   /**
    * @param {string} instanceId
-   * @param {string} [zoneId]
+   * @param {string} zoneId
    * @returns {Promise<void>}
    * @link https://cloud.google.com/sdk/gcloud/reference/compute/instances/stop
    */
   async stopInstance(instanceId, zoneId) {
-    if (zoneId) {
-      await this.spawn($`compute instances stop ${instanceId} --zone=${zoneId}`);
-    } else {
-      await this.spawn($`compute instances stop ${instanceId}`);
-    }
+    await this.spawn($`compute instances stop ${instanceId} --zone=${zoneId}`);
   },
 
   /**
    * @param {string} instanceId
-   * @param {string} [zoneId]
+   * @param {string} zoneId
    * @returns {Promise<void>}
    * @link https://cloud.google.com/sdk/gcloud/reference/compute/instances/delete
    */
   async deleteInstance(instanceId, zoneId) {
-    if (zoneId) {
-      await this.spawn($`compute instances delete ${instanceId} --delete-disks=all --zone=${zoneId}`);
-    } else {
-      await this.spawn($`compute instances delete ${instanceId} --delete-disks=all`);
-    }
+    await this.spawn($`compute instances delete ${instanceId} --delete-disks=all --zone=${zoneId}`, {
+      throwOnError: error => !/not found/i.test(inspect(error)),
+    });
   },
 
   /**
@@ -820,9 +841,11 @@ export const google = {
    * @returns {Promise<Machine>}
    */
   async createMachine(options) {
-    const { os, arch, distro, instanceType } = options;
+    const { os, arch, distro, instanceType, tags, preemptible, detached } = options;
     const image = await google.getMachineImage(options);
+
     const username = getUsername(distro || os);
+    const userData = getUserData({ ...options, username });
 
     /** @type {Record<string, string>} */
     let metadata;
@@ -830,26 +853,33 @@ export const google = {
       metadata = {
         "sysprep-specialize-script-cmd":
           "googet -noconfirm=true install google-compute-engine-ssh,enable-windows-ssh=TRUE",
-        "windows-startup-script-ps1": getUserData(options),
+        "windows-startup-script-ps1": userData,
       };
     } else {
       metadata = {
-        "startup-script": getUserData(options),
+        "user-data": userData,
       };
     }
 
     const instance = await google.createInstance({
-      ["zone"]: "us-central1-a",
-      ["image"]: image.selfLink,
-      ["machine-type"]: instanceType || (arch === "aarch64" ? "t2a-standard-2" : "t2d-standard-2"),
-      ["boot-disk-auto-delete"]: true,
-      ["boot-disk-size"]: `${getDiskSize(options)}GB`,
-      ["metadata"]: Object.entries(metadata)
-        .map(([key, value]) => `${key}=${value}`)
+      "zone": "us-central1-a",
+      "image": image.selfLink,
+      "machine-type": instanceType || (arch === "aarch64" ? "t2a-standard-2" : "t2d-standard-2"),
+      "boot-disk-auto-delete": true,
+      "boot-disk-size": `${getDiskSize(options)}GB`,
+      "metadata": this.getMetadata(metadata),
+      "labels": Object.entries(tags || {})
+        .filter(([, value]) => value !== undefined)
+        .map(([key, value]) => `${this.getLabel(key)}=${value}`)
         .join(","),
+      "provisioning-model": preemptible ? "SPOT" : "STANDARD",
+      "instance-termination-action": preemptible || !detached ? "DELETE" : undefined,
+      "no-restart-on-failure": true,
+      "threads-per-core": 1,
+      "max-run-duration": detached ? undefined : "6h",
     });
 
-    const { id: instanceId, zone: zoneId } = instance;
+    const { id: instanceId, zone: zoneId, machineType, name } = instance;
 
     const connect = () => {
       const { networkInterfaces } = instance;
@@ -861,7 +891,7 @@ export const google = {
           };
         }
       }
-      throw new Error(`Failed to find public IP for instance: ${instance.name}`);
+      throw new Error(`Failed to find public IP for instance: ${name}`);
     };
 
     const spawn = async (command, options) => {
@@ -889,23 +919,28 @@ export const google = {
       console.log(stopResult);
       const image = await this.createImage({
         ["source-disk"]: instanceId,
+        ["zone"]: zoneId,
         ["name"]: name || `${instanceId}-snapshot-${Date.now()}`,
       });
       console.log(image);
       return;
     };
 
+    let terminated = false;
+
     const terminate = async () => {
-      const deleteResult = await google.deleteInstance(instanceId, zoneId);
-      console.log(deleteResult);
+      if (!terminated) {
+        terminated = true;
+        await google.deleteInstance(instanceId, zoneId);
+      }
     };
 
     return {
       cloud: "google",
       id: instanceId,
-      name: instance.name,
-      instanceType: instance.machineType,
-      region: zoneId,
+      name,
+      instanceType: machineType.split("/").pop(),
+      region: zoneId.split("/").pop(),
       spawn,
       spawnSafe,
       attach,
@@ -1440,6 +1475,8 @@ function getCloud(name) {
   switch (name) {
     case "aws":
       return aws;
+    case "google":
+      return google;
   }
   throw new Error(`Unsupported cloud: ${name}`);
 }
@@ -1480,7 +1517,7 @@ function getCloud(name) {
  * @property {number} [cpuCount]
  * @property {number} [memoryGb]
  * @property {number} [diskSizeGb]
- * @property {boolean} [persistent]
+ * @property {boolean} [preemptible]
  * @property {boolean} [detached]
  * @property {Record<string, unknown>} [tags]
  * @property {boolean} [bootstrap]
@@ -1538,6 +1575,14 @@ async function main() {
     sshKeys.push(...orgSshKeys.flat());
   }
 
+  const tags = {
+    "robobun": "true",
+    "robobun2": "true",
+    "buildkite:token": args["buildkite-token"],
+    "tailscale:authkey": args["tailscale-authkey"],
+    ...Object.fromEntries(args["tag"]?.map(tag => tag.split("=")) ?? []),
+  };
+
   /** @type {MachineOptions} */
   const options = {
     cloud: getCloud(args["cloud"]),
@@ -1548,17 +1593,11 @@ async function main() {
     instanceType: args["instance-type"],
     imageId: args["image-id"],
     imageName: args["image-name"],
-    tags: {
-      "robobun": "true",
-      "robobun2": "true",
-      "buildkite:token": args["buildkite-token"],
-      "tailscale:authkey": args["tailscale-authkey"],
-      ...Object.fromEntries(args["tag"]?.map(tag => tag.split("=")) ?? []),
-    },
+    tags,
     cpuCount: parseInt(args["cpu-count"]) || undefined,
     memoryGb: parseInt(args["memory-gb"]) || undefined,
     diskSizeGb: parseInt(args["disk-size-gb"]) || undefined,
-    persistent: !!args["persistent"],
+    preemptible: !!args["preemptible"],
     detached: !!args["detached"],
     bootstrap: args["no-bootstrap"] !== true,
     ci: !!args["ci"],
@@ -1598,13 +1637,15 @@ async function main() {
     });
 
     const result = await cloud.createMachine(options);
-    const { id, imageId, instanceType, region } = result;
+    const { id, name, imageId, instanceType, region, publicIp } = result;
     console.log("Created machine:");
     console.table({
       "ID": id,
+      "Name": name || "N/A",
       "Image ID": imageId,
       "Instance Type": instanceType,
       "Region": region,
+      "IP Address": publicIp || "TBD",
     });
 
     return result;

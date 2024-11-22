@@ -286,7 +286,7 @@ function getPipeline(options) {
       abi,
       distro,
       release,
-      "image-name": image,
+      "image-name": "windows-x64-2022-build-6684",
       "instance-type": instanceType,
     };
   };
@@ -421,7 +421,7 @@ function getPipeline(options) {
       },
       retry: getRetry(),
       command: command.filter(Boolean).join(" "),
-      timeout_in_minutes: os === "windows" ? 120 : 60,
+      timeout_in_minutes: os === "windows" ? 3 * 60 : 60,
     };
   };
 
@@ -848,6 +848,9 @@ async function main() {
       buildRelease = true;
     }
   }
+
+  buildImages = false;
+  publishImages = false;
 
   console.log("Generating pipeline...");
   const pipeline = getPipeline({

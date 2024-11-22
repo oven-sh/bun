@@ -1493,10 +1493,6 @@ pub const ThreadSafeFunction = struct {
         }
     };
 
-    pub fn broadcast(this: *ThreadSafeFunction) void {
-        this.blocking_condvar.signal();
-    }
-
     // This has two states:
     // 1. We need to run potentially multiple tasks.
     // 2. We need to finalize the ThreadSafeFunction.
@@ -1560,7 +1556,7 @@ pub const ThreadSafeFunction = struct {
                 // ThreadSafeFunction.
                 if (this.thread_count.load(.monotonic) == 0) {
                     if (this.queue.max_queue_size > 0) {
-                        this.blocking_condvar.broadcast();
+                        this.blocking_condvar.signal();
                     }
                     this.maybeQueueFinalizer();
                 }
@@ -1699,7 +1695,7 @@ pub const ThreadSafeFunction = struct {
                 if (mode == .abort) {
                     this.closing.store(.closing, .monotonic);
                     if (this.queue.max_queue_size > 0) {
-                        this.blocking_condvar.broadcast();
+                        this.blocking_condvar.signal();
                     }
                 }
                 this.scheduleDispatch();

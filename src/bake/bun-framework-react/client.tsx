@@ -109,6 +109,17 @@ const firstPageId = Date.now();
       element: result,
     });
   });
+
+  if (document.startViewTransition as unknown) {
+    // View transitions are used by navigations to ensure that the page rerender
+    // all happens in one operation. Additionally, developers may animate
+    // different elements. The default fade animation is disabled so that the
+    // out-of-the-box experience feels like there are no view transitions.
+    // This is done client-side because a React error will unmount all elements.
+    const sheet = new CSSStyleSheet();
+    document.adoptedStyleSheets.push(sheet);
+    sheet.replaceSync(':where(*)::view-transition-group(root){animation:none}');
+  }
 }
 
 let lastNavigationId = 0;
@@ -130,11 +141,7 @@ async function goto(href: string, cacheId?: number) {
   const cached = cacheId && cachedPages.get(cacheId);
   if (cached) {
     currentCssList = cached.css;
-    // The first page gets its CSS indexed into the map lazily.
-    // In practice, this always resolves instantly.
-    if (firstPageId === cacheId) {
-      await ensureCssIsReady(currentCssList);
-    }
+    await ensureCssIsReady(currentCssList);
     setPage?.(rscPayload = cached.element);
     console.log("cached", cached);
     if (olderController?.signal.aborted === false) 
@@ -173,32 +180,21 @@ async function goto(href: string, cacheId?: number) {
 
   // If the navigation id has changed, this fetch is no longer relevant.
   if (thisNavigationId !== lastNavigationId) return;
-  const stream = response.body!;
+  let stream = response.body!;
 
-  // Read the css metadata at the start. Using BYOB reader allows reading an
-  // exact amount of bytes, which allows passing the stream to react without
-  // creating a wrapped stream.
-  const reader = stream.getReader({ mode: "byob" });
-  const header = (await reader.read(new Uint32Array(1))).value;
-  if (!header) {
-    throw new Error("Failed to read the CSS metadata");
-  }
-  if (header[0] > 0) {
-    const cssRaw = (await reader.read(new Uint8Array(header[0]))).value;
-    if (!cssRaw) {
-      throw new Error("Failed to read the CSS metadata");
-    }
-    currentCssList = td.decode(cssRaw).split("\n");
-    const p = ensureCssIsReady(currentCssList);
-    if (p) await p;
-  } else {
-    currentCssList = [];
-  }
-  reader.releaseLock();
+  // Read the css metadata at the start before handing it to react.
+  stream = await readCssMetadata(stream);
   if (thisNavigationId !== lastNavigationId) return;
+
+  const cssWaitPromise = ensureCssIsReady(currentCssList!);
 
   const p = await createFromReadableStream(stream);
   if (thisNavigationId !== lastNavigationId) return;
+
+  if (cssWaitPromise) {
+    await cssWaitPromise;
+    if (thisNavigationId !== lastNavigationId) return;
+  }
 
   // Save this promise so that pressing the back button in the browser navigates
   // to the same instance of the old page, instead of re-fetching it.
@@ -259,6 +255,7 @@ function ensureCssIsReady(cssList: string[]) {
       wait.push(promise);
     }
   }
+  if (wait.length === 0) return;
   return Promise.all(wait);
 }
 
@@ -360,4 +357,123 @@ if (import.meta.env.DEV) {
       return currentCssList;
     }
   };
+}
+
+async function readCssMetadata(stream: ReadableStream<Uint8Array>) {
+  let reader;
+  try {
+    // Using BYOB reader allows reading an exact amount of bytes, which allows
+    // passing the stream to react without creating a wrapped stream.
+    reader = stream.getReader({ mode: "byob" });
+  } catch (e) {
+    return readCssMetadataFallback(stream);
+  }
+
+  const header = (await reader.read(new Uint32Array(1))).value;
+  if (!header) {
+    if (import.meta.env.DEV) {
+      throw new Error("Did not read all bytes! This is a bug in bun-framework-react");
+    } else {
+      location.reload();
+    }
+  }
+  if (header[0] > 0) {
+    const cssRaw = (await reader.read(new Uint8Array(header[0]))).value;
+    if (!cssRaw) {
+      if (import.meta.env.DEV) {
+        throw new Error("Did not read all bytes! This is a bug in bun-framework-react");
+      } else {
+        location.reload();
+      }
+    }
+    currentCssList = td.decode(cssRaw).split("\n");
+  } else {
+    currentCssList = [];
+  }
+  reader.releaseLock();
+  return stream;
+}
+
+// Safari does not support BYOB reader. When this is resolved, this fallback
+// should be kept for a few years since Safari on iOS is versioned to the OS.
+// https://bugs.webkit.org/show_bug.cgi?id=283065
+async function readCssMetadataFallback(stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  const readChunk = async size => {
+    while (totalBytes < size) {
+      const { value, done } = await reader.read();
+      if (!done) {
+        chunks.push(value);
+        totalBytes += value.byteLength;
+      } else if (totalBytes < size) {
+        if (import.meta.env.DEV) {
+          throw new Error("Not enough bytes, expected " + size + " but got " + totalBytes);
+        } else {
+          location.reload();
+        }
+      }
+    }
+    if (chunks.length === 1) {
+      const first = chunks[0];
+      if(first.byteLength >= size) {
+        chunks[0] = first.subarray(size);
+        totalBytes -= size;
+        return first.subarray(0, size);
+      } else {
+        chunks.length = 0;
+        totalBytes = 0;
+        return first;
+      }
+    } else {
+      const buffer = new Uint8Array(size);
+      let i = 0;
+      let chunk;
+      let len;
+      while (size > 0) {
+        chunk = chunks.shift();
+        const { byteLength } = chunk;
+        len = Math.min(byteLength, size);
+        buffer.set(len === byteLength ? chunk : chunk.subarray(0, len), i);
+        i += len;
+        size -= len;
+      }
+      if (chunk.byteLength > len) {
+        chunks.unshift(chunk.subarray(len));
+      }
+      totalBytes -= size;
+      return buffer;
+    }
+  };
+  const header = new Uint32Array(await readChunk(4))[0]; 
+  console.log('h', header);
+  if (header === 0) {
+    currentCssList = [];
+  } else {
+    currentCssList = td.decode(await readChunk(header)).split("\n");
+  }
+  console.log('cc', currentCssList);
+  if (chunks.length === 0) {
+    return stream;
+  }
+  // New readable stream that includes the remaining data
+  return new ReadableStream({
+    async start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(chunk);
+      }
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(value);
+      }
+    },
+    cancel() {
+      reader.cancel();
+    }
+  });
 }

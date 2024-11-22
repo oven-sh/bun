@@ -25,14 +25,6 @@ function getPage(meta: Bake.RouteMetadata, styles: readonly string[]) {
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Bun + React Server Components</title>
-
-        {/*
-          * client.tsx uses view transitions to batch the DOM operations
-          * together to make page navigations smoother, but the default fade
-          * animation is undesirable as a default.
-          */}
-        <style>{'::view-transition-group(root){animation:none}'}</style>
-
         {styles.map(url => (
           // `data-bake-ssr` is used on the client-side to construct the styles array.
           <link key={url} rel="stylesheet" href={url} data-bake-ssr />

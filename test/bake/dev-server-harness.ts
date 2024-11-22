@@ -123,6 +123,15 @@ class DevFetchPromise extends Promise<Response> {
       expect(text).toBe(result.trim());
     });
   }
+  expectNoSpaces(result: string) {
+    expect(result).not.toMatch(/\s/);
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      const res = await this;
+      expect(res.ok).toBe(true);
+      const text = (await res.text()).replace(/\s/g, "");
+      expect(text).toBe(result.trim());
+    });
+  }
   async text() {
     return (await this).text();
   }

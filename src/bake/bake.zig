@@ -382,7 +382,7 @@ pub const Framework = struct {
                 const layouts = try fsr_opts.getBooleanStrict(global, "layouts") orelse false;
 
                 var style = try FrameworkRouter.Style.fromJS(try fsr_opts.get(global, "style") orelse {
-                    return global.throwInvalidArguments2("'fileSystemRouterTypes[{d}]' is missing 'style'", .{i});
+                    return global.throwInvalidArguments("'fileSystemRouterTypes[{d}]' is missing 'style'", .{i});
                 }, global);
                 errdefer style.deinit();
 
@@ -400,10 +400,10 @@ pub const Framework = struct {
                         while (it_2.next()) |array_item| : (i_2 += 1) {
                             const slice = refs.track(try array_item.toSlice2(global, arena));
                             if (bun.strings.eqlComptime(slice, "*"))
-                                return global.throwInvalidArguments2("'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array.", .{});
+                                return global.throwInvalidArguments("'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array.", .{});
 
                             if (slice.len == 0) {
-                                return global.throwInvalidArguments2("'extensions' cannot include \"\" as an extension.", .{});
+                                return global.throwInvalidArguments("'extensions' cannot include \"\" as an extension.", .{});
                             }
 
                             extensions[i_2] = if (slice[0] == '.')

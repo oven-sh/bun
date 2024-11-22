@@ -416,7 +416,7 @@ pub const Style = union(enum) {
             return .{ .javascript_defined = JSC.Strong.create(value, global) };
         }
 
-        return global.throwInvalidArguments2(error_message, .{});
+        return global.throwInvalidArguments(error_message, .{});
     }
 
     pub fn deinit(style: *Style) void {

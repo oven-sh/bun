@@ -380,6 +380,7 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
           }
           try {
             contents = JSON.stringify(result.exports);
+            loader = 'json';
           } catch (e) {
             throw new TypeError('When using Bun.build, onLoad plugin must return a JSON-serializable object: ' + e) ;
           }

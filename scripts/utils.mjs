@@ -2135,6 +2135,11 @@ export function printEnvironment() {
     console.log("Working Directory:", process.cwd());
     console.log("Temporary Directory:", tmpdir());
   });
+  if (isLinux) {
+    startGroup("ulimit -a", () => {
+      spawnSync(["ulimit", "-a"], { stdio: ["ignore", "inherit", "inherit"] });
+    });
+  }
 
   if (isCI) {
     startGroup("Environment", () => {

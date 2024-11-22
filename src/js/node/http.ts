@@ -1666,6 +1666,7 @@ class ClientRequest extends OutgoingMessage {
         })
         .finally(() => {
           this.#fetchRequest = null;
+          this.#res.destroy();
           this[kClearTimeout]();
           emitCloseNT(this);
         });

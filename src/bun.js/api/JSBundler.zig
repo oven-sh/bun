@@ -935,7 +935,7 @@ pub const JSBundler = struct {
             return plugin;
         }
 
-        extern fn JSBundlerPlugin__tombestone(*Plugin) void;
+        extern fn JSBundlerPlugin__tombstone(*Plugin) void;
 
         extern fn JSBundlerPlugin__anyMatches(
             *Plugin,
@@ -1060,7 +1060,7 @@ pub const JSBundler = struct {
 
         pub fn deinit(this: *Plugin) void {
             JSC.markBinding(@src());
-            JSBundlerPlugin__tombestone(this);
+            JSBundlerPlugin__tombstone(this);
             JSC.JSValue.fromCell(this).unprotect();
         }
 

@@ -18,6 +18,7 @@ pub const UserOptions = struct {
     root: []const u8,
     framework: Framework,
     bundler_options: SplitBundlerOptions,
+    bundler_plugin: ?*Plugin,
 
     pub fn deinit(options: *UserOptions) void {
         options.arena.deinit();
@@ -116,7 +117,7 @@ const BuildConfigSubset = struct {
 pub const Framework = struct {
     is_built_in_react: bool,
     file_system_router_types: []FileSystemRouterType,
-    // static_routers: [][]const u8,
+    static_routers: [][]const u8,
     server_components: ?ServerComponents = null,
     react_fast_refresh: ?ReactFastRefresh = null,
     built_in_modules: bun.StringArrayHashMapUnmanaged(BuiltInModule) = .{},
@@ -124,7 +125,7 @@ pub const Framework = struct {
     /// Bun provides built-in support for using React as a framework.
     /// Depends on externally provided React
     ///
-    /// $ bun i react@experimental react-dom@experimental react-server-dom-webpack@experimental react-refresh@experimental
+    /// $ bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun
     pub fn react(arena: std.mem.Allocator) !Framework {
         return .{
             .is_built_in_react = true,
@@ -146,7 +147,7 @@ pub const Framework = struct {
                     .allow_layouts = true,
                 },
             }),
-            // .static_routers = try arena.dupe([]const u8, &.{"public"}),
+            .static_routers = try arena.dupe([]const u8, &.{"public"}),
             .built_in_modules = bun.StringArrayHashMapUnmanaged(BuiltInModule).init(arena, &.{
                 "bun-framework-react/client.tsx",
                 "bun-framework-react/server.tsx",
@@ -716,8 +717,9 @@ const Allocator = std.mem.Allocator;
 
 const bun = @import("root").bun;
 const Environment = bun.Environment;
-const ZigString = bun.JSC.ZigString;
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const validators = bun.JSC.Node.validators;
+const ZigString = JSC.ZigString;
+const Plugin = JSC.API.JSBundler.Plugin;

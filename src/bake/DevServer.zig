@@ -509,6 +509,8 @@ pub fn attachRoutes(dev: *DevServer, server: anytype) !void {
 }
 
 pub fn deinit(dev: *DevServer) void {
+    // TODO: Currently deinit is not implemented, as it was assumed to be alive for
+    // the remainder of this process' lifespan. This isn't always true.
     const allocator = dev.allocator;
     if (dev.has_pre_crash_handler)
         bun.crash_handler.removePreCrashHandler(dev);
@@ -1421,6 +1423,7 @@ pub fn finalizeBundle(
     }
     try w.writeInt(i32, -1, .little);
 
+    // Send CSS mutations
     const css_chunks = result.cssChunks();
     if (will_hear_hot_update) {
         if (dev.client_graph.current_chunk_len > 0 or css_chunks.len > 0) {
@@ -1597,6 +1600,9 @@ pub fn handleParseTaskFailure(
     if (err == error.FileNotFound) {
         // Special-case files being deleted. Note that if a
         // file never existed, resolution would fail first.
+        //
+        // TODO: this should walk up the graph one level, and queue all of these
+        // files for re-bundling if they aren't already in the BundleV2 graph.
         switch (graph) {
             .server, .ssr => try dev.server_graph.onFileDeleted(abs_path, log),
             .client => try dev.client_graph.onFileDeleted(abs_path, log),

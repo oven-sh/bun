@@ -124,6 +124,22 @@ append_to_file() {
 	done
 }
 
+append_to_file_sudo() {
+	file="$1"
+	content="$2"
+
+	if ! [ -f "$file" ]; then
+		execute_sudo mkdir -p "$(dirname "$file")"
+		execute_sudo touch "$file"
+	fi
+
+	echo "$content" | while read -r line; do
+		if ! grep -q "$line" "$file"; then
+			echo "$line" | execute_sudo tee "$file" > /dev/null
+		fi
+	done
+}
+
 append_to_profile() {
 	content="$1"
 	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
@@ -968,8 +984,8 @@ install_chrome_dependencies() {
 }
 
 raise_file_descriptor_limit() {
-	append_to_file /etc/security/limits.conf '*  soft  nofile  262144'
-	append_to_file /etc/security/limits.conf '*  hard  nofile  262144'
+	append_to_file_sudo /etc/security/limits.conf '*  soft  nofile  262144'
+	append_to_file_sudo /etc/security/limits.conf '*  hard  nofile  262144'
 }
 
 main() {

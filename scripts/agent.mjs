@@ -20,6 +20,7 @@ import {
   getEnv,
   writeFile,
   spawnSafe,
+  spawn,
 } from "./utils.mjs";
 import { parseArgs } from "node:util";
 
@@ -42,6 +43,12 @@ async function doBuildkiteAgent(action) {
     logsPath = "/var/log/buildkite-agent";
     agentLogPath = join(logsPath, "buildkite-agent.log");
     pidPath = join(logsPath, "buildkite-agent.pid");
+  }
+
+  // On EC2 Windows, the metadata service needs to be manually added to the route table,
+  // otherwise it won't be able to resolve the metadata endpoint.
+  if (isWindows) {
+    await spawn(["route", "add", "169.254.169.254", "mask", "255.255.255.255", "0.0.0.0", "IF", "9", "metric", "1"]);
   }
 
   async function install() {
@@ -130,7 +137,7 @@ async function doBuildkiteAgent(action) {
     let shell;
     if (isWindows) {
       const pwsh = which(["pwsh", "powershell"], { required: true });
-      shell = `${pwsh} -Command`;
+      shell = `"${pwsh}" -Command`;
     } else {
       const sh = which(["bash", "sh"], { required: true });
       shell = `${sh} -c`;

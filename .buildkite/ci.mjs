@@ -615,9 +615,9 @@ function getPipeline(options) {
     // { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20", tier: 1 },
     // { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20", tier: 1 },
     // { os: "windows", arch: "x64", release: "2019", tier: 1 },
-    { os: "windows", arch: "x64", release: "2025", tier: 1 },
-    { os: "windows", arch: "x64", release: "2022", tier: 2 },
-    { os: "windows", arch: "x64", release: "2019", tier: 3 },
+    { os: "windows", arch: "x64", release: "2025", baseline: true, tier: 1 },
+    { os: "windows", arch: "x64", release: "2022", baseline: true, tier: 2 },
+    { os: "windows", arch: "x64", release: "2019", baseline: true, tier: 3 },
   ];
 
   const imagePlatforms = new Map(

@@ -700,14 +700,31 @@ export const google = {
    */
   async listImages(options) {
     const filters = google.getFilters(options);
-    const images = await google.spawn($`compute images list ${filters} --preview-images`);
+    const images = await google.spawn($`compute images list ${filters} --preview-images --show-deprecated`);
     return images.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
+  },
+
+  /**
+   * @param {Record<string, string | boolean | undefined>} options
+   * @returns {Promise<GoogleImage>}
+   * @link https://cloud.google.com/sdk/gcloud/reference/compute/images/create
+   */
+  async createImage(options) {
+    const { name, ...otherOptions } = options;
+    const flags = this.getFlags(otherOptions);
+    const imageId = name || "i-" + Math.random().toString(36).substring(2, 15);
+    return this.spawn($`compute images create ${imageId} ${flags}`);
   },
 
   /**
    * @typedef {Object} GoogleInstance
    * @property {string} id
    * @property {string} name
+   * @property {"RUNNING"} status
+   * @property {string} machineType
+   * @property {string} zone
+   * @property {{}[]} networkInterfaces
+   * @property {string} selfLink
    * @property {string} creationTimestamp
    */
 
@@ -716,28 +733,86 @@ export const google = {
    * @returns {Promise<GoogleInstance[]>}
    */
   async listInstances(options) {
-    const filters = google.getFilters(options);
-    const instances = await google.spawn($`compute instances list ${filters}`);
-    return instances.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
-  },
-
-  async createInstances(options = {}) {
-    const flags = Object.entries(options).flatMap(([key, value]) =>
-      typeof value === "boolean" ? `--${key}` : `--${key}=${value}`,
-    );
-    const randomId = "i-" + Math.random().toString(36).substring(2, 15);
-    const { stdout } = await spawnSafe(["compute", "instances", "create", randomId, ...flags]);
-    const instances = JSON.parse(stdout);
+    const filters = this.getFilters(options);
+    const instances = await this.spawn($`compute instances list ${filters}`);
     return instances.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
   },
 
   /**
+   * @param {Record<string, string | boolean | undefined>} options
+   * @returns {Promise<GoogleInstance>}
+   * @link https://cloud.google.com/sdk/gcloud/reference/compute/instances/create
+   */
+  async createInstance(options = {}) {
+    const { name, ...otherOptions } = options;
+    const flags = this.getFlags(otherOptions);
+    const instanceId = name || "i-" + Math.random().toString(36).substring(2, 15);
+    return this.spawn($`compute instances create ${instanceId} ${flags}`);
+  },
+
+  /**
    * @param {string} instanceId
+   * @param {string} [zoneId]
+   * @returns {Promise<void>}
+   * @link https://cloud.google.com/sdk/gcloud/reference/compute/instances/stop
+   */
+  async stopInstance(instanceId, zoneId) {
+    if (zoneId) {
+      await this.spawn($`compute instances stop ${instanceId} --zone=${zoneId}`);
+    } else {
+      await this.spawn($`compute instances stop ${instanceId}`);
+    }
+  },
+
+  /**
+   * @param {string} instanceId
+   * @param {string} [zoneId]
    * @returns {Promise<void>}
    * @link https://cloud.google.com/sdk/gcloud/reference/compute/instances/delete
    */
-  async deleteInstance(instanceId) {
-    await spawnSafe(`compute instances delete ${instanceId} --delete-disks=all`);
+  async deleteInstance(instanceId, zoneId) {
+    if (zoneId) {
+      await this.spawn($`compute instances delete ${instanceId} --delete-disks=all --zone=${zoneId}`);
+    } else {
+      await this.spawn($`compute instances delete ${instanceId} --delete-disks=all`);
+    }
+  },
+
+  /**
+   * @param {MachineOptions} options
+   * @returns {Promise<GoogleImage>}
+   */
+  async getMachineImage(options) {
+    const { os, arch, distro, distroVersion } = options;
+    const architecture = arch === "aarch64" ? "ARM64" : "X86_64";
+
+    /** @type {string | undefined} */
+    let family;
+    if (os === "linux") {
+      if (!distro || distro === "debian") {
+        family = `debian-${distroVersion || "*"}`;
+      } else if (distro === "ubuntu") {
+        family = `ubuntu-${distroVersion?.replace(/\./g, "") || "*"}`;
+      } else if (distro === "fedora") {
+        family = `fedora-coreos-${distroVersion || "*"}`;
+      } else if (distro === "rhel") {
+        family = `rhel-${distroVersion || "*"}`;
+      }
+    } else if (os === "windows" && arch === "x64") {
+      if (!distro || distro === "server") {
+        family = `windows-${distroVersion || "*"}`;
+      }
+    }
+
+    if (family) {
+      const images = await this.listImages({ family, architecture });
+      if (images.length) {
+        const [image] = images;
+        return image;
+      }
+    }
+
+    throw new Error(`Unsupported platform: ${inspect(options)}`);
   },
 
   /**
@@ -745,62 +820,97 @@ export const google = {
    * @returns {Promise<Machine>}
    */
   async createMachine(options) {
-    const image = await google.getImage(options);
-    const { id: imageId, username } = image;
+    const { os, arch, distro, instanceType } = options;
+    const image = await google.getMachineImage(options);
+    const username = getUsername(distro || os);
 
-    const authorizedKeys = await getAuthorizedKeys();
-    const sshKeys = authorizedKeys?.map(key => `${username}:${key}`).join("\n") ?? "";
-
-    const { os, ["instance-type"]: type } = platform;
-    const instanceType = type || "e2-standard-4";
-
-    let metadata = `ssh-keys=${sshKeys}`;
+    /** @type {Record<string, string>} */
+    let metadata;
     if (os === "windows") {
-      metadata += `,sysprep-specialize-script-cmd=googet -noconfirm=true install google-compute-engine-ssh,enable-windows-ssh=TRUE`;
+      metadata = {
+        "sysprep-specialize-script-cmd":
+          "googet -noconfirm=true install google-compute-engine-ssh,enable-windows-ssh=TRUE",
+        "windows-startup-script-ps1": getUserData(options),
+      };
+    } else {
+      metadata = {
+        "startup-script": getUserData(options),
+      };
     }
 
-    const [{ id, networkInterfaces }] = await google.createInstances({
+    const instance = await google.createInstance({
       ["zone"]: "us-central1-a",
-      ["image"]: imageId,
-      ["machine-type"]: instanceType,
+      ["image"]: image.selfLink,
+      ["machine-type"]: instanceType || (arch === "aarch64" ? "t2a-standard-2" : "t2d-standard-2"),
       ["boot-disk-auto-delete"]: true,
-      // ["boot-disk-size"]: "10GB",
-      // ["boot-disk-type"]: "pd-standard",
-      ["metadata"]: metadata,
+      ["boot-disk-size"]: `${getDiskSize(options)}GB`,
+      ["metadata"]: Object.entries(metadata)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(","),
     });
 
-    const publicIp = () => {
+    const { id: instanceId, zone: zoneId } = instance;
+
+    const connect = () => {
+      const { networkInterfaces } = instance;
       for (const { accessConfigs } of networkInterfaces) {
         for (const { natIP } of accessConfigs) {
-          return natIP;
+          return {
+            hostname: natIP,
+            username,
+          };
         }
       }
-      throw new Error(`Failed to find public IP for instance: ${id}`);
+      throw new Error(`Failed to find public IP for instance: ${instance.name}`);
     };
 
-    const spawn = command => {
-      const hostname = publicIp();
-      return spawnSsh({ hostname, username, command });
+    const spawn = async (command, options) => {
+      const connectOptions = connect();
+      return spawnSsh({ ...connectOptions, command }, options);
     };
 
-    const spawnSafe = command => {
-      const hostname = publicIp();
-      return spawnSshSafe({ hostname, username, command });
+    const spawnSafe = async (command, options) => {
+      const connectOptions = connect();
+      return spawnSshSafe({ ...connectOptions, command }, options);
     };
 
     const attach = async () => {
-      const hostname = publicIp();
-      await spawnSshSafe({ hostname, username });
+      const connectOptions = connect();
+      await spawnSshSafe({ ...connectOptions });
+    };
+
+    const upload = async (source, destination) => {
+      const connectOptions = connect();
+      await spawnScp({ ...connectOptions, source, destination });
+    };
+
+    const snapshot = async name => {
+      const stopResult = await this.stopInstance(instanceId, zoneId);
+      console.log(stopResult);
+      const image = await this.createImage({
+        ["source-disk"]: instanceId,
+        ["name"]: name || `${instanceId}-snapshot-${Date.now()}`,
+      });
+      console.log(image);
+      return;
     };
 
     const terminate = async () => {
-      await google.deleteInstance(id);
+      const deleteResult = await google.deleteInstance(instanceId, zoneId);
+      console.log(deleteResult);
     };
 
     return {
+      cloud: "google",
+      id: instanceId,
+      name: instance.name,
+      instanceType: instance.machineType,
+      region: zoneId,
       spawn,
       spawnSafe,
       attach,
+      upload,
+      snapshot,
       close: terminate,
       [Symbol.asyncDispose]: terminate,
     };
@@ -856,6 +966,10 @@ export const google = {
  * @property {string} [password]
  */
 
+/**
+ * @param {CloudInit} cloudInit
+ * @returns {string}
+ */
 function getUserData(cloudInit) {
   const { os } = cloudInit;
   if (os === "windows") {
@@ -988,13 +1102,7 @@ function getWindowsStartupScript(cloudInit) {
       Restart-Service sshd
     }
 
-    function Fix-Metadata-Service {
-      route delete 169.254.169.254
-      route add 169.254.169.254 mask 255.255.255.255 0.0.0.0 IF 9 metric 1
-    }
-
     Install-Ssh
-    Fix-Metadata-Service
   `;
 }
 
@@ -1366,6 +1474,7 @@ function getCloud(name) {
  * @property {Arch} arch
  * @property {string} distro
  * @property {string} [distroVersion]
+ * @property {string} [instanceType]
  * @property {string} [imageId]
  * @property {string} [imageName]
  * @property {number} [cpuCount]

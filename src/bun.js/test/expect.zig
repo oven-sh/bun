@@ -516,8 +516,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toBe() takes 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toBe() takes 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -583,8 +582,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toHaveLength() takes 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toHaveLength() takes 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -658,8 +656,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toBeOneOf() takes 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toBeOneOf() takes 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -744,8 +741,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toContain() takes 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toContain() takes 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -842,8 +838,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toContainKey() takes 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toContainKey() takes 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -855,8 +850,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         if (!value.isObject()) {
-            globalThis.throwInvalidArguments("Expected value must be an object\nReceived: {}", .{value.toFmt(&formatter)});
-            return .zero;
+            return globalThis.throwInvalidArguments("Expected value must be an object\nReceived: {}", .{value.toFmt(&formatter)});
         }
 
         var pass = value.hasOwnPropertyValue(globalThis, expected);
@@ -898,8 +892,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toContainKeys() takes 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toContainKeys() takes 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -971,8 +964,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalObject.throwInvalidArguments("toContainAllKeys() takes 1 argument", .{});
-            return .zero;
+            return globalObject.throwInvalidArguments("toContainAllKeys() takes 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -1039,8 +1031,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toContainAnyKeys() takes 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toContainAnyKeys() takes 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -1107,8 +1098,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalObject.throwInvalidArguments("toContainValue() takes 1 argument", .{});
-            return .zero;
+            return globalObject.throwInvalidArguments("toContainValue() takes 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -1164,8 +1154,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalObject.throwInvalidArguments("toContainValues() takes 1 argument", .{});
-            return .zero;
+            return globalObject.throwInvalidArguments("toContainValues() takes 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -1231,8 +1220,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalObject.throwInvalidArguments("toContainAllValues() takes 1 argument", .{});
-            return .zero;
+            return globalObject.throwInvalidArguments("toContainAllValues() takes 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -1304,8 +1292,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalObject.throwInvalidArguments("toContainAnyValues() takes 1 argument", .{});
-            return .zero;
+            return globalObject.throwInvalidArguments("toContainAnyValues() takes 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -1371,8 +1358,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toContainEqual() takes 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toContainEqual() takes 1 argument", .{});
         }
 
         active_test_expectation_counter.actual += 1;
@@ -1662,8 +1648,7 @@ pub const Expect = struct {
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toEqual() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toEqual() requires 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -1704,8 +1689,7 @@ pub const Expect = struct {
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toStrictEqual() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toStrictEqual() requires 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -1741,8 +1725,7 @@ pub const Expect = struct {
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toHaveProperty() requires at least 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toHaveProperty() requires at least 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -1890,8 +1873,7 @@ pub const Expect = struct {
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toBeGreaterThan() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toBeGreaterThan() requires 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -1953,8 +1935,7 @@ pub const Expect = struct {
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toBeGreaterThanOrEqual() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toBeGreaterThanOrEqual() requires 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -2016,8 +1997,7 @@ pub const Expect = struct {
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toBeLessThan() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toBeLessThan() requires 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -2079,8 +2059,7 @@ pub const Expect = struct {
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toBeLessThanOrEqual() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toBeLessThanOrEqual() requires 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -2142,8 +2121,7 @@ pub const Expect = struct {
         const arguments = thisArguments.ptr[0..thisArguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toBeCloseTo() requires at least 1 argument. Expected value must be a number", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toBeCloseTo() requires at least 1 argument. Expected value must be a number", .{});
         }
 
         const expected_ = arguments[0];
@@ -2726,7 +2704,7 @@ pub const Expect = struct {
                 error.FailedToOpenSnapshotFile => globalThis.throw("Failed to open snapshot file for test file: {s}", .{test_file_path}),
                 error.FailedToMakeSnapshotDirectory => globalThis.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
                 error.FailedToWriteSnapshotFile => globalThis.throw("Failed write to snapshot file: {s}", .{test_file_path}),
-                error.ParseError => globalThis.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
+                error.SyntaxError, error.ParseError => globalThis.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
                 else => globalThis.throw("Failed to snapshot value: {any}", .{value.toFmt(&formatter)}),
             }
             return .zero;
@@ -2930,8 +2908,7 @@ pub const Expect = struct {
         const arguments = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toBeArrayOfSize() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toBeArrayOfSize() requires 1 argument", .{});
         }
 
         const value: JSValue = try this.getValue(globalThis, thisValue, "toBeArrayOfSize", "");
@@ -3001,8 +2978,7 @@ pub const Expect = struct {
         const arguments = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toBeTypeOf() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toBeTypeOf() requires 1 argument", .{});
         }
 
         const value: JSValue = try this.getValue(globalThis, thisValue, "toBeTypeOf", "");
@@ -3011,8 +2987,7 @@ pub const Expect = struct {
         expected.ensureStillAlive();
 
         if (!expected.isString()) {
-            globalThis.throwInvalidArguments("toBeTypeOf() requires a string argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toBeTypeOf() requires a string argument", .{});
         }
 
         const expected_type = expected.toBunString(globalThis);
@@ -3020,8 +2995,7 @@ pub const Expect = struct {
         incrementExpectCallCounter();
 
         const typeof = expected_type.inMap(JSTypeOfMap) orelse {
-            globalThis.throwInvalidArguments("toBeTypeOf() requires a valid type string argument ('function', 'object', 'bigint', 'boolean', 'number', 'string', 'symbol', 'undefined')", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toBeTypeOf() requires a valid type string argument ('function', 'object', 'bigint', 'boolean', 'number', 'string', 'symbol', 'undefined')", .{});
         };
 
         const not = this.flags.not;
@@ -3312,8 +3286,7 @@ pub const Expect = struct {
         const arguments = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toBeWithin() requires 2 arguments", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toBeWithin() requires 2 arguments", .{});
         }
 
         const value: JSValue = try this.getValue(globalThis, thisValue, "toBeWithin", "<green>start<r><d>, <r><green>end<r>");
@@ -3375,8 +3348,7 @@ pub const Expect = struct {
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toEqualIgnoringWhitespace() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toEqualIgnoringWhitespace() requires 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -3593,8 +3565,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toInclude() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toInclude() requires 1 argument", .{});
         }
 
         const expected = arguments[0];
@@ -3650,8 +3621,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 2) {
-            globalThis.throwInvalidArguments("toIncludeRepeated() requires 2 arguments", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toIncludeRepeated() requires 2 arguments", .{});
         }
 
         incrementExpectCallCounter();
@@ -3761,8 +3731,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toSatisfy() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toSatisfy() requires 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -3819,8 +3788,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toStartWith() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toStartWith() requires 1 argument", .{});
         }
 
         const expected = arguments[0];
@@ -3876,8 +3844,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toEndWith() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toEndWith() requires 1 argument", .{});
         }
 
         const expected = arguments[0];
@@ -3933,8 +3900,7 @@ pub const Expect = struct {
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toBeInstanceOf() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toBeInstanceOf() requires 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -3982,8 +3948,7 @@ pub const Expect = struct {
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toMatch() requires 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toMatch() requires 1 argument", .{});
         }
 
         incrementExpectCallCounter();
@@ -4088,8 +4053,7 @@ pub const Expect = struct {
         }
 
         if (arguments.len < 1 or !arguments[0].isUInt32AsAnyInt()) {
-            globalThis.throwInvalidArguments("toHaveBeenCalledTimes() requires 1 non-negative integer argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toHaveBeenCalledTimes() requires 1 non-negative integer argument", .{});
         }
 
         const times = arguments[0].coerce(i32, globalThis);
@@ -4320,8 +4284,7 @@ pub const Expect = struct {
 
         const nthCallNum = if (arguments.len > 0 and arguments[0].isUInt32AsAnyInt()) arguments[0].coerce(i32, globalThis) else 0;
         if (nthCallNum < 1) {
-            globalThis.throwInvalidArguments("toHaveBeenNthCalledWith() requires a positive integer argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("toHaveBeenNthCalledWith() requires a positive integer argument", .{});
         }
 
         const totalCalls = calls.getLength(globalThis);
@@ -4399,8 +4362,7 @@ pub const Expect = struct {
 
         const return_count: i32 = if (known_index) |index| index else brk: {
             if (arguments.len < 1 or !arguments[0].isUInt32AsAnyInt()) {
-                globalThis.throwInvalidArguments(name ++ "() requires 1 non-negative integer argument", .{});
-                return .zero;
+                return globalThis.throwInvalidArguments(name ++ "() requires 1 non-negative integer argument", .{});
             }
 
             break :brk arguments[0].coerce(i32, globalThis);
@@ -4545,8 +4507,7 @@ pub const Expect = struct {
 
                 if (!matcher_fn.jsType().isFunction()) {
                     const type_name = if (matcher_fn.isNull()) bun.String.static("null") else bun.String.init(matcher_fn.jsTypeString(globalThis).getZigString(globalThis));
-                    globalThis.throwInvalidArguments("expect.extend: `{s}` is not a valid matcher. Must be a function, is \"{s}\"", .{ matcher_name, type_name });
-                    return .zero;
+                    return globalThis.throwInvalidArguments("expect.extend: `{s}` is not a valid matcher. Must be a function, is \"{s}\"", .{ matcher_name, type_name });
                 }
 
                 // Mutate the Expect/ExpectStatic prototypes/constructor with new instances of JSCustomExpectMatcherFunction.
@@ -4819,8 +4780,7 @@ pub const Expect = struct {
         const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("expect.assertions() takes 1 argument", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("expect.assertions() takes 1 argument", .{});
         }
 
         const expected: JSValue = arguments[0];

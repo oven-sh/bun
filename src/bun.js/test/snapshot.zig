@@ -84,27 +84,29 @@ pub const Snapshots = struct {
         var pretty_value = try MutableString.init(this.allocator, 0);
         try value.jestSnapshotPrettyFormat(&pretty_value, globalObject);
 
-        const serialized_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + pretty_value.list.items.len + "`;\n".len;
-        try this.file_buf.ensureUnusedCapacity(serialized_length);
-        this.file_buf.appendSliceAssumeCapacity("\nexports[`");
-        this.file_buf.appendSliceAssumeCapacity(name_with_counter);
-        this.file_buf.appendSliceAssumeCapacity("`] = `");
-        this.file_buf.appendSliceAssumeCapacity(pretty_value.list.items);
-        this.file_buf.appendSliceAssumeCapacity("`;\n");
+        const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + pretty_value.list.items.len + "`;\n".len;
+        try this.file_buf.ensureUnusedCapacity(estimated_length + 10);
+        try this.file_buf.writer().print(
+            "\nexports[`{}`] = `{}`;\n",
+            .{
+                strings.formatEscapes(name_with_counter, .{ .quote_char = '`' }),
+                strings.formatEscapes(pretty_value.list.items, .{ .quote_char = '`' }),
+            },
+        );
 
         this.added += 1;
         try this.values.put(name_hash, pretty_value.toOwnedSlice());
         return null;
     }
 
-    pub fn parseFile(this: *Snapshots) !void {
+    pub fn parseFile(this: *Snapshots, file: File) !void {
         if (this.file_buf.items.len == 0) return;
 
         const vm = VirtualMachine.get();
         const opts = js_parser.Parser.Options.init(vm.bundler.options.jsx, .js);
         var temp_log = logger.Log.init(this.allocator);
 
-        const test_file = Jest.runner.?.files.get(this._current_file.?.id);
+        const test_file = Jest.runner.?.files.get(file.id);
         const test_filename = test_file.source.path.name.filename;
         const dir_path = test_file.source.path.name.dirWithTrailingSlash();
 
@@ -245,6 +247,7 @@ pub const Snapshots = struct {
                 .id = file_id,
                 .file = fd.asFile(),
             };
+            errdefer file.file.close();
 
             if (this.update_snapshots) {
                 try this.file_buf.appendSlice(file_header);
@@ -263,8 +266,8 @@ pub const Snapshots = struct {
                 }
             }
 
+            try this.parseFile(file);
             this._current_file = file;
-            try this.parseFile();
         }
 
         return JSC.Maybe(void).success;

@@ -202,7 +202,7 @@ pub const ServerEntryPoint = struct {
                     \\
                 ,
                     .{
-                        strings.QuoteEscapeFormat{ .data = path_to_use },
+                        strings.formatEscapes(path_to_use, .{ .quote_char = '\'' }),
                     },
                 );
             }
@@ -225,7 +225,7 @@ pub const ServerEntryPoint = struct {
                 \\
             ,
                 .{
-                    strings.QuoteEscapeFormat{ .data = path_to_use },
+                    strings.formatEscapes(path_to_use, .{ .quote_char = '"' }),
                 },
             );
         };

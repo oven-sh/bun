@@ -37,5 +37,5 @@ if (module !== require.main) {
 
   // Run tests in a worker thread in a child process.
   // TODO(@heimskr): get finalizers in workers working again
-  // checkOutput(requireAs(__filename, ['--expose-gc'], runOptions, 'worker'));
+  checkOutput(requireAs(__filename, ['--expose-gc'], runOptions, 'worker'));
 }

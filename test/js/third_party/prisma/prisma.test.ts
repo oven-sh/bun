@@ -22,23 +22,28 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
 ["sqlite", "postgres" /*"mssql", "mongodb"*/].forEach(async type => {
   let Client: typeof PrismaClient;
 
-  if (!isCI) {
-    if (type !== "sqlite" && !process.env[`TLS_${type.toUpperCase()}_DATABASE_URL`]) {
-      throw new Error(`$TLS_${type.toUpperCase()}_DATABASE_URL is not set`);
-    }
-  } else if (type !== "sqlite") {
-    process.env[`TLS_${type.toUpperCase()}_DATABASE_URL`] ||= getSecret(`TLS_${type.toUpperCase()}_DATABASE_URL`);
-  }
+  const env_name = `TLS_${type.toUpperCase()}_DATABASE_URL`;
+  let database_url = type !== "sqlite" ? getSecret(env_name) : null;
 
-  Client = await generateClient(type);
+  Client = await generateClient(type, {
+    [env_name]: (database_url || "") as string,
+  });
 
   async function test(label: string, callback: Function, timeout: number = 5000) {
-    const it = Client ? bunTest : bunTest.skip;
+    const it = Client && (database_url || type === "sqlite") ? bunTest : bunTest.skip;
 
     it(
       label,
       async () => {
-        const prisma = new Client();
+        const prisma = database_url
+          ? new Client({
+              datasources: {
+                db: {
+                  url: database_url as string,
+                },
+              },
+            })
+          : new Client();
         const currentTestId = test_id.next().value;
         await cleanTestId(prisma, currentTestId);
         try {

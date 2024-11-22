@@ -1283,11 +1283,11 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Rename {
             const old_path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("oldPath must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("oldPath must be a string or TypedArray", .{});
             };
 
             const new_path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("newPath must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("newPath must be a string or TypedArray", .{});
             };
 
             return Rename{ .old_path = old_path, .new_path = new_path };
@@ -1314,7 +1314,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Truncate {
             const path = try PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
 
             const len: JSC.WebCore.Blob.SizeType = brk: {
@@ -1356,17 +1356,17 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Writev {
             const fd_value = arguments.nextEat() orelse {
-                return ctx.throwInvalidArguments2("file descriptor is required", .{});
+                return ctx.throwInvalidArguments("file descriptor is required", .{});
             };
 
             const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
-                return ctx.throwInvalidArguments2("file descriptor must be a number", .{});
+                return ctx.throwInvalidArguments("file descriptor must be a number", .{});
             };
 
             const buffers = try JSC.Node.VectorArrayBuffer.fromJS(
                 ctx,
                 arguments.protectEatNext() orelse {
-                    return ctx.throwInvalidArguments2("Expected an ArrayBufferView[]", .{});
+                    return ctx.throwInvalidArguments("Expected an ArrayBufferView[]", .{});
                 },
                 arguments.arena.allocator(),
             );
@@ -1378,7 +1378,7 @@ pub const Arguments = struct {
                     if (pos_value.isNumber()) {
                         position = pos_value.to(u52);
                     } else {
-                        return ctx.throwInvalidArguments2("position must be a number", .{});
+                        return ctx.throwInvalidArguments("position must be a number", .{});
                     }
                 }
             }
@@ -1413,17 +1413,17 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Readv {
             const fd_value = arguments.nextEat() orelse {
-                return ctx.throwInvalidArguments2("file descriptor is required", .{});
+                return ctx.throwInvalidArguments("file descriptor is required", .{});
             };
 
             const fd = try JSC.Node.fileDescriptorFromJS(ctx, fd_value) orelse {
-                return ctx.throwInvalidArguments2("file descriptor must be a number", .{});
+                return ctx.throwInvalidArguments("file descriptor must be a number", .{});
             };
 
             const buffers = try JSC.Node.VectorArrayBuffer.fromJS(
                 ctx,
                 arguments.protectEatNext() orelse {
-                    return ctx.throwInvalidArguments2("Expected an ArrayBufferView[]", .{});
+                    return ctx.throwInvalidArguments("Expected an ArrayBufferView[]", .{});
                 },
                 arguments.arena.allocator(),
             );
@@ -1435,7 +1435,7 @@ pub const Arguments = struct {
                     if (pos_value.isNumber()) {
                         position = pos_value.to(u52);
                     } else {
-                        return ctx.throwInvalidArguments2("position must be a number", .{});
+                        return ctx.throwInvalidArguments("position must be a number", .{});
                     }
                 }
             }
@@ -1462,9 +1462,9 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!FTruncate {
             const fd = try JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("file descriptor is required", .{});
+                return ctx.throwInvalidArguments("file descriptor is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("file descriptor must be a number", .{});
+                return ctx.throwInvalidArguments("file descriptor must be a number", .{});
             };
 
             arguments.eat();
@@ -1502,13 +1502,13 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Chown {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
             errdefer path.deinit();
 
             const uid: uid_t = brk: {
                 const uid_value = arguments.next() orelse break :brk {
-                    return ctx.throwInvalidArguments2("uid is required", .{});
+                    return ctx.throwInvalidArguments("uid is required", .{});
                 };
 
                 arguments.eat();
@@ -1521,7 +1521,7 @@ pub const Arguments = struct {
 
             const gid: gid_t = brk: {
                 const gid_value = arguments.next() orelse break :brk {
-                    return ctx.throwInvalidArguments2("gid is required", .{});
+                    return ctx.throwInvalidArguments("gid is required", .{});
                 };
 
                 arguments.eat();
@@ -1547,14 +1547,14 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Fchown {
             const fd = try JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("file descriptor is required", .{});
+                return ctx.throwInvalidArguments("file descriptor is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("file descriptor must be a number", .{});
+                return ctx.throwInvalidArguments("file descriptor must be a number", .{});
             };
 
             const uid: uid_t = brk: {
                 const uid_value = arguments.next() orelse break :brk {
-                    return ctx.throwInvalidArguments2("uid is required", .{});
+                    return ctx.throwInvalidArguments("uid is required", .{});
                 };
 
                 arguments.eat();
@@ -1563,7 +1563,7 @@ pub const Arguments = struct {
 
             const gid: gid_t = brk: {
                 const gid_value = arguments.next() orelse break :brk {
-                    return ctx.throwInvalidArguments2("gid is required", .{});
+                    return ctx.throwInvalidArguments("gid is required", .{});
                 };
 
                 arguments.eat();
@@ -1595,22 +1595,22 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Lutimes {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
             errdefer path.deinit();
 
             const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("atime is required", .{});
+                return ctx.throwInvalidArguments("atime is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("atime must be a number or a Date", .{});
+                return ctx.throwInvalidArguments("atime must be a number or a Date", .{});
             };
 
             arguments.eat();
 
             const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("mtime is required", .{});
+                return ctx.throwInvalidArguments("mtime is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("mtime must be a number or a Date", .{});
+                return ctx.throwInvalidArguments("mtime must be a number or a Date", .{});
             };
 
             arguments.eat();
@@ -1637,14 +1637,14 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Chmod {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
             errdefer path.deinit();
 
             const mode: Mode = try JSC.Node.modeFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("mode is required", .{});
+                return ctx.throwInvalidArguments("mode is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("mode must be a string or integer", .{});
+                return ctx.throwInvalidArguments("mode must be a string or integer", .{});
             };
 
             arguments.eat();
@@ -1663,17 +1663,17 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!FChmod {
             const fd = try JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("file descriptor is required", .{});
+                return ctx.throwInvalidArguments("file descriptor is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("file descriptor must be a number", .{});
+                return ctx.throwInvalidArguments("file descriptor must be a number", .{});
             };
 
             arguments.eat();
 
             const mode: Mode = try JSC.Node.modeFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("mode is required", .{});
+                return ctx.throwInvalidArguments("mode is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("mode must be a string or integer", .{});
+                return ctx.throwInvalidArguments("mode must be a string or integer", .{});
             };
 
             arguments.eat();
@@ -1703,7 +1703,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Stat {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
             errdefer path.deinit();
 
@@ -1741,9 +1741,9 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Fstat {
             const fd = try JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("file descriptor is required", .{});
+                return ctx.throwInvalidArguments("file descriptor is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("file descriptor must be a number", .{});
+                return ctx.throwInvalidArguments("file descriptor must be a number", .{});
             };
 
             const big_int = brk: {
@@ -1787,11 +1787,11 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Link {
             const old_path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("oldPath must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("oldPath must be a string or TypedArray", .{});
             };
 
             const new_path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("newPath must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("newPath must be a string or TypedArray", .{});
             };
 
             return Link{ .old_path = old_path, .new_path = new_path };
@@ -1831,11 +1831,11 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Symlink {
             const old_path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("oldPath must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("oldPath must be a string or TypedArray", .{});
             };
 
             const new_path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("newPath must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("newPath must be a string or TypedArray", .{});
             };
 
             const link_type: LinkType = if (!Environment.isWindows)
@@ -1857,8 +1857,7 @@ pub const Arguments = struct {
                         if (str.eqlComptime("dir")) break :link_type .dir;
                         if (str.eqlComptime("file")) break :link_type .file;
                         if (str.eqlComptime("junction")) break :link_type .junction;
-                        ctx.throwInvalidArguments("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", .{str});
-                        return error.JSError;
+                        return ctx.throwInvalidArguments("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", .{str});
                     }
 
                     // not a string. fallthrough to auto detect.
@@ -1897,7 +1896,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Readlink {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
             errdefer path.deinit();
 
@@ -1939,7 +1938,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Realpath {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
             errdefer path.deinit();
 
@@ -1988,7 +1987,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Unlink {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
             errdefer path.deinit();
 
@@ -2023,7 +2022,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!RmDir {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
             errdefer path.deinit();
 
@@ -2079,7 +2078,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Mkdir {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
             errdefer path.deinit();
 
@@ -2128,7 +2127,7 @@ pub const Arguments = struct {
             const prefix_value = arguments.next() orelse return MkdirTemp{};
 
             const prefix = StringOrBuffer.fromJS(ctx, bun.default_allocator, prefix_value) orelse {
-                return ctx.throwInvalidArguments2("prefix must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("prefix must be a string or TypedArray", .{});
             };
             errdefer prefix.deinit();
 
@@ -2188,7 +2187,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Readdir {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
             errdefer path.deinit();
 
@@ -2239,9 +2238,9 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Close {
             const fd = try JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("file descriptor is required", .{});
+                return ctx.throwInvalidArguments("file descriptor is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("file descriptor must be a number", .{});
+                return ctx.throwInvalidArguments("file descriptor must be a number", .{});
             };
 
             return Close{ .fd = fd };
@@ -2267,7 +2266,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Open {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
             errdefer path.deinit();
 
@@ -2327,23 +2326,23 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Futimes {
             const fd = try JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("file descriptor is required", .{});
+                return ctx.throwInvalidArguments("file descriptor is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("file descriptor must be a number", .{});
+                return ctx.throwInvalidArguments("file descriptor must be a number", .{});
             };
             arguments.eat();
 
             const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("atime is required", .{});
+                return ctx.throwInvalidArguments("atime is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("atime must be a number or a Date", .{});
+                return ctx.throwInvalidArguments("atime must be a number or a Date", .{});
             };
             arguments.eat();
 
             const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("mtime is required", .{});
+                return ctx.throwInvalidArguments("mtime is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("mtime must be a number or a Date", .{});
+                return ctx.throwInvalidArguments("mtime must be a number or a Date", .{});
             };
             arguments.eat();
 
@@ -2402,15 +2401,15 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Write {
             const fd = try JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("file descriptor is required", .{});
+                return ctx.throwInvalidArguments("file descriptor is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("file descriptor must be a number", .{});
+                return ctx.throwInvalidArguments("file descriptor must be a number", .{});
             };
             arguments.eat();
 
             const buffer_value = arguments.next();
             const buffer = StringOrBuffer.fromJS(ctx, bun.default_allocator, buffer_value orelse {
-                return ctx.throwInvalidArguments2("data is required", .{});
+                return ctx.throwInvalidArguments("data is required", .{});
             }) orelse {
                 _ = ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
                 return error.JSError;
@@ -2497,15 +2496,15 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Read {
             const fd = try JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("file descriptor is required", .{});
+                return ctx.throwInvalidArguments("file descriptor is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("file descriptor must be a number", .{});
+                return ctx.throwInvalidArguments("file descriptor must be a number", .{});
             };
             arguments.eat();
 
             const buffer_value = arguments.next();
             const buffer = Buffer.fromJS(ctx, buffer_value orelse {
-                return ctx.throwInvalidArguments2("buffer is required", .{});
+                return ctx.throwInvalidArguments("buffer is required", .{});
             }) orelse {
                 _ = ctx.throwInvalidArgumentTypeValue("buffer", "TypedArray", buffer_value.?);
                 return error.JSError;
@@ -2524,8 +2523,7 @@ pub const Arguments = struct {
                     args.offset = current.to(u52);
 
                     if (arguments.remaining.len < 1) {
-                        ctx.throwInvalidArguments("length is required", .{});
-                        return error.JSError;
+                        return ctx.throwInvalidArguments("length is required", .{});
                     }
 
                     const arg_length = arguments.next().?;
@@ -2603,7 +2601,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!ReadFile {
             const path = try PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or a file descriptor", .{});
+                return ctx.throwInvalidArguments("path must be a string or a file descriptor", .{});
             };
             errdefer path.deinit();
 
@@ -2619,7 +2617,7 @@ pub const Arguments = struct {
 
                     if (try arg.getTruthy(ctx, "flag")) |flag_| {
                         flag = try FileSystemFlags.fromJS(ctx, flag_) orelse {
-                            return ctx.throwInvalidArguments2("Invalid flag", .{});
+                            return ctx.throwInvalidArguments("Invalid flag", .{});
                         };
                     }
                 }
@@ -2664,12 +2662,12 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!WriteFile {
             const path = try PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or a file descriptor", .{});
+                return ctx.throwInvalidArguments("path must be a string or a file descriptor", .{});
             };
             errdefer path.deinit();
 
             const data_value = arguments.nextEat() orelse {
-                return ctx.throwInvalidArguments2("data is required", .{});
+                return ctx.throwInvalidArguments("data is required", .{});
             };
 
             var encoding = Encoding.buffer;
@@ -2689,20 +2687,20 @@ pub const Arguments = struct {
 
                     if (try arg.getTruthy(ctx, "flag")) |flag_| {
                         flag = try FileSystemFlags.fromJS(ctx, flag_) orelse {
-                            return ctx.throwInvalidArguments2("Invalid flag", .{});
+                            return ctx.throwInvalidArguments("Invalid flag", .{});
                         };
                     }
 
                     if (try arg.getTruthy(ctx, "mode")) |mode_| {
                         mode = try JSC.Node.modeFromJS(ctx, mode_) orelse {
-                            return ctx.throwInvalidArguments2("Invalid mode", .{});
+                            return ctx.throwInvalidArguments("Invalid mode", .{});
                         };
                     }
                 }
             }
 
             const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, arguments.will_be_async) orelse {
-                return ctx.throwInvalidArguments2("data must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("data must be a string or TypedArray", .{});
             };
 
             // Note: Signal is not implemented
@@ -2732,7 +2730,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!OpenDir {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
             errdefer path.deinit();
 
@@ -2751,7 +2749,7 @@ pub const Arguments = struct {
                     if (try arg.get(ctx, "bufferSize")) |buffer_size_| {
                         buffer_size = buffer_size_.toInt32();
                         if (buffer_size < 0) {
-                            return ctx.throwInvalidArguments2("bufferSize must be > 0", .{});
+                            return ctx.throwInvalidArguments("bufferSize must be > 0", .{});
                         }
                     }
                 }
@@ -2811,7 +2809,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Access {
             const path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("path must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("path must be a string or TypedArray", .{});
             };
             errdefer path.deinit();
 
@@ -2821,7 +2819,7 @@ pub const Arguments = struct {
                 arguments.eat();
                 if (arg.isString()) {
                     mode = try FileSystemFlags.fromJS(ctx, arg) orelse {
-                        return ctx.throwInvalidArguments2("Invalid mode", .{});
+                        return ctx.throwInvalidArguments("Invalid mode", .{});
                     };
                 }
             }
@@ -2843,9 +2841,9 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!FdataSync {
             const fd = try JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("file descriptor is required", .{});
+                return ctx.throwInvalidArguments("file descriptor is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("file descriptor must be a number", .{});
+                return ctx.throwInvalidArguments("file descriptor must be a number", .{});
             };
             arguments.eat();
 
@@ -2875,12 +2873,12 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!CopyFile {
             const src = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("src must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("src must be a string or TypedArray", .{});
             };
             errdefer src.deinit();
 
             const dest = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("dest must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("dest must be a string or TypedArray", .{});
             };
             errdefer dest.deinit();
 
@@ -2922,12 +2920,12 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Cp {
             const src = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("src must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("src must be a string or TypedArray", .{});
             };
             errdefer src.deinit();
 
             const dest = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArguments2("dest must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("dest must be a string or TypedArray", .{});
             };
             errdefer dest.deinit();
 
@@ -2997,9 +2995,9 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Fsync {
             const fd = try JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                return ctx.throwInvalidArguments2("file descriptor is required", .{});
+                return ctx.throwInvalidArguments("file descriptor is required", .{});
             }) orelse {
-                return ctx.throwInvalidArguments2("file descriptor must be a number", .{});
+                return ctx.throwInvalidArguments("file descriptor must be a number", .{});
             };
             arguments.eat();
 

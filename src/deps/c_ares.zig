@@ -1558,17 +1558,13 @@ comptime {
     const Bun__canonicalizeIP = JSC.toJSHostFunction(Bun__canonicalizeIP_);
     @export(Bun__canonicalizeIP, .{ .name = "Bun__canonicalizeIP" });
 }
-pub fn Bun__canonicalizeIP_(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
 
     const arguments = callframe.arguments_old(1);
 
     if (arguments.len == 0) {
-        globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});
-        return .zero;
+        return globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});
     }
     // windows uses 65 bytes for ipv6 addresses and linux/macos uses 46
     const INET6_ADDRSTRLEN = if (comptime bun.Environment.isWindows) 65 else 46;
@@ -1608,8 +1604,8 @@ pub fn Bun__canonicalizeIP_(
         return JSC.ZigString.init(ip_addr[0..size]).toJS(globalThis);
     } else {
         if (!globalThis.hasException())
-            globalThis.throwInvalidArguments("address must be a string", .{});
-        return .zero;
+            return globalThis.throwInvalidArguments("address must be a string", .{});
+        return error.JSError;
     }
 }
 

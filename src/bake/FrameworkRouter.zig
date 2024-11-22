@@ -976,10 +976,10 @@ pub const JSFrameworkRouter = struct {
     pub fn constructor(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !*JSFrameworkRouter {
         const opts = callframe.argumentsAsArray(1)[0];
         if (!opts.isObject())
-            return global.throwInvalidArguments2("FrameworkRouter needs an object as it's first argument", .{});
+            return global.throwInvalidArguments("FrameworkRouter needs an object as it's first argument", .{});
 
         const root = try opts.getOptional(global, "root", bun.String.Slice) orelse
-            return global.throwInvalidArguments2("Missing options.root", .{});
+            return global.throwInvalidArguments("Missing options.root", .{});
         defer root.deinit();
 
         const style = try validators.validateStringEnum(
@@ -1113,7 +1113,7 @@ pub const JSFrameworkRouter = struct {
         const alloc = arena.allocator();
 
         if (frame.argumentsCount() < 2)
-            return global.throwInvalidArguments2("parseRoutePattern takes two arguments", .{});
+            return global.throwInvalidArguments("parseRoutePattern takes two arguments", .{});
 
         const style_js, const filepath_js = frame.argumentsAsArray(2);
         const filepath = try filepath_js.toSlice2(global, alloc);
@@ -1122,7 +1122,7 @@ pub const JSFrameworkRouter = struct {
         defer style_string.deinit();
 
         const style = std.meta.stringToEnum(Style, style_string.slice()) orelse
-            return global.throwInvalidArguments2("unknown router style {}", .{bun.fmt.quote(style_string.slice())});
+            return global.throwInvalidArguments("unknown router style {}", .{bun.fmt.quote(style_string.slice())});
 
         var log = TinyLog.empty;
         const parsed = style.parse(filepath.slice(), std.fs.path.extension(filepath.slice()), &log, alloc) catch |err| switch (err) {

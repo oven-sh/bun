@@ -328,6 +328,7 @@ check_package_manager() {
 	case "$pm" in
 	apt)
 		export DEBIAN_FRONTEND=noninteractive
+		execute_sudo killall -9 apt-get
 		package_manager update -y
 		;;
 	apk)

@@ -11,6 +11,9 @@ Expected: 2
 Received: 1
 
 
+  at <dir>/a.test.js:4:19
+
+
       </failure>
     </testcase>
     <testcase classname="<dir>/a.test.js" name="success"     </testcase>

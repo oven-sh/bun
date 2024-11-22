@@ -8,7 +8,7 @@ register_repository(
 )
 
 if(WIN32)
-  set(LIBUV_CMAKE_C_FLAGS "/DWIN32 /D_WINDOWS -Wno-int-conversion")
+  set(LIBUV_CMAKE_C_FLAGS /DWIN32 /D_WINDOWS -Wno-int-conversion)
 endif()
 
 register_cmake_command(

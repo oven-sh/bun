@@ -9,8 +9,8 @@ register_repository(
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/25755
 if(APPLE)
-  set(ZLIB_CMAKE_C_FLAGS "-fno-define-target-os-macros")
-  set(ZLIB_CMAKE_CXX_FLAGS "-fno-define-target-os-macros")
+  set(ZLIB_CMAKE_C_FLAGS -fno-define-target-os-macros)
+  set(ZLIB_CMAKE_CXX_FLAGS -fno-define-target-os-macros)
 endif()
 
 if(WIN32)

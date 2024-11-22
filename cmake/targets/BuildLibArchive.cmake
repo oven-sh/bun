@@ -44,8 +44,8 @@ register_cmake_command(
     archive
   INCLUDES
     include
-ADDITIONAL_CMAKE_C_FLAGS
-    "-I${VENDOR_PATH}/zlib"
+  ADDITIONAL_CMAKE_C_FLAGS
+    -I${VENDOR_PATH}/zlib
 )
 
 # Must be loaded after zlib is defined

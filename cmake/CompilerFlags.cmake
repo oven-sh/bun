@@ -255,17 +255,9 @@ if(ENABLE_LTO)
       -fno-semantic-interposition
     )
 
-    register_compiler_flags(
-      DESCRIPTION "Embed bitcode"
-      LANGUAGES CXX
-      -emit-llvm
-    )
-
-    register_compiler_flags(
-      DESCRIPTION "Embed bitcode"
-      LANGUAGES C
-      -emit-llvm
-    )
+    # Pass -emit-llvm to the compiler, and not the linker.
+    # It must NOT appear in any linking flags.
+    add_compile_options(-emit-llvm)
   endif()
 
   if(UNIX)

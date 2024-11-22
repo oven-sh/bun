@@ -1609,6 +1609,8 @@ pub const ThreadSafeFunction = struct {
     }
 
     pub fn enqueue(this: *ThreadSafeFunction, ctx: ?*anyopaque, block: bool) napi_status {
+        this.lock.lock();
+        defer this.lock.unlock();
         if (block) {
             while (this.queue.isBlocked()) {
                 this.blocking_condvar.wait(&this.lock);
@@ -1618,9 +1620,6 @@ pub const ThreadSafeFunction = struct {
                 return .queue_full;
             }
         }
-
-        this.lock.lock();
-        defer this.lock.unlock();
 
         if (this.isClosing()) {
             if (this.thread_count.load(.acquire) == 0) {

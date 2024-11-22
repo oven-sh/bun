@@ -16,7 +16,7 @@ try {
 (hasCrypto ? describe : describe.skip)("Http2ServerResponse#[writableCorked,cork,uncork]", () => {
   let server;
   let client;
-  let corksLeft = 1;
+  let corksLeft = 0;
 
   beforeAll(done => {
     server = http2.createServer((req, res) => {
@@ -67,7 +67,7 @@ try {
   test("cork and uncork operations", done => {
     const req = client.request();
     let dataCallCount = 0;
-    req.on("data", () => {
+    req.on("data", d => {
       dataCallCount++;
     });
     req.on("end", () => {

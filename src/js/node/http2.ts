@@ -2215,7 +2215,7 @@ function toHeaderObject(headers, sensitiveHeadersValue) {
   return obj;
 }
 
-function emitReadyNT(stream) {
+function emitReady(stream) {
   stream.uncork();
   stream.emit("ready");
 }
@@ -2255,7 +2255,8 @@ class ServerHttp2Session extends Http2Session {
       const stream = new ServerHttp2Stream(stream_id, self, null);
       self.#parser?.setStreamContext(stream_id, stream);
 
-      process.nextTick(emitReadyNT, stream);
+      //process.nextTick(emitReadyNT, stream);
+      emitReady(stream);
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
@@ -3164,7 +3165,7 @@ class ClientHttp2Session extends Http2Session {
     } else {
       this.#parser.request(stream_id, req, headers, sensitiveNames, options);
     }
-    process.nextTick(emitReadyNT, req);
+    process.nextTick(emitReady, req);
     return req;
   }
   static connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {

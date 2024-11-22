@@ -3246,8 +3246,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             var wrote_anything = false;
             if (req.sink) |wrapper| {
-                wrapper.sink.pending_flush = null;
-                wrapper.sink.done = true;
                 req.flags.aborted = req.flags.aborted or wrapper.sink.aborted;
                 wrote_anything = wrapper.sink.wrote > 0;
 

@@ -2592,8 +2592,8 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         // so it must zero out state instead of make it
         pub fn finalize(this: *@This()) void {
             log("finalize()", .{});
-
             if (!this.done) {
+                _ = this.flushFromJSNoWait();
                 this.done = true;
                 this.unregisterAutoFlusher();
                 this.res.clearOnWritable();

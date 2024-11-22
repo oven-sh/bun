@@ -309,7 +309,7 @@ check_package_manager() {
 		pm="brew"
 		;;
 	linux)
-		if [ -f "$(which apt-get)" ]; then
+		if [ -f "$(which apt)" ]; then
 			pm="apt"
 		elif [ -f "$(which dnf)" ]; then
 			pm="dnf"
@@ -372,10 +372,10 @@ check_user() {
 package_manager() {
 	case "$pm" in
 	apt)
-		while ! sudo -n apt-get update -y; do
+		while ! sudo -n apt update -y; do
 			sleep 1
 		done
-		execute_sudo apt-get "$@"
+		execute_sudo apt "$@"
 		;;
 	dnf)
 		case "$distro" in

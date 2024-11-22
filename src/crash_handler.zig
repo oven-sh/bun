@@ -331,19 +331,24 @@ pub fn crashHandler(
                         }
                     }
 
+                    if (Output.enable_ansi_colors) {
+                        writer.print(Output.prettyFmt("<cyan>", true), .{}) catch std.posix.abort();
+                    }
+
+                    writer.writeAll(" ") catch std.posix.abort();
+
+                    trace_str_buf.writer().print("{}", .{TraceString{
+                        .trace = trace,
+                        .reason = reason,
+                        .action = .open_issue,
+                    }}) catch std.posix.abort();
+
+                    writer.writeAll(trace_str_buf.slice()) catch std.posix.abort();
+
+                    writer.writeAll("\n") catch std.posix.abort();
+
                     if (bun.Environment.is_canary) {
                         WTFReportBacktrace();
-                    } else {
-                        if (Output.enable_ansi_colors) {
-                            writer.print(Output.prettyFmt("<cyan>", true), .{}) catch std.posix.abort();
-                        }
-                        writer.writeAll(" ") catch std.posix.abort();
-                        trace_str_buf.writer().print("{}", .{TraceString{
-                            .trace = trace,
-                            .reason = reason,
-                            .action = .open_issue,
-                        }}) catch std.posix.abort();
-                        writer.writeAll(trace_str_buf.slice()) catch std.posix.abort();
                     }
 
                     writer.writeAll("\n") catch std.posix.abort();

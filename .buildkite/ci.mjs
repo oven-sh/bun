@@ -668,7 +668,7 @@ async function main() {
   if (!isFork() && !isMainBranch()) {
     console.log("Checking changed files...");
     const targetRef = getTargetBranch();
-    console.log(" - Target Ref:", baseRef);
+    console.log(" - Target Ref:", targetRef);
     const baseRef = lastBuild?.commit_id || targetRef || getMainBranch();
     console.log(" - Base Ref:", baseRef);
     const headRef = getCommit();

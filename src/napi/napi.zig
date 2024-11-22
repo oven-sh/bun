@@ -1408,11 +1408,19 @@ pub const Finalizer = struct {
 // TODO: generate comptime version of this instead of runtime checking
 pub const ThreadSafeFunction = struct {
     pub const Callback = union(enum) {
-        js: JSValue,
+        js: JSC.Strong,
         c: struct {
-            js: JSValue,
+            js: JSC.Strong,
             napi_threadsafe_function_call_js: napi_threadsafe_function_call_js,
         },
+
+        pub fn deinit(this: *Callback) void {
+            if (this.* == .js) {
+                this.js.deinit();
+            } else if (this.* == .c) {
+                this.c.js.deinit();
+            }
+        }
     };
     /// thread-safe functions can be "referenced" and "unreferenced". A
     /// "referenced" thread-safe function will cause the event loop on the thread
@@ -1426,148 +1434,244 @@ pub const ThreadSafeFunction = struct {
     /// prevent it from being destroyed.
     poll_ref: Async.KeepAlive,
 
-    thread_count: usize = 0,
-    owning_thread_lock: Lock = .{},
+    // User implementation error can cause this number to go negative.
+    thread_count: std.atomic.Value(i64) = std.atomic.Value(i64).init(0),
+    lock: std.Thread.Mutex = .{},
     event_loop: *JSC.EventLoop,
     tracker: JSC.AsyncTaskTracker,
 
     env: napi_env,
 
     finalizer: Finalizer = Finalizer{ .fun = null, .data = null },
-    channel: Queue,
+    has_queued_finalizer: bool = false,
+    queue: Queue = .{
+        .data = std.fifo.LinearFifo(?*anyopaque, .Dynamic).init(bun.default_allocator),
+        .max_queue_size = 0,
+    },
 
     ctx: ?*anyopaque = null,
 
     callback: Callback = undefined,
+    dispatch_state: DispatchState.Atomic = DispatchState.Atomic.init(.idle),
+    blocking_condvar: std.Thread.Condition = .{},
+    closing: std.atomic.Value(ClosingState) = std.atomic.Value(ClosingState).init(.not_closing),
+    aborted: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
 
-    const ThreadSafeFunctionTask = JSC.AnyTask.New(@This(), call);
-    pub const Queue = union(enum) {
-        sized: Channel(?*anyopaque, .Slice),
-        unsized: Channel(?*anyopaque, .Dynamic),
+    pub usingnamespace bun.New(ThreadSafeFunction);
 
-        pub fn isClosed(this: *const @This()) bool {
-            return @atomicLoad(
-                bool,
-                switch (this.*) {
-                    .sized => &this.sized.is_closed,
-                    .unsized => &this.unsized.is_closed,
-                },
-                .seq_cst,
-            );
+    const ClosingState = enum(u8) {
+        not_closing,
+        closing,
+        closed,
+    };
+
+    pub const DispatchState = enum(u8) {
+        idle,
+        running,
+        pending,
+
+        pub const Atomic = std.atomic.Value(DispatchState);
+    };
+
+    pub const Queue = struct {
+        data: std.fifo.LinearFifo(?*anyopaque, .Dynamic),
+
+        /// This value will never change after initialization. Zero means the size is unlimited.
+        max_queue_size: usize,
+
+        count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+        pub fn init(max_queue_size: usize, allocator: std.mem.Allocator) Queue {
+            return .{ .data = std.fifo.LinearFifo(?*anyopaque, .Dynamic).init(allocator), .max_queue_size = max_queue_size };
         }
 
-        pub fn close(this: *@This()) void {
-            switch (this.*) {
-                .sized => this.sized.close(),
-                .unsized => this.unsized.close(),
-            }
+        pub fn deinit(this: *Queue) void {
+            this.data.deinit();
         }
 
-        pub fn init(size: usize, allocator: std.mem.Allocator) @This() {
-            switch (size) {
-                0 => {
-                    return .{
-                        .unsized = Channel(?*anyopaque, .Dynamic).init(allocator),
-                    };
-                },
-                else => {
-                    const slice = allocator.alloc(?*anyopaque, size) catch unreachable;
-                    return .{
-                        .sized = Channel(?*anyopaque, .Slice).init(slice),
-                    };
-                },
-            }
-        }
-
-        pub fn writeItem(this: *@This(), value: ?*anyopaque) !void {
-            switch (this.*) {
-                .sized => try this.sized.writeItem(value),
-                .unsized => try this.unsized.writeItem(value),
-            }
-        }
-
-        pub fn readItem(this: *@This()) !?*anyopaque {
-            return switch (this.*) {
-                .sized => try this.sized.readItem(),
-                .unsized => try this.unsized.readItem(),
-            };
-        }
-
-        pub fn tryWriteItem(this: *@This(), value: ?*anyopaque) !bool {
-            return switch (this.*) {
-                .sized => try this.sized.tryWriteItem(value),
-                .unsized => try this.unsized.tryWriteItem(value),
-            };
-        }
-
-        pub fn tryReadItem(this: *@This()) !??*anyopaque {
-            return switch (this.*) {
-                .sized => try this.sized.tryReadItem(),
-                .unsized => try this.unsized.tryReadItem(),
-            };
+        pub fn isBlocked(this: *const Queue) bool {
+            return this.max_queue_size > 0 and this.count.load(.seq_cst) >= this.max_queue_size;
         }
     };
 
-    pub fn call(this: *ThreadSafeFunction) void {
-        const task = this.channel.tryReadItem() catch null orelse return;
+    // This has two states:
+    // 1. We need to run potentially multiple tasks.
+    // 2. We need to finalize the ThreadSafeFunction.
+    pub fn onDispatch(this: *ThreadSafeFunction) void {
+        if (this.closing.load(.seq_cst) == .closed) {
+            // Finalize the ThreadSafeFunction.
+            this.deinit();
+            return;
+        }
+
+        var is_first = true;
+
+        // Run the tasks.
+        while (true) {
+            this.dispatch_state.store(.running, .seq_cst);
+            if (this.dispatchOne(is_first)) {
+                is_first = false;
+                this.dispatch_state.store(.pending, .seq_cst);
+            } else {
+                // We're done running tasks, for now.
+                this.dispatch_state.store(.idle, .seq_cst);
+                break;
+            }
+        }
+
+        // Node sets a maximum number of runs per ThreadSafeFunction to 1,000.
+        // We don't set a max. I would like to see an issue caused by not
+        // setting a max before we do set a max. It is better for performance to
+        // not add unnecessary event loop ticks.
+    }
+
+    pub fn isClosing(this: *const ThreadSafeFunction) bool {
+        return this.closing.load(.seq_cst) != .not_closing;
+    }
+
+    fn maybeQueueFinalizer(this: *ThreadSafeFunction) void {
+        switch (this.closing.swap(.closed, .seq_cst)) {
+            .closing, .not_closing => {
+                // TODO: is this boolean necessary? Can we rely just on the closing value?
+                if (!this.has_queued_finalizer) {
+                    this.has_queued_finalizer = true;
+                    this.callback.deinit();
+                    this.poll_ref.disable();
+                    this.event_loop.enqueueTask(JSC.Task.init(this));
+                }
+            },
+            .closed => {
+                // already scheduled.
+            },
+        }
+    }
+
+    pub fn dispatchOne(this: *ThreadSafeFunction, is_first: bool) bool {
+        var queue_finalizer_after_call = false;
+        const has_more, const task = brk: {
+            this.lock.lock();
+            defer this.lock.unlock();
+            const was_blocked = this.queue.isBlocked();
+            const t = this.queue.data.readItem() orelse {
+                // When there are no tasks and the number of threads that have
+                // references reaches zero, we prepare to finalize the
+                // ThreadSafeFunction.
+                if (this.thread_count.load(.seq_cst) == 0) {
+                    if (this.queue.max_queue_size > 0) {
+                        this.blocking_condvar.signal();
+                    }
+                    this.maybeQueueFinalizer();
+                }
+                return false;
+            };
+
+            if (this.queue.count.fetchSub(1, .seq_cst) == 1 and this.thread_count.load(.seq_cst) == 0) {
+                this.closing.store(.closing, .seq_cst);
+                if (this.queue.max_queue_size > 0) {
+                    this.blocking_condvar.signal();
+                }
+                queue_finalizer_after_call = true;
+            } else if (was_blocked and !this.queue.isBlocked()) {
+                this.blocking_condvar.signal();
+            }
+
+            break :brk .{ !this.isClosing(), t };
+        };
+
+        this.call(task, !is_first);
+
+        if (queue_finalizer_after_call) {
+            this.maybeQueueFinalizer();
+        }
+
+        return has_more;
+    }
+
+    /// This function can be called multiple times in one tick of the event loop.
+    /// See: https://github.com/nodejs/node/pull/38506
+    /// In that case, we need to drain microtasks.
+    fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) void {
         const globalObject = this.env;
+        if (!is_first) {
+            this.event_loop.drainMicrotasks();
+        }
 
         this.tracker.willDispatch(globalObject);
         defer this.tracker.didDispatch(globalObject);
 
         switch (this.callback) {
-            .js => |js_function| {
-                if (js_function.isEmptyOrUndefinedOrNull()) {
+            .js => |strong| {
+                const js = strong.get() orelse .undefined;
+                if (js.isEmptyOrUndefinedOrNull()) {
                     return;
                 }
 
-                _ = js_function.call(globalObject, .undefined, &.{}) catch |err|
+                _ = js.call(globalObject, .undefined, &.{}) catch |err|
                     globalObject.reportActiveExceptionAsUnhandled(err);
             },
             .c => |cb| {
-                if (comptime bun.Environment.isDebug) {
-                    const str = cb.js.toBunString(globalObject);
-                    defer str.deref();
-                    log("call() {}", .{str});
-                }
+                const js = cb.js.get() orelse .undefined;
 
                 const handle_scope = NapiHandleScope.open(globalObject, false);
                 defer if (handle_scope) |scope| scope.close(globalObject);
-                cb.napi_threadsafe_function_call_js(globalObject, napi_value.create(globalObject, cb.js), this.ctx, task);
+                cb.napi_threadsafe_function_call_js(globalObject, napi_value.create(globalObject, js), this.ctx, task);
             },
         }
     }
 
-    pub fn enqueue(this: *ThreadSafeFunction, ctx: ?*anyopaque, block: bool) !void {
+    pub fn enqueue(this: *ThreadSafeFunction, ctx: ?*anyopaque, block: bool) napi_status {
+        this.lock.lock();
+        defer this.lock.unlock();
         if (block) {
-            try this.channel.writeItem(ctx);
+            while (this.queue.isBlocked()) {
+                this.blocking_condvar.wait(&this.lock);
+            }
         } else {
-            if (!try this.channel.tryWriteItem(ctx)) {
-                return error.WouldBlock;
+            if (this.queue.isBlocked()) {
+                return .queue_full;
             }
         }
 
-        this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
+        if (this.isClosing()) {
+            if (this.thread_count.load(.seq_cst) <= 0) {
+                return .invalid_arg;
+            }
+            _ = this.release(.release, true);
+            return .closing;
+        }
+
+        _ = this.queue.count.fetchAdd(1, .seq_cst);
+        this.queue.data.writeItem(ctx) catch bun.outOfMemory();
+        this.scheduleDispatch();
+        return .ok;
     }
 
-    pub fn finalize(opaq: *anyopaque) void {
-        var this = bun.cast(*ThreadSafeFunction, opaq);
+    fn scheduleDispatch(this: *ThreadSafeFunction) void {
+        switch (this.dispatch_state.swap(.pending, .seq_cst)) {
+            .idle => {
+                this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
+            },
+            .running => {
+                // it will check if it has more work to do
+            },
+            .pending => {
+                // we've already scheduled it to run
+            },
+        }
+    }
+
+    pub fn deinit(this: *ThreadSafeFunction) void {
         this.unref();
 
         if (this.finalizer.fun) |fun| {
+            const handle_scope = NapiHandleScope.open(this.env, false);
+            defer if (handle_scope) |scope| scope.close(this.env);
             fun(this.event_loop.global, this.finalizer.data, this.ctx);
         }
 
-        if (this.callback == .js) {
-            if (!this.callback.js.isEmptyOrUndefinedOrNull()) {
-                this.callback.js.unprotect();
-            }
-        } else if (this.callback == .c) {
-            if (!this.callback.c.js.isEmptyOrUndefinedOrNull()) {
-                this.callback.c.js.unprotect();
-            }
-        }
-        bun.default_allocator.destroy(this);
+        this.callback.deinit();
+        this.queue.deinit();
+        this.destroy();
     }
 
     pub fn ref(this: *ThreadSafeFunction) void {
@@ -1578,34 +1682,37 @@ pub const ThreadSafeFunction = struct {
         this.poll_ref.unrefConcurrentlyFromEventLoop(this.event_loop);
     }
 
-    pub fn acquire(this: *ThreadSafeFunction) !void {
-        this.owning_thread_lock.lock();
-        defer this.owning_thread_lock.unlock();
-        if (this.channel.isClosed())
-            return error.Closed;
-        this.thread_count += 1;
+    pub fn acquire(this: *ThreadSafeFunction) napi_status {
+        this.lock.lock();
+        defer this.lock.unlock();
+        if (this.isClosing()) {
+            return .closing;
+        }
+        _ = this.thread_count.fetchAdd(1, .seq_cst);
+        return .ok;
     }
 
-    pub fn release(this: *ThreadSafeFunction, mode: napi_threadsafe_function_release_mode) napi_status {
-        this.owning_thread_lock.lock();
-        defer this.owning_thread_lock.unlock();
+    pub fn release(this: *ThreadSafeFunction, mode: napi_threadsafe_function_release_mode, already_locked: bool) napi_status {
+        if (!already_locked) this.lock.lock();
+        defer if (!already_locked) this.lock.unlock();
 
-        if (this.thread_count == 0) {
-            return invalidArg();
+        if (this.thread_count.load(.seq_cst) < 0) {
+            return .invalid_arg;
         }
 
-        this.thread_count -= 1;
+        const prev_remaining = this.thread_count.fetchSub(1, .seq_cst);
 
-        if (this.channel.isClosed()) {
-            return .ok;
-        }
-
-        if (mode == .abort) {
-            this.channel.close();
-        }
-
-        if (mode == .abort or this.thread_count == 0) {
-            this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, finalize));
+        if (mode == .abort or prev_remaining == 1) {
+            if (!this.isClosing()) {
+                if (mode == .abort) {
+                    this.closing.store(.closing, .seq_cst);
+                    this.aborted.store(true, .seq_cst);
+                    if (this.queue.max_queue_size > 0) {
+                        this.blocking_condvar.signal();
+                    }
+                }
+                this.scheduleDispatch();
+            }
         }
 
         return .ok;
@@ -1635,29 +1742,24 @@ pub export fn napi_create_threadsafe_function(
         return napi_status.function_expected;
     }
 
-    if (!func.isEmptyOrUndefinedOrNull()) {
-        func.protect();
-    }
-
     const vm = env.bunVM();
-    var function = bun.default_allocator.create(ThreadSafeFunction) catch return genericFailure();
-    function.* = .{
+    var function = ThreadSafeFunction.new(.{
         .event_loop = vm.eventLoop(),
         .env = env,
         .callback = if (call_js_cb) |c| .{
             .c = .{
                 .napi_threadsafe_function_call_js = c,
-                .js = if (func == .zero) .undefined else func.withAsyncContextIfNeeded(env),
+                .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(env), vm.global),
             },
         } else .{
-            .js = if (func == .zero) .undefined else func.withAsyncContextIfNeeded(env),
+            .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(env), vm.global),
         },
         .ctx = context,
-        .channel = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),
-        .thread_count = initial_thread_count,
+        .queue = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),
+        .thread_count = .{ .raw = @intCast(initial_thread_count) },
         .poll_ref = Async.KeepAlive.init(),
         .tracker = JSC.AsyncTaskTracker.init(vm),
-    };
+    });
 
     function.finalizer = .{ .data = thread_finalize_data, .fun = thread_finalize_cb };
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
@@ -1674,25 +1776,15 @@ pub export fn napi_get_threadsafe_function_context(func: napi_threadsafe_functio
 }
 pub export fn napi_call_threadsafe_function(func: napi_threadsafe_function, data: ?*anyopaque, is_blocking: napi_threadsafe_function_call_mode) napi_status {
     log("napi_call_threadsafe_function", .{});
-    func.enqueue(data, is_blocking == napi_tsfn_blocking) catch |err| {
-        switch (err) {
-            error.WouldBlock => {
-                return napi_status.queue_full;
-            },
-
-            else => return .closing,
-        }
-    };
-    return .ok;
+    return func.enqueue(data, is_blocking == napi_tsfn_blocking);
 }
 pub export fn napi_acquire_threadsafe_function(func: napi_threadsafe_function) napi_status {
     log("napi_acquire_threadsafe_function", .{});
-    func.acquire() catch return .closing;
-    return .ok;
+    return func.acquire();
 }
 pub export fn napi_release_threadsafe_function(func: napi_threadsafe_function, mode: napi_threadsafe_function_release_mode) napi_status {
     log("napi_release_threadsafe_function", .{});
-    return func.release(mode);
+    return func.release(mode, false);
 }
 pub export fn napi_unref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status {
     log("napi_unref_threadsafe_function", .{});

@@ -62,7 +62,7 @@ fn exportIdentity(
     }.identity);
 }
 
-/// Export a function named `name` which taeks two parameters of type T and returns their sum.
+/// Export a function named `name` which takes two parameters of type T and returns their sum.
 fn exportAdd(
     comptime function_names: *[]const []const u8,
     comptime name: []const u8,

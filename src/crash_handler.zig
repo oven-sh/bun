@@ -754,7 +754,9 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
     );
 }
 
-var did_register_sigaltstack = false;
+// skip in canary since we let WTFReportBacktrace print trace
+// this will make stack overflow have a slightly worse ux but its rare enough to be worth it and still unique enough to be diagnosable
+var did_register_sigaltstack = bun.Environment.isRelease and bun.Environment.is_canary;
 var sigaltstack: [512 * 1024]u8 = undefined;
 
 pub fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {

@@ -18,6 +18,11 @@
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
+#include "JavaScriptCore/ScriptCallStackFactory.h"
+#include "JavaScriptCore/ConsoleMessage.h"
+#include "JavaScriptCore/InspectorConsoleAgent.h"
+#include "JavaScriptCore/JSGlobalObjectDebuggable.h"
+#include <JavaScriptCore/StackFrame.h>
 #include <sys/stat.h>
 #include "ConsoleObject.h"
 #include <JavaScriptCore/GetterSetter.h>
@@ -26,7 +31,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "wtf-bindings.h"
-
+#include <webcore/SerializedScriptValue.h>
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/OrdinalNumber.h"

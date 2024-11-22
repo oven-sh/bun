@@ -800,6 +800,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
   this[abortedSymbol] = false;
   this.complete = false;
   Readable.$call(this);
+  this._readableState.autoDestroy = false;
   var { type = "request", [kInternalRequest]: nodeReq } = defaultIncomingOpts || {};
 
   this[reqSymbol] = req;
@@ -961,8 +962,8 @@ IncomingMessage.prototype = {
     this[fakeSocketSymbol] = value;
   },
 };
-$setPrototypeDirect.$call(IncomingMessage.prototype, Readable.prototype);
-$setPrototypeDirect.$call(IncomingMessage, Readable);
+Object.setPrototypeOf(IncomingMessage.prototype, Readable.prototype);
+Object.setPrototypeOf(IncomingMessage, Readable);
 
 async function consumeStream(self, reader: ReadableStreamDefaultReader) {
   var done = false,

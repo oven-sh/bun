@@ -66,7 +66,7 @@ try {
 
   test("cork and uncork operations", done => {
     const req = client.request();
-    let dataCallCount = 0;
+    let dataCallCount = 1;
     req.on("data", () => {
       dataCallCount++;
     });

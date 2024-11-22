@@ -1455,6 +1455,7 @@ pub const ThreadSafeFunction = struct {
     dispatch_state: DispatchState.Atomic = DispatchState.Atomic.init(.idle),
     blocking_condvar: std.Thread.Condition = .{},
     closing: std.atomic.Value(ClosingState) = std.atomic.Value(ClosingState).init(.not_closing),
+    aborted: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
 
     pub usingnamespace bun.New(ThreadSafeFunction);
 
@@ -1700,6 +1701,7 @@ pub const ThreadSafeFunction = struct {
             if (!this.isClosing()) {
                 if (mode == .abort) {
                     this.closing.store(.closing, .seq_cst);
+                    this.aborted.store(true, .seq_cst);
                     if (this.queue.max_queue_size > 0) {
                         this.blocking_condvar.signal();
                     }

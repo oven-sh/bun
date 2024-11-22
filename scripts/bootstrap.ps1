@@ -325,6 +325,9 @@ function Optimize-System {
   Disable-Windows-Threat-Protection
   Disable-Windows-Services
   Disable-Power-Management
+}
+
+function Optimize-System-Needs-Reboot {
   Uninstall-Windows-Defender
 }
 
@@ -382,3 +385,6 @@ if ($Optimize) {
 Install-Common-Software
 Install-Build-Essentials
 
+if ($Optimize) {
+  Optimize-System-Needs-Reboot
+}

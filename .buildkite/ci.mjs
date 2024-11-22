@@ -402,12 +402,13 @@ function getPipeline(options) {
       "node",
       "./scripts/machine.mjs",
       action,
-      "--ci",
-      "--cloud=aws",
       `--os=${os}`,
       `--arch=${arch}`,
       distro && `--distro=${distro}`,
       `--distro-version=${release}`,
+      "--cloud=aws",
+      "--ci",
+      "--authorized-org=oven-sh",
     ];
     return {
       key: `${getImageKey(platform)}-build-image`,

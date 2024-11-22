@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -118,6 +119,7 @@ export function setEnv(name, value) {
  * @property {string} [cwd]
  * @property {number} [timeout]
  * @property {Record<string, string | undefined>} [env]
+ * @property {boolean | ((error: Error) => boolean)} [throwOnError]
  * @property {string} [stdin]
  * @property {boolean} [privileged]
  */
@@ -279,6 +281,17 @@ export async function spawn(command, options = {}) {
     }
   }
 
+  if (error) {
+    const throwOnError = options["throwOnError"];
+    if (typeof throwOnError === "function") {
+      if (throwOnError(error) || (error.cause && throwOnError(error.cause))) {
+        throw error;
+      }
+    } else if (throwOnError) {
+      throw error;
+    }
+  }
+
   return {
     exitCode,
     signalCode,
@@ -293,15 +306,8 @@ export async function spawn(command, options = {}) {
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
-export async function spawnSafe(command, options) {
-  const result = await spawn(command, options);
-
-  const { error } = result;
-  if (error) {
-    throw error;
-  }
-
-  return result;
+export async function spawnSafe(command, options = {}) {
+  return spawn(command, { throwOnError: true, ...options });
 }
 
 /**
@@ -313,11 +319,13 @@ export function spawnSync(command, options = {}) {
   const [cmd, ...args] = parseCommand(command, options);
   debugLog("$", cmd, ...args);
 
+  const stdin = options["stdin"];
   const spawnOptions = {
     cwd: options["cwd"] ?? process.cwd(),
     timeout: options["timeout"] ?? undefined,
     env: options["env"] ?? undefined,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [typeof stdin === "undefined" ? "ignore" : "pipe", "pipe", "pipe"],
+    input: stdin,
     ...options,
   };
 
@@ -362,6 +370,17 @@ export function spawnSync(command, options = {}) {
     }
   }
 
+  if (error) {
+    const throwOnError = options["throwOnError"];
+    if (typeof throwOnError === "function") {
+      if (throwOnError(error) || (error.cause && throwOnError(error.cause))) {
+        throw error;
+      }
+    } else if (throwOnError) {
+      throw error;
+    }
+  }
+
   return {
     exitCode,
     signalCode,
@@ -376,15 +395,8 @@ export function spawnSync(command, options = {}) {
  * @param {SpawnOptions} options
  * @returns {SpawnResult}
  */
-export function spawnSyncSafe(command, options) {
-  const result = spawnSync(command, options);
-
-  const { error } = result;
-  if (error) {
-    throw error;
-  }
-
-  return result;
+export function spawnSyncSafe(command, options = {}) {
+  return spawnSync(command, { throwOnError: true, ...options });
 }
 
 /**
@@ -852,7 +864,7 @@ export function readFile(filename, options = {}) {
  * @param {object} [options]
  * @param {number} [options.mode]
  */
-export function writeFile(filename, content, options = {}) {
+export function writeFile(filename, content, options) {
   const parent = dirname(filename);
   if (!existsSync(parent)) {
     mkdirSync(parent, { recursive: true });
@@ -860,8 +872,27 @@ export function writeFile(filename, content, options = {}) {
 
   writeFileSync(filename, content);
 
-  if (options["mode"]) {
-    chmodSync(filename, options["mode"]);
+  if (options?.mode) {
+    chmodSync(filename, options.mode);
+  }
+}
+
+/**
+ * @param {string} source
+ * @param {string} destination
+ * @param {object} [options]
+ * @param {number} [options.mode]
+ */
+export function copyFile(source, destination, options) {
+  const parent = dirname(destination);
+  if (!existsSync(parent)) {
+    mkdirSync(parent, { recursive: true });
+  }
+
+  copyFileSync(source, destination);
+
+  if (options?.mode) {
+    chmodSync(destination, options.mode);
   }
 }
 
@@ -1281,6 +1312,16 @@ export function tmpdir() {
 }
 
 /**
+ * @param {string} [prefix]
+ * @param {string} [filename]
+ * @returns {string}
+ */
+export function mkdtemp(prefix, filename) {
+  const tmpPath = mkdtempSync(join(tmpdir(), prefix || "bun-"));
+  return filename ? join(tmpPath, filename) : tmpPath;
+}
+
+/**
  * @param {string} filename
  * @param {string} [output]
  * @returns {Promise<string>}
@@ -1342,9 +1383,13 @@ export function getArch() {
 }
 
 /**
- * @returns {string}
+ * @returns {string | undefined}
  */
 export function getKernel() {
+  if (isWindows) {
+    return;
+  }
+
   const kernel = release();
   const match = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(kernel);
 
@@ -1689,9 +1734,10 @@ export function getDistro() {
     const releasePath = "/etc/os-release";
     if (existsSync(releasePath)) {
       const releaseFile = readFile(releasePath, { cache: true });
-      const match = releaseFile.match(/^ID=\"?(.*)\"?/m);
+      const match = releaseFile.match(/^ID=(.*)/m);
       if (match) {
-        return match[1];
+        const [, id] = match;
+        return id.includes('"') ? JSON.parse(id) : id;
       }
     }
 
@@ -1734,9 +1780,10 @@ export function getDistroVersion() {
     const releasePath = "/etc/os-release";
     if (existsSync(releasePath)) {
       const releaseFile = readFile(releasePath, { cache: true });
-      const match = releaseFile.match(/^VERSION_ID=\"?(.*)\"?/m);
+      const match = releaseFile.match(/^VERSION_ID=(.*)/m);
       if (match) {
-        return match[1];
+        const [, release] = match;
+        return release.includes('"') ? JSON.parse(release) : release;
       }
     }
 
@@ -1951,6 +1998,7 @@ export async function getBuildMetadata(name) {
  */
 export async function waitForPort(options) {
   const { hostname, port, retries = 10 } = options;
+  console.log("Connecting...", `${hostname}:${port}`);
 
   let cause;
   for (let i = 0; i < retries; i++) {
@@ -1962,6 +2010,7 @@ export async function waitForPort(options) {
       const socket = connect({ host: hostname, port });
       socket.on("connect", () => {
         socket.destroy();
+        console.log("Connected:", `${hostname}:${port}`);
         resolve();
       });
       socket.on("error", error => {
@@ -1977,6 +2026,7 @@ export async function waitForPort(options) {
     }
   }
 
+  console.error("Connection failed:", `${hostname}:${port}`);
   return cause;
 }
 /**

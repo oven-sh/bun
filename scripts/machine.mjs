@@ -18,15 +18,19 @@ import {
   waitForPort,
   which,
   escapePowershell,
-  curl,
   getGithubUrl,
   getGithubApiUrl,
   curlSafe,
+  mkdtemp,
+  writeFile,
+  copyFile,
+  isMacOS,
 } from "./utils.mjs";
-import { join, relative, resolve } from "node:path";
+import { basename, extname, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 const docker = {
   getPlatform(platform) {
@@ -124,9 +128,10 @@ export const aws = {
 
   /**
    * @param {string[]} args
+   * @param {import("./utils.mjs").SpawnOptions} [options]
    * @returns {Promise<unknown>}
    */
-  async spawn(args) {
+  async spawn(args, options = {}) {
     const aws = which("aws");
     if (!aws) {
       throw new Error("AWS CLI is not installed, please install it");
@@ -141,14 +146,7 @@ export const aws = {
       };
     }
 
-    const { error, stdout } = await spawn($`${aws} ${args} --output json`, { env });
-    if (error) {
-      if (/max attempts exceeded/i.test(inspect(error))) {
-        return this.spawn(args);
-      }
-      throw error;
-    }
-
+    const { stdout } = await spawnSafe($`${aws} ${args} --output json`, { env, ...options });
     try {
       return JSON.parse(stdout);
     } catch {
@@ -233,7 +231,29 @@ export const aws = {
    * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/wait.html
    */
   async waitInstances(action, ...instanceIds) {
-    await aws.spawn($`ec2 wait ${action} --instance-ids ${instanceIds}`);
+    await aws.spawn($`ec2 wait ${action} --instance-ids ${instanceIds}`, {
+      throwOnError: error => !/max attempts exceeded/i.test(inspect(error)),
+    });
+  },
+
+  /**
+   * @param {string} instanceId
+   * @param {string} privateKeyPath
+   * @param {object} [passwordOptions]
+   * @param {boolean} [passwordOptions.wait]
+   * @returns {Promise<string | undefined>}
+   * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/get-password-data.html
+   */
+  async getPasswordData(instanceId, privateKeyPath, passwordOptions = {}) {
+    const attempts = passwordOptions.wait ? 15 : 1;
+    for (let i = 0; i < attempts; i++) {
+      const { PasswordData } = await aws.spawn($`ec2 get-password-data --instance-id ${instanceId}`);
+      if (PasswordData) {
+        return decryptPassword(PasswordData, privateKeyPath);
+      }
+      await new Promise(resolve => setTimeout(resolve, 60000 * i));
+    }
+    throw new Error(`Failed to get password data for instance: ${instanceId}`);
   },
 
   /**
@@ -266,19 +286,31 @@ export const aws = {
    */
   async createImage(options) {
     const flags = aws.getFlags(options);
-    try {
-      const { ImageId } = await aws.spawn($`ec2 create-image ${flags}`);
-      return ImageId;
-    } catch (error) {
-      const match = /already in use by AMI (ami-[a-z0-9]+)/i.exec(inspect(error));
-      if (!match) {
-        throw error;
-      }
-      const [, existingImageId] = match;
-      await aws.spawn($`ec2 deregister-image --image-id ${existingImageId}`);
-      const { ImageId } = await aws.spawn($`ec2 create-image ${flags}`);
+
+    /** @type {string | undefined} */
+    let existingImageId;
+
+    /** @type {AwsImage | undefined} */
+    const image = await aws.spawn($`ec2 create-image ${flags}`, {
+      throwOnError: error => {
+        const match = /already in use by AMI (ami-[a-z0-9]+)/i.exec(inspect(error));
+        if (!match) {
+          return true;
+        }
+        const [, imageId] = match;
+        existingImageId = imageId;
+        return false;
+      },
+    });
+
+    if (!existingImageId) {
+      const { ImageId } = image;
       return ImageId;
     }
+
+    await aws.spawn($`ec2 deregister-image --image-id ${existingImageId}`);
+    const { ImageId } = await aws.spawn($`ec2 create-image ${flags}`);
+    return ImageId;
   },
 
   /**
@@ -298,7 +330,60 @@ export const aws = {
    * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/wait/image-available.html
    */
   async waitImage(action, ...imageIds) {
-    await aws.spawn($`ec2 wait ${action} --image-ids ${imageIds}`);
+    await aws.spawn($`ec2 wait ${action} --image-ids ${imageIds}`, {
+      throwOnError: error => !/max attempts exceeded/i.test(inspect(error)),
+    });
+  },
+
+  /**
+   * @typedef {Object} AwsKeyPair
+   * @property {string} KeyPairId
+   * @property {string} KeyName
+   * @property {string} KeyFingerprint
+   * @property {string} [PublicKeyMaterial]
+   */
+
+  /**
+   * @param {string[]} [names]
+   * @returns {Promise<AwsKeyPair[]>}
+   * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/describe-key-pairs.html
+   */
+  async describeKeyPairs(names) {
+    const command = names
+      ? $`ec2 describe-key-pairs --include-public-key --key-names ${names}`
+      : $`ec2 describe-key-pairs --include-public-key`;
+    const { KeyPairs } = await aws.spawn(command);
+    return KeyPairs;
+  },
+
+  /**
+   * @param {string | Buffer} publicKey
+   * @param {string} [name]
+   * @returns {Promise<AwsKeyPair>}
+   * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/import-key-pair.html
+   */
+  async importKeyPair(publicKey, name) {
+    const keyName = name || `key-pair-${createHash("sha256").update(publicKey).digest("hex")}`;
+    const publicKeyBase64 = Buffer.from(publicKey).toString("base64");
+
+    /** @type {AwsKeyPair | undefined} */
+    const keyPair = await aws.spawn(
+      $`ec2 import-key-pair --key-name ${keyName} --public-key-material ${publicKeyBase64}`,
+      {
+        throwOnError: error => !/InvalidKeyPair\.Duplicate/i.test(inspect(error)),
+      },
+    );
+
+    if (keyPair) {
+      return keyPair;
+    }
+
+    const keyPairs = await aws.describeKeyPairs(keyName);
+    if (keyPairs.length) {
+      return keyPairs[0];
+    }
+
+    throw new Error(`Failed to import key pair: ${keyName}`);
   },
 
   /**
@@ -389,7 +474,7 @@ export const aws = {
    * @returns {Promise<Machine>}
    */
   async createMachine(options) {
-    const { os, arch, imageId, instanceType, tags } = options;
+    const { os, arch, imageId, instanceType, tags, sshKeys } = options;
 
     /** @type {AwsImage} */
     let image;
@@ -430,6 +515,18 @@ export const aws = {
       });
     }
 
+    /** @type {string | undefined} */
+    let keyName, keyPath;
+    if (os === "windows") {
+      const sshKey = sshKeys.find(({ privatePath }) => existsSync(privatePath));
+      if (sshKey) {
+        const { publicKey, privatePath } = sshKey;
+        const { KeyName } = await aws.importKeyPair(publicKey);
+        keyName = KeyName;
+        keyPath = privatePath;
+      }
+    }
+
     const [instance] = await aws.runInstances({
       ["image-id"]: ImageId,
       ["instance-type"]: instanceType || (arch === "aarch64" ? "t4g.large" : "t3.large"),
@@ -442,10 +539,10 @@ export const aws = {
         "InstanceMetadataTags": "enabled",
       }),
       ["tag-specifications"]: JSON.stringify(tagSpecification),
-      ["key-name"]: "ashcon-bun",
+      ["key-name"]: keyName,
     });
 
-    return aws.toMachine(instance, { ...options, username });
+    return aws.toMachine(instance, { ...options, username, keyPath });
   },
 
   /**
@@ -481,6 +578,13 @@ export const aws = {
     const spawnSafe = async (command, options) => {
       const connectOptions = await connect();
       return spawnSshSafe({ ...connectOptions, command }, options);
+    };
+
+    const rdp = async () => {
+      const { keyPath } = options;
+      const { hostname, username } = await connect();
+      const password = await aws.getPasswordData(InstanceId, keyPath, { wait: true });
+      return { hostname, username, password };
     };
 
     const attach = async () => {
@@ -521,6 +625,7 @@ export const aws = {
       spawnSafe,
       upload,
       attach,
+      rdp,
       snapshot,
       close: terminate,
       [Symbol.asyncDispose]: terminate,
@@ -755,30 +860,40 @@ function getWindowsStartupScript(cloudInit) {
     Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
     function Install-Ssh {
-      $sshService = Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Server*'
-      if ($sshService.State -ne "Installed") {
-        Write-Output "Installing OpenSSH server..."
-        Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-      }
-
-      $pwshPath = Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path
-      if (-not $pwshPath) {
-        $pwshPath = Get-Command powershell -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path
+      $sshdService = Get-Service -Name sshd -ErrorAction SilentlyContinue
+      if (-not $sshdService) {
+        $buildNumber = Get-WmiObject Win32_OperatingSystem | Select-Object -ExpandProperty BuildNumber
+        if ($buildNumber -lt 17763) {
+          Write-Output "Installing OpenSSH server through Github..."
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Invoke-WebRequest -Uri "https://github.com/PowerShell/Win32-OpenSSH/releases/download/v9.8.0.0p1-Preview/OpenSSH-Win64.zip" -OutFile "$env:TEMP\\OpenSSH.zip"
+          Expand-Archive -Path "$env:TEMP\\OpenSSH.zip" -DestinationPath "$env:TEMP\\OpenSSH" -Force
+          Get-ChildItem -Path "$env:TEMP\\OpenSSH\\OpenSSH-Win64" -Recurse | Move-Item -Destination "$env:ProgramFiles\\OpenSSH" -Force
+          & "$env:ProgramFiles\\OpenSSH\\install-sshd.ps1"
+        } else {
+          Write-Output "Installing OpenSSH server through Windows Update..."
+          Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+        }
       }
 
       Write-Output "Enabling OpenSSH server..."
       Set-Service -Name sshd -StartupType Automatic
       Start-Service sshd
 
+      $pwshPath = Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path
+      if (-not $pwshPath) {
+        $pwshPath = Get-Command powershell -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path
+      }
+
       if ($pwshPath) {
         Write-Output "Setting default shell to $pwshPath..."
         New-ItemProperty -Path "HKLM:\\SOFTWARE\\OpenSSH" -Name DefaultShell -Value $pwshPath -PropertyType String -Force
       }
 
-      $firewallRule = Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue
+      $firewallRule = Get-NetFirewallRule -Name "OpenSSH-Server" -ErrorAction SilentlyContinue
       if (-not $firewallRule) {
         Write-Output "Configuring firewall..."
-        New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
+        New-NetFirewallRule -Profile Any -Name 'OpenSSH-Server' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
       }
 
       $sshPath = "C:\\ProgramData\\ssh"
@@ -803,7 +918,9 @@ function getWindowsStartupScript(cloudInit) {
 "@
       if (-not (Test-Path $sshdConfigPath) -or (Get-Content $sshdConfigPath) -ne $sshdConfig) {
         Write-Output "Writing SSH configuration..."
-        Set-Content -Path $sshdConfigPath -Value $sshdConfig
+        Set-Content \`
+          -Path $sshdConfigPath \`
+          -Value $sshdConfig
       }
 
       Write-Output "Restarting SSH server..."
@@ -976,56 +1093,57 @@ async function getGithubOrgSshKeys(organization) {
 
 /**
  * @param {SshOptions} options
- * @param {object} [spawnOptions]
+ * @param {import("./utils.mjs").SpawnOptions} [spawnOptions]
  * @returns {Promise<import("./utils.mjs").SpawnResult>}
  */
 async function spawnSsh(options, spawnOptions = {}) {
-  const { hostname, port, username, identityPaths, command } = options;
-  await waitForPort({ hostname, port: port || 22 });
+  const { hostname, port, username, identityPaths, retries = 10, command: spawnCommand } = options;
 
-  const ssh = ["ssh", hostname, "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"];
+  await waitForPort({
+    hostname,
+    port: port || 22,
+  });
+
+  const logPath = mkdtemp("ssh-", "ssh.log");
+  const command = ["ssh", hostname, "-C", "-E", logPath, "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"];
   if (port) {
-    ssh.push("-p", port);
+    command.push("-p", port);
   }
   if (username) {
-    ssh.push("-l", username);
+    command.push("-l", username);
   }
   if (identityPaths) {
-    ssh.push(...identityPaths.flatMap(path => ["-i", path]));
+    command.push(...identityPaths.flatMap(path => ["-i", path]));
   }
-  const stdio = command ? "pipe" : "inherit";
-  if (command) {
-    ssh.push(...command);
+  const stdio = spawnCommand ? "pipe" : "inherit";
+  if (spawnCommand) {
+    command.push(...spawnCommand);
   }
 
-  return spawn(ssh, { stdio, ...spawnOptions });
+  /** @type {import("./utils.mjs").SpawnResult} */
+  let result;
+  for (let i = 0; i < retries; i++) {
+    result = await spawn(command, { stdio, ...spawnOptions, throwOnError: undefined });
+    console.log("SSH log:", readFile(logPath, { encoding: "utf-8" }));
+
+    const { exitCode } = result;
+    if (exitCode !== 255) {
+      break;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+  }
+
+  return result;
 }
 
 /**
  * @param {SshOptions} options
- * @param {object} [spawnOptions]
+ * @param {import("./utils.mjs").SpawnOptions} [spawnOptions]
  * @returns {Promise<import("./utils.mjs").SpawnResult>}
  */
 async function spawnSshSafe(options, spawnOptions = {}) {
-  const { hostname, port, username, identityPaths, command } = options;
-  await waitForPort({ hostname, port: port || 22 });
-
-  const ssh = ["ssh", hostname, "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"];
-  if (port) {
-    ssh.push("-p", port);
-  }
-  if (username) {
-    ssh.push("-l", username);
-  }
-  if (identityPaths) {
-    ssh.push(...identityPaths.flatMap(path => ["-i", path]));
-  }
-  const stdio = command ? "pipe" : "inherit";
-  if (command) {
-    ssh.push(...command);
-  }
-
-  return spawnSafe(ssh, { stdio, ...spawnOptions });
+  return spawnSsh(options, { throwOnError: true, ...spawnOptions });
 }
 
 /**
@@ -1080,6 +1198,53 @@ async function spawnScp(options) {
 }
 
 /**
+ * @param {string} passwordData
+ * @param {string} privateKeyPath
+ * @returns {string}
+ */
+function decryptPassword(passwordData, privateKeyPath) {
+  const name = basename(privateKeyPath, extname(privateKeyPath));
+  const tmpPemPath = mkdtemp("pem-", `${name}.pem`);
+  try {
+    copyFile(privateKeyPath, tmpPemPath, { mode: 0o600 });
+    spawnSyncSafe(["ssh-keygen", "-p", "-m", "PEM", "-f", tmpPemPath, "-N", ""]);
+    const { stdout } = spawnSyncSafe(
+      ["openssl", "pkeyutl", "-decrypt", "-inkey", tmpPemPath, "-pkeyopt", "rsa_padding_mode:pkcs1"],
+      {
+        stdin: Buffer.from(passwordData, "base64"),
+      },
+    );
+    return stdout.trim();
+  } finally {
+    rmSync(tmpPemPath, { force: true });
+  }
+}
+
+/**
+ * @typedef RdpCredentials
+ * @property {string} hostname
+ * @property {string} username
+ * @property {string} password
+ */
+
+/**
+ * @param {string} hostname
+ * @param {string} [username]
+ * @param {string} [password]
+ * @returns {string}
+ */
+function getRdpFile(hostname, username) {
+  const options = [
+    "auto connect:i:1", // start the connection automatically
+    `full address:s:${hostname}`,
+  ];
+  if (username) {
+    options.push(`username:s:${username}`);
+  }
+  return options.join("\n");
+}
+
+/**
  * @typedef Cloud
  * @property {string} name
  * @property {(options: MachineOptions) => Promise<Machine>} createMachine
@@ -1106,9 +1271,10 @@ function getCloud(name) {
  * @property {string} instanceType
  * @property {string} region
  * @property {string} [publicIp]
- * @property {(command: string[]) => Promise<SpawnResult>} spawn
- * @property {(command: string[]) => Promise<SpawnResult>} spawnSafe
+ * @property {(command: string[], options?: import("./utils.mjs").SpawnOptions) => Promise<import("./utils.mjs").SpawnResult>} spawn
+ * @property {(command: string[], options?: import("./utils.mjs").SpawnOptions) => Promise<import("./utils.mjs").SpawnResult>} spawnSafe
  * @property {(source: string, destination: string) => Promise<void>} upload
+ * @property {() => Promise<RdpCredentials>} [rdp]
  * @property {() => Promise<void>} attach
  * @property {() => Promise<string>} snapshot
  * @property {() => Promise<void>} close
@@ -1136,7 +1302,8 @@ function getCloud(name) {
  * @property {Record<string, unknown>} [tags]
  * @property {boolean} [bootstrap]
  * @property {boolean} [ci]
- * @property {SshKey[]} [sshKeys]
+ * @property {boolean} [rdp]
+ * @property {SshKey[]} sshKeys
  */
 
 async function main() {
@@ -1169,11 +1336,24 @@ async function main() {
       "detached": { type: "boolean" },
       "tag": { type: "string", multiple: true },
       "ci": { type: "boolean" },
+      "rdp": { type: "boolean" },
+      "authorized-user": { type: "string", multiple: true },
+      "authorized-org": { type: "string", multiple: true },
       "no-bootstrap": { type: "boolean" },
       "buildkite-token": { type: "string" },
       "tailscale-authkey": { type: "string" },
     },
   });
+
+  const sshKeys = getSshKeys();
+  if (args["authorized-user"]) {
+    const userSshKeys = await Promise.all(args["authorized-user"].map(getGithubUserSshKeys));
+    sshKeys.push(...userSshKeys.flat());
+  }
+  if (args["authorized-org"]) {
+    const orgSshKeys = await Promise.all(args["authorized-org"].map(getGithubOrgSshKeys));
+    sshKeys.push(...orgSshKeys.flat());
+  }
 
   /** @type {MachineOptions} */
   const options = {
@@ -1199,7 +1379,8 @@ async function main() {
     detached: !!args["detached"],
     bootstrap: args["no-bootstrap"] !== true,
     ci: !!args["ci"],
-    sshKeys: isCI ? await getGithubOrgSshKeys("oven-sh") : getSshKeys(),
+    rdp: !!args["rdp"],
+    sshKeys,
   };
 
   const { cloud, detached, bootstrap, ci, os, arch, distro, distroVersion } = options;
@@ -1225,9 +1406,24 @@ async function main() {
 
   /** @type {Machine} */
   const machine = await startGroup("Creating machine...", async () => {
-    console.log("Creating machine:", JSON.parse(JSON.stringify(options)));
+    console.log("Creating machine:");
+    console.table({
+      "Operating System": os,
+      "Architecture": arch,
+      "Distribution": distro ? `${distro} ${distroVersion}` : distroVersion,
+      "CI": ci ? "Yes" : "No",
+    });
+
     const result = await cloud.createMachine(options);
-    console.log("Created machine:", result);
+    const { id, imageId, instanceType, region } = result;
+    console.log("Created machine:");
+    console.table({
+      "ID": id,
+      "Image ID": imageId,
+      "Instance Type": instanceType,
+      "Region": region,
+    });
+
     return result;
   });
 
@@ -1248,7 +1444,38 @@ async function main() {
   }
 
   try {
-    await startGroup("Connecting...", async () => {
+    if (options.rdp) {
+      await startGroup("Connecting with RDP...", async () => {
+        const { hostname, username, password } = await machine.rdp();
+
+        console.log("You can now connect with RDP using these credentials:");
+        console.table({
+          Hostname: hostname,
+          Username: username,
+          Password: password,
+        });
+
+        const { cloud, id } = machine;
+        const rdpPath = mkdtemp("rdp-", `${cloud}-${id}.rdp`);
+
+        /** @type {string[]} */
+        let command;
+        if (isMacOS) {
+          command = [
+            "osascript",
+            "-e",
+            `'tell application "Microsoft Remote Desktop" to open POSIX file ${JSON.stringify(rdpPath)}'`,
+          ];
+        }
+
+        if (command) {
+          writeFile(rdpPath, getRdpFile(hostname, username));
+          await spawn(command, { detached: true });
+        }
+      });
+    }
+
+    await startGroup("Connecting with SSH...", async () => {
       const command = os === "windows" ? ["cmd", "/c", "ver"] : ["uname", "-a"];
       await machine.spawnSafe(command, { stdio: "inherit" });
     });

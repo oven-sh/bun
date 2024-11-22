@@ -9,6 +9,11 @@ it("performance.setResourceTimingBufferSize()", () => {
   performance.setResourceTimingBufferSize(10);
 });
 
+it("performance.onresourcetimingbufferfull", () => {
+  performance.onresourcetimingbufferfull = () => {};
+  performance.onresourcetimingbufferfull();
+});
+
 it("performance.now() should be monotonic", () => {
   const first = performance.now();
   const second = performance.now();

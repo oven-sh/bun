@@ -298,7 +298,6 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
    */
   get url(): string {
     // This code has been migrated from a time when the inspector was always a WebSocketInspector.
-    // So t
     if (this.inspector instanceof WebSocketInspector) {
       return this.inspector.url;
     }
@@ -479,9 +478,9 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
           throw error;
         }
       });
-    }
 
-    this.send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
+      this.send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
+    }
 
     const { clientID, supportsConfigurationDoneRequest } = request;
     if (!supportsConfigurationDoneRequest && clientID !== "vscode") {

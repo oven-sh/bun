@@ -64,6 +64,8 @@ var before_crash_handlers_mutex: std.Thread.Mutex = .{};
 
 const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
 
+extern fn WTFReportBacktrace() void;
+
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
     /// From @panic()

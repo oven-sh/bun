@@ -5,7 +5,6 @@ import gzipFile from "./fetch.brotli.test.ts.gzip" with { type: "file" };
 
 test("fetch brotli response works", async () => {
   const brotli = await Bun.file(brotliFile).arrayBuffer();
-  const deflate = await Bun.file(deflateFile).arrayBuffer();
   const gzip = await Bun.file(gzipFile).arrayBuffer();
 
   using server = Bun.serve({

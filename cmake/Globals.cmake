@@ -136,6 +136,16 @@ else()
   set(WARNING WARNING)
 endif()
 
+if(LINUX)
+  if(EXISTS "/etc/alpine-release")
+    set(DEFAULT_ABI "musl")
+  else()
+    set(DEFAULT_ABI "gnu")
+  endif()
+
+  optionx(ABI "musl|gnu" "The ABI to use (e.g. musl, gnu)" DEFAULT ${DEFAULT_ABI})
+endif()
+
 # TODO: This causes flaky zig builds in CI, so temporarily disable it.
 # if(CI)
 #   set(DEFAULT_VENDOR_PATH ${CACHE_PATH}/vendor)
@@ -369,7 +379,7 @@ function(register_command)
   if(CMD_ENVIRONMENT)
     set(CMD_COMMAND ${CMAKE_COMMAND} -E env ${CMD_ENVIRONMENT} ${CMD_COMMAND})
   endif()
-  
+
   if(NOT CMD_COMMENT)
     string(JOIN " " CMD_COMMENT ${CMD_COMMAND})
   endif()
@@ -519,7 +529,7 @@ function(parse_package_json)
     set(NPM_NODE_MODULES)
     set(NPM_NODE_MODULES_PATH ${NPM_CWD}/node_modules)
     set(NPM_NODE_MODULES_PROPERTIES "devDependencies" "dependencies")
-    
+
     foreach(property ${NPM_NODE_MODULES_PROPERTIES})
       string(JSON NPM_${property} ERROR_VARIABLE error GET "${NPM_PACKAGE_JSON}" "${property}")
       if(error MATCHES "not found")
@@ -875,7 +885,7 @@ function(register_compiler_flags)
       if(NOT COMPILER_TARGETS)
         add_compile_options($<$<COMPILE_LANGUAGE:${lang}>:${flag}>)
       endif()
-      
+
       foreach(target ${COMPILER_TARGETS})
         get_target_property(type ${target} TYPE)
         if(type MATCHES "EXECUTABLE|LIBRARY")
@@ -887,7 +897,7 @@ function(register_compiler_flags)
 endfunction()
 
 function(register_compiler_definitions)
-  
+
 endfunction()
 
 # register_linker_flags()

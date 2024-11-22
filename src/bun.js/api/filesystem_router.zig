@@ -49,17 +49,15 @@ pub const FileSystemRouter = struct {
 
     pub usingnamespace JSC.Codegen.JSFileSystemRouter;
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*FileSystemRouter {
-        const argument_ = callframe.arguments(1);
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*FileSystemRouter {
+        const argument_ = callframe.arguments_old(1);
         if (argument_.len == 0) {
-            globalThis.throwInvalidArguments("Expected object", .{});
-            return null;
+            return globalThis.throwInvalidArguments("Expected object", .{});
         }
 
         const argument = argument_.ptr[0];
         if (argument.isEmptyOrUndefinedOrNull() or !argument.isObject()) {
-            globalThis.throwInvalidArguments("Expected object", .{});
-            return null;
+            return globalThis.throwInvalidArguments("Expected object", .{});
         }
         var vm = globalThis.bunVM();
 
@@ -69,20 +67,17 @@ pub const FileSystemRouter = struct {
         var asset_prefix_slice: ZigString.Slice = .{};
 
         var out_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
-        if (argument.getOwn(globalThis, "style")) |style_val| {
+        if (try argument.get(globalThis, "style")) |style_val| {
             if (!style_val.getZigString(globalThis).eqlComptime("nextjs")) {
-                globalThis.throwInvalidArguments("Only 'nextjs' style is currently implemented", .{});
-                return null;
+                return globalThis.throwInvalidArguments("Only 'nextjs' style is currently implemented", .{});
             }
         } else {
-            globalThis.throwInvalidArguments("Expected 'style' option (ex: \"style\": \"nextjs\")", .{});
-            return null;
+            return globalThis.throwInvalidArguments("Expected 'style' option (ex: \"style\": \"nextjs\")", .{});
         }
 
-        if (argument.getOwn(globalThis, "dir")) |dir| {
+        if (try argument.get(globalThis, "dir")) |dir| {
             if (!dir.isString()) {
-                globalThis.throwInvalidArguments("Expected dir to be a string", .{});
-                return null;
+                return globalThis.throwInvalidArguments("Expected dir to be a string", .{});
             }
             const root_dir_path_ = dir.toSlice(globalThis, globalThis.allocator());
             if (!(root_dir_path_.len == 0 or strings.eqlComptime(root_dir_path_.slice(), "."))) {
@@ -97,44 +92,40 @@ pub const FileSystemRouter = struct {
             }
         } else {
             // dir is not optional
-            globalThis.throwInvalidArguments("Expected dir to be a string", .{});
-            return null;
+            return globalThis.throwInvalidArguments("Expected dir to be a string", .{});
         }
         var arena = globalThis.allocator().create(bun.ArenaAllocator) catch unreachable;
         arena.* = bun.ArenaAllocator.init(globalThis.allocator());
         const allocator = arena.allocator();
         var extensions = std.ArrayList(string).init(allocator);
-        if (argument.getOwn(globalThis, "fileExtensions")) |file_extensions| {
+        if (try argument.get(globalThis, "fileExtensions")) |file_extensions| {
             if (!file_extensions.jsType().isArray()) {
-                globalThis.throwInvalidArguments("Expected fileExtensions to be an Array", .{});
                 origin_str.deinit();
                 arena.deinit();
                 globalThis.allocator().destroy(arena);
-                return null;
+                return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array", .{});
             }
 
             var iter = file_extensions.arrayIterator(globalThis);
             extensions.ensureTotalCapacityPrecise(iter.len) catch unreachable;
             while (iter.next()) |val| {
                 if (!val.isString()) {
-                    globalThis.throwInvalidArguments("Expected fileExtensions to be an Array of strings", .{});
                     origin_str.deinit();
                     arena.deinit();
                     globalThis.allocator().destroy(arena);
-                    return null;
+                    return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array of strings", .{});
                 }
                 if (val.getLength(globalThis) == 0) continue;
                 extensions.appendAssumeCapacity((val.toSlice(globalThis, allocator).clone(allocator) catch unreachable).slice()[1..]);
             }
         }
 
-        if (argument.getOwnTruthy(globalThis, "assetPrefix")) |asset_prefix| {
+        if (try argument.getTruthy(globalThis, "assetPrefix")) |asset_prefix| {
             if (!asset_prefix.isString()) {
-                globalThis.throwInvalidArguments("Expected assetPrefix to be a string", .{});
                 origin_str.deinit();
                 arena.deinit();
                 globalThis.allocator().destroy(arena);
-                return null;
+                return globalThis.throwInvalidArguments("Expected assetPrefix to be a string", .{});
             }
 
             asset_prefix_slice = asset_prefix.toSlice(globalThis, allocator).clone(allocator) catch unreachable;
@@ -147,17 +138,15 @@ pub const FileSystemRouter = struct {
         const path_to_use = (root_dir_path.cloneWithTrailingSlash(allocator) catch unreachable).slice();
 
         const root_dir_info = vm.bundler.resolver.readDirInfo(path_to_use) catch {
-            globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return null;
+            return globalThis.throwValue2(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
         } orelse {
-            globalThis.throw("Unable to find directory: {s}", .{root_dir_path.slice()});
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return null;
+            return globalThis.throw2("Unable to find directory: {s}", .{root_dir_path.slice()});
         };
 
         var router = Router.init(vm.bundler.fs, allocator, .{
@@ -167,29 +156,26 @@ pub const FileSystemRouter = struct {
         }) catch unreachable;
 
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.bundler.resolver, router.config.dir) catch {
-            globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return null;
+            return globalThis.throwValue2(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         };
 
-        if (argument.getOwn(globalThis, "origin")) |origin| {
+        if (try argument.get(globalThis, "origin")) |origin| {
             if (!origin.isString()) {
-                globalThis.throwInvalidArguments("Expected origin to be a string", .{});
                 arena.deinit();
                 globalThis.allocator().destroy(arena);
-                return null;
+                return globalThis.throwInvalidArguments("Expected origin to be a string", .{});
             }
             origin_str = origin.toSlice(globalThis, globalThis.allocator());
         }
 
         if (log.errors + log.warnings > 0) {
-            globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return null;
+            return globalThis.throwValue2(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         }
 
         var fs_router = globalThis.allocator().create(FileSystemRouter) catch unreachable;
@@ -211,7 +197,7 @@ pub const FileSystemRouter = struct {
         return fs_router;
     }
 
-    pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
 
         var arena = globalThis.allocator().create(bun.ArenaAllocator) catch unreachable;
@@ -259,17 +245,15 @@ pub const FileSystemRouter = struct {
         return this_value;
     }
 
-    pub fn match(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
-        const argument_ = callframe.arguments(2);
+    pub fn match(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const argument_ = callframe.arguments_old(2);
         if (argument_.len == 0) {
-            globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
-            return JSValue.zero;
+            return globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
         }
 
         const argument = argument_.ptr[0];
         if (argument.isEmptyOrUndefinedOrNull() or !argument.isCell()) {
-            globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
-            return JSValue.zero;
+            return globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
         }
 
         var path: ZigString.Slice = brk: {
@@ -288,8 +272,7 @@ pub const FileSystemRouter = struct {
                 }
             }
 
-            globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
-            return JSValue.zero;
+            return globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
         };
 
         if (path.len == 0 or (path.len == 1 and path.ptr[0] == '/')) {
@@ -531,11 +514,10 @@ pub const MatchedRoute = struct {
                         for (entry.values, 0..) |value, i| {
                             values[i] = ZigString.init(value).withEncoding();
                         }
-                        obj.putRecord(global, &str, values.ptr, values.len);
+                        obj.putRecord(global, &str, values);
                     } else {
                         query_string_value_refs_buf[0] = ZigString.init(entry.values[0]).withEncoding();
-
-                        obj.putRecord(global, &str, &query_string_value_refs_buf, 1);
+                        obj.putRecord(global, &str, query_string_value_refs_buf[0..1]);
                     }
                 }
             }

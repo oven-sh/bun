@@ -31,6 +31,7 @@
 #include "PathInlines.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "BunObject+exports.h"
+#include "ErrorCode.h"
 
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookup);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolve);
@@ -50,7 +51,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
-
+BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
 namespace Bun {
 
 using namespace JSC;
@@ -120,8 +121,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
 
         if (auto* typedArray = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(element)) {
             if (UNLIKELY(typedArray->isDetached())) {
-                throwTypeError(lexicalGlobalObject, throwScope, "ArrayBufferView is detached"_s);
-                return {};
+                return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
             }
             size_t current = typedArray->byteLength();
             any_typed = true;
@@ -133,8 +133,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
         } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(element)) {
             auto* impl = arrayBuffer->impl();
             if (UNLIKELY(!impl)) {
-                throwTypeError(lexicalGlobalObject, throwScope, "ArrayBuffer is detached"_s);
-                return {};
+                return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
             }
 
             size_t current = impl->byteLength();
@@ -277,6 +276,15 @@ static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
         JSC::PropertyAttribute::DontDelete | 0);
 
     return pluginFunction;
+}
+
+static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(bunObject->globalObject());
+    JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
+    RETURN_IF_EXCEPTION(scope, {});
+    return sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword);
 }
 
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
@@ -618,6 +626,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
+    randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
     readableStreamToBytes                          JSBuiltin                                                           Builtin|Function 1
@@ -630,6 +639,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     semver                                         BunObject_getter_wrap_semver                                        ReadOnly|DontDelete|PropertyCallback
+    sql                                            constructBunSQLObject                                               DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1

@@ -4,15 +4,15 @@
 
 #if !OS(WINDOWS)
 #include <sys/resource.h>
-#include <sys/fcntl.h>
+#include <fcntl.h>
 #include <sys/stat.h>
-#include <sys/signal.h>
+#include <signal.h>
 #include <unistd.h>
 #include <cstring>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
-#include <sys/termios.h>
+#include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #else
@@ -252,6 +252,8 @@ typedef struct {
     size_t name_len;
     const char* value;
     size_t value_len;
+    bool never_index;
+    uint16_t hpack_index;
 } lshpack_header;
 
 lshpack_wrapper* lshpack_wrapper_init(lshpack_wrapper_alloc alloc, lshpack_wrapper_free free, unsigned max_capacity)
@@ -310,6 +312,12 @@ size_t lshpack_wrapper_decode(lshpack_wrapper* self,
     output->name_len = hdr.name_len;
     output->value = lsxpack_header_get_value(&hdr);
     output->value_len = hdr.val_len;
+    output->never_index = (hdr.flags & LSXPACK_NEVER_INDEX) != 0;
+    if (hdr.hpack_index != LSHPACK_HDR_UNKNOWN && hdr.hpack_index <= LSHPACK_HDR_WWW_AUTHENTICATE) {
+        output->hpack_index = hdr.hpack_index - 1;
+    } else {
+        output->hpack_index = 255;
+    }
     return s - src;
 }
 
@@ -549,7 +557,7 @@ extern "C" void bun_initialize_process()
 
 #if OS(DARWIN)
     atexit(Bun__onExit);
-#else
+#elif !OS(WINDOWS)
     at_quick_exit(Bun__onExit);
 #endif
 }

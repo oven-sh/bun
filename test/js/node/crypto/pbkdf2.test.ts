@@ -69,13 +69,18 @@ testPBKDF2("password", "salt", 32, 32, "64c486c55d30d4c5a079b8823b7d7cb37ff0556f
 testPBKDF2("", "", 1, 32, "f7ce0b653d2d72a4108cf5abe912ffdd777616dbbb27a70e8204f3ae2d0f6fad", "hex");
 
 describe("invalid inputs", () => {
-  for (let input of ["test", {}, [], true, undefined, null]) {
+  for (let input of ["test", [], true, undefined, null]) {
     test(`${input} is invalid`, () => {
       expect(() => crypto.pbkdf2("pass", "salt", input, 8, "sha256")).toThrow(
-        `The "iteration count" argument must be of type integer. Received "${typeof input}"`,
+        `The "iteration count" argument must be of type integer. Received ${input}`,
       );
     });
   }
+  test(`{} is invalid`, () => {
+    expect(() => crypto.pbkdf2("pass", "salt", {}, 8, "sha256")).toThrow(
+      `The "iteration count" argument must be of type integer. Received {}`,
+    );
+  });
 
   test("invalid length", () => {
     expect(() => crypto.pbkdf2("password", "salt", 1, -1, "sha256")).toThrow();
@@ -115,7 +120,7 @@ describe("invalid inputs", () => {
 [Infinity, -Infinity, NaN].forEach(input => {
   test(`${input} keylen`, () => {
     expect(() => crypto.pbkdf2("password", "salt", 1, input, "sha256")).toThrow(
-      `The \"keylen\" argument must be of type integer. Received "number"`,
+      `The \"keylen\" argument must be of type integer. Received ${input}`,
     );
   });
 });

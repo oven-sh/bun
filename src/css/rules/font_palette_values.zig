@@ -75,6 +75,10 @@ pub const FontPaletteValuesRule = struct {
         try dest.newline();
         try dest.writeChar('}');
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 pub const FontPaletteValuesProperty = union(enum) {
@@ -119,6 +123,10 @@ pub const FontPaletteValuesProperty = union(enum) {
             },
         }
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A value for the [override-colors](https://drafts.csswg.org/css-fonts-4/#override-color)
@@ -155,6 +163,10 @@ pub const OverrideColors = struct {
         try css.CSSIntegerFns.toCss(&@as(i32, @intCast(this.index)), W, dest);
         try dest.writeChar(' ');
         try this.color.toCss(W, dest);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 
@@ -194,6 +206,10 @@ pub const BasePalette = union(enum) {
             .dark => try dest.writeStr("dark"),
             .integer => try css.CSSIntegerFns.toCss(&@as(i32, @intCast(this.integer)), W, dest),
         }
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 

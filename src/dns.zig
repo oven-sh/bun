@@ -74,23 +74,23 @@ pub const GetAddrInfo = struct {
             if (value.isObject()) {
                 var options = Options{};
 
-                if (value.getOwn(globalObject, "family")) |family| {
+                if (try value.get(globalObject, "family")) |family| {
                     options.family = try Family.fromJS(family, globalObject);
                 }
 
-                if (value.getOwn(globalObject, "socketType") orelse value.getOwn(globalObject, "socktype")) |socktype| {
+                if (try value.get(globalObject, "socketType") orelse try value.get(globalObject, "socktype")) |socktype| {
                     options.socktype = try SocketType.fromJS(socktype, globalObject);
                 }
 
-                if (value.getOwn(globalObject, "protocol")) |protocol| {
+                if (try value.get(globalObject, "protocol")) |protocol| {
                     options.protocol = try Protocol.fromJS(protocol, globalObject);
                 }
 
-                if (value.getOwn(globalObject, "backend")) |backend| {
+                if (try value.get(globalObject, "backend")) |backend| {
                     options.backend = try Backend.fromJS(backend, globalObject);
                 }
 
-                if (value.getOwn(globalObject, "flags")) |flags| {
+                if (try value.get(globalObject, "flags")) |flags| {
                     if (!flags.isNumber())
                         return error.InvalidFlags;
 

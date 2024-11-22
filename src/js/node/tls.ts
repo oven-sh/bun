@@ -4,7 +4,6 @@ const { addServerName } = require("../internal/net");
 const net = require("node:net");
 const { Server: NetServer, [Symbol.for("::bunternal::")]: InternalTCPSocket } = net;
 
-const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
 const SymbolReplace = Symbol.replace;
@@ -330,6 +329,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     #socket;
     #checkServerIdentity;
     #session;
+    alpnProtocol = null;
 
     constructor(socket, options) {
       super(socket instanceof InternalTCPSocket ? options : options || socket);
@@ -373,31 +373,31 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
 
     getSession() {
-      return this[bunSocketInternal]?.getSession();
+      return this._handle?.getSession();
     }
 
     getEphemeralKeyInfo() {
-      return this[bunSocketInternal]?.getEphemeralKeyInfo();
+      return this._handle?.getEphemeralKeyInfo();
     }
 
     getCipher() {
-      return this[bunSocketInternal]?.getCipher();
+      return this._handle?.getCipher();
     }
 
     getSharedSigalgs() {
-      return this[bunSocketInternal]?.getSharedSigalgs();
+      return this._handle?.getSharedSigalgs();
     }
 
     getProtocol() {
-      return this[bunSocketInternal]?.getTLSVersion();
+      return this._handle?.getTLSVersion();
     }
 
     getFinished() {
-      return this[bunSocketInternal]?.getTLSFinishedMessage() || undefined;
+      return this._handle?.getTLSFinishedMessage() || undefined;
     }
 
     getPeerFinished() {
-      return this[bunSocketInternal]?.getTLSPeerFinishedMessage() || undefined;
+      return this._handle?.getTLSPeerFinishedMessage() || undefined;
     }
     isSessionReused() {
       return !!this.#session;
@@ -412,7 +412,7 @@ const TLSSocket = (function (InternalTLSSocket) {
         return false;
       }
 
-      const socket = this[bunSocketInternal];
+      const socket = this._handle;
       // if the socket is detached we can't renegotiate, nodejs do a noop too (we should not return false or true here)
       if (!socket) return;
 
@@ -444,21 +444,21 @@ const TLSSocket = (function (InternalTLSSocket) {
     disableRenegotiation() {
       this.#renegotiationDisabled = true;
       // disable renegotiation on the socket
-      return this[bunSocketInternal]?.disableRenegotiation();
+      return this._handle?.disableRenegotiation();
     }
 
     getTLSTicket() {
-      return this[bunSocketInternal]?.getTLSTicket();
+      return this._handle?.getTLSTicket();
     }
     exportKeyingMaterial(length, label, context) {
       if (context) {
-        return this[bunSocketInternal]?.exportKeyingMaterial(length, label, context);
+        return this._handle?.exportKeyingMaterial(length, label, context);
       }
-      return this[bunSocketInternal]?.exportKeyingMaterial(length, label);
+      return this._handle?.exportKeyingMaterial(length, label);
     }
 
     setMaxSendFragment(size) {
-      return this[bunSocketInternal]?.setMaxSendFragment(size) || false;
+      return this._handle?.setMaxSendFragment(size) || false;
     }
 
     // only for debug purposes so we just mock for now
@@ -472,25 +472,23 @@ const TLSSocket = (function (InternalTLSSocket) {
       }
       // if the socket is detached we can't set the servername but we set this property so when open will auto set to it
       this.servername = name;
-      this[bunSocketInternal]?.setServername(name);
+      this._handle?.setServername(name);
     }
     setSession(session) {
       this.#session = session;
       if (typeof session === "string") session = Buffer.from(session, "latin1");
-      return this[bunSocketInternal]?.setSession(session);
+      return this._handle?.setSession(session);
     }
     getPeerCertificate(abbreviated) {
       const cert =
-        arguments.length < 1
-          ? this[bunSocketInternal]?.getPeerCertificate()
-          : this[bunSocketInternal]?.getPeerCertificate(abbreviated);
+        arguments.length < 1 ? this._handle?.getPeerCertificate() : this._handle?.getPeerCertificate(abbreviated);
       if (cert) {
         return translatePeerCertificate(cert);
       }
     }
     getCertificate() {
       // need to implement certificate on socket.zig
-      const cert = this[bunSocketInternal]?.getCertificate();
+      const cert = this._handle?.getCertificate();
       if (cert) {
         // It's not a peer cert, but the formatting is identical.
         return translatePeerCertificate(cert);
@@ -501,10 +499,6 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
     getX509Certificate() {
       throw Error("Not implented in Bun yet");
-    }
-
-    get alpnProtocol() {
-      return this[bunSocketInternal]?.alpnProtocol;
     }
 
     [buntls](port, host) {
@@ -546,8 +540,8 @@ class Server extends NetServer {
     if (!(context instanceof InternalSecureContext)) {
       context = createSecureContext(context);
     }
-    if (this[bunSocketInternal]) {
-      addServerName(this[bunSocketInternal], hostname, context);
+    if (this._handle) {
+      addServerName(this._handle, hostname, context);
     } else {
       if (!this.#contexts) this.#contexts = new Map();
       this.#contexts.set(hostname, context as typeof InternalSecureContext);

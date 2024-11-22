@@ -12,8 +12,8 @@ const EVP = Crypto.EVP;
 const PBKDF2 = EVP.PBKDF2;
 const JSValue = JSC.JSValue;
 const validators = @import("./util/validators.zig");
-fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-    const arguments = callframe.arguments(2).slice();
+fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const arguments = callframe.arguments_old(2).slice();
 
     //min, max
     if (!arguments[0].isNumber()) return globalThis.throwInvalidArgumentTypeValue("min", "safe integer", arguments[0]);
@@ -41,13 +41,10 @@ fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSV
 fn pbkdf2(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
-    const arguments = callframe.arguments(5);
+) bun.JSError!JSC.JSValue {
+    const arguments = callframe.arguments_old(5);
 
-    const data = PBKDF2.fromJS(globalThis, arguments.slice(), true) orelse {
-        assert(globalThis.hasException());
-        return .zero;
-    };
+    const data = try PBKDF2.fromJS(globalThis, arguments.slice(), true);
 
     const job = PBKDF2.Job.create(JSC.VirtualMachine.get(), globalThis, &data);
     return job.promise.value();
@@ -56,13 +53,10 @@ fn pbkdf2(
 fn pbkdf2Sync(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) JSC.JSValue {
-    const arguments = callframe.arguments(5);
+) bun.JSError!JSC.JSValue {
+    const arguments = callframe.arguments_old(5);
 
-    var data = PBKDF2.fromJS(globalThis, arguments.slice(), false) orelse {
-        assert(globalThis.hasException());
-        return .zero;
-    };
+    var data = try PBKDF2.fromJS(globalThis, arguments.slice(), false);
     defer data.deinit();
     var out_arraybuffer = JSC.JSValue.createBufferFromLength(globalThis, @intCast(data.length));
     if (out_arraybuffer == .zero or globalThis.hasException()) {
@@ -86,16 +80,12 @@ fn pbkdf2Sync(
     return out_arraybuffer;
 }
 
-const jsPbkdf2 = JSC.toJSHostFunction(pbkdf2);
-const jsPbkdf2Sync = JSC.toJSHostFunction(pbkdf2Sync);
-const jsRandomInt = JSC.toJSHostFunction(randomInt);
-
 pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
     const crypto = JSC.JSValue.createEmptyObject(global, 3);
 
-    crypto.put(global, bun.String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", jsPbkdf2, 5, .{}));
-    crypto.put(global, bun.String.init("pbkdf2Sync"), JSC.JSFunction.create(global, "pbkdf2Sync", jsPbkdf2Sync, 5, .{}));
-    crypto.put(global, bun.String.init("randomInt"), JSC.JSFunction.create(global, "randomInt", jsRandomInt, 2, .{}));
+    crypto.put(global, bun.String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", pbkdf2, 5, .{}));
+    crypto.put(global, bun.String.init("pbkdf2Sync"), JSC.JSFunction.create(global, "pbkdf2Sync", pbkdf2Sync, 5, .{}));
+    crypto.put(global, bun.String.init("randomInt"), JSC.JSFunction.create(global, "randomInt", randomInt, 2, .{}));
 
     return crypto;
 }

@@ -510,7 +510,6 @@ describe("workspaces", () => {
       'error: Failed to resolve workspace version for "pkg1" in `dependencies`. Run `bun install` and try again.',
     );
 
-    await rm(join(packageDir, "pack-workspace-protocol-fail-2.2.3.tgz"));
     await runBunInstall(bunEnv, packageDir);
     await pack(packageDir, bunEnv);
     const tarball = readTarball(join(packageDir, "pack-workspace-protocol-fail-2.2.3.tgz"));

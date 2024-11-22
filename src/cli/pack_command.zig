@@ -136,12 +136,7 @@ pub const PackCommand = struct {
                     }
 
                     if (manager.log.hasErrors()) {
-                        switch (Output.enable_ansi_colors) {
-                            inline else => |enable_ansi_colors| try manager.log.printForLogLevelWithEnableAnsiColors(
-                                Output.errorWriter(),
-                                enable_ansi_colors,
-                            ),
-                        }
+                        try manager.log.print(Output.errorWriter());
                     }
 
                     Global.crash();
@@ -1090,11 +1085,7 @@ pub const PackCommand = struct {
             },
             .parse_err => |err| {
                 Output.err(err, "failed to parse package.json: {s}", .{abs_package_json_path});
-                switch (Output.enable_ansi_colors) {
-                    inline else => |enable_ansi_colors| {
-                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                    },
-                }
+                manager.log.print(Output.errorWriter()) catch {};
                 Global.crash();
             },
             .entry => |entry| entry,
@@ -1147,6 +1138,8 @@ pub const PackCommand = struct {
                 }
             }
         }
+
+        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
 
         var this_bundler: bun.bundler.Bundler = undefined;
 
@@ -1401,6 +1394,7 @@ pub const PackCommand = struct {
                     .publish_script = publish_script,
                     .postpublish_script = postpublish_script,
                     .script_env = this_bundler.env,
+                    .normalized_pkg_info = "",
                 };
             }
 
@@ -1500,7 +1494,7 @@ pub const PackCommand = struct {
 
         var entry = Archive.Entry.new2(archive);
 
-        const package_json = archive_with_progress: {
+        {
             var progress: if (log_level == .silent) void else Progress = if (comptime log_level == .silent) {} else .{};
             var node = if (comptime log_level == .silent) {} else node: {
                 progress.supports_ansi_escape_codes = Output.enable_ansi_colors;
@@ -1510,7 +1504,7 @@ pub const PackCommand = struct {
             };
             defer if (comptime log_level != .silent) node.end();
 
-            entry, const edited_package_json = try editAndArchivePackageJSON(ctx, archive, entry, root_dir, json);
+            entry = try archivePackageJSON(ctx, archive, entry, root_dir, edited_package_json);
             if (comptime log_level != .silent) node.completeOne();
 
             while (pack_queue.removeOrNull()) |pathname| {
@@ -1575,9 +1569,7 @@ pub const PackCommand = struct {
                     bins,
                 );
             }
-
-            break :archive_with_progress edited_package_json;
-        };
+        }
 
         entry.free();
 
@@ -1655,12 +1647,25 @@ pub const PackCommand = struct {
             ctx.stats.packed_size = size;
         };
 
+        const normalized_pkg_info: if (for_publish) string else void = if (comptime for_publish)
+            try Publish.normalizedPackage(
+                ctx.allocator,
+                manager,
+                package_name,
+                package_version,
+                &json.root,
+                json.source,
+                shasum,
+                integrity,
+                abs_tarball_dest,
+            );
+
         printArchivedFilesAndPackages(
             ctx,
             root_dir,
             false,
             pack_list,
-            package_json.len,
+            edited_package_json.len,
         );
 
         if (comptime !for_publish) {
@@ -1715,6 +1720,7 @@ pub const PackCommand = struct {
                 .publish_script = publish_script,
                 .postpublish_script = postpublish_script,
                 .script_env = this_bundler.env,
+                .normalized_pkg_info = normalized_pkg_info,
             };
         }
     }
@@ -1785,15 +1791,13 @@ pub const PackCommand = struct {
         }
     };
 
-    fn editAndArchivePackageJSON(
+    fn archivePackageJSON(
         ctx: *Context,
         archive: *Archive,
         entry: *Archive.Entry,
         root_dir: std.fs.Dir,
-        json: *PackageManager.WorkspacePackageJSONCache.MapEntry,
-    ) OOM!struct { *Archive.Entry, string } {
-        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
-
+        edited_package_json: string,
+    ) OOM!*Archive.Entry {
         const stat = bun.sys.fstatat(bun.toFD(root_dir), "package.json").unwrap() catch |err| {
             Output.err(err, "failed to stat package.json", .{});
             Global.crash();
@@ -1818,7 +1822,7 @@ pub const PackCommand = struct {
 
         ctx.stats.unpacked_size += @intCast(archive.writeData(edited_package_json));
 
-        return .{ entry.clear(), edited_package_json };
+        return entry.clear();
     }
 
     fn addArchiveEntry(
@@ -2293,8 +2297,8 @@ pub const bindings = struct {
     //     return obj;
     // }
 
-    pub fn jsReadTarball(global: *JSGlobalObject, callFrame: *CallFrame) JSValue {
-        const args = callFrame.arguments(1).slice();
+    pub fn jsReadTarball(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+        const args = callFrame.arguments_old(1).slice();
         if (args.len < 1 or !args[0].isString()) {
             global.throw("expected tarball path string argument", .{});
             return .zero;

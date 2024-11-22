@@ -192,6 +192,10 @@ pub const Angle = union(Tag) {
         return Angle.op(&this, &rhs, {}, addfn.add);
     }
 
+    pub fn tryAdd(this: *const Angle, _: std.mem.Allocator, rhs: *const Angle) ?Angle {
+        return .{ .deg = this.toDegrees() + rhs.toDegrees() };
+    }
+
     pub fn eql(lhs: *const Angle, rhs: *const Angle) bool {
         return lhs.toDegrees() == rhs.toDegrees();
     }
@@ -282,6 +286,14 @@ pub const Angle = union(Tag) {
         return switch (this.*) {
             .deg, .rad, .grad, .turn => |v| CSSNumberFns.sign(&v),
         };
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 

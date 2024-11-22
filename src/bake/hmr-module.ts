@@ -19,9 +19,9 @@ export const enum LoadModuleType {
 
 /**
  * This object is passed as the CommonJS "module", but has a bunch of
- * non-standard properties that are used for implementing hot-module
- * reloading. It is unacceptable to depend on these properties, and
- * it will not be considered a breaking change.
+ * non-standard properties that are used for implementing hot-module reloading.
+ * It is unacceptable for users to depend on these properties, and it will not
+ * be considered a breaking change when these internals are altered.
  */
 export class HotModule<E = any> {
   id: Id;
@@ -33,9 +33,11 @@ export class HotModule<E = any> {
   _import_meta: ImportMeta | undefined = undefined;
   _cached_failure: any = undefined;
   // modules that import THIS module
-  _deps: Map<HotModule, ExportsCallbackFunction | undefined> = new Map;
+  _deps: Map<HotModule, ExportsCallbackFunction | undefined> = new Map();
 
-  constructor(id: Id) { this.id = id; }
+  constructor(id: Id) {
+    this.id = id;
+  }
 
   require(id: Id, onReload?: ExportsCallbackFunction) {
     const mod = loadModule(id, LoadModuleType.UserDynamic);
@@ -77,41 +79,44 @@ function initImportMeta(m: HotModule): ImportMeta {
   throw new Error("TODO: import meta object");
 }
 
-/** 
+/**
  * Load a module by ID. Use `type` to specify if the module is supposed to be
  * present, or is something a user is able to dynamically specify.
  */
 export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T> {
-  let module = registry.get(key);
-  if (module) {
+  let mod = registry.get(key);
+  if (mod) {
     // Preserve failures until they are re-saved.
-    if (module._state == State.Error) throw module._cached_failure;
+    if (mod._state == State.Error) throw mod._cached_failure;
 
-    return module;
+    return mod;
   }
-  module = new HotModule(key);
+  mod = new HotModule(key);
   const load = input_graph[key];
   if (!load) {
     if (type == LoadModuleType.AssertPresent) {
       throw new Error(
-        `Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun Kit's bundler.`,
+        `Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun's bundler.`,
       );
     } else {
       throw new Error(
-        `Failed to resolve dynamic import '${key}'. In Bun Kit, all imports must be statically known at compile time so that the bundler can trace everything.`,
+        `Failed to resolve dynamic import '${key}'. In Bun Bake, all imports must be statically known at compile time so that the bundler can trace everything.`,
       );
     }
   }
   try {
-    registry.set(key, module);
-    load(module);
+    registry.set(key, mod);
+    load(mod);
   } catch (err) {
-    module._cached_failure = err;
-    module._state = State.Error;
+    console.error(err);
+    mod._cached_failure = err;
+    mod._state = State.Error;
     throw err;
   }
-  return module;
+  return mod;
 }
+
+export const getModule = registry.get.bind(registry);
 
 export function replaceModule(key: Id, load: ModuleLoadFunction) {
   const module = registry.get(key);
@@ -149,22 +154,30 @@ export function replaceModules(modules: any) {
   registry.set("bun:wrap", runtime);
 }
 
+export const serverManifest = {};
+export const clientManifest = {};
+
+if (side === "server") {
+  const server_module = new HotModule("bun:bake/server");
+  server_module.__esModule = true;
+  server_module.exports = { serverManifest, clientManifest };
+  registry.set(server_module.id, server_module);
+}
+
 if (side === "client") {
   const { refresh } = config;
   if (refresh) {
     refreshRuntime = loadModule(refresh, LoadModuleType.AssertPresent).exports;
     refreshRuntime.injectIntoGlobalHook(window);
   }
-}
 
-// TODO: Remove this after `react-server-dom-bun` is uploaded
-globalThis.__webpack_require__ = (id: string) => {
-  if (side == "server" && config.separateSSRGraph && !id.startsWith("ssr:")) {
-    return loadModule("ssr:" + id, LoadModuleType.UserDynamic).exports;
-  } else {
-    return loadModule(id, LoadModuleType.UserDynamic).exports;
-  }
-};
+  const server_module = new HotModule("bun:bake/client");
+  server_module.__esModule = true;
+  server_module.exports = {
+    bundleRouteForDevelopment: async () => {},
+  };
+  registry.set(server_module.id, server_module);
+}
 
 runtimeHelpers.__name(HotModule.prototype.importSync, "<HMR runtime> importSync");
 runtimeHelpers.__name(HotModule.prototype.require, "<HMR runtime> require");

@@ -46,7 +46,7 @@ pub const CssModule = struct {
                     allocator,
                     "{s}",
                     .{source},
-                    config.pattern.segments.items[0] == .hash,
+                    config.pattern.segments.at(0).* == .hash,
                 ));
             }
             break :hashes hashes;
@@ -67,7 +67,7 @@ pub const CssModule = struct {
 
     pub fn deinit(this: *CssModule) void {
         _ = this; // autofix
-        @panic(css.todo_stuff.depth);
+        // TODO: deinit
     }
 
     pub fn referenceDashed(
@@ -90,12 +90,12 @@ pub const CssModule = struct {
         composes: *const css.css_properties.css_modules.Composes,
         source_index: u32,
     ) css.Maybe(void, css.PrinterErrorKind) {
-        for (selectors.v.items) |*sel| {
+        for (selectors.v.slice()) |*sel| {
             if (sel.len() == 1) {
                 const component: *const css.selector.parser.Component = &sel.components.items[0];
                 switch (component.*) {
                     .class => |id| {
-                        for (composes.names.items) |name| {
+                        for (composes.names.slice()) |name| {
                             const reference: CssModuleReference = if (composes.from) |*specifier|
                                 switch (specifier.*) {
                                     .source_index => |dep_source_index| {
@@ -231,7 +231,7 @@ pub const Pattern = struct {
         closure: anytype,
         comptime writefn: *const fn (@TypeOf(closure), []const u8, replace_dots: bool) void,
     ) void {
-        for (this.segments.items) |*segment| {
+        for (this.segments.slice()) |*segment| {
             switch (segment.*) {
                 .literal => |s| {
                     writefn(closure, s, false);

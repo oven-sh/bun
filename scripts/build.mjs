@@ -130,7 +130,10 @@ function getCachePath(branch) {
   const repository = process.env.BUILDKITE_REPO;
   const fork = process.env.BUILDKITE_PULL_REQUEST_REPO;
   const repositoryKey = (fork || repository).replace(/[^a-z0-9]/gi, "-");
-  const branchKey = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/gi, "-");
+  const branchName = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/gi, "-");
+  const branchKey = branchName.startsWith("gh-readonly-queue-")
+    ? branchName.slice(18, branchName.indexOf("-pr-"))
+    : branchName;
   const stepKey = process.env.BUILDKITE_STEP_KEY.replace(/[^a-z0-9]/gi, "-");
   return resolve(buildPath, "..", "cache", repositoryKey, branchKey, stepKey);
 }

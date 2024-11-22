@@ -125,6 +125,10 @@ pub const PropertyRule = struct {
         try dest.newline();
         try dest.writeChar(';');
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 pub const PropertyRuleDeclarationParser = struct {

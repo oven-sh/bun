@@ -24,11 +24,11 @@ describe("Bun.build", () => {
       entrypoints: [join(dir, "a.css")],
       experimentalCss: true,
       minify: true,
-    })
+    });
 
     expect(build.outputs).toHaveLength(1);
-    expect(build.outputs[0].kind).toBe("entry-point");
-    expect(await build.outputs[0].text()).toEqualIgnoringWhitespace('.hello{color:#00f}.hi{color:red}\n');
+    expect(build.outputs[0].kind).toBe("asset");
+    expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
   });
 
   test("experimentalCss = false works", async () => {
@@ -51,12 +51,11 @@ describe("Bun.build", () => {
       entrypoints: [join(dir, "a.css")],
       outdir: join(dir, "out"),
       minify: true,
-    })
+    });
 
-    console.log(build.outputs);
     expect(build.outputs).toHaveLength(2);
     expect(build.outputs[0].kind).toBe("entry-point");
-    expect(await build.outputs[0].text()).not.toEqualIgnoringWhitespace('.hello{color:#00f}.hi{color:red}\n');
+    expect(await build.outputs[0].text()).not.toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
   });
 
   test("bytecode works", async () => {

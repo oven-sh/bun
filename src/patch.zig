@@ -1094,8 +1094,8 @@ const PatchLinesParser = struct {
 };
 
 pub const TestingAPIs = struct {
-    pub fn makeDiff(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+    pub fn makeDiff(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const old_folder_jsval = arguments.nextEat() orelse {
@@ -1119,8 +1119,7 @@ pub const TestingAPIs = struct {
         defer new_folder.deinit();
 
         return switch (gitDiffInternal(bun.default_allocator, old_folder.slice(), new_folder.slice()) catch |e| {
-            globalThis.throwError(e, "failed to make diff");
-            return .undefined;
+            return globalThis.throwError(e, "failed to make diff");
         }) {
             .result => |s| {
                 defer s.deinit();
@@ -1146,7 +1145,7 @@ pub const TestingAPIs = struct {
             }
         }
     };
-    pub fn apply(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn apply(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var args = switch (parseApplyArgs(globalThis, callframe)) {
             .err => |e| return e,
             .result => |a| a,
@@ -1161,8 +1160,8 @@ pub const TestingAPIs = struct {
         return .true;
     }
     /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
-    pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+    pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_src_js = arguments.nextEat() orelse {
@@ -1174,10 +1173,10 @@ pub const TestingAPIs = struct {
 
         var patchfile = parsePatchFile(patchfile_src.slice()) catch |e| {
             if (e == error.hunk_header_integrity_check_failed) {
-                globalThis.throwError(e, "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)");
-            } else globalThis.throwError(e, "failed to parse patch file");
-
-            return .undefined;
+                return globalThis.throwError(e, "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)");
+            } else {
+                return globalThis.throwError(e, "failed to parse patch file");
+            }
         };
         defer patchfile.deinit(bun.default_allocator);
 
@@ -1190,7 +1189,7 @@ pub const TestingAPIs = struct {
     }
 
     pub fn parseApplyArgs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSC.Node.Maybe(ApplyArgs, JSC.JSValue) {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_js = arguments.nextEat() orelse {
@@ -1223,7 +1222,7 @@ pub const TestingAPIs = struct {
             }
 
             patchfile_src.deinit();
-            globalThis.throwError(e, "failed to parse patchfile");
+            globalThis.throwError(e, "failed to parse patchfile") catch {};
             return .{ .err = .undefined };
         };
 

@@ -1237,7 +1237,7 @@ export default <>hi</>
     });
 
     expect(bun.transformSync("console.log(<div key={() => {}} points={() => {}}></div>);")).toBe(
-      `console.log(jsxDEV("div", {
+      `console.log(jsxDEV_7x81h0kn("div", {
   points: () => {
   }
 }, () => {
@@ -1246,7 +1246,7 @@ export default <>hi</>
     );
 
     expect(bun.transformSync("console.log(<div points={() => {}} key={() => {}}></div>);")).toBe(
-      `console.log(jsxDEV("div", {
+      `console.log(jsxDEV_7x81h0kn("div", {
   points: () => {
   }
 }, () => {
@@ -1255,23 +1255,23 @@ export default <>hi</>
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}} key={() => {}}></div>);")).toBe(
-      'console.log(jsxDEV("div", {\n  key: () => {\n  }\n}, () => {\n}, false, undefined, this));\n',
+      'console.log(jsxDEV_7x81h0kn("div", {\n  key: () => {\n  }\n}, () => {\n}, false, undefined, this));\n',
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}}></div>, () => {});")).toBe(
-      'console.log(jsxDEV("div", {}, () => {\n}, false, undefined, this), () => {\n});\n',
+      'console.log(jsxDEV_7x81h0kn("div", {}, () => {\n}, false, undefined, this), () => {\n});\n',
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}} a={() => {}} key={() => {}}></div>, () => {});")).toBe(
-      'console.log(jsxDEV("div", {\n  key: () => {\n  },\n  a: () => {\n  }\n}, () => {\n}, false, undefined, this), () => {\n});\n',
+      'console.log(jsxDEV_7x81h0kn("div", {\n  key: () => {\n  },\n  a: () => {\n  }\n}, () => {\n}, false, undefined, this), () => {\n});\n',
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}} key={() => {}} a={() => {}}></div>, () => {});")).toBe(
-      'console.log(jsxDEV("div", {\n  key: () => {\n  },\n  a: () => {\n  }\n}, () => {\n}, false, undefined, this), () => {\n});\n',
+      'console.log(jsxDEV_7x81h0kn("div", {\n  key: () => {\n  },\n  a: () => {\n  }\n}, () => {\n}, false, undefined, this), () => {\n});\n',
     );
 
     expect(bun.transformSync("console.log(<div points={() => {}} key={() => {}}></div>);")).toBe(
-      `console.log(jsxDEV("div", {
+      `console.log(jsxDEV_7x81h0kn("div", {
   points: () => {
   }
 }, () => {
@@ -1280,31 +1280,31 @@ export default <>hi</>
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}}></div>);")).toBe(
-      `console.log(jsxDEV("div", {}, () => {
+      `console.log(jsxDEV_7x81h0kn("div", {}, () => {
 }, false, undefined, this));
 `,
     );
 
     expect(bun.transformSync("console.log(<div></div>);")).toBe(
-      `console.log(jsxDEV("div", {}, undefined, false, undefined, this));
+      `console.log(jsxDEV_7x81h0kn("div", {}, undefined, false, undefined, this));
 `,
     );
 
     // key after spread props
     // https://github.com/oven-sh/bun/issues/7328
     expect(bun.transformSync(`console.log(<div {...obj} key="after" />, <div key="before" {...obj} />);`)).toBe(
-      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\"\n}), jsxDEV(\"div\", {\n  ...obj\n}, \"before\", false, undefined, this));
+      `console.log(createElement_mvmpqhxp(\"div\", {\n  ...obj,\n  key: \"after\"\n}), jsxDEV_7x81h0kn(\"div\", {\n  ...obj\n}, \"before\", false, undefined, this));
 `,
     );
     expect(bun.transformSync(`console.log(<div {...obj} key="after" {...obj2} />);`)).toBe(
-      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\",\n  ...obj2\n}));
+      `console.log(createElement_mvmpqhxp(\"div\", {\n  ...obj,\n  key: \"after\",\n  ...obj2\n}));
 `,
     );
     expect(
       bun.transformSync(`// @jsx foo;
 console.log(<div {...obj} key="after" />);`),
     ).toBe(
-      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\"\n}));
+      `console.log(createElement_mvmpqhxp(\"div\", {\n  ...obj,\n  key: \"after\"\n}));
 `,
     );
   });
@@ -1317,44 +1317,44 @@ console.log(<div {...obj} key="after" />);`),
       },
     });
     expect(bun.transformSync("export var foo = <div foo />")).toBe(
-      `export var foo = jsxDEV("div", {
+      `export var foo = jsxDEV_7x81h0kn("div", {
   foo: true
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var foo = <div foo={foo} />")).toBe(
-      `export var foo = jsxDEV("div", {
+      `export var foo = jsxDEV_7x81h0kn("div", {
   foo
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var foo = <div {...foo} />")).toBe(
-      `export var foo = jsxDEV("div", {
+      `export var foo = jsxDEV_7x81h0kn("div", {
   ...foo
 }, undefined, false, undefined, this);
 `,
     );
 
     expect(bun.transformSync("export var hi = <div {foo} />")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   foo
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo.bar.baz} />")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   baz: foo.bar.baz
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo?.bar?.baz} />")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   baz: foo?.bar?.baz
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
 `,
@@ -1362,20 +1362,20 @@ console.log(<div {...obj} key="after" />);`),
 
     // cursed
     expect(bun.transformSync("export var hi = <div {foo[() => true].hi} />")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   hi: foo[() => true].hi
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <Foo {process.env.NODE_ENV} />")).toBe(
-      `export var hi = jsxDEV(Foo, {
+      `export var hi = jsxDEV_7x81h0kn(Foo, {
       NODE_ENV: "development"
     }, undefined, false, undefined, this);
     `,
     );
 
     expect(bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
 `,
@@ -1388,22 +1388,22 @@ console.log(<div {...obj} key="after" />);`),
     }
 
     expect(bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   Foo,
-  children: jsxDEV(Foo, {}, undefined, false, undefined, this)
+  children: jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this)
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   Foo,
-  children: jsxDEV(Foo, {}, undefined, false, undefined, this)
+  children: jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this)
 }, undefined, false, undefined, this);
 `,
     );
 
     expect(bun.transformSync("export var hi = <div>{123}}</div>").trim()).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   children: [
     123,
     "}"
@@ -1421,7 +1421,7 @@ console.log(<div {...obj} key="after" />);`),
       },
     });
     expect(bun.transformSync("export var foo = <div>{...a}b</div>")).toBe(
-      `export var foo = jsxDEV("div", {
+      `export var foo = jsxDEV_7x81h0kn("div", {
   children: [
     ...a,
     "b"
@@ -1431,7 +1431,7 @@ console.log(<div {...obj} key="after" />);`),
     );
 
     expect(bun.transformSync("export var foo = <div>{...a}</div>")).toBe(
-      `export var foo = jsxDEV("div", {
+      `export var foo = jsxDEV_7x81h0kn("div", {
   children: [...a]
 }, undefined, true, undefined, this);
 `,
@@ -1668,8 +1668,33 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`import("./foo.json", { type: "json" });`, `import("./foo.json")`);
     });
 
-    it("import with unicode escape", () => {
-      expectPrinted_(`import { name } from 'mod\\u1011';`, `import { name } from "mod\\u1011"`);
+    it("import with unicode", () => {
+      expectPrinted_(`import { name } from 'modထ';`, `import { name } from "modထ"`);
+      expectPrinted_(`import { name } from 'mod\\u1011';`, `import { name } from "modထ"`);
+      expectPrinted_(`import('modထ');`, `import("modထ")`);
+      expectPrinted_(`import('mod\\u1011');`, `import("modထ")`);
+    });
+    it("import with quote", () => {
+      expectPrinted_(`import { name } from '".ts';`, `import { name } from '".ts'`);
+    });
+
+    it("string quote selection", () => {
+      expectPrinted_(`console.log("\\n")`, "console.log(`\n`)");
+      expectPrinted_(`console.log("\\"")`, `console.log('"')`);
+      expectPrinted_(`console.log('\\'')`, `console.log("'")`);
+      expectPrinted_("console.log(`\\`hi\\``)", "console.log(`\\`hi\\``)");
+      expectPrinted_(`console.log("ထ")`, `console.log("ထ")`);
+      expectPrinted_(`console.log("\\u1011")`, `console.log("ထ")`);
+    });
+
+    it("unicode surrogates", () => {
+      expectPrinted_(`console.log("𐌴")`, 'console.log("\\uD800\\uDF34")');
+      expectPrinted_(`console.log("\\u{10334}")`, 'console.log("\\uD800\\uDF34")');
+      expectPrinted_(`console.log("\\uD800\\uDF34")`, 'console.log("\\uD800\\uDF34")');
+      expectPrinted_(`console.log("\\u{10334}" === "\\uD800\\uDF34")`, "console.log(true)");
+      expectPrinted_(`console.log("\\u{10334}" === "\\uDF34\\uD800")`, "console.log(false)");
+      expectPrintedMin_(`console.log("abc" + "def")`, 'console.log("abcdef")');
+      expectPrintedMin_(`console.log("\\uD800" + "\\uDF34")`, 'console.log("\\uD800" + "\\uDF34")');
     });
 
     it("fold string addition", () => {
@@ -1810,7 +1835,7 @@ export const { dead } = { dead: "hello world!" };
       expect(bunTranspiler.transformSync(input, object).trim()).toBe(output);
     });
 
-    it.skip("rewrite string to length", () => {
+    it("rewrite string to length", () => {
       expectBunPrinted_(`export const foo = "a".length + "b".length;`, `export const foo = 2`);
       // check rope string
       expectBunPrinted_(`export const foo = ("a" + "b").length;`, `export const foo = 2`);
@@ -1819,6 +1844,8 @@ export const { dead } = { dead: "hello world!" };
         `export const foo = "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌".length;`,
         `export const foo = 52`,
       );
+      // no rope string for non-ascii
+      expectBunPrinted_(`export const foo = ("æ" + "™").length;`, `export const foo = ("æ" + "™").length`);
     });
 
     describe("Bun.js", () => {

@@ -423,7 +423,7 @@ pub const Repository = extern struct {
         });
 
         return if (cache_dir.openDirZ(folder_name, .{})) |dir| fetch: {
-            const path = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
+            const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
             _ = exec(
                 allocator,
@@ -443,7 +443,7 @@ pub const Repository = extern struct {
         } else |not_found| clone: {
             if (not_found != error.FileNotFound) return not_found;
 
-            const target = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
+            const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
             _ = exec(allocator, env, &[_]string{
                 "git",
@@ -479,7 +479,7 @@ pub const Repository = extern struct {
         committish: string,
         task_id: u64,
     ) !string {
-        const path = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
+        const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id),
         })}, .auto);
 
@@ -520,7 +520,7 @@ pub const Repository = extern struct {
         var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
             if (not_found != error.ENOENT) return not_found;
 
-            const target = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
+            const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
             _ = exec(allocator, env, &[_]string{
                 "git",
@@ -541,7 +541,7 @@ pub const Repository = extern struct {
                 return err;
             };
 
-            const folder = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
+            const folder = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
             _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
                 log.addErrorFmt(

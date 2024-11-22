@@ -763,7 +763,7 @@ void populateESMExports(
     bool ignoreESModuleAnnotation)
 {
     auto& vm = globalObject->vm();
-    const Identifier& esModuleMarker = builtinNames(vm).__esModulePublicName();
+    const Identifier& esModuleMarker = vm.propertyNames->__esModule;
 
     // Bun's intepretation of the "__esModule" annotation:
     //
@@ -795,9 +795,23 @@ void populateESMExports(
     //       unit tests of build tools. Happy to revisit this if users file an issue.
     bool needsToAssignDefault = true;
 
-    if (result.isObject()) {
-        auto* exports = result.getObject();
-        bool hasESModuleMarker = !ignoreESModuleAnnotation && exports->hasProperty(globalObject, esModuleMarker);
+    if (auto* exports = result.getObject()) {
+        bool hasESModuleMarker = false;
+        if (!ignoreESModuleAnnotation) {
+            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            if (exports->getPropertySlot(globalObject, esModuleMarker, slot)) {
+                JSValue value = slot.getValue(globalObject, esModuleMarker);
+                if (!value.isUndefinedOrNull()) {
+                    if (value.pureToBoolean() == TriState::True) {
+                        hasESModuleMarker = true;
+                    }
+                }
+            }
+            if (catchScope.exception()) {
+                catchScope.clearException();
+            }
+        }
 
         auto* structure = exports->structure();
         uint32_t size = structure->inlineSize() + structure->outOfLineSize();

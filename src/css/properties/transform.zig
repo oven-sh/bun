@@ -47,12 +47,23 @@ pub const TransformList = struct {
         _ = dest; // autofix
         @panic(css.todo_stuff.depth);
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// An individual transform function (https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#two-d-transform-functions).
 pub const Transform = union(enum) {
     /// A 2D translation.
-    translate: struct { x: LengthPercentage, y: LengthPercentage },
+    translate: struct {
+        x: LengthPercentage,
+        y: LengthPercentage,
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
+    },
     /// A translation in the X direction.
     translate_x: LengthPercentage,
     /// A translation in the Y direction.
@@ -60,9 +71,24 @@ pub const Transform = union(enum) {
     /// A translation in the Z direction.
     translate_z: Length,
     /// A 3D translation.
-    translate_3d: struct { x: LengthPercentage, y: LengthPercentage, z: Length },
+    translate_3d: struct {
+        x: LengthPercentage,
+        y: LengthPercentage,
+        z: Length,
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
+    },
     /// A 2D scale.
-    scale: struct { x: NumberOrPercentage, y: NumberOrPercentage },
+    scale: struct {
+        x: NumberOrPercentage,
+        y: NumberOrPercentage,
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
+    },
     /// A scale in the X direction.
     scale_x: NumberOrPercentage,
     /// A scale in the Y direction.
@@ -70,7 +96,15 @@ pub const Transform = union(enum) {
     /// A scale in the Z direction.
     scale_z: NumberOrPercentage,
     /// A 3D scale.
-    scale_3d: struct { x: NumberOrPercentage, y: NumberOrPercentage, z: NumberOrPercentage },
+    scale_3d: struct {
+        x: NumberOrPercentage,
+        y: NumberOrPercentage,
+        z: NumberOrPercentage,
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
+    },
     /// A 2D rotation.
     rotate: Angle,
     /// A rotation around the X axis.
@@ -80,9 +114,25 @@ pub const Transform = union(enum) {
     /// A rotation around the Z axis.
     rotate_z: Angle,
     /// A 3D rotation.
-    rotate_3d: struct { x: f32, y: f32, z: f32, angle: Angle },
+    rotate_3d: struct {
+        x: f32,
+        y: f32,
+        z: f32,
+        angle: Angle,
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
+    },
     /// A 2D skew.
-    skew: struct { x: Angle, y: Angle },
+    skew: struct {
+        x: Angle,
+        y: Angle,
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
+    },
     /// A skew along the X axis.
     skew_x: Angle,
     /// A skew along the Y axis.
@@ -104,6 +154,10 @@ pub const Transform = union(enum) {
         _ = dest; // autofix
         @panic(css.todo_stuff.depth);
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A 2D matrix.
@@ -115,6 +169,14 @@ pub fn Matrix(comptime T: type) type {
         d: T,
         e: T,
         f: T,
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     };
 }
 

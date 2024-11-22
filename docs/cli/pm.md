@@ -64,6 +64,14 @@ $ bun pm ls --all
 ├── ...
 ```
 
+## whoami
+
+Print your npm username. Requires you to be logged in (`bunx npm login`) with credentials in either `bunfig.toml` or `.npmrc`:
+
+```bash
+$ bun pm whoami
+```
+
 ## hash
 
 To generate and print the hash of the current lockfile:

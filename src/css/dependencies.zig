@@ -41,6 +41,14 @@ pub const Location = struct {
             .column = loc.column,
         };
     }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// An `@import` dependency.

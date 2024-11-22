@@ -33,6 +33,10 @@ fn needsDeinit(comptime T: type) bool {
         css.css_values.percentage.NumberOrPercentage => false,
         css.css_properties.border_image.BorderImageSideWidth => true,
         *const css.css_values.percentage.DimensionPercentage(css.css_values.length.LengthValue) => true,
+        CssColor => true,
+        css.css_properties.border.LineStyle => false,
+        css.css_properties.border.BorderSideWidth => true,
+        css.css_values.length.LengthPercentageOrAuto => true,
         else => @compileError("Don't know if " ++ @typeName(T) ++ " needs deinit. Please add it to this switch statement."),
     };
 }
@@ -74,6 +78,15 @@ pub fn Rect(comptime T: type) type {
                 .right = this.right,
                 .bottom = this.bottom,
                 .left = this.left,
+            };
+        }
+
+        pub fn all(val: T) This {
+            return This{
+                .top = val,
+                .right = val,
+                .bottom = val,
+                .left = val,
             };
         }
 

@@ -983,7 +983,7 @@ pub const FormData = struct {
     ) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
-        const args_ = callframe.arguments(2);
+        const args_ = callframe.arguments_old(2);
 
         const args = args_.ptr[0..2];
 
@@ -997,8 +997,7 @@ pub const FormData = struct {
         };
 
         if (input_value.isEmptyOrUndefinedOrNull()) {
-            globalThis.throwInvalidArguments("input must not be empty", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("input must not be empty", .{});
         }
 
         if (!boundary_value.isEmptyOrUndefinedOrNull()) {
@@ -1006,13 +1005,12 @@ pub const FormData = struct {
                 if (array_buffer.byteSlice().len > 0)
                     encoding = .{ .Multipart = array_buffer.byteSlice() };
             } else if (boundary_value.isString()) {
-                boundary_slice = boundary_value.toSliceOrNull(globalThis) orelse return .zero;
+                boundary_slice = try boundary_value.toSliceOrNull(globalThis);
                 if (boundary_slice.len > 0) {
                     encoding = .{ .Multipart = boundary_slice.slice() };
                 }
             } else {
-                globalThis.throwInvalidArguments("boundary must be a string or ArrayBufferView", .{});
-                return .zero;
+                return globalThis.throwInvalidArguments("boundary must be a string or ArrayBufferView", .{});
             }
         }
         var input_slice = JSC.ZigString.Slice{};
@@ -1022,13 +1020,12 @@ pub const FormData = struct {
         if (input_value.asArrayBuffer(globalThis)) |array_buffer| {
             input = array_buffer.byteSlice();
         } else if (input_value.isString()) {
-            input_slice = input_value.toSliceOrNull(globalThis) orelse return .zero;
+            input_slice = try input_value.toSliceOrNull(globalThis);
             input = input_slice.slice();
         } else if (input_value.as(JSC.WebCore.Blob)) |blob| {
             input = blob.sharedView();
         } else {
-            globalThis.throwInvalidArguments("input must be a string or ArrayBufferView", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("input must be a string or ArrayBufferView", .{});
         }
 
         return FormData.toJS(globalThis, input, encoding) catch |err| return globalThis.throwError(err, "while parsing FormData");

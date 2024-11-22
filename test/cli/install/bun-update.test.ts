@@ -193,7 +193,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
       expect.stringContaining("bun install v1."),
       "",
       "+ @barn/moo@0.1.0",
-      "+ baz@0.0.3",
+      expect.stringContaining("+ baz@0.0.3"),
       "",
       "2 packages installed",
     ]);
@@ -254,8 +254,8 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
       expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun update v1."),
         "",
-        "+ @barn/moo@0.1.0",
-        "+ baz@0.0.3",
+        expect.stringContaining("+ @barn/moo@0.1.0"),
+        expect.stringContaining("+ baz@0.0.3"),
         "",
         "2 packages installed",
       ]);

@@ -48,7 +48,7 @@ const PathOrBlob = union(enum) {
     path: JSC.Node.PathOrFileDescriptor,
     blob: Blob,
 
-    pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice) bun.JSError!?PathOrBlob {
+    pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice) bun.JSError!PathOrBlob {
         if (try JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator)) |path| {
             return PathOrBlob{
                 .path = path,
@@ -57,7 +57,7 @@ const PathOrBlob = union(enum) {
 
         const arg = args.nextEat() orelse {
             _ = ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .undefined);
-            return null;
+            return error.JSError;
         };
         if (arg.as(Blob)) |blob| {
             return PathOrBlob{
@@ -66,7 +66,7 @@ const PathOrBlob = union(enum) {
         }
 
         _ = ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);
-        return null;
+        return error.JSError;
     }
 };
 
@@ -969,19 +969,13 @@ pub const Blob = struct {
         unreachable;
     }
 
-    pub fn writeFile(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(3).slice();
+    pub fn writeFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const arguments = callframe.arguments_old(3).slice();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
 
         // accept a path or a blob
-        var path_or_blob = (try PathOrBlob.fromJSNoCopy(globalThis, &args)) orelse {
-            globalThis.throwInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{});
-            return .zero;
-        };
+        var path_or_blob = try PathOrBlob.fromJSNoCopy(globalThis, &args);
         defer {
             if (path_or_blob == .path) {
                 path_or_blob.path.deinit();
@@ -989,19 +983,16 @@ pub const Blob = struct {
         }
 
         var data = args.nextEat() orelse {
-            globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
         };
 
         if (data.isEmptyOrUndefinedOrNull()) {
-            globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
         }
 
         if (path_or_blob == .blob) {
             if (path_or_blob.blob.store == null) {
-                globalThis.throwInvalidArguments("Blob is detached", .{});
-                return .zero;
+                return globalThis.throwInvalidArguments("Blob is detached", .{});
             } else {
                 // TODO only reset last_modified on success paths instead of
                 // resetting last_modified at the beginning for better performance.
@@ -1042,8 +1033,7 @@ pub const Blob = struct {
                 path_or_blob.blob.store.?.data == .file and
                 path_or_blob.blob.store.?.data.file.pathlike == .fd)
             {
-                globalThis.throwInvalidArguments("Cannot create a directory for a file descriptor", .{});
-                return .zero;
+                return globalThis.throwInvalidArguments("Cannot create a directory for a file descriptor", .{});
             }
         }
 
@@ -1140,8 +1130,7 @@ pub const Blob = struct {
         } else path_or_blob.blob.dupe();
 
         if (destination_blob.store == null) {
-            globalThis.throwInvalidArguments("Writing to an empty blob is not implemented yet", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("Writing to an empty blob is not implemented yet", .{});
         }
 
         // TODO: implement a writeev() fast path
@@ -1216,11 +1205,7 @@ pub const Blob = struct {
                 false,
             ) catch |err| {
                 if (err == error.InvalidArguments) {
-                    globalThis.throwInvalidArguments(
-                        "Expected an Array",
-                        .{},
-                    );
-                    return .zero;
+                    return globalThis.throwInvalidArguments("Expected an Array", .{});
                 }
 
                 globalThis.throwOutOfMemory();
@@ -1434,35 +1419,29 @@ pub const Blob = struct {
             },
         };
     }
-    pub fn JSDOMFile__construct_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!?*Blob {
+    pub fn JSDOMFile__construct_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Blob {
         JSC.markBinding(@src());
         const allocator = bun.default_allocator;
         var blob: Blob = undefined;
-        var arguments = callframe.arguments(3);
+        var arguments = callframe.arguments_old(3);
         const args = arguments.slice();
 
         if (args.len < 2) {
-            globalThis.throwInvalidArguments("new File(bits, name) expects at least 2 arguments", .{});
-            return null;
+            return globalThis.throwInvalidArguments("new File(bits, name) expects at least 2 arguments", .{});
         }
         {
             const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
                 if (!globalThis.hasException()) {
-                    globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
+                    return globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
                 }
-                return null;
+                return error.JSError;
             };
             defer name_value_str.deref();
 
             blob = get(globalThis, args[0], false, true) catch |err| switch (err) {
-                error.JSError => return null,
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory();
-                    return null;
-                },
+                error.JSError, error.OutOfMemory => |e| return e,
                 error.InvalidArguments => {
-                    globalThis.throwInvalidArguments("new Blob() expects an Array", .{});
-                    return null;
+                    return globalThis.throwInvalidArguments("new Blob() expects an Array", .{});
                 },
             };
 
@@ -1489,7 +1468,7 @@ pub const Blob = struct {
                 // representing the media type of the Blob.
                 // Normative conditions for this member are provided
                 // in the § 3.1 Constructors.
-                if (options.get(globalThis, "type")) |content_type| {
+                if (try options.get(globalThis, "type")) |content_type| {
                     inner: {
                         if (content_type.isString()) {
                             var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
@@ -1571,13 +1550,12 @@ pub const Blob = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         var vm = globalObject.bunVM();
-        const arguments = callframe.arguments(2).slice();
+        const arguments = callframe.arguments_old(2).slice();
         var args = JSC.Node.ArgumentsSlice.init(vm, arguments);
         defer args.deinit();
 
         var path = (try JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator)) orelse {
-            globalObject.throwInvalidArguments("Expected file path string or file descriptor", .{});
-            return .zero;
+            return globalObject.throwInvalidArguments("Expected file path string or file descriptor", .{});
         };
         defer path.deinitAndUnprotect();
 
@@ -3269,12 +3247,11 @@ pub const Blob = struct {
             return cached;
         }
         var recommended_chunk_size: SizeType = 0;
-        var arguments_ = callframe.arguments(2);
+        var arguments_ = callframe.arguments_old(2);
         var arguments = arguments_.ptr[0..arguments_.len];
         if (arguments.len > 0) {
             if (!arguments[0].isNumber() and !arguments[0].isUndefinedOrNull()) {
-                globalThis.throwInvalidArguments("chunkSize must be a number", .{});
-                return JSValue.jsUndefined();
+                return globalThis.throwInvalidArguments("chunkSize must be a number", .{});
             }
 
             recommended_chunk_size = @as(SizeType, @intCast(@max(0, @as(i52, @truncate(arguments[0].toInt64())))));
@@ -3308,7 +3285,7 @@ pub const Blob = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         const this = callframe.this().as(Blob) orelse @panic("this is not a Blob");
-        const args = callframe.arguments(1).slice();
+        const args = callframe.arguments_old(1).slice();
 
         return JSC.WebCore.ReadableStream.fromFileBlobWithOffset(
             globalThis,
@@ -3473,19 +3450,19 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        var arguments_ = callframe.arguments(1);
+        var arguments_ = callframe.arguments_old(1);
         var arguments = arguments_.ptr[0..arguments_.len];
 
         if (!arguments.ptr[0].isEmptyOrUndefinedOrNull() and !arguments.ptr[0].isObject()) {
-            return globalThis.throwInvalidArguments2("options must be an object or undefined", .{});
+            return globalThis.throwInvalidArguments("options must be an object or undefined", .{});
         }
 
         var store = this.store orelse {
-            return globalThis.throwInvalidArguments2("Blob is detached", .{});
+            return globalThis.throwInvalidArguments("Blob is detached", .{});
         };
 
         if (store.data != .file) {
-            return globalThis.throwInvalidArguments2("Blob is read-only", .{});
+            return globalThis.throwInvalidArguments("Blob is read-only", .{});
         }
 
         if (Environment.isWindows) {
@@ -3603,7 +3580,7 @@ pub const Blob = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         const allocator = bun.default_allocator;
-        var arguments_ = callframe.arguments(3);
+        var arguments_ = callframe.arguments_old(3);
         var args = arguments_.ptr[0..arguments_.len];
 
         if (this.size == 0) {
@@ -3949,7 +3926,7 @@ pub const Blob = struct {
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Blob {
         const allocator = bun.default_allocator;
         var blob: Blob = undefined;
-        var arguments = callframe.arguments(2);
+        var arguments = callframe.arguments_old(2);
         const args = arguments.slice();
 
         switch (args.len) {
@@ -3960,7 +3937,7 @@ pub const Blob = struct {
             else => {
                 blob = get(globalThis, args[0], false, true) catch |err| switch (err) {
                     error.OutOfMemory, error.JSError => |e| return e,
-                    error.InvalidArguments => return globalThis.throwInvalidArguments2("new Blob() expects an Array", .{}),
+                    error.InvalidArguments => return globalThis.throwInvalidArguments("new Blob() expects an Array", .{}),
                 };
 
                 if (args.len > 1) {
@@ -3970,7 +3947,7 @@ pub const Blob = struct {
                         // representing the media type of the Blob.
                         // Normative conditions for this member are provided
                         // in the § 3.1 Constructors.
-                        if (options.get(globalThis, "type")) |content_type| {
+                        if (try options.get(globalThis, "type")) |content_type| {
                             inner: {
                                 if (content_type.isString()) {
                                     var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);

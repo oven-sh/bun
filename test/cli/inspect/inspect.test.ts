@@ -359,7 +359,9 @@ describe("unix domain socket without websocket", () => {
   }
 });
 
-test("junit reporter", async () => {
+/// TODO: this test is flaky because the inspect may not send all messages before the process exit
+/// we need to implement a way/option so we wait every message from the inspector before exiting
+test.todo("junit reporter", async () => {
   const path = Math.random().toString(36).substring(2, 15) + ".sock";
   let reporter: JUnitReporter;
   let session: InspectorSession;

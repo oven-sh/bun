@@ -1236,6 +1236,14 @@ pub const VirtualMachine = struct {
         return handled;
     }
 
+    pub fn handlePendingInternalPromiseRejection(this: *JSC.VirtualMachine) void {
+        var promise = this.pending_internal_promise;
+        if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
+            _ = this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
+            promise.setHandled(this.global.vm());
+        }
+    }
+
     pub fn defaultOnUnhandledRejection(this: *JSC.VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         this.runErrorHandler(value, this.onUnhandledRejectionExceptionList);
     }

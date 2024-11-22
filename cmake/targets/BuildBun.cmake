@@ -1072,7 +1072,7 @@ if(NOT BUN_CPP_ONLY)
   elseif(LINUX AND NOT ABI STREQUAL "musl")
     # When you use llvm-strip to do this, it doesn't delete it from the binary and instead keeps it as [LOAD #2 [R]]
     # So, we must use GNU strip to do this.
-    set(CMAKE_STRIP_FLAGS -R .eh_frame -R .gcc_except_table)
+    set(CMAKE_STRIP_FLAGS -R .eh_frame -R .gcc_except_table -R .llvmbc -R .llvmcmd)
   endif()
 
   if(bunStrip)

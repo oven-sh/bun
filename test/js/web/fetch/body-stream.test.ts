@@ -34,9 +34,8 @@ for (let doClone of [true, false]) {
       },
       async url => {
         called = true;
-        expect(await fetch(url).then(res => res.text())).toContain(
-          "Welcome to Bun! To get started, return a Response object.",
-        );
+        // if we can flush it will be "hey" otherwise will be empty
+        expect(await fetch(url).then(res => res.text())).toBeOneOf(["hey", ""]);
       },
     );
 

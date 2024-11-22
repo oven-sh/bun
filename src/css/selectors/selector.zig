@@ -866,7 +866,7 @@ pub const serialize = struct {
         }
 
         const Helpers = struct {
-            pub inline fn writePrefixed(
+            pub fn writePrefixed(
                 d: *Printer(W),
                 prefix: css.VendorPrefix,
                 comptime val: []const u8,
@@ -881,7 +881,7 @@ pub const serialize = struct {
                 try vp.toCss(W, d);
                 try d.writeStr(val);
             }
-            pub inline fn pseudo(
+            pub fn pseudo(
                 d: *Printer(W),
                 comptime key: []const u8,
                 comptime s: []const u8,
@@ -1583,7 +1583,7 @@ const CompoundSelectorIter = struct {
     ///  .split(|x| x.is_combinator()) // splits the slice into subslices by elements that match over the predicate
     ///  .rev() // reverse
     /// ```
-    pub inline fn next(this: *@This()) ?[]const parser.Component {
+    pub fn next(this: *@This()) ?[]const parser.Component {
         // Since we iterating backwards, we convert all indices into "backwards form" by doing `this.sel.components.items.len - 1 - i`
         while (this.i < this.sel.components.items.len) {
             const next_index: ?usize = next_index: {

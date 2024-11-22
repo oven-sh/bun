@@ -156,7 +156,7 @@ pub fn canTransitivelyImplementEql(comptime T: type) bool {
     };
 }
 
-pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
+pub fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
     const tyinfo = comptime @typeInfo(T);
     if (comptime tyinfo == .Pointer) {
         if (comptime T == []const u8) return bun.strings.eql(lhs.*, rhs.*);
@@ -264,7 +264,7 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
 }
 
 const Angle = css_values.angle.Angle;
-pub inline fn tryFromAngle(comptime T: type, angle: Angle) ?T {
+pub fn tryFromAngle(comptime T: type, angle: Angle) ?T {
     return switch (T) {
         CSSNumber => CSSNumberFns.tryFromAngle(angle),
         Angle => return Angle.tryFromAngle(angle),
@@ -285,7 +285,7 @@ pub inline fn trySign(comptime T: type, val: *const T) ?f32 {
 pub inline fn tryMap(
     comptime T: type,
     val: *const T,
-    comptime map_fn: *const fn (a: f32) f32,
+    map_fn: *const fn (a: f32) f32,
 ) ?T {
     return switch (T) {
         CSSNumber => map_fn(val.*),
@@ -301,31 +301,33 @@ pub inline fn tryOpTo(
     comptime R: type,
     lhs: *const T,
     rhs: *const T,
-    ctx: anytype,
-    comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) R,
+    comptime Ctx: type,
+    ctx: Ctx,
+    op_fn: *const fn (Ctx, a: f32, b: f32) R,
 ) ?R {
     return switch (T) {
         CSSNumber => op_fn(ctx, lhs.*, rhs.*),
         else => {
-            if (@hasDecl(T, "opTo")) return T.opTo(lhs, rhs, R, ctx, op_fn);
-            return T.tryOpTo(lhs, rhs, R, ctx, op_fn);
+            if (@hasDecl(T, "opTo")) return T.opTo(lhs, rhs, R, Ctx, ctx, op_fn);
+            return T.tryOpTo(lhs, rhs, R, Ctx, ctx, op_fn);
         },
     };
 }
 
-pub inline fn tryOp(
+pub fn tryOp(
     comptime T: type,
     lhs: *const T,
     rhs: *const T,
-    ctx: anytype,
-    comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+    comptime Ctx: type,
+    ctx: Ctx,
+    op_fn: *const fn (Ctx, f32, f32) f32,
 ) ?T {
     return switch (T) {
-        Angle => Angle.tryOp(lhs, rhs, ctx, op_fn),
+        Angle => Angle.tryOp(lhs, rhs, Ctx, ctx, op_fn),
         CSSNumber => op_fn(ctx, lhs.*, rhs.*),
         else => {
-            if (@hasDecl(T, "op")) return T.op(lhs, rhs, ctx, op_fn);
-            return T.tryOp(lhs, rhs, ctx, op_fn);
+            if (@hasDecl(T, "op")) return T.op(lhs, rhs, Ctx, ctx, op_fn);
+            return T.tryOp(lhs, rhs, Ctx, ctx, op_fn);
         },
     };
 }

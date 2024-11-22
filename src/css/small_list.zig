@@ -53,7 +53,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             var values: @This() = .{};
             while (true) {
                 input.skipWhitespace();
-                switch (input.parseUntilBefore(Delimiters{ .comma = true }, T, {}, parseFn)) {
+                switch (input.parseUntilBefore(Delimiters{ .comma = true }, T, void, {}, parseFn)) {
                     .result => |v| {
                         values.append(input.allocator(), v);
                     },

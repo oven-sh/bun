@@ -925,7 +925,7 @@ pub const UnresolvedColor = union(enum) {
             const Closure = struct {
                 options: *const css.ParserOptions,
                 parser: *ComponentParser,
-                pub fn parsefn(this: *@This(), input2: *css.Parser) Result(UnresolvedColor) {
+                pub fn parsefn(this: *const @This(), input2: *css.Parser) Result(UnresolvedColor) {
                     return this.parser.parseRelative(input2, HSL, UnresolvedColor, @This().innerParseFn, .{this.options});
                 }
                 pub fn innerParseFn(i: *css.Parser, p: *ComponentParser, opts: *const css.ParserOptions) Result(UnresolvedColor) {
@@ -951,7 +951,7 @@ pub const UnresolvedColor = union(enum) {
                     } };
                 }
             };
-            var closure = Closure{
+            const closure = Closure{
                 .options = options,
                 .parser = &parser,
             };
@@ -960,8 +960,8 @@ pub const UnresolvedColor = union(enum) {
             const Closure = struct {
                 options: *const css.ParserOptions,
                 parser: *ComponentParser,
-                pub fn parsefn(this: *@This(), input2: *css.Parser) Result(UnresolvedColor) {
-                    const light = switch (input2.parseUntilBefore(css.Delimiters{ .comma = true }, TokenList, this, @This().parsefn2)) {
+                pub fn parsefn(this: *const @This(), input2: *css.Parser) Result(UnresolvedColor) {
+                    const light = switch (input2.parseUntilBefore(css.Delimiters{ .comma = true }, TokenList, *const css.ParserOptions, this.options, @This().parsefn2)) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     };
@@ -982,11 +982,11 @@ pub const UnresolvedColor = union(enum) {
                     } };
                 }
 
-                pub fn parsefn2(this: *@This(), input2: *css.Parser) Result(TokenList) {
-                    return TokenListFns.parse(input2, this.options, 1);
+                pub fn parsefn2(parser_options: *const css.ParserOptions, input2: *css.Parser) Result(TokenList) {
+                    return TokenListFns.parse(input2, parser_options, 1);
                 }
             };
-            var closure = Closure{
+            const closure = Closure{
                 .options = options,
                 .parser = &parser,
             };
@@ -1412,10 +1412,9 @@ pub const UnparsedProperty = struct {
     value: TokenList,
 
     pub fn parse(property_id: css.PropertyId, input: *css.Parser, options: *const css.ParserOptions) Result(UnparsedProperty) {
-        const Closure = struct { options: *const css.ParserOptions };
-        const value = switch (input.parseUntilBefore(css.Delimiters{ .bang = true, .semicolon = true }, css.TokenList, &Closure{ .options = options }, struct {
-            pub fn parseFn(self: *const Closure, i: *css.Parser) Result(TokenList) {
-                return TokenList.parse(i, self.options, 0);
+        const value = switch (input.parseUntilBefore(css.Delimiters{ .bang = true, .semicolon = true }, css.TokenList, *const css.ParserOptions, options, struct {
+            pub fn parseFn(parser_options: *const css.ParserOptions, i: *css.Parser) Result(TokenList) {
+                return TokenList.parse(i, parser_options, 0);
             }
         }.parseFn)) {
             .result => |v| v,
@@ -1444,15 +1443,9 @@ pub const CustomProperty = struct {
 
     pub fn parse(name: CustomPropertyName, input: *css.Parser, options: *const css.ParserOptions) Result(CustomProperty) {
         const Closure = struct {
-            options: *const css.ParserOptions,
-
-            pub fn parsefn(this: *@This(), input2: *css.Parser) Result(TokenList) {
-                return TokenListFns.parse(input2, this.options, 0);
+            pub fn parsefn(parser_options: *const css.ParserOptions, input2: *css.Parser) Result(TokenList) {
+                return TokenListFns.parse(input2, parser_options, 0);
             }
-        };
-
-        var closure = Closure{
-            .options = options,
         };
 
         const value = switch (input.parseUntilBefore(
@@ -1461,7 +1454,8 @@ pub const CustomProperty = struct {
                 .semicolon = true,
             },
             TokenList,
-            &closure,
+            *const css.ParserOptions,
+            options,
             Closure.parsefn,
         )) {
             .result => |v| v,

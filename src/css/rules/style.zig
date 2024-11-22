@@ -241,7 +241,7 @@ pub fn StyleRule(comptime R: type) type {
 
         /// Returns whether this rule is a duplicate of another rule.
         /// This means it has the same selectors and properties.
-        pub inline fn isDuplicate(this: *const This, other: *const This) bool {
+        pub fn isDuplicate(this: *const This, other: *const This) bool {
             return this.declarations.len() == other.declarations.len() and
                 this.selectors.eql(&other.selectors) and
                 brk: {

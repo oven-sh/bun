@@ -1550,7 +1550,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
                     .nesting_requirement = nesting_requirement,
                     .parser = parser,
                 };
-                const selector = input.parseUntilBefore(css.Delimiters{ .comma = true }, SelectorT, &closure, Closure.parsefn);
+                const selector = input.parseUntilBefore(css.Delimiters{ .comma = true }, SelectorT, *Closure, &closure, Closure.parsefn);
 
                 const was_ok = selector.isOk();
                 switch (selector) {
@@ -1610,7 +1610,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
                     .nesting_requirement = nesting_requirement,
                     .parser = parser,
                 };
-                const selector = input.parseUntilBefore(css.Delimiters{ .comma = true }, SelectorT, &closure, Closure.parsefn);
+                const selector = input.parseUntilBefore(css.Delimiters{ .comma = true }, SelectorT, *Closure, &closure, Closure.parsefn);
 
                 const was_ok = selector.isOk();
                 switch (selector) {

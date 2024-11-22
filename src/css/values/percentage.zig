@@ -90,7 +90,7 @@ pub const Percentage = struct {
         return null;
     }
 
-    pub fn tryMap(_: *const Percentage, comptime _: *const fn (f32) f32) ?Percentage {
+    pub fn tryMap(_: *const Percentage, _: *const fn (f32) f32) ?Percentage {
         // Percentages cannot be mapped because we don't know what they will resolve to.
         // For example, they might be positive or negative depending on what they are a
         // percentage of, which we don't know.
@@ -100,8 +100,9 @@ pub const Percentage = struct {
     pub fn op(
         this: *const Percentage,
         other: *const Percentage,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+        comptime Ctx: type,
+        ctx: Ctx,
+        op_fn: *const fn (Ctx, a: f32, b: f32) f32,
     ) Percentage {
         return Percentage{ .v = op_fn(ctx, this.v, other.v) };
     }
@@ -110,8 +111,9 @@ pub const Percentage = struct {
         this: *const Percentage,
         other: *const Percentage,
         comptime R: type,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) R,
+        comptime Ctx: type,
+        ctx: Ctx,
+        op_fn: *const fn (Ctx, a: f32, b: f32) R,
     ) R {
         return op_fn(ctx, this.v, other.v);
     }
@@ -119,8 +121,9 @@ pub const Percentage = struct {
     pub fn tryOp(
         this: *const Percentage,
         other: *const Percentage,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+        comptime Ctx: type,
+        ctx: Ctx,
+        op_fn: *const fn (Ctx, a: f32, b: f32) f32,
     ) ?Percentage {
         return Percentage{ .v = op_fn(ctx, this.v, other.v) };
     }
@@ -430,7 +433,7 @@ pub fn DimensionPercentage(comptime D: type) type {
             };
         }
 
-        pub fn tryMap(this: *const This, comptime mapfn: *const fn (f32) f32) ?This {
+        pub fn tryMap(this: *const This, mapfn: *const fn (f32) f32) ?This {
             return switch (this.*) {
                 .dimension => |vv| if (css.generic.tryMap(D, &vv, mapfn)) |v| .{ .dimension = v } else null,
                 else => null,
@@ -440,10 +443,11 @@ pub fn DimensionPercentage(comptime D: type) type {
         pub fn tryOp(
             this: *const This,
             other: *const This,
-            ctx: anytype,
-            comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+            comptime Ctx: type,
+            ctx: Ctx,
+            op_fn: *const fn (Ctx, f32, f32) f32,
         ) ?This {
-            if (this.* == .dimension and other.* == .dimension) return .{ .dimension = css.generic.tryOp(D, &this.dimension, &other.dimension, ctx, op_fn) orelse return null };
+            if (this.* == .dimension and other.* == .dimension) return .{ .dimension = css.generic.tryOp(D, &this.dimension, &other.dimension, Ctx, ctx, op_fn) orelse return null };
             if (this.* == .percentage and other.* == .percentage) return .{ .percentage = Percentage{ .v = op_fn(ctx, this.percentage.v, other.percentage.v) } };
             return null;
         }

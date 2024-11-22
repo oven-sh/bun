@@ -25,12 +25,15 @@ import {
   writeFile,
   copyFile,
   isMacOS,
+  mkdir,
+  rm,
+  homedir,
+  isWindows,
+  sha256,
 } from "./utils.mjs";
 import { basename, extname, join, relative, resolve } from "node:path";
-import { homedir } from "node:os";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { createHash } from "node:crypto";
 
 const docker = {
   getPlatform(platform) {
@@ -132,10 +135,7 @@ export const aws = {
    * @returns {Promise<unknown>}
    */
   async spawn(args, options = {}) {
-    const aws = which("aws");
-    if (!aws) {
-      throw new Error("AWS CLI is not installed, please install it");
-    }
+    const aws = which("aws", { required: true });
 
     let env;
     if (isCI) {
@@ -363,7 +363,7 @@ export const aws = {
    * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/import-key-pair.html
    */
   async importKeyPair(publicKey, name) {
-    const keyName = name || `key-pair-${createHash("sha256").update(publicKey).digest("hex")}`;
+    const keyName = name || `key-pair-${sha256(publicKey)}`;
     const publicKeyBase64 = Buffer.from(publicKey).toString("base64");
 
     /** @type {AwsKeyPair | undefined} */
@@ -502,7 +502,7 @@ export const aws = {
 
     let userData = getUserData({ ...options, username });
     if (os === "windows") {
-      userData = `<powershell>${userData}</powershell><powershellArguments>-ExecutionPolicy Unrestricted -NoProfile -NonInteractive</powershellArguments><persist>false</persist>`;
+      userData = `<powershell>${userData}</powershell><powershellArguments>-ExecutionPolicy Unrestricted -NoProfile -NonInteractive</powershellArguments><persist>true</persist>`;
     }
 
     let tagSpecification = [];
@@ -633,9 +633,119 @@ export const aws = {
   },
 };
 
-const google = {
-  async createMachine(platform) {
-    const image = await google.getImage(platform);
+export const google = {
+  get cloud() {
+    return "google";
+  },
+
+  /**
+   * @param {string[]} args
+   * @param {import("./utils.mjs").SpawnOptions} [options]
+   * @returns {Promise<unknown>}
+   */
+  async spawn(args, options = {}) {
+    const gcloud = which("gcloud", { required: true });
+
+    let env;
+    if (isCI) {
+      env = {}; // TODO: Add Google Cloud credentials
+    }
+
+    const { stdout } = await spawnSafe($`${gcloud} ${args} --format json`, { env, ...options });
+    try {
+      return JSON.parse(stdout);
+    } catch {
+      return;
+    }
+  },
+
+  /**
+   * @param {Record<string, string | undefined>} [options]
+   * @returns {string[]}
+   */
+  getFilters(options) {
+    const filter = Object.entries(options || {})
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => [value.includes("*") ? `${key}~${value}` : `${key}=${value}`])
+      .join(" AND ");
+    return filter ? ["--filter", filter] : [];
+  },
+
+  /**
+   * @param {Record<string, string | boolean | undefined>} options
+   * @returns {string[]}
+   */
+  getFlags(options) {
+    return Object.entries(options)
+      .filter(([, value]) => value !== undefined)
+      .flatMap(([key, value]) => (typeof value === "boolean" ? `--${key}` : `--${key}=${value}`));
+  },
+
+  /**
+   * @typedef {Object} GoogleImage
+   * @property {string} id
+   * @property {string} name
+   * @property {string} family
+   * @property {"X86_64" | "ARM64"} architecture
+   * @property {string} diskSizeGb
+   * @property {string} selfLink
+   * @property {"READY"} status
+   * @property {string} creationTimestamp
+   */
+
+  /**
+   * @param {Partial<GoogleImage>} [options]
+   * @returns {Promise<GoogleImage[]>}
+   * @link https://cloud.google.com/sdk/gcloud/reference/compute/images/list
+   */
+  async listImages(options) {
+    const filters = google.getFilters(options);
+    const images = await google.spawn($`compute images list ${filters} --preview-images`);
+    return images.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
+  },
+
+  /**
+   * @typedef {Object} GoogleInstance
+   * @property {string} id
+   * @property {string} name
+   * @property {string} creationTimestamp
+   */
+
+  /**
+   * @param {Partial<GoogleInstance>} options
+   * @returns {Promise<GoogleInstance[]>}
+   */
+  async listInstances(options) {
+    const filters = google.getFilters(options);
+    const instances = await google.spawn($`compute instances list ${filters}`);
+    return instances.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
+  },
+
+  async createInstances(options = {}) {
+    const flags = Object.entries(options).flatMap(([key, value]) =>
+      typeof value === "boolean" ? `--${key}` : `--${key}=${value}`,
+    );
+    const randomId = "i-" + Math.random().toString(36).substring(2, 15);
+    const { stdout } = await spawnSafe(["compute", "instances", "create", randomId, ...flags]);
+    const instances = JSON.parse(stdout);
+    return instances.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
+  },
+
+  /**
+   * @param {string} instanceId
+   * @returns {Promise<void>}
+   * @link https://cloud.google.com/sdk/gcloud/reference/compute/instances/delete
+   */
+  async deleteInstance(instanceId) {
+    await spawnSafe(`compute instances delete ${instanceId} --delete-disks=all`);
+  },
+
+  /**
+   * @param {MachineOptions} options
+   * @returns {Promise<Machine>}
+   */
+  async createMachine(options) {
+    const image = await google.getImage(options);
     const { id: imageId, username } = image;
 
     const authorizedKeys = await getAuthorizedKeys();
@@ -696,8 +806,12 @@ const google = {
     };
   },
 
-  async getImage(platform) {
-    const { os, arch, distro, release } = platform;
+  /**
+   * @param {MachineOptions} options
+   * @returns {Promise<MachineImage>}
+   */
+  async getImage(options) {
+    const { os, arch, distro, release } = options;
     const architecture = arch === "aarch64" ? "ARM64" : "X86_64";
 
     let name;
@@ -731,49 +845,6 @@ const google = {
     }
 
     throw new Error(`Unsupported platform: ${inspect(platform)}`);
-  },
-
-  async listImages(options = {}) {
-    const filter = Object.entries(options)
-      .map(([key, value]) => [value.includes("*") ? `${key}~${value}` : `${key}=${value}`])
-      .join(" AND ");
-    const filters = filter ? ["--filter", filter] : [];
-    const { stdout } = await spawnSafe(["gcloud", "compute", "images", "list", ...filters, "--format", "json"]);
-    const images = JSON.parse(stdout);
-    return images.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
-  },
-
-  async listInstances(options = {}) {
-    const filter = Object.entries(options)
-      .map(([key, value]) => [value.includes("*") ? `${key}~${value}` : `${key}=${value}`])
-      .join(" AND ");
-    const filters = filter ? ["--filter", filter] : [];
-    const { stdout } = await spawnSafe(["gcloud", "compute", "instances", "list", ...filters, "--format", "json"]);
-    const instances = JSON.parse(stdout);
-    return instances.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
-  },
-
-  async createInstances(options = {}) {
-    const flags = Object.entries(options).flatMap(([key, value]) =>
-      typeof value === "boolean" ? `--${key}` : `--${key}=${value}`,
-    );
-    const randomId = "i-" + Math.random().toString(36).substring(2, 15);
-    const { stdout } = await spawnSafe([
-      "gcloud",
-      "compute",
-      "instances",
-      "create",
-      randomId,
-      ...flags,
-      "--format",
-      "json",
-    ]);
-    const instances = JSON.parse(stdout);
-    return instances.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
-  },
-
-  async deleteInstance(instanceId) {
-    await spawnSafe(["gcloud", "compute", "instances", "delete", instanceId, "--zone", "us-central1-a", "--quiet"]);
   },
 };
 
@@ -813,14 +884,6 @@ function getCloudInit(cloudInit) {
       sftpPath = "/usr/libexec/openssh/sftp-server";
       break;
   }
-
-  `
-    package_update: true
-    packages:
-      - curl
-      - ca-certificates
-      - openssh-server
-  `;
 
   let users;
   if (username === "root") {
@@ -918,16 +981,20 @@ function getWindowsStartupScript(cloudInit) {
 "@
       if (-not (Test-Path $sshdConfigPath) -or (Get-Content $sshdConfigPath) -ne $sshdConfig) {
         Write-Output "Writing SSH configuration..."
-        Set-Content \`
-          -Path $sshdConfigPath \`
-          -Value $sshdConfig
+        Set-Content -Path $sshdConfigPath -Value $sshdConfig
       }
 
       Write-Output "Restarting SSH server..."
       Restart-Service sshd
     }
 
+    function Fix-Metadata-Service {
+      route delete 169.254.169.254
+      route add 169.254.169.254 mask 255.255.255.255 0.0.0.0 IF 9 metric 1
+    }
+
     Install-Ssh
+    Fix-Metadata-Service
   `;
 }
 
@@ -990,24 +1057,27 @@ function getDiskSize(options) {
  * @returns {SshKey}
  */
 function createSshKey() {
+  const sshKeyGen = which("ssh-keygen", { required: true });
+  const sshAdd = which("ssh-add", { required: true });
+
   const sshPath = join(homedir(), ".ssh");
-  if (!existsSync(sshPath)) {
-    mkdirSync(sshPath, { recursive: true });
-  }
+  mkdir(sshPath);
 
-  const name = `id_rsa_${crypto.randomUUID()}`;
-  const privatePath = join(sshPath, name);
-  const publicPath = join(sshPath, `${name}.pub`);
-  spawnSyncSafe(["ssh-keygen", "-t", "rsa", "-b", "4096", "-f", privatePath, "-N", ""], { stdio: "inherit" });
-
+  const filename = `id_rsa_${crypto.randomUUID()}`;
+  const privatePath = join(sshPath, filename);
+  const publicPath = join(sshPath, `${filename}.pub`);
+  spawnSyncSafe([sshKeyGen, "-t", "rsa", "-b", "4096", "-f", privatePath, "-N", ""], { stdio: "inherit" });
   if (!existsSync(privatePath) || !existsSync(publicPath)) {
     throw new Error(`Failed to generate SSH key: ${privatePath} / ${publicPath}`);
   }
 
-  const sshAgent = which("ssh-agent");
-  const sshAdd = which("ssh-add");
-  if (sshAgent && sshAdd) {
-    spawnSyncSafe(["sh", "-c", `eval $(${sshAgent} -s) && ${sshAdd} ${privatePath}`], { stdio: "inherit" });
+  if (isWindows) {
+    spawnSyncSafe([sshAdd, privatePath], { stdio: "inherit" });
+  } else {
+    const sshAgent = which("ssh-agent");
+    if (sshAgent) {
+      spawnSyncSafe(["sh", "-c", `eval $(${sshAgent} -s) && ${sshAdd} ${privatePath}`], { stdio: "inherit" });
+    }
   }
 
   return {
@@ -1220,7 +1290,7 @@ function decryptPassword(passwordData, privateKeyPath) {
     );
     return stdout.trim();
   } finally {
-    rmSync(tmpPemPath, { force: true });
+    rm(tmpPemPath);
   }
 }
 
@@ -1573,4 +1643,13 @@ async function main() {
   }
 }
 
-await main();
+console.log(
+  (
+    await google.listImages({
+      name: "ubuntu*",
+      architecture: "ARM64",
+    })
+  ).map(image => ({ n: image.name, s: image.status })),
+);
+
+// await main();

@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { connect } from "node:net";
-import { hostname, tmpdir as nodeTmpdir, userInfo, release } from "node:os";
+import { hostname, tmpdir as nodeTmpdir, homedir as nodeHomedir, userInfo, release } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
@@ -874,21 +874,28 @@ export function readFile(filename, options = {}) {
 }
 
 /**
+ * @param {string} path
+ * @param {number} mode
+ */
+export function chmod(path, mode) {
+  debugLog("$", "chmod", path, mode);
+  chmodSync(path, mode);
+}
+
+/**
  * @param {string} filename
  * @param {string | Buffer} content
  * @param {object} [options]
  * @param {number} [options.mode]
  */
 export function writeFile(filename, content, options) {
-  const parent = dirname(filename);
-  if (!existsSync(parent)) {
-    mkdirSync(parent, { recursive: true });
-  }
+  mkdir(dirname(filename));
 
+  debugLog("$", "touch", filename);
   writeFileSync(filename, content);
 
   if (options?.mode) {
-    chmodSync(filename, options.mode);
+    chmod(filename, options.mode);
   }
 }
 
@@ -899,15 +906,47 @@ export function writeFile(filename, content, options) {
  * @param {number} [options.mode]
  */
 export function copyFile(source, destination, options) {
-  const parent = dirname(destination);
-  if (!existsSync(parent)) {
-    mkdirSync(parent, { recursive: true });
-  }
+  mkdir(dirname(destination));
 
+  debugLog("$", "cp", source, destination);
   copyFileSync(source, destination);
 
   if (options?.mode) {
-    chmodSync(destination, options.mode);
+    chmod(destination, options.mode);
+  }
+}
+
+/**
+ * @param {string} path
+ * @param {object} [options]
+ * @param {number} [options.mode]
+ */
+export function mkdir(path, options = {}) {
+  if (existsSync(path)) {
+    return;
+  }
+
+  debugLog("$", "mkdir", path);
+  mkdirSync(path, { ...options, recursive: true });
+}
+
+/**
+ * @param {string} path
+ */
+export function rm(path) {
+  let stats;
+  try {
+    stats = statSync(path);
+  } catch {
+    return;
+  }
+
+  if (stats?.isDirectory()) {
+    debugLog("$", "rm", "-rf", path);
+    rmSync(path, { recursive: true, force: true });
+  } else {
+    debugLog("$", "rm", "-f", path);
+    rmSync(path, { force: true });
   }
 }
 
@@ -1293,6 +1332,13 @@ export function escapeCodeBlock(string) {
  */
 export function escapePowershell(string) {
   return string.replace(/'/g, "''").replace(/`/g, "``");
+}
+
+/**
+ * @returns {string}
+ */
+export function homedir() {
+  return nodeHomedir();
 }
 
 /**
@@ -2087,6 +2133,14 @@ export function getGithubApiUrl() {
  */
 export function getGithubUrl() {
   return new URL(getEnv("GITHUB_SERVER_URL", false) || "https://github.com");
+}
+
+/**
+ * @param {string} string
+ * @returns {string}
+ */
+export function sha256(string) {
+  return createHash("sha256").update(Buffer.from(string)).digest("hex");
 }
 
 /**

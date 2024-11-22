@@ -51,24 +51,17 @@ async function doBuildkiteAgent(action) {
     if (isWindows) {
       mkdirSync(logsPath, { recursive: true });
 
-      const pwsh = which(["pwsh", "powershell"], { required: true });
-      const startProcess = [
-        "Start-Process",
-        `-FilePath ${escape(command)}`,
-        `-ArgumentList ${args.map(escape).join(",")}`,
-        `-RedirectStandardOutput ${escape(agentLogPath)}`,
-        `-RedirectStandardError ${escape(`${agentLogPath}.err`)}`,
-        "-NoNewWindow",
-        "-Wait",
+      const nssm = which("nssm", { required: true });
+      const nssmCommands = [
+        [nssm, "install", "buildkite-agent", command, ...args],
+        [nssm, "set", "buildkite-agent", "Start", "SERVICE_AUTO_START"],
+        [nssm, "set", "buildkite-agent", "AppDirectory", homePath],
+        [nssm, "set", "buildkite-agent", "AppStdout", agentLogPath],
+        [nssm, "set", "buildkite-agent", "AppStderr", agentLogPath],
       ];
-      const newService = [
-        "New-Service",
-        "-Name buildkite-agent",
-        "-DependsOn NetLogon",
-        "-StartupType Automatic",
-        `-BinaryPathName '${[escape(pwsh), ...startProcess].join(" ")}'`,
-      ];
-      await spawnSafe([pwsh, "-Command", newService.join(" ")], { stdio: "inherit" });
+      for (const command of nssmCommands) {
+        await spawnSafe(command, { stdio: "inherit" });
+      }
     }
 
     if (isOpenRc()) {

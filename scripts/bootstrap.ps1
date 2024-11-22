@@ -1,6 +1,6 @@
 # Version: 4
-# A powershell script that installs the dependencies needed to build and test Bun.
-# This should work on Windows 10 or newer.
+# A script that installs the dependencies needed to build and test Bun.
+# This should work on Windows 10 or newer with PowerShell.
 
 # If this script does not work on your machine, please open an issue:
 # https://github.com/oven-sh/bun/issues
@@ -8,6 +8,9 @@
 # If you need to make a change to this script, such as upgrading a dependency,
 # increment the version comment to indicate that a new image should be built.
 # Otherwise, the existing image will be retroactively updated.
+
+$ErrorActionPreference = "Stop"
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 param (
   [Parameter(Mandatory = $false)]
@@ -187,7 +190,7 @@ function Install-Common-Software {
   Install-Chocolatey
   Install-Pwsh
   Install-Git
-  Install-Packages curl 7zip
+  Install-Packages curl 7zip nssm
   Install-NodeJs
   Install-Bun
   Install-Cygwin
@@ -367,7 +370,7 @@ function Disable-Windows-Services {
 }
 
 function Disable-Power-Management {
-  Write-Output "Disabling power management features..."
+  Write-Output "Disabling Power Management..."
   powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c # High performance
   powercfg /change monitor-timeout-ac 0
   powercfg /change monitor-timeout-dc 0
@@ -377,7 +380,6 @@ function Disable-Power-Management {
   powercfg /change hibernate-timeout-dc 0
 }
 
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 if ($Optimize) {
   Optimize-System
 }

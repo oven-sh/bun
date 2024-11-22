@@ -553,7 +553,7 @@ it("WebSocketServer should handle backpressure", async () => {
   }
 });
 
-it.only("Server should be able to send empty pings", async () => {
+it("Server should be able to send empty pings", async () => {
   // WebSocket frame creation function with masking
   function createWebSocketFrame(message: string) {
     const messageBuffer = Buffer.from(message);

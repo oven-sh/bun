@@ -1643,13 +1643,4 @@ async function main() {
   }
 }
 
-console.log(
-  (
-    await google.listImages({
-      name: "ubuntu*",
-      architecture: "ARM64",
-    })
-  ).map(image => ({ n: image.name, s: image.status })),
-);
-
-// await main();
+await main();

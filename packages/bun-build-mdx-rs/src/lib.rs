@@ -110,6 +110,7 @@ pub struct OnBeforeParseArguments {
     namespace_ptr: *const u8,
     namespace_len: usize,
     default_loader: u8,
+    external: *mut c_void,
 }
 
 #[repr(C)]

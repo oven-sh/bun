@@ -2309,7 +2309,7 @@ pub const Timer = opaque {
         // never fallthrough poll
         // the problem is uSockets hardcodes it on the other end
         // so we can never free non-fallthrough polls
-        return us_create_timer(loop, 0, @sizeOf(Type)) orelse std.debug.panic("us_create_timer: returned null: {d} -- limit: {d} {}", .{ std.c._errno(), bun.fs.FileSystem.RealFS.Limit.handles, bun.fs.FileSystem.RealFS.Limit.handles_before });
+        return us_create_timer(loop, 0, @sizeOf(Type)) orelse std.debug.panic("us_create_timer: returned null: {d} -- limit: {d} {}", .{ std.c._errno().*, bun.fs.FileSystem.RealFS.Limit.handles, bun.fs.FileSystem.RealFS.Limit.handles_before });
     }
 
     pub fn createFallthrough(loop: *Loop, ptr: anytype) *Timer {
@@ -2318,7 +2318,7 @@ pub const Timer = opaque {
         // never fallthrough poll
         // the problem is uSockets hardcodes it on the other end
         // so we can never free non-fallthrough polls
-        return us_create_timer(loop, 1, @sizeOf(Type)) orelse std.debug.panic("us_create_timer: returned null: {d} -- limit: {d} {}", .{ std.c._errno(), bun.fs.FileSystem.RealFS.Limit.handles, bun.fs.FileSystem.RealFS.Limit.handles_before });
+        return us_create_timer(loop, 1, @sizeOf(Type)) orelse std.debug.panic("us_create_timer: returned null: {d} -- limit: {d} {}", .{ std.c._errno().*, bun.fs.FileSystem.RealFS.Limit.handles, bun.fs.FileSystem.RealFS.Limit.handles_before });
     }
 
     pub fn set(this: *Timer, ptr: anytype, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void {

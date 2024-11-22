@@ -423,15 +423,7 @@ declare module "bun" {
     }
 
     interface ClientEntryPoint {
-      /**
-       * Called when server-side code is changed. This can be used to fetch a
-       * non-html version of the updated page to perform a faster reload. If
-       * this function does not exist or throws, the client will perform a
-       * hard reload.
-       *
-       * Tree-shaken away in production builds.
-       */
-      onServerSideReload?: () => Promise<void> | void;
+      // No exports
     }
 
     /**
@@ -549,9 +541,11 @@ declare module "bun:bake/server" {
 
 declare module "bun:bake/client" {
   /**
-   * Due to the current implementation of the Dev Server, it must be informed of
-   * client-side routing so it can load client components. This is not necessary
-   * in production, and calling this in that situation will fail to compile.
+   * Callback is invoked when server-side code is changed. This can be used to
+   * fetch a non-html version of the updated page to perform a faster reload. If
+   * not provided, the client will perform a hard reload.
+   * 
+   * Only one callback can be set. This function overwrites the previous one.
    */
-  declare function bundleRouteForDevelopment(href: string, options?: { signal?: AbortSignal }): Promise<void>;
+  export function onServerSideReload(cb: () => void | Promise<void>): Promise<void>;
 }

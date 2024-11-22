@@ -25,8 +25,17 @@ function getPage(meta: Bake.RouteMetadata, styles: readonly string[]) {
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Bun + React Server Components</title>
+
+        {/*
+          * client.tsx uses view transitions to batch the DOM operations
+          * together to make page navigations smoother, but the default fade
+          * animation is undesirable as a default.
+          */}
+        <style>{'::view-transition-group(root){animation:none}'}</style>
+
         {styles.map(url => (
-          <link key={url} rel="stylesheet" href={url} />
+          // `data-bake-ssr` is used on the client-side to construct the styles array.
+          <link key={url} rel="stylesheet" href={url} data-bake-ssr />
         ))}
       </head>
       <body>{route}</body>
@@ -84,13 +93,18 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
   let pipe;
   const signal: MiniAbortSignal = { aborted: false, abort: null! };
   ({ pipe, abort: signal.abort } = renderToPipeableStream(page, serverManifest, {
-    onError: (err) => {
-      if(signal.aborted) return;
+    onError: err => {
+      if (signal.aborted) return;
       console.error(err);
     },
     filterStackFrame: () => false,
   }));
-  pipe(rscPayload)
+  pipe(rscPayload);
+ 
+  rscPayload.on('error', err => {
+    if (signal.aborted) return;
+    console.error(err);
+  });
 
   if (skipSSR) {
     return new Response(rscPayload as any, {
@@ -158,5 +172,5 @@ export const contentTypeToStaticFile = {
 export interface MiniAbortSignal {
   aborted: boolean;
   /** Caller must set `aborted` to true before calling. */
-  abort: () => void
+  abort: () => void;
 }

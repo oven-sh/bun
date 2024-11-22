@@ -381,7 +381,7 @@ pub const Framework = struct {
                 const ignore_underscores = try fsr_opts.getBooleanStrict(global, "ignoreUnderscores") orelse false;
                 const layouts = try fsr_opts.getBooleanStrict(global, "layouts") orelse false;
 
-                var style = try FrameworkRouter.Style.fromJS(try fsr_opts.get2(global, "style") orelse {
+                var style = try FrameworkRouter.Style.fromJS(try fsr_opts.get(global, "style") orelse {
                     return global.throwInvalidArguments2("'fileSystemRouterTypes[{d}]' is missing 'style'", .{i});
                 }, global);
                 errdefer style.deinit();

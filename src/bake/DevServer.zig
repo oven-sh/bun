@@ -277,16 +277,16 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
 
-    const generic_action = "initializing development server";
+    const generic_action = "while initializing development server";
     const fs = bun.fs.FileSystem.init(options.root) catch |err|
-        return global.throwZigError(err, generic_action);
+        return global.throwError(err, generic_action);
 
     dev.bun_watcher = Watcher.init(DevServer, dev, fs, bun.default_allocator) catch |err|
-        return global.throwZigError(err, "while initializing file watcher for development server");
+        return global.throwError(err, "while initializing file watcher for development server");
 
     errdefer dev.bun_watcher.deinit(false);
     dev.bun_watcher.start() catch |err|
-        return global.throwZigError(err, "while initializing file watcher thread for development server");
+        return global.throwError(err, "while initializing file watcher thread for development server");
 
     dev.server_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     dev.client_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
@@ -295,14 +295,14 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.watcher_atomics = WatcherAtomics.init(dev);
 
     dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_bundler) catch |err|
-        return global.throwZigError(err, generic_action);
+        return global.throwError(err, generic_action);
     dev.client_bundler.options.dev_server = dev;
     dev.framework.initBundler(allocator, &dev.log, .development, .client, &dev.client_bundler) catch |err|
-        return global.throwZigError(err, generic_action);
+        return global.throwError(err, generic_action);
     dev.server_bundler.options.dev_server = dev;
     if (separate_ssr_graph) {
         dev.framework.initBundler(allocator, &dev.log, .development, .ssr, &dev.ssr_bundler) catch |err|
-            return global.throwZigError(err, generic_action);
+            return global.throwError(err, generic_action);
         dev.ssr_bundler.options.dev_server = dev;
     }
 
@@ -455,10 +455,12 @@ fn initServerRuntime(dev: *DevServer) void {
     };
 
     if (!interface.isObject()) @panic("Internal assertion failure: expected interface from HMR runtime to be an object");
-    const fetch_function: JSValue = try interface.get(dev.vm.global, "handleRequest") orelse @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
+    const fetch_function = interface.get(dev.vm.global, "handleRequest") catch null orelse
+        @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
     bun.assert(fetch_function.isCallable(dev.vm.jsc));
     dev.server_fetch_function_callback = JSC.Strong.create(fetch_function, dev.vm.global);
-    const register_update = try interface.get(dev.vm.global, "registerUpdate") orelse @panic("Internal assertion failure: expected interface from HMR runtime to contain registerUpdate");
+    const register_update = interface.get(dev.vm.global, "registerUpdate") catch null orelse
+        @panic("Internal assertion failure: expected interface from HMR runtime to contain registerUpdate");
     dev.server_register_update_callback = JSC.Strong.create(register_update, dev.vm.global);
 
     fetch_function.ensureStillAlive();
@@ -1405,10 +1407,11 @@ pub fn finalizeBundle(
 
                 try w.writeInt(i32, @intCast(names.len), .little);
                 for (names) |name| {
+                    const css_prefix_slash = css_prefix ++ "/";
                     // These slices are url pathnames. The ID can be extracted
-                    bun.assert(name.len == (css_prefix ++ "/.css").len + 16);
-                    bun.assert(bun.strings.hasPrefix(name, css_prefix ++ "/"));
-                    try w.writeAll(name[css_prefix.len..][0..16]);
+                    bun.assert(name.len == (css_prefix_slash ++ ".css").len + 16);
+                    bun.assert(bun.strings.hasPrefix(name, css_prefix_slash));
+                    try w.writeAll(name[css_prefix_slash.len..][0..16]);
                 }
             } else {
                 try w.writeInt(i32, -1, .little);

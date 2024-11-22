@@ -5,7 +5,8 @@
 import * as React from "react";
 import { hydrateRoot } from "react-dom/client";
 import { createFromReadableStream } from "react-server-dom-bun/client.browser";
-import { bundleRouteForDevelopment } from "bun:bake/client";
+import { onServerSideReload } from 'bun:bake/client';
+import { flushSync } from 'react-dom';
 
 const te = new TextEncoder();
 const td = new TextDecoder();
@@ -14,6 +15,7 @@ const td = new TextDecoder();
 // loads CSS files. The implementation here loads all CSS files as <link> tags,
 // and uses the ".disabled" property to enable/disable them.
 const cssFiles = new Map<string, { promise: Promise<void> | null; link: HTMLLinkElement }>();
+let currentCssList: string[] | undefined = undefined;
 
 // The initial RSC payload is put into inline <script> tags that follow the pattern
 // `(self.__bun_f ??= []).push(chunk)`, which is converted into a ReadableStream
@@ -34,11 +36,9 @@ let rscPayload: any = createFromReadableStream(
       if (document.readyState === "loading") {
         document.addEventListener("DOMContentLoaded", () => {
           controller.close();
-          initCssMap();
         });
       } else {
         controller.close();
-        initCssMap();
       }
     },
   }),
@@ -51,7 +51,6 @@ let rscPayload: any = createFromReadableStream(
 // also updates CSS files when navigating between routes.
 let setPage;
 let abortOnRender: AbortController | undefined;
-let currentCssList: string[] | undefined = undefined;
 const Root = () => {
   setPage = React.useState(rscPayload)[1];
 
@@ -59,33 +58,53 @@ const Root = () => {
   // which is the perfect time to make CSS visible.
   React.useLayoutEffect(() => {
     if (abortOnRender) {
-      abortOnRender.abort();
-      abortOnRender = undefined;
+      try {
+        abortOnRender.abort();
+        abortOnRender = undefined;
+      } catch {}
     }
-    if (currentCssList) updateCssStatus();
+    requestAnimationFrame(() => {
+      if (currentCssList) disableUnusedCssFiles();
+    });
   });
 
   // Unwrap the promise if it is one
   return rscPayload.then ? React.use(rscPayload) : rscPayload;
 };
 const root = hydrateRoot(document, <Root />, {
-  // TODO: handle `onUncaughtError` here
+  onUncaughtError(e) {
+    console.error(e);
+  }
 });
 
 // Keep a cache of page objects to avoid re-fetching a page when pressing the
 // back button. The cache is indexed by the date it was created.
 const cachedPages = new Map<number, Page>();
-const defaultPageExpiryTime = 1000 * 60 * 5; // 5 minutes
+// const defaultPageExpiryTime = 1000 * 60 * 5; // 5 minutes
 interface Page {
   css: string[];
   element: unknown;
 }
-let currentPageId = Date.now();
+
+const firstPageId = Date.now();
 {
-  const firstPageId = currentPageId;
-  rscPayload.then((result) => {
+  history.replaceState(firstPageId, "", location.href);
+  rscPayload.then(result => {
     if (lastNavigationId > 0) return;
-    cachedPages.set(currentPageId, { 
+
+    // Collect the list of CSS files that were added from SSR
+    const links = document.querySelectorAll<HTMLLinkElement>("link[data-bake-ssr]");
+    currentCssList = [];
+    for (let i = 0; i < links.length; i++) {
+      const link = links[i];
+      const href = new URL(link.href).pathname;
+      currentCssList.push(href);
+
+      // Hack: cannot add this to `cssFiles` because React owns the element, and
+      // it will be removed when any navigation is performed.
+    }
+
+    cachedPages.set(firstPageId, {
       css: currentCssList!,
       element: result,
     });
@@ -111,8 +130,14 @@ async function goto(href: string, cacheId?: number) {
   const cached = cacheId && cachedPages.get(cacheId);
   if (cached) {
     currentCssList = cached.css;
-    setPage?.(cached.element);
-    if (olderController?.signal.aborted === false)
+    // The first page gets its CSS indexed into the map lazily.
+    // In practice, this always resolves instantly.
+    if (firstPageId === cacheId) {
+      await ensureCssIsReady(currentCssList);
+    }
+    setPage?.(rscPayload = cached.element);
+    console.log("cached", cached);
+    if (olderController?.signal.aborted === false) 
       abortOnRender = olderController;
     return;
   }
@@ -189,23 +214,21 @@ async function goto(href: string, cacheId?: number) {
   }
 
   // Tell react about the new page promise
-  setPage?.((rscPayload = p));
-}
-
-function initCssMap() {
-  const links = document.querySelectorAll<HTMLLinkElement>("link[rel=stylesheet]");
-  currentCssList = [];
-  for (let i = 0; i < links.length; i++) {
-    const link = links[i];
-    const href = new URL(link.href).pathname;
-    cssFiles.set(href, { promise: null, link });
-    currentCssList.push(href);
+  if (setPage) {
+    if (document.startViewTransition as unknown) {
+      document.startViewTransition(() => {
+        flushSync(() => {
+          if (thisNavigationId === lastNavigationId)
+            setPage(rscPayload = p);
+        });
+      });
+    } else {
+      setPage((rscPayload = p));
+    }
   }
-  console.log("initCssMap", currentCssList);
 }
 
-// This function blocks until all CSS files are loaded. It does not change the
-// visibility state of any of the link tags.
+// This function blocks until all CSS files are loaded.
 function ensureCssIsReady(cssList: string[]) {
   const wait: Promise<void>[] = [];
   for (const href of cssList) {
@@ -213,21 +236,22 @@ function ensureCssIsReady(cssList: string[]) {
     const existing = cssFiles.get(href);
     console.log("get", existing);
     if (existing) {
-      const { promise } = existing;
+      const { promise, link } = existing;
       if (promise) {
         wait.push(promise);
       }
+      link.disabled = false;
     } else {
       const link = document.createElement("link");
       let entry;
       const promise = new Promise<void>((resolve, reject) => {
         link.rel = "stylesheet";
-        link.href = href;
         link.onload = resolve as any;
         link.onerror = reject;
-        link.disabled = true;
+        link.href = href;
         document.head.appendChild(link);
       }).then(() => {
+        console.log("loaded", href);
         entry.promise = null;
       });
       entry = { promise, link };
@@ -235,14 +259,15 @@ function ensureCssIsReady(cssList: string[]) {
       wait.push(promise);
     }
   }
-  if (wait.length === 0) return;
   return Promise.all(wait);
 }
 
-function updateCssStatus() {
+function disableUnusedCssFiles() {
   // TODO: create a list of files that should be updated instead of a full loop
   for (const [href, { link }] of cssFiles) {
-    link.disabled = !currentCssList!.includes(href);
+    if (!currentCssList!.includes(href)) {
+      link.disabled = true;
+    }
   }
 }
 
@@ -296,9 +321,9 @@ document.addEventListener("click", async (event, element = event.target as HTMLA
       }
 
       const href = url.href;
-      history.pushState(currentPageId, "", href);
-      currentPageId = Date.now();
-      goto(href, currentPageId);
+      const newId = Date.now();
+      history.pushState(newId, "", href);
+      goto(href, newId);
 
       return event.preventDefault();
     }
@@ -309,19 +334,30 @@ document.addEventListener("click", async (event, element = event.target as HTMLA
 });
 
 // Handle browser navigation events
-window.addEventListener("popstate", (event) => {
+window.addEventListener("popstate", event => {
   console.log("popstate", event);
   let state = event.state;
   if (typeof state !== "number") {
     state = undefined;
   }
-  goto(location.href, state) 
+  goto(location.href, state);
 });
 
-// Frameworks can export a `onServerSideReload` function to hook into server-side
-// hot module reloading. This export is not used in production and tree-shaken.
-export async function onServerSideReload() {
-  const state = Date.now();
-  history.replaceState(state, "", location.href);
-  await goto(location.href, state);
+if (import.meta.env.DEV) {
+  // Frameworks can call `onServerSideReload` to hook into server-side hot
+  // module reloading. 
+  onServerSideReload(async() => {
+    const newId = Date.now();
+    history.replaceState(newId, "", location.href);
+    await goto(location.href, newId);
+  });
+
+  // Expose a global in Development mode
+  (window as any).$bake = {
+    goto,
+    onServerSideReload,
+    get currentCssList() {
+      return currentCssList;
+    }
+  };
 }

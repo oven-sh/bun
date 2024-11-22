@@ -16,33 +16,62 @@
 // client-side navigation.
 
 const cssStore = new Map<string, CSS>();
-const active = new Set<string>();
 const registeredLinkTags = new Map<HTMLLinkElement, string>();
 
 interface CSS {
   sheet: CSSStyleSheet | null;
   link: HTMLLinkElement | null;
+  active: boolean;
+}
+
+function validateCssId(id: string) {
+  if (!/^[a-f0-9]{16}$/.test(id)) {
+    throw new Error(`Invalid CSS id: ${id}`);
+  }
+}
+
+function deactivateCss(css: CSS) {
+  if (css.active) {
+    const { sheet, link } = css;
+    css.active = false;
+    if (sheet) {
+      sheet.disabled = true;
+    } else if (link) {
+      const linkSheet = link.sheet;
+      if (linkSheet) linkSheet.disabled = true;
+    }
+  }
+}
+
+function activateCss(css: CSS) {
+  if (!css.active) {
+    css.active = true;
+    if (css.sheet) {
+      css.sheet.disabled = false;
+    } else if (css.link) {
+      const linkSheet = css.link.sheet;
+      if (linkSheet) linkSheet.disabled = false;
+    }
+  }
 }
 
 // A mutation observer detects when the framework does client-side routing.
 const headObserver = new MutationObserver(list => {
   for (const mutation of list) {
     if (mutation.type === "childList") {
+      // This allows frameworks to add and remove link tags. Removing a link tag
+      // that Bun had reloaded needs to disable the wrapped sheet. The wrapper
+      // is kept around in case the framework re-adds the link tag.
       let i = 0;
       let len = mutation.removedNodes.length;
       while (i < len) {
         const node = mutation.removedNodes[i];
         const id = registeredLinkTags.get(node as HTMLLinkElement);
         if (id) {
-          const existingSheet = cssStore.get(id)?.sheet;
+          const existingSheet = cssStore.get(id);
           if (existingSheet) {
-            const adoptedStyleSheets = document.adoptedStyleSheets;
-            const index = adoptedStyleSheets.indexOf(existingSheet);
-            if (index !== -1) {
-              adoptedStyleSheets.splice(index, 1);
-            }
+            deactivateCss(existingSheet);
           }
-          active.delete(id);
           registeredLinkTags.delete(node as HTMLLinkElement);
         }
         i++;
@@ -57,21 +86,19 @@ const headObserver = new MutationObserver(list => {
         i++;
       }
     } else if (mutation.type === "attributes") {
+      // This allows frameworks to set the `disabled` attribute on the link tag
       const target = mutation.target as HTMLLinkElement;
       if (target.tagName === "LINK" && target.rel === "stylesheet") {
         const id = registeredLinkTags.get(target);
         if (id) {
-          const existingSheet = cssStore.get(id)?.sheet;
-
-          const disabled = target.disabled;
-          if (existingSheet) {
-            existingSheet.disabled = disabled;
-          }
-
-          if (disabled) {
-            active.delete(id);
-          } else {
-            active.add(id);
+          const existing = cssStore.get(id);
+          if (existing) {
+            const disabled = target.disabled;
+            if (disabled) {
+              deactivateCss(existing);
+            } else {
+              activateCss(existing);
+            }
           }
         }
       }
@@ -83,11 +110,14 @@ function maybeAddCssLink(link: HTMLLinkElement) {
   const pathname = new URL(link.href).pathname;
   if (pathname.startsWith("/_bun/css/")) {
     const id = pathname.slice("/_bun/css/".length).slice(0, 16);
+    if ( !/^[a-f0-9]{16}$/.test(id)) {
+      return;
+    }
     const existing = cssStore.get(id);
     if (existing) {
       const { sheet } = existing;
       if (sheet) {
-        // The HMR runtime has a managed sheet.
+        // The HMR runtime has a managed sheet already.
         sheet.disabled = false;
         const linkSheet = link.sheet;
         if (linkSheet) linkSheet.disabled = true;
@@ -97,9 +127,9 @@ function maybeAddCssLink(link: HTMLLinkElement) {
       cssStore.set(id, {
         sheet: null,
         link,
+        active: true,
       });
     }
-    active.add(id);
     registeredLinkTags.set(link, id);
   }
 }
@@ -116,39 +146,24 @@ document.querySelectorAll<HTMLLinkElement>("head>link[rel=stylesheet]").forEach(
 export function editCssArray(array: string[]) {
   const removedCssKeys = new Set(cssStore.keys());
   for (const css of array) {
+    if (IS_BUN_DEVELOPMENT) validateCssId(css);
     const existing = cssStore.get(css);
+    removedCssKeys.delete(css);
     if (existing) {
-      removedCssKeys.delete(css);
-      const { sheet, link } = existing;
-      if (sheet) {
-        document.adoptedStyleSheets.push(sheet);
-      } else if (link) {
-        const linkSheet = link.sheet;
-        if (linkSheet) linkSheet.disabled = false;
-      }
+      activateCss(existing);
     } else {
       // This will be populated shortly by a call to `editCssContent`
       cssStore.set(css, {
         sheet: null,
         link: null,
+        active: true,
       });
     }
   }
   for (const css of removedCssKeys) {
     const entry = cssStore.get(css);
     if (entry) {
-      if (entry.sheet) {
-        const index = document.adoptedStyleSheets.indexOf(entry.sheet);
-        if (index !== -1) {
-          document.adoptedStyleSheets.splice(index, 1);
-        }
-      }
-      if (entry.link) {
-        // Disable it but not remove it so a framework isn't confused
-        // if it is performing its own DOM-diffing logic.
-        const linkSheet = entry.link?.sheet;
-        if (linkSheet) linkSheet.disabled = true;
-      }
+      deactivateCss(entry);
     }
   }
 }

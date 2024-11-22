@@ -32,7 +32,11 @@ const createFromNodeStreamOptions: Manifest = {
 // References:
 // - https://github.com/vercel/next.js/blob/15.0.2/packages/next/src/server/app-render/use-flight-response.tsx
 // - https://github.com/devongovett/rsc-html-stream
-export function renderToHtml(rscPayload: Readable, bootstrapModules: readonly string[], signal: MiniAbortSignal): ReadableStream {
+export function renderToHtml(
+  rscPayload: Readable,
+  bootstrapModules: readonly string[],
+  signal: MiniAbortSignal,
+): ReadableStream {
   // Bun supports a special type of readable stream type called "direct",
   // which provides a raw handle to the controller. We can bypass all of
   // the Web Streams API (slow) and use the controller directly.
@@ -41,9 +45,6 @@ export function renderToHtml(rscPayload: Readable, bootstrapModules: readonly st
   return new ReadableStream({
     type: "direct",
     pull(controller) {
-      // Initialize the injection stream so it gets the first "data" listener.
-      stream = new RscInjectionStream(rscPayload, controller);
-
       // `createFromNodeStream` turns the RSC payload into a React component.
       const promise = createFromNodeStream(rscPayload, {
         // React takes in a manifest mapping client-side assets
@@ -61,11 +62,13 @@ export function renderToHtml(rscPayload: Readable, bootstrapModules: readonly st
       ({ pipe, abort } = renderToPipeableStream(<Root />, {
         bootstrapModules,
         onError(error) {
-          if(!signal.aborted) {
+          if (!signal.aborted) {
             console.error(error);
           }
-        }
+        },
       }));
+
+      stream = new RscInjectionStream(rscPayload, controller);
       pipe(stream);
 
       // Promise resolved after all data is combined.
@@ -146,7 +149,17 @@ class RscInjectionStream extends EventEmitter {
   }
 
   write(data: Uint8Array) {
-    console.write("write" + Bun.inspect({ data: new TextDecoder().decode(data) }, {colors:true}) + "\n");
+    if (import.meta.env.DEV && process.env.VERBOSE_SSR)
+      console.write(
+        "write" +
+          Bun.inspect(
+            {
+              data: new TextDecoder().decode(data),
+            },
+            { colors: true },
+          ) +
+          "\n",
+      );
     if (endsWithClosingScript(data)) {
       // The HTML is not done yet, but it's a suitible time to inject RSC data.
       const { controller } = this;
@@ -189,9 +202,17 @@ class RscInjectionStream extends EventEmitter {
   }
 
   writeRscData(chunk: Uint8Array) {
-    console.write('writeRscData ' + Bun.inspect({
-      data: new TextDecoder().decode(chunk),
-    }, { colors: true }) + "\n");
+    if (import.meta.env.DEV && process.env.VERBOSE_SSR)
+      console.write(
+        "writeRscData " +
+          Bun.inspect(
+            {
+              data: new TextDecoder().decode(chunk),
+            },
+            { colors: true },
+          ) +
+          "\n",
+      );
 
     if (this.html === HtmlState.Boundary) {
       const { controller, decoder } = this;
@@ -211,7 +232,7 @@ class RscInjectionStream extends EventEmitter {
     // Ignore flush requests from React. Bun will automatically flush when reasonable.
   }
 
-  destroy() { }
+  destroy() {}
 
   end() {}
 }

@@ -1,7 +1,7 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
-import { loadModule, LoadModuleType, replaceModules } from "./hmr-module";
-import { onErrorClearedMessage, onErrorMessage } from "./client/overlay";
+import { loadModule, LoadModuleType, onServerSideReload, replaceModules } from "./hmr-module";
+import { hasFatalError, onErrorMessage, onRuntimeError, RuntimeErrorType } from "./client/overlay";
 import { Bake } from "bun";
 import { td } from "./shared";
 import { DataViewReader } from "./client/reader";
@@ -48,24 +48,9 @@ async function performRouteReload() {
   location.reload();
 }
 
-let main;
-
-try {
-  main = loadModule<Bake.ClientEntryPoint>(config.main, LoadModuleType.AssertPresent);
-  var { onServerSideReload, ...rest } = main.exports;
-  if (Object.keys(rest).length > 0) {
-    console.warn(
-      `Framework client entry point (${config.main}) exported unknown properties, found: ${Object.keys(rest).join(", ")}`,
-    );
-  }
-} catch (e) {
-  // showErrorOverlay(e);
-  console.error(e);
-}
-
 let isFirstRun = true;
-initWebSocket({
-  [MessageId.version](view, ws) {
+const ws = initWebSocket({
+  [MessageId.version](view) {
     if (td.decode(view.buffer.slice(1)) !== config.version) {
       console.error("Version mismatch, hard-reloading");
       location.reload();
@@ -140,6 +125,10 @@ initWebSocket({
         editCssContent(identifier, code);
       }
     }
+    if (hasFatalError && (isServerSideRouteUpdate || reader.hasMoreData())) {
+      location.reload();
+      return;
+    }
     // JavaScript modules
     if (reader.hasMoreData()) {
       const code = td.decode(reader.rest());
@@ -150,19 +139,25 @@ initWebSocket({
       performRouteReload();
     }
   },
-  // [MessageId.route_update](view) {
-  //   const reader = new DataViewReader(view, 1);
-  //   let routeCount = reader.u32();
-
-  //   while (routeCount > 0) {
-  //     routeCount -= 1;
-  //     const routeId = reader.u32();
-  //     const routePattern = reader.string32();
-  //     if (routeMatch(routeId, routePattern)) {
-  //       performRouteReload();
-  //       break;
-  //     }
-  //   }
-  // },
   [MessageId.errors]: onErrorMessage,
 });
+
+// Before loading user code, instrument some globals.
+{
+  const truePushState = History.prototype.pushState;
+  History.prototype.pushState = function pushState(this: History, state: any, title: string, url?: string | null) {
+    truePushState.call(this, state, title, url);
+    ws.send("n" + location.pathname);
+  }
+  const trueReplaceState = History.prototype.replaceState;
+  History.prototype.replaceState = function replaceState(this: History, state: any, title: string, url?: string | null) {
+    trueReplaceState.call(this, state, title, url);
+    ws.send("n" + location.pathname);
+  }
+}
+
+try {
+  loadModule<Bake.ClientEntryPoint>(config.main, LoadModuleType.AssertPresent);
+} catch (e) {
+  onRuntimeError(e, RuntimeErrorType.fatal);
+}

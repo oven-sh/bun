@@ -1653,6 +1653,8 @@ pub const ThreadSafeFunction = struct {
         this.unref();
 
         if (this.finalizer.fun) |fun| {
+            const handle_scope = NapiHandleScope.open(this.env, false);
+            defer if (handle_scope) |scope| scope.close(this.env);
             fun(this.event_loop.global, this.finalizer.data, this.ctx);
         }
 

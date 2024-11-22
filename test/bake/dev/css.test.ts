@@ -1,15 +1,15 @@
 // CSS tests concern bundling bugs with CSS files
-import { devTest, minimalFramework, Step } from '../dev-server-harness';
+import { devTest, minimalFramework, Step } from "../dev-server-harness";
 
-devTest('css file with syntax error does not kill old styles', {
+devTest("css file with syntax error does not kill old styles", {
   framework: minimalFramework,
   files: {
-    'routes/styles.css': `
+    "routes/styles.css": `
       body {
         color: red;
       }
     `,
-    'routes/index.ts': `
+    "routes/index.ts": `
       import { expect } from 'bun:test';
       import './styles.css';
 
@@ -20,27 +20,33 @@ devTest('css file with syntax error does not kill old styles', {
     `,
   },
   async test(dev) {
-    let css_url = await dev.fetch('/').text();
-    await dev.fetch(css_url).expectNoSpaces('/*routes/styles.css*/body{color:red;}');
-    await dev.write('routes/styles.css', `
+    let css_url = await dev.fetch("/").text();
+    await dev.fetch(css_url).expectNoSpaces("/*routes/styles.css*/body{color:red;}");
+    await dev.write(
+      "routes/styles.css",
+      `
         body {
           color: red;
           background-color
         }
-      `);
-      await dev.fetch(css_url).expectNoSpaces('/*routes/styles.css*/body{color:red;}'),
-      await dev.fetch('/').expect(css_url);
-      await dev.write('routes/styles.css', `
+      `,
+    );
+    await dev.fetch(css_url).expectNoSpaces("/*routes/styles.css*/body{color:red;}");
+    await dev.fetch("/").expect(css_url);
+    await dev.write(
+      "routes/styles.css",
+      `
         body {
           color: red;
           background-color: blue;
         }
-      `);
-      await dev.fetch(css_url).expectNoSpaces('/*routes/styles.css*/body{color:red;background-color:#00f;}');
-      await dev.fetch('/').expect(css_url);
-      await dev.write('routes/styles.css', ` `);
-      await dev.fetch(css_url).expectNoSpaces('/*routes/styles.css*/');
-      await dev.fetch('/').expect(css_url);
+      `,
+    );
+    await dev.fetch(css_url).expectNoSpaces("/*routes/styles.css*/body{color:red;background-color:#00f;}");
+    await dev.fetch("/").expect(css_url);
+    await dev.write("routes/styles.css", ` `);
+    await dev.fetch(css_url).expectNoSpaces("/*routes/styles.css*/");
+    await dev.fetch("/").expect(css_url);
   },
 });
 // devTest('css file with initial syntax error gets recovered', {

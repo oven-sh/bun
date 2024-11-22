@@ -28,7 +28,7 @@ export const minimalFramework: Bake.Framework = {
 };
 
 export interface DevServerTest {
-  /** 
+  /**
    * Framework to use. Consider `minimalFramework` if possible.
    * Provide this object or `files['bun.app.ts']` for a dynamic one.
    */
@@ -62,7 +62,9 @@ export class Dev {
   }
 
   fetch(url: string, init?: RequestInit) {
-    return new DevFetchPromise((resolve, reject) => fetch(new URL(url, this.baseUrl).toString(), init).then(resolve, reject));
+    return new DevFetchPromise((resolve, reject) =>
+      fetch(new URL(url, this.baseUrl).toString(), init).then(resolve, reject),
+    );
   }
 
   fetchJSON(url: string, object: any) {
@@ -216,7 +218,7 @@ class OutputLineStream extends EventEmitter {
           last = lines.pop()!;
           for (const line of lines) {
             this.lines.push(line);
-            if (line.includes('============================================================')) {
+            if (line.includes("============================================================")) {
               this.emit("panic");
             }
             console.log("\x1b[0;30mdev|\x1b[0m", line);
@@ -281,7 +283,7 @@ export function devTest(description: string, options: DevServerTest) {
   const caller = stackTraceFileName(callerLocation);
   const jest = (Bun as any).jest(caller);
   assert(caller.startsWith(devTestRoot), "dev server tests must be in test/bake/dev");
-  const basename = path.basename(caller, '.test' + path.extname(caller));
+  const basename = path.basename(caller, ".test" + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
   jest.test(`DevServer > ${basename}.${count}: ${description}`, async () => {
     const root = path.join(tempDir, basename + count);

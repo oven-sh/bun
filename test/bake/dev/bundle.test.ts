@@ -1,11 +1,11 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { devTest, minimalFramework, Step } from '../dev-server-harness';
+import { devTest, minimalFramework, Step } from "../dev-server-harness";
 
-devTest('import identifier doesnt get renamed', {
+devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
   files: {
-    'db.ts': `export const abc = "123";`,
-    'routes/index.ts': `
+    "db.ts": `export const abc = "123";`,
+    "routes/index.ts": `
       import { abc } from '../db';
       export default function (req, meta) {
         let v1 = "";
@@ -17,21 +17,21 @@ devTest('import identifier doesnt get renamed', {
     `,
   },
   async test(dev) {
-    await dev.fetch('/').expect('Hello, 123!');
-    await dev.write('db.ts', `export const abc = "456";`);
-    await dev.fetch('/').expect('Hello, 456!');
-    await dev.patch('routes/index.ts', {
-      find: 'Hello',
-      replace: 'Bun',
+    await dev.fetch("/").expect("Hello, 123!");
+    await dev.write("db.ts", `export const abc = "456";`);
+    await dev.fetch("/").expect("Hello, 456!");
+    await dev.patch("routes/index.ts", {
+      find: "Hello",
+      replace: "Bun",
     });
-    await dev.fetch('/').expect('Bun, 456!');
+    await dev.fetch("/").expect("Bun, 456!");
   },
 });
-devTest('symbol collision with import identifier', {
+devTest("symbol collision with import identifier", {
   framework: minimalFramework,
   files: {
-    'db.ts': `export const abc = "123";`,
-    'routes/index.ts': `
+    "db.ts": `export const abc = "123";`,
+    "routes/index.ts": `
       let import_db = 987;
       import { abc } from '../db';
       export default function (req, meta) {
@@ -44,8 +44,8 @@ devTest('symbol collision with import identifier', {
     `,
   },
   async test(dev) {
-    await dev.fetch('/').expect('Hello, 123, 987!');
-    await dev.write('db.ts', `export const abc = "456";`);
-    await dev.fetch('/').expect('Hello, 456, 987!');
-  }
+    await dev.fetch("/").expect("Hello, 123, 987!");
+    await dev.write("db.ts", `export const abc = "456";`);
+    await dev.fetch("/").expect("Hello, 456, 987!");
+  },
 });

@@ -2529,28 +2529,47 @@ const PackageManifestMap = struct {
     };
     const HashMap = std.HashMapUnmanaged(PackageNameHash, Value, IdentityContext(PackageNameHash), 80);
 
-    pub fn byName(this: *PackageManifestMap, scope: *const Npm.Registry.Scope, name: []const u8) ?*Npm.PackageManifest {
-        return this.byNameHash(scope, String.Builder.stringHash(name));
+    pub fn byName(this: *PackageManifestMap, pm: *PackageManager, scope: *const Npm.Registry.Scope, name: []const u8, cache_behavior: CacheBehavior) ?*Npm.PackageManifest {
+        return this.byNameHash(pm, scope, String.Builder.stringHash(name), cache_behavior);
     }
 
     pub fn insert(this: *PackageManifestMap, name_hash: PackageNameHash, manifest: *const Npm.PackageManifest) !void {
         try this.hash_map.put(bun.default_allocator, name_hash, .{ .manifest = manifest.* });
     }
 
-    pub fn byNameHash(this: *PackageManifestMap, scope: *const Npm.Registry.Scope, name_hash: PackageNameHash) ?*Npm.PackageManifest {
-        return byNameHashAllowExpired(this, scope, name_hash, null);
+    pub fn byNameHash(this: *PackageManifestMap, pm: *PackageManager, scope: *const Npm.Registry.Scope, name_hash: PackageNameHash, cache_behavior: CacheBehavior) ?*Npm.PackageManifest {
+        return byNameHashAllowExpired(this, pm, scope, name_hash, null, cache_behavior);
     }
 
-    pub fn byNameAllowExpired(this: *PackageManifestMap, scope: *const Npm.Registry.Scope, name: string, is_expired: ?*bool) ?*Npm.PackageManifest {
-        return byNameHashAllowExpired(this, scope, String.Builder.stringHash(name), is_expired);
+    pub fn byNameAllowExpired(this: *PackageManifestMap, pm: *PackageManager, scope: *const Npm.Registry.Scope, name: string, is_expired: ?*bool, cache_behavior: CacheBehavior) ?*Npm.PackageManifest {
+        return byNameHashAllowExpired(this, pm, scope, String.Builder.stringHash(name), is_expired, cache_behavior);
     }
+
+    pub const CacheBehavior = enum {
+        load_from_memory,
+        load_from_memory_fallback_to_disk,
+    };
 
     pub fn byNameHashAllowExpired(
         this: *PackageManifestMap,
+        pm: *PackageManager,
         scope: *const Npm.Registry.Scope,
         name_hash: PackageNameHash,
         is_expired: ?*bool,
+        cache_behavior: CacheBehavior,
     ) ?*Npm.PackageManifest {
+        if (cache_behavior == .load_from_memory) {
+            const entry = this.hash_map.getPtr(name_hash) orelse return null;
+            return switch (entry.*) {
+                .manifest => &entry.manifest,
+                .expired => if (is_expired) |expiry| {
+                    expiry.* = true;
+                    return &entry.expired;
+                } else null,
+                .not_found => null,
+            };
+        }
+
         const entry = this.hash_map.getOrPut(bun.default_allocator, name_hash) catch bun.outOfMemory();
         if (entry.found_existing) {
             if (entry.value_ptr.* == .manifest) {
@@ -2567,14 +2586,14 @@ const PackageManifestMap = struct {
             return null;
         }
 
-        if (PackageManager.get().options.enable.manifest_cache) {
+        if (pm.options.enable.manifest_cache) {
             if (Npm.PackageManifest.Serializer.loadByFileID(
-                PackageManager.get().allocator,
+                pm.allocator,
                 scope,
-                PackageManager.get().getCacheDirectory(),
+                pm.getCacheDirectory(),
                 name_hash,
             ) catch null) |manifest| {
-                if (PackageManager.get().options.enable.manifest_cache_control and manifest.pkg.public_max_age > PackageManager.get().timestamp_for_manifest_cache_control) {
+                if (pm.options.enable.manifest_cache_control and manifest.pkg.public_max_age > pm.timestamp_for_manifest_cache_control) {
                     entry.value_ptr.* = .{ .manifest = manifest };
                     return &entry.value_ptr.manifest;
                 } else {
@@ -3270,14 +3289,14 @@ pub const PackageManager = struct {
                     // TODO:
                     return null;
 
-                // We skip this in CI because we don't want any performance impact in an environment you'll probably never use
-                // and it makes tests more consistent
-                if (this.isContinuousIntegration())
-                    return null;
+                const manifest = this.manifests.byNameHash(
+                    this,
+                    this.scopeForPackageName(package_name),
+                    name_hash,
+                    .load_from_memory,
+                ) orelse return null;
 
-                const manifest = this.manifests.byNameHash(this.scopeForPackageName(package_name), name_hash) orelse return null;
-
-                if (manifest.findByDistTag("latest")) |latest_version| {
+                if (manifest.findByDistTag("latest")) |*latest_version| {
                     if (latest_version.version.order(
                         resolution.value.npm.version,
                         manifest.string_buf,
@@ -4584,7 +4603,12 @@ pub const PackageManager = struct {
 
                 // Resolve the version from the loaded NPM manifest
                 const name_str = this.lockfile.str(&name);
-                const manifest = this.manifests.byNameHash(this.scopeForPackageName(name_str), name_hash) orelse return null; // manifest might still be downloading. This feels unreliable.
+                const manifest = this.manifests.byNameHash(
+                    this,
+                    this.scopeForPackageName(name_str),
+                    name_hash,
+                    .load_from_memory_fallback_to_disk,
+                ) orelse return null; // manifest might still be downloading. This feels unreliable.
                 const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
                     .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)),
                     .npm => manifest.findBestVersion(version.value.npm.version, this.lockfile.buffers.string_bytes.items),
@@ -5252,7 +5276,13 @@ pub const PackageManager = struct {
                                 if (!this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) {
                                     if (this.options.enable.manifest_cache) {
                                         var expired = false;
-                                        if (this.manifests.byNameHashAllowExpired(this.scopeForPackageName(name_str), name_hash, &expired)) |manifest| {
+                                        if (this.manifests.byNameHashAllowExpired(
+                                            this,
+                                            this.scopeForPackageName(name_str),
+                                            name_hash,
+                                            &expired,
+                                            .load_from_memory_fallback_to_disk,
+                                        )) |manifest| {
                                             loaded_manifest = manifest.*;
 
                                             // If it's an exact package version already living in the cache
@@ -14642,7 +14672,7 @@ pub const PackageManager = struct {
                 manager.progress.refresh();
             }
 
-            manager.lockfile.saveToDisk(manager.options.lockfile_path);
+            manager.lockfile.saveToDisk(manager.options.lockfile_path, manager.options.log_level.isVerbose());
 
             if (comptime Environment.allow_assert) {
                 if (manager.lockfile.hasMetaHashChanged(false, packages_len_before_install) catch false) {

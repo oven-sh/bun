@@ -1648,8 +1648,7 @@ pub const InternalDNS = struct {
         if (hostname_or_url.isString()) {
             hostname_slice = hostname_or_url.toSlice(globalThis, bun.default_allocator);
         } else {
-            globalThis.throwInvalidArguments("hostname must be a string", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("hostname must be a string", .{});
         }
 
         const hostname_z = bun.default_allocator.dupeZ(u8, hostname_slice.slice()) catch {

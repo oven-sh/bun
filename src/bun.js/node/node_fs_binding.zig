@@ -10,11 +10,7 @@ const FeatureFlags = bun.FeatureFlags;
 const Args = JSC.Node.NodeFS.Arguments;
 const d = JSC.d;
 
-const NodeFSFunction = fn (
-    this: *JSC.Node.NodeJSFS,
-    globalObject: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue;
+const NodeFSFunction = fn (this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue;
 
 const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
 
@@ -30,11 +26,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     _ = Result;
 
     const NodeBindingClosure = struct {
-        pub fn bind(
-            this: *JSC.Node.NodeJSFS,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSC.JSValue {
+        pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             var arguments = callframe.arguments_old(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());

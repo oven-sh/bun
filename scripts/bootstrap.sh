@@ -401,9 +401,6 @@ check_user() {
 package_manager() {
 	case "$pm" in
 	apt)
-		while ! sudo -n apt update -y; do
-			sleep 1
-		done
 		execute_sudo apt "$@"
 		;;
 	dnf)

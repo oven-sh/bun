@@ -226,8 +226,7 @@ const StaticRoute = struct {
 
                     .Blob, .InternalBlob, .WTFStringImpl => {
                         if (response.body.value == .Blob and response.body.value.Blob.needsToReadFile()) {
-                            globalThis.throwTODO("TODO: support Bun.file(path) in static routes");
-                            return error.JSError;
+                            return globalThis.throwTODO("TODO: support Bun.file(path) in static routes");
                         }
                         var blob = response.body.value.use();
                         blob.globalThis = globalThis;
@@ -1140,7 +1139,7 @@ pub const ServerConfig = struct {
                     }
                 }
 
-                if (obj.get(global, "lowMemoryMode")) |low_memory_mode| {
+                if (try obj.get(global, "lowMemoryMode")) |low_memory_mode| {
                     if (low_memory_mode.isBoolean() or low_memory_mode.isUndefined()) {
                         result.low_memory_mode = low_memory_mode.toBoolean();
                         any = true;
@@ -1225,7 +1224,7 @@ pub const ServerConfig = struct {
                 return global.throwInvalidArguments2("Bun.serve expects an object", .{});
             }
 
-            if (arg.get(global, "static")) |static| {
+            if (try arg.get(global, "static")) |static| {
                 if (!static.isObject()) {
                     return global.throwInvalidArguments2("Bun.serve expects 'static' to be an object shaped like { [pathname: string]: Response }", .{});
                 }
@@ -1261,7 +1260,7 @@ pub const ServerConfig = struct {
 
             if (global.hasException()) return error.JSError;
 
-            if (arg.get(global, "idleTimeout")) |value| {
+            if (try arg.get(global, "idleTimeout")) |value| {
                 if (!value.isUndefinedOrNull()) {
                     if (!value.isAnyInt()) {
                         global.throwInvalidArguments("Bun.serve expects idleTimeout to be an integer", .{});
@@ -1346,7 +1345,7 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (arg.get(global, "id")) |id| {
+            if (try arg.get(global, "id")) |id| {
                 if (id.isUndefinedOrNull()) {
                     args.allow_hot = false;
                 } else {
@@ -1364,7 +1363,7 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (arg.get(global, "development")) |dev| {
+            if (try arg.get(global, "development")) |dev| {
                 args.development = dev.coerce(bool, global);
                 args.reuse_port = !args.development;
             }
@@ -1384,12 +1383,12 @@ pub const ServerConfig = struct {
                 args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global);
             }
 
-            if (arg.get(global, "reusePort")) |dev| {
+            if (try arg.get(global, "reusePort")) |dev| {
                 args.reuse_port = dev.coerce(bool, global);
             }
             if (global.hasException()) return error.JSError;
 
-            if (arg.get(global, "inspector")) |inspector| {
+            if (try arg.get(global, "inspector")) |inspector| {
                 args.inspector = inspector.coerce(bool, global);
 
                 if (args.inspector and !args.development) {
@@ -1966,7 +1965,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             ctxLog("onResolve", .{});
 
-            const arguments = callframe.arguments(2);
+            const arguments = callframe.arguments_old(2);
             var ctx = arguments.ptr[1].asPromisePtr(@This());
             defer ctx.deref();
 
@@ -2111,7 +2110,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onReject(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             ctxLog("onReject", .{});
 
-            const arguments = callframe.arguments(2);
+            const arguments = callframe.arguments_old(2);
             const ctx = arguments.ptr[1].asPromisePtr(@This());
             const err = arguments.ptr[0];
             defer ctx.deref();
@@ -3328,7 +3327,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             streamLog("onResolveStream", .{});
-            var args = callframe.arguments(2);
+            var args = callframe.arguments_old(2);
             var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
             defer req.deref();
             req.handleResolveStream();
@@ -3336,7 +3335,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
         pub fn onRejectStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             streamLog("onRejectStream", .{});
-            const args = callframe.arguments(2);
+            const args = callframe.arguments_old(2);
             var req = args.ptr[args.len - 1].asPromisePtr(@This());
             const err = args.ptr[0];
             defer req.deref();
@@ -4331,7 +4330,7 @@ pub const WebSocketServer = struct {
         var server = WebSocketServer{};
         server.handler = try Handler.fromJS(globalObject, object);
 
-        if (object.get(globalObject, "perMessageDeflate")) |per_message_deflate| {
+        if (try object.get(globalObject, "perMessageDeflate")) |per_message_deflate| {
             getter: {
                 if (per_message_deflate.isUndefined()) {
                     break :getter;
@@ -4372,7 +4371,7 @@ pub const WebSocketServer = struct {
             }
         }
 
-        if (object.get(globalObject, "maxPayloadLength")) |value| {
+        if (try object.get(globalObject, "maxPayloadLength")) |value| {
             if (!value.isUndefinedOrNull()) {
                 if (!value.isAnyInt()) {
                     return globalObject.throwInvalidArguments2("websocket expects maxPayloadLength to be an integer", .{});
@@ -4381,7 +4380,7 @@ pub const WebSocketServer = struct {
             }
         }
 
-        if (object.get(globalObject, "idleTimeout")) |value| {
+        if (try object.get(globalObject, "idleTimeout")) |value| {
             if (!value.isUndefinedOrNull()) {
                 if (!value.isAnyInt()) {
                     return globalObject.throwInvalidArguments2("websocket expects idleTimeout to be an integer", .{});
@@ -4399,7 +4398,7 @@ pub const WebSocketServer = struct {
                 server.idleTimeout = idleTimeout;
             }
         }
-        if (object.get(globalObject, "backpressureLimit")) |value| {
+        if (try object.get(globalObject, "backpressureLimit")) |value| {
             if (!value.isUndefinedOrNull()) {
                 if (!value.isAnyInt()) {
                     return globalObject.throwInvalidArguments2("websocket expects backpressureLimit to be an integer", .{});
@@ -4409,7 +4408,7 @@ pub const WebSocketServer = struct {
             }
         }
 
-        if (object.get(globalObject, "closeOnBackpressureLimit")) |value| {
+        if (try object.get(globalObject, "closeOnBackpressureLimit")) |value| {
             if (!value.isUndefinedOrNull()) {
                 if (!value.isBoolean()) {
                     return globalObject.throwInvalidArguments2("websocket expects closeOnBackpressureLimit to be a boolean", .{});
@@ -4419,7 +4418,7 @@ pub const WebSocketServer = struct {
             }
         }
 
-        if (object.get(globalObject, "sendPings")) |value| {
+        if (try object.get(globalObject, "sendPings")) |value| {
             if (!value.isUndefinedOrNull()) {
                 if (!value.isBoolean()) {
                     return globalObject.throwInvalidArguments2("websocket expects sendPings to be a boolean", .{});
@@ -4429,7 +4428,7 @@ pub const WebSocketServer = struct {
             }
         }
 
-        if (object.get(globalObject, "publishToSelf")) |value| {
+        if (try object.get(globalObject, "publishToSelf")) |value| {
             if (!value.isUndefinedOrNull()) {
                 if (!value.isBoolean()) {
                     return globalObject.throwInvalidArguments2("websocket expects publishToSelf to be a boolean", .{});
@@ -4790,7 +4789,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(4);
+        const args = callframe.arguments_old(4);
         if (args.len < 1) {
             log("publish()", .{});
             globalThis.throw("publish requires at least 1 argument", .{});
@@ -4875,7 +4874,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(4);
+        const args = callframe.arguments_old(4);
 
         if (args.len < 1) {
             log("publish()", .{});
@@ -4938,7 +4937,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(4);
+        const args = callframe.arguments_old(4);
 
         if (args.len < 1) {
             log("publishBinary()", .{});
@@ -5091,7 +5090,7 @@ pub const ServerWebSocket = struct {
         // make sure the `this` value is up to date.
         this_value: JSC.JSValue,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         this.this_value = this_value;
 
         if (args.len < 1) {
@@ -5129,7 +5128,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(2);
+        const args = callframe.arguments_old(2);
 
         if (args.len < 1) {
             log("send()", .{});
@@ -5203,7 +5202,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(2);
+        const args = callframe.arguments_old(2);
 
         if (args.len < 1) {
             log("sendText()", .{});
@@ -5287,7 +5286,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(2);
+        const args = callframe.arguments_old(2);
 
         if (args.len < 1) {
             log("sendBinary()", .{});
@@ -5383,7 +5382,7 @@ pub const ServerWebSocket = struct {
         comptime name: string,
         comptime opcode: uws.Opcode,
     ) JSValue {
-        const args = callframe.arguments(2);
+        const args = callframe.arguments_old(2);
 
         if (this.isClosed()) {
             return JSValue.jsNumber(0);
@@ -5487,7 +5486,7 @@ pub const ServerWebSocket = struct {
         // Since close() can lead to the close() callback being called, let's always ensure the `this` value is up to date.
         this_value: JSC.JSValue,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(2);
+        const args = callframe.arguments_old(2);
         log("close()", .{});
         this.this_value = this_value;
 
@@ -5511,13 +5510,7 @@ pub const ServerWebSocket = struct {
 
         var message_value: ZigString.Slice = brk: {
             if (args.ptr[1] == .zero or args.ptr[1].isUndefined()) break :brk ZigString.Slice.empty;
-
-            if (args.ptr[1].toSliceOrNull(globalThis)) |slice| {
-                break :brk slice;
-            }
-
-            // toString() failed, that means an exception occurred.
-            return .zero;
+            break :brk try args.ptr[1].toSliceOrNull(globalThis);
         };
 
         defer message_value.deinit();
@@ -5535,7 +5528,7 @@ pub const ServerWebSocket = struct {
         this_value: JSC.JSValue,
     ) bun.JSError!JSValue {
         _ = globalThis;
-        const args = callframe.arguments(2);
+        const args = callframe.arguments_old(2);
         _ = args;
         log("terminate()", .{});
 
@@ -5606,7 +5599,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         if (args.len < 1) {
             globalThis.throw("subscribe requires at least 1 argument", .{});
             return .zero;
@@ -5643,7 +5636,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         if (args.len < 1) {
             globalThis.throw("unsubscribe requires at least 1 argument", .{});
             return .zero;
@@ -5680,7 +5673,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         if (args.len < 1) {
             globalThis.throw("isSubscribed requires at least 1 argument", .{});
             return .zero;
@@ -5783,7 +5776,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doTimeout = JSC.wrapInstanceMethod(ThisServer, "timeout", false);
 
         pub fn doSubscriberCount(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments = callframe.arguments(1);
+            const arguments = callframe.arguments_old(1);
             if (arguments.len < 1) {
                 return globalThis.throwNotEnoughArguments("subscriberCount", 1, 0);
             }
@@ -6105,7 +6098,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn onReload(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments = callframe.arguments(1).slice();
+            const arguments = callframe.arguments_old(1).slice();
             if (arguments.len < 1) {
                 return globalThis.throwNotEnoughArguments("reload", 1, 0);
             }
@@ -6131,7 +6124,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             callframe: *JSC.CallFrame,
         ) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
-            const arguments = callframe.arguments(2).slice();
+            const arguments = callframe.arguments_old(2).slice();
             if (arguments.len == 0) {
                 const fetch_error = WebCore.Fetch.fetch_error_no_args;
                 return JSPromise.rejectedPromiseValue(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));
@@ -6171,22 +6164,22 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                 if (arguments.len >= 2 and arguments[1].isObject()) {
                     var opts = arguments[1];
-                    if (opts.fastGet(ctx.ptr(), .method)) |method_| {
-                        var slice_ = method_.toSlice(ctx.ptr(), getAllocator(ctx));
+                    if (opts.fastGet(ctx, .method)) |method_| {
+                        var slice_ = method_.toSlice(ctx, getAllocator(ctx));
                         defer slice_.deinit();
                         method = HTTP.Method.which(slice_.slice()) orelse method;
                     }
 
-                    if (opts.fastGet(ctx.ptr(), .headers)) |headers_| {
+                    if (opts.fastGet(ctx, .headers)) |headers_| {
                         if (headers_.as(JSC.FetchHeaders)) |headers__| {
                             headers = headers__;
-                        } else if (JSC.FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
+                        } else if (JSC.FetchHeaders.createFromJS(ctx, headers_)) |headers__| {
                             headers = headers__;
                         }
                     }
 
-                    if (opts.fastGet(ctx.ptr(), .body)) |body__| {
-                        if (Blob.get(ctx.ptr(), body__, true, false)) |new_blob| {
+                    if (opts.fastGet(ctx, .body)) |body__| {
+                        if (Blob.get(ctx, body__, true, false)) |new_blob| {
                             body = .{ .Blob = new_blob };
                         } else |_| {
                             return JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() received invalid body").toErrorInstance(ctx));

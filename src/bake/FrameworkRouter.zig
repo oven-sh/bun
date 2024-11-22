@@ -1050,8 +1050,7 @@ pub const JSFrameworkRouter = struct {
             &global.bunVM().bundler.resolver,
             InsertionContext.wrap(JSFrameworkRouter, jsfr),
         ) catch |err| {
-            global.throwError(err, "while scanning route list");
-            return error.JSError;
+            return global.throwError(err, "while scanning route list");
         };
 
         return jsfr;

@@ -83,30 +83,30 @@ pub const ShellErr = union(enum) {
         }
     }
 
-    pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) void {
+    pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) bun.JSError {
         defer this.deinit(bun.default_allocator);
         switch (this.*) {
             .sys => {
                 const err = this.sys.toErrorInstance(globalThis);
-                globalThis.throwValue(err);
+                return globalThis.throwValue2(err);
             },
             .custom => {
                 var str = JSC.ZigString.init(this.custom);
                 str.markUTF8();
                 const err_value = str.toErrorInstance(globalThis);
-                globalThis.throwValue(err_value);
+                return globalThis.throwValue2(err_value);
                 // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
             .invalid_arguments => {
-                globalThis.throwInvalidArguments("{s}", .{this.invalid_arguments.val});
+                return globalThis.throwInvalidArguments2("{s}", .{this.invalid_arguments.val});
             },
             .todo => {
-                globalThis.throwTODO(this.todo);
+                return globalThis.throwTODO(this.todo);
             },
         }
     }
 
-    pub fn throwMini(this: @This()) void {
+    pub fn throwMini(this: @This()) noreturn {
         defer this.deinit(bun.default_allocator);
         switch (this) {
             .sys => |err| {
@@ -4316,7 +4316,7 @@ pub const TestingAPIs = struct {
     pub fn disabledOnThisPlatform(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (comptime bun.Environment.isWindows) return JSValue.false;
 
-        const arguments_ = callframe.arguments(1);
+        const arguments_ = callframe.arguments_old(1);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string = arguments.nextEat() orelse {
             globalThis.throw("shellInternals.disabledOnPosix: expected 1 arguments, got 0", .{});
@@ -4340,7 +4340,7 @@ pub const TestingAPIs = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
             globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
@@ -4385,15 +4385,13 @@ pub const TestingAPIs = struct {
             if (bun.strings.isAllASCII(script.items[0..])) {
                 var lexer = LexerAscii.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
                 lexer.lex() catch |err| {
-                    globalThis.throwError(err, "failed to lex shell");
-                    return JSValue.undefined;
+                    return globalThis.throwError(err, "failed to lex shell");
                 };
                 break :brk lexer.get_result();
             }
             var lexer = LexerUnicode.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
             lexer.lex() catch |err| {
-                globalThis.throwError(err, "failed to lex shell");
-                return JSValue.undefined;
+                return globalThis.throwError(err, "failed to lex shell");
             };
             break :brk lexer.get_result();
         };
@@ -4430,7 +4428,7 @@ pub const TestingAPIs = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
             globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
@@ -4487,8 +4485,7 @@ pub const TestingAPIs = struct {
                 return .undefined;
             }
 
-            globalThis.throwError(err, "failed to lex/parse shell");
-            return .undefined;
+            return globalThis.throwError(err, "failed to lex/parse shell");
         };
 
         const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{}) catch {

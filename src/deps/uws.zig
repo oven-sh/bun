@@ -223,7 +223,7 @@ pub const UpgradedDuplex = struct {
         log("onReceivedData", .{});
 
         const function = callframe.callee();
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
 
         if (JSC.getFunctionData(function)) |self| {
             const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));

@@ -271,9 +271,7 @@ pub const JSBundler = struct {
             if (try config.getArray(globalThis, "entrypoints") orelse try config.getArray(globalThis, "entryPoints")) |entry_points| {
                 var iter = entry_points.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
-                    var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                        return globalThis.throwInvalidArguments2("Expected entrypoints to be an array of strings", .{});
-                    };
+                    var slice = try entry_point.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.entry_points.insert(slice.slice());
                 }
@@ -291,17 +289,13 @@ pub const JSBundler = struct {
 
             if (try config.getTruthy(globalThis, "conditions")) |conditions_value| {
                 if (conditions_value.isString()) {
-                    var slice = conditions_value.toSliceOrNull(globalThis) orelse {
-                        return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
-                    };
+                    var slice = try conditions_value.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.conditions.insert(slice.slice());
                 } else if (conditions_value.jsType().isArray()) {
                     var iter = conditions_value.arrayIterator(globalThis);
                     while (iter.next()) |entry_point| {
-                        var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                            return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
-                        };
+                        var slice = try entry_point.toSliceOrNull(globalThis);
                         defer slice.deinit();
                         try this.conditions.insert(slice.slice());
                     }
@@ -344,9 +338,7 @@ pub const JSBundler = struct {
             if (try config.getOwnArray(globalThis, "external")) |externals| {
                 var iter = externals.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
-                    var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                        return globalThis.throwInvalidArguments2("Expected external to be an array of strings", .{});
-                    };
+                    var slice = try entry_point.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.external.insert(slice.slice());
                 }
@@ -355,9 +347,7 @@ pub const JSBundler = struct {
             if (try config.getOwnArray(globalThis, "drop")) |drops| {
                 var iter = drops.arrayIterator(globalThis);
                 while (iter.next()) |entry| {
-                    var slice = entry.toSliceOrNull(globalThis) orelse {
-                        return globalThis.throwInvalidArguments2("Expected drop to be an array of strings", .{});
-                    };
+                    var slice = try entry.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.drop.insert(slice.slice());
                 }
@@ -587,7 +577,7 @@ pub const JSBundler = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(1);
+        const arguments = callframe.arguments_old(1);
         return build(globalThis, arguments.slice());
     }
 

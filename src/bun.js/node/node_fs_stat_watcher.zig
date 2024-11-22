@@ -254,7 +254,7 @@ pub const StatWatcher = struct {
                     // default false
                     bigint = (try options_or_callable.getBooleanStrict(ctx, "bigint")) orelse false;
 
-                    if (options_or_callable.get(ctx, "interval")) |interval_| {
+                    if (try options_or_callable.get(ctx, "interval")) |interval_| {
                         if (!interval_.isNumber() and !interval_.isAnyInt()) {
                             return ctx.throwInvalidArguments2("interval must be a number", .{});
                         }

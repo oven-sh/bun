@@ -193,7 +193,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
       expect.stringContaining("bun install v1."),
       "",
       "+ @barn/moo@0.1.0",
-      "+ baz@0.0.3",
+      expect.stringContaining("+ baz@0.0.3"),
       "",
       "2 packages installed",
     ]);

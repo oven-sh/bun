@@ -2563,7 +2563,6 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
           }));
           isNextIncomingMessageHTTPS = prevIsHTTPS;
           res.req = this;
-
           process.nextTick(
             (self, res) => {
               // If the user did not listen for the 'response' event, then they
@@ -2602,7 +2601,7 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
       if (!!$debug) globalReportError(err);
       this.emit("error", err);
     } finally {
-      this.#maybeEmitFinish();
+      process.nextTick(this.#maybeEmitFinish.bind(this));
     }
   }
 

@@ -16,22 +16,21 @@ test("HTTP server close idle connections after response", async () => {
       }, 1000);
     }),
   );
-
+  let finishCalled = 0;
   await new Promise(resolve => {
     server.listen(0, () => {
       const port = server.address().port;
-
       get(`http://localhost:${port}`, res => {
-        server.close();
+        server.close(resolve);
       }).on("finish", () => {
         setTimeout(() => {
+          finishCalled++;
           server.closeIdleConnections();
-          resolve();
         }, 500);
       });
     });
   });
-
+  expect(finishCalled).toBe(1);
   expect(server.listeners("request")[0]).toHaveBeenCalledTimes(1);
 });
 

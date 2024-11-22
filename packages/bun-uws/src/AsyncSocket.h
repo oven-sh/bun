@@ -57,19 +57,6 @@ struct AsyncSocket {
     template <typename, typename> friend struct TopicTree;
     template <bool> friend struct HttpResponse;
 
-private:
-    /* Helper, do not use directly (todo: move to uSockets or de-crazify) */
-    void setEvents(int enable) {
-        struct us_poll_t *p = (struct us_poll_t *) this;
-        struct us_loop_t *loop = us_socket_context_loop(SSL, us_socket_context(SSL, (us_socket_t *) this));
-
-        if (enable) {
-            us_poll_change(p, loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-        } else {
-            /* Resume */
-            us_poll_change(p, loop, 0);
-        }
-    }
 
 public:
     /* Returns SSL pointer or FD as pointer */

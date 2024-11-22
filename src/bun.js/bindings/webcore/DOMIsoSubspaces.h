@@ -691,8 +691,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForPerformanceObserver;
     std::unique_ptr<IsoSubspace> m_subspaceForPerformanceObserverEntryList;
     // std::unique_ptr<IsoSubspace> m_subspaceForPerformancePaintTiming;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceResourceTiming;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceServerTiming;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceResourceTiming;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceServerTiming;
     std::unique_ptr<IsoSubspace> m_subspaceForPerformanceTiming;
     // std::unique_ptr<IsoSubspace> m_subspaceForRemoteDOMWindow;
     // std::unique_ptr<IsoSubspace> m_subspaceForResizeObserver;

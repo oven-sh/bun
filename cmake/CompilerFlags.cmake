@@ -257,6 +257,13 @@ if(ENABLE_LTO)
 
     register_compiler_flags(
       DESCRIPTION "Embed bitcode"
+      LANGUAGES CXX
+      -emit-llvm
+    )
+
+    register_compiler_flags(
+      DESCRIPTION "Embed bitcode"
+      LANGUAGES C
       -emit-llvm
     )
   endif()

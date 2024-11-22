@@ -1562,10 +1562,15 @@ pub const ThreadSafeFunction = struct {
                 }
                 return false;
             };
-            _ = this.queue.count.fetchSub(1, .monotonic);
 
-            if (was_blocked and !this.queue.isBlocked()) {
-                this.blocking_condvar.broadcast();
+            if (this.queue.count.fetchSub(1, .monotonic) == 1 and this.thread_count.load(.monotonic) == 0) {
+                this.closing.store(.closing, .monotonic);
+                if (this.queue.max_queue_size > 0) {
+                    this.blocking_condvar.signal();
+                }
+                this.maybeQueueFinalizer();
+            } else if (was_blocked and !this.queue.isBlocked()) {
+                this.blocking_condvar.signal();
             }
 
             break :brk .{ !this.isClosing(), t };

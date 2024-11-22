@@ -273,7 +273,7 @@ pub const JunitReporter = struct {
             );
 
             try this.contents.appendSlice(bun.default_allocator,
-                \\<testsuites name="bun test" 
+                \\<testsuites name="bun test"
             );
             this.offset_of_testsuites_value = this.contents.items.len;
             try this.contents.appendSlice(bun.default_allocator, ">\n");
@@ -1599,13 +1599,24 @@ pub const TestCommand = struct {
 
                 if (files.len > 1) {
                     for (files[0 .. files.len - 1]) |file_name| {
-                        TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch {};
+                        TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch |err| {
+                            bun.Output.debugWarn("Unhandled error: error name={}", .{err});
+                            Global.exit(1);
+                        };
                         reporter.jest.default_timeout_override = std.math.maxInt(u32);
                         Global.mimalloc_cleanup(false);
                     }
                 }
 
-                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator, true) catch {};
+                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator, true) catch |err| switch (err) {
+                    error.ModuleNotFound => {
+                        Global.exit(1);
+                    },
+                    else => {
+                        bun.Output.debugWarn("Unhandled error: error name={}", .{err});
+                        Global.exit(1);
+                    },
+                };
             }
         };
 

@@ -5805,7 +5805,6 @@ pub const NodeHTTPResponse = struct {
     is_request_pending: bool = true,
     body_read_state: BodyReadState = .none,
     body_read_ref: JSC.Ref = .{},
-    upgrade_ctx: ?*uws.uws_socket_context_t = null,
     promise: JSC.Strong = .{},
     server: AnyServer,
 
@@ -5817,6 +5816,8 @@ pub const NodeHTTPResponse = struct {
     is_data_buffered_during_pause: bool = false,
     /// Did we receive the last chunk of data during pause?
     is_data_buffered_during_pause_last: bool = false,
+
+    upgrade_ctx: ?*uws.uws_socket_context_t = null,
 
     const log = bun.Output.scoped(.NodeHTTPResponse, false);
     pub usingnamespace JSC.Codegen.JSNodeHTTPResponse;
@@ -5899,6 +5900,7 @@ pub const NodeHTTPResponse = struct {
         request: *uws.Request,
         is_ssl: i32,
         response_ptr: *anyopaque,
+        upgrade_ctx: ?*anyopaque,
         node_response_ptr: *?*NodeHTTPResponse,
     ) callconv(.C) JSC.JSValue {
         const vm = globalObject.bunVM();
@@ -5915,6 +5917,7 @@ pub const NodeHTTPResponse = struct {
         }
 
         const response = NodeHTTPResponse.new(.{
+            .upgrade_ctx = @ptrCast(upgrade_ctx),
             .server = AnyServer{ .ptr = AnyServer.Ptr.from(@ptrFromInt(any_server_tag)) },
             .response = switch (is_ssl != 0) {
                 true => uws.AnyResponse{ .SSL = @ptrCast(response_ptr) },
@@ -6880,6 +6883,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSValue.jsBoolean(false);
             }
 
+            if (object.as(NodeHTTPResponse)) |nodeHttpResponse| {
+                if (nodeHttpResponse.aborted or nodeHttpResponse.ended or nodeHttpResponse.upgrade_ctx == null) {
+                    return JSC.jsBoolean(false);
+                }
+
+                return JSC.jsBoolean(false);
+            }
+
             var request = object.as(Request) orelse {
                 globalThis.throwInvalidArguments("upgrade requires a Request object", .{});
                 return error.JSError;
@@ -7827,7 +7838,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             defer {
                 if (!is_async) {
                     if (node_http_response) |node_response| {
-                        node_response.upgrade_ctx = upgrade_ctx;
                         node_response.deref();
                     }
                 }
@@ -7840,6 +7850,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 this.config.onNodeHTTPRequest,
                 req,
                 resp,
+                upgrade_ctx,
                 &node_http_response,
             );
 
@@ -7939,7 +7950,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             resp: *App.Response,
         ) void {
             JSC.markBinding(@src());
-            onNodeHTTPRequestWithUpgradeCtx(this, req, resp);
+            onNodeHTTPRequestWithUpgradeCtx(this, req, resp, null);
         }
 
         const onNodeHTTPRequestFn = if (ssl_enabled)
@@ -8197,7 +8208,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         ) void {
             JSC.markBinding(@src());
             if (this.config.onNodeHTTPRequest != .zero) {
-                onNodeHTTPRequestWithUpgradeCtx(this, resp, req, upgrade_ctx);
+                onNodeHTTPRequestWithUpgradeCtx(this, req, resp, upgrade_ctx);
                 return;
             }
             this.pending_requests += 1;
@@ -8624,6 +8635,7 @@ extern fn NodeHTTPServer__onRequest_http(
     callback: JSC.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(false).Response,
+    upgrade_ctx: ?*uws.uws_socket_context_t,
     node_response_ptr: *?*NodeHTTPResponse,
 ) JSC.JSValue;
 
@@ -8634,6 +8646,7 @@ extern fn NodeHTTPServer__onRequest_https(
     callback: JSC.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(true).Response,
+    upgrade_ctx: ?*uws.uws_socket_context_t,
     node_response_ptr: *?*NodeHTTPResponse,
 ) JSC.JSValue;
 

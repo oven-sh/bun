@@ -838,6 +838,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     JSValue callback,
     uWS::HttpRequest* request,
     uWS::HttpResponse<isSSL>* response,
+    void* upgrade_ctx,
     void** nodeHttpResponsePtr)
 {
     auto& vm = globalObject->vm();
@@ -1084,9 +1085,10 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
     EncodedJSValue callback,
     uWS::HttpRequest* request,
     uWS::HttpResponse<false>* response,
+    void* upgrade_ctx,
     void** nodeHttpResponsePtr)
 {
-    return NodeHTTPServer__onRequest<false>(any_server, globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, nodeHttpResponsePtr);
+    return NodeHTTPServer__onRequest<false>(any_server, globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, upgrade_ctx, nodeHttpResponsePtr);
 }
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
@@ -1096,9 +1098,11 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
     EncodedJSValue callback,
     uWS::HttpRequest* request,
     uWS::HttpResponse<true>* response,
+    void* upgrade_ctx,
+
     void** nodeHttpResponsePtr)
 {
-    return NodeHTTPServer__onRequest<true>(any_server, globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, nodeHttpResponsePtr);
+    return NodeHTTPServer__onRequest<true>(any_server, globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, upgrade_ctx, nodeHttpResponsePtr);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, CallFrame* callFrame))

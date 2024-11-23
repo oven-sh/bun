@@ -1759,7 +1759,7 @@ async function main() {
     if (command === "create-image" || command === "publish-image") {
       let suffix;
       if (command === "publish-image") {
-        suffix = `v${getBootstrapVersion()}`;
+        suffix = `v${getBootstrapVersion(os)}`;
       } else if (isCI) {
         suffix = `build-${getBuildNumber()}`;
       } else {

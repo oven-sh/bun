@@ -99,7 +99,7 @@ fn Bun__createObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
         return globalObject.throwNotEnoughArguments("createObjectURL", 1, arguments.len);
     }
     const blob = arguments.ptr[0].as(JSC.WebCore.Blob) orelse {
-        return globalObject.throwInvalidArguments2("createObjectURL expects a Blob object", .{});
+        return globalObject.throwInvalidArguments("createObjectURL expects a Blob object", .{});
     };
     const registry = ObjectURLRegistry.singleton();
     const uuid = registry.register(globalObject.bunVM(), blob);
@@ -117,7 +117,7 @@ fn Bun__revokeObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
         return globalObject.throwNotEnoughArguments("revokeObjectURL", 1, arguments.len);
     }
     if (!arguments.ptr[0].isString()) {
-        return globalObject.throwInvalidArguments2("revokeObjectURL expects a string", .{});
+        return globalObject.throwInvalidArguments("revokeObjectURL expects a string", .{});
     }
     const str = arguments.ptr[0].toBunString(globalObject);
     if (!str.hasPrefixComptime("blob:")) {

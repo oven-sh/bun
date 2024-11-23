@@ -18,44 +18,6 @@
     "esbuild": "^0.19.2",
     "typescript": "^5.0.0"
   },
-  "description": "The Visual Studio Code extension for Bun.",
-  "displayName": "Bun for Visual Studio Code",
-  "engines": {
-    "vscode": "^1.60.0"
-  },
-  "extensionKind": [
-    "workspace"
-  ],
-  "galleryBanner": {
-    "color": "#3B3738",
-    "theme": "dark"
-  },
-  "homepage": "https://bun.sh/",
-  "icon": "assets/icon.png",
-  "keywords": [
-    "bun",
-    "node.js",
-    "javascript",
-    "typescript",
-    "vscode"
-  ],
-  "license": "MIT",
-  "publisher": "oven",
-  "scripts": {
-    "build": "node scripts/build.mjs",
-    "pretest": "bun run build",
-    "test": "node scripts/test.mjs",
-    "dev": "vscode-test --config scripts/dev.mjs",
-    "prepublish": "npm version patch && bun run build",
-    "publish": "cd extension && bunx vsce publish"
-  },
-  "workspaceTrust": {
-    "request": "never"
-  },
-  "workspaces": [
-    "../bun-debug-adapter-protocol",
-    "../bun-inspector-protocol"
-  ],
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -95,6 +57,21 @@
           "description": "If the debugger should stop on the first line when used in the JavaScript Debug Terminal.",
           "scope": "window",
           "default": false
+        },
+        "bun.test.filePattern": {
+          "type": "string",
+          "default": "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts}",
+          "description": "Glob pattern to find test files"
+        },
+        "bun.test.customFlag": {
+          "type": "string",
+          "default": "",
+          "description": "Custom flag added to the end of test command"
+        },
+        "bun.test.customScript": {
+          "type": "string",
+          "default": "",
+          "description": "Custom script to use instead of `bun test`, for example script from `package.json`"
         }
       }
     },
@@ -122,6 +99,20 @@
         "category": "Bun",
         "enablement": "!inDebugMode && resourceLangId =~ /^(javascript|typescript|javascriptreact|typescriptreact)$/ && !isInDiffEditor && resourceScheme == 'untitled'",
         "icon": "$(play-circle)"
+      },
+      {
+        "command": "extension.bun.runTest",
+        "title": "Run all tests",
+        "shortTitle": "Run Test",
+        "category": "Bun",
+        "icon": "$(play)"
+      },
+      {
+        "command": "extension.bun.watchTest",
+        "title": "Run all tests in watch mode",
+        "shortTitle": "Run Test Watch",
+        "category": "Bun",
+        "icon": "$(sync)"
       }
     ],
     "menus": {
@@ -328,5 +319,43 @@
         }
       }
     ]
-  }
+  },
+  "description": "The Visual Studio Code extension for Bun.",
+  "displayName": "Bun for Visual Studio Code",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "galleryBanner": {
+    "color": "#3B3738",
+    "theme": "dark"
+  },
+  "homepage": "https://bun.sh/",
+  "icon": "assets/icon.png",
+  "keywords": [
+    "bun",
+    "node.js",
+    "javascript",
+    "typescript",
+    "vscode"
+  ],
+  "license": "MIT",
+  "publisher": "oven",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "pretest": "bun run build",
+    "test": "node scripts/test.mjs",
+    "dev": "vscode-test --config scripts/dev.mjs",
+    "prepublish": "npm version patch && bun run build",
+    "publish": "cd extension && bunx vsce publish"
+  },
+  "workspaceTrust": {
+    "request": "never"
+  },
+  "workspaces": [
+    "../bun-debug-adapter-protocol",
+    "../bun-inspector-protocol"
+  ]
 }

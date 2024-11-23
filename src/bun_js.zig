@@ -305,6 +305,7 @@ pub const Run = struct {
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .rejected) {
                 const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
+                promise.setHandled(vm.global.vm());
 
                 if (vm.hot_reload != .none or handled) {
                     vm.eventLoop().tick();
@@ -366,38 +367,23 @@ pub const Run = struct {
 
         {
             if (this.vm.isWatcherEnabled()) {
-                var prev_promise = this.vm.pending_internal_promise;
-                if (prev_promise.status(vm.global.vm()) == .rejected) {
-                    _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                }
+                vm.handlePendingInternalPromiseRejection();
 
                 while (true) {
                     while (vm.isEventLoopAlive()) {
                         vm.tick();
 
                         // Report exceptions in hot-reloaded modules
-                        if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
-                            prev_promise = this.vm.pending_internal_promise;
-                            _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                            continue;
-                        }
+                        vm.handlePendingInternalPromiseRejection();
 
                         vm.eventLoop().autoTickActive();
                     }
 
                     vm.onBeforeExit();
 
-                    if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
-                        prev_promise = this.vm.pending_internal_promise;
-                        _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                    }
+                    vm.handlePendingInternalPromiseRejection();
 
                     vm.eventLoop().tickPossiblyForever();
-                }
-
-                if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
-                    prev_promise = this.vm.pending_internal_promise;
-                    _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                 }
             } else {
                 while (vm.isEventLoopAlive()) {

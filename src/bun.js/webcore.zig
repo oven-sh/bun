@@ -545,27 +545,20 @@ pub const Crypto = struct {
         return .zero;
     }
 
-    pub fn timingSafeEqual(
-        _: *@This(),
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+    pub fn timingSafeEqual(_: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(2).slice();
 
         if (arguments.len < 2) {
-            globalThis.throwInvalidArguments("Expected 2 typed arrays but got nothing", .{});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected 2 typed arrays but got nothing", .{});
         }
 
         const array_buffer_a = arguments[0].asArrayBuffer(globalThis) orelse {
-            globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
         };
         const a = array_buffer_a.byteSlice();
 
         const array_buffer_b = arguments[1].asArrayBuffer(globalThis) orelse {
-            globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[1].jsType())});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[1].jsType())});
         };
         const b = array_buffer_b.byteSlice();
 
@@ -602,13 +595,11 @@ pub const Crypto = struct {
     ) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(1).slice();
         if (arguments.len == 0) {
-            globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
         }
 
         var array_buffer = arguments[0].asArrayBuffer(globalThis) orelse {
-            globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
         };
         const slice = array_buffer.byteSlice();
 

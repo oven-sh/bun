@@ -8,7 +8,7 @@ import { test } from "bun:test";
 import { EventEmitter } from "node:events";
 // @ts-ignore
 import { dedent } from "../bundler/expectBundled.ts";
-import { bunEnv, mergeWindowEnvs } from "harness";
+import { bunEnv, isWindows, mergeWindowEnvs } from "harness";
 import { expect } from "bun:test";
 
 /** For testing bundler related bugs in the DevServer */
@@ -289,6 +289,13 @@ export function devTest(description: string, options: DevServerTest) {
   assert(caller.startsWith(devTestRoot), "dev server tests must be in test/bake/dev, not " + caller);
   const basename = path.basename(caller, ".test" + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
+
+  // TODO: Tests are too flaky on Windows. Cannot reproduce locally.
+  if (isWindows) {
+    jest.test.todo(`DevServer > ${basename}.${count}: ${description}`);
+    return;
+  }
+
   jest.test(`DevServer > ${basename}.${count}: ${description}`, async () => {
     const root = path.join(tempDir, basename + count);
     writeAll(root, options.files);

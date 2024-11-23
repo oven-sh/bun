@@ -366,7 +366,7 @@ console.log("FOOOO", foo);
     ],
     outdir: "/out",
     bundleErrors: {
-      "/a.css": ["end_of_input"],
+      "/a.css": ["Unexpected end of input"],
     },
   });
 
@@ -417,7 +417,7 @@ console.log("FOOOO", foo);
     ],
     outdir: "/out",
     bundleErrors: {
-      "/a.css": ["end_of_input"],
+      "/a.css": ["Unexpected end of input"],
       "/lmao.ts": ["woopsie"],
     },
   });
@@ -469,7 +469,7 @@ console.log("FOOOO", foo);
     ],
     outdir: "/out",
     bundleErrors: {
-      "/a.css": ["end_of_input"],
+      "/a.css": ["Unexpected end of input"],
       "/lmao.ts": ["Can't call .defer() more than once within an onLoad plugin"],
     },
   });

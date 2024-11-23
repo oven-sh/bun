@@ -3628,15 +3628,7 @@ pub const ParseTask = struct {
                     )) {
                         .result => |v| v,
                         .err => |e| {
-                            log.addErrorFmt(
-                                &source,
-                                if (e.loc) |loc| Logger.Loc{
-                                    .start = @intCast(loc.line),
-                                } else Logger.Loc.Empty,
-                                allocator,
-                                "{}",
-                                .{e.kind},
-                            ) catch unreachable;
+                            try e.addToLogger(log, &source);
                             return error.SyntaxError;
                         },
                     };
@@ -3644,15 +3636,7 @@ pub const ParseTask = struct {
                         .targets = .{},
                         .unused_symbols = .{},
                     }).asErr()) |e| {
-                        log.addErrorFmt(
-                            &source,
-                            if (e.loc) |loc| Logger.Loc{
-                                .start = @intCast(loc.line),
-                            } else Logger.Loc.Empty,
-                            allocator,
-                            "{}",
-                            .{e.kind},
-                        ) catch unreachable;
+                        try e.addToLogger(log, &source);
                         return error.MinifyError;
                     }
                     const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });

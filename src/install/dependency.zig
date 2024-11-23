@@ -116,7 +116,7 @@ pub const Context = struct {
     allocator: std.mem.Allocator,
     log: *logger.Log,
     buffer: []const u8,
-    package_manager: *PackageManager,
+    package_manager: ?*PackageManager,
 };
 
 /// Get the name of the package as it should appear in a remote registry.

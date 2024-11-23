@@ -1012,7 +1012,7 @@ pub const EventLoop = struct {
                 },
                 .ThreadSafeFunction => {
                     var transform_task: *ThreadSafeFunction = task.as(ThreadSafeFunction);
-                    transform_task.call();
+                    transform_task.onDispatch();
                 },
                 @field(Task.Tag, @typeName(ReadFileTask)) => {
                     var transform_task: *ReadFileTask = task.get(ReadFileTask).?;

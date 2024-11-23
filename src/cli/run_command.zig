@@ -259,6 +259,8 @@ pub const RunCommand = struct {
         use_system_shell: bool,
     ) !void {
         const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
+        env.map.put("npm_lifecycle_event", name) catch unreachable;
+        env.map.put("npm_lifecycle_script", original_script) catch unreachable;
 
         var copy_script_capacity: usize = original_script.len;
         for (passthrough) |part| copy_script_capacity += 1 + part.len;
@@ -872,6 +874,14 @@ pub const RunCommand = struct {
                     this_bundler.env.map.put(NpmArgs.package_version, package_json.version) catch unreachable;
                 }
             }
+
+            if (package_json.config) |config| {
+                try this_bundler.env.map.ensureUnusedCapacity(config.count());
+                for (config.keys(), config.values()) |k, v| {
+                    const key = try bun.strings.concat(bun.default_allocator, &.{ "npm_package_config_", k });
+                    this_bundler.env.map.putAssumeCapacity(key, v);
+                }
+            }
         }
 
         return root_dir_info;
@@ -1384,7 +1394,7 @@ pub const RunCommand = struct {
         var this_bundler: bundler.Bundler = undefined;
         const root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors, false);
         try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
-        this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
+        this_bundler.env.map.put("npm_command", "run-script") catch unreachable;
 
         if (script_name_to_search.len == 0) {
             // naked "bun run"
@@ -1421,17 +1431,19 @@ pub const RunCommand = struct {
                         );
                     }
 
-                    try runPackageScriptForeground(
-                        ctx,
-                        ctx.allocator,
-                        script_content,
-                        script_name_to_search,
-                        this_bundler.fs.top_level_dir,
-                        this_bundler.env,
-                        passthrough,
-                        ctx.debug.silent,
-                        ctx.debug.use_system_shell,
-                    );
+                    {
+                        try runPackageScriptForeground(
+                            ctx,
+                            ctx.allocator,
+                            script_content,
+                            script_name_to_search,
+                            this_bundler.fs.top_level_dir,
+                            this_bundler.env,
+                            passthrough,
+                            ctx.debug.silent,
+                            ctx.debug.use_system_shell,
+                        );
+                    }
 
                     temp_script_buffer[0.."post".len].* = "post".*;
 

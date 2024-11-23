@@ -350,9 +350,11 @@ pub const OutdatedCommand = struct {
                 const package_name = pkg_names[package_id].slice(string_buf);
                 var expired = false;
                 const manifest = manager.manifests.byNameAllowExpired(
+                    manager,
                     manager.scopeForPackageName(package_name),
                     package_name,
                     &expired,
+                    .load_from_memory_fallback_to_disk,
                 ) orelse continue;
 
                 const latest = manifest.findByDistTag("latest") orelse continue;
@@ -471,9 +473,11 @@ pub const OutdatedCommand = struct {
 
                     var expired = false;
                     const manifest = manager.manifests.byNameAllowExpired(
+                        manager,
                         manager.scopeForPackageName(package_name),
                         package_name,
                         &expired,
+                        .load_from_memory_fallback_to_disk,
                     ) orelse continue;
 
                     const latest = manifest.findByDistTag("latest") orelse continue;
@@ -580,8 +584,10 @@ pub const OutdatedCommand = struct {
 
                 const package_name = pkg_names[package_id].slice(string_buf);
                 _ = manager.manifests.byName(
+                    manager,
                     manager.scopeForPackageName(package_name),
                     package_name,
+                    .load_from_memory_fallback_to_disk,
                 ) orelse {
                     const task_id = Install.Task.Id.forManifest(package_name);
                     if (manager.hasCreatedNetworkTask(task_id, dep.behavior.optional)) continue;

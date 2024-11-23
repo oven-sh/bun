@@ -352,7 +352,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
             else => {
                 i += @as(usize, width);
 
-                if (c < 0xFF and !json) {
+                if (c <= 0xFF and !json) {
                     const k = @as(usize, @intCast(c));
 
                     try writer.writeAll(&[_]u8{
@@ -361,7 +361,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                         hex_chars[(k >> 4) & 0xF],
                         hex_chars[k & 0xF],
                     });
-                } else if (c < 0xFFFF) {
+                } else if (c <= 0xFFFF) {
                     const k = @as(usize, @intCast(c));
 
                     try writer.writeAll(&[_]u8{

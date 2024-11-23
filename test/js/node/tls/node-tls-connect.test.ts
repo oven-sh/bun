@@ -3,6 +3,7 @@ import { tls as COMMON_CERT_ } from "harness";
 import net from "net";
 import { join } from "path";
 import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls";
+import stream from "stream";
 
 import { Duplex } from "node:stream";
 
@@ -116,7 +117,16 @@ it("should have checkServerIdentity", async () => {
   expect(checkServerIdentity).toBeFunction();
   expect(tls.checkServerIdentity).toBeFunction();
 });
-
+it("should be able to grab the JSStreamSocket constructor", () => {
+  // this keep http2-wrapper compatibility with node.js
+  const socket = new tls.TLSSocket(new stream.PassThrough());
+  //@ts-ignore
+  expect(socket._handle).not.toBeNull();
+  //@ts-ignore
+  expect(socket._handle._parentWrap).not.toBeNull();
+  //@ts-ignore
+  expect(socket._handle._parentWrap.constructor).toBeFunction();
+});
 for (const { name, connect } of tests) {
   describe(name, () => {
     it("should work with alpnProtocols", done => {

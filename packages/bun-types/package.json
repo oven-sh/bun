@@ -14,7 +14,8 @@
   "homepage": "https://bun.sh",
   "dependencies": {
     "@types/node": "~20.12.8",
-    "@types/ws": "~8.5.10"
+    "@types/ws": "~8.5.10",
+    "undici-fetch": "^1.0.0-rc.4"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.5.3",

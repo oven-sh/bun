@@ -16,6 +16,7 @@
 declare module "bun" {
   import type { Encoding as CryptoEncoding } from "crypto";
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
+
   interface Env {
     NODE_ENV?: string;
     /**
@@ -162,6 +163,19 @@ declare module "bun" {
      * ```
      */
     arrayBuffer(): ArrayBuffer;
+
+    /**
+     * Read from stdout as a Uint8Array
+     *
+     * @returns Stdout as a Uint8Array
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.bytes()); // Uint8Array { byteLength: 6 }
+     * ```
+     */
+    bytes(): Uint8Array;
 
     /**
      * Read from stdout as a Blob
@@ -411,9 +425,9 @@ declare module "bun" {
     arrayBuffer(): ArrayBuffer;
 
     /**
-     * Read from stdout as an Uint8Array
+     * Read from stdout as a Uint8Array
      *
-     * @returns Stdout as an Uint8Array
+     * @returns Stdout as a Uint8Array
      * @example
      *
      * ```ts

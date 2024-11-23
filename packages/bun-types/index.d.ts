@@ -2,6 +2,8 @@
 // Definitions by: Jarred Sumner <https://github.com/Jarred-Sumner>
 // Definitions: https://github.com/DefinitelyTyped/DefinitelyTyped
 
+/// <reference no-default-lib="true"/>
+
 /// <reference lib="esnext" />
 /// <reference types="node" />
 /// <reference types="ws" />
@@ -10,6 +12,7 @@
 //// <reference lib="dom" />
 
 /// <reference path="./globals.d.ts" />
+/// <reference path="./wildcards.d.ts" />
 /// <reference path="./bun.d.ts" />
 /// <reference path="./overrides.d.ts" />
 /// <reference path="./fetch.d.ts" />

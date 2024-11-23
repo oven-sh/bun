@@ -1,6 +1,3 @@
-type _Response = typeof globalThis extends { onmessage: any } ? {} : import("undici-types").Response;
-
-export interface Response extends _Response {}
 export declare class Response {
   constructor(body?: Bun.BodyInit | null | undefined, init?: Bun.ResponseInit | undefined);
 
@@ -50,4 +47,10 @@ export declare class Response {
    * Create a new {@link Response} that has a network error
    */
   static error(): Response;
+}
+
+export declare class Request {
+  constructor(...params: Parameters<typeof fetch>);
+
+  // TODO: Rest of types
 }

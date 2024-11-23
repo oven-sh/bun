@@ -6,6 +6,14 @@ type _ReadableStream<T> = typeof globalThis extends {
 }
   ? T
   : import("stream/web").ReadableStream<T>;
+
+type _RequestInit = typeof globalThis extends {
+  onerror: any;
+  RequestInit: infer T;
+}
+  ? T
+  : NonNullable<ConstructorParameters<typeof import("undici-fetch").Request>[1]>;
+
 type _WritableStream<T> = typeof globalThis extends {
   onerror: any;
   WritableStream: infer T;
@@ -141,17 +149,9 @@ import type { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } f
 import type { MessagePort } from "worker_threads";
 import type { WebSocket as _WebSocket } from "ws";
 
-declare module "*.txt" {
-  var text: string;
-  export = text;
-}
-
-declare module "*.toml" {
-  var contents: any;
-  export = contents;
-}
-
 declare global {
+  var onmessage: never; // Not a fan of this - required so Node.js' globals.d.ts doesn't conflict with our own definitions. Not a perfect solution though.
+
   var Bun: typeof import("bun");
 
   namespace NodeJS {
@@ -804,9 +804,10 @@ declare global {
     readonly lastModified: number;
     readonly name: string;
   }
-  var File: typeof globalThis extends { onerror: any; File: infer T } ? T : typeof File;
 
-  interface FetchRequestInit extends RequestInit {
+  var File: File;
+
+  interface RequestInit extends _RequestInit {
     /**
      * Log the raw HTTP request & response to stdout. This API may be
      * removed in a future version of Bun without notice.
@@ -823,10 +824,7 @@ declare global {
     /**
      * Override the default TLS options
      */
-    tls?: {
-      rejectUnauthorized?: boolean | undefined; // Defaults to true
-      checkServerIdentity?: any; // TODO: change `any` to `checkServerIdentity`
-    };
+    tls?: import("bun").TLSOptions;
   }
 
   /**
@@ -915,29 +913,8 @@ declare global {
     new (): ShadowRealm;
   };
 
-  interface Fetch {
-    /**
-     * Send a HTTP(s) request
-     *
-     * @param request Request object
-     * @param init A structured value that contains settings for the fetch() request.
-     *
-     * @returns A promise that resolves to {@link Response} object.
-     */
-    (request: Request, init?: RequestInit): Promise<Response>;
-
-    /**
-     * Send a HTTP(s) request
-     *
-     * @param url URL string
-     * @param init A structured value that contains settings for the fetch() request.
-     *
-     * @returns A promise that resolves to {@link Response} object.
-     */
-    (url: string | URL | Request, init?: FetchRequestInit): Promise<Response>;
-
-    (input: string | URL | globalThis.Request, init?: RequestInit): Promise<Response>;
-
+  // @types/node defines fetch, we can merge our `.preconnect(url)` 'static' method
+  namespace fetch {
     /**
      * Start the DNS resolution, TCP connection, and TLS handshake for a request
      * before the request is actually sent.
@@ -946,13 +923,14 @@ declare global {
      * long-running task that will delay the request starting.
      *
      * This is a bun-specific API and is not part of the Fetch API specification.
+     *
+     * @param url A string or URL instance to preconnect
      */
-    preconnect(url: string | URL): void;
+    export function preconnect(url: string | URL): void;
   }
 
-  var fetch: Fetch;
-
   function queueMicrotask(callback: (...args: any[]) => void): void;
+
   /**
    * Log an error using the default exception handler
    * @param error Error or string
@@ -1835,10 +1813,10 @@ declare global {
     readonly main: boolean;
 
     /** Alias of `import.meta.dir`. Exists for Node.js compatibility */
-    readonly dirname: string;
+    /* readonly */ dirname: string; // Ideally this would be `readonly`, but Node.js doesn't mark it readonly so TypeScript tells us off
 
     /** Alias of `import.meta.path`. Exists for Node.js compatibility */
-    readonly filename: string;
+    /* readonly */ filename: string; // Ideally this would be `readonly`, but Node.js doesn't mark it readonly so TypeScript tells us off
   }
 
   /**
@@ -1969,17 +1947,17 @@ declare global {
     ? T
     : typeof import("./fetch").Response;
 
-  var Request: typeof globalThis extends {
-    onerror: any;
-    Request: infer T;
-  }
-    ? T
-    : {
-        prototype: Request;
-        new (requestInfo: string, requestInit?: RequestInit): Request;
-        new (requestInfo: RequestInit & { url: string }): Request;
-        new (requestInfo: Request, requestInit?: RequestInit): Request;
-      };
+  // var Request: typeof globalThis extends {
+  //   onerror: any;
+  //   Request: infer T;
+  // }
+  //   ? T
+  //   : {
+  //       prototype: Request;
+  //       new (requestInfo: string, requestInit?: RequestInit): Request;
+  //       new (requestInfo: RequestInit & { url: string }): Request;
+  //       new (requestInfo: Request, requestInit?: RequestInit): Request;
+  //     };
 
   interface Headers {
     /**

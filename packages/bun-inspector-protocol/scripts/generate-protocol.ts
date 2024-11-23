@@ -1,26 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, realpathSync } from "node:fs";
 import type { Domain, Property, Protocol } from "../src/protocol/schema";
-
-run().catch(console.error);
-
-async function run() {
-  const cwd = new URL("../src/protocol/", import.meta.url);
-  const runner = "Bun" in globalThis ? "bunx" : "npx";
-  const write = (name: string, data: string) => {
-    const path = new URL(name, cwd);
-    writeFileSync(path, data);
-    spawnSync(runner, ["prettier", "--write", path.pathname], { cwd, stdio: "ignore" });
-  };
-  const base = readFileSync(new URL("protocol.d.ts", cwd), "utf-8");
-  const baseNoComments = base.replace(/\/\/.*/g, "");
-  const jsc = await downloadJsc();
-  write("jsc/protocol.json", JSON.stringify(jsc));
-  write("jsc/index.d.ts", "// GENERATED - DO NOT EDIT\n" + formatProtocol(jsc, baseNoComments));
-  const v8 = await downloadV8();
-  write("v8/protocol.json", JSON.stringify(v8));
-  write("v8/index.d.ts", "// GENERATED - DO NOT EDIT\n" + formatProtocol(v8, baseNoComments));
-}
+import path from "node:path";
 
 function formatProtocol(protocol: Protocol, extraTs?: string): string {
   const { name, domains } = protocol;
@@ -29,6 +10,7 @@ function formatProtocol(protocol: Protocol, extraTs?: string): string {
   let body = `export namespace ${name} {`;
   for (const { domain, types = [], events = [], commands = [] } of domains) {
     body += `export namespace ${domain} {`;
+
     for (const type of types) {
       body += formatProperty(type);
     }
@@ -153,32 +135,12 @@ async function downloadV8(): Promise<Protocol> {
   }));
 }
 
-/**
- * @link https://github.com/WebKit/WebKit/tree/main/Source/JavaScriptCore/inspector/protocol
- */
-async function downloadJsc(): Promise<Protocol> {
-  const baseUrl = "https://raw.githubusercontent.com/WebKit/WebKit/main/Source/JavaScriptCore/inspector/protocol";
-  const domains = [
-    "Runtime",
-    "Console",
-    "Debugger",
-    "Heap",
-    "ScriptProfiler",
-    "CPUProfiler",
-    "GenericTypes",
-    "Network",
-    "Inspector",
-  ];
-  return {
-    name: "JSC",
-    version: {
-      major: 1,
-      minor: 3,
-    },
-    domains: await Promise.all(domains.map(domain => download<Domain>(`${baseUrl}/${domain}.json`))).then(domains =>
-      domains.sort((a, b) => a.domain.localeCompare(b.domain)),
-    ),
-  };
+async function getJSC(): Promise<Protocol> {
+  let bunExecutable = Bun.which("bun-debug") || process.execPath;
+  if (!bunExecutable) {
+    throw new Error("bun-debug not found");
+  }
+  bunExecutable = realpathSync(bunExecutable);
 }
 
 async function download<V>(url: string): Promise<V> {
@@ -200,3 +162,39 @@ function toComment(description?: string): string {
   const lines = ["/**", ...description.split("\n").map(line => ` * ${line.trim()}`), "*/"];
   return lines.join("\n");
 }
+
+const cwd = new URL("../src/protocol/", import.meta.url);
+const runner = "Bun" in globalThis ? "bunx" : "npx";
+const write = (name: string, data: string) => {
+  const filePath = path.resolve(__dirname, "..", "src", "protocol", name);
+  writeFileSync(filePath, data);
+  spawnSync(runner, ["prettier", "--write", filePath], { cwd, stdio: "ignore" });
+};
+const base = readFileSync(new URL("protocol.d.ts", cwd), "utf-8");
+const baseNoComments = base.replace(/\/\/.*/g, "");
+
+const jscJsonFile = path.resolve(__dirname, process.argv.at(-1) ?? "");
+let jscJSONFile;
+try {
+  jscJSONFile = await Bun.file(jscJsonFile).json();
+} catch (error) {
+  console.warn("Failed to read CombinedDomains.json from WebKit build. Is this a WebKit build from Bun?");
+  console.error(error);
+  process.exit(1);
+}
+
+const jsc = {
+  name: "JSC",
+  version: {
+    major: 1,
+    minor: 4,
+  },
+  domains: jscJSONFile.domains
+    .filter(a => a.debuggableTypes?.includes?.("javascript"))
+    .sort((a, b) => a.domain.localeCompare(b.domain)),
+};
+write("jsc/protocol.json", JSON.stringify(jsc, null, 2));
+write("jsc/index.d.ts", "// GENERATED - DO NOT EDIT\n" + formatProtocol(jsc, baseNoComments));
+const v8 = await downloadV8();
+write("v8/protocol.json", JSON.stringify(v8));
+write("v8/index.d.ts", "// GENERATED - DO NOT EDIT\n" + formatProtocol(v8, baseNoComments));

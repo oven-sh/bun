@@ -7,7 +7,8 @@
 /// Version 8: Fix for generated symbols
 /// Version 9: String printing changes
 /// Version 10: Constant folding for ''.charCodeAt(n)
-const expected_version = 10;
+/// Version 11: Fix \uFFFF printing regression
+const expected_version = 11;
 
 const bun = @import("root").bun;
 const std = @import("std");

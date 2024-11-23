@@ -78,7 +78,7 @@
   "prettier.prettierPath": "./node_modules/prettier",
 
   // TypeScript
-  "typescript.tsdk": "${workspaceFolder}/node_modules/typescript/lib",
+  "typescript.tsdk": "node_modules/typescript/lib",
   "[typescript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
   },

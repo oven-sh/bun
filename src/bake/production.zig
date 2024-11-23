@@ -203,6 +203,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     var router_types = try std.ArrayListUnmanaged(FrameworkRouter.Type).initCapacity(allocator, options.framework.file_system_router_types.len);
 
     var entry_points: EntryPointMap = .{
+        .root = cwd,
         .allocator = allocator,
         .files = .{},
     };
@@ -228,7 +229,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         });
     }
 
-    var router = try FrameworkRouter.initEmpty(router_types.items, allocator);
+    var router = try FrameworkRouter.initEmpty(cwd, router_types.items, allocator);
     try router.scanAll(
         allocator,
         &server_bundler.resolver,
@@ -589,6 +590,8 @@ export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specif
 /// This data structure contains that mapping, and is also used by bundle_v2
 /// to enqueue the entry points.
 pub const EntryPointMap = struct {
+    root: []const u8,
+
     allocator: std.mem.Allocator,
     /// OpaqueFileId refers to the index in this map.
     /// Values are left uninitialized until after the bundle is done and indexed.
@@ -677,6 +680,20 @@ pub const EntryPointMap = struct {
 
     pub fn getFileIdForRouter(map: *EntryPointMap, abs_path: []const u8, _: FrameworkRouter.Route.Index, _: FrameworkRouter.Route.FileKind) !FrameworkRouter.OpaqueFileId {
         return map.getOrPutEntryPoint(abs_path, .server);
+    }
+
+    pub fn onRouterCollisionError(dev: *EntryPointMap, rel_path: []const u8, other_id: OpaqueFileId, ty: FrameworkRouter.Route.FileKind) bun.OOM!void {
+        Output.errGeneric("Multiple {s} matching the same route pattern is ambiguous", .{
+            switch (ty) {
+                .page => "pages",
+                .layout => "layout",
+            },
+        });
+        Output.prettyErrorln("  - <blue>{s}<r>", .{rel_path});
+        Output.prettyErrorln("  - <blue>{s}<r>", .{
+            bun.path.relative(dev.root, dev.files.keys()[other_id.get()].absPath()),
+        });
+        Output.flush();
     }
 };
 

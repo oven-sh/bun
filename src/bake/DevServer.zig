@@ -430,11 +430,12 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             });
         }
 
-        break :router try FrameworkRouter.initEmpty(types.items, allocator);
+        break :router try FrameworkRouter.initEmpty(dev.root, types.items, allocator);
     };
 
-    // TODO: move scanning to be one tick after server startup.
-    // this way the line saying the server is ready shows quicker
+    // TODO: move scanning to be one tick after server startup. this way the
+    // line saying the server is ready shows quicker, and route errors show up
+    // after that line.
     try dev.scanInitialRoutes();
 
     if (bun.FeatureFlags.bake_debugging_features and options.dump_state_on_crash)
@@ -515,8 +516,8 @@ pub fn deinit(dev: *DevServer) void {
     if (dev.has_pre_crash_handler)
         bun.crash_handler.removePreCrashHandler(dev);
     allocator.destroy(dev);
-    if (bun.Environment.isDebug)
-        bun.todoPanic(@src(), "bake.DevServer.deinit()", .{});
+    // if (bun.Environment.isDebug)
+    //     bun.todoPanic(@src(), "bake.DevServer.deinit()", .{});
 }
 
 fn onJsRequest(dev: *DevServer, req: *Request, resp: *Response) void {
@@ -650,7 +651,7 @@ fn ensureRouteIsBundled(
                         std.time.Timer.start() catch @panic("timers unsupported"),
                     ) catch |err| {
                         if (dev.log.hasAny()) {
-                            dev.log.print(Output.errorWriter()) catch {};
+                            dev.log.print(Output.errorWriterBuffered()) catch {};
                             Output.flush();
                         }
                         Output.panic("Fatal error while initializing bundle job: {}", .{err});
@@ -1608,23 +1609,15 @@ pub fn handleParseTaskFailure(
             .client => try dev.client_graph.onFileDeleted(abs_path, log),
         }
     } else {
-        // TODO: CSS parser causes this code to crash.
-        // - css logs are not useful.
-        // - css parser emits garbage memory in log message.
-        // For these reasons, printing CSS errors is disabled
-        if (bun.strings.hasSuffixComptime(abs_path, ".css")) {
-            Output.prettyErrorln("<red><b>Error{s} while bundling \"{s}\"<r>", .{
-                if (log.errors +| log.warnings != 1) "s" else "",
-                dev.relativePath(abs_path),
-            });
-        } else {
-            Output.prettyErrorln("<red><b>Error{s} while bundling \"{s}\":<r>", .{
-                if (log.errors +| log.warnings != 1) "s" else "",
-                dev.relativePath(abs_path),
-            });
-            Output.flush();
-            log.print(Output.errorWriter()) catch {};
+        Output.prettyErrorln("<red><b>Error{s} while bundling \"{s}\":<r>", .{
+            if (log.errors +| log.warnings != 1) "s" else "",
+            dev.relativePath(abs_path),
+        });
+        log.print(Output.errorWriterBuffered()) catch {};
+        Output.flush();
 
+        // Do not index css errors
+        if (!bun.strings.hasSuffixComptime(abs_path, ".css")) {
             switch (graph) {
                 .server => try dev.server_graph.insertFailure(abs_path, log, false),
                 .ssr => try dev.server_graph.insertFailure(abs_path, log, true),
@@ -4274,9 +4267,25 @@ pub fn getFileIdForRouter(dev: *DevServer, abs_path: []const u8, associated_rout
     return toOpaqueFileId(.server, index);
 }
 
-pub fn onRouterError(dev: *DevServer, rel_path: []const u8, log: FrameworkRouter.TinyLog) bun.OOM!void {
+pub fn onRouterSyntaxError(dev: *DevServer, rel_path: []const u8, log: FrameworkRouter.TinyLog) bun.OOM!void {
     _ = dev; // TODO: maybe this should track the error, send over HmrSocket?
     log.print(rel_path);
+}
+
+pub fn onRouterCollisionError(dev: *DevServer, rel_path: []const u8, other_id: OpaqueFileId, ty: Route.FileKind) bun.OOM!void {
+    // TODO: maybe this should track the error, send over HmrSocket?
+
+    Output.errGeneric("Multiple {s} matching the same route pattern is ambiguous", .{
+        switch (ty) {
+            .page => "pages",
+            .layout => "layout",
+        },
+    });
+    Output.prettyErrorln("  - <blue>{s}<r>", .{rel_path});
+    Output.prettyErrorln("  - <blue>{s}<r>", .{
+        dev.relativePath(dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, other_id).get()]),
+    });
+    Output.flush();
 }
 
 fn toOpaqueFileId(comptime side: bake.Side, index: IncrementalGraph(side).FileIndex) OpaqueFileId {

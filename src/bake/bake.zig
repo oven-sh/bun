@@ -18,7 +18,7 @@ pub const UserOptions = struct {
     root: []const u8,
     framework: Framework,
     bundler_options: SplitBundlerOptions,
-    bundler_plugin: ?*Plugin,
+    // bundler_plugin: ?*Plugin,
 
     pub fn deinit(options: *UserOptions) void {
         options.arena.deinit();
@@ -117,7 +117,7 @@ const BuildConfigSubset = struct {
 pub const Framework = struct {
     is_built_in_react: bool,
     file_system_router_types: []FileSystemRouterType,
-    static_routers: [][]const u8,
+    // static_routers: [][]const u8,
     server_components: ?ServerComponents = null,
     react_fast_refresh: ?ReactFastRefresh = null,
     built_in_modules: bun.StringArrayHashMapUnmanaged(BuiltInModule) = .{},
@@ -147,7 +147,7 @@ pub const Framework = struct {
                     .allow_layouts = true,
                 },
             }),
-            .static_routers = try arena.dupe([]const u8, &.{"public"}),
+            // .static_routers = try arena.dupe([]const u8, &.{"public"}),
             .built_in_modules = bun.StringArrayHashMapUnmanaged(BuiltInModule).init(arena, &.{
                 "bun-framework-react/client.tsx",
                 "bun-framework-react/server.tsx",

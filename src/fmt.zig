@@ -17,41 +17,41 @@ pub const TableSymbols = struct {
     pub const unicode = TableSymbols{ .enable_ansi_colors = true };
     pub const ascii = TableSymbols{ .enable_ansi_colors = false };
 
-    pub fn topLeftSep(comptime s: TableSymbols) *const [1]u8 {
-        return if (s.enable_ansi_colors) "┌" else "|";
+    pub fn topLeftSep(comptime s: TableSymbols) []const u8 {
+        return comptime if (s.enable_ansi_colors) "┌" else "|";
     }
-    pub fn topRightSep(comptime s: TableSymbols) *const [1]u8 {
-        return if (s.enable_ansi_colors) "┐" else "|";
+    pub fn topRightSep(comptime s: TableSymbols) []const u8 {
+        return comptime if (s.enable_ansi_colors) "┐" else "|";
     }
-    pub fn topColumnSep(comptime s: TableSymbols) *const [1]u8 {
-        return if (s.enable_ansi_colors) "┬" else "-";
-    }
-
-    pub fn bottomLeftSep(comptime s: TableSymbols) *const [1]u8 {
-        return if (s.enable_ansi_colors) "└" else "|";
-    }
-    pub fn bottomRightSep(comptime s: TableSymbols) *const [1]u8 {
-        return if (s.enable_ansi_colors) "┘" else "|";
-    }
-    pub fn bottomColumnSep(comptime s: TableSymbols) *const [1]u8 {
-        return if (s.enable_ansi_colors) "┴" else "-";
+    pub fn topColumnSep(comptime s: TableSymbols) []const u8 {
+        return comptime if (s.enable_ansi_colors) "┬" else "-";
     }
 
-    pub fn middleLeftSep(comptime s: TableSymbols) *const [1]u8 {
-        return if (s.enable_ansi_colors) "├" else "|";
+    pub fn bottomLeftSep(comptime s: TableSymbols) []const u8 {
+        return comptime if (s.enable_ansi_colors) "└" else "|";
     }
-    pub fn middleRightSep(comptime s: TableSymbols) *const [1]u8 {
-        return if (s.enable_ansi_colors) "┤" else "|";
+    pub fn bottomRightSep(comptime s: TableSymbols) []const u8 {
+        return comptime if (s.enable_ansi_colors) "┘" else "|";
     }
-    pub fn middleColumnSep(comptime s: TableSymbols) *const [1]u8 {
-        return if (s.enable_ansi_colors) "┼" else "|";
+    pub fn bottomColumnSep(comptime s: TableSymbols) []const u8 {
+        return comptime if (s.enable_ansi_colors) "┴" else "-";
     }
 
-    pub fn horizontalEdge(comptime s: TableSymbols) *const [1]u8 {
-        return if (s.enable_ansi_colors) "─" else "-";
+    pub fn middleLeftSep(comptime s: TableSymbols) []const u8 {
+        return comptime if (s.enable_ansi_colors) "├" else "|";
     }
-    pub fn verticalEdge(comptime s: TableSymbols) *const [1]u8 {
-        return if (s.enable_ansi_colors) "│" else "|";
+    pub fn middleRightSep(comptime s: TableSymbols) []const u8 {
+        return comptime if (s.enable_ansi_colors) "┤" else "|";
+    }
+    pub fn middleColumnSep(comptime s: TableSymbols) []const u8 {
+        return comptime if (s.enable_ansi_colors) "┼" else "|";
+    }
+
+    pub fn horizontalEdge(comptime s: TableSymbols) []const u8 {
+        return comptime if (s.enable_ansi_colors) "─" else "-";
+    }
+    pub fn verticalEdge(comptime s: TableSymbols) []const u8 {
+        return comptime if (s.enable_ansi_colors) "│" else "|";
     }
 };
 
@@ -65,6 +65,8 @@ pub fn Table(
     return struct {
         column_names: []const []const u8,
         column_inside_lengths: []const usize,
+
+        comptime symbols: TableSymbols = symbols,
 
         pub fn init(column_names_: []const []const u8, column_inside_lengths_: []const usize) @This() {
             return .{

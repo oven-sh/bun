@@ -8,6 +8,8 @@ const FrameworkRouter = @This();
 /// where it is an entrypoint index.
 pub const OpaqueFileId = bun.GenericIndex(u32, opaque {});
 
+/// Absolute path to root directory of the router.
+root: []const u8,
 types: []Type,
 routes: std.ArrayListUnmanaged(Route),
 /// Keys are full URL, with leading /, no trailing /
@@ -98,7 +100,9 @@ pub const Type = struct {
     pub const Index = bun.GenericIndex(u8, Type);
 };
 
-pub fn initEmpty(types: []Type, allocator: Allocator) !FrameworkRouter {
+pub fn initEmpty(root: []const u8, types: []Type, allocator: Allocator) !FrameworkRouter {
+    bun.assert(std.fs.path.isAbsolute(root));
+
     var routes = try std.ArrayListUnmanaged(Route).initCapacity(allocator, types.len);
     errdefer routes.deinit(allocator);
 
@@ -116,6 +120,7 @@ pub fn initEmpty(types: []Type, allocator: Allocator) !FrameworkRouter {
         });
     }
     return .{
+        .root = root,
         .types = types,
         .routes = routes,
         .dynamic_routes = .{},
@@ -829,17 +834,23 @@ pub const TinyLog = struct {
     }
 
     pub fn print(log: *const TinyLog, rel_path: []const u8) void {
-        bun.Output.errGeneric("\"{s}\" is not a valid route", .{rel_path});
-        const w = bun.Output.errorWriter();
+        const after = rel_path[@max(0, log.cursor_at)..];
+        bun.Output.errGeneric("\"{s}<blue>{s}<r>{s}\" is not a valid route", .{
+            rel_path[0..@max(0, log.cursor_at)],
+            after[0..@min(log.cursor_len, after.len)],
+            after[@min(log.cursor_len, after.len)..],
+        });
+        const w = bun.Output.errorWriterBuffered();
         w.writeByteNTimes(' ', "error: \"".len + log.cursor_at) catch return;
         if (bun.Output.enable_ansi_colors_stderr) {
-            w.writeAll(bun.fmt.TableSymbols.unicode.topColumnSep()) catch return;
+            const symbols = bun.fmt.TableSymbols.unicode;
+            bun.Output.prettyError("<blue>" ++ symbols.topColumnSep(), .{});
             if (log.cursor_len > 1) {
-                w.writeByteNTimes('-', log.cursor_len - 1) catch return;
+                w.writeBytesNTimes(symbols.horizontalEdge(), log.cursor_len - 1) catch return;
             }
         } else {
             if (log.cursor_len <= 1) {
-                w.writeAll("|");
+                w.writeAll("|") catch return;
             } else {
                 w.writeByteNTimes('-', log.cursor_len - 1) catch return;
             }
@@ -847,6 +858,8 @@ pub const TinyLog = struct {
         w.writeByte('\n') catch return;
         w.writeByteNTimes(' ', "error: \"".len + log.cursor_at) catch return;
         w.writeAll(log.msg.slice()) catch return;
+        bun.Output.prettyError("<r>\n", .{});
+        bun.Output.flush();
     }
 };
 
@@ -856,7 +869,8 @@ pub const InsertionContext = struct {
     vtable: *const VTable,
     const VTable = struct {
         getFileIdForRouter: *const fn (*anyopaque, abs_path: []const u8, associated_route: Route.Index, kind: Route.FileKind) bun.OOM!OpaqueFileId,
-        onFileSystemRouterError: *const fn (*anyopaque, rel_path: []const u8, fail: TinyLog) bun.OOM!void,
+        onRouterSyntaxError: *const fn (*anyopaque, rel_path: []const u8, fail: TinyLog) bun.OOM!void,
+        onRouterCollisionError: *const fn (*anyopaque, rel_path: []const u8, other_id: OpaqueFileId, file_kind: Route.FileKind) bun.OOM!void,
     };
     pub fn wrap(comptime T: type, ctx: *T) InsertionContext {
         const wrapper = struct {
@@ -864,17 +878,23 @@ pub const InsertionContext = struct {
                 const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
                 return try cast_ctx.getFileIdForRouter(abs_path, associated_route, kind);
             }
-            fn onFileSystemRouterError(opaque_ctx: *anyopaque, rel_path: []const u8, log: TinyLog) bun.OOM!void {
+            fn onRouterSyntaxError(opaque_ctx: *anyopaque, rel_path: []const u8, log: TinyLog) bun.OOM!void {
                 const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
-                if (!@hasDecl(T, "onFileSystemRouterError")) @panic("TODO: onFileSystemRouterError for " ++ @typeName(T));
-                return try cast_ctx.onFileSystemRouterError(rel_path, log);
+                if (!@hasDecl(T, "onRouterSyntaxError")) @panic("TODO: onRouterSyntaxError for " ++ @typeName(T));
+                return try cast_ctx.onRouterSyntaxError(rel_path, log);
+            }
+            fn onRouterCollisionError(opaque_ctx: *anyopaque, rel_path: []const u8, other_id: OpaqueFileId, file_kind: Route.FileKind) bun.OOM!void {
+                const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
+                if (!@hasDecl(T, "onRouterCollisionError")) @panic("TODO: onRouterCollisionError for " ++ @typeName(T));
+                return try cast_ctx.onRouterCollisionError(rel_path, other_id, file_kind);
             }
         };
         return .{
             .opaque_ctx = ctx,
             .vtable = comptime &.{
                 .getFileIdForRouter = &wrapper.getFileIdForRouter,
-                .onFileSystemRouterError = &wrapper.onFileSystemRouterError,
+                .onRouterSyntaxError = &wrapper.onRouterSyntaxError,
+                .onRouterCollisionError = &wrapper.onRouterCollisionError,
             },
         };
     }
@@ -940,20 +960,20 @@ fn scanInner(
                     }
 
                     var rel_path_buf: bun.PathBuffer = undefined;
-                    var rel_path = bun.path.relativeNormalizedBuf(
-                        rel_path_buf[1..],
-                        t.abs_root,
+                    var full_rel_path = bun.path.relativeNormalizedBuf(
+                        &rel_path_buf,
+                        fr.root,
                         fs.abs(&.{ file.dir, file.base() }),
                         .auto,
                         true,
                     );
-                    bun.path.platformToPosixInPlace(u8, rel_path_buf[0..rel_path.len]);
-                    rel_path_buf[0] = '/';
-                    rel_path = rel_path_buf[0 .. rel_path.len + 1];
+                    bun.path.platformToPosixInPlace(u8, rel_path_buf[0..full_rel_path.len]);
+                    const rel_path = full_rel_path[t.abs_root.len - 1 - fr.root.len ..];
                     var log = TinyLog.empty;
                     defer _ = arena_state.reset(.retain_capacity);
                     const parsed = (t.style.parse(rel_path, ext, &log, t.allow_layouts, arena_state.allocator()) catch {
-                        try ctx.vtable.onFileSystemRouterError(ctx.opaque_ctx, rel_path, log);
+                        log.cursor_at += @intCast(t.abs_root.len - 1 - fr.root.len);
+                        try ctx.vtable.onRouterSyntaxError(ctx.opaque_ctx, full_rel_path, log);
                         continue :outer;
                     }) orelse continue :outer;
 
@@ -977,9 +997,17 @@ fn scanInner(
 
                     if (param_count > 64) {
                         log.write("Pattern cannot have more than 64 param", .{});
-                        try ctx.vtable.onFileSystemRouterError(ctx.opaque_ctx, rel_path, log);
+                        try ctx.vtable.onRouterSyntaxError(ctx.opaque_ctx, full_rel_path, log);
                         continue :outer;
                     }
+
+                    var out_colliding_file_id: OpaqueFileId = undefined;
+
+                    const file_kind: Route.FileKind = switch (parsed.kind) {
+                        .page => .page,
+                        .layout => .layout,
+                        .extra => @panic("TODO: associate extra files with route"),
+                    };
 
                     const result = switch (param_count > 0) {
                         inline else => |has_dynamic_comptime| result: {
@@ -1000,18 +1028,13 @@ fn scanInner(
                                 bun.assert(s.getWritten().len == allocation.len);
                                 break :static_route StaticPattern{ .route_path = allocation };
                             };
-                            var out_colliding_file_id: OpaqueFileId = undefined;
 
                             break :result fr.insert(
                                 alloc,
                                 t_index,
                                 if (has_dynamic_comptime) .dynamic else .static,
                                 pattern,
-                                switch (parsed.kind) {
-                                    .page => .page,
-                                    .layout => .layout,
-                                    .extra => @panic("TODO: associate extra files with route"),
-                                },
+                                file_kind,
                                 fs.abs(&.{ file.dir, file.base() }),
                                 ctx,
                                 &out_colliding_file_id,
@@ -1021,7 +1044,14 @@ fn scanInner(
 
                     result catch |err| switch (err) {
                         error.OutOfMemory => |e| return e,
-                        error.RouteCollision => @panic("TODO: error.RouteCollision"),
+                        error.RouteCollision => {
+                            try ctx.vtable.onRouterCollisionError(
+                                ctx.opaque_ctx,
+                                full_rel_path,
+                                out_colliding_file_id,
+                                file_kind,
+                            );
+                        },
                     };
                 },
             }
@@ -1086,7 +1116,7 @@ pub const JSFrameworkRouter = struct {
         errdefer bun.default_allocator.free(types);
 
         const jsfr = bun.new(JSFrameworkRouter, .{
-            .router = try FrameworkRouter.initEmpty(types, bun.default_allocator),
+            .router = try FrameworkRouter.initEmpty(abs_root, types, bun.default_allocator),
             .files = .{},
             .stored_parse_errors = .{},
         });
@@ -1259,7 +1289,7 @@ pub const JSFrameworkRouter = struct {
         return OpaqueFileId.init(@intCast(jsfr.files.items.len - 1));
     }
 
-    pub fn onFileSystemRouterError(jsfr: *JSFrameworkRouter, rel_path: []const u8, log: TinyLog) !void {
+    pub fn onRouterSyntaxError(jsfr: *JSFrameworkRouter, rel_path: []const u8, log: TinyLog) !void {
         const rel_path_dupe = try bun.default_allocator.dupe(u8, rel_path);
         errdefer bun.default_allocator.free(rel_path_dupe);
         try jsfr.stored_parse_errors.append(bun.default_allocator, .{

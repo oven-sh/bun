@@ -499,11 +499,18 @@ pub fn panic(comptime fmt: string, args: anytype) noreturn {
 
 pub const WriterType: type = @TypeOf(Source.StreamType.quietWriter(undefined));
 
+// TODO: investigate migrating this to the buffered one.
 pub fn errorWriter() WriterType {
     bun.debugAssert(source_set);
     return source.error_stream.quietWriter();
 }
 
+pub fn errorWriterBuffered() Source.BufferedStream.Writer {
+    bun.debugAssert(source_set);
+    return source.buffered_error_stream.writer();
+}
+
+// TODO: investigate returning the buffered_error_stream
 pub fn errorStream() Source.StreamType {
     bun.debugAssert(source_set);
     return source.error_stream;

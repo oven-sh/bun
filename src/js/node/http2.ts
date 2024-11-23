@@ -843,6 +843,8 @@ function onServerStream(Http2ServerRequest, Http2ServerResponse, stream, headers
     return;
   }
 
+  // request.uncork();
+  // response.uncork();
   server.emit("request", request, response);
 }
 
@@ -1564,7 +1566,7 @@ class Http2Stream extends Duplex {
     this.#id = streamId;
     this[bunHTTP2Session] = session;
     this[bunHTTP2Headers] = headers;
-    this.cork();
+    // this.cork();
   }
 
   get scheme() {
@@ -2216,7 +2218,7 @@ function toHeaderObject(headers, sensitiveHeadersValue) {
 }
 
 function emitReady(stream) {
-  stream.uncork();
+  // stream.uncork();
   stream.emit("ready");
 }
 class ServerHttp2Session extends Http2Session {
@@ -2255,8 +2257,7 @@ class ServerHttp2Session extends Http2Session {
       const stream = new ServerHttp2Stream(stream_id, self, null);
       self.#parser?.setStreamContext(stream_id, stream);
 
-      //process.nextTick(emitReadyNT, stream);
-      emitReady(stream);
+      process.nextTick(emitReady, stream);
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;

@@ -357,7 +357,6 @@ check_package_manager() {
 	case "$pm" in
 	apt)
 		export DEBIAN_FRONTEND=noninteractive
-		execute_sudo_lax killall -9 apt-get
 		package_manager update -y
 		;;
 	apk)
@@ -401,6 +400,7 @@ check_user() {
 package_manager() {
 	case "$pm" in
 	apt)
+		execute_sudo_lax killall -9 apt-get # TODO: investigate why this is necessary
 		execute_sudo apt "$@"
 		;;
 	dnf)

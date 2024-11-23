@@ -6793,7 +6793,7 @@ pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSE
             error.JSError => .zero,
             error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
         };
-        bun.assert((normal == .zero) == globalThis.hasException());
+        bun.assert((normal == .zero or normal == .undefined) == globalThis.hasException());
         return normal;
     }
     return value catch |err| switch (err) {

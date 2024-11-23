@@ -1766,7 +1766,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 }
             }
 
-            const args_list = callframe.arguments(4);
+            const args_list = callframe.arguments_old(4);
             const args = args_list.ptr[0..args_list.len];
 
             if (args.len == 0) {
@@ -2224,21 +2224,26 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         fn flushFromJSNoWait(this: *@This()) JSC.Maybe(JSValue) {
             log("flushFromJSNoWait", .{});
+
+            return .{ .result = JSValue.jsNumber(this.flushNoWait()) };
+        }
+
+        pub fn flushNoWait(this: *@This()) usize {
             if (this.hasBackpressureAndIsTryEnd() or this.done) {
-                return .{ .result = JSValue.jsNumberFromInt32(0) };
+                return 0;
             }
 
             const slice = this.readableSlice();
             if (slice.len == 0) {
-                return .{ .result = JSValue.jsNumberFromInt32(0) };
+                return 0;
             }
 
             const success = this.send(slice);
             if (success) {
-                return .{ .result = JSValue.jsNumber(slice.len) };
+                return slice.len;
             }
 
-            return .{ .result = JSValue.jsNumberFromInt32(0) };
+            return 0;
         }
 
         pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) JSC.Maybe(JSValue) {
@@ -2563,11 +2568,15 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         // so it must zero out state instead of make it
         pub fn finalize(this: *@This()) void {
             log("finalize()", .{});
-
             if (!this.done) {
-                this.done = true;
                 this.unregisterAutoFlusher();
+                // make sure we detached the handlers before flushing inside the finalize function
                 this.res.clearOnWritable();
+                this.res.clearAborted();
+                this.res.clearOnData();
+                _ = this.flushNoWait();
+                this.done = true;
+                // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
                 this.res.endStream(false);
             }
 
@@ -2801,7 +2810,7 @@ pub fn ReadableStreamSource(
             pub fn pull(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 JSC.markBinding(@src());
                 const this_jsvalue = callFrame.this();
-                const arguments = callFrame.arguments(2);
+                const arguments = callFrame.arguments_old(2);
                 const view = arguments.ptr[0];
                 view.ensureStillAlive();
                 this.this_jsvalue = this_jsvalue;

@@ -3,19 +3,19 @@ import { bunEnv, bunExe, isLinux } from "harness";
 import path from "path";
 const cwd = import.meta.dir;
 
-export async function generateClient(type: string) {
-  generate(type);
+export async function generateClient(type: string, env: Record<string, string>) {
+  generate(type, env);
 
   // This should run the first time on a fresh db
   try {
-    migrate(type);
+    migrate(type, env);
   } catch (err: any) {
     if (err.message.indexOf("Environment variable not found:") !== -1) throw err;
   }
 
   return (await import(`./prisma/${type}/client`)).PrismaClient;
 }
-export function migrate(type: string) {
+export function migrate(type: string, env: Record<string, string>) {
   const result = Bun.spawnSync(
     [
       bunExe(),
@@ -33,13 +33,14 @@ export function migrate(type: string) {
       env: {
         ...bunEnv,
         NODE_ENV: undefined,
+        ...env,
       },
     },
   );
   if (!result.success) throw new Error(result.stderr.toString("utf8"));
 }
 
-export function generate(type: string) {
+export function generate(type: string, env: Record<string, string>) {
   const schema = path.join(cwd, "prisma", type, "schema.prisma");
 
   const content = fs
@@ -60,6 +61,7 @@ export function generate(type: string) {
     env: {
       ...bunEnv,
       NODE_ENV: undefined,
+      ...env,
     },
   });
   if (!result.success) throw new Error(result.stderr.toString("utf8"));

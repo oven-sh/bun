@@ -4274,6 +4274,11 @@ pub fn getFileIdForRouter(dev: *DevServer, abs_path: []const u8, associated_rout
     return toOpaqueFileId(.server, index);
 }
 
+pub fn onRouterError(dev: *DevServer, rel_path: []const u8, log: FrameworkRouter.TinyLog) bun.OOM!void {
+    _ = dev; // TODO: maybe this should track the error, send over HmrSocket?
+    log.print(rel_path);
+}
+
 fn toOpaqueFileId(comptime side: bake.Side, index: IncrementalGraph(side).FileIndex) OpaqueFileId {
     if (Environment.allow_assert) {
         return OpaqueFileId.init(@bitCast(SafeFileId{

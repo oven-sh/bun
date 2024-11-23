@@ -213,6 +213,64 @@ class Debugger {
   }
 }
 
+async function connectToUnixServer(
+  executionContextId: number,
+  unix: string,
+  createBackend: CreateBackendFn,
+  send: (message: string) => void,
+  close: () => void,
+) {
+  let sdfafdsa  = [];
+  const backendRaw = createBackend(executionContextId, true, (...messages: string[]) => {
+    for (const message of messages) {
+      framer.send(socket, message);
+    }
+  });
+  const socket = await Bun.connect<{ framer: SocketFramer; backend: Backend }>({
+    unix,
+    socket: {
+      open: socket => {
+        const framer = new SocketFramer((message: string | string[]) => {
+          backend.write(message);
+        });
+
+
+        const backend = {
+          write: message => {
+            send.$call(backendRaw, message);
+            return true;
+          },
+          close: () => close.$call(backendRaw),
+        };
+
+        socket.data = {
+          framer,
+          backend,
+        };
+
+        socket.ref();
+      },
+      data: (socket, bytes) => {
+        if (!socket.data) {
+          socket.terminate();
+          return;
+        }
+
+        socket.data.framer.onData(socket, bytes);
+      },
+      close: socket => {
+        if (socket.data) {
+          const { backend, framer } = socket.data;
+          backend.close();
+          framer.reset();
+        }
+      },
+    },
+  });
+
+  return socket;
+}
+
 function versionInfo(): unknown {
   return {
     "Protocol-Version": "1.3",

@@ -827,6 +827,27 @@ pub const TinyLog = struct {
             break :brk log.msg.buffer.len;
         });
     }
+
+    pub fn print(log: *const TinyLog, rel_path: []const u8) void {
+        bun.Output.errGeneric("\"{s}\" is not a valid route", .{rel_path});
+        const w = bun.Output.errorWriter();
+        w.writeByteNTimes(' ', "error: \"".len + log.cursor_at) catch return;
+        if (bun.Output.enable_ansi_colors_stderr) {
+            w.writeAll(bun.fmt.TableSymbols.unicode.topColumnSep()) catch return;
+            if (log.cursor_len > 1) {
+                w.writeByteNTimes('-', log.cursor_len - 1) catch return;
+            }
+        } else {
+            if (log.cursor_len <= 1) {
+                w.writeAll("|");
+            } else {
+                w.writeByteNTimes('-', log.cursor_len - 1) catch return;
+            }
+        }
+        w.writeByte('\n') catch return;
+        w.writeByteNTimes(' ', "error: \"".len + log.cursor_at) catch return;
+        w.writeAll(log.msg.slice()) catch return;
+    }
 };
 
 /// Interface for connecting FrameworkRouter to another codebase

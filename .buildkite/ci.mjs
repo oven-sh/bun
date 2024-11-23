@@ -27,6 +27,7 @@ import {
   toYaml,
   uploadArtifact,
 } from "../scripts/utils.mjs";
+import { platform } from "node:os";
 
 /**
  * @typedef PipelineOptions
@@ -286,9 +287,18 @@ function getPipeline(options) {
       abi,
       distro,
       release,
-      "image-name": "windows-x64-2022-build-6684",
+      "image-name": image,
       "instance-type": instanceType,
     };
+  };
+
+  /**
+   * @param {Target} target
+   * @returns {string}
+   */
+  const getBuildInstanceType = target => {
+    const { arch } = target;
+    return arch === "aarch64" ? "c8g.8xlarge" : "c7i.8xlarge";
   };
 
   /**
@@ -298,8 +308,7 @@ function getPipeline(options) {
   const getBuildAgent = target => {
     const { os, arch, abi } = target;
     if (isUsingNewAgent(target)) {
-      const instanceType = arch === "aarch64" ? "c8g.8xlarge" : "c7i.8xlarge";
-      return getEmphemeralAgent("v2", target, instanceType);
+      return getEmphemeralAgent("v2", target, getBuildInstanceType(target));
     }
     return {
       queue: `build-${os}`,
@@ -334,13 +343,29 @@ function getPipeline(options) {
 
   /**
    * @param {Platform} platform
+   * @returns {string}
+   */
+  const getTestInstanceType = platform => {
+    const { os, arch } = platform;
+    // TODO: `dev-server-ssr-110.test.ts` and `next-build.test.ts` run out of memory
+    // on `t3.large`, which has 8GB of memory. `t3.xlarge` has 16GB of memory.
+    if (os === "windows") {
+      return "t3.xlarge";
+    }
+    if (arch === "aarch64") {
+      return "t4g.large";
+    }
+    return "t3.large";
+  };
+
+  /**
+   * @param {Platform} platform
    * @returns {Agent}
    */
   const getTestAgent = platform => {
     const { os, arch, release } = platform;
     if (isUsingNewAgent(platform)) {
-      const instanceType = arch === "aarch64" ? "t4g.large" : "t3.large";
-      return getEmphemeralAgent("v2", platform, instanceType);
+      return getEmphemeralAgent("v2", platform, getTestInstanceType(platform));
     }
     if (os === "darwin") {
       return {
@@ -848,9 +873,6 @@ async function main() {
       buildRelease = true;
     }
   }
-
-  buildImages = false;
-  publishImages = false;
 
   console.log("Generating pipeline...");
   const pipeline = getPipeline({

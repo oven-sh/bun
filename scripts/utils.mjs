@@ -1081,13 +1081,14 @@ export function getBuildLabel() {
 }
 
 /**
+ * @param {string} [os]
  * @returns {number}
  */
-export function getBootstrapVersion() {
-  if (isWindows) {
-    return 0; // TODO
-  }
-  const scriptPath = join(import.meta.dirname, "bootstrap.sh");
+export function getBootstrapVersion(os) {
+  const scriptPath = join(
+    import.meta.dirname,
+    os === "windows" || (!os && isWindows) ? "bootstrap.ps1" : "bootstrap.sh",
+  );
   const scriptContent = readFile(scriptPath, { cache: true });
   const match = /# Version: (\d+)/.exec(scriptContent);
   if (match) {

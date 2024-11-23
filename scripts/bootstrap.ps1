@@ -141,8 +141,21 @@ function Add-To-Path {
   }
 
   Write-Output "Adding $absolutePath to PATH..."
-  [Environment]::SetEnvironmentVariable("Path", $newPath, "Machine")
+  [Environment]::SetEnvironmentVariable("Path", "$newPath", "Machine")
   Refresh-Path
+}
+
+function Set-Env {
+  param (
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$Name,
+    [Parameter(Mandatory = $true, Position = 1)]
+    [string]$Value
+  )
+
+  Write-Output "Setting environment variable $Name=$Value..."
+  [System.Environment]::SetEnvironmentVariable("$Name", "$Value", "Machine")
+  [System.Environment]::SetEnvironmentVariable("$Name", "$Value", "Process")
 }
 
 function Install-Package {
@@ -308,19 +321,31 @@ function Install-Rust {
     return
   }
 
-  Write-Output "Downloading Rustup installer..."
+  Write-Output "Installing Rustup..."
   $rustupInit = Download-File "https://win.rustup.rs/" -Name "rustup-init.exe"
 
   Write-Output "Installing Rust..."
   Execute-Command $rustupInit -y
-  Add-To-Path "$env:USERPROFILE\.cargo\bin"
+
+  Write-Output "Moving Rust to $env:ProgramFiles..."
+  $rustPath = Join-Path $env:ProgramFiles "Rust"
+  if (-not (Test-Path $rustPath)) {
+    New-Item -Path $rustPath -ItemType Directory
+  }
+  Move-Item "$env:UserProfile\.cargo" "$rustPath\cargo" -Force
+  Move-Item "$env:UserProfile\.rustup" "$rustPath\rustup" -Force
+
+  Write-Output "Setting environment variables for Rust..."
+  Set-Env "CARGO_HOME" "$rustPath\cargo"
+  Set-Env "RUSTUP_HOME" "$rustPath\rustup"
+  Add-To-Path "$rustPath\cargo\bin"
 }
 
 function Install-Llvm {
   Install-Package llvm `
     -Command clang-cl `
     -Version "18.1.8"
-  Add-To-Path "C:\Program Files\LLVM\bin"
+  Add-To-Path "$env:ProgramFiles\LLVM\bin"
 }
 
 function Optimize-System {

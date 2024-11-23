@@ -1,0 +1,17 @@
+name: yamldemo
+runtime: yaml
+resources:
+  bucket:
+    type: aws:s3:Bucket
+    properties:
+      website:
+        indexDocument: index.html
+  index.html:
+    type: aws:s3:BucketObject
+    properties:
+      bucket: ${bucket.id}
+      content: <h1>Hello, world!</h1>
+      contentType: text/html
+      acl: public-read
+outputs:
+  url: http://${bucket.websiteEndpoint}

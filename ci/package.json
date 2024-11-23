@@ -1,5 +1,6 @@
 {
   "private": true,
+  "type": "module",
   "scripts": {
     "bootstrap": "brew install gh jq cirruslabs/cli/tart cirruslabs/cli/sshpass hashicorp/tap/packer && packer init darwin",
     "login": "token=$(gh auth token); username=$(gh api user --jq .login); echo \"Login as $username...\"; echo \"$token\" | tart login ghcr.io --username \"$username\" --password-stdin; echo \"$token\" | docker login ghcr.io --username \"$username\" --password-stdin",

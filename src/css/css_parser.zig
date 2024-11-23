@@ -384,7 +384,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
             // }
 
             // return null;
-            @panic(todo_stuff.depth);
+            @compileError(todo_stuff.depth);
         }
 
         /// Returns a shorthand from the longhand properties defined in the given declaration block.
@@ -405,7 +405,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
             // };
             // return out;
 
-            @panic(todo_stuff.depth);
+            @compileError(todo_stuff.depth);
         }
 
         /// Returns a longhand property for this shorthand.
@@ -430,7 +430,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
             //     }
             // }
             // return null;
-            @panic(todo_stuff.depth);
+            @compileError(todo_stuff.depth);
         }
 
         /// Updates this shorthand from a longhand property.
@@ -451,7 +451,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
             //     }
             // }
             // return false;
-            @panic(todo_stuff.depth);
+            @compileError(todo_stuff.depth);
         }
     };
 }

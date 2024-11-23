@@ -557,7 +557,9 @@ pub const Range = struct {
     loc: Loc = Loc.Empty,
     len: i32 = 0,
 
-    pub const None = Range{ .loc = Loc.Empty, .len = 0 };
+    /// Deprecated: use .none
+    pub const None = none;
+    pub const none = Range{ .loc = Loc.Empty, .len = 0 };
 
     pub fn in(this: Range, buf: []const u8) []const u8 {
         if (this.loc.start < 0 or this.len <= 0) return "";

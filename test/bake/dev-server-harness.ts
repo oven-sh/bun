@@ -155,7 +155,7 @@ function snapshotCallerLocation(): string {
 }
 
 function stackTraceFileName(line: string): string {
-  return / \((.*?)[:)]/.exec(line)![1];
+  return / \(((?:[A-Za-z]:)?.*?)[:)]/.exec(line)![1].replaceAll("\\", "/");
 }
 
 async function withAnnotatedStack<T>(stackLine: string, cb: () => Promise<T>): Promise<T> {
@@ -173,7 +173,7 @@ async function withAnnotatedStack<T>(stackLine: string, cb: () => Promise<T>): P
 const tempDir = fs.mkdtempSync(
   path.join(process.platform === "darwin" && !process.env.CI ? "/tmp" : os.tmpdir(), "bun-dev-test-"),
 );
-const devTestRoot = path.join(import.meta.dir, "dev");
+const devTestRoot = path.join(import.meta.dir, "dev").replaceAll("\\", "/");
 const counts: Record<string, number> = {};
 
 console.log("Dev server testing directory:", tempDir);
@@ -282,7 +282,7 @@ export function devTest(description: string, options: DevServerTest) {
   const callerLocation = snapshotCallerLocation();
   const caller = stackTraceFileName(callerLocation);
   const jest = (Bun as any).jest(caller);
-  assert(caller.startsWith(devTestRoot), "dev server tests must be in test/bake/dev");
+  assert(caller.startsWith(devTestRoot), "dev server tests must be in test/bake/dev, not " + caller);
   const basename = path.basename(caller, ".test" + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
   jest.test(`DevServer > ${basename}.${count}: ${description}`, async () => {

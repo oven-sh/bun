@@ -1,8 +1,10 @@
 import { describe, test } from "bun:test";
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { expect } from "bun:test";
+import path from "path";
+import { tempDirWithFiles } from "harness";
 
-const { parseRoutePattern } = frameworkRouterInternals;
+const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
 
 const testRoutePattern = (style: string) => {
   // The 'expected' is a one-off string serialization that is only used for testing.
@@ -75,4 +77,60 @@ describe("pattern parse", () => {
   testApp("/route/(group)/page.tsx", "/route/(group)", "page");
   testApp("/route/[param]/not-found.tsx", "/route/:param", "extra");
   testApp.isNull("/route/_layout.tsx");
+});
+
+test("discovers from filesystem paths", () => {
+  const dir = tempDirWithFiles("fsr", {
+    "hello.tsx": "1",
+    "meow/_layout.tsx": "1",
+    "meow/bark/[param]/hello.tsx": "1",
+    "[world].tsx": "1",
+  });
+  const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+  expect(router.toJSON()).toEqual({
+    part: "/",
+    page: null,
+    layout: null,
+    children: [
+      {
+        part: "/:world",
+        page: path.join(dir, "[world].tsx"),
+        layout: null,
+        children: [],
+      },
+      {
+        part: "/meow",
+        page: null,
+        layout: path.join(dir, "meow/_layout.tsx"),
+        children: [
+          {
+            part: "/bark",
+            page: null,
+            layout: null,
+            children: [
+              {
+                part: "/:param",
+                page: null,
+                layout: null,
+                children: [
+                  {
+                    part: "/hello",
+                    page: path.join(dir, "meow/bark/[param]/hello.tsx"),
+                    layout: null,
+                    children: [],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        part: "/hello",
+        page: path.join(dir, "hello.tsx"),
+        layout: null,
+        children: [],
+      },
+    ],
+  });
 });

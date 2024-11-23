@@ -114,6 +114,7 @@ const BuildConfigSubset = struct {
 ///
 /// Full documentation on these fields is located in the TypeScript definitions.
 pub const Framework = struct {
+    is_built_in_react: bool,
     file_system_router_types: []FileSystemRouterType,
     // static_routers: [][]const u8,
     server_components: ?ServerComponents = null,
@@ -126,6 +127,7 @@ pub const Framework = struct {
     /// $ bun i react@experimental react-dom@experimental react-server-dom-webpack@experimental react-refresh@experimental
     pub fn react(arena: std.mem.Allocator) !Framework {
         return .{
+            .is_built_in_react = true,
             .server_components = .{
                 .separate_ssr_graph = true,
                 .server_runtime_import = "react-server-dom-bun/server",
@@ -191,6 +193,16 @@ pub const Framework = struct {
     const ReactFastRefresh = struct {
         import_source: []const u8 = "react-refresh/runtime",
     };
+
+    pub const react_install_command = "bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun";
+
+    pub fn addReactInstallCommandNote(log: *bun.logger.Log) !void {
+        try log.addMsg(.{
+            .kind = .note,
+            .data = try bun.logger.rangeData(null, bun.logger.Range.none, "Install the built in react integration with \"" ++ react_install_command ++ "\"")
+                .cloneLineText(log.clone_line_text, log.msgs.allocator),
+        });
+    }
 
     /// Given a Framework configuration, this returns another one with all paths resolved.
     /// New memory allocated into provided arena.
@@ -449,6 +461,7 @@ pub const Framework = struct {
         errdefer for (file_system_router_types) |*fsr| fsr.style.deinit();
 
         const framework: Framework = .{
+            .is_built_in_react = false,
             .file_system_router_types = file_system_router_types,
             .react_fast_refresh = react_fast_refresh,
             .server_components = server_components,

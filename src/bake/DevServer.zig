@@ -307,6 +307,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     }
 
     dev.framework = dev.framework.resolve(&dev.server_bundler.resolver, &dev.client_bundler.resolver, options.arena) catch {
+        try bake.Framework.addReactInstallCommandNote(&dev.log);
         return global.throwValue2(dev.log.toJSAggregateError(global, "Framework is missing required files!"));
     };
 
@@ -4296,7 +4297,10 @@ fn relativePath(dev: *const DevServer, path: []const u8) []const u8 {
     {
         return path[dev.root.len + 1 ..];
     }
-    return bun.path.relative(dev.root, path);
+    const rel = bun.path.relative(dev.root, path);
+    // `rel` is owned by a mutable threadlocal buffer in the path code.
+    bun.path.platformToPosixInPlace(u8, @constCast(rel));
+    return rel;
 }
 
 fn dumpStateDueToCrash(dev: *DevServer) !void {

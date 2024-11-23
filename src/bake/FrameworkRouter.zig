@@ -805,6 +805,7 @@ fn newEdge(fr: *FrameworkRouter, alloc: Allocator, edge_data: Route.Edge) !Route
 const PatternParseError = error{InvalidRoutePattern};
 
 /// Non-allocating single message log, specialized for the messages from the route pattern parsers.
+/// DevServer uses this to special-case the printing of these messages to highlight the offending part of the filename
 pub const TinyLog = struct {
     msg: std.BoundedArray(u8, 512 + std.fs.max_path_bytes),
     cursor_at: u32,
@@ -813,14 +814,18 @@ pub const TinyLog = struct {
     pub const empty: TinyLog = .{ .cursor_at = std.math.maxInt(u32), .cursor_len = 0, .msg = .{} };
 
     pub fn fail(log: *TinyLog, comptime fmt: []const u8, args: anytype, cursor_at: usize, cursor_len: usize) PatternParseError {
+        log.write(fmt, args);
+        log.cursor_at = @intCast(cursor_at);
+        log.cursor_len = @intCast(cursor_len);
+        return PatternParseError.InvalidRoutePattern;
+    }
+
+    pub fn write(log: *TinyLog, comptime fmt: []const u8, args: anytype) void {
         log.msg.len = @intCast(if (std.fmt.bufPrint(&log.msg.buffer, fmt, args)) |slice| slice.len else |_| brk: {
             // truncation should never happen because the buffer is HUGE. handle it anyways
             @memcpy(log.msg.buffer[log.msg.buffer.len - 3 ..], "...");
             break :brk log.msg.buffer.len;
         });
-        log.cursor_at = @intCast(cursor_at);
-        log.cursor_len = @intCast(cursor_len);
-        return PatternParseError.InvalidRoutePattern;
     }
 };
 
@@ -830,6 +835,7 @@ pub const InsertionContext = struct {
     vtable: *const VTable,
     const VTable = struct {
         getFileIdForRouter: *const fn (*anyopaque, abs_path: []const u8, associated_route: Route.Index, kind: Route.FileKind) bun.OOM!OpaqueFileId,
+        onFileSystemRouterError: *const fn (*anyopaque, rel_path: []const u8, fail: TinyLog) bun.OOM!void,
     };
     pub fn wrap(comptime T: type, ctx: *T) InsertionContext {
         const wrapper = struct {
@@ -837,11 +843,17 @@ pub const InsertionContext = struct {
                 const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
                 return try cast_ctx.getFileIdForRouter(abs_path, associated_route, kind);
             }
+            fn onFileSystemRouterError(opaque_ctx: *anyopaque, rel_path: []const u8, log: TinyLog) bun.OOM!void {
+                const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
+                if (!@hasDecl(T, "onFileSystemRouterError")) @panic("TODO: onFileSystemRouterError for " ++ @typeName(T));
+                return try cast_ctx.onFileSystemRouterError(rel_path, log);
+            }
         };
         return .{
             .opaque_ctx = ctx,
             .vtable = comptime &.{
                 .getFileIdForRouter = &wrapper.getFileIdForRouter,
+                .onFileSystemRouterError = &wrapper.onFileSystemRouterError,
             },
         };
     }
@@ -911,15 +923,18 @@ fn scanInner(
                         rel_path_buf[1..],
                         t.abs_root,
                         fs.abs(&.{ file.dir, file.base() }),
-                        .posix,
+                        .auto,
                         true,
                     );
+                    bun.path.platformToPosixInPlace(u8, rel_path_buf[0..rel_path.len]);
                     rel_path_buf[0] = '/';
                     rel_path = rel_path_buf[0 .. rel_path.len + 1];
                     var log = TinyLog.empty;
                     defer _ = arena_state.reset(.retain_capacity);
-                    const parsed = (t.style.parse(rel_path, ext, &log, t.allow_layouts, arena_state.allocator()) catch
-                        @panic("TODO: propagate error message")) orelse continue :outer;
+                    const parsed = (t.style.parse(rel_path, ext, &log, t.allow_layouts, arena_state.allocator()) catch {
+                        try ctx.vtable.onFileSystemRouterError(ctx.opaque_ctx, rel_path, log);
+                        continue :outer;
+                    }) orelse continue :outer;
 
                     if (parsed.kind == .page and t.ignore_underscores and bun.strings.hasPrefixComptime(base, "_"))
                         continue :outer;
@@ -940,7 +955,9 @@ fn scanInner(
                     }
 
                     if (param_count > 64) {
-                        @panic("TODO: propagate error for more than 64 params");
+                        log.write("Pattern cannot have more than 64 param", .{});
+                        try ctx.vtable.onFileSystemRouterError(ctx.opaque_ctx, rel_path, log);
+                        continue :outer;
                     }
 
                     const result = switch (param_count > 0) {
@@ -972,7 +989,7 @@ fn scanInner(
                                 switch (parsed.kind) {
                                     .page => .page,
                                     .layout => .layout,
-                                    .extra => @panic("TODO: extra files"),
+                                    .extra => @panic("TODO: associate extra files with route"),
                                 },
                                 fs.abs(&.{ file.dir, file.base() }),
                                 ctx,
@@ -981,7 +998,10 @@ fn scanInner(
                         },
                     };
 
-                    result catch @panic("TODO: propagate error message");
+                    result catch |err| switch (err) {
+                        error.OutOfMemory => |e| return e,
+                        error.RouteCollision => @panic("TODO: error.RouteCollision"),
+                    };
                 },
             }
         }
@@ -999,6 +1019,11 @@ pub const JSFrameworkRouter = struct {
 
     files: std.ArrayListUnmanaged(bun.String),
     router: FrameworkRouter,
+    stored_parse_errors: std.ArrayListUnmanaged(struct {
+        // Owned by bun.default_allocator
+        rel_path: []const u8,
+        log: TinyLog,
+    }),
 
     const validators = bun.JSC.Node.validators;
 
@@ -1042,16 +1067,32 @@ pub const JSFrameworkRouter = struct {
         const jsfr = bun.new(JSFrameworkRouter, .{
             .router = try FrameworkRouter.initEmpty(types, bun.default_allocator),
             .files = .{},
+            .stored_parse_errors = .{},
         });
 
-        jsfr.router.scan(
+        try jsfr.router.scan(
             bun.default_allocator,
             Type.Index.init(0),
             &global.bunVM().bundler.resolver,
             InsertionContext.wrap(JSFrameworkRouter, jsfr),
-        ) catch |err| {
-            return global.throwError(err, "while scanning route list");
-        };
+        );
+        if (jsfr.stored_parse_errors.items.len > 0) {
+            const arr = JSValue.createEmptyArray(global, jsfr.stored_parse_errors.items.len);
+            for (jsfr.stored_parse_errors.items, 0..) |*item, i| {
+                arr.putIndex(
+                    global,
+                    @intCast(i),
+                    global.createErrorInstance("Invalid route {}: {s}", .{
+                        bun.fmt.quote(item.rel_path),
+                        item.log.msg.slice(),
+                    }),
+                );
+            }
+            return global.throwValue2(global.createAggregateErrorWithArray(
+                bun.String.static("Errors scanning routes"),
+                arr,
+            ));
+        }
 
         return jsfr;
     }
@@ -1136,6 +1177,8 @@ pub const JSFrameworkRouter = struct {
         this.files.deinit(bun.default_allocator);
         this.router.deinit(bun.default_allocator);
         bun.default_allocator.free(this.router.types);
+        for (this.stored_parse_errors.items) |i| bun.default_allocator.free(i.rel_path);
+        this.stored_parse_errors.deinit(bun.default_allocator);
         bun.destroy(this);
     }
 
@@ -1193,6 +1236,15 @@ pub const JSFrameworkRouter = struct {
     pub fn getFileIdForRouter(jsfr: *JSFrameworkRouter, abs_path: []const u8, _: Route.Index, _: Route.FileKind) !OpaqueFileId {
         try jsfr.files.append(bun.default_allocator, bun.String.createUTF8(abs_path));
         return OpaqueFileId.init(@intCast(jsfr.files.items.len - 1));
+    }
+
+    pub fn onFileSystemRouterError(jsfr: *JSFrameworkRouter, rel_path: []const u8, log: TinyLog) !void {
+        const rel_path_dupe = try bun.default_allocator.dupe(u8, rel_path);
+        errdefer bun.default_allocator.free(rel_path_dupe);
+        try jsfr.stored_parse_errors.append(bun.default_allocator, .{
+            .rel_path = rel_path_dupe,
+            .log = log,
+        });
     }
 
     pub fn fileIdToJS(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, id: OpaqueFileId.Optional) JSValue {

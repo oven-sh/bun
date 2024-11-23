@@ -6775,7 +6775,7 @@ pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunction
                     error.JSError => .zero,
                     error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
                 };
-                bun.assert((value == .zero) == globalThis.hasException());
+                bun.assert((value == .zero or value == .undefined) == globalThis.hasException());
                 return value;
             }
             return @call(.always_inline, Function, .{ globalThis, callframe }) catch |err| switch (err) {

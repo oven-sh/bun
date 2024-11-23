@@ -771,7 +771,6 @@ async function main() {
 
   console.log("Checking if CI should be forced...");
   let forceBuild;
-  let ciFileChanged;
   {
     const message = getCommitMessage();
     const match = /\[(force ci|ci force|ci force build)\]/i.exec(message);
@@ -779,13 +778,6 @@ async function main() {
       const [, reason] = match;
       console.log(" - Yes, because commit message contains:", reason);
       forceBuild = true;
-    }
-    for (const coref of [".buildkite/ci.mjs", "scripts/utils.mjs", "scripts/bootstrap.sh", "scripts/machine.mjs"]) {
-      if (changedFilesBranch && changedFilesBranch.includes(coref)) {
-        console.log(" - Yes, because the list of changed files contains:", coref);
-        forceBuild = true;
-        ciFileChanged = true;
-      }
     }
   }
 
@@ -814,9 +806,13 @@ async function main() {
       console.log(" - Yes, because commit message contains:", reason);
       buildImages = true;
     }
-    if (ciFileChanged) {
-      console.log(" - Yes, because a core CI file changed");
-      buildImages = true;
+    if (changedFiles) {
+      const imageFiles = ["scripts/bootstrap.sh", "scripts/bootstrap.ps1"];
+      const changedImageFiles = changedFiles.filter(filename => imageFiles.includes(filename));
+      if (changedImageFiles.length) {
+        console.log(" - Yes, because the list of changed files contains:", changedImageFiles.join(", "));
+        buildImages = true;
+      }
     }
   }
 

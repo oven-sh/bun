@@ -1,4 +1,4 @@
 import data from "./bunfig.toml";
-import { expectType } from "./utilities.test";
+import { expectAny } from "./utilities.test";
 
-expectType<any>(data);
+expectAny(data);

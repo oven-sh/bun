@@ -1650,8 +1650,8 @@ class ClientRequest extends OutgoingMessage {
             type: "response",
             [kInternalRequest]: this,
           }));
-          res.on("end", () => {
-            this.#res.destroy();
+          this.on("error", _ => {
+            this.#res?.destroy();
           });
           isNextIncomingMessageHTTPS = prevIsHTTPS;
           this.emit("response", res);
@@ -1668,6 +1668,7 @@ class ClientRequest extends OutgoingMessage {
           this.emit("error", err);
         })
         .finally(() => {
+          this.#res?.destroy();
           this.#fetchRequest = null;
           this[kClearTimeout]();
           emitCloseNT(this);

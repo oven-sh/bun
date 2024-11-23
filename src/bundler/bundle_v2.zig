@@ -10968,7 +10968,7 @@ pub const LinkerContext = struct {
 
                     const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
 
-                    // module.importSync('path', (module) => ns = module)
+                    // module.importSync('path', (module) => ns = module, ['dep', 'etc'])
                     const call = if (record.tag != .css) call: {
                         const path = if (record.source_index.isValid())
                             c.parse_graph.input_files.items(.source)[record.source_index.get()].path
@@ -10980,6 +10980,11 @@ pub const LinkerContext = struct {
                         const key_expr = Expr.init(E.String, .{
                             .data = path.pretty,
                         }, stmt.loc);
+
+                        const items = try allocator.alloc(Expr, st.items.len);
+                        for (st.items, items) |item, *str| {
+                            str.* = Expr.init(E.String, .{ .data = item.original_name }, item.name.loc);
+                        }
 
                         break :call Expr.init(E.Call, .{
                             .target = Expr.init(E.Dot, .{
@@ -11005,6 +11010,10 @@ pub const LinkerContext = struct {
                                                 .loc = stmt.loc,
                                             },
                                             .prefer_expr = true,
+                                        }, stmt.loc),
+                                        Expr.init(E.Array, .{
+                                            .items = BabyList(Expr).init(items),
+                                            .is_single_line = true,
                                         }, stmt.loc),
                                     }),
                             ),

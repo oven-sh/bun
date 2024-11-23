@@ -18,40 +18,40 @@ pub const TableSymbols = struct {
     pub const ascii = TableSymbols{ .enable_ansi_colors = false };
 
     pub fn topLeftSep(comptime s: TableSymbols) []const u8 {
-        return comptime if (s.enable_ansi_colors) "┌" else "|";
+        return if (s.enable_ansi_colors) "┌" else "|";
     }
     pub fn topRightSep(comptime s: TableSymbols) []const u8 {
-        return comptime if (s.enable_ansi_colors) "┐" else "|";
+        return if (s.enable_ansi_colors) "┐" else "|";
     }
     pub fn topColumnSep(comptime s: TableSymbols) []const u8 {
-        return comptime if (s.enable_ansi_colors) "┬" else "-";
+        return if (s.enable_ansi_colors) "┬" else "-";
     }
 
     pub fn bottomLeftSep(comptime s: TableSymbols) []const u8 {
-        return comptime if (s.enable_ansi_colors) "└" else "|";
+        return if (s.enable_ansi_colors) "└" else "|";
     }
     pub fn bottomRightSep(comptime s: TableSymbols) []const u8 {
-        return comptime if (s.enable_ansi_colors) "┘" else "|";
+        return if (s.enable_ansi_colors) "┘" else "|";
     }
     pub fn bottomColumnSep(comptime s: TableSymbols) []const u8 {
-        return comptime if (s.enable_ansi_colors) "┴" else "-";
+        return if (s.enable_ansi_colors) "┴" else "-";
     }
 
     pub fn middleLeftSep(comptime s: TableSymbols) []const u8 {
-        return comptime if (s.enable_ansi_colors) "├" else "|";
+        return if (s.enable_ansi_colors) "├" else "|";
     }
     pub fn middleRightSep(comptime s: TableSymbols) []const u8 {
-        return comptime if (s.enable_ansi_colors) "┤" else "|";
+        return if (s.enable_ansi_colors) "┤" else "|";
     }
     pub fn middleColumnSep(comptime s: TableSymbols) []const u8 {
-        return comptime if (s.enable_ansi_colors) "┼" else "|";
+        return if (s.enable_ansi_colors) "┼" else "|";
     }
 
     pub fn horizontalEdge(comptime s: TableSymbols) []const u8 {
-        return comptime if (s.enable_ansi_colors) "─" else "-";
+        return if (s.enable_ansi_colors) "─" else "-";
     }
     pub fn verticalEdge(comptime s: TableSymbols) []const u8 {
-        return comptime if (s.enable_ansi_colors) "│" else "|";
+        return if (s.enable_ansi_colors) "│" else "|";
     }
 };
 

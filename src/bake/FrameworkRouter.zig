@@ -106,7 +106,10 @@ pub fn initEmpty(root: []const u8, types: []Type, allocator: Allocator) !Framewo
     var routes = try std.ArrayListUnmanaged(Route).initCapacity(allocator, types.len);
     errdefer routes.deinit(allocator);
 
-    for (0..types.len) |type_index| {
+    for (types, 0..) |*ty, type_index| {
+        ty.abs_root = bun.strings.withoutTrailingSlashWindowsPath(ty.abs_root);
+        bun.assert(bun.strings.hasPrefix(ty.abs_root, root));
+
         routes.appendAssumeCapacity(.{
             .part = .{ .text = "" },
             .type = Type.Index.init(@intCast(type_index)),
@@ -120,7 +123,7 @@ pub fn initEmpty(root: []const u8, types: []Type, allocator: Allocator) !Framewo
         });
     }
     return .{
-        .root = root,
+        .root = bun.strings.withoutTrailingSlashWindowsPath(root),
         .types = types,
         .routes = routes,
         .dynamic_routes = .{},
@@ -961,18 +964,22 @@ fn scanInner(
 
                     var rel_path_buf: bun.PathBuffer = undefined;
                     var full_rel_path = bun.path.relativeNormalizedBuf(
-                        &rel_path_buf,
+                        rel_path_buf[1..],
                         fr.root,
                         fs.abs(&.{ file.dir, file.base() }),
                         .auto,
                         true,
                     );
+                    rel_path_buf[0] = '/';
                     bun.path.platformToPosixInPlace(u8, rel_path_buf[0..full_rel_path.len]);
-                    const rel_path = full_rel_path[t.abs_root.len - 1 - fr.root.len ..];
+                    const rel_path = if (t.abs_root.len == fr.root.len)
+                        rel_path_buf[0 .. full_rel_path.len + 1]
+                    else
+                        full_rel_path[t.abs_root.len - fr.root.len - 1 ..];
                     var log = TinyLog.empty;
                     defer _ = arena_state.reset(.retain_capacity);
                     const parsed = (t.style.parse(rel_path, ext, &log, t.allow_layouts, arena_state.allocator()) catch {
-                        log.cursor_at += @intCast(t.abs_root.len - 1 - fr.root.len);
+                        log.cursor_at += @intCast(t.abs_root.len - fr.root.len);
                         try ctx.vtable.onRouterSyntaxError(ctx.opaque_ctx, full_rel_path, log);
                         continue :outer;
                     }) orelse continue :outer;
@@ -1056,8 +1063,6 @@ fn scanInner(
                 },
             }
         }
-
-        //
     }
 }
 

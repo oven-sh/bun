@@ -120,7 +120,9 @@ class DevFetchPromise extends Promise<Response> {
   expect(result: string) {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       const res = await this;
-      expect(res.ok).toBe(true);
+      if (!res.ok) {
+        throw new Error(`Expected response to be ok, but got ${res.status} ${res.statusText}`);
+      }
       const text = (await res.text()).trim();
       expect(text).toBe(result.trim());
     });
@@ -129,7 +131,9 @@ class DevFetchPromise extends Promise<Response> {
     expect(result).not.toMatch(/\s/);
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       const res = await this;
-      expect(res.ok).toBe(true);
+      if (!res.ok) {
+        throw new Error(`Expected response to be ok, but got ${res.status} ${res.statusText}`);
+      }
       const text = (await res.text()).replace(/\s/g, "");
       expect(text).toBe(result.trim());
     });

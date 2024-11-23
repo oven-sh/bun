@@ -418,7 +418,7 @@ pub const UDPSocket = struct {
                 continue;
             }
             if (i % 3 == 2) {
-                if (!this.parseAddr(globalThis, port, val, &addrs[slice_idx])) {
+                if (!try this.parseAddr(globalThis, port, val, &addrs[slice_idx])) {
                     return globalThis.throwInvalidArguments("Invalid address", .{});
                 }
                 addr_ptrs[slice_idx] = &addrs[slice_idx];
@@ -482,7 +482,7 @@ pub const UDPSocket = struct {
         var addr: std.posix.sockaddr.storage = std.mem.zeroes(std.posix.sockaddr.storage);
         const addr_ptr = brk: {
             if (dst) |dest| {
-                if (!this.parseAddr(globalThis, dest.port, dest.address, &addr)) {
+                if (!try this.parseAddr(globalThis, dest.port, dest.address, &addr)) {
                     return globalThis.throwInvalidArguments("Invalid address", .{});
                 }
                 break :brk &addr;

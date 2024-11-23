@@ -875,6 +875,9 @@ async function main() {
     }
   }
 
+  buildImages = false;
+  publishImages = false;
+
   console.log("Generating pipeline...");
   const pipeline = getPipeline({
     buildId: lastBuild && skipBuild && !forceBuild ? lastBuild.id : undefined,

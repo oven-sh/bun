@@ -828,7 +828,7 @@ extern "C" void NodeHTTP_assignOnCloseFunction(int is_ssl, void* uws_app)
         assignOnCloseFunction<false>(reinterpret_cast<uWS::TemplatedApp<false>*>(uws_app));
     }
 }
-extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::JSGlobalObject* globalObject, int* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, void** nodeHttpResponsePtr);
+extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::JSGlobalObject* globalObject, int* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, void* upgrade_ctx, void** nodeHttpResponsePtr);
 
 template<bool isSSL>
 static EncodedJSValue NodeHTTPServer__onRequest(
@@ -1099,7 +1099,6 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
     uWS::HttpRequest* request,
     uWS::HttpResponse<true>* response,
     void* upgrade_ctx,
-
     void** nodeHttpResponsePtr)
 {
     return NodeHTTPServer__onRequest<true>(any_server, globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, upgrade_ctx, nodeHttpResponsePtr);

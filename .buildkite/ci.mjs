@@ -255,9 +255,10 @@ function getPipeline(options) {
    * @param {"v1" | "v2"} version
    * @param {Platform} platform
    * @param {string} [instanceType]
+   * @param {number} [cpuCount]
    * @returns {Agent}
    */
-  const getEmphemeralAgent = (version, platform, instanceType) => {
+  const getEmphemeralAgent = (version, platform, instanceType, cpuCount) => {
     const { os, arch, abi, distro, release } = platform;
     if (version === "v1") {
       return {
@@ -289,16 +290,42 @@ function getPipeline(options) {
       release,
       "image-name": image,
       "instance-type": instanceType,
+      "cpu-count": cpuCount,
     };
   };
 
   /**
-   * @param {Target} target
+   * @param {Platform} platform
    * @returns {string}
    */
-  const getBuildInstanceType = target => {
-    const { arch } = target;
-    return arch === "aarch64" ? "c8g.8xlarge" : "c7i.8xlarge";
+  const getEmphemeralBuildAgent = platform => {
+    const { arch } = platform;
+    const instanceType = arch === "aarch64" ? "c8g.8xlarge" : "c7i.8xlarge";
+    const cpuCount = 32;
+    return getEmphemeralAgent("v2", platform, instanceType, cpuCount);
+  };
+
+  /**
+   * @param {Platform} platform
+   * @returns {Agent}
+   */
+  const getEmphemeralTestAgent = platform => {
+    const { os, arch } = platform;
+    let instanceType;
+    let cpuCount;
+    if (os === "windows") {
+      // TODO: `dev-server-ssr-110.test.ts` and `next-build.test.ts` run out of memory
+      // at 8GB of memory, so use 16GB instead.
+      instanceType = "c7i.2xlarge";
+      cpuCount = 8;
+    } else if (arch === "aarch64") {
+      instanceType = "c8g.xlarge";
+      cpuCount = 4;
+    } else {
+      instanceType = "c7i.xlarge";
+      cpuCount = 4;
+    }
+    return getEmphemeralAgent("v2", platform, instanceType, cpuCount);
   };
 
   /**
@@ -308,7 +335,7 @@ function getPipeline(options) {
   const getBuildAgent = target => {
     const { os, arch, abi } = target;
     if (isUsingNewAgent(target)) {
-      return getEmphemeralAgent("v2", target, getBuildInstanceType(target));
+      return getEmphemeralBuildAgent(target);
     }
     return {
       queue: `build-${os}`,
@@ -343,29 +370,12 @@ function getPipeline(options) {
 
   /**
    * @param {Platform} platform
-   * @returns {string}
-   */
-  const getTestInstanceType = platform => {
-    const { os, arch } = platform;
-    // TODO: `dev-server-ssr-110.test.ts` and `next-build.test.ts` run out of memory
-    // on `t3.large`, which has 8GB of memory. `t3.xlarge` has 16GB of memory.
-    if (os === "windows") {
-      return "t3.xlarge";
-    }
-    if (arch === "aarch64") {
-      return "t4g.large";
-    }
-    return "t3.large";
-  };
-
-  /**
-   * @param {Platform} platform
    * @returns {Agent}
    */
   const getTestAgent = platform => {
     const { os, arch, release } = platform;
     if (isUsingNewAgent(platform)) {
-      return getEmphemeralAgent("v2", platform, getTestInstanceType(platform));
+      return getEmphemeralTestAgent(platform);
     }
     if (os === "darwin") {
       return {

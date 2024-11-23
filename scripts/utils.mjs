@@ -2146,6 +2146,113 @@ export function sha256(string) {
 }
 
 /**
+ * @param {string} level
+ * @returns {"info" | "warning" | "error"}
+ */
+function parseLevel(level) {
+  if (/error|fatal|fail/i.test(level)) {
+    return "error";
+  }
+  if (/warn|caution/i.test(level)) {
+    return "warning";
+  }
+  return "info";
+}
+
+/**
+ * @typedef {Object} Annotation
+ * @property {string} title
+ * @property {string} [content]
+ * @property {"info" | "warning" | "error"} [level]
+ * @property {string} [url]
+ * @property {string} [filename]
+ * @property {number} [line]
+ * @property {number} [column]
+ */
+
+/**
+ * @typedef {Object} AnnotationOptions
+ * @property {string} [cwd]
+ */
+
+/**
+ * @typedef {Object} AnnotationResult
+ * @property {Annotation[]} annotations
+ * @property {string} content
+ * @property {string} preview
+ */
+
+/**
+ * @param {string} content
+ * @param {AnnotationOptions} [options]
+ * @returns {Annotation[]}
+ */
+function parseAnnotations(content, options = {}) {
+  /** @type {Annotation[]} */
+  const annotations = [];
+
+  /**
+   * @param {Record<keyof Annotation, unknown>} options
+   */
+  const addAnnotation = ({ title, content, level, filename, line, column }) => {
+    const annotation = {
+      title,
+      content,
+      level: parseLevel(String(level || "info")),
+      filename,
+      line: parseInt(line) || undefined,
+      column: parseInt(column) || undefined,
+    };
+
+    annotations.push(annotation);
+  };
+
+  const originalLines = content.split(/(\r?\n)/);
+  const lines = [];
+  const previewLines = [];
+
+  for (let i = 0; i < originalLines.length; i++) {
+    const originalLine = originalLines[i];
+    const line = stripAnsi(originalLine);
+
+    // Github Actions
+    // https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions
+    const githubAnnotation = line.match(/^::(error|warning|notice|debug)(?: (.*))?::(.*)$/);
+    if (githubAnnotation) {
+      const [, level, attributes, content] = githubAnnotation;
+      const { file, line, col, title } = Object.fromEntries(
+        attributes?.split(",")?.map(entry => entry.split("=")) || {},
+      );
+
+      addAnnotation({ level, filename: file, line, column: col, title, content });
+      continue;
+    }
+
+    const githubCommand = line.match(/^::(group|endgroup|add-mask|stop-commands)::$/);
+    if (githubCommand) {
+      continue;
+    }
+
+    // CMake error format
+    // e.g. CMake Error at /path/to/thing.cmake:123 (message): ...
+    const cmakeMessage = line.match(/^CMake (Error|Warning|Deprecation Warning) at (.*):(\d+)/);
+    if (cmakeMessage) {
+      const [, level, filename, line] = cmakeMessage;
+
+      addAnnotation({ level, filename, line, content: originalLine });
+    }
+
+    lines.push(originalLine);
+  }
+
+  return {
+    annotations,
+    content: lines.join("\n"),
+    preview: previewLines.join("\n"),
+  };
+}
+
+/**
  * @param {object} obj
  * @param {number} indent
  * @returns {string}

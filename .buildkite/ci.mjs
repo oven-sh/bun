@@ -827,11 +827,6 @@ async function main() {
       publishImages = true;
       buildImages = true;
     }
-    if (ciFileChanged && isMainBranch()) {
-      console.log(" - Yes, because a core CI file changed and this is main branch");
-      publishImages = true;
-      buildImages = true;
-    }
   }
 
   console.log("Checking if build should be skipped...");

@@ -732,8 +732,7 @@ pub const ParsedShellScript = struct {
 
         const value1 = callframe.argument(0);
         if (!value1.isObject()) {
-            globalThis.throwInvalidArguments("env must be an object", .{});
-            return .undefined;
+            return globalThis.throwInvalidArguments("env must be an object", .{});
         }
 
         var object_iter = JSC.JSPropertyIterator(.{
@@ -1784,8 +1783,7 @@ pub const Interpreter = struct {
     pub fn setEnv(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const value1 = callframe.argument(0);
         if (!value1.isObject()) {
-            globalThis.throwInvalidArguments("env must be an object", .{});
-            return .undefined;
+            return globalThis.throwInvalidArguments("env must be an object", .{});
         }
 
         var object_iter = JSC.JSPropertyIterator(.{
@@ -4960,23 +4958,11 @@ pub const Interpreter = struct {
                         } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob__| {
                             const blob = blob__.dupe();
                             if (this.node.redirect.stdin) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
-                                    .Blob = blob,
-                                }, stdin_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdin_no) catch return;
                             } else if (this.node.redirect.stdout) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
-                                    .Blob = blob,
-                                }, stdout_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdout_no) catch return;
                             } else if (this.node.redirect.stderr) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
-                                    .Blob = blob,
-                                }, stderr_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stderr_no) catch return;
                             }
                         } else if (JSC.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
                             _ = rstream;
@@ -4984,26 +4970,17 @@ pub const Interpreter = struct {
                         } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Response)) |req| {
                             req.getBodyValue().toBlobIfPossible();
                             if (this.node.redirect.stdin) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no) catch return;
                             }
                             if (this.node.redirect.stdout) {
-                                if (!spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no) catch return;
                             }
                             if (this.node.redirect.stderr) {
-                                if (!spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no)) {
-                                    return;
-                                }
+                                spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no) catch return;
                             }
                         } else {
                             const jsval = this.base.interpreter.jsobjs[val.idx];
-                            global.throw(
-                                "Unknown JS value used in shell: {}",
-                                .{jsval.fmtString(global)},
-                            );
+                            global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)});
                             return;
                         }
                     },

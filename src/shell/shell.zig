@@ -98,7 +98,7 @@ pub const ShellErr = union(enum) {
                 // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
             .invalid_arguments => {
-                return globalThis.throwInvalidArguments2("{s}", .{this.invalid_arguments.val});
+                return globalThis.throwInvalidArguments("{s}", .{this.invalid_arguments.val});
             },
             .todo => {
                 return globalThis.throwTODO(this.todo);

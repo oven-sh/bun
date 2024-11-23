@@ -638,10 +638,10 @@ pub const Body = struct {
                 .Blob = Blob.get(globalThis, value, true, false) catch |err| {
                     if (!globalThis.hasException()) {
                         if (err == error.InvalidArguments) {
-                            return globalThis.throwInvalidArguments2("Expected an Array", .{});
+                            return globalThis.throwInvalidArguments("Expected an Array", .{});
                         }
 
-                        return globalThis.throwInvalidArguments2("Invalid Body object", .{});
+                        return globalThis.throwInvalidArguments("Invalid Body object", .{});
                     }
 
                     return error.JSError;

@@ -997,8 +997,7 @@ pub const FormData = struct {
         };
 
         if (input_value.isEmptyOrUndefinedOrNull()) {
-            globalThis.throwInvalidArguments("input must not be empty", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("input must not be empty", .{});
         }
 
         if (!boundary_value.isEmptyOrUndefinedOrNull()) {
@@ -1011,8 +1010,7 @@ pub const FormData = struct {
                     encoding = .{ .Multipart = boundary_slice.slice() };
                 }
             } else {
-                globalThis.throwInvalidArguments("boundary must be a string or ArrayBufferView", .{});
-                return .zero;
+                return globalThis.throwInvalidArguments("boundary must be a string or ArrayBufferView", .{});
             }
         }
         var input_slice = JSC.ZigString.Slice{};
@@ -1027,8 +1025,7 @@ pub const FormData = struct {
         } else if (input_value.as(JSC.WebCore.Blob)) |blob| {
             input = blob.sharedView();
         } else {
-            globalThis.throwInvalidArguments("input must be a string or ArrayBufferView", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("input must be a string or ArrayBufferView", .{});
         }
 
         return FormData.toJS(globalThis, input, encoding) catch |err| return globalThis.throwError(err, "while parsing FormData");

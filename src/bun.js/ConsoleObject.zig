@@ -706,8 +706,7 @@ pub const FormatOptions = struct {
                 if (opt.isInt32()) {
                     const arg = opt.toInt32();
                     if (arg < 0) {
-                        globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (opt.isNumber()) {
@@ -715,8 +714,7 @@ pub const FormatOptions = struct {
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
-                        globalThis.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
                     }
                 }
             }
@@ -737,8 +735,7 @@ pub const FormatOptions = struct {
                 if (depthArg.isInt32()) {
                     const arg = depthArg.toInt32();
                     if (arg < 0) {
-                        globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (depthArg.isNumber()) {
@@ -746,8 +743,7 @@ pub const FormatOptions = struct {
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
-                        globalThis.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
                     }
                 }
                 if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull()) {

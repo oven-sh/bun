@@ -325,8 +325,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     };
 
     if (!object.isObject()) {
-        globalObject.throwInvalidArguments("Expected an object", .{});
-        return error.JSError;
+        return globalObject.throwInvalidArguments("Expected an object", .{});
     }
 
     if (try object.getTruthy(globalObject, "define")) |define| {
@@ -336,8 +335,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             }
 
             if (!define.isObject()) {
-                globalObject.throwInvalidArguments("define must be an object", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments("define must be an object", .{});
             }
 
             var define_iter = JSC.JSPropertyIterator(.{
@@ -358,8 +356,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 const value_type = property_value.jsType();
 
                 if (!value_type.isStringLike()) {
-                    globalObject.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
-                    return error.JSError;
+                    return globalObject.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
                 }
 
                 names[define_iter.i] = prop.toOwnedSlice(allocator) catch unreachable;
@@ -399,8 +396,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 var i: usize = 0;
                 while (iter.next()) |entry| {
                     if (!entry.jsType().isStringLike()) {
-                        globalObject.throwInvalidArguments("external must be a string or string[]", .{});
-                        return error.JSError;
+                        return globalObject.throwInvalidArguments("external must be a string or string[]", .{});
                     }
 
                     var zig_str = JSC.ZigString.init("");
@@ -412,8 +408,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 
                 transpiler.transform.external = externals[0..i];
             } else {
-                globalObject.throwInvalidArguments("external must be a string or string[]", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments("external must be a string or string[]", .{});
             }
         }
     }
@@ -421,8 +416,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     if (try object.get(globalThis, "loader")) |loader| {
         if (try Loader.fromJS(globalThis, loader)) |resolved| {
             if (!resolved.isJavaScriptLike()) {
-                globalObject.throwInvalidArguments("only JavaScript-like loaders supported for now", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments("only JavaScript-like loaders supported for now", .{});
             }
 
             transpiler.default_loader = resolved;
@@ -443,8 +437,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             defer out.deref();
 
             if (kind.isArray()) {
-                globalObject.throwInvalidArguments("tsconfig must be a string or object", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments("tsconfig must be a string or object", .{});
             }
 
             if (!kind.isStringLike()) {
@@ -484,8 +477,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             const kind = macros.jsType();
             const is_object = kind.isObject();
             if (!(kind.isStringLike() or is_object)) {
-                globalObject.throwInvalidArguments("macro must be an object", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments("macro must be an object", .{});
             }
 
             var out = bun.String.empty;
@@ -545,8 +537,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 transpiler.minify_identifiers = syntax;
             }
         } else {
-            globalObject.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
-            return error.JSError;
+            return globalObject.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
         }
     }
 
@@ -561,8 +552,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             if (options.SourceMapOption.Map.fromJS(globalObject, flag)) |source| {
                 transpiler.transform.source_map = source.toAPI();
             } else {
-                globalObject.throwInvalidArguments("sourcemap must be one of \"inline\", \"linked\", \"external\", or \"none\"", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments("sourcemap must be one of \"inline\", \"linked\", \"external\", or \"none\"", .{});
             }
         }
     }
@@ -583,8 +573,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 
     if (try object.getTruthy(globalThis, "exports")) |exports| {
         if (!exports.isObject()) {
-            globalObject.throwInvalidArguments("exports must be an object", .{});
-            return error.JSError;
+            return globalObject.throwInvalidArguments("exports must be an object", .{});
         }
 
         var replacements = Runtime.Features.ReplaceableExport.Map{};
@@ -592,8 +581,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 
         if (try exports.getTruthy(globalThis, "eliminate")) |eliminate| {
             if (!eliminate.jsType().isArray()) {
-                globalObject.throwInvalidArguments("exports.eliminate must be an array", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments("exports.eliminate must be an array", .{});
             }
 
             var total_name_buf_len: u32 = 0;
@@ -620,8 +608,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                         const str = value.getZigString(globalThis);
                         if (str.len == 0) continue;
                         const name = std.fmt.bufPrint(buf.items.ptr[buf.items.len..buf.capacity], "{}", .{str}) catch {
-                            globalObject.throwInvalidArguments("Error reading exports.eliminate. TODO: utf-16", .{});
-                            return error.JSError;
+                            return globalObject.throwInvalidArguments("Error reading exports.eliminate. TODO: utf-16", .{});
                         };
                         buf.items.len += name.len;
                         if (name.len > 0) {
@@ -634,8 +621,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 
         if (try exports.getTruthy(globalThis, "replace")) |replace| {
             if (!replace.isObject()) {
-                globalObject.throwInvalidArguments("replace must be an object", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments("replace must be an object", .{});
             }
 
             var iter = JSC.JSPropertyIterator(.{
@@ -664,9 +650,8 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                     const key = try key_.toOwnedSlice(bun.default_allocator);
 
                     if (!JSLexer.isIdentifier(key)) {
-                        globalObject.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{key});
                         bun.default_allocator.free(key);
-                        return error.JSError;
+                        return globalObject.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{key});
                     }
 
                     const entry = replacements.getOrPutAssumeCapacity(key);
@@ -684,9 +669,8 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                             const replacement_name = slice.slice();
 
                             if (!JSLexer.isIdentifier(replacement_name)) {
-                                globalObject.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{replacement_name});
                                 slice.deinit();
-                                return error.JSError;
+                                return globalObject.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{replacement_name});
                             }
 
                             entry.value_ptr.* = .{
@@ -699,8 +683,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                         }
                     }
 
-                    globalObject.throwInvalidArguments("exports.replace values can only be string, null, undefined, number or boolean", .{});
-                    return error.JSError;
+                    return globalObject.throwInvalidArguments("exports.replace values can only be string, null, undefined, number or boolean", .{});
                 }
             }
         }
@@ -713,8 +696,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         if (logger.Log.Level.Map.fromJS(globalObject, logLevel)) |level| {
             transpiler.log.level = level;
         } else {
-            globalObject.throwInvalidArguments("logLevel must be one of \"verbose\", \"debug\", \"info\", \"warn\", or \"error\"", .{});
-            return error.JSError;
+            return globalObject.throwInvalidArguments("logLevel must be one of \"verbose\", \"debug\", \"info\", \"warn\", or \"error\"", .{});
         }
     }
 
@@ -1156,11 +1138,7 @@ fn namedImportsToJS(
     return array;
 }
 
-pub fn scanImports(
-    this: *Transpiler,
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+pub fn scanImports(this: *Transpiler, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(2);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
     defer args.deinit();
@@ -1189,8 +1167,7 @@ pub fn scanImports(
     }
 
     if (!loader.isJavaScriptLike()) {
-        globalThis.throwInvalidArguments("Only JavaScript-like files support this fast path", .{});
-        return .zero;
+        return globalThis.throwInvalidArguments("Only JavaScript-like files support this fast path", .{});
     }
 
     var arena = Mimalloc.Arena.init() catch unreachable;

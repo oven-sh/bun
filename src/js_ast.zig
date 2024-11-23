@@ -3533,6 +3533,39 @@ pub const Expr = struct {
         return obj.asProperty(name);
     }
 
+    pub fn asPropertyStringMap(expr: *const Expr, name: string, allocator: std.mem.Allocator) ?*bun.StringArrayHashMap(string) {
+        if (std.meta.activeTag(expr.data) != .e_object) return null;
+        const obj_ = expr.data.e_object;
+        if (@intFromPtr(obj_.properties.ptr) == 0) return null;
+        const query = obj_.asProperty(name) orelse return null;
+        if (query.expr.data != .e_object) return null;
+
+        const obj = query.expr.data.e_object;
+        var count: usize = 0;
+        for (obj.properties.slice()) |prop| {
+            const key = prop.key.?.asString(allocator) orelse continue;
+            const value = prop.value.?.asString(allocator) orelse continue;
+            count += @as(usize, @intFromBool(key.len > 0 and value.len > 0));
+        }
+
+        if (count == 0) return null;
+        var map = bun.StringArrayHashMap(string).init(allocator);
+        map.ensureUnusedCapacity(count) catch return null;
+
+        for (obj.properties.slice()) |prop| {
+            const key = prop.key.?.asString(allocator) orelse continue;
+            const value = prop.value.?.asString(allocator) orelse continue;
+
+            if (!(key.len > 0 and value.len > 0)) continue;
+
+            map.putAssumeCapacity(key, value);
+        }
+
+        const ptr = allocator.create(bun.StringArrayHashMap(string)) catch unreachable;
+        ptr.* = map;
+        return ptr;
+    }
+
     pub const ArrayIterator = struct {
         array: *const E.Array,
         index: u32,

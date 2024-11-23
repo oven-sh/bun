@@ -10,7 +10,6 @@ optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
 
 if(BUILDKITE)
   optionx(BUILDKITE_COMMIT STRING "The commit hash")
-  optionx(BUILDKITE_MESSAGE STRING "The commit message")
 endif()
 
 optionx(CMAKE_BUILD_TYPE "Debug|Release|RelWithDebInfo|MinSizeRel" "The build type to use" REQUIRED)
@@ -56,14 +55,7 @@ endif()
 optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEBUG})
 optionx(ENABLE_ASSERTIONS BOOL "If debug assertions should be enabled" DEFAULT ${DEBUG})
 
-if(BUILDKITE_MESSAGE AND BUILDKITE_MESSAGE MATCHES "\\[release build\\]")
-  message(STATUS "Switched to release build, since commit message contains: \"[release build]\"")
-  set(DEFAULT_CANARY OFF)
-else()
-  set(DEFAULT_CANARY ON)
-endif()
-
-optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ${DEFAULT_CANARY})
+optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ON)
 
 if(ENABLE_CANARY AND BUILDKITE)
   execute_process(

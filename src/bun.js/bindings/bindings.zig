@@ -5455,6 +5455,13 @@ pub const JSValue = enum(i64) {
     pub fn truthyPropertyValue(prop: JSValue) ?JSValue {
         return switch (prop) {
             .null => null,
+
+            // Handled by get() and fastGet().
+            .zero, .undefined => unreachable,
+
+            // false, 0, are deliberately not includedin this list.
+            // That would prevent you from passing `0` or `false` to various Bun APIs.
+
             else => {
                 // Ignore null, undefined, and empty string.
                 if (prop.isString()) {
@@ -5471,7 +5478,7 @@ pub const JSValue = enum(i64) {
     // TODO: replace calls to this function with `getOptional`
     pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) bun.JSError!?JSValue {
         if (comptime BuiltinName.has(property)) {
-            return truthyPropertyValue(fastGet(this, global, @field(BuiltinName, property)));
+            return truthyPropertyValue(fastGet(this, global, @field(BuiltinName, property)) orelse return null);
         }
 
         return getTruthy(this, global, property);

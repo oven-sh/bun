@@ -5452,26 +5452,26 @@ pub const JSValue = enum(i64) {
         return getOwnTruthy(this, global, property);
     }
 
-    // TODO: replace calls to this function with `getOptional`
-    pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) bun.JSError!?JSValue {
-        if (comptime bun.ComptimeEnumMap(BuiltinName).has(property)) {
-            if (fastGet(this, global, @field(BuiltinName, property))) |prop| {
-                switch (prop) {
-                    .null, .undefined => return null,
-                    else => {
-                        // Ignore null, undefined, and empty string.
-                        if (prop.isString()) {
-                            if (!prop.toBoolean()) {
-                                return null;
-                            }
-                        }
-                    },
+    pub fn truthyPropertyValue(prop: JSValue) ?JSValue {
+        return switch (prop) {
+            .null => null,
+            else => {
+                // Ignore null, undefined, and empty string.
+                if (prop.isString()) {
+                    if (!prop.toBoolean()) {
+                        return null;
+                    }
                 }
 
                 return prop;
-            }
+            },
+        };
+    }
 
-            return null;
+    // TODO: replace calls to this function with `getOptional`
+    pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) bun.JSError!?JSValue {
+        if (comptime BuiltinName.has(property)) {
+            return truthyPropertyValue(fastGet(this, global, @field(BuiltinName, property)));
         }
 
         return getTruthy(this, global, property);
@@ -5480,19 +5480,7 @@ pub const JSValue = enum(i64) {
     // TODO: replace calls to this function with `getOptional`
     pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?JSValue {
         if (try get(this, global, property)) |prop| {
-            switch (prop) {
-                .null, .undefined => {},
-                else => {
-                    // Ignore null, undefined, and empty string.
-                    if (prop.isString()) {
-                        if (!prop.toBoolean()) {
-                            return null;
-                        }
-                    }
-
-                    return prop;
-                },
-            }
+            return truthyPropertyValue(prop);
         }
 
         return null;

@@ -834,6 +834,18 @@ pub const Fetch = struct {
             }
         }
 
+        pub fn derefFromThread(this: *FetchTasklet) void {
+            const count = this.ref_count.fetchSub(1, .monotonic);
+            bun.debugAssert(count > 0);
+
+            if (count == 1) {
+                // this is really unlikely to happen, but can happen
+                // lets make sure that we always call deinit from main thread
+
+                this.javascript_vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
+            }
+        }
+
         pub const HTTPRequestBody = union(enum) {
             AnyBlob: AnyBlob,
             Sendfile: http.Sendfile,
@@ -918,7 +930,7 @@ pub const Fetch = struct {
             this.clearAbortSignal();
         }
 
-        fn deinit(this: *FetchTasklet) void {
+        pub fn deinit(this: *FetchTasklet) void {
             log("deinit", .{});
 
             bun.assert(this.ref_count.load(.monotonic) == 0);
@@ -1785,9 +1797,11 @@ pub const Fetch = struct {
         }
 
         pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
+            // at this point only this thread is accessing result to is no race condition
             const is_done = !result.has_more;
             // we are done with the http client so we can deref our side
-            defer if (is_done) task.deref();
+            // this is a atomic operation and will enqueue a task to deinit on the main thread
+            defer if (is_done) task.derefFromThread();
 
             task.mutex.lock();
             // we need to unlock before task.deref();

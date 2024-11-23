@@ -277,7 +277,7 @@ function getPipeline(options) {
     if (buildImages && !publishImages) {
       image += `-build-${getBuildNumber()}`;
     } else {
-      image += `-v${getBootstrapVersion()}`;
+      image += `-v${getBootstrapVersion(os)}`;
     }
     return {
       robobun: true,

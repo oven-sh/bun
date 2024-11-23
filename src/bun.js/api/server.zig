@@ -5805,6 +5805,7 @@ pub const NodeHTTPResponse = struct {
     is_request_pending: bool = true,
     body_read_state: BodyReadState = .none,
     body_read_ref: JSC.Ref = .{},
+    upgrade_ctx: ?*uws.uws_socket_context_t = null,
     promise: JSC.Strong = .{},
     server: AnyServer,
 
@@ -7804,12 +7805,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.pending_requests += 1;
         }
 
-        pub fn onNodeHTTPRequest(
-            this: *ThisServer,
-            req: *uws.Request,
-            resp: *App.Response,
-        ) void {
-            JSC.markBinding(@src());
+        pub fn onNodeHTTPRequestWithUpgradeCtx(this: *ThisServer, req: *uws.Request, resp: *App.Response, upgrade_ctx: ?*uws.uws_socket_context_t) void {
             this.onPendingRequest();
             if (comptime Environment.isDebug) {
                 this.vm.eventLoop().debug.enter();
@@ -7831,6 +7827,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             defer {
                 if (!is_async) {
                     if (node_http_response) |node_response| {
+                        node_response.upgrade_ctx = upgrade_ctx;
                         node_response.deref();
                     }
                 }
@@ -7934,6 +7931,15 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     node_response.maybeStopReadingBody(vm);
                 }
             }
+        }
+
+        pub fn onNodeHTTPRequest(
+            this: *ThisServer,
+            req: *uws.Request,
+            resp: *App.Response,
+        ) void {
+            JSC.markBinding(@src());
+            onNodeHTTPRequestWithUpgradeCtx(this, req, resp);
         }
 
         const onNodeHTTPRequestFn = if (ssl_enabled)
@@ -8190,6 +8196,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             _: usize,
         ) void {
             JSC.markBinding(@src());
+            if (this.config.onNodeHTTPRequest != .zero) {
+                onNodeHTTPRequestWithUpgradeCtx(this, resp, req, upgrade_ctx);
+                return;
+            }
             this.pending_requests += 1;
             req.setYield(false);
             var ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();

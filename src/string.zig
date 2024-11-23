@@ -709,7 +709,9 @@ pub const String = extern struct {
             bun.assert(out.tag != .Dead);
             return out;
         } else {
-            bun.assert(globalObject.hasException());
+            if (comptime bun.Environment.isDebug) {
+                bun.assert(globalObject.hasException());
+            }
             return error.JSError;
         }
     }
@@ -721,7 +723,9 @@ pub const String = extern struct {
         if (BunString__fromJSRef(globalObject, value, &out)) {
             return out;
         } else {
-            bun.assert(globalObject.hasException());
+            if (comptime bun.Environment.isDebug) {
+                bun.assert(globalObject.hasException());
+            }
             return error.JSError;
         }
     }

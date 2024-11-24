@@ -28,16 +28,7 @@ describe("AbortSignal", () => {
       cwd: tmpdir(),
     });
 
-    const exitCode = await Promise.race([
-      server.exited,
-      (async () => {
-        await Bun.sleep(5000);
-        server.kill();
-        return 2;
-      })(),
-    ]);
-
-    expect(exitCode).toBe(0);
+    expect(await server.exited).toBe(0);
   });
 
   test("AbortSignal.any() should fire abort event", async () => {

@@ -40,11 +40,11 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
         globalThis.throw("minifyTestWithOptions: expected 2 arguments, got 0", .{});
-        return .undefined;
+        return .zero;
     };
     if (!source_arg.isString()) {
         globalThis.throw("minifyTestWithOptions: expected source to be a string", .{});
-        return .undefined;
+        return .zero;
     }
     const source_bunstr = source_arg.toBunString(globalThis);
     defer source_bunstr.deref();
@@ -53,11 +53,11 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
 
     const expected_arg = arguments.nextEat() orelse {
         globalThis.throw("minifyTestWithOptions: expected 2 arguments, got 1", .{});
-        return .undefined;
+        return .zero;
     };
     if (!expected_arg.isString()) {
         globalThis.throw("minifyTestWithOptions: expected `expected` arg to be a string", .{});
-        return .undefined;
+        return .zero;
     }
     const expected_bunstr = expected_arg.toBunString(globalThis);
     defer expected_bunstr.deref();
@@ -120,7 +120,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
                 return log.toJS(globalThis, bun.default_allocator, "parsing failed:");
             }
             globalThis.throw("parsing failed: {}", .{err.kind});
-            return .undefined;
+            return .zero;
         },
     }
 }
@@ -206,11 +206,11 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
         globalThis.throw("attrTest: expected 3 arguments, got 0", .{});
-        return .undefined;
+        return .zero;
     };
     if (!source_arg.isString()) {
         globalThis.throw("attrTest: expected source to be a string", .{});
-        return .undefined;
+        return .zero;
     }
     const source_bunstr = source_arg.toBunString(globalThis);
     defer source_bunstr.deref();
@@ -219,11 +219,11 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
 
     const expected_arg = arguments.nextEat() orelse {
         globalThis.throw("attrTest: expected 3 arguments, got 1", .{});
-        return .undefined;
+        return .zero;
     };
     if (!expected_arg.isString()) {
         globalThis.throw("attrTest: expected `expected` arg to be a string", .{});
-        return .undefined;
+        return .zero;
     }
     const expected_bunstr = expected_arg.toBunString(globalThis);
     defer expected_bunstr.deref();
@@ -232,7 +232,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
 
     const minify_arg: JSC.JSValue = arguments.nextEat() orelse {
         globalThis.throw("attrTest: expected 3 arguments, got 2", .{});
-        return .undefined;
+        return .zero;
     };
     const minify = minify_arg.isBoolean() and minify_arg.toBoolean();
 
@@ -271,7 +271,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
                 return log.toJS(globalThis, bun.default_allocator, "parsing failed:");
             }
             globalThis.throw("parsing failed: {}", .{err.kind});
-            return .undefined;
+            return .zero;
         },
     }
 }

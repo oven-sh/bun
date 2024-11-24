@@ -706,7 +706,9 @@ pub const String = extern struct {
     pub fn fromJS2(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
         var out: String = String.dead;
         if (BunString__fromJS(globalObject, value, &out)) {
-            bun.assert(out.tag != .Dead);
+            if (comptime bun.Environment.isDebug) {
+                bun.assert(out.tag != .Dead);
+            }
             return out;
         } else {
             if (comptime bun.Environment.isDebug) {

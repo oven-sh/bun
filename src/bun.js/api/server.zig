@@ -1304,11 +1304,9 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (try arg.getTruthy(global, "hostname") orelse try arg.getTruthy(global, "host")) |host| {
-                const host_str = host.toSlice(
-                    global,
-                    bun.default_allocator,
-                );
+            if (try arg.getStringish(global, "hostname") orelse try arg.getStringish(global, "host")) |host| {
+                defer host.deref();
+                const host_str = host.toUTF8(bun.default_allocator);
                 defer host_str.deinit();
 
                 if (host_str.len > 0) {
@@ -1318,11 +1316,9 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (try arg.getTruthy(global, "unix")) |unix| {
-                const unix_str = unix.toSlice(
-                    global,
-                    bun.default_allocator,
-                );
+            if (try arg.getStringish(global, "unix")) |unix| {
+                defer unix.deref();
+                const unix_str = unix.toUTF8(bun.default_allocator);
                 defer unix_str.deinit();
                 if (unix_str.len > 0) {
                     if (has_hostname) {

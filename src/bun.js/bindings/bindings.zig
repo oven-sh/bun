@@ -5459,11 +5459,11 @@ pub const JSValue = enum(i64) {
             // Handled by get() and fastGet().
             .zero, .undefined => unreachable,
 
-            // false, 0, are deliberately not includedin this list.
+            // false, 0, are deliberately not included in this list.
             // That would prevent you from passing `0` or `false` to various Bun APIs.
 
             else => {
-                // Ignore null, undefined, and empty string.
+                // Ignore empty string.
                 if (prop.isString()) {
                     if (!prop.toBoolean()) {
                         return null;
@@ -5491,6 +5491,37 @@ pub const JSValue = enum(i64) {
         }
 
         return null;
+    }
+
+    /// Get a value that can be coerced to a string.
+    ///
+    /// Returns null when the value is:
+    /// - JSValue.null
+    /// - JSValue.false
+    /// - JSValue.undefined
+    /// - an empty string
+    pub fn getStringish(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?bun.String {
+        const prop = try get(this, global, property) orelse return null;
+        if (prop.isNull() or prop == .false) {
+            return null;
+        }
+
+        if (prop.isSymbol()) {
+            _ = global.throwInvalidPropertyTypeValue(property, "string", prop);
+            return error.JSError;
+        }
+
+        const str = prop.toBunString(global);
+        if (global.hasException()) {
+            str.deref();
+            return error.JSError;
+        }
+
+        if (str.isEmpty()) {
+            return null;
+        }
+
+        return str;
     }
 
     pub fn toEnumFromMap(

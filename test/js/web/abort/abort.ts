@@ -110,15 +110,11 @@ describe("AbortSignal", () => {
         expect(() => AbortSignal.timeout(timeout)).toThrow(TypeError);
       });
     }
-    // FIXME: test runner hangs when this is enabled
-    test.skip("timeout works", done => {
+    test("timeout works", done => {
       const abort = AbortSignal.timeout(1);
       abort.addEventListener("abort", event => {
         done();
       });
-      // AbortSignal.timeout doesn't keep the event loop / process alive
-      // so we set a no-op timeout
-      setTimeout(() => {}, 10);
     });
   });
   describe("prototype", () => {

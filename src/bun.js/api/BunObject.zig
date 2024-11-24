@@ -337,7 +337,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     if (tokenize) {
         const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, lexer_output.tokens.items[0..], .{}) catch {
             globalThis.throwOutOfMemory();
-            return JSValue.zero;
+            return .zero;
         };
         defer globalThis.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
@@ -350,7 +350,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         };
         const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, ast_node, .{}) catch {
             globalThis.throwOutOfMemory();
-            return JSValue.undefined;
+            return .zero;
         };
         defer globalThis.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
@@ -2078,7 +2078,7 @@ pub const Crypto = struct {
                     .err => {
                         const error_instance = value.toErrorInstance(globalObject);
                         globalObject.throwValue(error_instance);
-                        return JSC.JSValue.undefined;
+                        return .zero;
                     },
                     .pass => |pass| {
                         return JSC.JSValue.jsBoolean(pass);
@@ -2316,7 +2316,7 @@ pub const Crypto = struct {
             if (arguments.len > 2 and !arguments[2].isEmptyOrUndefinedOrNull()) {
                 if (!arguments[2].isString()) {
                     globalObject.throwInvalidArgumentType("verify", "algorithm", "string");
-                    return JSC.JSValue.undefined;
+                    return .zero;
                 }
 
                 const algorithm_string = arguments[2].getZigString(globalObject);
@@ -2325,7 +2325,7 @@ pub const Crypto = struct {
                     if (!globalObject.hasException()) {
                         globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
                     }
-                    return JSC.JSValue.undefined;
+                    return .zero;
                 };
             }
 
@@ -2333,7 +2333,7 @@ pub const Crypto = struct {
                 if (!globalObject.hasException()) {
                     globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
                 }
-                return JSC.JSValue.undefined;
+                return .zero;
             };
 
             var hash_ = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[1]) orelse {
@@ -2341,7 +2341,7 @@ pub const Crypto = struct {
                 if (!globalObject.hasException()) {
                     globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
                 }
-                return JSC.JSValue.undefined;
+                return .zero;
             };
 
             defer password.deinit();

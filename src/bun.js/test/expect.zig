@@ -677,7 +677,7 @@ pub const Expect = struct {
             var itr = list_value.arrayIterator(globalThis);
             while (itr.next()) |item| {
                 // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
-                if (item.jestDeepEquals(expected, globalThis)) {
+                if (try item.jestDeepEquals(expected, globalThis)) {
                     pass = true;
                     break;
                 }
@@ -697,7 +697,7 @@ pub const Expect = struct {
                 ) callconv(.C) void {
                     const entry = bun.cast(*ExpectedEntry, entry_.?);
                     // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
-                    if (item.jestDeepEquals(entry.expected, entry.globalThis)) {
+                    if (item.jestDeepEquals(entry.expected, entry.globalThis) catch return) {
                         entry.pass.* = true;
                         // TODO(perf): break out of the `forEach` when a match is found
                     }
@@ -991,7 +991,7 @@ pub const Expect = struct {
                     var i: u32 = 0;
                     while (i < count) : (i += 1) {
                         const key = expected.getIndex(globalObject, i);
-                        if (item.jestDeepEquals(key, globalObject)) break;
+                        if (try item.jestDeepEquals(key, globalObject)) break;
                     } else break :outer;
                 }
                 pass = true;
@@ -1114,7 +1114,7 @@ pub const Expect = struct {
             const values = value.values(globalObject);
             var itr = values.arrayIterator(globalObject);
             while (itr.next()) |item| {
-                if (item.jestDeepEquals(expected, globalObject)) {
+                if (try item.jestDeepEquals(expected, globalObject)) {
                     pass = true;
                     break;
                 }
@@ -1179,7 +1179,7 @@ pub const Expect = struct {
                 var i: u32 = 0;
                 while (i < count) : (i += 1) {
                     const key = values.getIndex(globalObject, i);
-                    if (key.jestDeepEquals(item, globalObject)) break;
+                    if (try key.jestDeepEquals(item, globalObject)) break;
                 } else {
                     pass = false;
                     break;
@@ -1247,7 +1247,7 @@ pub const Expect = struct {
                     var i: u32 = 0;
                     while (i < count) : (i += 1) {
                         const key = values.getIndex(globalObject, i);
-                        if (key.jestDeepEquals(item, globalObject)) {
+                        if (try key.jestDeepEquals(item, globalObject)) {
                             pass = true;
                             break;
                         }
@@ -1317,7 +1317,7 @@ pub const Expect = struct {
                 var i: u32 = 0;
                 while (i < count) : (i += 1) {
                     const key = values.getIndex(globalObject, i);
-                    if (key.jestDeepEquals(item, globalObject)) {
+                    if (try key.jestDeepEquals(item, globalObject)) {
                         pass = true;
                         break :outer;
                     }
@@ -1382,7 +1382,7 @@ pub const Expect = struct {
         if (value_type.isArrayLike()) {
             var itr = value.arrayIterator(globalThis);
             while (itr.next()) |item| {
-                if (item.jestDeepEquals(expected, globalThis)) {
+                if (try item.jestDeepEquals(expected, globalThis)) {
                     pass = true;
                     break;
                 }
@@ -1420,7 +1420,7 @@ pub const Expect = struct {
                     item: JSValue,
                 ) callconv(.C) void {
                     const entry = bun.cast(*ExpectedEntry, entry_.?);
-                    if (item.jestDeepEquals(entry.expected, entry.globalThis)) {
+                    if (item.jestDeepEquals(entry.expected, entry.globalThis) catch return) {
                         entry.pass.* = true;
                         // TODO(perf): break out of the `forEach` when a match is found
                     }
@@ -1657,7 +1657,7 @@ pub const Expect = struct {
         const value: JSValue = try this.getValue(globalThis, thisValue, "toEqual", "<green>expected<r>");
 
         const not = this.flags.not;
-        var pass = value.jestDeepEquals(expected, globalThis);
+        var pass = try value.jestDeepEquals(expected, globalThis);
 
         if (not) pass = !pass;
         if (pass) return .undefined;
@@ -1755,7 +1755,7 @@ pub const Expect = struct {
         }
 
         if (pass and expected_property != null) {
-            pass = received_property.jestDeepEquals(expected_property.?, globalThis);
+            pass = try received_property.jestDeepEquals(expected_property.?, globalThis);
         }
 
         if (not) pass = !pass;
@@ -2250,19 +2250,23 @@ pub const Expect = struct {
     pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
 
+        const vm = globalThis.bunVM();
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(1);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.argumentsAsArray(1);
 
         incrementExpectCallCounter();
 
-        const expected_value: JSValue = if (arguments.len > 0) brk: {
+        const expected_value: JSValue = brk: {
+            if (callFrame.argumentsCount() == 0) {
+                break :brk .zero;
+            }
             const value = arguments[0];
-            if (value.isEmptyOrUndefinedOrNull() or !value.isObject() and !value.isString()) {
+            if (value.isUndefinedOrNull() or !value.isObject() and !value.isString()) {
                 var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                 globalThis.throw("Expected value must be string or Error: {any}", .{value.toFmt(&fmt)});
                 return .zero;
-            } else if (value.isObject()) {
+            }
+            if (value.isObject()) {
                 if (ExpectAny.fromJSDirect(value)) |_| {
                     if (ExpectAny.constructorValueGetCached(value)) |innerConstructorValue| {
                         break :brk innerConstructorValue;
@@ -2270,7 +2274,7 @@ pub const Expect = struct {
                 }
             }
             break :brk value;
-        } else .zero;
+        };
         expected_value.ensureStillAlive();
 
         const value: JSValue = try this.getValue(globalThis, thisValue, "toThrow", "<green>expected<r>");
@@ -2288,7 +2292,6 @@ pub const Expect = struct {
                 return .zero;
             }
 
-            var vm = globalThis.bunVM();
             var return_value: JSValue = .zero;
 
             // Drain existing unhandled rejections
@@ -4174,7 +4177,7 @@ pub const Expect = struct {
                 var callItr = callItem.arrayIterator(globalThis);
                 var match = true;
                 while (callItr.next()) |callArg| {
-                    if (!callArg.jestDeepEquals(arguments[callItr.i - 1], globalThis)) {
+                    if (!try callArg.jestDeepEquals(arguments[callItr.i - 1], globalThis)) {
                         match = false;
                         break;
                     }
@@ -4238,7 +4241,7 @@ pub const Expect = struct {
             } else {
                 var itr = lastCallValue.arrayIterator(globalThis);
                 while (itr.next()) |callArg| {
-                    if (!callArg.jestDeepEquals(arguments[itr.i - 1], globalThis)) {
+                    if (!try callArg.jestDeepEquals(arguments[itr.i - 1], globalThis)) {
                         pass = false;
                         break;
                     }
@@ -4305,7 +4308,7 @@ pub const Expect = struct {
             } else {
                 var itr = nthCallValue.arrayIterator(globalThis);
                 while (itr.next()) |callArg| {
-                    if (!callArg.jestDeepEquals(arguments[itr.i], globalThis)) {
+                    if (!try callArg.jestDeepEquals(arguments[itr.i], globalThis)) {
                         pass = false;
                         break;
                     }
@@ -5420,7 +5423,7 @@ pub const ExpectMatcherContext = struct {
             return .zero;
         }
         const args = arguments.slice();
-        return JSValue.jsBoolean(args[0].jestDeepEquals(args[1], globalThis));
+        return JSValue.jsBoolean(try args[0].jestDeepEquals(args[1], globalThis));
     }
 };
 

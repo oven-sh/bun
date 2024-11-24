@@ -737,7 +737,7 @@ pub const ZigString = extern struct {
         if (len > String.max_length()) {
             bun.default_allocator.free(ptr[0..len]);
             global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw();
-            return JSValue.zero;
+            return .zero;
         }
         return shim.cppFn("toExternalU16", .{ ptr, len, global });
     }
@@ -5723,8 +5723,10 @@ pub const JSValue = enum(i64) {
     }
 
     /// same as `JSValue.deepEquals`, but with jest asymmetric matchers enabled
-    pub fn jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
-        return cppFn("jestDeepEquals", .{ this, other, global });
+    pub fn jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bun.JSError!bool {
+        const result = cppFn("jestDeepEquals", .{ this, other, global });
+        if (global.hasException()) return error.JSError;
+        return result;
     }
 
     pub fn strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
@@ -6483,7 +6485,7 @@ pub const VM = extern struct {
     // TODO: rewrite all `throwError` to use `JSError`
     pub fn throwError2(vm: *VM, global_object: *JSGlobalObject, value: JSValue) JSError {
         vm.throwError(global_object, value);
-        return JSError.JSError;
+        return error.JSError;
     }
 
     pub fn releaseWeakRefs(vm: *VM) void {

@@ -4376,7 +4376,7 @@ pub const TestingAPIs = struct {
         var script = std.ArrayList(u8).init(arena.allocator());
         if (!(shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
             globalThis.throwOutOfMemory();
-            return JSValue.undefined;
+            return .zero;
         })) {
             return .undefined;
         }
@@ -4404,19 +4404,19 @@ pub const TestingAPIs = struct {
 
         var test_tokens = std.ArrayList(Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch {
             globalThis.throwOutOfMemory();
-            return JSValue.undefined;
+            return .zero;
         };
         for (lex_result.tokens) |tok| {
             const test_tok = Test.TestToken.from_real(tok, lex_result.strpool);
             test_tokens.append(test_tok) catch {
                 globalThis.throwOutOfMemory();
-                return JSValue.undefined;
+                return .zero;
             };
         }
 
         const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, test_tokens.items[0..], .{}) catch {
             globalThis.throwOutOfMemory();
-            return JSValue.undefined;
+            return .zero;
         };
 
         defer globalThis.bunVM().allocator.free(str);
@@ -4463,7 +4463,7 @@ pub const TestingAPIs = struct {
         var script = std.ArrayList(u8).init(arena.allocator());
         if (!(shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
             globalThis.throwOutOfMemory();
-            return JSValue.undefined;
+            return .zero;
         })) {
             return .undefined;
         }
@@ -4490,7 +4490,7 @@ pub const TestingAPIs = struct {
 
         const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{}) catch {
             globalThis.throwOutOfMemory();
-            return JSValue.undefined;
+            return .zero;
         };
 
         defer globalThis.bunVM().allocator.free(str);

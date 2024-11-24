@@ -42,7 +42,9 @@ fn NativeSocketHandleType(comptime ssl: bool) type {
 pub const InternalLoopData = extern struct {
     pub const us_internal_async = opaque {};
 
-    sweep_timer: ?*Timer,
+    /// Do not use uws.Timer in any new code.
+    sweep_timer: ?*anyopaque,
+
     wakeup_async: ?*us_internal_async,
     last_write_failed: i32,
     head: ?*SocketContext,
@@ -2302,47 +2304,6 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 pub const SocketTCP = NewSocketHandler(false);
 pub const SocketTLS = NewSocketHandler(true);
 
-pub const Timer = opaque {
-    pub fn create(loop: *Loop, ptr: anytype) *Timer {
-        const Type = @TypeOf(ptr);
-
-        // never fallthrough poll
-        // the problem is uSockets hardcodes it on the other end
-        // so we can never free non-fallthrough polls
-        return us_create_timer(loop, 0, @sizeOf(Type));
-    }
-
-    pub fn createFallthrough(loop: *Loop, ptr: anytype) *Timer {
-        const Type = @TypeOf(ptr);
-
-        // never fallthrough poll
-        // the problem is uSockets hardcodes it on the other end
-        // so we can never free non-fallthrough polls
-        return us_create_timer(loop, 1, @sizeOf(Type));
-    }
-
-    pub fn set(this: *Timer, ptr: anytype, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void {
-        us_timer_set(this, cb, ms, repeat_ms);
-        const value_ptr = us_timer_ext(this);
-        @setRuntimeSafety(false);
-        @as(*@TypeOf(ptr), @ptrCast(@alignCast(value_ptr))).* = ptr;
-    }
-
-    pub fn deinit(this: *Timer, comptime fallthrough: bool) void {
-        debug("Timer.deinit()", .{});
-        us_timer_close(this, @intFromBool(fallthrough));
-    }
-
-    pub fn ext(this: *Timer, comptime Type: type) ?*Type {
-        return @as(*Type, @ptrCast(@alignCast(us_timer_ext(this).*.?)));
-    }
-
-    pub fn as(this: *Timer, comptime Type: type) Type {
-        @setRuntimeSafety(false);
-        return @as(*?Type, @ptrCast(@alignCast(us_timer_ext(this)))).*.?;
-    }
-};
-
 pub const SocketContext = opaque {
     pub fn getNativeHandle(this: *SocketContext, comptime ssl: bool) *anyopaque {
         return us_socket_context_get_native_handle(@intFromBool(ssl), this).?;
@@ -2598,11 +2559,6 @@ pub const PosixLoop = extern struct {
 
 extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
 
-extern fn us_create_timer(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) *Timer;
-extern fn us_timer_ext(timer: ?*Timer) *?*anyopaque;
-extern fn us_timer_close(timer: ?*Timer, fallthrough: i32) void;
-extern fn us_timer_set(timer: ?*Timer, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void;
-extern fn us_timer_loop(t: ?*Timer) ?*Loop;
 pub const us_socket_context_options_t = extern struct {
     key_file_name: [*c]const u8 = null,
     cert_file_name: [*c]const u8 = null,

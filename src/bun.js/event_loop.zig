@@ -21,6 +21,7 @@ const FetchTasklet = Fetch.FetchTasklet;
 const JSValue = JSC.JSValue;
 const js = JSC.C;
 const Waker = bun.Async.Waker;
+const log = bun.Output.scoped(.EventLoop, false);
 
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
@@ -532,20 +533,23 @@ pub const ConcurrentTask = struct {
 
 // This type must be unique per JavaScript thread
 pub const GarbageCollectionController = struct {
-    gc_timer: *uws.Timer = undefined,
+    gc_timer: EventLoopTimer = .{
+        .tag = .GCTimer,
+    },
     gc_last_heap_size: usize = 0,
     gc_last_heap_size_on_repeating_timer: usize = 0,
     heap_size_didnt_change_for_repeating_timer_ticks_count: u8 = 0,
     gc_timer_state: GCTimerState = GCTimerState.pending,
-    gc_repeating_timer: *uws.Timer = undefined,
+    gc_repeating_timer: EventLoopTimer = .{
+        .tag = .GCRepeatingTimer,
+    },
     gc_timer_interval: i32 = 0,
     gc_repeating_timer_fast: bool = true,
     disabled: bool = false,
 
     pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
         const actual = uws.Loop.get();
-        this.gc_timer = uws.Timer.createFallthrough(actual, this);
-        this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
+
         actual.internal_loop_data.jsc_vm = vm.jsc;
 
         if (comptime Environment.isDebug) {
@@ -567,21 +571,22 @@ pub const GarbageCollectionController = struct {
         this.disabled = vm.bundler.env.has("BUN_GC_TIMER_DISABLE");
 
         if (!this.disabled)
-            this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
+            this.gc_repeating_timer.set(vm, gc_timer_interval);
     }
 
-    pub fn scheduleGCTimer(this: *GarbageCollectionController) void {
+    pub fn scheduleGCTimer(this: *GarbageCollectionController, now: *const bun.timespec) void {
         this.gc_timer_state = .scheduled;
-        this.gc_timer.set(this, onGCTimer, 16, 0);
+        this.gc_timer.setWithTimespec(this.bunVM(), now, 16);
     }
 
     pub fn bunVM(this: *GarbageCollectionController) *VirtualMachine {
         return @alignCast(@fieldParentPtr("gc_controller", this));
     }
 
-    pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
-        var this = timer.as(*GarbageCollectionController);
+    pub fn onGCTimer(this: *GarbageCollectionController) void {
         if (this.disabled) return;
+
+        log("onGCTimer()", .{});
         this.gc_timer_state = .run_on_next_tick;
     }
 
@@ -596,20 +601,35 @@ pub const GarbageCollectionController = struct {
     //
     // When the heap size is increasing, we always switch to fast mode
     // When the heap size has been the same or less for 30 seconds, we switch to slow mode
-    pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting: @Type(.EnumLiteral)) void {
+    pub fn updateGCRepeatTimer(this: *GarbageCollectionController, cached_timespec: ?*const bun.timespec, comptime setting: @Type(.EnumLiteral)) ?bun.timespec {
         if (setting == .fast and !this.gc_repeating_timer_fast) {
             this.gc_repeating_timer_fast = true;
-            this.gc_repeating_timer.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
+            const ts = if (cached_timespec != null) cached_timespec.?.* else bun.timespec.now();
+            this.gc_repeating_timer.setWithTimespec(this.bunVM(), &ts, this.repeatingTimeInterval());
             this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+            return ts;
         } else if (setting == .slow and this.gc_repeating_timer_fast) {
             this.gc_repeating_timer_fast = false;
-            this.gc_repeating_timer.set(this, onGCRepeatingTimer, 30_000, 30_000);
+            const ts = if (cached_timespec != null) cached_timespec.?.* else bun.timespec.now();
+            this.gc_repeating_timer.setWithTimespec(this.bunVM(), &ts, this.repeatingTimeInterval());
             this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+            return ts;
         }
+
+        return null;
     }
 
-    pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.C) void {
-        var this = timer.as(*GarbageCollectionController);
+    pub fn repeatingTimeInterval(this: *const GarbageCollectionController) i32 {
+        return if (this.gc_repeating_timer_fast) this.gc_timer_interval else 30_000;
+    }
+
+    pub fn onGCRepeatingTimer(this: *GarbageCollectionController, now: *const bun.timespec) void {
+        if (comptime Environment.enable_logs)
+            log("onGCRepeatingTimer(at: {d}ms, heap: {d}) - repeating every {d}ms", .{
+                now.ms(),
+                this.gc_last_heap_size_on_repeating_timer,
+                this.repeatingTimeInterval(),
+            });
         const prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
         this.performGC();
         this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
@@ -617,11 +637,11 @@ pub const GarbageCollectionController = struct {
             this.heap_size_didnt_change_for_repeating_timer_ticks_count +|= 1;
             if (this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30) {
                 // make the timer interval longer
-                this.updateGCRepeatTimer(.slow);
+                _ = this.updateGCRepeatTimer(now, .slow);
             }
         } else {
             this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
-            this.updateGCRepeatTimer(.fast);
+            _ = this.updateGCRepeatTimer(now, .fast);
         }
     }
 
@@ -638,8 +658,9 @@ pub const GarbageCollectionController = struct {
             .run_on_next_tick => {
                 // When memory usage is not stable, run the GC more.
                 if (this_heap_size != prev) {
-                    this.scheduleGCTimer();
-                    this.updateGCRepeatTimer(.fast);
+                    const now = bun.timespec.now();
+                    this.scheduleGCTimer(&now);
+                    _ = this.updateGCRepeatTimer(&now, .fast);
                 } else {
                     this.gc_timer_state = .pending;
                 }
@@ -648,18 +669,18 @@ pub const GarbageCollectionController = struct {
             },
             .pending => {
                 if (this_heap_size != prev) {
-                    this.updateGCRepeatTimer(.fast);
+                    const ts = this.updateGCRepeatTimer(null, .fast);
 
                     if (this_heap_size > prev * 2) {
                         this.performGC();
                     } else {
-                        this.scheduleGCTimer();
+                        this.scheduleGCTimer(&(ts orelse bun.timespec.now()));
                     }
                 }
             },
             .scheduled => {
                 if (this_heap_size > prev * 2) {
-                    this.updateGCRepeatTimer(.fast);
+                    _ = this.updateGCRepeatTimer(null, .fast);
                     this.performGC();
                 }
             },
@@ -838,7 +859,6 @@ pub const EventLoop = struct {
     }
 
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
-    const log = bun.Output.scoped(.EventLoop, false);
 
     pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
         while (!done.*) {
@@ -891,6 +911,343 @@ pub const EventLoop = struct {
         return result;
     }
 
+    pub fn runTask(this: *EventLoop, task: Task, global: *JSC.JSGlobalObject, jsc_vm: *JSC.VM, virtual_machine: *JSC.VirtualMachine) bool {
+        switch (task.tag()) {
+            @field(Task.Tag, typeBaseName(@typeName(ShellAsync))) => {
+                var shell_ls_task: *ShellAsync = task.get(ShellAsync).?;
+                shell_ls_task.runFromMainThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ShellAsyncSubprocessDone))) => {
+                var shell_ls_task: *ShellAsyncSubprocessDone = task.get(ShellAsyncSubprocessDone).?;
+                shell_ls_task.runFromMainThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ShellIOWriterAsyncDeinit))) => {
+                var shell_ls_task: *ShellIOWriterAsyncDeinit = task.get(ShellIOWriterAsyncDeinit).?;
+                shell_ls_task.runFromMainThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ShellIOReaderAsyncDeinit))) => {
+                var shell_ls_task: *ShellIOReaderAsyncDeinit = task.get(ShellIOReaderAsyncDeinit).?;
+                shell_ls_task.runFromMainThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ShellCondExprStatTask))) => {
+                var shell_ls_task: *ShellCondExprStatTask = task.get(ShellCondExprStatTask).?;
+                shell_ls_task.task.runFromMainThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ShellCpTask))) => {
+                var shell_ls_task: *ShellCpTask = task.get(ShellCpTask).?;
+                shell_ls_task.runFromMainThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ShellTouchTask))) => {
+                var shell_ls_task: *ShellTouchTask = task.get(ShellTouchTask).?;
+                shell_ls_task.runFromMainThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ShellMkdirTask))) => {
+                var shell_ls_task: *ShellMkdirTask = task.get(ShellMkdirTask).?;
+                shell_ls_task.runFromMainThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ShellLsTask))) => {
+                var shell_ls_task: *ShellLsTask = task.get(ShellLsTask).?;
+                shell_ls_task.runFromMainThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ShellMvBatchedTask))) => {
+                var shell_mv_batched_task: *ShellMvBatchedTask = task.get(ShellMvBatchedTask).?;
+                shell_mv_batched_task.task.runFromMainThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ShellMvCheckTargetTask))) => {
+                var shell_mv_check_target_task: *ShellMvCheckTargetTask = task.get(ShellMvCheckTargetTask).?;
+                shell_mv_check_target_task.task.runFromMainThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ShellRmTask))) => {
+                var shell_rm_task: *ShellRmTask = task.get(ShellRmTask).?;
+                shell_rm_task.runFromMainThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ShellRmDirTask))) => {
+                var shell_rm_task: *ShellRmDirTask = task.get(ShellRmDirTask).?;
+                shell_rm_task.runFromMainThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ShellGlobTask))) => {
+                var shell_glob_task: *ShellGlobTask = task.get(ShellGlobTask).?;
+                shell_glob_task.runFromMainThread();
+                shell_glob_task.deinit();
+            },
+            .FetchTasklet => {
+                var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
+                fetch_task.onProgressUpdate();
+            },
+            @field(Task.Tag, @typeName(AsyncGlobWalkTask)) => {
+                var globWalkTask: *AsyncGlobWalkTask = task.get(AsyncGlobWalkTask).?;
+                globWalkTask.*.runFromJS();
+                globWalkTask.deinit();
+            },
+            @field(Task.Tag, @typeName(AsyncTransformTask)) => {
+                var transform_task: *AsyncTransformTask = task.get(AsyncTransformTask).?;
+                transform_task.*.runFromJS();
+                transform_task.deinit();
+            },
+            @field(Task.Tag, @typeName(CopyFilePromiseTask)) => {
+                var transform_task: *CopyFilePromiseTask = task.get(CopyFilePromiseTask).?;
+                transform_task.*.runFromJS();
+                transform_task.deinit();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(JSC.napi.napi_async_work))) => {
+                const transform_task: *JSC.napi.napi_async_work = task.get(JSC.napi.napi_async_work).?;
+                transform_task.*.runFromJS();
+            },
+            .ThreadSafeFunction => {
+                var transform_task: *ThreadSafeFunction = task.as(ThreadSafeFunction);
+                transform_task.onDispatch();
+            },
+            @field(Task.Tag, @typeName(ReadFileTask)) => {
+                var transform_task: *ReadFileTask = task.get(ReadFileTask).?;
+                transform_task.*.runFromJS();
+                transform_task.deinit();
+            },
+            @field(Task.Tag, bun.meta.typeBaseName(@typeName(JSCDeferredWorkTask))) => {
+                var jsc_task: *JSCDeferredWorkTask = task.get(JSCDeferredWorkTask).?;
+                JSC.markBinding(@src());
+                jsc_task.run();
+            },
+            @field(Task.Tag, @typeName(WriteFileTask)) => {
+                var transform_task: *WriteFileTask = task.get(WriteFileTask).?;
+                transform_task.*.runFromJS();
+                transform_task.deinit();
+            },
+            @field(Task.Tag, @typeName(HotReloadTask)) => {
+                const transform_task: *HotReloadTask = task.get(HotReloadTask).?;
+                transform_task.run();
+                transform_task.deinit();
+                // special case: we return
+                return false;
+            },
+            @field(Task.Tag, typeBaseName(@typeName(bun.bake.DevServer.HotReloadTask))) => {
+                const hmr_task: *bun.bake.DevServer.HotReloadTask = task.get(bun.bake.DevServer.HotReloadTask).?;
+                hmr_task.run();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
+                var transform_task: *FSWatchTask = task.get(FSWatchTask).?;
+                transform_task.*.run();
+                transform_task.deinit();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(AnyTask))) => {
+                var any: *AnyTask = task.get(AnyTask).?;
+                any.run();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ManagedTask))) => {
+                var any: *ManagedTask = task.get(ManagedTask).?;
+                any.run();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(CppTask))) => {
+                var any: *CppTask = task.get(CppTask).?;
+                any.run(global);
+            },
+            @field(Task.Tag, typeBaseName(@typeName(PollPendingModulesTask))) => {
+                virtual_machine.modules.onPoll();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(GetAddrInfoRequestTask))) => {
+                if (Environment.os == .windows) @panic("This should not be reachable on Windows");
+
+                var any: *GetAddrInfoRequestTask = task.get(GetAddrInfoRequestTask).?;
+                any.runFromJS();
+                any.deinit();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Stat))) => {
+                var any: *Stat = task.get(Stat).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Lstat))) => {
+                var any: *Lstat = task.get(Lstat).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Fstat))) => {
+                var any: *Fstat = task.get(Fstat).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Open))) => {
+                var any: *Open = task.get(Open).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ReadFile))) => {
+                var any: *ReadFile = task.get(ReadFile).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(WriteFile))) => {
+                var any: *WriteFile = task.get(WriteFile).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(CopyFile))) => {
+                var any: *CopyFile = task.get(CopyFile).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Read))) => {
+                var any: *Read = task.get(Read).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Write))) => {
+                var any: *Write = task.get(Write).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Truncate))) => {
+                var any: *Truncate = task.get(Truncate).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Writev))) => {
+                var any: *Writev = task.get(Writev).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Readv))) => {
+                var any: *Readv = task.get(Readv).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Rename))) => {
+                var any: *Rename = task.get(Rename).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(FTruncate))) => {
+                var any: *FTruncate = task.get(FTruncate).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Readdir))) => {
+                var any: *Readdir = task.get(Readdir).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ReaddirRecursive))) => {
+                var any: *ReaddirRecursive = task.get(ReaddirRecursive).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Close))) => {
+                var any: *Close = task.get(Close).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Rm))) => {
+                var any: *Rm = task.get(Rm).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Rmdir))) => {
+                var any: *Rmdir = task.get(Rmdir).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Chown))) => {
+                var any: *Chown = task.get(Chown).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(FChown))) => {
+                var any: *FChown = task.get(FChown).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Utimes))) => {
+                var any: *Utimes = task.get(Utimes).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Lutimes))) => {
+                var any: *Lutimes = task.get(Lutimes).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Chmod))) => {
+                var any: *Chmod = task.get(Chmod).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Fchmod))) => {
+                var any: *Fchmod = task.get(Fchmod).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Link))) => {
+                var any: *Link = task.get(Link).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Symlink))) => {
+                var any: *Symlink = task.get(Symlink).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Readlink))) => {
+                var any: *Readlink = task.get(Readlink).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Realpath))) => {
+                var any: *Realpath = task.get(Realpath).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Mkdir))) => {
+                var any: *Mkdir = task.get(Mkdir).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Fsync))) => {
+                var any: *Fsync = task.get(Fsync).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Fdatasync))) => {
+                var any: *Fdatasync = task.get(Fdatasync).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Access))) => {
+                var any: *Access = task.get(Access).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(AppendFile))) => {
+                var any: *AppendFile = task.get(AppendFile).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Mkdtemp))) => {
+                var any: *Mkdtemp = task.get(Mkdtemp).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Exists))) => {
+                var any: *Exists = task.get(Exists).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Futimes))) => {
+                var any: *Futimes = task.get(Futimes).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Lchmod))) => {
+                var any: *Lchmod = task.get(Lchmod).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Lchown))) => {
+                var any: *Lchown = task.get(Lchown).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(Unlink))) => {
+                var any: *Unlink = task.get(Unlink).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(NativeZlib))) => {
+                var any: *NativeZlib = task.get(NativeZlib).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(NativeBrotli))) => {
+                var any: *NativeBrotli = task.get(NativeBrotli).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ProcessWaiterThreadTask))) => {
+                bun.markPosixOnly();
+                var any: *ProcessWaiterThreadTask = task.get(ProcessWaiterThreadTask).?;
+                any.runFromJSThread();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(RuntimeTranspilerStore))) => {
+                var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
+                any.drain();
+            },
+            @field(Task.Tag, typeBaseName(@typeName(TimerObject))) => {
+                var any: *TimerObject = task.get(TimerObject).?;
+                any.runImmediateTask(virtual_machine);
+            },
+            @field(Task.Tag, typeBaseName(@typeName(ServerAllConnectionsClosedTask))) => {
+                var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
+                any.runFromJSThread(virtual_machine);
+            },
+            @field(Task.Tag, typeBaseName(@typeName(bun.bundle_v2.DeferredBatchTask))) => {
+                var any: *bun.bundle_v2.DeferredBatchTask = task.get(bun.bundle_v2.DeferredBatchTask).?;
+                any.runOnJSThread();
+            },
+
+            else => {
+                bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
+            },
+        }
+
+        this.drainMicrotasksWithGlobal(global, jsc_vm);
+        return true;
+    }
     fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, comptime queue_name: []const u8) u32 {
         var global = this.global;
         const global_vm = global.vm();
@@ -928,341 +1285,12 @@ pub const EventLoop = struct {
         }
 
         while (@field(this, queue_name).readItem()) |task| {
-            defer counter += 1;
-            switch (task.tag()) {
-                @field(Task.Tag, typeBaseName(@typeName(ShellAsync))) => {
-                    var shell_ls_task: *ShellAsync = task.get(ShellAsync).?;
-                    shell_ls_task.runFromMainThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellAsyncSubprocessDone))) => {
-                    var shell_ls_task: *ShellAsyncSubprocessDone = task.get(ShellAsyncSubprocessDone).?;
-                    shell_ls_task.runFromMainThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellIOWriterAsyncDeinit))) => {
-                    var shell_ls_task: *ShellIOWriterAsyncDeinit = task.get(ShellIOWriterAsyncDeinit).?;
-                    shell_ls_task.runFromMainThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellIOReaderAsyncDeinit))) => {
-                    var shell_ls_task: *ShellIOReaderAsyncDeinit = task.get(ShellIOReaderAsyncDeinit).?;
-                    shell_ls_task.runFromMainThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellCondExprStatTask))) => {
-                    var shell_ls_task: *ShellCondExprStatTask = task.get(ShellCondExprStatTask).?;
-                    shell_ls_task.task.runFromMainThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellCpTask))) => {
-                    var shell_ls_task: *ShellCpTask = task.get(ShellCpTask).?;
-                    shell_ls_task.runFromMainThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellTouchTask))) => {
-                    var shell_ls_task: *ShellTouchTask = task.get(ShellTouchTask).?;
-                    shell_ls_task.runFromMainThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellMkdirTask))) => {
-                    var shell_ls_task: *ShellMkdirTask = task.get(ShellMkdirTask).?;
-                    shell_ls_task.runFromMainThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellLsTask))) => {
-                    var shell_ls_task: *ShellLsTask = task.get(ShellLsTask).?;
-                    shell_ls_task.runFromMainThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellMvBatchedTask))) => {
-                    var shell_mv_batched_task: *ShellMvBatchedTask = task.get(ShellMvBatchedTask).?;
-                    shell_mv_batched_task.task.runFromMainThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellMvCheckTargetTask))) => {
-                    var shell_mv_check_target_task: *ShellMvCheckTargetTask = task.get(ShellMvCheckTargetTask).?;
-                    shell_mv_check_target_task.task.runFromMainThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellRmTask))) => {
-                    var shell_rm_task: *ShellRmTask = task.get(ShellRmTask).?;
-                    shell_rm_task.runFromMainThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellRmDirTask))) => {
-                    var shell_rm_task: *ShellRmDirTask = task.get(ShellRmDirTask).?;
-                    shell_rm_task.runFromMainThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellGlobTask))) => {
-                    var shell_glob_task: *ShellGlobTask = task.get(ShellGlobTask).?;
-                    shell_glob_task.runFromMainThread();
-                    shell_glob_task.deinit();
-                },
-                .FetchTasklet => {
-                    var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
-                    fetch_task.onProgressUpdate();
-                },
-                @field(Task.Tag, @typeName(AsyncGlobWalkTask)) => {
-                    var globWalkTask: *AsyncGlobWalkTask = task.get(AsyncGlobWalkTask).?;
-                    globWalkTask.*.runFromJS();
-                    globWalkTask.deinit();
-                },
-                @field(Task.Tag, @typeName(AsyncTransformTask)) => {
-                    var transform_task: *AsyncTransformTask = task.get(AsyncTransformTask).?;
-                    transform_task.*.runFromJS();
-                    transform_task.deinit();
-                },
-                @field(Task.Tag, @typeName(CopyFilePromiseTask)) => {
-                    var transform_task: *CopyFilePromiseTask = task.get(CopyFilePromiseTask).?;
-                    transform_task.*.runFromJS();
-                    transform_task.deinit();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(JSC.napi.napi_async_work))) => {
-                    const transform_task: *JSC.napi.napi_async_work = task.get(JSC.napi.napi_async_work).?;
-                    transform_task.*.runFromJS();
-                },
-                .ThreadSafeFunction => {
-                    var transform_task: *ThreadSafeFunction = task.as(ThreadSafeFunction);
-                    transform_task.onDispatch();
-                },
-                @field(Task.Tag, @typeName(ReadFileTask)) => {
-                    var transform_task: *ReadFileTask = task.get(ReadFileTask).?;
-                    transform_task.*.runFromJS();
-                    transform_task.deinit();
-                },
-                @field(Task.Tag, bun.meta.typeBaseName(@typeName(JSCDeferredWorkTask))) => {
-                    var jsc_task: *JSCDeferredWorkTask = task.get(JSCDeferredWorkTask).?;
-                    JSC.markBinding(@src());
-                    jsc_task.run();
-                },
-                @field(Task.Tag, @typeName(WriteFileTask)) => {
-                    var transform_task: *WriteFileTask = task.get(WriteFileTask).?;
-                    transform_task.*.runFromJS();
-                    transform_task.deinit();
-                },
-                @field(Task.Tag, @typeName(HotReloadTask)) => {
-                    const transform_task: *HotReloadTask = task.get(HotReloadTask).?;
-                    transform_task.run();
-                    transform_task.deinit();
-                    // special case: we return
-                    return 0;
-                },
-                @field(Task.Tag, typeBaseName(@typeName(bun.bake.DevServer.HotReloadTask))) => {
-                    const hmr_task: *bun.bake.DevServer.HotReloadTask = task.get(bun.bake.DevServer.HotReloadTask).?;
-                    hmr_task.run();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
-                    var transform_task: *FSWatchTask = task.get(FSWatchTask).?;
-                    transform_task.*.run();
-                    transform_task.deinit();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(AnyTask))) => {
-                    var any: *AnyTask = task.get(AnyTask).?;
-                    any.run();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ManagedTask))) => {
-                    var any: *ManagedTask = task.get(ManagedTask).?;
-                    any.run();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(CppTask))) => {
-                    var any: *CppTask = task.get(CppTask).?;
-                    any.run(global);
-                },
-                @field(Task.Tag, typeBaseName(@typeName(PollPendingModulesTask))) => {
-                    virtual_machine.modules.onPoll();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(GetAddrInfoRequestTask))) => {
-                    if (Environment.os == .windows) @panic("This should not be reachable on Windows");
-
-                    var any: *GetAddrInfoRequestTask = task.get(GetAddrInfoRequestTask).?;
-                    any.runFromJS();
-                    any.deinit();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Stat))) => {
-                    var any: *Stat = task.get(Stat).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Lstat))) => {
-                    var any: *Lstat = task.get(Lstat).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Fstat))) => {
-                    var any: *Fstat = task.get(Fstat).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Open))) => {
-                    var any: *Open = task.get(Open).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ReadFile))) => {
-                    var any: *ReadFile = task.get(ReadFile).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(WriteFile))) => {
-                    var any: *WriteFile = task.get(WriteFile).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(CopyFile))) => {
-                    var any: *CopyFile = task.get(CopyFile).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Read))) => {
-                    var any: *Read = task.get(Read).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Write))) => {
-                    var any: *Write = task.get(Write).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Truncate))) => {
-                    var any: *Truncate = task.get(Truncate).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Writev))) => {
-                    var any: *Writev = task.get(Writev).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Readv))) => {
-                    var any: *Readv = task.get(Readv).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Rename))) => {
-                    var any: *Rename = task.get(Rename).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(FTruncate))) => {
-                    var any: *FTruncate = task.get(FTruncate).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Readdir))) => {
-                    var any: *Readdir = task.get(Readdir).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ReaddirRecursive))) => {
-                    var any: *ReaddirRecursive = task.get(ReaddirRecursive).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Close))) => {
-                    var any: *Close = task.get(Close).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Rm))) => {
-                    var any: *Rm = task.get(Rm).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Rmdir))) => {
-                    var any: *Rmdir = task.get(Rmdir).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Chown))) => {
-                    var any: *Chown = task.get(Chown).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(FChown))) => {
-                    var any: *FChown = task.get(FChown).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Utimes))) => {
-                    var any: *Utimes = task.get(Utimes).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Lutimes))) => {
-                    var any: *Lutimes = task.get(Lutimes).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Chmod))) => {
-                    var any: *Chmod = task.get(Chmod).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Fchmod))) => {
-                    var any: *Fchmod = task.get(Fchmod).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Link))) => {
-                    var any: *Link = task.get(Link).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Symlink))) => {
-                    var any: *Symlink = task.get(Symlink).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Readlink))) => {
-                    var any: *Readlink = task.get(Readlink).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Realpath))) => {
-                    var any: *Realpath = task.get(Realpath).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Mkdir))) => {
-                    var any: *Mkdir = task.get(Mkdir).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Fsync))) => {
-                    var any: *Fsync = task.get(Fsync).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Fdatasync))) => {
-                    var any: *Fdatasync = task.get(Fdatasync).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Access))) => {
-                    var any: *Access = task.get(Access).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(AppendFile))) => {
-                    var any: *AppendFile = task.get(AppendFile).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Mkdtemp))) => {
-                    var any: *Mkdtemp = task.get(Mkdtemp).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Exists))) => {
-                    var any: *Exists = task.get(Exists).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Futimes))) => {
-                    var any: *Futimes = task.get(Futimes).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Lchmod))) => {
-                    var any: *Lchmod = task.get(Lchmod).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Lchown))) => {
-                    var any: *Lchown = task.get(Lchown).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(Unlink))) => {
-                    var any: *Unlink = task.get(Unlink).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(NativeZlib))) => {
-                    var any: *NativeZlib = task.get(NativeZlib).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(NativeBrotli))) => {
-                    var any: *NativeBrotli = task.get(NativeBrotli).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ProcessWaiterThreadTask))) => {
-                    bun.markPosixOnly();
-                    var any: *ProcessWaiterThreadTask = task.get(ProcessWaiterThreadTask).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(RuntimeTranspilerStore))) => {
-                    var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
-                    any.drain();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(TimerObject))) => {
-                    var any: *TimerObject = task.get(TimerObject).?;
-                    any.runImmediateTask(virtual_machine);
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ServerAllConnectionsClosedTask))) => {
-                    var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
-                    any.runFromJSThread(virtual_machine);
-                },
-                @field(Task.Tag, typeBaseName(@typeName(bun.bundle_v2.DeferredBatchTask))) => {
-                    var any: *bun.bundle_v2.DeferredBatchTask = task.get(bun.bundle_v2.DeferredBatchTask).?;
-                    any.runOnJSThread();
-                },
-
-                else => {
-                    bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
-                },
+            if (!this.runTask(task, global, global_vm, virtual_machine)) {
+                // Yield when hot reloading.
+                return 0;
             }
 
-            this.drainMicrotasksWithGlobal(global, global_vm);
+            counter += 1;
         }
 
         @field(this, queue_name).head = if (@field(this, queue_name).count == 0) 0 else @field(this, queue_name).head;
@@ -1560,18 +1588,31 @@ pub const EventLoop = struct {
         this.next_immediate_tasks.writeItem(task) catch unreachable;
     }
 
+    pub const TimeoutTask = struct {
+        task: Task,
+        event_loop_timer: EventLoopTimer = .{
+            .tag = .TimeoutTask,
+        },
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn create(vm: *JSC.VirtualMachine, task: Task, timeout: i32) void {
+            const this = TimeoutTask.new(.{
+                .task = task,
+            });
+            this.event_loop_timer.set(vm, timeout);
+        }
+
+        pub fn schedule(this: *TimeoutTask, vm: *JSC.VirtualMachine) void {
+            const task = this.task;
+            this.destroy();
+
+            _ = vm.event_loop.runTask(task, vm.global, vm.jsc, vm);
+        }
+    };
+
     pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {
-        // TODO: make this more efficient!
-        const loop = this.virtual_machine.uwsLoop();
-        var timer = uws.Timer.createFallthrough(loop, task.ptr());
-        timer.set(task.ptr(), callTask, timeout, 0);
-    }
-
-    pub fn callTask(timer: *uws.Timer) callconv(.C) void {
-        const task = Task.from(timer.as(*anyopaque));
-        defer timer.deinit(true);
-
-        JSC.VirtualMachine.get().enqueueTask(task);
+        TimeoutTask.create(this.virtual_machine, task, timeout);
     }
 
     pub fn ensureWaker(this: *EventLoop) void {
@@ -2299,3 +2340,5 @@ pub const EventLoopTaskPtr = union {
     js: *ConcurrentTask,
     mini: *JSC.AnyTaskWithExtraContext,
 };
+
+pub const EventLoopTimer = @import("./api/Timer.zig").EventLoopTimer;

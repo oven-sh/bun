@@ -49,8 +49,14 @@ const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
-var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(bun.default_allocator);
-var async_http_id: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+var socket_async_http_abort_tracker = std.AutoHashMap(u32, uws.InternalSocket).init(bun.default_allocator);
+const AsyncHTTPID = u31;
+fn nextAsyncHttpID() AsyncHTTPID {
+    const container = struct {
+        pub var async_http_id: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+    };
+    return @truncate(container.async_http_id.fetchAdd(1, .monotonic) % std.math.maxInt(u31));
+}
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
 
@@ -1021,8 +1027,8 @@ pub const HTTPThread = struct {
 
     const threadlog = Output.scoped(.HTTPThread, true);
 
-    const ShutdownMessage = struct {
-        async_http_id: u32,
+    const ShutdownMessage = packed struct(u32) {
+        async_http_id: AsyncHTTPID,
         is_tls: bool,
     };
 
@@ -1191,10 +1197,17 @@ pub const HTTPThread = struct {
 
     fn drainEvents(this: *@This()) void {
         {
-            this.queued_shutdowns_lock.lock();
-            defer this.queued_shutdowns_lock.unlock();
-            for (this.queued_shutdowns.items) |http| {
-                if (socket_async_http_abort_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
+            var shutdowns = brk: {
+                this.queued_shutdowns_lock.lock();
+                defer this.queued_shutdowns_lock.unlock();
+                const shutdowns = this.queued_shutdowns;
+                this.queued_shutdowns = .{};
+                break :brk shutdowns;
+            };
+            defer shutdowns.deinit(bun.default_allocator);
+
+            for (shutdowns.items) |http| {
+                if (socket_async_http_abort_tracker.fetchRemove(http.async_http_id)) |socket_ptr| {
                     if (http.is_tls) {
                         const socket = uws.SocketTLS.fromAny(socket_ptr.value);
                         // do a fast shutdown here since we are aborting and we dont want to wait for the close_notify from the other side
@@ -1205,7 +1218,6 @@ pub const HTTPThread = struct {
                     }
                 }
             }
-            this.queued_shutdowns.clearRetainingCapacity();
         }
 
         while (this.queued_proxy_deref.popOrNull()) |http| {
@@ -1399,7 +1411,7 @@ fn unregisterAbortTracker(
     client: *HTTPClient,
 ) void {
     if (client.signals.aborted != null) {
-        _ = socket_async_http_abort_tracker.swapRemove(client.async_http_id);
+        _ = socket_async_http_abort_tracker.remove(client.async_http_id);
     }
 }
 
@@ -2032,7 +2044,7 @@ http_proxy: ?URL = null,
 proxy_authorization: ?[]u8 = null,
 proxy_tunnel: ?*ProxyTunnel = null,
 signals: Signals = .{},
-async_http_id: u32 = 0,
+async_http_id: AsyncHTTPID = 0,
 hostname: ?[]u8 = null,
 unix_socket_path: JSC.ZigString.Slice = JSC.ZigString.Slice.empty,
 
@@ -2202,7 +2214,7 @@ pub const AsyncHTTP = struct {
     waitingDeffered: bool = false,
     finalized: bool = false,
     err: ?anyerror = null,
-    async_http_id: u32 = 0,
+    async_http_id: AsyncHTTPID = 0,
 
     state: AtomicState = AtomicState.init(State.pending),
     elapsed: u64 = 0,
@@ -2350,7 +2362,7 @@ pub const AsyncHTTP = struct {
             .result_callback = callback,
             .http_proxy = options.http_proxy,
             .signals = options.signals orelse .{},
-            .async_http_id = if (options.signals != null and options.signals.?.aborted != null) async_http_id.fetchAdd(1, .monotonic) else 0,
+            .async_http_id = if (options.signals != null and options.signals.?.aborted != null) nextAsyncHttpID() else 0,
         };
 
         this.client = .{
@@ -2603,7 +2615,9 @@ pub const AsyncHTTP = struct {
         }
 
         if (socket_async_http_abort_tracker.capacity() > 10_000 and socket_async_http_abort_tracker.count() < 100) {
-            socket_async_http_abort_tracker.shrinkAndFree(socket_async_http_abort_tracker.count());
+            const cloned = socket_async_http_abort_tracker.clone() catch bun.outOfMemory();
+            socket_async_http_abort_tracker.deinit();
+            socket_async_http_abort_tracker = cloned;
         }
 
         if (result.has_more) {

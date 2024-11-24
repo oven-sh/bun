@@ -76,7 +76,7 @@ public:
     void signalAbort(JSC::JSValue reason);
     void signalFollow(AbortSignal&);
 
-    bool aborted() const { return m_aborted; }
+    bool aborted() const { return m_flags.load(std::memory_order_seq_cst) & static_cast<uint8_t>(Flags::Aborted); }
     const JSValueInWrappedObject& reason() const { return m_reason; }
     JSValue jsReason(JSC::JSGlobalObject& globalObject);
     CommonAbortReason commonReason() const { return m_commonReason; }
@@ -84,8 +84,8 @@ public:
     void cleanNativeBindings(void* ref);
     void addNativeCallback(NativeCallbackTuple callback) { m_native_callbacks.append(callback); }
 
-    bool hasActiveTimeoutTimer() const { return m_hasActiveTimeoutTimer; }
-    bool hasAbortEventListener() const { return m_hasAbortEventListener; }
+    bool hasActiveTimeoutTimer() const { return m_flags.load(std::memory_order_seq_cst) & static_cast<uint8_t>(Flags::HasActiveTimeoutTimer); }
+    bool hasAbortEventListener() const { return m_flags.load(std::memory_order_seq_cst) & static_cast<uint8_t>(Flags::HasAbortEventListener); }
 
     using RefCounted::deref;
     using RefCounted::ref;
@@ -106,7 +106,7 @@ public:
     void incrementPendingActivityCount() { ++pendingActivityCount; }
     void decrementPendingActivityCount() { --pendingActivityCount; }
     bool hasPendingActivity() const { return pendingActivityCount > 0; }
-    bool isDependent() const { return m_isDependent; }
+    bool isDependent() const { return m_flags.load(std::memory_order_seq_cst) & static_cast<uint8_t>(Flags::IsDependent); }
 
 private:
     enum class Aborted : bool {
@@ -114,10 +114,24 @@ private:
         Yes
     };
     explicit AbortSignal(ScriptExecutionContext*, Aborted = Aborted::No, JSC::JSValue reason = JSC::jsUndefined());
+    enum class Flags : uint8_t {
+        None = 0,
+        Aborted = 2,
+        HasActiveTimeoutTimer = 4,
+        HasAbortEventListener = 8,
+        IsDependent = 16,
+    };
+    void setFlag(Flags flags)
+    {
+        m_flags.fetch_or(static_cast<uint8_t>(flags));
+    }
+    void clearFlag(Flags flags)
+    {
+        m_flags.fetch_and(~static_cast<uint8_t>(flags));
+    }
 
-    void setHasActiveTimeoutTimer(bool hasActiveTimeoutTimer) { m_hasActiveTimeoutTimer = hasActiveTimeoutTimer; }
-
-    void markAsDependent() { m_isDependent = true; }
+    void setHasActiveTimeoutTimer(bool hasActiveTimeoutTimer) { setFlag(Flags::HasActiveTimeoutTimer); }
+    void markAsDependent() { setFlag(Flags::IsDependent); }
     void addSourceSignal(AbortSignal&);
     void addDependentSignal(AbortSignal&);
 
@@ -137,10 +151,7 @@ private:
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
     std::atomic<uint32_t> pendingActivityCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
-    bool m_aborted : 1 = false;
-    bool m_hasActiveTimeoutTimer : 1 = false;
-    bool m_hasAbortEventListener : 1 = false;
-    bool m_isDependent : 1 = false;
+    std::atomic<uint8_t> m_flags { 0 };
 };
 
 WebCoreOpaqueRoot root(AbortSignal*);

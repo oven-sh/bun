@@ -102,7 +102,7 @@ Ref<AbortSignal> AbortSignal::any(ScriptExecutionContext& context, const Vector<
 AbortSignal::AbortSignal(ScriptExecutionContext* context, Aborted aborted, JSC::JSValue reason)
     : ContextDestructionObserver(context)
     , m_reason(reason)
-    , m_aborted(aborted == Aborted::Yes)
+    , m_flags(aborted == Aborted::Yes ? static_cast<uint8_t>(Flags::Aborted) : static_cast<uint8_t>(Flags::None))
 {
     ASSERT(reason);
 }
@@ -145,11 +145,11 @@ void AbortSignal::addDependentSignal(AbortSignal& signal)
 void AbortSignal::signalAbort(JSC::JSValue reason)
 {
     // 1. If signal's aborted flag is set, then return.
-    if (m_aborted)
+    if (aborted())
         return;
 
     // 2. Set signal’s aborted flag.
-    m_aborted = true;
+    setFlag(Flags::Aborted);
     m_sourceSignals.clear();
 
     // FIXME: This code is wrong: we should emit a write-barrier. Otherwise, GC can collect it.
@@ -178,7 +178,7 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
 void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason)
 {
     // 1. If signal's aborted flag is set, then return.
-    if (m_aborted)
+    if (aborted())
         return;
 
     m_commonReason = reason;
@@ -218,7 +218,10 @@ void AbortSignal::signalFollow(AbortSignal& signal)
 
 void AbortSignal::eventListenersDidChange()
 {
-    m_hasAbortEventListener = hasEventListeners(eventNames().abortEvent);
+    if (hasEventListeners(eventNames().abortEvent))
+        setFlag(Flags::HasAbortEventListener);
+    else
+        clearFlag(Flags::HasAbortEventListener);
 }
 
 uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)

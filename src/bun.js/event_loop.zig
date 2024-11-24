@@ -795,7 +795,6 @@ pub const EventLoop = struct {
     global: *JSGlobalObject = undefined,
     virtual_machine: *JSC.VirtualMachine = undefined,
     waker: ?Waker = null,
-    forever_timer: ?*uws.Timer = null,
     deferred_tasks: DeferredTaskQueue = .{},
     uws_loop: if (Environment.isWindows) ?*uws.Loop else void = if (Environment.isWindows) null else {},
 
@@ -1458,16 +1457,13 @@ pub const EventLoop = struct {
             }
         }
 
-        if (!loop.isActive()) {
-            if (this.forever_timer == null) {
-                var t = uws.Timer.create(loop, this);
-                t.set(this, &noopForeverTimer, 1000 * 60 * 4, 1000 * 60 * 4);
-                this.forever_timer = t;
-            }
-        }
-
         this.processGCTimer();
-        loop.tick();
+        if (!loop.isActive()) {
+            const timespec: bun.timespec = bun.timespec.msFromNow(std.time.ms_per_week);
+            loop.tickWithTimeout(&timespec);
+        } else {
+            loop.tick();
+        }
 
         ctx.onAfterEventLoop();
         this.tickConcurrent();

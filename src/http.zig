@@ -1403,6 +1403,7 @@ fn registerAbortTracker(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     if (client.signals.aborted != null) {
+        client.state.flags.did_register_abort_tracker = true;
         socket_async_http_abort_tracker.put(client.async_http_id, socket.socket) catch unreachable;
     }
 }
@@ -1411,6 +1412,7 @@ fn unregisterAbortTracker(
     client: *HTTPClient,
 ) void {
     if (client.signals.aborted != null) {
+        client.state.flags.did_register_abort_tracker = false;
         _ = socket_async_http_abort_tracker.remove(client.async_http_id);
     }
 }
@@ -1821,6 +1823,10 @@ pub const InternalState = struct {
         is_redirect_pending: bool = false,
         is_libdeflate_fast_path_disabled: bool = false,
         resend_request_body_on_redirect: bool = false,
+
+        /// Attempt to register to receive AbortSignal while the socket has not connected yet.
+        /// It's fine for this to be wrong sometimes.
+        did_register_abort_tracker: bool = false,
     };
 
     pub fn init(body: HTTPRequestBody, body_out_str: *MutableString) InternalState {
@@ -2874,6 +2880,15 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         NewHTTPContext(is_ssl).markSocketAsDead(socket);
         this.fail(error.ConnectionClosed);
         return;
+    }
+
+    // A connecting socket won't have called onOpen yet.
+    // So if you want to be able to call AbortSignal.timeout() on it, we need to
+    // manually register the abort tracker.
+    if (socket.socket == .connecting) {
+        if (!socket.isClosed() and !this.state.flags.did_register_abort_tracker) {
+            this.registerAbortTracker(is_ssl, socket);
+        }
     }
 }
 

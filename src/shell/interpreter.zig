@@ -1628,6 +1628,7 @@ pub const Interpreter = struct {
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .seq_cst);
         root.start();
+        if (globalThis.hasException()) return error.JSError;
 
         return .undefined;
     }

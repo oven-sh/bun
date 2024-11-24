@@ -4110,12 +4110,20 @@ pub const FileReader = struct {
                     } else if (in_progress.len > 0 and !hasMore) {
                         this.read_inside_on_pull = .{ .temporary = buf };
                     } else if (hasMore and !bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
-                        this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+                        this.buffered.appendSlice(bun.default_allocator, buf) catch {
+                            this.onReaderError(bun.sys.Error.fromCode(.NOMEM, .read));
+                            this.reader.close();
+                            return false;
+                        };
                         this.read_inside_on_pull = .{ .use_buffered = buf.len };
                     }
                 },
                 .use_buffered => |original| {
-                    this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+                    this.buffered.appendSlice(bun.default_allocator, buf) catch {
+                        this.onReaderError(bun.sys.Error.fromCode(.NOMEM, .read));
+                        this.reader.close();
+                        return false;
+                    };
                     this.read_inside_on_pull = .{ .use_buffered = buf.len + original };
                 },
                 .none => unreachable,
@@ -4222,7 +4230,11 @@ pub const FileReader = struct {
             this.pending.run();
             return !was_done;
         } else if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
-            this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+            this.buffered.appendSlice(bun.default_allocator, buf) catch {
+                this.onReaderError(bun.sys.Error.fromCode(.NOMEM, .read));
+                this.reader.close();
+                return false;
+            };
             if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
                 this.reader.buffer().clearRetainingCapacity();
             }

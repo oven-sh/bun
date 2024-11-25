@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.1.35",
+  "version": "1.1.37",
   "workspaces": [
     "./packages/bun-types"
   ],

@@ -1715,13 +1715,12 @@ pub const fmt_js_test_bindings = struct {
 
     /// Internal function for testing in highlighter.test.ts
     pub fn jsFunctionStringFormatter(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) bun.JSError!bun.JSC.JSValue {
-        const args = callframe.arguments(2);
+        const args = callframe.arguments_old(2);
         if (args.len < 2) {
-            globalThis.throwNotEnoughArguments("code", 1, 0);
+            return globalThis.throwNotEnoughArguments("code", 1, 0);
         }
 
-        const code = args.ptr[0].toSliceOrNull(globalThis) orelse
-            return .zero;
+        const code = try args.ptr[0].toSliceOrNull(globalThis);
         defer code.deinit();
 
         var buffer = bun.MutableString.initEmpty(bun.default_allocator);
@@ -1736,21 +1735,18 @@ pub const fmt_js_test_bindings = struct {
                     .check_for_unhighlighted_write = false,
                 });
                 std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
-                    globalThis.throwError(err, "Error formatting");
-                    return .zero;
+                    return globalThis.throwError(err, "Error formatting");
                 };
             },
             .escapePowershell => {
                 std.fmt.format(writer.writer(), "{}", .{escapePowershell(code.slice())}) catch |err| {
-                    globalThis.throwError(err, "Error formatting");
-                    return .zero;
+                    return globalThis.throwError(err, "Error formatting");
                 };
             },
         }
 
         writer.flush() catch |err| {
-            globalThis.throwError(err, "Error formatting");
-            return .zero;
+            return globalThis.throwError(err, "Error formatting");
         };
 
         var str = bun.String.createUTF8(buffer.list.items);

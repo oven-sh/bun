@@ -1163,7 +1163,7 @@ if(NOT BUN_CPP_ONLY)
 
   if(CI)
     set(bunTriplet bun-${OS}-${ARCH})
-    if(ABI STREQUAL "musl")
+    if(LINUX AND ABI STREQUAL "musl")
       set(bunTriplet ${bunTriplet}-musl)
     endif()
     if(ENABLE_BASELINE)

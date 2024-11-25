@@ -1552,7 +1552,8 @@ pub const VirtualMachine = struct {
         script_execution_context_id: u32 = 0,
         next_debugger_id: u64 = 1,
         poll_ref: Async.KeepAlive = .{},
-        wait_for_connection: bool = false,
+        wait_for_connection: Wait = .off,
+        // wait_for_connection: bool = false,
         set_breakpoint_on_first_line: bool = false,
         mode: enum {
             /// Bun acts as the server. https://debug.bun.sh/ uses this
@@ -1564,6 +1565,8 @@ pub const VirtualMachine = struct {
         test_reporter_agent: TestReporterAgent = .{},
         lifecycle_reporter_agent: LifecycleAgent = .{},
         must_block_until_connected: bool = false,
+
+        pub const Wait = enum { off, shortly, forever };
 
         pub const log = Output.scoped(.debugger, false);
 
@@ -1589,11 +1592,24 @@ pub const VirtualMachine = struct {
                     .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.CLI.start_time))),
                 }});
 
-            Bun__ensureDebugger(debugger.script_execution_context_id, debugger.wait_for_connection);
-            while (debugger.wait_for_connection) {
+            Bun__ensureDebugger(debugger.script_execution_context_id, debugger.wait_for_connection != .off);
+            var deadline: bun.timespec = if (debugger.wait_for_connection == .shortly) bun.timespec.now().addMs(30) else undefined;
+
+            while (debugger.wait_for_connection != .off) {
                 this.eventLoop().tick();
-                if (debugger.wait_for_connection)
-                    this.eventLoop().autoTickActive();
+                switch (debugger.wait_for_connection) {
+                    .forever => {
+                        this.eventLoop().autoTickActive();
+                    },
+                    .shortly => {
+                        this.uwsLoop().tickWithTimeout(&deadline);
+                        if (bun.timespec.now().order(&deadline) != .lt) {
+                            log("Timed out waiting for the debugger", .{});
+                            break;
+                        }
+                    },
+                    .off => {},
+                }
             }
         }
 
@@ -1616,7 +1632,7 @@ pub const VirtualMachine = struct {
                 }
                 this.eventLoop().ensureWaker();
 
-                if (debugger.wait_for_connection) {
+                if (debugger.wait_for_connection != .off) {
                     debugger.poll_ref.ref(this);
                     debugger.must_block_until_connected = true;
                 }
@@ -1646,8 +1662,8 @@ pub const VirtualMachine = struct {
 
         pub export fn Debugger__didConnect() void {
             var this = VirtualMachine.get();
-            if (this.debugger.?.wait_for_connection) {
-                this.debugger.?.wait_for_connection = false;
+            if (this.debugger.?.wait_for_connection != .off) {
+                this.debugger.?.wait_for_connection = .off;
                 this.debugger.?.poll_ref.unref(this);
             }
         }
@@ -1991,8 +2007,21 @@ pub const VirtualMachine = struct {
         }
         const notify = bun.getenvZ("BUN_INSPECT_NOTIFY") orelse "";
         const unix = bun.getenvZ("BUN_INSPECT") orelse "";
-        const set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1");
-        const wait_for_connection = set_breakpoint_on_first_line or (unix.len > 0 and strings.endsWith(unix, "?wait=1"));
+
+        const set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1"); // If we should set a breakpoint on the first line
+        const wait_for_debugger = unix.len > 0 and strings.endsWith(unix, "?wait=1"); // If we should wait (either 30ms if report is passed, forever otherwise) for the debugger to connect
+        const report = unix.len > 0 and strings.includes(unix, "?report=1"); // If either `break=1` or `wait=1` are specified, passing this will make the wait be 30ms and act like it's reporting to clients like the VSCode extension
+
+        // NOTE:
+        // It's possible (and likely!) that the unix url will end like `?report=1?wait=1`.
+        // This is done because we needed to support the BUN_INSPECT url in versions of bun before we introduced `report=1` mode.
+        // Report mode is used for the VSCode extension (and other clients), it just tells bun to timeout connecting quickly rather
+        // than waiting forever.
+
+        const wait_for_connection: Debugger.Wait = switch (set_breakpoint_on_first_line or wait_for_debugger) {
+            true => if (report) .shortly else .forever,
+            false => .off,
+        };
 
         switch (cli_flag) {
             .unspecified => {
@@ -2007,7 +2036,7 @@ pub const VirtualMachine = struct {
                     this.debugger = Debugger{
                         .path_or_port = null,
                         .from_environment_variable = notify,
-                        .wait_for_connection = true,
+                        .wait_for_connection = wait_for_connection,
                         .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
                         .mode = .connect,
                     };
@@ -2017,7 +2046,7 @@ pub const VirtualMachine = struct {
                 this.debugger = Debugger{
                     .path_or_port = cli_flag.enable.path_or_port,
                     .from_environment_variable = unix,
-                    .wait_for_connection = wait_for_connection or cli_flag.enable.wait_for_connection,
+                    .wait_for_connection = if (cli_flag.enable.wait_for_connection) .forever else wait_for_connection,
                     .set_breakpoint_on_first_line = set_breakpoint_on_first_line or cli_flag.enable.set_breakpoint_on_first_line,
                 };
             },

@@ -48,38 +48,38 @@
     v(worker_threads,         Bun::InternalModuleRegistry::NodeWorkerThreads) \
     v(zlib,                   Bun::InternalModuleRegistry::NodeZlib) \
 
-#define FOREACH_EXPOSED_BUILTIN_NATIVE(v) \
-    v(constants,              SyntheticModuleType::NodeConstants) \
-    v(string_decoder,         SyntheticModuleType::NodeStringDecoder) \
-    v(buffer,                 SyntheticModuleType::NodeBuffer) \
-    v(jsc,                    SyntheticModuleType::BunJSC) \
+
 
 namespace ExposeNodeModuleGlobalGetters {
 
 #define DECL_GETTER(id, field) \
     JSC_DEFINE_CUSTOM_GETTER(id, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName)) \
     { \
-        Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject); \
+        Zig::GlobalObject* thisObject = defaultGlobalObject(lexicalGlobalObject); \
         JSC::VM& vm = thisObject->vm(); \
         return JSC::JSValue::encode(thisObject->internalModuleRegistry()->requireId(thisObject, vm, field)); \
     }
 FOREACH_EXPOSED_BUILTIN_IMR(DECL_GETTER)
-#undef DECL_GETTER
+#undef DECL_GETTER    
 
-#define DECL_GETTER(id, field) \
-    JSC_DEFINE_CUSTOM_GETTER(id, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName)) \
-    { \
-        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject); \
-        JSC::VM& vm = globalObject->vm(); \
-        auto& builtinNames = WebCore::builtinNames(vm); \
-        JSC::JSFunction* function = jsCast<JSC::JSFunction*>(globalObject->getDirect(vm, builtinNames.requireNativeModulePrivateName())); \
-        JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer(); \
-        arguments.append(JSC::jsString(vm, WTF::String(#id##_s))); \
-        auto callData = JSC::getCallData(function); \
-        return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments)); \
-    }
-FOREACH_EXPOSED_BUILTIN_NATIVE(DECL_GETTER)
-#undef DECL_GETTER
+
+JSC_DEFINE_CUSTOM_GETTER(jsCustomGetterGetNativeModule, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject); 
+    JSC::VM& vm = globalObject->vm(); 
+    
+    JSC::JSValue key = JSC::identifierToJSValue(vm, propertyName == "jsc"_s ? JSC::Identifier::fromString(vm, "bun:jsc"_s) : JSC::Identifier::fromUid(vm, propertyName.uid())); 
+    JSC::JSValue result = globalObject->requireMap()->get(globalObject, key); 
+    if (!result || result.isUndefinedOrNull()) { 
+        auto& builtinNames = WebCore::builtinNames(vm); 
+        JSC::JSFunction* function = jsCast<JSC::JSFunction*>(globalObject->getDirect(vm, builtinNames.requireNativeModulePrivateName())); 
+        JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer(); 
+        arguments.append(key); 
+        auto callData = JSC::getCallData(function); 
+        return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments)); 
+    } 
+    return JSC::JSValue::encode(result); 
+}
 
 } // namespace ExposeNodeModuleGlobalGetters
 
@@ -95,11 +95,32 @@ extern "C" void Bun__ExposeNodeModuleGlobals(Zig::GlobalObject* globalObject)
             vm, \
             ExposeNodeModuleGlobalGetters::id, \
             nullptr), \
-        0 | JSC::PropertyAttribute::CustomAccessorOrValue \
+        0 | JSC::PropertyAttribute::CustomValue \
     );
 
     FOREACH_EXPOSED_BUILTIN_IMR(PUT_CUSTOM_GETTER_SETTER)
-    // FOREACH_EXPOSED_BUILTIN_NATIVE(PUT_CUSTOM_GETTER_SETTER)
 #undef PUT_CUSTOM_GETTER_SETTER
 
+
+    JSC::CustomGetterSetter *nativeModuleGetter = JSC::CustomGetterSetter::create(
+        vm,
+        ExposeNodeModuleGlobalGetters::jsCustomGetterGetNativeModule,
+        nullptr
+    );
+
+    static constexpr ASCIILiteral nativeModuleNames[] = {
+        "constants"_s,
+        "string_decoder"_s,
+        "buffer"_s,
+        "jsc"_s,
+    };
+
+    for (auto name : nativeModuleNames) {
+        globalObject->putDirectCustomAccessor(
+            vm,
+            JSC::Identifier::fromString(vm, name),
+            nativeModuleGetter,
+            0 | JSC::PropertyAttribute::CustomValue
+        );
+    }
 }

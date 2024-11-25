@@ -4406,7 +4406,7 @@ pub const Blob = struct {
             .share => {
                 if (buf.len > JSC.synthetic_allocation_limit and TypedArrayView != .ArrayBuffer) {
                     global.throwOutOfMemory();
-                    return JSValue.zero;
+                    return .zero;
                 }
 
                 this.store.?.ref();

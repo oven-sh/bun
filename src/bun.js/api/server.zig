@@ -5070,7 +5070,7 @@ pub const ServerWebSocket = struct {
 
         if (result.isAnyError()) {
             globalThis.throwValue(result);
-            return JSValue.jsUndefined();
+            return .zero;
         }
 
         return result;

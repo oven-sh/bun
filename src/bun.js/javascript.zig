@@ -1568,7 +1568,6 @@ pub const VirtualMachine = struct {
             /// Bun connects to this path. The VSCode extension uses this.
             connect,
         } = .listen,
-        notify_fd: ?bun.FileDescriptor = null,
 
         test_reporter_agent: TestReporterAgent = .{},
         lifecycle_reporter_agent: LifecycleAgent = .{},
@@ -1658,12 +1657,6 @@ pub const VirtualMachine = struct {
             if (this.debugger.?.wait_for_connection) {
                 this.debugger.?.wait_for_connection = false;
                 this.debugger.?.poll_ref.unref(this);
-
-                // Send notification if notify_fd is set
-                if (this.debugger.?.notify_fd) |fd| {
-                    const one = "1";
-                    _ = bun.sys.write(fd, one.ptr, one.len) catch {};
-                }
             }
         }
 
@@ -2005,7 +1998,6 @@ pub const VirtualMachine = struct {
             return;
         }
         const notify = bun.getenvZ("BUN_INSPECT_NOTIFY") orelse "";
-        const vscode_socket = bun.getenvZ("BUN_VSCODE_EXTENSION_SOCKET") orelse "";
         const unix = bun.getenvZ("BUN_INSPECT") orelse "";
         const set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1");
         const wait_for_connection = set_breakpoint_on_first_line or (unix.len > 0 and strings.endsWith(unix, "?wait=1"));
@@ -2018,16 +2010,11 @@ pub const VirtualMachine = struct {
                         .from_environment_variable = unix,
                         .wait_for_connection = wait_for_connection,
                         .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
-                        // If BUN_INSPECT_NOTIFY is set, we'll need to notify it when ready
-                        .notify_fd = if (notify.len > 0)
-                            std.fmt.parseInt(bun.FileDescriptor, notify, 10) catch null
-                        else
-                            null,
                     };
-                } else if (vscode_socket.len > 0) {
+                } else if (notify.len > 0) {
                     this.debugger = Debugger{
                         .path_or_port = null,
-                        .from_environment_variable = vscode_socket,
+                        .from_environment_variable = notify,
                         .wait_for_connection = true,
                         .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
                         .mode = .connect,
@@ -2040,10 +2027,6 @@ pub const VirtualMachine = struct {
                     .from_environment_variable = unix,
                     .wait_for_connection = wait_for_connection or cli_flag.enable.wait_for_connection,
                     .set_breakpoint_on_first_line = set_breakpoint_on_first_line or cli_flag.enable.set_breakpoint_on_first_line,
-                    .notify_fd = if (notify.len > 0)
-                        std.fmt.parseInt(bun.FileDescriptor, notify, 10) catch null
-                    else
-                        null,
                 };
             },
         }

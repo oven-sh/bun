@@ -1080,6 +1080,8 @@ function getCloudInit(cloudInit) {
           PermitRootLogin yes
           PasswordAuthentication no
           PubkeyAuthentication yes
+          UsePAM yes
+          UseLogin yes
           Subsystem sftp ${sftpPath}
     chpasswd:
       expire: false

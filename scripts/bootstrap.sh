@@ -112,14 +112,23 @@ append_to_file() {
 	file="$1"
 	content="$2"
 
-	if ! [ -f "$file" ]; then
+	file_needs_sudo="0"
+	if [ -f "$file" ]; then
+		if ! [ -r "$file" ] || ! [ -w "$file" ]; then
+			file_needs_sudo="1"
+		fi
+	else
 		execute_as_user mkdir -p "$(dirname "$file")"
 		execute_as_user touch "$file"
 	fi
 
 	echo "$content" | while read -r line; do
 		if ! grep -q "$line" "$file"; then
-			echo "$line" >>"$file"
+			if [ "$file_needs_sudo" = "1" ]; then
+				execute_sudo sh -c "echo '$line' >> '$file'"
+			else
+				echo "$line" >> "$file"
+			fi
 		fi
 	done
 }
@@ -381,6 +390,56 @@ check_user() {
 	elif [ -f "$(which sudo)" ] && [ "$(sudo -n echo 1 2>/dev/null)" = "1" ]; then
 		can_sudo=1
 		print "Sudo: can be used"
+	fi
+}
+
+check_ulimit() {
+	if ! [ "$ci" = "1" ]; then
+		return
+	fi
+
+	print "Checking ulimits..."
+	systemd_conf="/etc/systemd/system.conf"
+	limits_conf="/etc/security/limits.d/99-unlimited.conf"
+	if [ -f "/etc/security/limits.conf" ] && ! [ -f "$limits_conf" ]; then
+		execute_sudo mkdir -p "$(dirname "$limits_conf")"
+		execute_sudo touch "$limits_conf"
+	fi
+
+	limits="core data fsize memlock nofile rss stack cpu nproc as locks sigpending msgqueue"
+	for limit in $limits; do
+		limit_upper="$(echo "$limit" | tr '[:lower:]' '[:upper:]')"
+
+		limit_value="unlimited"
+		case "$limit" in
+		nofile | nproc)
+			limit_value="1048576"
+			;;
+		esac
+
+		if [ -f "$limits_conf" ]; then
+			limit_users="root *"
+			for limit_user in $limit_users; do
+				append_to_file "$limits_conf" "$limit_user soft $limit $limit_value"
+				append_to_file "$limits_conf" "$limit_user hard $limit $limit_value"
+			done
+		fi
+
+		if [ -f "$systemd_conf" ]; then
+			append_to_file "$systemd_conf" "DefaultLimit$limit_upper=$limit_value"
+		fi
+	done
+
+	pam_confs="/etc/pam.d/common-session /etc/pam.d/common-session-noninteractive"
+	for pam_conf in $pam_confs; do
+		if [ -f "$pam_conf" ]; then
+			append_to_file "$pam_conf" "session optional pam_limits.so"
+		fi
+	done
+
+	systemctl="$(which systemctl)"
+	if [ -f "$systemctl" ]; then
+		execute_sudo "$systemctl" daemon-reload
 	fi
 }
 
@@ -872,6 +931,7 @@ create_buildkite_user() {
 	if [ -z "$(getent passwd "$user")" ]; then
 		execute_sudo useradd "$user" \
 			--system \
+			--shell "$(require sh)" \
 			--no-create-home \
 			--home-dir "$home"
 	fi
@@ -1012,12 +1072,13 @@ main() {
 	check_operating_system
 	check_inside_docker
 	check_user
+	check_ulimit
 	check_package_manager
 	create_buildkite_user
-	install_common_software
-	install_build_essentials
-	install_chrome_dependencies
-	raise_file_descriptor_limit # XXX: temporary
+	
+	# install_common_software
+	# install_build_essentials
+	# install_chrome_dependencies
 }
 
 main "$@"

@@ -19,6 +19,26 @@ At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-i
   <br/>
 </div>
 
+## Features:
+
+- Live in-editor error messages (gif below)
+- Test runner codelens
+- Debugger support
+- Run scripts from package.json
+- Visual lockfile viewer (`bun.lockb`)
+
+## In-editor error messages
+
+When running programs with Bun from a Visual Studio Code terminal, Bun will connect to the extension and report errors as they happen, at the exact location they happened. We recommend using this feature with `bun --watch` so you can see errors on every save.
+
+![Error messages example](./error-messages.gif)
+
+<div align="center">
+<sup>In the example above VSCode is saving on every keypress. Under normal configuration you'd only see errors on every save.</sup>
+</div>
+
+Errors are cleared whenever you start typing, or whenever the extension detects that Bun just started running (or reloading) a new program.
+
 ## Configuration
 
 ### `.vscode/launch.json`

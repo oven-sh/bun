@@ -380,6 +380,15 @@ if (global.PerformanceMark) {
 if (global.PerformanceMeasure) {
   knownGlobals.push(global.PerformanceMeasure);
 }
+if (global.PerformanceResourceTiming) {
+  knownGlobals.push(global.PerformanceResourceTiming);
+}
+if (global.PerformanceServerTiming) {
+  knownGlobals.push(global.PerformanceServerTiming);
+}
+if (global.PerformanceTiming) {
+  knownGlobals.push(global.PerformanceTiming);
+}
 
 // TODO(@ethan-arrowood): Similar to previous checks, this can be temporary
 // until v16.x is EOL. Once all supported versions have structuredClone we

@@ -952,6 +952,8 @@ pub const MySQLConnection = struct {
         const first_byte = try reader.int(u8);
         reader.skip(-1);
 
+        debug("Auth packet: 0x{x:0>2}", .{first_byte});
+
         switch (first_byte) {
             @intFromEnum(protocol.PacketType.OK) => {
                 var ok = protocol.OKPacket{};
@@ -968,7 +970,53 @@ pub const MySQLConnection = struct {
                 try err.decode(reader);
                 defer err.deinit();
 
-                this.fail("Authentication failed", error.AuthenticationFailed);
+                this.failWithJSValue(err.toJS(this.globalObject));
+                return error.AuthenticationFailed;
+            },
+
+            @intFromEnum(protocol.PacketType.MORE_DATA) => {
+                // Handle various MORE_DATA cases
+                if (this.auth_plugin) |plugin| {
+                    switch (plugin) {
+                        .caching_sha2_password => {
+                            var response = protocol.Auth.caching_sha2_password.Response{};
+                            try response.decode(reader);
+                            defer response.deinit();
+
+                            switch (response.status) {
+                                .success => {
+                                    this.status = .connected;
+                                    this.is_ready_for_query = true;
+                                },
+                                .fail => {
+                                    this.fail("Authentication failed", error.AuthenticationFailed);
+                                },
+                                .full_auth => {
+                                    // Server wants full authentication
+                                    this.auth_state = .{ .caching_sha2 = .full_auth };
+                                    // Send empty response to continue auth
+                                    try this.sendAuthSwitchResponse(plugin, "");
+                                },
+                            }
+                        },
+                        else => {
+                            debug("Unexpected auth continuation for plugin: {s}", .{@tagName(plugin)});
+                            return error.UnexpectedPacket;
+                        },
+                    }
+                } else if (first_byte == @intFromEnum(protocol.PacketType.LOCAL_INFILE)) {
+                    // Handle LOCAL INFILE request
+                    var infile = protocol.LocalInfileRequest{};
+                    try infile.decode(reader);
+                    defer infile.deinit();
+
+                    // We don't support LOCAL INFILE for security reasons
+                    this.fail("LOCAL INFILE not supported", error.LocalInfileNotSupported);
+                    return;
+                } else {
+                    debug("Received auth continuation without plugin", .{});
+                    return error.UnexpectedPacket;
+                }
             },
 
             protocol.PacketType.AUTH_SWITCH => {

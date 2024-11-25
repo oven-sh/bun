@@ -320,7 +320,9 @@ pub const PacketType = enum(u8) {
     LOCAL_INFILE = 0xfb,
 
     // Client/server packets
-    pub const HANDSHAKE = 0x0a;
+    HANDSHAKE = 0x0a,
+    MORE_DATA = 0x01,
+
     pub const AUTH_SWITCH = 0xfe;
 };
 
@@ -506,10 +508,10 @@ pub const HandshakeResponse41 = struct {
     pub fn writeInternal(this: *const HandshakeResponse41, comptime Context: type, writer: NewWriter(Context)) !void {
         var packet = try writer.start(1);
 
-        // Client capability flags - make sure we mask with server capabilities
+        // Client capability flags
         try writer.int4(this.capability_flags.toInt());
 
-        // Max packet size (16MB)
+        // Max packet size
         try writer.int4(this.max_packet_size);
 
         // Character set
@@ -519,26 +521,30 @@ pub const HandshakeResponse41 = struct {
         try writer.write(&[_]u8{0} ** 23);
 
         // Username - null terminated
-        try writer.string(this.username.slice());
+        try writer.write(this.username.slice());
+        if (this.username.slice().len == 0 or this.username.slice()[this.username.slice().len - 1] != 0) {
+            try writer.write(&[_]u8{0});
+        }
 
         // Auth response
         const auth_data = this.auth_response.slice();
         if (this.capability_flags.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA) {
-            // Length encoded
+            // Length encoded integer for auth data length
             try writer.write(encodeLengthInt(auth_data.len));
             if (auth_data.len > 0) {
                 try writer.write(auth_data);
             }
         } else {
-            // Fixed length
+            // Fixed length byte for auth data length
             try writer.int1(@intCast(auth_data.len));
             if (auth_data.len > 0) {
                 try writer.write(auth_data);
             }
         }
 
-        // Database name if requested
-        if (this.capability_flags.CLIENT_CONNECT_WITH_DB and this.database.slice().len > 0) {
+        // Database name if requested - only write if CLIENT_CONNECT_WITH_DB is set
+        if (this.capability_flags.CLIENT_CONNECT_WITH_DB) {
+            // Only write database name if one was provided
             try writer.string(this.database.slice());
         }
 
@@ -1231,7 +1237,7 @@ pub const Auth = struct {
         };
 
         pub const Response = struct {
-            status: FastAuthStatus,
+            status: FastAuthStatus = .success,
             data: Data = .{ .empty = {} },
 
             pub fn deinit(this: *Response) void {

@@ -760,15 +760,16 @@ export async function readStreamIntoSink(stream, sink, isNative) {
   var didThrow = false;
   var started = false;
   const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark") || 0;
+  function onSinkClose(stream, reason) {
+    if (!didThrow && !didClose && stream && stream.$state !== $streamClosed) {
+      const cancelResult = $readableStreamCancel(stream, reason);
+      $isPromise(cancelResult) && $markPromiseAsHandled(cancelResult);
+    }
+  }
 
   try {
     var reader = stream.getReader();
     var many = reader.readMany();
-    function onSinkClose(stream, reason) {
-      if (!didThrow && !didClose && stream && stream.$state !== $streamClosed) {
-        $readableStreamCancel(stream, reason);
-      }
-    }
 
     if (many && $isPromise(many)) {
       // Some time may pass before this Promise is fulfilled. The sink may
@@ -795,7 +796,6 @@ export async function readStreamIntoSink(stream, sink, isNative) {
     for (var i = 0, values = many.value, length = many.value.length; i < length; i++) {
       sink.write(values[i]);
     }
-
     var streamState = $getByIdDirectPrivate(stream, "state");
     if (streamState === $streamClosed) {
       didClose = true;
@@ -812,15 +812,8 @@ export async function readStreamIntoSink(stream, sink, isNative) {
       sink.write(value);
     }
   } catch (e) {
+    onSinkClose(stream, e);
     didThrow = true;
-
-    try {
-      reader = undefined;
-      const prom = stream.cancel(e);
-      if ($isPromise(prom)) {
-        $markPromiseAsHandled(prom);
-      }
-    } catch (j) {}
 
     if (sink && !didClose) {
       didClose = true;
@@ -1519,8 +1512,7 @@ export function readableStreamCloseIfPossible(stream) {
   switch ($getByIdDirectPrivate(stream, "state")) {
     case $streamReadable:
     case $streamClosing: {
-      $readableStreamClose(stream);
-      break;
+      return $readableStreamClose(stream);
     }
   }
 }

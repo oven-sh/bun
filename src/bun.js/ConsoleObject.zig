@@ -1228,7 +1228,7 @@ pub const Formatter = struct {
                 .tag = switch (js_type) {
                     .ErrorInstance => .Error,
                     .NumberObject => .Double,
-                    .DerivedArray, JSValue.JSType.Array => .Array,
+                    .DerivedArray, JSValue.JSType.Array, .DirectArguments, .ScopedArguments, .ClonedArguments => .Array,
                     .DerivedStringObject, JSValue.JSType.String, JSValue.JSType.StringObject => .String,
                     .RegExpObject => .String,
                     .Symbol => .Symbol,
@@ -2179,7 +2179,7 @@ pub const Formatter = struct {
                 const func_name = proto.getName(this.globalThis); // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
                 defer func_name.deref();
 
-                if (printable.isEmpty()) {
+                if (printable.isEmpty() or func_name.eql(printable)) {
                     if (func_name.isEmpty()) {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
                     } else {
@@ -2369,16 +2369,18 @@ pub const Formatter = struct {
                         }
                     }
 
-                    const Iterator = PropertyIterator(Writer, enable_ansi_colors);
-                    var iter = Iterator{
-                        .formatter = this,
-                        .writer = writer_,
-                        .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
-                        .single_line = this.single_line,
-                        .parent = value,
-                        .i = i,
-                    };
-                    value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
+                    if (!jsType.isArguments()) {
+                        const Iterator = PropertyIterator(Writer, enable_ansi_colors);
+                        var iter = Iterator{
+                            .formatter = this,
+                            .writer = writer_,
+                            .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
+                            .single_line = this.single_line,
+                            .parent = value,
+                            .i = i,
+                        };
+                        value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
+                    }
                 }
 
                 if (!this.single_line and (this.ordered_properties or was_good_time or this.goodTimeForANewLine())) {

@@ -4092,6 +4092,13 @@ pub const JSValue = enum(i64) {
                 else => false,
             };
         }
+
+        pub inline fn isArguments(this: JSType) bool {
+            return switch (this) {
+                .DirectArguments, .ClonedArguments, .ScopedArguments => true,
+                else => false,
+            };
+        }
     };
 
     pub inline fn cast(ptr: anytype) JSValue {

@@ -1160,6 +1160,7 @@ pub const PackCommand = struct {
         };
 
         const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(abs_package_json_path, "package.json"));
+        try manager.env.map.put("npm_command", "pack");
 
         const postpack_script, const publish_script: ?[]const u8, const postpublish_script: ?[]const u8 = post_scripts: {
             // --ignore-scripts

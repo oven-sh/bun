@@ -1,17 +1,19 @@
 //#FILE: test-http2-pipe.js
 //#SHA1: bb970b612d495580b8c216a1b202037e5eb0721e
 //-----------------
-'use strict';
+"use strict";
 
-const http2 = require('http2');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+import { afterEach, beforeEach, test, expect, describe, mock } from "bun:test";
+
+const http2 = require("http2");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
 // Skip the test if crypto is not available
 let hasCrypto;
 try {
-  require('crypto');
+  require("crypto");
   hasCrypto = true;
 } catch (err) {
   hasCrypto = false;
@@ -19,30 +21,30 @@ try {
 
 const testIfCrypto = hasCrypto ? test : test.skip;
 
-describe('HTTP2 Pipe', () => {
+describe("HTTP2 Pipe", () => {
   let server;
   let serverPort;
   let tmpdir;
-  const fixturesDir = path.join(__dirname, '..', 'fixtures');
-  const loc = path.join(fixturesDir, 'person-large.jpg');
+  const fixturesDir = path.join(__dirname, "..", "fixtures");
+  const loc = path.join(fixturesDir, "person-large.jpg");
   let fn;
 
-  beforeAll(async () => {
-    tmpdir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'http2-test-'));
-    fn = path.join(tmpdir, 'http2-url-tests.js');
+  beforeEach(() => {
+    tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "http2-test-"));
+    fn = path.join(tmpdir, "http2-url-tests.js");
   });
 
-  afterAll(async () => {
-    await fs.promises.rm(tmpdir, { recursive: true, force: true });
+  afterEach(() => {
+    fs.rmSync(tmpdir, { recursive: true, force: true });
   });
 
-  testIfCrypto('Piping should work as expected with createWriteStream', (done) => {
+  testIfCrypto("Piping should work as expected with createWriteStream", done => {
     server = http2.createServer();
 
-    server.on('stream', (stream) => {
+    server.on("stream", stream => {
       const dest = stream.pipe(fs.createWriteStream(fn));
 
-      dest.on('finish', () => {
+      dest.on("finish", () => {
         expect(fs.readFileSync(loc).length).toBe(fs.readFileSync(fn).length);
       });
       stream.respond();
@@ -53,13 +55,13 @@ describe('HTTP2 Pipe', () => {
       serverPort = server.address().port;
       const client = http2.connect(`http://localhost:${serverPort}`);
 
-      const req = client.request({ ':method': 'POST' });
+      const req = client.request({ ":method": "POST" });
 
-      const responseHandler = jest.fn();
-      req.on('response', responseHandler);
+      const responseHandler = mock(() => {});
+      req.on("response", responseHandler);
       req.resume();
 
-      req.on('close', () => {
+      req.on("close", () => {
         expect(responseHandler).toHaveBeenCalled();
         server.close();
         client.close();
@@ -67,11 +69,11 @@ describe('HTTP2 Pipe', () => {
       });
 
       const str = fs.createReadStream(loc);
-      const strEndHandler = jest.fn();
-      str.on('end', strEndHandler);
+      const strEndHandler = mock(() => {});
+      str.on("end", strEndHandler);
       str.pipe(req);
 
-      req.on('finish', () => {
+      req.on("finish", () => {
         expect(strEndHandler).toHaveBeenCalled();
       });
     });

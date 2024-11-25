@@ -1921,6 +1921,8 @@ pub const Formatter = struct {
         value.getClassName(globalThis, &name_str);
         if (!name_str.eqlComptime("Object")) {
             return name_str;
+        } else if (value.getPrototype(globalThis).eqlValue(JSValue.null)) {
+            return ZigString.static("[Object: null prototype]").*;
         }
         return null;
     }
@@ -3128,8 +3130,6 @@ pub const Formatter = struct {
                     else {
                         if (getObjectName(this.globalThis, value)) |name_str| {
                             writer.print("{} ", .{name_str});
-                        } else if (value.getPrototype(this.globalThis).eqlValue(JSValue.null)) {
-                            writer.print("[Object: null prototype] ", .{});
                         }
                         writer.writeAll("{}");
                     }

@@ -279,7 +279,7 @@ export async function registerDiagnosticsSocket(context: vscode.ExtensionContext
   const manager = await BunDiagnosticsManager.initialize(context);
 
   context.environmentVariableCollection.replace("BUN_INSPECT_NOTIFY", manager.notifyUrl);
-  context.environmentVariableCollection.replace("BUN_INSPECT", `${manager.inspectUrl}?wait=1&report=1`);
+  context.environmentVariableCollection.replace("BUN_INSPECT", `${manager.inspectUrl}?report=1?wait=1`); // Intentionally invalid query params
 
   context.subscriptions.push(manager);
 }

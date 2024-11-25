@@ -703,10 +703,10 @@ pub const StmtPreparePacket = struct {
 // Prepared statement prepare response
 pub const StmtPrepareOKPacket = struct {
     status: u8 = 0,
-    statement_id: u32,
-    num_columns: u16,
-    num_params: u16,
-    warning_count: u16,
+    statement_id: u32 = 0,
+    num_columns: u16 = 0,
+    num_params: u16 = 0,
+    warning_count: u16 = 0,
 
     pub fn decodeInternal(this: *StmtPrepareOKPacket, comptime Context: type, reader: NewReader(Context)) !void {
         this.status = try reader.int(u8);

@@ -296,9 +296,10 @@ pub const Value = union(enum) {
         }
 
         pub fn fromUnixTimestamp(timestamp: i64) Timestamp {
+            const timestamp_u64: u64 = @intCast(@max(timestamp, 0));
             return .{
-                .seconds = @truncate(timestamp),
-                .microseconds = @truncate(@mod(timestamp, 1_000_000)),
+                .seconds = @truncate(timestamp_u64),
+                .microseconds = @truncate(@mod(timestamp_u64, 1_000_000)),
             };
         }
 
@@ -321,22 +322,20 @@ pub const Value = union(enum) {
         }
 
         pub fn toJS(this: Timestamp, globalObject: *JSC.JSGlobalObject) JSValue {
-            return JSValue.fromDateNumber(globalObject, @floatFromInt(this.toUnixTimestamp() * 1000));
+            const timestamp: f64 = @floatCast(this.toUnixTimestamp());
+            return JSValue.fromDateNumber(globalObject, timestamp * 1000);
         }
 
-        pub fn toBinary(this: Timestamp, field_type: FieldType) BoundedArray(u8, 7) {
-            var out = BoundedArray(u8, 7){};
-            std.mem.writeInt(u32, out.buffer[0..4], this.seconds, .little);
-            std.mem.writeInt(u24, out.buffer[4..7], this.microseconds, .little);
-            out.len = switch (field_type) {
+        pub fn toBinary(this: *const Timestamp, field_type: FieldType, buffer: []u8) u8 {
+            std.mem.writeInt(u32, buffer[0..4], this.seconds, .little);
+            std.mem.writeInt(u24, buffer[4..7], this.microseconds, .little);
+            return switch (field_type) {
                 // [4 bytes] - unix timestamp as uint32_t LE
                 .MYSQL_TYPE_TIMESTAMP => 4,
                 // [7 bytes] - unix timestamp as uint32_t LE + microseconds as uint24_t LE
                 .MYSQL_TYPE_TIMESTAMP2 => 7,
                 else => unreachable,
             };
-
-            return out;
         }
     };
 
@@ -569,10 +568,10 @@ pub const Value = union(enum) {
                 total_ms = -total_ms;
             }
 
-            return JSValue.jsNumber(@floatFromInt(total_ms));
+            return JSValue.jsDoubleNumber(@floatFromInt(total_ms));
         }
 
-        pub fn toBinary(this: Time, field_type: FieldType, buffer: []u8) u8 {
+        pub fn toBinary(this: *const Time, field_type: FieldType, buffer: []u8) u8 {
             switch (field_type) {
                 .MYSQL_TYPE_TIME, .MYSQL_TYPE_TIME2 => {
                     buffer[1] = if (this.negative) 1 else 0;
@@ -688,8 +687,8 @@ fn gregorianDate(days: i32) Date {
     var d = days;
     var y: u16 = 1970;
 
-    while (d >= 365 + @intFromBool(isLeapYear(y))) : (y += 1) {
-        d -= 365 + @intFromBool(isLeapYear(y));
+    while (d >= 365 + @as(u16, @intFromBool(isLeapYear(y)))) : (y += 1) {
+        d -= 365 + @as(u16, @intFromBool(isLeapYear(y)));
     }
 
     var m: u8 = 1;

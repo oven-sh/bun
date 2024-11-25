@@ -3110,7 +3110,6 @@ pub const Formatter = struct {
                     if (display_name.isEmpty()) {
                         display_name = String.static("Object");
                     }
-
                     writer.print(comptime Output.prettyFmt("<r><cyan>[{} ...]<r>", enable_ansi_colors), .{
                         display_name,
                     });

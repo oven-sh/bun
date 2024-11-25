@@ -1663,22 +1663,22 @@ pub const ThreadSafeFunction = struct {
             }
         } else {
             if (this.queue.isBlocked()) {
-                return .queue_full;
+                return this.env.setLastError(.queue_full);
             }
         }
 
         if (this.isClosing()) {
             if (this.thread_count.load(.seq_cst) <= 0) {
-                return .invalid_arg;
+                return this.env.invalidArg();
             }
             _ = this.release(.release, true);
-            return .closing;
+            return this.env.setLastError(.closing);
         }
 
         _ = this.queue.count.fetchAdd(1, .seq_cst);
         this.queue.data.writeItem(ctx) catch bun.outOfMemory();
         this.scheduleDispatch();
-        return .ok;
+        return this.env.ok();
     }
 
     fn scheduleDispatch(this: *ThreadSafeFunction) void {
@@ -1719,7 +1719,7 @@ pub const ThreadSafeFunction = struct {
         this.lock.lock();
         defer this.lock.unlock();
         if (this.isClosing()) {
-            return .closing;
+            return this.env.setLastError(.closing);
         }
         _ = this.thread_count.fetchAdd(1, .seq_cst);
         return .ok;
@@ -1730,7 +1730,7 @@ pub const ThreadSafeFunction = struct {
         defer if (!already_locked) this.lock.unlock();
 
         if (this.thread_count.load(.seq_cst) < 0) {
-            return .invalid_arg;
+            return this.env.invalidArg();
         }
 
         const prev_remaining = this.thread_count.fetchSub(1, .seq_cst);
@@ -1778,7 +1778,7 @@ pub export fn napi_create_threadsafe_function(
         return env.setLastError(.function_expected);
     }
 
-    const vm = env.bunVM();
+    const vm = env.toJS().bunVM();
     var function = ThreadSafeFunction.new(.{
         .event_loop = vm.eventLoop(),
         .env = env,

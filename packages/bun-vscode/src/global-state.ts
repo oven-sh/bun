@@ -10,6 +10,8 @@ export type GlobalStateTypes = {
         type: "unix";
         url: string;
       };
+
+  deprecated_BUN_INSPECT: string;
 };
 
 export function typedGlobalState(state: ExtensionContext["globalState"]) {
@@ -34,6 +36,21 @@ export function typedGlobalState(state: ExtensionContext["globalState"]) {
      * @param keys The set of keys whose values are synced.
      */
     setKeysForSync(keys: readonly (keyof GlobalStateTypes)[]): void;
+  };
+}
+
+export function createGlobalStateGenerationFn<T extends keyof GlobalStateTypes>(
+  key: T,
+  resolve: () => Promise<GlobalStateTypes[T]>,
+) {
+  return async (gs: ExtensionContext["globalState"]) => {
+    const value = (gs as TypedGlobalState).get(key);
+    if (value) return value;
+
+    const next = await resolve();
+    await (gs as TypedGlobalState).update(key, next);
+
+    return next;
   };
 }
 

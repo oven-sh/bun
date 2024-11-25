@@ -305,6 +305,10 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     throw new Error("Inspector does not offer a URL");
   }
 
+  public getInspector() {
+    return this.inspector;
+  }
+
   abstract start(...args: unknown[]): Promise<boolean>;
 
   /**
@@ -2064,7 +2068,7 @@ export class NodeSocketDebugAdapter extends BaseDebugAdapter<NodeSocketInspector
 /**
  * The default debug adapter. Connects via WebSocket
  */
-export class DebugAdapter extends BaseDebugAdapter<WebSocketInspector> {
+export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> {
   #process?: ChildProcess;
 
   public constructor(url?: string | URL, untitledDocPath?: string, bunEvalPath?: string) {
@@ -2330,6 +2334,8 @@ export class DebugAdapter extends BaseDebugAdapter<WebSocketInspector> {
     return false;
   }
 }
+
+export const DebugAdapter = WebSocketDebugAdapter;
 
 function stoppedReason(reason: JSC.Debugger.PausedEvent["reason"]): DAP.StoppedEvent["reason"] {
   switch (reason) {

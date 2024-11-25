@@ -4,12 +4,14 @@ import * as os from "node:os";
 import * as vscode from "vscode";
 import {
   getAvailablePort,
+  getRandomId,
   NodeSocketDebugAdapter,
   TCPSocketSignal,
   UnixSignal,
 } from "../../../../bun-debug-adapter-protocol";
 import type { JSC } from "../../../../bun-inspector-protocol";
-import { typedGlobalState } from "../../global-state";
+import { createGlobalStateGenerationFn, typedGlobalState } from "../../global-state";
+import { createReconnectingWS } from "./ws";
 
 const output = vscode.window.createOutputChannel("Bun - Diagnostics");
 
@@ -70,6 +72,9 @@ class BunDiagnosticsManager {
   private readonly signal: UnixSignal | TCPSocketSignal;
   private readonly context: vscode.ExtensionContext;
 
+  public readonly oldVersionInspectURL: string;
+  private readonly oldVersionSocket: ReturnType<typeof createReconnectingWS>;
+
   public get signalUrl() {
     return this.signal.url;
   }
@@ -122,12 +127,20 @@ class BunDiagnosticsManager {
     }
   }
 
+  private static getOrCreateOldVersionInspectURL = createGlobalStateGenerationFn("deprecated_BUN_INSPECT", async () => {
+    const url =
+      process.platform === "win32"
+        ? `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`
+        : `ws+unix://${os.tmpdir()}/${getRandomId()}.sock`;
+
+    return url;
+  });
+
   public static async initialize(context: vscode.ExtensionContext) {
     const signal = await BunDiagnosticsManager.getOrRecreateSignal(context);
+    const oldVersionInspectURL = await BunDiagnosticsManager.getOrCreateOldVersionInspectURL(context.globalState);
 
-    await signal.ready;
-
-    return new BunDiagnosticsManager(context, signal);
+    return new BunDiagnosticsManager(context, signal, oldVersionInspectURL);
   }
 
   /**
@@ -203,8 +216,6 @@ class BunDiagnosticsManager {
 
       const [line = null, col = null] = event.lineColumns.slice(i * 2, i * 2 + 2);
 
-      output.appendLine(`Adding related information for ${url} at ${line}:${col}`);
-
       if (line === null || col === null) {
         return [];
       }
@@ -231,10 +242,15 @@ class BunDiagnosticsManager {
     });
   }
 
-  private constructor(context: vscode.ExtensionContext, signal: UnixSignal | TCPSocketSignal) {
+  private constructor(
+    context: vscode.ExtensionContext,
+    signal: UnixSignal | TCPSocketSignal,
+    oldVersionInspectURL: string,
+  ) {
     this.editorState = new EditorStateManager();
     this.signal = signal;
     this.context = context;
+    this.oldVersionInspectURL = oldVersionInspectURL;
 
     this.context.subscriptions.push(
       // on did type
@@ -255,7 +271,9 @@ export async function registerDiagnosticsSocket(context: vscode.ExtensionContext
   context.environmentVariableCollection.description = description;
 
   const manager = await BunDiagnosticsManager.initialize(context);
+
   context.environmentVariableCollection.replace("BUN_INSPECT_NOTIFY", manager.signalUrl);
+  context.environmentVariableCollection.replace("BUN_INSPECT", manager.oldVersionInspectURL);
 
   context.subscriptions.push(manager);
 }

@@ -2096,6 +2096,10 @@ export async function waitForPort(options) {
  * @returns {Promise<number | undefined>}
  */
 export async function getCanaryRevision() {
+  if (isPullRequest() || isFork()) {
+    return 1;
+  }
+
   const repository = getRepository() || "oven-sh/bun";
   const { error: releaseError, body: release } = await curl(
     new URL(`repos/${repository}/releases/latest`, getGithubApiUrl()),

@@ -3228,39 +3228,11 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
         return .undefined;
     };
 
-    switch (escaped) {
-        .static => |val| {
-            return ZigString.init(val).toJS(globalObject);
-        },
-        .original => return input_value,
-        .allocated => |escaped_html| {
-            // TODO: remove `unreachable` from this assertion
-            // if (comptime Environment.allow_assert) {
-            //     // assert that re-encoding the string produces the same result
-            //     assert(
-            //         std.mem.eql(
-            //             u16,
-            //             (strings.toUTF16Alloc(bun.default_allocator, strings.toUTF8Alloc(bun.default_allocator, escaped_html) catch unreachable, false, false) catch unreachable).?,
-            //             escaped_html,
-            //         ),
-            //     );
-
-            //     // assert we do not allocate a new string unnecessarily
-            //     assert(
-            //         !std.mem.eql(
-            //             u16,
-            //             input_slice,
-            //             escaped_html,
-            //         ),
-            //     );
-
-            //     // the output should always be longer than the input
-            //     assert(escaped_html.len > input_slice.len);
-            // }
-
-            return ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject);
-        },
-    }
+    return switch (escaped) {
+        .static => |val| ZigString.init(val).toJS(globalObject),
+        .original => input_value,
+        .allocated => |escaped_html| ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject),
+    };
 }
 
 pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: JSValue, ptr: [*]const u8, len: usize) JSValue {

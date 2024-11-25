@@ -448,7 +448,7 @@ function getPipeline(options) {
       },
       retry: getRetry(),
       command: command.filter(Boolean).join(" "),
-      timeout_in_minutes: os === "windows" ? 3 * 60 : 60,
+      timeout_in_minutes: 3 * 60,
     };
   };
 

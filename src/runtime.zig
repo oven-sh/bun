@@ -71,9 +71,9 @@ pub const Fallback = struct {
 
     pub inline fn errorJS() string {
         return if (Environment.codegen_embed)
-            @embedFile("bun-error/bun-error.css")
+            @embedFile("bun-error/index.js")
         else
-            bun.runtimeEmbedFile(.codegen, "bun-error/bun-error.css");
+            bun.runtimeEmbedFile(.codegen, "bun-error/index.js");
     }
 
     pub inline fn errorCSS() string {

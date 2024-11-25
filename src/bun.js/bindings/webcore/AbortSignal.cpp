@@ -65,15 +65,11 @@ Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t 
     auto signal = adoptRef(*new AbortSignal(&context));
     signal->setHasActiveTimeoutTimer(true);
     auto action = [signal](ScriptExecutionContext& context) mutable {
-        signal->setHasActiveTimeoutTimer(false);
-
-        auto* globalObject = JSC::jsCast<JSDOMGlobalObject*>(context.jsGlobalObject());
-        if (!globalObject)
-            return;
-
+        auto* globalObject = defaultGlobalObject(context.globalObject());
         auto& vm = globalObject->vm();
         Locker locker { vm.apiLock() };
         signal->signalAbort(toJS(globalObject, globalObject, DOMException::create(TimeoutError)));
+        signal->setHasActiveTimeoutTimer(false);
     };
 
     if (milliseconds == 0) {

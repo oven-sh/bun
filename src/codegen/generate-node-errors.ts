@@ -88,10 +88,10 @@ listHeader += `
 `;
 
 zig += `
- 
+
 
   extern fn Bun__createErrorWithCode(globalThis: *JSC.JSGlobalObject, code: Error, message: *bun.String) JSC.JSValue;
-  
+
   /// Creates an Error object with the given error code.
   /// Derefs the message string.
   pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject, message: *bun.String) JSC.JSValue {
@@ -110,7 +110,7 @@ zig += `
   }
 
   pub fn throw(this: Error, globalThis: *JSC.JSGlobalObject, comptime fmt_str: [:0]const u8, args: anytype) void {
-    globalThis.throwValue(fmt(this, globalThis, fmt_str, args)); 
+    globalThis.throwValue(fmt(this, globalThis, fmt_str, args));
   }
 
 };

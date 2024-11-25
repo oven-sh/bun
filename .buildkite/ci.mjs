@@ -304,15 +304,23 @@ function getPipeline(options) {
    * @param {Target} target
    * @returns {Agent}
    */
-  const getZigAgent = target => {
-    const { abi, arch } = target;
-    // if (abi === "musl") {
-    //   const instanceType = arch === "aarch64" ? "c8g.large" : "c7i.large";
-    //   return getEmphemeralAgent("v2", target, instanceType);
-    // }
+  const getZigAgent = platform => {
+    const { arch } = platform;
+    const instanceType = arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge";
     return {
-      queue: "build-zig",
+      robobun: true,
+      robobun2: true,
+      os: "linux",
+      arch,
+      distro: "debian",
+      release: "11",
+      "image-name": `linux-${arch}-debian-11-v5`, // v5 is not on main yet
+      "instance-type": instanceType,
     };
+    // TODO: Temporarily disable due to configuration
+    // return {
+    //   queue: "build-zig",
+    // };
   };
 
   /**
@@ -443,7 +451,7 @@ function getPipeline(options) {
       label: `${getTargetLabel(platform)} - build-zig`,
       depends_on: getDependsOn(platform),
       agents: getZigAgent(platform),
-      retry: getRetry(1), // FIXME: Sometimes zig build hangs, so we need to retry once
+      retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
       env: getBuildEnv(platform),
       command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
@@ -557,34 +565,19 @@ function getPipeline(options) {
     { os: "darwin", arch: "x64", release: "13" },
     { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
     { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
-    // { os: "linux", arch: "aarch64", distro: "debian", release: "10" },
     { os: "linux", arch: "x64", distro: "debian", release: "12" },
     { os: "linux", arch: "x64", distro: "debian", release: "11" },
-    // { os: "linux", arch: "x64", distro: "debian", release: "10" },
     { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12" },
     { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
-    // { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "10" },
-    // { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04" },
     { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
-    // { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04" },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
-    // { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04" },
     { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "20.04" },
-    { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023" },
-    // { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2" },
-    { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023" },
-    // { os: "linux", arch: "x64", distro: "amazonlinux", release: "2" },
-    { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023" },
-    // { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2" },
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
-    // { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.17" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
-    // { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.17" },
     { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
-    // { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.17" },
     { os: "windows", arch: "x64", release: "2019" },
     { os: "windows", arch: "x64", baseline: true, release: "2019" },
   ];

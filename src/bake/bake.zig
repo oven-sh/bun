@@ -26,7 +26,7 @@ pub const UserOptions = struct {
 
     pub fn fromJS(config: JSValue, global: *JSC.JSGlobalObject) !UserOptions {
         if (!config.isObject()) {
-            return global.throwInvalidArguments2("'" ++ api_name ++ "' is not an object", .{});
+            return global.throwInvalidArguments("'" ++ api_name ++ "' is not an object", .{});
         }
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         errdefer arena.deinit();
@@ -37,8 +37,8 @@ pub const UserOptions = struct {
         var bundler_options: SplitBundlerOptions = .{};
 
         const framework = try Framework.fromJS(
-            try config.get2(global, "framework") orelse {
-                return global.throwInvalidArguments2("'" ++ api_name ++ "' is missing 'framework'", .{});
+            try config.get(global, "framework") orelse {
+                return global.throwInvalidArguments("'" ++ api_name ++ "' is missing 'framework'", .{});
             },
             global,
             &allocations,
@@ -278,29 +278,29 @@ pub const Framework = struct {
         }
 
         if (!opts.isObject()) {
-            return global.throwInvalidArguments2("Framework must be an object", .{});
+            return global.throwInvalidArguments("Framework must be an object", .{});
         }
 
-        if (try opts.get2(global, "serverEntryPoint") != null) {
+        if (try opts.get(global, "serverEntryPoint") != null) {
             bun.Output.warn("deprecation notice: 'framework.serverEntryPoint' has been replaced with 'fileSystemRouterTypes[n].serverEntryPoint'", .{});
         }
-        if (try opts.get2(global, "clientEntryPoint") != null) {
+        if (try opts.get(global, "clientEntryPoint") != null) {
             bun.Output.warn("deprecation notice: 'framework.clientEntryPoint' has been replaced with 'fileSystemRouterTypes[n].clientEntryPoint'", .{});
         }
 
         const react_fast_refresh: ?ReactFastRefresh = brk: {
-            const rfr: JSValue = try opts.get2(global, "reactFastRefresh") orelse
+            const rfr: JSValue = try opts.get(global, "reactFastRefresh") orelse
                 break :brk null;
 
             if (rfr == .true) break :brk .{};
             if (rfr == .false or rfr == .null or rfr == .undefined) break :brk null;
 
             if (!rfr.isObject()) {
-                return global.throwInvalidArguments2("'framework.reactFastRefresh' must be an object or 'true'", .{});
+                return global.throwInvalidArguments("'framework.reactFastRefresh' must be an object or 'true'", .{});
             }
 
-            const prop = rfr.get(global, "importSource") orelse {
-                return global.throwInvalidArguments2("'framework.reactFastRefresh' is missing 'importSource'", .{});
+            const prop = try rfr.get(global, "importSource") orelse {
+                return global.throwInvalidArguments("'framework.reactFastRefresh' is missing 'importSource'", .{});
             };
 
             const str = try prop.toBunString2(global);
@@ -311,32 +311,32 @@ pub const Framework = struct {
             };
         };
         const server_components: ?ServerComponents = sc: {
-            const sc: JSValue = try opts.get2(global, "serverComponents") orelse
+            const sc: JSValue = try opts.get(global, "serverComponents") orelse
                 break :sc null;
             if (sc == .false or sc == .null or sc == .undefined) break :sc null;
 
             if (!sc.isObject()) {
-                return global.throwInvalidArguments2("'framework.serverComponents' must be an object or 'undefined'", .{});
+                return global.throwInvalidArguments("'framework.serverComponents' must be an object or 'undefined'", .{});
             }
 
             break :sc .{
                 .separate_ssr_graph = brk: {
                     // Intentionally not using a truthiness check
                     const prop = try sc.getOptional(global, "separateSSRGraph", JSValue) orelse {
-                        return global.throwInvalidArguments2("Missing 'framework.serverComponents.separateSSRGraph'", .{});
+                        return global.throwInvalidArguments("Missing 'framework.serverComponents.separateSSRGraph'", .{});
                     };
                     if (prop == .true) break :brk true;
                     if (prop == .false) break :brk false;
-                    return global.throwInvalidArguments2("'framework.serverComponents.separateSSRGraph' must be a boolean", .{});
+                    return global.throwInvalidArguments("'framework.serverComponents.separateSSRGraph' must be a boolean", .{});
                 },
                 .server_runtime_import = refs.track(
                     try sc.getOptional(global, "serverRuntimeImportSource", ZigString.Slice) orelse {
-                        return global.throwInvalidArguments2("Missing 'framework.serverComponents.serverRuntimeImportSource'", .{});
+                        return global.throwInvalidArguments("Missing 'framework.serverComponents.serverRuntimeImportSource'", .{});
                     },
                 ),
                 .server_register_client_reference = refs.track(
                     try sc.getOptional(global, "serverRegisterClientReferenceExport", ZigString.Slice) orelse {
-                        return global.throwInvalidArguments2("Missing 'framework.serverComponents.serverRegisterClientReferenceExport'", .{});
+                        return global.throwInvalidArguments("Missing 'framework.serverComponents.serverRegisterClientReferenceExport'", .{});
                     },
                 ),
             };
@@ -353,11 +353,11 @@ pub const Framework = struct {
             var i: usize = 0;
             while (it.next()) |file| : (i += 1) {
                 if (!file.isObject()) {
-                    return global.throwInvalidArguments2("'builtInModules[{d}]' is not an object", .{i});
+                    return global.throwInvalidArguments("'builtInModules[{d}]' is not an object", .{i});
                 }
 
                 const path = try getOptionalString(file, global, "import", refs, arena) orelse {
-                    return global.throwInvalidArguments2("'builtInModules[{d}]' is missing 'import'", .{i});
+                    return global.throwInvalidArguments("'builtInModules[{d}]' is missing 'import'", .{i});
                 };
 
                 const value: BuiltInModule = if (try getOptionalString(file, global, "path", refs, arena)) |str|
@@ -365,7 +365,7 @@ pub const Framework = struct {
                 else if (try getOptionalString(file, global, "code", refs, arena)) |str|
                     .{ .code = str }
                 else
-                    return global.throwInvalidArguments2("'builtInModules[{d}]' needs either 'path' or 'code'", .{i});
+                    return global.throwInvalidArguments("'builtInModules[{d}]' needs either 'path' or 'code'", .{i});
 
                 files.putAssumeCapacity(path, value);
             }
@@ -374,11 +374,11 @@ pub const Framework = struct {
         };
         const file_system_router_types: []FileSystemRouterType = brk: {
             const array: JSValue = try opts.getArray(global, "fileSystemRouterTypes") orelse {
-                return global.throwInvalidArguments2("Missing 'framework.fileSystemRouterTypes'", .{});
+                return global.throwInvalidArguments("Missing 'framework.fileSystemRouterTypes'", .{});
             };
             const len = array.getLength(global);
             if (len > 256) {
-                return global.throwInvalidArguments2("Framework can only define up to 256 file-system router types", .{});
+                return global.throwInvalidArguments("Framework can only define up to 256 file-system router types", .{});
             }
             const file_system_router_types = try arena.alloc(FileSystemRouterType, len);
 
@@ -386,10 +386,10 @@ pub const Framework = struct {
             var i: usize = 0;
             while (it.next()) |fsr_opts| : (i += 1) {
                 const root = try getOptionalString(fsr_opts, global, "root", refs, arena) orelse {
-                    return global.throwInvalidArguments2("'fileSystemRouterTypes[{d}]' is missing 'root'", .{i});
+                    return global.throwInvalidArguments("'fileSystemRouterTypes[{d}]' is missing 'root'", .{i});
                 };
                 const server_entry_point = try getOptionalString(fsr_opts, global, "serverEntryPoint", refs, arena) orelse {
-                    return global.throwInvalidArguments2("'fileSystemRouterTypes[{d}]' is missing 'serverEntryPoint'", .{i});
+                    return global.throwInvalidArguments("'fileSystemRouterTypes[{d}]' is missing 'serverEntryPoint'", .{i});
                 };
                 const client_entry_point = try getOptionalString(fsr_opts, global, "clientEntryPoint", refs, arena);
                 const prefix = try getOptionalString(fsr_opts, global, "prefix", refs, arena) orelse "/";
@@ -403,7 +403,7 @@ pub const Framework = struct {
                     .{},
                 );
 
-                const extensions: []const []const u8 = if (try fsr_opts.get2(global, "extensions")) |exts_js| exts: {
+                const extensions: []const []const u8 = if (try fsr_opts.get(global, "extensions")) |exts_js| exts: {
                     if (exts_js.isString()) {
                         const str = try exts_js.toSlice2(global, arena);
                         defer str.deinit();
@@ -421,10 +421,10 @@ pub const Framework = struct {
                         break :exts extensions;
                     }
 
-                    return global.throwInvalidArguments2("'extensions' must be an array of strings or \"*\" for all extensions", .{});
+                    return global.throwInvalidArguments("'extensions' must be an array of strings or \"*\" for all extensions", .{});
                 } else &.{ ".jsx", ".tsx", ".js", ".ts", ".cjs", ".cts", ".mjs", ".mts" };
 
-                const ignore_dirs: []const []const u8 = if (try fsr_opts.get2(global, "ignoreDirs")) |exts_js| exts: {
+                const ignore_dirs: []const []const u8 = if (try fsr_opts.get(global, "ignoreDirs")) |exts_js| exts: {
                     if (exts_js.isArray()) {
                         var it_2 = array.arrayIterator(global);
                         var i_2: usize = 0;
@@ -435,7 +435,7 @@ pub const Framework = struct {
                         break :exts dirs;
                     }
 
-                    return global.throwInvalidArguments2("'ignoreDirs' must be an array of strings or \"*\" for all extensions", .{});
+                    return global.throwInvalidArguments("'ignoreDirs' must be an array of strings or \"*\" for all extensions", .{});
                 } else &.{ ".git", "node_modules" };
 
                 file_system_router_types[i] = .{
@@ -552,7 +552,7 @@ fn getOptionalString(
     allocations: *StringRefList,
     arena: Allocator,
 ) !?[]const u8 {
-    const value = try target.get2(global, property) orelse
+    const value = try target.get(global, property) orelse
         return null;
     if (value == .undefined or value == .null)
         return null;

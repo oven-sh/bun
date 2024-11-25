@@ -421,7 +421,7 @@ pub const TextEncoderStreamEncoder = struct {
     }
 
     pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
-        const arguments = callFrame.arguments(1).slice();
+        const arguments = callFrame.arguments_old(1).slice();
         if (arguments.len == 0) {
             return globalObject.throwNotEnoughArguments("TextEncoderStreamEncoder.encode", 1, arguments.len);
         }
@@ -760,7 +760,7 @@ pub const TextDecoder = struct {
     }
 
     pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const arguments = callframe.arguments(2).slice();
+        const arguments = callframe.arguments_old(2).slice();
 
         const input_slice = input_slice: {
             if (arguments.len == 0 or arguments[0].isUndefined()) {
@@ -771,8 +771,7 @@ pub const TextDecoder = struct {
                 break :input_slice array_buffer.slice();
             }
 
-            globalThis.throwInvalidArguments("TextDecoder.decode expects an ArrayBuffer or TypedArray", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("TextDecoder.decode expects an ArrayBuffer or TypedArray", .{});
         };
 
         const stream = stream: {
@@ -794,11 +793,11 @@ pub const TextDecoder = struct {
         };
     }
 
-    pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) JSValue {
+    pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) bun.JSError!JSValue {
         return this.decodeSlice(globalThis, uint8array.slice(), false);
     }
 
-    fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) JSValue {
+    fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) bun.JSError!JSValue {
         switch (this.encoding) {
             EncodingLabel.latin1 => {
                 if (strings.isAllASCII(buffer_slice)) {
@@ -810,10 +809,7 @@ pub const TextDecoder = struct {
                 //
                 // It's not clear why we couldn't jusst use Latin1 here, but tests failures proved it necessary.
                 const out_length = strings.elementLengthLatin1IntoUTF16([]const u8, buffer_slice);
-                const bytes = globalThis.allocator().alloc(u16, out_length) catch {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                };
+                const bytes = try globalThis.allocator().alloc(u16, out_length);
 
                 const out = strings.copyLatin1IntoUTF16([]u16, bytes, []const u8, buffer_slice);
                 return ZigString.toExternalU16(bytes.ptr, out.written, globalThis);
@@ -827,10 +823,7 @@ pub const TextDecoder = struct {
 
                     if (this.buffered.len > 0) {
                         defer this.buffered.len = 0;
-                        const joined = bun.default_allocator.alloc(u8, maybe_without_bom.len + this.buffered.len) catch {
-                            globalThis.throwOutOfMemory();
-                            return .zero;
-                        };
+                        const joined = try bun.default_allocator.alloc(u8, maybe_without_bom.len + this.buffered.len);
                         @memcpy(joined[0..this.buffered.len], this.buffered.slice());
                         @memcpy(joined[this.buffered.len..][0..maybe_without_bom.len], maybe_without_bom);
                         break :input .{ joined, true };
@@ -845,13 +838,13 @@ pub const TextDecoder = struct {
                         if (comptime fail_if_invalid) {
                             if (err == error.InvalidByteSequence) {
                                 globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("Invalid byte sequence", .{}).throw();
-                                return .zero;
+                                return error.JSError;
                             }
                         }
 
                         bun.assert(err == error.OutOfMemory);
                         globalThis.throwOutOfMemory();
-                        return .zero;
+                        return error.JSError;
                     },
                 };
 
@@ -881,29 +874,25 @@ pub const TextDecoder = struct {
                 else
                     buffer_slice;
 
-                var decoded, const saw_error = this.decodeUTF16(input, utf16_encoding == .@"UTF-16BE", flush) catch {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                };
+                var decoded, const saw_error = try this.decodeUTF16(input, utf16_encoding == .@"UTF-16BE", flush);
 
                 if (saw_error and this.fatal) {
                     decoded.deinit(bun.default_allocator);
                     globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
-                    return .zero;
+                    return error.JSError;
                 }
 
                 var output = bun.String.fromUTF16(decoded.items);
                 return output.toJS(globalThis);
             },
             else => {
-                globalThis.throwInvalidArguments("TextDecoder.decode set to unsupported encoding", .{});
-                return .zero;
+                return globalThis.throwInvalidArguments("TextDecoder.decode set to unsupported encoding", .{});
             },
         }
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*TextDecoder {
-        var args_ = callframe.arguments(2);
+        var args_ = callframe.arguments_old(2);
         var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
         var decoder = TextDecoder{};
@@ -917,35 +906,35 @@ pub const TextDecoder = struct {
                 if (EncodingLabel.which(str.slice())) |label| {
                     decoder.encoding = label;
                 } else {
-                    return globalThis.throwInvalidArguments2("Unsupported encoding label \"{s}\"", .{str.slice()});
+                    return globalThis.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()});
                 }
             } else if (arguments[0].isUndefined()) {
                 // default to utf-8
                 decoder.encoding = EncodingLabel.@"UTF-8";
             } else {
-                return globalThis.throwInvalidArguments2("TextDecoder(encoding) label is invalid", .{});
+                return globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
             }
 
             if (arguments.len >= 2) {
                 const options = arguments[1];
 
                 if (!options.isObject()) {
-                    return globalThis.throwInvalidArguments2("TextDecoder(options) is invalid", .{});
+                    return globalThis.throwInvalidArguments("TextDecoder(options) is invalid", .{});
                 }
 
-                if (options.get(globalThis, "fatal")) |fatal| {
+                if (try options.get(globalThis, "fatal")) |fatal| {
                     if (fatal.isBoolean()) {
                         decoder.fatal = fatal.asBoolean();
                     } else {
-                        return globalThis.throwInvalidArguments2("TextDecoder(options) fatal is invalid. Expected boolean value", .{});
+                        return globalThis.throwInvalidArguments("TextDecoder(options) fatal is invalid. Expected boolean value", .{});
                     }
                 }
 
-                if (options.get(globalThis, "ignoreBOM")) |ignoreBOM| {
+                if (try options.get(globalThis, "ignoreBOM")) |ignoreBOM| {
                     if (ignoreBOM.isBoolean()) {
                         decoder.ignore_bom = ignoreBOM.asBoolean();
                     } else {
-                        return globalThis.throwInvalidArguments2("TextDecoder(options) ignoreBOM is invalid. Expected boolean value", .{});
+                        return globalThis.throwInvalidArguments("TextDecoder(options) ignoreBOM is invalid. Expected boolean value", .{});
                     }
                 }
             }

@@ -313,6 +313,7 @@ pub const SocketConfig = struct {
 
     pub fn fromJS(vm: *JSC.VirtualMachine, opts: JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!SocketConfig {
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
+        errdefer hostname_or_unix.deinit();
         var port: ?u16 = null;
         var exclusive = false;
         var allowHalfOpen = false;
@@ -332,6 +333,12 @@ pub const SocketConfig = struct {
             }
         }
 
+        errdefer {
+            if (ssl != null) {
+                ssl.?.deinit();
+            }
+        }
+
         hostname_or_unix: {
             if (try opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
@@ -339,16 +346,18 @@ pub const SocketConfig = struct {
                 }
             }
 
-            if (try opts.getTruthy(globalObject, "unix")) |unix_socket| {
-                if (!unix_socket.isString()) {
-                    return globalObject.throwInvalidArguments("Expected \"unix\" to be a string", .{});
-                }
+            if (try opts.getStringish(globalObject, "unix")) |unix_socket| {
+                defer unix_socket.deref();
 
-                hostname_or_unix = unix_socket.getZigString(globalObject).toSlice(bun.default_allocator);
+                hostname_or_unix = try unix_socket.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator);
 
                 if (strings.hasPrefixComptime(hostname_or_unix.slice(), "file://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "unix://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "sock://")) {
-                    hostname_or_unix.ptr += 7;
-                    hostname_or_unix.len -|= 7;
+                    // The memory allocator relies on the pointer address to
+                    // free it, so if we simply moved the pointer up it would
+                    // cause an issue when freeing it later.
+                    const moved_bytes = try bun.default_allocator.dupeZ(u8, hostname_or_unix.slice()[7..]);
+                    hostname_or_unix.deinit();
+                    hostname_or_unix = ZigString.Slice.init(bun.default_allocator, moved_bytes);
                 }
 
                 if (hostname_or_unix.len > 0) {
@@ -363,20 +372,21 @@ pub const SocketConfig = struct {
                 allowHalfOpen = true;
             }
 
-            if (try opts.getTruthy(globalObject, "hostname") orelse try opts.getTruthy(globalObject, "host")) |hostname| {
-                if (!hostname.isString()) {
-                    return globalObject.throwInvalidArguments("Expected \"hostname\" to be a string", .{});
-                }
+            if (try opts.getStringish(globalObject, "hostname") orelse try opts.getStringish(globalObject, "host")) |hostname| {
+                defer hostname.deref();
 
                 var port_value = try opts.get(globalObject, "port") orelse JSValue.zero;
-                hostname_or_unix = hostname.getZigString(globalObject).toSlice(bun.default_allocator);
+                hostname_or_unix = try hostname.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator);
 
                 if (port_value.isEmptyOrUndefinedOrNull() and hostname_or_unix.len > 0) {
                     const parsed_url = bun.URL.parse(hostname_or_unix.slice());
                     if (parsed_url.getPort()) |port_num| {
                         port_value = JSValue.jsNumber(port_num);
-                        hostname_or_unix.ptr = parsed_url.hostname.ptr;
-                        hostname_or_unix.len = @as(u32, @truncate(parsed_url.hostname.len));
+                        if (parsed_url.hostname.len > 0) {
+                            const moved_bytes = try bun.default_allocator.dupeZ(u8, parsed_url.hostname);
+                            hostname_or_unix.deinit();
+                            hostname_or_unix = ZigString.Slice.init(bun.default_allocator, moved_bytes);
+                        }
                     }
                 }
 
@@ -410,7 +420,6 @@ pub const SocketConfig = struct {
 
             return globalObject.throwInvalidArguments("Expected either \"hostname\" or \"unix\"", .{});
         }
-        errdefer hostname_or_unix.deinit();
 
         var handlers = try Handlers.fromJS(globalObject, try opts.get(globalObject, "socket") orelse JSValue.zero);
 

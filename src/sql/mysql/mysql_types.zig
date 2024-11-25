@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const mysql = bun.JSC.MySQL;
-const Data = mysql.Data;
+const Data = bun.sql.Data;
 const protocol = @This();
 const MySQLInt32 = mysql.MySQLInt32;
 const MySQLInt16 = mysql.MySQLInt16;
@@ -168,8 +168,8 @@ pub const FieldType = enum(u8) {
     }
 };
 
-
-
+// Add this near the top of the file
+const BoundedArray = std.BoundedArray;
 pub const Value = union(enum) {
     null,
     bool: bool,
@@ -181,13 +181,58 @@ pub const Value = union(enum) {
     ulong: u64,
     float: f32,
     double: f64,
-    string: []const u8,
 
-    bytes: []const u8,
+    string: JSC.ZigString.Slice,
+    bytes: JSC.ZigString.Slice,
     date: DateTime,
     timestamp: Timestamp,
     time: Time,
     decimal: Decimal,
+
+    pub fn deinit(this: *Value, allocator: std.mem.Allocator) void {
+        switch (this.*) {
+            inline .string, .bytes => |*slice| slice.deinit(allocator),
+            .decimal => |*decimal| decimal.deinit(allocator),
+            else => {},
+        }
+    }
+
+    pub fn toData(
+        this: *const Value,
+        field_type: FieldType,
+    ) !Data {
+        var buffer: [15]u8 = undefined; // Large enough for all fixed-size types
+        var stream = std.io.fixedBufferStream(&buffer);
+        var writer = stream.writer();
+        switch (this.*) {
+            .null => return Data{ .empty = {} },
+            .bool => |b| try writer.writeByte(if (b) 1 else 0),
+            .short => |s| try writer.writeInt(i16, s, .little),
+            .ushort => |s| try writer.writeInt(u16, s, .little),
+            .int => |i| try writer.writeInt(i32, i, .little),
+            .uint => |i| try writer.writeInt(u32, i, .little),
+            .long => |l| try writer.writeInt(i64, l, .little),
+            .ulong => |l| try writer.writeInt(u64, l, .little),
+            .float => |f| try writer.writeInt(u32, @bitCast(f), .little),
+            .double => |d| try writer.writeInt(u64, @bitCast(d), .little),
+            .date => |d| {
+                const bounded = d.toBinary(field_type, &buffer);
+                try writer.writeAll(bounded.slice());
+            },
+            .timestamp => |t| {
+                const bounded = t.toBinary(field_type, &buffer);
+                try writer.writeAll(bounded.slice());
+            },
+            .time => |t| {
+                const bounded = t.toBinary(field_type, &buffer);
+                try writer.writeAll(bounded.slice());
+            },
+            .decimal => |dec| try writer.writeAll(dec.digits),
+            .string, .bytes => |slice| if (slice.len > 0) Data{ .temporary = slice.slice() } else Data{ .empty = {} },
+        }
+
+        return try Data.create(buffer[0..stream.pos], bun.default_allocator);
+    }
 
     pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, field_type: FieldType, unsigned: bool) !Value {
         _ = unsigned; // autofix
@@ -196,20 +241,49 @@ pub const Value = union(enum) {
             .MYSQL_TYPE_SHORT => Value{ .short = globalObject.validateIntegerRange(value, i16, 0, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) }) } orelse return error.JSError,
             .MYSQL_TYPE_LONG => Value{ .int = globalObject.validateIntegerRange(value, i32, 0, .{ .min = std.math.minInt(i32), .max = std.math.maxInt(i32) }) } orelse return error.JSError,
             .MYSQL_TYPE_LONGLONG => Value{ .long = globalObject.validateIntegerRange(value, i64, 0, .{ .min = std.math.minInt(i64), .max = std.math.maxInt(i64) }) } orelse return error.JSError,
-            .MYSQL_TYPE_FLOAT => Value{ .float = globalObject.validateFloatRange(value, f32, 0, .{ .min = std.math.minInt(f32), .max = std.math.maxInt(f32) }) } orelse return error.JSError,
-            .MYSQL_TYPE_DOUBLE => Value{ .double = globalObject.validateFloatRange(value, f64, 0, .{ .min = std.math.minInt(f64), .max = std.math.maxInt(f64) }) } orelse return error.JSError,
+            .MYSQL_TYPE_FLOAT => Value{ .float = @floatCast(try value.coerceToDoubleCheckingErrors(globalObject)) },
+            .MYSQL_TYPE_DOUBLE => Value{ .double = try value.coerceToDoubleCheckingErrors(globalObject) },
             .MYSQL_TYPE_TIME => Value{ .time = try Time.fromJS(value, globalObject) },
             .MYSQL_TYPE_DATE => Value{ .date = try DateTime.fromJS(value, globalObject) },
             .MYSQL_TYPE_DATETIME => Value{ .date = try DateTime.fromJS(value, globalObject) },
             .MYSQL_TYPE_TIMESTAMP => Value{ .timestamp = try Timestamp.fromJS(value, globalObject) },
-            .MYSQL_TYPE_TINY_BLOB,
-            .MYSQL_TYPE_MEDIUM_BLOB,
-            .MYSQL_TYPE_LONG_BLOB,
-            .MYSQL_TYPE_BLOB,
-            .MYSQL_TYPE_STRING,
-            .MYSQL_TYPE_VARCHAR,
-            .MYSQL_TYPE_VAR_STRING,
-            .MYSQL_TYPE_JSON => Value{ .bytes = enc  },
+            .MYSQL_TYPE_TINY_BLOB, .MYSQL_TYPE_MEDIUM_BLOB, .MYSQL_TYPE_LONG_BLOB, .MYSQL_TYPE_BLOB => {
+                if (value.asArrayBuffer(globalObject)) |array_buffer| {
+                    return Value{ .bytes = JSC.ZigString.Slice.fromUTF8NeverFree(array_buffer.slice()) };
+                }
+
+                if (value.as(JSC.WebCore.Blob)) |blob| {
+                    if (blob.needsToReadFile()) {
+                        globalObject.throwInvalidArguments("File blobs are not supported", .{});
+                        return error.JSError;
+                    }
+                    return Value{ .bytes = JSC.ZigString.Slice.fromUTF8NeverFree(blob.sharedView()) };
+                }
+
+                if (value.isString()) {
+                    const str = bun.String.tryFromJS(value, globalObject) orelse return error.JSError;
+                    defer str.deref();
+                    return Value{ .string = str.toUTF8(bun.default_allocator) };
+                }
+
+                globalObject.throwInvalidArguments("Expected a string, blob, or array buffer", .{});
+                return error.JSError;
+            },
+
+            .MYSQL_TYPE_JSON => {
+                var str: bun.String = bun.String.empty;
+                value.jsonStringify(globalObject, 0, &str);
+                if (globalObject.hasException()) return error.JSError;
+                defer str.deref();
+                return Value{ .string = str.toUTF8(bun.default_allocator) };
+            },
+
+            //   .MYSQL_TYPE_VARCHAR, .MYSQL_TYPE_VAR_STRING, .MYSQL_TYPE_STRING => {
+            else => {
+                const str = bun.String.tryFromJS(value, globalObject) orelse return error.JSError;
+                defer str.deref();
+                return Value{ .string = str.toUTF8(bun.default_allocator) };
+            },
         };
     }
 
@@ -242,7 +316,7 @@ pub const Value = union(enum) {
 
             if (value.isNumber()) {
                 const double = value.asNumber();
-                return Timestamp.fromUnixTimestamp(@floatToInt(i64, double));
+                return Timestamp.fromUnixTimestamp(@intFromFloat(double));
             }
 
             globalObject.throwInvalidArguments("Expected a date or number", .{});
@@ -255,6 +329,21 @@ pub const Value = union(enum) {
 
         pub fn toJS(this: Timestamp, globalObject: *JSC.JSGlobalObject) JSValue {
             return JSValue.fromDateNumber(globalObject, @floatFromInt(this.toUnixTimestamp() * 1000));
+        }
+
+        pub fn toBinary(this: Timestamp, field_type: FieldType) BoundedArray(u8, 7) {
+            var out = BoundedArray(u8, 7){};
+            std.mem.writeInt(u32, out.buffer[0..4], this.seconds, .little);
+            std.mem.writeInt(u24, out.buffer[4..7], this.microseconds, .little);
+            out.len = switch (field_type) {
+                // [4 bytes] - unix timestamp as uint32_t LE
+                .MYSQL_TYPE_TIMESTAMP => 4,
+                // [7 bytes] - unix timestamp as uint32_t LE + microseconds as uint24_t LE
+                .MYSQL_TYPE_TIMESTAMP2 => 7,
+                else => unreachable,
+            };
+
+            return out;
         }
     };
 
@@ -328,7 +417,41 @@ pub const Value = union(enum) {
             }
         }
 
-        pub fn toUnixTimestamp(this: DateTime) i64 {
+        pub fn toBinary(this: *const DateTime, field_type: FieldType) BoundedArray(u8, 11) {
+            var out = BoundedArray(u8, 11){};
+
+            switch (field_type) {
+                .MYSQL_TYPE_YEAR => {
+                    std.mem.writeInt(u16, out.buffer[0..2], this.year, .little);
+                    out.len = 2;
+                },
+                .MYSQL_TYPE_DATE => {
+                    std.mem.writeInt(u16, out.buffer[0..2], this.year, .little);
+                    out.buffer[2] = this.month;
+                    out.buffer[3] = this.day;
+                    out.len = 4;
+                },
+                .MYSQL_TYPE_DATETIME => {
+                    std.mem.writeInt(u16, out.buffer[0..2], this.year, .little);
+                    out.buffer[2] = this.month;
+                    out.buffer[3] = this.day;
+                    out.buffer[4] = this.hour;
+                    out.buffer[5] = this.minute;
+                    out.buffer[6] = this.second;
+                    if (this.microsecond == 0) {
+                        out.len = 7;
+                    } else {
+                        std.mem.writeInt(u32, out.buffer[7..11], this.microsecond, .little);
+                        out.len = 11;
+                    }
+                },
+                else => unreachable,
+            }
+
+            return out;
+        }
+
+        pub fn toUnixTimestamp(this: *const DateTime) i64 {
             // Convert to Unix timestamp (seconds since 1970-01-01)
             var ts: i64 = 0;
             const days = gregorianDays(this.year, this.month, this.day);
@@ -374,7 +497,7 @@ pub const Value = union(enum) {
 
             if (value.isNumber()) {
                 const double = value.asNumber();
-                return DateTime.fromUnixTimestamp(@floatToInt(i64, double));
+                return DateTime.fromUnixTimestamp(@intFromFloat(double));
             }
 
             globalObject.throwInvalidArguments("Expected a date or number", .{});
@@ -413,6 +536,15 @@ pub const Value = union(enum) {
             return t;
         }
 
+        pub fn toUnixTimestamp(this: *const Time) i64 {
+            var total_ms: i64 = 0;
+            total_ms += @as(i64, this.days) * 86400000;
+            total_ms += @as(i64, this.hours) * 3600000;
+            total_ms += @as(i64, this.minutes) * 60000;
+            total_ms += @as(i64, this.seconds) * 1000;
+            total_ms += @divFloor(this.microseconds, 1000);
+            return total_ms;
+        }
 
         pub fn fromBinary(val: []const u8) Time {
             if (val.len == 0) {
@@ -452,6 +584,29 @@ pub const Value = union(enum) {
 
             return JSValue.jsNumber(@floatFromInt(total_ms));
         }
+
+        pub fn toBinary(this: Time, field_type: FieldType, out_buffer: []u8) BoundedArray(u8, 13) {
+            var bounded = BoundedArray(u8, 13).init(out_buffer);
+            switch (field_type) {
+                .MYSQL_TYPE_TIME, .MYSQL_TYPE_TIME2 => {
+                    bounded.buffer[1] = if (this.negative) 1 else 0;
+                    std.mem.writeInt(u32, bounded.buffer[2..6], this.days, .little);
+                    bounded.buffer[6] = this.hours;
+                    bounded.buffer[7] = this.minutes;
+                    bounded.buffer[8] = this.seconds;
+                    if (this.microseconds == 0) {
+                        bounded.buffer[0] = 8; // length
+                        bounded.len = 9;
+                    } else {
+                        bounded.buffer[0] = 12; // length
+                        std.mem.writeInt(u32, bounded.buffer[9..], this.microseconds, .little);
+                        bounded.len = 12;
+                    }
+                },
+                else => unreachable,
+            }
+            return bounded;
+        }
     };
 
     pub const Decimal = struct {
@@ -486,20 +641,14 @@ pub const Value = union(enum) {
         }
     };
 
-    pub fn deinit(this: *Value, allocator: std.mem.Allocator) void {
-        switch (this.*) {
-            .string => |str| allocator.free(str),
-            .bytes => |bytes| allocator.free(bytes),
-            .decimal => |*decimal| decimal.deinit(allocator),
-            else => {},
-        }
-    }
-
     pub fn toJS(this: *const Value, globalObject: *JSC.JSGlobalObject) JSValue {
         return switch (this.*) {
             .null => JSValue.jsNull(),
-            .string => |str| JSC.ZigString.init(str).toJS(globalObject),
-            .bytes => JSValue.createBuffer(globalObject, this.bytes, null),
+            .string => |*str| {
+                var out = bun.String.createUTF8(str.items);
+                return out.transferToJS(globalObject);
+            },
+            .bytes => JSValue.createBuffer(globalObject, this.bytes.slice(), null),
             .long => |l| JSValue.toInt64(@floatFromInt(l)),
             inline .int, .float, .double, .short, .ushort, .uint, .ulong => |t| JSValue.jsNumber(t),
             inline .timestamp, .date, .time, .decimal => |*d| d.toJS(globalObject),
@@ -563,5 +712,3 @@ fn gregorianDate(days: i32) Date {
         .day = @intCast(d + 1),
     };
 }
-
-pub fn encodeBinary

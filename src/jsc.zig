@@ -55,6 +55,7 @@ pub const API = struct {
     pub const NativeBrotli = @import("./bun.js/node/node_zlib_binding.zig").SNativeBrotli;
 };
 pub const Postgres = @import("./sql/postgres.zig");
+pub const MySQL = @import("./sql/mysql.zig");
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
 pub const FFI = @import("./bun.js/api/ffi.zig").FFI;
 pub const Node = struct {

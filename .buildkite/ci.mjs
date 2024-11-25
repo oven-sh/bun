@@ -304,15 +304,21 @@ function getPipeline(options) {
    * @param {Target} target
    * @returns {Agent}
    */
-  const getZigAgent = target => {
-    const { abi, arch } = target;
-    // if (abi === "musl") {
-    //   const instanceType = arch === "aarch64" ? "c8g.large" : "c7i.large";
-    //   return getEmphemeralAgent("v2", target, instanceType);
-    // }
-    return {
-      queue: "build-zig",
+  const getZigAgent = platform => {
+    const { arch } = platform;
+    const instanceType = arch === "aarch64" ? "c8g.large" : "c7i.large";
+    const zigPlatform = {
+      os: "linux",
+      arch,
+      abi: "musl",
+      distro: "alpine",
+      distroVersion: "3.20"
     };
+    return getEmphemeralAgent("v2", zigPlatform, instanceType);
+    // TODO: Temporarily disable due to configuration
+    // return {
+    //   queue: "build-zig",
+    // };
   };
 
   /**
@@ -443,7 +449,7 @@ function getPipeline(options) {
       label: `${getTargetLabel(platform)} - build-zig`,
       depends_on: getDependsOn(platform),
       agents: getZigAgent(platform),
-      retry: getRetry(1), // FIXME: Sometimes zig build hangs, so we need to retry once
+      retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
       env: getBuildEnv(platform),
       command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,

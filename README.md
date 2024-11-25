@@ -48,14 +48,17 @@ Bun supports Linux (x64 & arm64), macOS (x64 & Apple Silicon) and Windows (x64).
 > **Linux users** — Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
 
 ```sh
-# with install script (recommended)
+# with install script on MacOS/Linux(recommended)
 curl -fsSL https://bun.sh/install | bash
 
-# on windows
+# with install script on Windows (recommended)
 powershell -c "irm bun.sh/install.ps1 | iex"
 
 # with npm
 npm install -g bun
+
+# with scoop
+scoop install bun
 
 # with Homebrew
 brew tap oven-sh/bun
@@ -82,6 +85,23 @@ bun upgrade --canary
 
 [View canary build](https://github.com/oven-sh/bun/releases/tag/canary)
 
+To switch back to a stable release from canary, run:
+
+```sh
+bun upgrade --stable
+```
+
+### Installing a specific version of Bun
+
+To install a specific of Bun, replace `<version-number>` with the version you want to install and run:
+
+```sh
+# on MacOS/Linux
+curl -fsSL https://bun.sh/install | bash -s "bun-<version-number>"
+
+# on Windows (powershell)
+iex "& {$(irm https://bun.sh/install.ps1)} -Version <version-number>"
+```
 ## Quick links
 
 - Intro

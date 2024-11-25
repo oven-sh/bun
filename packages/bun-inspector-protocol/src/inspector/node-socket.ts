@@ -35,8 +35,6 @@ export class NodeSocketInspector extends EventEmitter<InspectorEventMap> impleme
     this.#pendingResponses = new Map();
 
     this.#framer = new SocketFramer(socket, message => {
-      console.error(JSON.stringify(message));
-
       if (Array.isArray(message)) {
         for (const m of message) {
           this.#accept(m);

@@ -312,7 +312,7 @@ function getPipeline(options) {
       arch,
       abi: "musl",
       distro: "alpine",
-      distroVersion: "3.20"
+      release: "3.20"
     };
     return getEmphemeralAgent("v2", zigPlatform, instanceType);
     // TODO: Temporarily disable due to configuration

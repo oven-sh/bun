@@ -39,7 +39,7 @@ pub const SSLMode = enum(u8) {
 };
 pub const Data = sql.Data;
 // MySQL capability flags
-pub const Capabilities = packed struct(u32) {
+pub const Capabilities = struct {
     CLIENT_LONG_PASSWORD: bool = false,
     CLIENT_FOUND_ROWS: bool = false,
     CLIENT_LONG_FLAG: bool = false,
@@ -178,7 +178,11 @@ pub const Capabilities = packed struct(u32) {
     }
 
     pub fn fromInt(flags: u32) Capabilities {
-        return @bitCast(flags);
+        var this: Capabilities = .{};
+        inline for (comptime std.meta.fieldNames(Capabilities)) |field| {
+            @field(this, field) = (@field(Capabilities, field) & flags) != 0;
+        }
+        return this;
     }
 
     pub fn getDefaultCapabilities() Capabilities {

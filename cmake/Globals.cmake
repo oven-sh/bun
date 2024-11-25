@@ -136,16 +136,6 @@ else()
   set(WARNING WARNING)
 endif()
 
-if(LINUX)
-  if(EXISTS "/etc/alpine-release")
-    set(DEFAULT_ABI "musl")
-  else()
-    set(DEFAULT_ABI "gnu")
-  endif()
-
-  optionx(ABI "musl|gnu" "The ABI to use (e.g. musl, gnu)" DEFAULT ${DEFAULT_ABI})
-endif()
-
 # TODO: This causes flaky zig builds in CI, so temporarily disable it.
 # if(CI)
 #   set(DEFAULT_VENDOR_PATH ${CACHE_PATH}/vendor)

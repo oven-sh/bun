@@ -829,7 +829,7 @@ console.log(foo);
             console.log("[plugin] CSS path", path);
             return {
               // this fails, because it causes a Build error I think?
-              contents: `hello friends`,
+              contents: `hello friends!`,
               loader: "css",
             };
           });
@@ -848,7 +848,7 @@ console.log(foo);
     ],
     outdir: "/out",
     bundleErrors: {
-      "/a.css": ["end_of_input"],
+      "/a.css": ["Unexpected end of input"],
     },
   });
 
@@ -899,7 +899,7 @@ console.log(foo);
     ],
     outdir: "/out",
     bundleErrors: {
-      "/a.css": ["end_of_input"],
+      "/a.css": ["Unexpected end of input"],
       "/lmao.ts": ["woopsie"],
     },
   });
@@ -951,7 +951,7 @@ console.log(foo);
     ],
     outdir: "/out",
     bundleErrors: {
-      "/a.css": ["end_of_input"],
+      "/a.css": ["Unexpected end of input"],
       "/lmao.ts": ["can't call .defer() more than once within an onLoad plugin"],
     },
   });

@@ -29,14 +29,14 @@ pub fn testWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     return testingImpl(globalThis, callframe, .normal);
 }
 
-pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, comptime test_kind: TestKind) JSC.JSValue {
+pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, comptime test_kind: TestKind) bun.JSError!JSC.JSValue {
     var arena = arena_ orelse brk: {
         break :brk Arena.init() catch @panic("oopsie arena no good");
     };
     defer arena.reset();
     const alloc = arena.allocator();
 
-    const arguments_ = callframe.arguments(3);
+    const arguments_ = callframe.arguments_old(3);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
         globalThis.throw("minifyTestWithOptions: expected 2 arguments, got 0", .{});
@@ -94,7 +94,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
             if (options_arg) |optarg| {
                 if (optarg.isObject()) {
-                    minify_options.targets.browsers = targetsFromJS(globalThis, optarg);
+                    minify_options.targets.browsers = try targetsFromJS(globalThis, optarg);
                 }
             }
             _ = stylesheet.minify(alloc, minify_options).assert();
@@ -125,66 +125,66 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     }
 }
 
-fn targetsFromJS(globalThis: *JSC.JSGlobalObject, jsobj: JSValue) bun.css.targets.Browsers {
+fn targetsFromJS(globalThis: *JSC.JSGlobalObject, jsobj: JSValue) bun.JSError!bun.css.targets.Browsers {
     var targets = bun.css.targets.Browsers{};
 
-    if (jsobj.getTruthy(globalThis, "android")) |val| {
+    if (try jsobj.getTruthy(globalThis, "android")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.android = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "chrome")) |val| {
+    if (try jsobj.getTruthy(globalThis, "chrome")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.chrome = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "edge")) |val| {
+    if (try jsobj.getTruthy(globalThis, "edge")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.edge = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "firefox")) |val| {
+    if (try jsobj.getTruthy(globalThis, "firefox")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.firefox = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "ie")) |val| {
+    if (try jsobj.getTruthy(globalThis, "ie")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.ie = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "ios_saf")) |val| {
+    if (try jsobj.getTruthy(globalThis, "ios_saf")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.ios_saf = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "opera")) |val| {
+    if (try jsobj.getTruthy(globalThis, "opera")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.opera = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "safari")) |val| {
+    if (try jsobj.getTruthy(globalThis, "safari")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.safari = @intFromFloat(value);
             }
         }
     }
-    if (jsobj.getTruthy(globalThis, "samsung")) |val| {
+    if (try jsobj.getTruthy(globalThis, "samsung")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
                 targets.samsung = @intFromFloat(value);
@@ -202,7 +202,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     defer arena.reset();
     const alloc = arena.allocator();
 
-    const arguments_ = callframe.arguments(4);
+    const arguments_ = callframe.arguments_old(4);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
         globalThis.throw("attrTest: expected 3 arguments, got 0", .{});
@@ -239,7 +239,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     var targets: bun.css.targets.Targets = .{};
     if (arguments.nextEat()) |arg| {
         if (arg.isObject()) {
-            targets.browsers = targetsFromJS(globalThis, arg);
+            targets.browsers = try targetsFromJS(globalThis, arg);
         }
     }
 

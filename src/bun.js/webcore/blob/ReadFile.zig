@@ -709,9 +709,15 @@ pub const ReadFileUV = struct {
             this.onFinish();
             return;
         }
-
+        // Out of memory we can't read more than 4GB at a time (ULONG) on Windows
+        if (this.size > @as(usize, std.math.maxInt(bun.windows.ULONG))) {
+            this.errno = bun.errnoToZigErr(bun.C.E.NOMEM);
+            this.system_error = bun.sys.Error.fromCode(bun.C.E.NOMEM, .read).toSystemError();
+            this.onFinish();
+            return;
+        }
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
-        this.buffer.ensureTotalCapacityPrecise(this.byte_store.allocator, this.size + 16) catch |err| {
+        this.buffer.ensureTotalCapacityPrecise(this.byte_store.allocator, @min(this.size + 16, @as(usize, std.math.maxInt(bun.windows.ULONG)))) catch |err| {
             this.errno = err;
             this.onFinish();
             return;

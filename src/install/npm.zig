@@ -275,7 +275,7 @@ pub const Registry = struct {
             return name[1..];
         }
 
-        pub fn fromAPI(name: string, registry_: Api.NpmRegistry, allocator: std.mem.Allocator, env: *DotEnv.Loader) !Scope {
+        pub fn fromAPI(name: string, registry_: Api.NpmRegistry, allocator: std.mem.Allocator, env: *DotEnv.Loader) OOM!Scope {
             var registry = registry_;
 
             // Support $ENV_VAR for registry URLs
@@ -653,7 +653,7 @@ pub const OperatingSystem = enum(u16) {
 
     const JSC = bun.JSC;
     pub fn jsFunctionOperatingSystemIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         var operating_system = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
@@ -695,7 +695,7 @@ pub const Libc = enum(u8) {
 
     const JSC = bun.JSC;
     pub fn jsFunctionLibcIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         var libc = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
@@ -770,7 +770,7 @@ pub const Architecture = enum(u16) {
 
     const JSC = bun.JSC;
     pub fn jsFunctionArchitectureIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const args = callframe.arguments(1);
+        const args = callframe.arguments_old(1);
         var architecture = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
@@ -1284,7 +1284,7 @@ pub const PackageManifest = struct {
         }
 
         pub fn jsParseManifest(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
-            const args = callFrame.arguments(2).slice();
+            const args = callFrame.arguments_old(2).slice();
             if (args.len < 2 or !args[0].isString() or !args[1].isString()) {
                 global.throw("expected manifest filename and registry string arguments", .{});
                 return .zero;

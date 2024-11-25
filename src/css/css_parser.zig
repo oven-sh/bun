@@ -5251,7 +5251,7 @@ const Tokenizer = struct {
     }
 
     pub fn startsWith(this: *Tokenizer, comptime needle: []const u8) bool {
-        return std.mem.eql(u8, this.src[this.position .. this.position + needle.len], needle);
+        return bun.strings.hasPrefixComptime(this.src[this.position..], needle);
     }
 
     /// Advance over N bytes in the input.  This function can advance

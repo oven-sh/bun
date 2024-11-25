@@ -333,15 +333,15 @@ pub const PacketType = enum(u8) {
 // Length-encoded integer encoding/decoding
 pub fn encodeLengthInt(value: u64) std.BoundedArray(u8, 9) {
     var array: std.BoundedArray(u8, 9) = .{};
-    if (value < 251) {
+    if (value < 0xfb) {
         array.len = 1;
         array.buffer[0] = @intCast(value);
-    } else if (value < 65536) {
+    } else if (value < 0xffff) {
         array.len = 3;
         array.buffer[0] = 0xfc;
         array.buffer[1] = @intCast(value & 0xff);
         array.buffer[2] = @intCast((value >> 8) & 0xff);
-    } else if (value < 16777216) {
+    } else if (value < 0xffffff) {
         array.len = 4;
         array.buffer[0] = 0xfd;
         array.buffer[1] = @intCast(value & 0xff);
@@ -532,14 +532,17 @@ pub const HandshakeResponse41 = struct {
         var packet = try writer.start(1);
         defer packet.end() catch {};
 
-        // Write client capabilities flags
-        try writer.int4(this.capability_flags.toInt());
-        debug("Client capabilities: [{}] {d}", .{ this.capability_flags, this.capability_flags.toInt() });
+        this.capability_flags.CLIENT_CONNECT_ATTRS = this.connect_attrs.count() > 0;
 
-        // Write max packet size (16MB default)
+        // Write client capabilities flags (4 bytes)
+        const caps = this.capability_flags.toInt();
+        try writer.int4(caps);
+        debug("Client capabilities: [{}] 0x{x:0>8}", .{ this.capability_flags, caps });
+
+        // Write max packet size (4 bytes)
         try writer.int4(this.max_packet_size);
 
-        // Write character set
+        // Write character set (1 byte)
         try writer.int1(@intFromEnum(this.character_set));
 
         // Write 23 bytes of padding
@@ -551,15 +554,12 @@ pub const HandshakeResponse41 = struct {
         // Write auth response based on capabilities
         const auth_data = this.auth_response.slice();
         if (this.capability_flags.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA) {
-            // Write length-encoded number followed by auth data
             try writer.write(encodeLengthInt(auth_data.len).slice());
             try writer.write(auth_data);
         } else if (this.capability_flags.CLIENT_SECURE_CONNECTION) {
-            // Write length byte followed by auth data
             try writer.int1(@intCast(auth_data.len));
             try writer.write(auth_data);
         } else {
-            // Write null-terminated auth data
             try writer.writeZ(auth_data);
         }
 
@@ -573,10 +573,27 @@ pub const HandshakeResponse41 = struct {
             try writer.writeZ(this.auth_plugin_name.slice());
         }
 
-        // Connect attributes are not implemented yet
-        // if (this.capability_flags.CLIENT_CONNECT_ATTRS) {
-        //     // TODO: Implement connect attributes
-        // }
+        // Write connect attributes if enabled
+        if (this.capability_flags.CLIENT_CONNECT_ATTRS) {
+            var total_length: usize = 0;
+            var it = this.connect_attrs.iterator();
+            while (it.next()) |entry| {
+                total_length += encodeLengthInt(entry.key_ptr.len).len;
+                total_length += entry.key_ptr.len;
+                total_length += encodeLengthInt(entry.value_ptr.len).len;
+                total_length += entry.value_ptr.len;
+            }
+
+            try writer.write(encodeLengthInt(total_length).slice());
+
+            it = this.connect_attrs.iterator();
+            while (it.next()) |entry| {
+                try writer.write(encodeLengthInt(entry.key_ptr.len).slice());
+                try writer.write(entry.key_ptr.*);
+                try writer.write(encodeLengthInt(entry.value_ptr.len).slice());
+                try writer.write(entry.value_ptr.*);
+            }
+        }
     }
 
     pub const write = writeWrap(HandshakeResponse41, writeInternal).write;

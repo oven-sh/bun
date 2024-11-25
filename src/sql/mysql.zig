@@ -114,6 +114,11 @@ pub const Capabilities = struct {
         this.CLIENT_SSL_VERIFY_SERVER_CERT = false;
         this.CLIENT_REMEMBER_OPTIONS = false;
         this.CLIENT_COMPRESS = false;
+        this.CLIENT_INTERACTIVE = false;
+        this.CLIENT_IGNORE_SIGPIPE = false;
+        this.CLIENT_NO_SCHEMA = false;
+        this.CLIENT_ODBC = false;
+        this.CLIENT_LOCAL_FILES = false;
     }
 
     pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
@@ -977,7 +982,7 @@ pub const MySQLConnection = struct {
             \\   Server Version: {s}
             \\   Connection ID:  {d}
             \\   Character Set:  {d} ({s})
-            \\   Server Capabilities:   [ {} ] {d}
+            \\   Server Capabilities:   [ {} ] 0x{x:0>8}
             \\   Status Flags:   [ {} ]
             \\
         , .{
@@ -1178,6 +1183,10 @@ pub const MySQLConnection = struct {
         };
         defer response.deinit();
 
+        // Add some basic connect attributes like mysql2
+        try response.connect_attrs.put(bun.default_allocator, try bun.default_allocator.dupe(u8, "_client_name"), try bun.default_allocator.dupe(u8, "Bun"));
+        try response.connect_attrs.put(bun.default_allocator, try bun.default_allocator.dupe(u8, "_client_version"), try bun.default_allocator.dupe(u8, bun.Global.package_json_version_with_revision));
+
         // Generate auth response based on plugin
         var scrambled_buf: [32]u8 = undefined;
         if (this.auth_plugin) |plugin| {
@@ -1188,7 +1197,7 @@ pub const MySQLConnection = struct {
 
             response.auth_response = .{ .temporary = try plugin.scramble(this.password, this.auth_data, &scrambled_buf) };
         }
-
+        response.capability_flags.reject();
         try response.write(this.writer());
         this.capabilities = response.capability_flags;
         this.flushData();

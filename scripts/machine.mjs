@@ -707,14 +707,7 @@ function getCloudInit(cloudInit) {
 
   // https://cloudinit.readthedocs.io/en/stable/
   return `#cloud-config
-
-    package_update: true
-    packages:
-      - curl
-      - ca-certificates
-      - openssh-server
-    
-    write_files:
+  write_files:
       - path: /etc/ssh/sshd_config
         content: |
           PermitRootLogin yes

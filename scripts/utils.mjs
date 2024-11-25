@@ -41,7 +41,7 @@ export function getEnv(name, required = true) {
 export const isBuildkite = getEnv("BUILDKITE", false) === "true";
 export const isGithubAction = getEnv("GITHUB_ACTIONS", false) === "true";
 export const isCI = getEnv("CI", false) === "true" || isBuildkite || isGithubAction;
-export const isDebug = true;
+export const isDebug = getEnv("DEBUG", false) === "1";
 
 /**
  * @param {string} name
@@ -2137,14 +2137,7 @@ export function printEnvironment() {
   });
   if (isPosix) {
     startGroup("ulimit -a", () => {
-      const { stdout, stderr, exitCode, signalCode, error } = spawnSync(["ulimit", "-a"]);
-      console.log("--stdout--");
-      console.log(stdout);
-      console.log("--stderr--");
-      console.log(stderr);
-      console.log("--exit--");
-      console.log(exitCode, signalCode);
-      console.log(error);
+      spawnSync(["ulimit", "-a"], { stdio: ["ignore", "inherit", "inherit"] });
     });
   }
 

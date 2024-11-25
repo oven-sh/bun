@@ -30,24 +30,11 @@ execute() {
 	fi
 }
 
-execute_lax() {
-	print "$ $@" >&2
-	"$@"
-}
-
 execute_sudo() {
 	if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then
 		execute "$@"
 	else
 		execute sudo -n "$@"
-	fi
-}
-
-execute_sudo_lax() {
-	if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then
-		execute_lax "$@"
-	else
-		execute_lax sudo -n "$@"
 	fi
 }
 
@@ -400,7 +387,6 @@ check_user() {
 package_manager() {
 	case "$pm" in
 	apt)
-		execute_sudo_lax killall -9 apt-get # TODO: investigate why this is necessary
 		execute_sudo apt "$@"
 		;;
 	dnf)

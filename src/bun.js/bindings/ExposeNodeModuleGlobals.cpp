@@ -99,7 +99,6 @@ extern "C" void Bun__ExposeNodeModuleGlobals(Zig::GlobalObject* globalObject)
     );
 
     FOREACH_EXPOSED_BUILTIN_IMR(PUT_CUSTOM_GETTER_SETTER)
-    // FOREACH_EXPOSED_BUILTIN_NATIVE(PUT_CUSTOM_GETTER_SETTER)
 #undef PUT_CUSTOM_GETTER_SETTER
 
 

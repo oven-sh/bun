@@ -4,11 +4,11 @@ import { join } from "node:path";
 import * as vscode from "vscode";
 import {
   type DAP,
-  DebugAdapter,
   getAvailablePort,
   getRandomId,
   TCPSocketSignal,
   UnixSignal,
+  WebSocketDebugAdapter,
 } from "../../../bun-debug-adapter-protocol";
 
 export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
@@ -239,7 +239,7 @@ class FileDebugSession extends DebugSession {
   // If these classes are moved/published, we should make sure
   // we remove these non-null assertions so consumers of
   // this lib are not running into these hard
-  adapter!: DebugAdapter;
+  adapter!: WebSocketDebugAdapter;
   sessionId?: string;
   untitledDocPath?: string;
   bunEvalPath?: string;
@@ -263,7 +263,7 @@ class FileDebugSession extends DebugSession {
         : `ws+unix://${tmpdir()}/${uniqueId}.sock`;
 
     const { untitledDocPath, bunEvalPath } = this;
-    this.adapter = new DebugAdapter(url, untitledDocPath, bunEvalPath);
+    this.adapter = new WebSocketDebugAdapter(url, untitledDocPath, bunEvalPath);
 
     if (untitledDocPath) {
       this.adapter.on("Adapter.response", (response: DebugProtocolResponse) => {

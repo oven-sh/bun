@@ -149,3 +149,8 @@ export const frameworkRouterInternals = $zig("FrameworkRouter.zig", "JSFramework
     new(): any;
   };
 };
+
+export const bindingTests = {
+  fastGet: $newZigFunction("bindings.zig", "test_apis.fastGet", 1),
+  slowGet: $newZigFunction("bindings.zig", "test_apis.slowGet", 1),
+}

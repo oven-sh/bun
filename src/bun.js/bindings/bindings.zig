@@ -5267,12 +5267,15 @@ pub const JSValue = enum(i64) {
         };
     }
 
-    // `this` must be known to be an object
-    // intended to be more lightweight than ZigString.
+    /// Deprecated: `JSValue.get` already performs this optimization for you
+    /// Deprecated: This masks thrown exceptions. `null` may either have an exception or not
+    ///
+    /// `this` must be known to be an object
+    /// intended to be more lightweight than ZigString.
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
         if (bun.Environment.allow_assert)
             bun.assert(this.isObject());
-        const result = JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name)).legacyUnwrap();
+        const result = JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name)).deprecatedUnwrapHidingException();
         if (result == .zero or
             // JS APIs treat {}.a as mostly the same as though it was not defined
             result == .undefined)
@@ -5321,7 +5324,7 @@ pub const JSValue = enum(i64) {
         does_not_exist = 0x4, // JSC::JSValue::ValueDeleted
         _,
 
-        fn legacyUnwrap(value: GetResult) ?JSValue {
+        fn deprecatedUnwrapHidingException(value: GetResult) ?JSValue {
             return switch (value) {
                 // footgun! caller must check hasException on every `get` or else Bun will crash
                 .thrown_exception => null,
@@ -5391,7 +5394,7 @@ pub const JSValue = enum(i64) {
             }
         }
 
-        return JSC__JSValue__getIfPropertyExistsImpl(this, global, property.ptr, @intCast(property.len)).legacyUnwrap();
+        return JSC__JSValue__getIfPropertyExistsImpl(this, global, property.ptr, @intCast(property.len)).deprecatedUnwrapHidingException();
     }
 
     /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
@@ -5403,13 +5406,14 @@ pub const JSValue = enum(i64) {
     /// marked `inline` to allow Zig to determine if `fastGet` should be used
     /// per invocation.
     pub inline fn get(target: JSValue, global: *JSGlobalObject, property: anytype) JSError!?JSValue {
-        if (bun.Environment.allow_assert) bun.assert(target.isObject());
+        if (bun.Environment.allow_assert)
+            bun.assert(target.isObject());
         const property_slice: []const u8 = property; // must be a slice!
 
         // This call requires `get2` to be `inline`
         if (bun.isComptimeKnown(property_slice)) {
             if (comptime BuiltinName.get(property_slice)) |builtin| {
-                return target.fastGet(global, builtin);
+                return JSC__JSValue__fastGet(target, global, @intFromEnum(builtin)).unwrap(global);
             }
         }
 
@@ -7202,5 +7206,25 @@ pub const DeferredError = struct {
         };
         err.put(globalThis, ZigString.static("code"), ZigString.init(@tagName(this.code)).toJS(globalThis));
         return err;
+    }
+};
+
+/// Used to test binding functions directly.
+pub const test_apis = struct {
+    /// One can verify this takes the correct code path by placing a debugger
+    /// breakpoint into the `JSC__JSValue__fastGet` line, and then see that it
+    /// steps into the fastGet code path.
+    pub fn fastGet(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
+        const arg = callframe.argumentsAsArray(1)[0];
+        if (arg.isObject()) return .undefined; // assertion
+        return try arg.get(global, "headers") orelse JSC.jsNumber(404);
+    }
+    /// One can verify this takes the correct code path by placing a debugger
+    /// breakpoint into the `JSC__JSValue__getIfPropertyExistsImpl` line, and
+    /// then see that it steps into the getter code path.
+    pub fn slowGet(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
+        const arg = callframe.argumentsAsArray(1)[0];
+        if (arg.isObject()) return .undefined; // assertion
+        return try arg.get(global, "something") orelse JSC.jsNumber(404);
     }
 };

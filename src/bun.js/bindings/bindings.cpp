@@ -3783,6 +3783,8 @@ JSC__JSValue JSC__JSValue__createObject2(JSC__JSGlobalObject* globalObject, cons
     return JSC::JSValue::encode(object);
 }
 
+// Returns empty for exception, returns deleted if not found.
+// Be careful when handling the return value.
 JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
     JSC__JSGlobalObject* globalObject,
     const unsigned char* arg1, uint32_t arg2)
@@ -3793,8 +3795,7 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
 
     JSC::VM& vm = globalObject->vm();
     JSC::JSObject* object = value.getObject();
-    if (UNLIKELY(!object))
-        return JSValue::encode({});
+    ASSERT(object);
 
     // Since Identifier might not ref' the string, we need to ensure it doesn't get deref'd until this function returns
     const auto propertyString = String(StringImpl::createWithoutCopying({ arg1, arg2 }));
@@ -5170,6 +5171,8 @@ JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalOb
     return JSValue::encode(value.getObject()->getDirect(globalObject->vm(), PropertyName(builtinNameMap(globalObject->vm(), arg2))));
 }
 
+// Returns empty for exception, returns deleted if not found.
+// Be careful when handling the return value.
 JSC__JSValue JSC__JSValue__fastGet(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);

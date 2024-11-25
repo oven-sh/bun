@@ -173,7 +173,7 @@ pub fn NewWriterWrap(
             try this.write(&[_]u8{value});
         }
 
-        pub fn string(this: @This(), value: []const u8) !void {
+        pub fn writeZ(this: @This(), value: []const u8) !void {
             try this.write(value);
             if (value.len == 0 or value[value.len - 1] != 0)
                 try this.write(&[_]u8{0});
@@ -521,10 +521,7 @@ pub const HandshakeResponse41 = struct {
         try writer.write(&[_]u8{0} ** 23);
 
         // Username - null terminated
-        try writer.write(this.username.slice());
-        if (this.username.slice().len == 0 or this.username.slice()[this.username.slice().len - 1] != 0) {
-            try writer.write(&[_]u8{0});
-        }
+        try writer.writeZ(this.username.slice());
 
         // Auth response
         const auth_data = this.auth_response.slice();
@@ -545,12 +542,12 @@ pub const HandshakeResponse41 = struct {
         // Database name if requested - only write if CLIENT_CONNECT_WITH_DB is set
         if (this.capability_flags.CLIENT_CONNECT_WITH_DB) {
             // Only write database name if one was provided
-            try writer.string(this.database.slice());
+            try writer.writeZ(this.database.slice());
         }
 
         // Auth plugin name if supported
         if (this.capability_flags.CLIENT_PLUGIN_AUTH) {
-            try writer.string(this.auth_plugin_name.slice());
+            try writer.writeZ(this.auth_plugin_name.slice());
         }
 
         try packet.end();
@@ -653,7 +650,7 @@ pub const ErrorPacket = struct {
         }
 
         // Read the error message (rest of packet)
-        this.error_message = try reader.readZ();
+        this.error_message = try reader.read(reader.peek().len);
     }
 
     pub const decode = decoderWrap(ErrorPacket, decodeInternal).decode;

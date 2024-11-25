@@ -829,6 +829,7 @@ pub const MySQLConnection = struct {
 
         {
             this.read_buffer.head = this.last_message_start;
+
             this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
             this.processPackets(Reader, this.bufferedReader()) catch |err| {
                 if (err != error.ShortRead) {
@@ -887,8 +888,6 @@ pub const MySQLConnection = struct {
                     return error.UnexpectedPacket;
                 },
             }
-
-            reader.skip(header.length);
         }
     }
 

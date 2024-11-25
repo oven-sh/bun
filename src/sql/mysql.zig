@@ -1090,39 +1090,7 @@ pub const MySQLConnection = struct {
         }
 
         var response = protocol.HandshakeResponse41{
-            .capability_flags = .{
-                // Must-have flags
-                .CLIENT_PROTOCOL_41 = true,
-                .CLIENT_SECURE_CONNECTION = true,
-
-                // Auth related
-                .CLIENT_PLUGIN_AUTH = true,
-                .CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = true,
-
-                // Features we want
-                .CLIENT_DEPRECATE_EOF = true,
-                .CLIENT_TRANSACTIONS = true,
-                .CLIENT_MULTI_STATEMENTS = true,
-                .CLIENT_MULTI_RESULTS = true,
-                .CLIENT_PS_MULTI_RESULTS = true,
-                .CLIENT_FOUND_ROWS = true,
-                .CLIENT_LONG_PASSWORD = true,
-                .CLIENT_LONG_FLAG = true,
-                .CLIENT_LOCAL_FILES = true,
-                .CLIENT_IGNORE_SPACE = true,
-                .CLIENT_INTERACTIVE = true,
-                .CLIENT_IGNORE_SIGPIPE = true,
-
-                // Database specific
-                .CLIENT_CONNECT_WITH_DB = this.database.len > 0,
-
-                // SSL/TLS
-                .CLIENT_SSL = this.ssl_mode != .disable,
-
-                // Session tracking
-                .CLIENT_SESSION_TRACK = true,
-                .CLIENT_CONNECT_ATTRS = true,
-            },
+            .capability_flags = this.capabilities,
             .max_packet_size = 16777216,
             .character_set = DEFAULT_CHARSET,
             .username = .{ .temporary = this.user },
@@ -1153,6 +1121,7 @@ pub const MySQLConnection = struct {
         }
 
         try response.write(this.writer());
+        this.capabilities = response.capability_flags;
         this.flushData();
 
         this.socket.setTimeout(0);

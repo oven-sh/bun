@@ -126,6 +126,10 @@ pub fn NewWriterWrap(
 
         pub const WrappedWriter = @This();
 
+        pub inline fn writeArray(this: @This(), data: anytype) anyerror!void {
+            try writeFn(this.wrapped, data.slice());
+        }
+
         pub fn write(this: @This(), data: []const u8) anyerror!void {
             try writeFn(this.wrapped, data);
         }
@@ -327,20 +331,20 @@ pub const PacketType = enum(u8) {
 };
 
 // Length-encoded integer encoding/decoding
-pub fn encodeLengthInt(value: u64) []const u8 {
+pub fn encodeLengthInt(value: u64) std.BoundedArray(u8, 9) {
+    var array: std.BoundedArray(u8, 9) = .{};
     if (value < 251) {
-        return &[_]u8{@intCast(value)};
+        array.len = 1;
+        array.buffer[0] = @intCast(value);
     } else if (value < 65536) {
-        return &[_]u8{ 0xfc, @intCast(value & 0xff), @intCast((value >> 8) & 0xff) };
+        array.len = 3;
+        array.buffer[0..3].* = [_]u8{ 0xfc, @intCast(value & 0xff), @intCast((value >> 8) & 0xff) };
     } else if (value < 16777216) {
-        return &[_]u8{
-            0xfd,
-            @intCast(value & 0xff),
-            @intCast((value >> 8) & 0xff),
-            @intCast((value >> 16) & 0xff),
-        };
+        array.len = 4;
+        array.buffer[0..4].* = [_]u8{ 0xfd, @intCast(value & 0xff), @intCast((value >> 8) & 0xff), @intCast((value >> 16) & 0xff) };
     } else {
-        return &[_]u8{
+        array.len = 9;
+        array.buffer[0..9].* = [_]u8{
             0xfe,
             @intCast(value & 0xff),
             @intCast((value >> 8) & 0xff),
@@ -352,6 +356,8 @@ pub fn encodeLengthInt(value: u64) []const u8 {
             @intCast((value >> 56) & 0xff),
         };
     }
+
+    return array;
 }
 
 pub fn decodeLengthInt(bytes: []const u8) ?struct { value: u64, bytes_read: usize } {
@@ -505,11 +511,47 @@ pub const HandshakeResponse41 = struct {
         this.connect_attrs.deinit(bun.default_allocator);
     }
 
-    pub fn writeInternal(this: *const HandshakeResponse41, comptime Context: type, writer: NewWriter(Context)) !void {
+    pub fn writeInternal(this: *HandshakeResponse41, comptime Context: type, writer: NewWriter(Context)) !void {
         var packet = try writer.start(1);
+        defer packet.end() catch {};
 
-        // Client capability flags
-        try writer.int4(this.capability_flags.toInt());
+        const server_caps = this.capability_flags;
+
+        const final_caps = mysql.Capabilities{
+            // Must-have capabilities
+            .CLIENT_PROTOCOL_41 = true,
+            .CLIENT_SECURE_CONNECTION = true,
+            .CLIENT_PLUGIN_AUTH = true,
+            .CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = true,
+            .CLIENT_LONG_PASSWORD = true,
+
+            // Optional capabilities - only if server supports them
+            .CLIENT_CONNECT_WITH_DB = server_caps.CLIENT_CONNECT_WITH_DB and this.database.slice().len > 0,
+            .CLIENT_DEPRECATE_EOF = server_caps.CLIENT_DEPRECATE_EOF,
+            .CLIENT_LONG_FLAG = server_caps.CLIENT_LONG_FLAG,
+            .CLIENT_TRANSACTIONS = server_caps.CLIENT_TRANSACTIONS,
+            .CLIENT_MULTI_STATEMENTS = server_caps.CLIENT_MULTI_STATEMENTS,
+            .CLIENT_MULTI_RESULTS = server_caps.CLIENT_MULTI_RESULTS,
+            .CLIENT_PS_MULTI_RESULTS = server_caps.CLIENT_PS_MULTI_RESULTS,
+            .CLIENT_SSL = server_caps.CLIENT_SSL,
+
+            // Everything else off
+            .CLIENT_FOUND_ROWS = false,
+            .CLIENT_NO_SCHEMA = false,
+            .CLIENT_COMPRESS = false,
+            .CLIENT_ODBC = false,
+            .CLIENT_LOCAL_FILES = false,
+            .CLIENT_IGNORE_SPACE = false,
+            .CLIENT_INTERACTIVE = false,
+            .CLIENT_IGNORE_SIGPIPE = false,
+            .CLIENT_RESERVED = false,
+            .CLIENT_CONNECT_ATTRS = false,
+            .CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS = false,
+            .CLIENT_SESSION_TRACK = false,
+        };
+
+        try writer.int4(final_caps.toInt());
+        this.capability_flags = final_caps;
 
         // Max packet size
         try writer.int4(this.max_packet_size);
@@ -523,34 +565,30 @@ pub const HandshakeResponse41 = struct {
         // Username - null terminated
         try writer.writeZ(this.username.slice());
 
-        // Auth response
+        // Auth response - for empty password, send empty response
         const auth_data = this.auth_response.slice();
-        if (this.capability_flags.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA) {
-            // Length encoded integer for auth data length
-            try writer.write(encodeLengthInt(auth_data.len));
+        if (final_caps.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA) {
+            // For empty password, send length=0
+            try writer.write(encodeLengthInt(auth_data.len).slice());
             if (auth_data.len > 0) {
                 try writer.write(auth_data);
             }
         } else {
-            // Fixed length byte for auth data length
             try writer.int1(@intCast(auth_data.len));
             if (auth_data.len > 0) {
                 try writer.write(auth_data);
             }
         }
 
-        // Database name if requested - only write if CLIENT_CONNECT_WITH_DB is set
-        if (this.capability_flags.CLIENT_CONNECT_WITH_DB) {
-            // Only write database name if one was provided
+        // Database name if requested
+        if (final_caps.CLIENT_CONNECT_WITH_DB and this.database.slice().len > 0) {
             try writer.writeZ(this.database.slice());
         }
 
         // Auth plugin name if supported
-        if (this.capability_flags.CLIENT_PLUGIN_AUTH) {
+        if (final_caps.CLIENT_PLUGIN_AUTH) {
             try writer.writeZ(this.auth_plugin_name.slice());
         }
-
-        try packet.end();
     }
 
     pub const write = writeWrap(HandshakeResponse41, writeInternal).write;
@@ -830,7 +868,8 @@ pub const StmtExecutePacket = struct {
                 if (param_type.isBinaryFormatSupported()) {
                     try writer.write(value);
                 } else {
-                    try writer.write(encodeLengthInt(value.len));
+                    const encoded = encodeLengthInt(value.len);
+                    try writer.write(encoded.slice());
                     try writer.write(value);
                 }
             }
@@ -1540,7 +1579,7 @@ pub const PreparedStatement = struct {
                     if (param_type.isBinaryFormatSupported()) {
                         try writer.write(value);
                     } else {
-                        try writer.write(encodeLengthInt(value.len));
+                        try writer.writeArray(encodeLengthInt(value.len));
                         try writer.write(value);
                     }
                 }

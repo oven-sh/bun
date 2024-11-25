@@ -644,6 +644,7 @@ pub const Value = union(enum) {
     pub fn toJS(this: *const Value, globalObject: *JSC.JSGlobalObject) JSValue {
         return switch (this.*) {
             .null => JSValue.jsNull(),
+            .bool => |b| JSValue.jsBoolean(b),
             .string => |*str| {
                 var out = bun.String.createUTF8(str.items);
                 return out.transferToJS(globalObject);

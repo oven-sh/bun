@@ -141,11 +141,11 @@ pub fn NewWriterWrap(
         }
 
         pub fn int4(this: @This(), value: MySQLInt32) !void {
-            try this.write(std.mem.asBytes(value));
+            try this.write(&std.mem.toBytes(value));
         }
 
         pub fn int8(this: @This(), value: MySQLInt64) !void {
-            try this.write(std.mem.asBytes(value));
+            try this.write(&std.mem.toBytes(value));
         }
 
         pub fn int1(this: @This(), value: u8) !void {

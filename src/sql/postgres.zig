@@ -295,7 +295,8 @@ pub const PostgresSQLQuery = struct {
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*PostgresSQLQuery {
         _ = callframe;
-        return globalThis.throw2("PostgresSQLQuery cannot be constructed directly", .{});
+        globalThis.ERR_ILLEGAL_CONSTRUCTOR("PostgresSQLQuery cannot be constructed directly", .{}).throw();
+        return error.JSError;
     }
 
     pub fn estimatedSize(this: *PostgresSQLQuery) usize {

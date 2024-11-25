@@ -130,6 +130,29 @@ pub fn NewWriterWrap(
             try writeFn(this.wrapped, data);
         }
 
+        const Packet = struct {
+            header: protocol.PacketHeader,
+            offset: usize,
+            ctx: WrappedWriter,
+
+            pub fn end(this: *@This()) !void {
+                const new_offset = offsetFn(this.ctx.wrapped);
+                const length = new_offset - this.offset;
+                this.header.length = @intCast(length - PACKET_HEADER_SIZE);
+                try pwrite(this.ctx, &this.header.encode(), this.offset);
+            }
+        };
+
+        pub fn start(this: @This(), sequence_id: u8) !Packet {
+            const o = offsetFn(this.wrapped);
+            try this.write(&[_]u8{0} ** PACKET_HEADER_SIZE);
+            return .{
+                .header = .{ .sequence_id = sequence_id, .length = 0 },
+                .offset = o,
+                .ctx = this,
+            };
+        }
+
         pub fn offset(this: @This()) usize {
             return offsetFn(this.wrapped);
         }
@@ -355,28 +378,18 @@ pub fn decodeLengthInt(bytes: []const u8) ?struct { value: u64, bytes_read: usiz
 }
 
 // MySQL packet header
-pub const PacketHeader = struct {
+pub const PacketHeader = packed struct(u32) {
     length: u24,
     sequence_id: u8,
 
     pub fn decode(bytes: []const u8) ?PacketHeader {
         if (bytes.len < 4) return null;
 
-        return PacketHeader{
-            .length = @as(u24, bytes[0]) |
-                (@as(u24, bytes[1]) << 8) |
-                (@as(u24, bytes[2]) << 16),
-            .sequence_id = bytes[3],
-        };
+        return @bitCast(bytes[0..4].*);
     }
 
     pub fn encode(self: PacketHeader) [4]u8 {
-        return [4]u8{
-            @intCast(self.length & 0xff),
-            @intCast((self.length >> 8) & 0xff),
-            @intCast((self.length >> 16) & 0xff),
-            self.sequence_id,
-        };
+        return @bitCast(self);
     }
 };
 
@@ -481,33 +494,41 @@ pub const HandshakeResponse41 = struct {
     }
 
     pub fn writeInternal(this: *const HandshakeResponse41, comptime Context: type, writer: NewWriter(Context)) !void {
-        // Client capability flags
+        var packet = try writer.start(1);
+
+        // Client capability flags - make sure we mask with server capabilities
         try writer.int4(this.capability_flags.toInt());
 
-        // Max packet size
+        // Max packet size (16MB)
         try writer.int4(this.max_packet_size);
 
         // Character set
         try writer.int1(this.character_set);
 
-        // Reserved bytes
+        // Reserved bytes (23 bytes of 0)
         try writer.write(&[_]u8{0} ** 23);
 
-        // Username
+        // Username - null terminated
         try writer.string(this.username.slice());
 
-        // Auth response length + data
+        // Auth response
         const auth_data = this.auth_response.slice();
         if (this.capability_flags.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA) {
+            // Length encoded
             try writer.write(encodeLengthInt(auth_data.len));
-            try writer.write(auth_data);
+            if (auth_data.len > 0) {
+                try writer.write(auth_data);
+            }
         } else {
+            // Fixed length
             try writer.int1(@intCast(auth_data.len));
-            try writer.write(auth_data);
+            if (auth_data.len > 0) {
+                try writer.write(auth_data);
+            }
         }
 
         // Database name if requested
-        if (this.capability_flags.CLIENT_CONNECT_WITH_DB) {
+        if (this.capability_flags.CLIENT_CONNECT_WITH_DB and this.database.slice().len > 0) {
             try writer.string(this.database.slice());
         }
 
@@ -516,22 +537,7 @@ pub const HandshakeResponse41 = struct {
             try writer.string(this.auth_plugin_name.slice());
         }
 
-        // Connection attributes if supported
-        if (this.capability_flags.CLIENT_CONNECT_ATTRS) {
-            var attrs_buf = std.ArrayList(u8).init(bun.default_allocator);
-            defer attrs_buf.deinit();
-
-            var it = this.connect_attrs.iterator();
-            while (it.next()) |entry| {
-                try attrs_buf.appendSlice(encodeLengthInt(entry.key_ptr.len));
-                try attrs_buf.appendSlice(entry.key_ptr.*);
-                try attrs_buf.appendSlice(encodeLengthInt(entry.value_ptr.len));
-                try attrs_buf.appendSlice(entry.value_ptr.*);
-            }
-
-            try writer.write(encodeLengthInt(attrs_buf.items.len));
-            try writer.write(attrs_buf.items);
-        }
+        try packet.end();
     }
 
     pub const write = writeWrap(HandshakeResponse41, writeInternal).write;

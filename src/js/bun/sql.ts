@@ -464,6 +464,11 @@ const enum DatabaseAdapter {
   mysql = 1,
 }
 
+const databaseAdapterPort: Record<DatabaseAdapter, number> = {
+  [DatabaseAdapter.postgres]: 5432,
+  [DatabaseAdapter.mysql]: 3306,
+};
+
 function getAdapter(adapter: DatabaseAdapter) {
   if (adapter === DatabaseAdapter.postgres) {
     if (!postgres) {
@@ -575,7 +580,9 @@ function loadOptions(o) {
   }
 
   hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
-  port ||= Number(o.port || (adapter === DatabaseAdapter.postgres ? env.PGPORT : env.MYSQL_PORT) || 5432);
+  port ||= Number(
+    o.port || (adapter === DatabaseAdapter.postgres ? env.PGPORT : env.MYSQL_PORT) || databaseAdapterPort[adapter],
+  );
   username ||=
     o.username ||
     o.user ||

@@ -191,6 +191,7 @@ pub const ConnectionState = enum {
 // Add after the existing code:
 
 const Socket = uws.AnySocket;
+pub const DEFAULT_CHARSET = 45; // utf8mb4
 const PreparedStatementsMap = std.HashMapUnmanaged(u64, *MySQLStatement, bun.IdentityContext(u64), 80);
 const SocketMonitor = @import("./SocketMonitor.zig");
 
@@ -639,6 +640,7 @@ pub const MySQLConnection = struct {
             .tls_ctx = tls_ctx,
             .ssl_mode = ssl_mode,
             .tls_status = if (ssl_mode != .disable) .pending else .none,
+            .character_set = DEFAULT_CHARSET,
         };
 
         ptr.updateHasPendingActivity();
@@ -861,14 +863,15 @@ pub const MySQLConnection = struct {
         this.server_version = try handshake.server_version.toOwned();
         this.connection_id = handshake.connection_id;
         this.capabilities = handshake.capability_flags;
-        this.character_set = handshake.character_set;
+        // Override with utf8mb4 instead of using server's default
+        this.character_set = DEFAULT_CHARSET;
         this.status_flags = handshake.status_flags;
 
         debug(
             \\Handshake
             \\   Server Version: {s}
             \\   Connection ID:  {d}
-            \\   Character Set:  {d}
+            \\   Character Set:  {d} (utf8mb4)
             \\   Capabilities:   [ {} ]
             \\   Status Flags:   [ {} ]
             \\
@@ -986,9 +989,48 @@ pub const MySQLConnection = struct {
     }
 
     pub fn sendHandshakeResponse(this: *MySQLConnection) !void {
+        // First validate we have credentials if needed
+        if (this.auth_plugin != null and this.password.len == 0) {
+            this.fail("Password required for authentication", error.PasswordRequired);
+            return;
+        }
+
         var response = protocol.HandshakeResponse41{
-            .capability_flags = this.capabilities,
-            .character_set = this.character_set,
+            .capability_flags = .{
+                // Must-have flags
+                .CLIENT_PROTOCOL_41 = true,
+                .CLIENT_SECURE_CONNECTION = true,
+
+                // Auth related
+                .CLIENT_PLUGIN_AUTH = true,
+                .CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = true,
+
+                // Features we want
+                .CLIENT_DEPRECATE_EOF = true,
+                .CLIENT_TRANSACTIONS = true,
+                .CLIENT_MULTI_STATEMENTS = true,
+                .CLIENT_MULTI_RESULTS = true,
+                .CLIENT_PS_MULTI_RESULTS = true,
+                .CLIENT_FOUND_ROWS = true, // Return found rows instead of affected rows
+                .CLIENT_LONG_PASSWORD = true, // Enable long password support
+                .CLIENT_LONG_FLAG = true, // Get longer flags in protocol
+                .CLIENT_LOCAL_FILES = true, // Enable LOAD DATA LOCAL
+                .CLIENT_IGNORE_SPACE = true, // Ignore spaces before '('
+                .CLIENT_INTERACTIVE = true, // Interactive client
+                .CLIENT_IGNORE_SIGPIPE = true, // Don't exit on SIGPIPE
+
+                // Database specific
+                .CLIENT_CONNECT_WITH_DB = this.database.len > 0,
+
+                // SSL/TLS
+                .CLIENT_SSL = this.ssl_mode != .disable,
+
+                // Session tracking
+                .CLIENT_SESSION_TRACK = true,
+                .CLIENT_CONNECT_ATTRS = true, // Allow connection attributes
+            },
+            .max_packet_size = 16777216, // 16MB
+            .character_set = DEFAULT_CHARSET,
             .username = .{ .temporary = this.user },
             .database = .{ .temporary = this.database },
             .auth_plugin_name = .{
@@ -1004,21 +1046,21 @@ pub const MySQLConnection = struct {
             .auth_response = .{ .empty = {} },
         };
         defer response.deinit();
-        var scrambled_buf: [32]u8 = undefined;
 
         // Generate auth response based on plugin
+        var scrambled_buf: [32]u8 = undefined;
         if (this.auth_plugin) |plugin| {
-            response.auth_response = .{
-                .temporary = switch (plugin) {
-                    .mysql_native_password => scrambled_buf[0..20],
-                    .caching_sha2_password => scrambled_buf[0..32],
-                    .sha256_password => scrambled_buf[0..20],
-                },
-            };
+            if (this.auth_data.len == 0) {
+                this.fail("Missing auth data from server", error.MissingAuthData);
+                return;
+            }
+            const scrambled = try plugin.scramble(this.password, this.auth_data, &scrambled_buf);
+            response.auth_response = .{ .temporary = scrambled };
         }
 
         try response.write(this.writer());
         this.flushData();
+        this.state = .handshaking;
     }
 
     pub fn sendAuthSwitchResponse(this: *MySQLConnection, auth_method: mysql.AuthMethod, plugin_data: []const u8) !void {

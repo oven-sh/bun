@@ -1,5 +1,7 @@
 import { ExtensionContext } from "vscode";
 
+export const GLOBAL_STATE_VERSION = 1;
+
 export type GlobalStateTypes = {
   BUN_INSPECT_NOTIFY:
     | {
@@ -11,8 +13,14 @@ export type GlobalStateTypes = {
         url: string;
       };
 
-  deprecated_BUN_INSPECT: string;
+  DIAGNOSTICS_BUN_INSPECT: string;
 };
+
+export async function clearGlobalState(gs: ExtensionContext["globalState"]) {
+  const tgs = typedGlobalState(gs);
+
+  await Promise.all(tgs.keys().map(key => tgs.update(key, undefined as never)));
+}
 
 export function typedGlobalState(state: ExtensionContext["globalState"]) {
   return state as {

@@ -1,12 +1,13 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
+import { inspect } from "node:util";
 import * as vscode from "vscode";
 import {
-  DebugAdapter,
   getAvailablePort,
   getRandomId,
   TCPSocketSignal,
   UnixSignal,
+  WebSocketDebugAdapter,
 } from "../../../../bun-debug-adapter-protocol";
 import type { JSC } from "../../../../bun-inspector-protocol";
 import { createGlobalStateGenerationFn, typedGlobalState } from "../../global-state";
@@ -123,14 +124,17 @@ class BunDiagnosticsManager {
     }
   }
 
-  private static getOrCreateOldVersionInspectURL = createGlobalStateGenerationFn("deprecated_BUN_INSPECT", async () => {
-    const url =
-      process.platform === "win32"
-        ? `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}?report=1`
-        : `ws+unix://${os.tmpdir()}/${getRandomId()}.sock?report=1`;
+  private static getOrCreateOldVersionInspectURL = createGlobalStateGenerationFn(
+    "DIAGNOSTICS_BUN_INSPECT",
+    async () => {
+      const url =
+        process.platform === "win32"
+          ? `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`
+          : `ws+unix://${os.tmpdir()}/${getRandomId()}.sock`;
 
-    return url;
-  });
+      return url;
+    },
+  );
 
   public static async initialize(context: vscode.ExtensionContext) {
     const signal = await BunDiagnosticsManager.getOrRecreateSignal(context);
@@ -143,7 +147,7 @@ class BunDiagnosticsManager {
    * Called when Bun pings BUN_INSPECT_NOTIFY (indicating a program has started).
    */
   private async handleSocketConnection() {
-    const debugAdapter = new DebugAdapter(this.inspectUrl);
+    const debugAdapter = new WebSocketDebugAdapter(this.inspectUrl);
 
     this.editorState.clearAll("A new socket connected");
 
@@ -155,7 +159,15 @@ class BunDiagnosticsManager {
       output.appendLine(`Received inspector event: ${e.method}`);
     });
 
+    debugAdapter.on("Inspector.error", e => {
+      output.appendLine(inspect(e, true, null));
+    });
+
     debugAdapter.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
+
+    debugAdapter.on("Inspector.connected", () => {
+      output.appendLine("Inspector connected");
+    });
 
     const ok = await debugAdapter.start();
 
@@ -258,8 +270,6 @@ class BunDiagnosticsManager {
     this.signal.on("Signal.received", () => {
       this.handleSocketConnection();
     });
-
-    this.signal.on("Signal.Socket.connect", this.handleSocketConnection.bind(this));
   }
 }
 
@@ -273,7 +283,7 @@ export async function registerDiagnosticsSocket(context: vscode.ExtensionContext
   const manager = await BunDiagnosticsManager.initialize(context);
 
   context.environmentVariableCollection.replace("BUN_INSPECT_NOTIFY", manager.notifyUrl);
-  context.environmentVariableCollection.replace("BUN_INSPECT", manager.inspectUrl);
+  context.environmentVariableCollection.replace("BUN_INSPECT", `${manager.inspectUrl}?wait=1&report=1`);
 
   context.subscriptions.push(manager);
 }

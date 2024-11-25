@@ -1,13 +1,13 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
-import { loadModule, LoadModuleType, replaceModules } from "./hmr-module";
-import { onErrorClearedMessage, onErrorMessage } from "./client/overlay";
 import { Bake } from "bun";
-import { td } from "./shared";
+import { onErrorClearedMessage, onErrorMessage } from "./client/overlay";
 import { DataViewReader } from "./client/reader";
 import { routeMatch } from "./client/route";
 import { initWebSocket } from "./client/websocket";
 import { MessageId } from "./generated";
+import { loadModule, LoadModuleType, replaceModules } from "./hmr-module";
+import { td } from "./shared";
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");

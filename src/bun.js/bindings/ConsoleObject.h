@@ -6,6 +6,8 @@
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
+#include <JavaScriptCore/InspectorConsoleAgent.h>
+
 namespace Inspector {
 class InspectorConsoleAgent;
 class InspectorDebuggerAgent;
@@ -31,6 +33,7 @@ public:
     static bool logToSystemConsole();
     static void setLogToSystemConsole(bool);
 
+    Inspector::InspectorConsoleAgent* consoleAgent() { return m_consoleAgent; }
     void setDebuggerAgent(InspectorDebuggerAgent* agent) { m_debuggerAgent = agent; }
     void setPersistentScriptProfilerAgent(InspectorScriptProfilerAgent* agent)
     {

@@ -57,7 +57,7 @@ Replace `bail` in your Jest config with the `--bail` CLI flag.
 ``` -->
 
 ```sh
-$ bun test --bail 3
+$ bun test --bail=3
 ```
 
 ---

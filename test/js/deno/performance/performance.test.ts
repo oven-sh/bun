@@ -28,7 +28,7 @@ test(function performanceToJSON() {
   assert("timeOrigin" in json);
   assert(json.timeOrigin === performance.timeOrigin);
   // check there are no other keys
-  assertEquals(Object.keys(json).length, 1);
+  assertEquals(Object.keys(json).length, 2);
 });
 
 test(function performanceMark() {

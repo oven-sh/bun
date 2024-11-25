@@ -4200,8 +4200,6 @@ const Tokenizer = struct {
             .position = 0,
         };
 
-        // make current point to the first token
-        _ = lexer.next();
         lexer.position = 0;
 
         return lexer;

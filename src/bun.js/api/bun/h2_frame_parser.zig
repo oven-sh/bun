@@ -3254,7 +3254,7 @@ pub const H2FrameParser = struct {
         const args_list = callframe.arguments_old(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected error argument", .{});
-            return .undefined;
+            return .zero;
         }
 
         var it = StreamResumableIterator.init(this);

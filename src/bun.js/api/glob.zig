@@ -113,7 +113,7 @@ const ScanOpts = struct {
                 return out;
             }
             globalThis.throw("{s}: expected first argument to be an object", .{fnName});
-            return null;
+            return error.JSError;
         }
 
         if (try optsObj.getTruthy(globalThis, "onlyFiles")) |only_files| {
@@ -135,7 +135,7 @@ const ScanOpts = struct {
         if (try optsObj.getTruthy(globalThis, "cwd")) |cwdVal| {
             if (!cwdVal.isString()) {
                 globalThis.throw("{s}: invalid `cwd`, not a string", .{fnName});
-                return null;
+                return error.JSError;
             }
 
             {
@@ -428,12 +428,12 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     defer arguments.deinit();
     const str_arg = arguments.nextEat() orelse {
         globalThis.throw("Glob.matchString: expected 1 arguments, got 0", .{});
-        return .undefined;
+        return .zero;
     };
 
     if (!str_arg.isString()) {
         globalThis.throw("Glob.matchString: first argument is not a string", .{});
-        return .undefined;
+        return .zero;
     }
 
     var str = str_arg.toSlice(globalThis, arena.allocator());
@@ -446,13 +446,13 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
 
         var codepoints = std.ArrayList(u32).initCapacity(alloc, this.pattern.len * 2) catch {
             globalThis.throwOutOfMemory();
-            return .undefined;
+            return .zero;
         };
         errdefer codepoints.deinit();
 
         convertUtf8(&codepoints, this.pattern) catch {
             globalThis.throwOutOfMemory();
-            return .undefined;
+            return .zero;
         };
 
         this.pattern_codepoints = codepoints;

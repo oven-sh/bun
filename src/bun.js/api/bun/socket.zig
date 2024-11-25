@@ -3465,11 +3465,13 @@ fn NewSocket(comptime ssl: bool) type {
                 // If BoringSSL gave us an error code, let's use it.
                 if (err != 0 and !globalObject.hasException()) {
                     globalObject.throwValue(BoringSSL.ERR_toJS(globalObject, err));
+                    return .zero;
                 }
 
                 // If BoringSSL did not give us an error code, let's throw a generic error.
                 if (!globalObject.hasException()) {
                     globalObject.throw("Failed to upgrade socket from TCP -> TLS. Is the TLS config correct?", .{});
+                    return .zero;
                 }
 
                 return JSValue.jsUndefined();

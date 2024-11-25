@@ -316,7 +316,7 @@ function getPipeline(options) {
       release: "11",
       "image-name": `linux-${arch}-debian-11-v5`, // v5 is not on main yet
       "instance-type": instanceType,
-    }
+    };
     // TODO: Temporarily disable due to configuration
     // return {
     //   queue: "build-zig",

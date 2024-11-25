@@ -2165,10 +2165,23 @@ pub const Formatter = struct {
                 value.getClassName(this.globalThis, &printable);
                 this.addForNewLine(printable.len);
 
+                const proto = value.getPrototype(this.globalThis);
+                var printable_proto = ZigString.init(&name_buf);
+                proto.getClassName(this.globalThis, &printable_proto);
+                this.addForNewLine(printable_proto.len);
+
                 if (printable.len == 0) {
-                    writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous)]<r>", enable_ansi_colors), .{});
+                    if (printable_proto.isEmpty()) {
+                        writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous)]<r>", enable_ansi_colors), .{});
+                    } else {
+                        writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous) extends {}]<r>", enable_ansi_colors), .{printable_proto});
+                    }
                 } else {
-                    writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
+                    if (printable_proto.isEmpty()) {
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
+                    } else {
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {} extends {}]<r>", enable_ansi_colors), .{ printable, printable_proto });
+                    }
                 }
             },
             .Function => {
@@ -3097,6 +3110,7 @@ pub const Formatter = struct {
                     if (display_name.isEmpty()) {
                         display_name = String.static("Object");
                     }
+
                     writer.print(comptime Output.prettyFmt("<r><cyan>[{} ...]<r>", enable_ansi_colors), .{
                         display_name,
                     });
@@ -3115,6 +3129,8 @@ pub const Formatter = struct {
                     else {
                         if (getObjectName(this.globalThis, value)) |name_str| {
                             writer.print("{} ", .{name_str});
+                        } else if (value.getPrototype(this.globalThis).eqlValue(JSValue.null)) {
+                            writer.print("[Object: null prototype] ", .{});
                         }
                         writer.writeAll("{}");
                     }

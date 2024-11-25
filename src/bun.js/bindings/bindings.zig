@@ -3084,8 +3084,9 @@ pub const JSGlobalObject = opaque {
         );
 
         if (possible_errors.OutOfMemory and err == error.OutOfMemory) {
-            if (!global.hasException()) {
+            if (global.hasException()) {
                 if (comptime bun.Environment.isDebug) bun.Output.panic("attempted to throw OutOfMemory without an exception", .{});
+            } else {
                 global.throwOutOfMemory();
             }
             return null_value;

@@ -306,7 +306,7 @@ function getPipeline(options) {
    */
   const getZigAgent = platform => {
     const { arch } = platform;
-    const instanceType = arch === "aarch64" ? "c8g.large" : "c7i.large";
+    const instanceType = arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge";
     return {
       robobun: true,
       robobun2: true,

@@ -159,9 +159,6 @@ export function $(strings, ...values) {
   return result;
 }
 
-/** @type {string[] | undefined} */
-let priviledgedCommand;
-
 /**
  * @param {string[]} command
  * @param {SpawnOptions} options
@@ -172,6 +169,9 @@ function parseCommand(command, options) {
   }
   return command;
 }
+
+/** @type {string[] | undefined} */
+let priviledgedCommand;
 
 /**
  * @returns {string[]}
@@ -840,6 +840,7 @@ export async function curlSafe(url, options) {
   return body;
 }
 
+/** @type {Record<string, string> | undefined} */
 let cachedFiles;
 
 /**
@@ -989,7 +990,7 @@ export async function getChangedFiles(cwd, base, head) {
   head ||= getCommit(cwd);
   base ||= `${head}^1`;
 
-  const url = `https://api.github.com/repos/${repository}/compare/${base}...${head}`;
+  const url = new URL(`repos/${repository}/compare/${base}...${head}`, getGithubApiUrl());
   const { error, body } = await curl(url, { json: true });
 
   if (error) {
@@ -1131,9 +1132,8 @@ export async function getBuildkiteBuildNumber() {
     return;
   }
 
-  const { status, error, body } = await curl(`https://api.github.com/repos/${repository}/commits/${commit}/statuses`, {
-    json: true,
-  });
+  const url = new URL(`repos/${repository}/commits/${commit}/statuses`, getGithubApiUrl());
+  const { status, error, body } = await curl(url, { json: true });
   if (status === 404) {
     return;
   }
@@ -1275,7 +1275,7 @@ export async function uploadArtifact(filename, cwd) {
  * @returns {string}
  */
 export function stripAnsi(string) {
-  return string.replace(/\u001b\[\d+m/g, "");
+  return string.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "");
 }
 
 /**
@@ -1602,7 +1602,7 @@ export async function getTargetDownloadUrl(target, release) {
       return canaryUrl;
     }
 
-    const statusUrl = new URL(`https://api.github.com/repos/oven-sh/bun/commits/${release}/status`).toString();
+    const statusUrl = new URL(`repos/oven-sh/bun/commits/${release}/status`, getGithubApiUrl());
     const { error, body } = await curl(statusUrl, { json: true });
     if (error) {
       throw new Error(`Failed to fetch commit status: ${release}`, { cause: error });
@@ -2146,7 +2146,7 @@ export function sha256(string) {
 }
 
 /**
- * @param {string} level
+ * @param {string} [level]
  * @returns {"info" | "warning" | "error"}
  */
 function parseLevel(level) {
@@ -2156,24 +2156,67 @@ function parseLevel(level) {
   if (/warn|caution/i.test(level)) {
     return "warning";
   }
-  return "info";
+  return "notice";
 }
 
 /**
  * @typedef {Object} Annotation
  * @property {string} title
  * @property {string} [content]
- * @property {"info" | "warning" | "error"} [level]
+ * @property {string} [source]
+ * @property {"notice" | "warning" | "error"} [level]
  * @property {string} [url]
  * @property {string} [filename]
  * @property {number} [line]
  * @property {number} [column]
+ * @property {Record<string, string>} [metadata]
  */
 
 /**
- * @typedef {Object} AnnotationOptions
+ * @typedef {Object} AnnotationContext
  * @property {string} [cwd]
+ * @property {string[]} [command]
  */
+
+/**
+ * @param {Record<keyof Annotation, unknown>} options
+ * @param {AnnotationContext} [context]
+ * @returns {Annotation}
+ */
+export function parseAnnotation(options, context) {
+  const source = options["source"];
+  const level = parseLevel(options["level"]);
+  const title = options["title"] || (source ? `${source} ${level}` : level);
+  const filename = options["filename"];
+  const line = parseInt(options["line"]) || undefined;
+  const column = parseInt(options["column"]) || undefined;
+  const content = options["content"];
+  const lines = Array.isArray(content) ? content : content?.split(/(\r?\n)/) || [];
+  const metadata = Object.fromEntries(
+    Object.entries(options["metadata"] || {}).filter(([, value]) => value !== undefined),
+  );
+
+  const relevantLines = [];
+  let lastLine;
+  for (const line of lines) {
+    if (!lastLine && !line.trim()) {
+      continue;
+    }
+    lastLine = line.trim();
+    relevantLines.push(line);
+  }
+
+  return {
+    source,
+    title,
+    level,
+    filename,
+    line,
+    column,
+    content: relevantLines.join("\n"),
+    metadata,
+  };
+}
 
 /**
  * @typedef {Object} AnnotationResult
@@ -2185,35 +2228,43 @@ function parseLevel(level) {
 /**
  * @param {string} content
  * @param {AnnotationOptions} [options]
- * @returns {Annotation[]}
+ * @returns {AnnotationResult}
  */
-function parseAnnotations(content, options = {}) {
+export function parseAnnotations(content, options = {}) {
   /** @type {Annotation[]} */
   const annotations = [];
 
-  /**
-   * @param {Record<keyof Annotation, unknown>} options
-   */
-  const addAnnotation = ({ title, content, level, filename, line, column }) => {
-    const annotation = {
-      title,
-      content,
-      level: parseLevel(String(level || "info")),
-      filename,
-      line: parseInt(line) || undefined,
-      column: parseInt(column) || undefined,
-    };
-
-    annotations.push(annotation);
-  };
-
   const originalLines = content.split(/(\r?\n)/);
   const lines = [];
-  const previewLines = [];
 
   for (let i = 0; i < originalLines.length; i++) {
     const originalLine = originalLines[i];
-    const line = stripAnsi(originalLine);
+    const line = stripAnsi(originalLine).trim();
+    const bufferedLines = [originalLine];
+
+    /**
+     * @param {RegExp} pattern
+     * @param {number} [maxLength]
+     * @returns {{lines: string[], match: string[] | undefined}}
+     */
+    const readUntil = (pattern, maxLength = 100) => {
+      let length = 0;
+      let match;
+
+      while (i + length <= originalLines.length && length < maxLength) {
+        const originalLine = originalLines[i + length++];
+        const line = stripAnsi(originalLine).trim();
+        const patternMatch = pattern.exec(line);
+        if (patternMatch) {
+          match = patternMatch;
+          break;
+        }
+      }
+
+      const lines = originalLines.slice(i + 1, (i += length));
+      bufferedLines.push(...lines);
+      return { lines, match };
+    };
 
     // Github Actions
     // https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions
@@ -2224,7 +2275,14 @@ function parseAnnotations(content, options = {}) {
         attributes?.split(",")?.map(entry => entry.split("=")) || {},
       );
 
-      addAnnotation({ level, filename: file, line, column: col, title, content });
+      const annotation = parseAnnotation({
+        level,
+        filename: file,
+        line,
+        column: col,
+        content: unescapeGitHubAction(title) + unescapeGitHubAction(content),
+      });
+      annotations.push(annotation);
       continue;
     }
 
@@ -2235,11 +2293,102 @@ function parseAnnotations(content, options = {}) {
 
     // CMake error format
     // e.g. CMake Error at /path/to/thing.cmake:123 (message): ...
-    const cmakeMessage = line.match(/^CMake (Error|Warning|Deprecation Warning) at (.*):(\d+)/);
+    const cmakeMessage = line.match(/CMake (Error|Warning|Deprecation Warning) at (.*):(\d+)/i);
     if (cmakeMessage) {
-      const [, level, filename, line] = cmakeMessage;
+      let [, level, filename, line] = cmakeMessage;
 
-      addAnnotation({ level, filename, line, content: originalLine });
+      const { match: callStackMatch } = readUntil(/Call Stack \(most recent call first\)/i);
+      if (callStackMatch) {
+        const { match: callFrameMatch } = readUntil(/(CMakeLists\.txt|[^\s]+\.cmake):(\d+)/i, 5);
+        if (callFrameMatch) {
+          const [, frame, location] = callFrameMatch;
+          filename = frame;
+          line = location;
+        }
+      }
+
+      const annotation = parseAnnotation({
+        source: "cmake",
+        level,
+        filename,
+        line,
+        content: bufferedLines,
+      });
+      annotations.push(annotation);
+    }
+
+    // Zig compiler error
+    // e.g. /path/to/build.zig:8:19: error: ...
+    const zigMessage = line.match(/^(.+\.zig):(\d+):(\d+): (error|warning): (.+)$/);
+    if (zigMessage) {
+      const [, filename, line, column, level] = zigMessage;
+
+      const { match: callStackMatch } = readUntil(/referenced by:/i);
+      if (callStackMatch) {
+        readUntil(/(.+\.zig):(\d+):(\d+)/i, 5);
+      }
+
+      const annotation = parseAnnotation({
+        source: "zig",
+        level,
+        filename,
+        line,
+        column,
+        content: bufferedLines,
+      });
+      annotations.push(annotation);
+    }
+
+    const nodeJsError = line.match(/^file:\/\/(.+\.(?:c|m)js):(\d+)/i);
+    if (nodeJsError) {
+      const [, filename, line] = nodeJsError;
+
+      let metadata;
+      const { match: nodeJsVersionMatch } = readUntil(/^Node\.js v(\d+\.\d+\.\d+)/i);
+      if (nodeJsVersionMatch) {
+        const [, version] = nodeJsVersionMatch;
+        metadata = {
+          "node-version": version,
+        };
+      }
+
+      const annotation = parseAnnotation({
+        source: "node",
+        level: "error",
+        filename,
+        line,
+        content: bufferedLines,
+        metadata,
+      });
+      annotations.push(annotation);
+    }
+
+    const clangError = line.match(/^(.+\.(?:cpp|c|m|h)):(\d+):(\d+): (error|warning): (.+)/i);
+    if (clangError) {
+      const [, filename, line, column, level] = clangError;
+      readUntil(/^\d+ (?:error|warning)s? generated/);
+      const annotation = parseAnnotation({
+        source: "clang",
+        level,
+        filename,
+        line,
+        column,
+        content: bufferedLines,
+      });
+      annotations.push(annotation);
+    }
+
+    const shellMessage = line.match(/(.+\.sh): line (\d+): (.+)/i);
+    if (shellMessage) {
+      const [, filename, line] = shellMessage;
+      const annotation = parseAnnotation({
+        source: "shell",
+        level: "error",
+        filename,
+        line,
+        content: bufferedLines,
+      });
+      annotations.push(annotation);
     }
 
     lines.push(originalLine);
@@ -2248,7 +2397,6 @@ function parseAnnotations(content, options = {}) {
   return {
     annotations,
     content: lines.join("\n"),
-    preview: previewLines.join("\n"),
   };
 }
 

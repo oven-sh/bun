@@ -204,9 +204,28 @@ export const aws = {
    * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/run-instances.html
    */
   async runInstances(options) {
-    const flags = aws.getFlags(options);
-    const { Instances } = await aws.spawn($`ec2 run-instances ${flags}`);
-    return Instances.sort((a, b) => (a.LaunchTime < b.LaunchTime ? 1 : -1));
+    for (let i = 0; i < 3; i++) {
+      const flags = aws.getFlags(options);
+      const result = await aws.spawn($`ec2 run-instances ${flags}`, {
+        throwOnError: error => {
+          if (options["instance-market-options"] && /InsufficientInstanceCapacity/i.test(inspect(error))) {
+            delete options["instance-market-options"];
+            const instanceType = options["instance-type"] || "default";
+            console.warn(`There is not enough capacity for ${instanceType} spot instances, retrying with on-demand...`);
+            return false;
+          }
+          return true;
+        },
+      });
+      if (result) {
+        const { Instances } = result;
+        if (Instances.length) {
+          return Instances.sort((a, b) => (a.LaunchTime < b.LaunchTime ? 1 : -1));
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, i * Math.random() * 15_000));
+    }
+    throw new Error(`Failed to run instances: ${inspect(instanceOptions)}`);
   },
 
   /**
@@ -474,7 +493,7 @@ export const aws = {
    * @returns {Promise<Machine>}
    */
   async createMachine(options) {
-    const { os, arch, imageId, instanceType, tags, sshKeys } = options;
+    const { os, arch, imageId, instanceType, tags, sshKeys, preemptible } = options;
 
     /** @type {AwsImage} */
     let image;
@@ -527,6 +546,17 @@ export const aws = {
       }
     }
 
+    let marketOptions;
+    if (preemptible) {
+      marketOptions = JSON.stringify({
+        MarketType: "spot",
+        SpotOptions: {
+          InstanceInterruptionBehavior: "terminate",
+          SpotInstanceType: "one-time",
+        },
+      });
+    }
+
     const [instance] = await aws.runInstances({
       ["image-id"]: ImageId,
       ["instance-type"]: instanceType || (arch === "aarch64" ? "t4g.large" : "t3.large"),
@@ -540,6 +570,7 @@ export const aws = {
       }),
       ["tag-specifications"]: JSON.stringify(tagSpecification),
       ["key-name"]: keyName,
+      ["instance-market-options"]: marketOptions,
     });
 
     return aws.toMachine(instance, { ...options, username, keyPath });
@@ -1552,7 +1583,7 @@ async function main() {
       "cpu-count": { type: "string" },
       "memory-gb": { type: "string" },
       "disk-size-gb": { type: "string" },
-      "persistent": { type: "boolean" },
+      "preemptible": { type: "boolean" },
       "detached": { type: "boolean" },
       "tag": { type: "string", multiple: true },
       "ci": { type: "boolean" },

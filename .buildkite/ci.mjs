@@ -27,7 +27,6 @@ import {
   toYaml,
   uploadArtifact,
 } from "../scripts/utils.mjs";
-import { platform } from "node:os";
 
 /**
  * @typedef PipelineOptions
@@ -300,8 +299,8 @@ function getPipeline(options) {
    */
   const getEmphemeralBuildAgent = platform => {
     const { arch } = platform;
-    const instanceType = arch === "aarch64" ? "c8g.8xlarge" : "c7i.8xlarge";
-    const cpuCount = 32;
+    const instanceType = arch === "aarch64" ? "c8g.16xlarge" : "c7i.16xlarge";
+    const cpuCount = 64;
     return getEmphemeralAgent("v2", platform, instanceType, cpuCount);
   };
 

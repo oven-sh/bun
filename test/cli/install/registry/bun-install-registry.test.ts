@@ -12055,3 +12055,79 @@ registry = "http://localhost:${port}/"
     });
   }
 });
+
+it("$npm_command is accurate during publish", async () => {
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "publish-pkg-10",
+      version: "1.0.0",
+      scripts: {
+        publish: "echo $npm_command",
+      },
+    }),
+  );
+  await write(join(packageDir, "bunfig.toml"), await authBunfig("npm_command"));
+  await rm(join(import.meta.dir, "packages", "publish-pkg-10"), { recursive: true, force: true });
+  let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
+  expect(err).toBe(`$ echo $npm_command\n`);
+  expect(out.split("\n")).toEqual([
+    `bun publish ${Bun.version_with_sha}`,
+    ``,
+    `packed 95B package.json`,
+    ``,
+    `Total files: 1`,
+    expect.stringContaining(`Shasum: `),
+    expect.stringContaining(`Integrity: sha512-`),
+    `Unpacked size: 95B`,
+    expect.stringContaining(`Packed size: `),
+    `Tag: simpletag`,
+    `Access: default`,
+    `Registry: http://localhost:${port}/`,
+    ``,
+    ` + publish-pkg-10@1.0.0`,
+    `publish`,
+    ``,
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+it("$npm_lifecycle_event is accurate during publish", async () => {
+  await write(
+    packageJson,
+    `{
+      "name": "publish-pkg-11",
+      "version": "1.0.0",
+      "scripts": {
+        "prepublish": "echo 1 $npm_lifecycle_event",
+        "publish": "echo 2 $npm_lifecycle_event",
+        "postpublish": "echo 3 $npm_lifecycle_event",
+      },
+    }
+    `,
+  );
+  await write(join(packageDir, "bunfig.toml"), await authBunfig("npm_lifecycle_event"));
+  await rm(join(import.meta.dir, "packages", "publish-pkg-11"), { recursive: true, force: true });
+  let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
+  expect(err).toBe(`$ echo 2 $npm_lifecycle_event\n$ echo 3 $npm_lifecycle_event\n`);
+  expect(out.split("\n")).toEqual([
+    `bun publish ${Bun.version_with_sha}`,
+    ``,
+    `packed 256B package.json`,
+    ``,
+    `Total files: 1`,
+    expect.stringContaining(`Shasum: `),
+    expect.stringContaining(`Integrity: sha512-`),
+    `Unpacked size: 256B`,
+    expect.stringContaining(`Packed size: `),
+    `Tag: simpletag`,
+    `Access: default`,
+    `Registry: http://localhost:${port}/`,
+    ``,
+    ` + publish-pkg-11@1.0.0`,
+    `2 publish`,
+    `3 postpublish`,
+    ``,
+  ]);
+  expect(exitCode).toBe(0);
+});

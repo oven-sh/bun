@@ -54,10 +54,10 @@ curl -fsSL https://bun.sh/install | bash
 # with install script on Windows (recommended)
 powershell -c "irm bun.sh/install.ps1 | iex"
 
-# with npm
+# with NPM
 npm install -g bun
 
-# with scoop
+# with Scoop
 scoop install bun
 
 # with Homebrew

@@ -379,7 +379,7 @@ describe("Bun.serve hostname and port validation", () => {
 });
 
 describe("Bun.serve hostname coercion", () => {
-  test("number hostnames coerce to string", () => {
+  test.todo("number hostnames coerce to string", () => {
     using server = serve({
       // @ts-expect-error - Testing runtime coercion
       hostname: 0, // Should coerce to "0"

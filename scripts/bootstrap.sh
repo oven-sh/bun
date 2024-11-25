@@ -1074,11 +1074,10 @@ main() {
 	check_user
 	check_ulimit
 	check_package_manager
-	create_buildkite_user
-	
-	# install_common_software
-	# install_build_essentials
-	# install_chrome_dependencies
+	create_buildkite_user	
+	install_common_software
+	install_build_essentials
+	install_chrome_dependencies
 }
 
 main "$@"

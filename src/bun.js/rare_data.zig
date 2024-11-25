@@ -24,6 +24,7 @@ stdin_store: ?*Blob.Store = null,
 stdout_store: ?*Blob.Store = null,
 
 postgresql_context: JSC.Postgres.PostgresSQLContext = .{},
+mysql_context: JSC.MySQL.MySQLContext = .{},
 
 entropy_cache: ?*EntropyCache = null,
 

@@ -4168,6 +4168,18 @@ pub const JSValue = enum(i64) {
         return cppFn("coerceToDouble", .{ this, globalObject });
     }
 
+    pub fn coerceToDoubleCheckingErrors(
+        this: JSValue,
+        globalObject: *JSC.JSGlobalObject,
+    ) f64 {
+        const num = this.coerceToDouble(globalObject);
+        if (globalObject.hasException()) {
+            return error.JSError;
+        }
+
+        return num;
+    }
+
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
             ZigString => this.getZigString(globalThis),

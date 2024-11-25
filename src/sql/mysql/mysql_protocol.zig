@@ -1486,6 +1486,8 @@ pub const PreparedStatement = struct {
                 for (this.params, 0..) |param, i| {
                     if (param == .empty) {
                         null_bitmap[i >> 3] |= @as(u8, 1) << @as(u3, @truncate(i & 7));
+                    } else {
+                        bun.assert(param.slice().len > 0);
                     }
                 }
 
@@ -1503,8 +1505,8 @@ pub const PreparedStatement = struct {
                 }
 
                 // Write parameter values
-                for (this.params, this.param_types) |param, param_type| {
-                    if (param == .empty) continue;
+                for (this.params, this.param_types) |*param, param_type| {
+                    if (param.* == .empty) continue;
 
                     const value = param.slice();
                     if (param_type.isBinaryFormatSupported()) {

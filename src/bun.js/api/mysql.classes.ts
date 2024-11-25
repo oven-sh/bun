@@ -2,7 +2,7 @@ import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
-    name: "MySQLSQLConnection",
+    name: "MySQLConnection",
     construct: true,
     finalize: true,
     hasPendingActivity: true,
@@ -38,7 +38,7 @@ export default [
     },
   }),
   define({
-    name: "MySQLSQLQuery",
+    name: "MySQLQuery",
     construct: true,
     finalize: true,
     configurable: false,

@@ -20,6 +20,8 @@ pub const int2 = u16;
 pub const int3 = u24;
 pub const int4 = u32;
 pub const int8 = u64;
+const Value = types.Value;
+const FieldType = types.FieldType;
 
 pub const MySQLInt8 = int1;
 pub const MySQLInt16 = int2;
@@ -815,14 +817,14 @@ pub const MySQLConnection = struct {
 
                     // Read parameter definitions if any
                     if (ok.num_params > 0) {
-                        var params = try bun.default_allocator.alloc(types.FieldType, ok.num_params);
+                        const params = try bun.default_allocator.alloc(types.FieldType, ok.num_params);
                         errdefer bun.default_allocator.free(params);
 
                         for (params) |*param| {
                             var column = protocol.ColumnDefinition41{};
+                            defer column.deinit();
                             try column.decode(Context, reader);
                             param.* = column.column_type;
-                            column.deinit();
                         }
 
                         statement.params = params;
@@ -830,22 +832,32 @@ pub const MySQLConnection = struct {
 
                     // Read column definitions if any
                     if (ok.num_columns > 0) {
-                        var columns = try bun.default_allocator.alloc(protocol.ColumnDefinition41, ok.num_columns);
+                        const columns = try bun.default_allocator.alloc(protocol.ColumnDefinition41, ok.num_columns);
+                        var consumed: u32 = 0;
                         errdefer {
-                            for (columns) |*column| {
+                            for (columns[0..consumed]) |*column| {
                                 column.deinit();
                             }
                             bun.default_allocator.free(columns);
                         }
 
-                        for (0..ok.num_columns) |i| {
-                            try columns[i].decode(Context, reader);
+                        for (columns) |*column| {
+                            try column.decode(Context, reader);
+                            consumed += 1;
                         }
 
                         statement.columns = columns;
                     }
 
-                    try this.executeStatement(statement, request, this.globalObject);
+                    var execute = protocol.PreparedStatement.Execute{
+                        .statement_id = statement.statement_id,
+                        .param_types = statement.params,
+                        .iteration_count = 1,
+                    };
+                    defer execute.deinit();
+                    try request.bind(&execute, this.globalObject);
+                    try execute.writeInternal(Context, this.writer());
+                    this.flushData();
                 }
             },
 
@@ -854,7 +866,7 @@ pub const MySQLConnection = struct {
                 try err.decode(Context, reader);
                 defer err.deinit();
 
-                if (this.requests.popOrNull()) |request| {
+                if (this.requests.readItem()) |request| {
                     if (request.statement) |statement| {
                         statement.status = .failed;
                         statement.error_response = err;
@@ -903,14 +915,14 @@ pub const MySQLConnection = struct {
                 var header = protocol.ResultSetHeader{};
                 try header.decode(Context, reader);
 
-
                 if (this.requests.readableLength() > 0) {
                     const request = this.requests.peekItem(0);
 
                     // Read column definitions
                     const columns = try bun.default_allocator.alloc(protocol.ColumnDefinition41, header.field_count);
+                    var columns_read: u32 = 0;
                     errdefer {
-                        for (columns) |*column| {
+                        for (columns[0..columns_read]) |*column| {
                             column.deinit();
                         }
                         bun.default_allocator.free(columns);
@@ -918,8 +930,10 @@ pub const MySQLConnection = struct {
 
                     for (columns) |*column| {
                         try column.decode(Context, reader);
+                        columns_read += 1;
                     }
-const globalThis = this.globalObject;
+
+                    const globalThis = this.globalObject;
                     // Start reading rows
                     while (true) {
                         const row_first_byte = try reader.byte();
@@ -933,9 +947,9 @@ const globalThis = this.globalObject;
                                 // Update status flags and finish
                                 this.status_flags = eof.status_flags;
                                 this.is_ready_for_query = true;
-
                                 this.requests.discard(1);
-                                request.onSuccess(0, 0, this.globalObject);
+
+                                request.onSuccess(this.globalObject);
                                 break;
                             },
 
@@ -950,48 +964,34 @@ const globalThis = this.globalObject;
 
                             else => {
                                 var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
+                                const allocator = stack_fallback.get();
+
                                 // Read row data
                                 var row = protocol.ResultSet.Row{
                                     .columns = columns,
                                     .binary = request.binary,
                                 };
-                                const allocator = stack_fallback.get();
-                                try row.decodeInternal(allocator, Context, reader);
                                 defer row.deinit(allocator);
+                                try row.decodeInternal(allocator, Context, reader);
+
+                                const pending_value = MySQLQuery.pendingValueGetCached(request.thisValue) orelse .zero;
 
                                 // Process row data
-                                // Note: You'll need to implement row processing logic
-                                // based on your application's needs
+                                const row_value = row.toJS(request.statement.?.structure(request.thisValue, globalThis), pending_value, request.globalThis);
+                                if (globalThis.hasException()) {
+                                    request.onJSError(globalThis.tryTakeException().?, globalThis);
+                                    return error.JSError;
+                                }
 
-                                row.toJS(request.statement.?.structure(request.thisValue, globalThis), request. globalThis);
-
+                                if (pending_value == .zero) {
+                                    MySQLQuery.pendingValueSetCached(request.thisValue, globalThis, row_value);
+                                }
                             },
                         }
                     }
-
-                    // Clean up columns
-                    for (columns) |*column| {
-                        column.deinit();
-                    }
-                    bun.default_allocator.free(columns);
                 }
             },
         }
-    }
-
-    pub fn executeStatement(this: *MySQLConnection, statement: *MySQLStatement, globalObject: *JSC.JSGlobalObject) !void {
-        var execute = protocol.PreparedStatement.Execute{
-            .statement_id = statement.statement_id,
-            .params = values,
-            .param_types = statement.params,
-            .iteration_count = 1,
-        };
-        defer execute.deinit();
-
-        const array 
-
-        try execute.writeInternal()
-        this.flushData();
     }
 
     pub fn closeStatement(this: *MySQLConnection, statement: *MySQLStatement) !void {
@@ -1170,6 +1170,31 @@ pub const MySQLQuery = struct {
         });
     }
 
+    pub fn bind(this: *MySQLQuery, execute: *protocol.PreparedStatement.Execute, globalObject: *JSC.JSGlobalObject) !void {
+        const binding_value = MySQLQuery.bindingGetCached(this.thisValue) orelse .zero;
+        const columns_value = MySQLQuery.columnsGetCached(this.thisValue) orelse .zero;
+
+        var iter = QueryBindingIterator.init(binding_value, columns_value, globalObject);
+
+        var i: u32 = 0;
+        var params = try bun.default_allocator.alloc(Data, execute.params.len);
+        errdefer {
+            for (params[0..i]) |*param| {
+                param.deinit();
+            }
+            bun.default_allocator.free(params);
+        }
+        while (iter.next()) |js_value| {
+            const param = execute.param_types[i];
+            const value = try Value.fromJS(js_value, globalObject, param, bun.default_allocator);
+            params[i] = try value.toData(param);
+            i += 1;
+        }
+
+        this.status = .binding;
+        execute.params = params;
+    }
+
     pub fn onError(this: *@This(), err: protocol.ErrorPacket, globalObject: *JSC.JSGlobalObject) void {
         this.status = .fail;
         defer {
@@ -1192,7 +1217,29 @@ pub const MySQLQuery = struct {
         globalObject.queueMicrotask(function, &[_]JSValue{ targetValue, err.toJS(globalObject) });
     }
 
-    pub fn onSuccess(this: *@This(), affected_rows: u64, last_insert_id: u64, globalObject: *JSC.JSGlobalObject) void {
+    pub fn onJSError(this: *@This(), exception: JSC.JSValue, globalObject: *JSC.JSGlobalObject) void {
+        this.status = .fail;
+        defer {
+            // Clean up statement reference on error
+            if (this.statement) |statement| {
+                statement.deref();
+                this.statement = null;
+            }
+            this.deref();
+        }
+
+        const thisValue = this.thisValue;
+        const targetValue = this.target.trySwap() orelse JSValue.zero;
+        if (thisValue == .zero or targetValue == .zero) {
+            return;
+        }
+
+        var vm = JSC.VirtualMachine.get();
+        const function = vm.rareData().mysql_context.onQueryRejectFn.get().?;
+        globalObject.queueMicrotask(function, &[_]JSValue{ targetValue, exception.toError().? });
+    }
+
+    pub fn onSuccess(this: *@This(), globalObject: *JSC.JSGlobalObject) void {
         this.status = .success;
         defer this.deref();
 
@@ -1208,8 +1255,8 @@ pub const MySQLQuery = struct {
         event_loop.runCallback(function, globalObject, thisValue, &.{
             targetValue,
             this.pending_value.trySwap() orelse .undefined,
-            JSValue.jsNumber(@floatFromInt(affected_rows)),
-            JSValue.jsNumber(@floatFromInt(last_insert_id)),
+            JSValue.jsNumber(0),
+            JSValue.jsNumber(0),
         });
     }
 

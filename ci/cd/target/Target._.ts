@@ -61,7 +61,7 @@ export class Target {
 
     if (platform.isUsingNewAgent()) {
       const instanceType = arch === "aarch64" ? "c8g.8xlarge" : "c7i.8xlarge";
-      return platform.getEmphemeralAgent("v2", instanceType);
+      return platform.getEmphemeralAgent("v2", { instanceType });
     }
     return {
       queue: `build-${os}`,
@@ -76,14 +76,24 @@ export class Target {
    * @returns {Agent}
    */
   static getZigAgent = (target: Target): Agent => {
-    const { abi, arch } = target;
-    // if (abi === "musl") {
-    //   const instanceType = arch === "aarch64" ? "c8g.large" : "c7i.large";
-    //   return getEmphemeralAgent("v2", target, instanceType);
-    // }
-    return {
-      queue: "build-zig",
-    };
+    const { arch } = target;
+    const instanceType = arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge";
+    const image = `linux-${arch}-debian-11-v5`;
+    const platform = new PlatformBuilder()
+      .setOs("linux")
+      .setDistro("debian")
+      .setRelease("11")
+      .setArch(arch)
+      .build();
+
+    return platform.getEmphemeralAgent("v2", { 
+      instanceType,
+      image
+    });
+    // TODO: Temporarily disable due to configuration
+    // return {
+    //   queue: "build-zig",
+    // };
   };
 
   static getParallelism = (target: Target): number => {

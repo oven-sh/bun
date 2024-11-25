@@ -10,7 +10,7 @@ export type _Platform<Step> = {
   getImageKey: () => string;
   getImageLabel: () => string;
   isUsingNewAgent: () => boolean;
-  getEmphemeralAgent: (version: "v1" | "v2", instanceType: string) => Agent;
+  getEmphemeralAgent: (version: "v1" | "v2", instance: {image?: string; instanceType: string}) => Agent;
   getTestAgent: () => Agent;
   getBuildAgent: () => Agent;
   getBuildImageStep: () => Step;
@@ -107,8 +107,8 @@ export class PlatformBuilder<Step> {
       getImageKey: () => Platform.getImageKey(platform),
       getImageLabel: () => Platform.getImageLabel(platform),
       isUsingNewAgent: () => Platform.isUsingNewAgent(platform),
-      getEmphemeralAgent: (version: "v1" | "v2", instanceType: string) =>
-        Platform.getEmphemeralAgent(version, platform, instanceType, this.options!),
+      getEmphemeralAgent: (version: "v1" | "v2", instance: { image?: string; instanceType: string }) =>
+        Platform.getEmphemeralAgent(version, platform, instance, this.options!),
       getTestAgent: () => Platform.getTestAgent(platform, this.options!),
       getBuildImageStep: () => Platform.getBuildImageStep(platform, this.options!) as Step,
       getDependsOn: (step?: string) => PlatformTargets.getDependsOn(platform, step, this.options),

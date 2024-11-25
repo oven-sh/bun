@@ -73,7 +73,7 @@ export class Platform {
   static getEmphemeralAgent = (
     version: "v1" | "v2",
     platform: Platform,
-    instanceType: string,
+    { image, instanceType }: { image?: string; instanceType: string },
     options: PipelineOptions,
   ): Agent => {
     const { os, arch, abi, distro, release } = platform;
@@ -87,17 +87,20 @@ export class Platform {
         release,
       };
     }
-    let image;
-    if (distro) {
-      image = `${os}-${arch}-${distro}-${release}`;
-    } else {
-      image = `${os}-${arch}-${release}`;
+
+    if (image === undefined) {
+      if (distro) {
+        image = `${os}-${arch}-${distro}-${release}`;
+      } else {
+        image = `${os}-${arch}-${release}`;
+      }
+      if (buildImages && !publishImages) {
+        image += `-build-${getBuildNumber()}`;
+      } else {
+        image += `-v${getBootstrapVersion()}`;
+      }
     }
-    if (buildImages && !publishImages) {
-      image += `-build-${getBuildNumber()}`;
-    } else {
-      image += `-v${getBootstrapVersion()}`;
-    }
+
     return {
       robobun: true,
       robobun2: true,
@@ -125,7 +128,7 @@ export class Platform {
 
     if (isUsingNewAgent()) {
       const instanceType = arch === "aarch64" ? "t4g.large" : "t3.large";
-      return getEmphemeralAgent("v2", instanceType);
+      return getEmphemeralAgent("v2",  { instanceType });
     }
     if (os === "darwin") {
       return {
@@ -135,7 +138,7 @@ export class Platform {
         queue: "test-darwin",
       };
     }
-    return getEmphemeralAgent("v1", undefined as unknown as string);
+    return getEmphemeralAgent("v1", { instanceType: undefined as unknown as string });
   };
 
   /**

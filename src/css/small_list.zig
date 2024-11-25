@@ -87,6 +87,11 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             return ret;
         }
 
+        pub inline fn getLastUnchecked(this: *const @This()) T {
+            if (this.spilled()) return this.data.heap.ptr[this.data.heap.len - 1];
+            return this.data.inlined[this.capacity - 1];
+        }
+
         pub inline fn at(this: *const @This(), idx: u32) *const T {
             return &this.as_const_ptr()[idx];
         }
@@ -429,6 +434,14 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             bun.debugAssert(len_ptr.* < capp);
             ptr[len_ptr.*] = item;
             len_ptr.* += 1;
+        }
+
+        pub fn pop(this: *@This()) ?T {
+            const ptr, const len_ptr, _ = this.tripleMut();
+            if (len_ptr.* == 0) return null;
+            const last_index = len_ptr.* - 1;
+            len_ptr.* = last_index;
+            return ptr[last_index];
         }
 
         pub fn append(this: *@This(), allocator: Allocator, item: T) void {

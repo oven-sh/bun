@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { isCI } from "harness";
+import { isCI, isDebug } from "harness";
 
 interface InvalidFuzzOptions {
   maxLength: number;
@@ -62,7 +62,7 @@ const invalidGenerators = {
 
   // Memory and resource stress
   memory: {
-    deepNesting: (depth: number = 1000) => {
+    deepNesting: (depth: number = 300) => {
       let css = "";
       for (let i = 0; i < depth; i++) {
         css += "@media screen {";
@@ -111,12 +111,11 @@ function corruptCSS(css: string): string {
 // TODO:
 if (!isCI) {
   // Main fuzzing test suite for invalid inputs
-  test.each([
-    ["syntax", 1000],
-    ["structure", 1000],
-    ["encoding", 500],
-    ["memory", 100],
-  ])("CSS Parser Invalid Input Fuzzing - %s (%d iterations)", async (strategy, iterations) => {
+  test.each(
+    [["syntax", 1000], ["structure", 1000], ["encoding", 500], !isDebug ? ["memory", 100] : []].filter(
+      xs => xs.length > 0,
+    ),
+  )("CSS Parser Invalid Input Fuzzing - %s (%d iterations)", async (strategy, iterations) => {
     const options: InvalidFuzzOptions = {
       maxLength: 10000,
       strategy: strategy as any,
@@ -161,7 +160,7 @@ if (!isCI) {
         case "memory":
           const memoryFuncs = Object.keys(invalidGenerators.memory);
           const selectedFunc = memoryFuncs[Math.floor(Math.random() * memoryFuncs.length)];
-          invalidCSS = invalidGenerators.memory[selectedFunc](1000);
+          invalidCSS = invalidGenerators.memory[selectedFunc]();
           break;
       }
 

@@ -1754,7 +1754,7 @@ const JavaScriptCoreBindings = struct {
       output += `
         pub fn ${classSymbolName(typeName, "call")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
           if (comptime Environment.enable_logs) zig("${typeName}<d>({})<r>", .{callFrame});
-          return JSC.toJSHostFunction(${typeName}.call)(globalObject, callFrame);
+          return @call(.always_inline, JSC.toJSHostFunction(${typeName}.call), .{globalObject, callFrame});
         }
       `;
     }
@@ -1807,7 +1807,7 @@ const JavaScriptCoreBindings = struct {
           output += `
         pub fn ${names.fn}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame${proto[name].passThis ? ", js_this_value: JSC.JSValue" : ""}) callconv(JSC.conv) JSC.JSValue {
           if (comptime Environment.enable_logs) zig("<d>${typeName}.<r>${name}<d>({})<r>", .{callFrame});
-          return JSC.toJSHostValue(globalObject, ${typeName}.${fn}(thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}));
+          return @call(.always_inline, JSC.toJSHostValue, .{globalObject, @call(.always_inline, ${typeName}.${fn}, .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}})});
         }
         `;
         }
@@ -1854,7 +1854,7 @@ const JavaScriptCoreBindings = struct {
           output += `
         pub fn ${names.fn}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
           if (comptime Environment.enable_logs) JSC.markBinding(@src());
-          return JSC.toJSHostFunction(${typeName}.${fn})(globalObject, callFrame);
+          return @call(.always_inline, JSC.toJSHostFunction(${typeName}.${fn}), .{globalObject, callFrame});
         }
         `;
         }

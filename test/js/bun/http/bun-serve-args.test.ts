@@ -1,5 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
+import { tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -262,8 +263,9 @@ describe("Bun.serve static routes", () => {
 
 describe("Bun.serve unix socket", () => {
   test("unix socket config", () => {
+    const tmpdir = tmpdirSync();
     using server = serve({
-      unix: "/tmp/test.sock",
+      unix: tmpdir + "/test.sock",
       fetch() {
         return new Response("ok");
       },
@@ -272,8 +274,9 @@ describe("Bun.serve unix socket", () => {
   });
 
   test("unix socket with websocket", () => {
+    const tmpdir = tmpdirSync();
     using server = serve({
-      unix: "test.sock",
+      unix: tmpdir + "/test.sock",
       websocket: {
         message(ws, message) {},
       },
@@ -325,8 +328,9 @@ describe("Bun.serve hostname and port validation", () => {
   });
 
   test("unix with no hostname/port is valid", () => {
+    const tmpdir = tmpdirSync();
     using server = serve({
-      unix: "/tmp/test.sock",
+      unix: tmpdir + "/test.sock",
       fetch() {
         return new Response("ok");
       },

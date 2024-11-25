@@ -2025,10 +2025,6 @@ pub const VirtualMachine = struct {
             false => .off,
         };
 
-        Output.scoped("debugger", false)("{}", switch (wait_for_connection) {
-            _ => {},
-        });
-
         switch (cli_flag) {
             .unspecified => {
                 if (unix.len > 0) {

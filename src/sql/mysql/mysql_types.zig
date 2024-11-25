@@ -215,32 +215,28 @@ pub const Value = union(enum) {
             .ulong => |l| try writer.writeInt(u64, l, .little),
             .float => |f| try writer.writeInt(u32, @bitCast(f), .little),
             .double => |d| try writer.writeInt(u64, @bitCast(d), .little),
-            .date => |d| {
-                const bounded = d.toBinary(field_type, &buffer);
-                try writer.writeAll(bounded.slice());
+            inline .date, .timestamp, .time => |d| {
+                stream.pos = d.toBinary(field_type, &buffer);
             },
-            .timestamp => |t| {
-                const bounded = t.toBinary(field_type, &buffer);
-                try writer.writeAll(bounded.slice());
-            },
-            .time => |t| {
-                const bounded = t.toBinary(field_type, &buffer);
-                try writer.writeAll(bounded.slice());
-            },
-            .decimal => |dec| try writer.writeAll(dec.digits),
-            .string, .bytes => |slice| if (slice.len > 0) Data{ .temporary = slice.slice() } else Data{ .empty = {} },
+            .decimal => |dec| return try dec.toBinary(field_type),
+            .string, .bytes => |slice| return if (slice.len > 0)
+                Data{ .temporary = slice.slice() }
+            else
+                Data{ .empty = {} },
         }
 
         return try Data.create(buffer[0..stream.pos], bun.default_allocator);
     }
 
     pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, field_type: FieldType, unsigned: bool) !Value {
+        // TODO: Handle unsigned
         _ = unsigned; // autofix
+
         return switch (field_type) {
             .MYSQL_TYPE_TINY => Value{ .bool = value.toBoolean() },
-            .MYSQL_TYPE_SHORT => Value{ .short = globalObject.validateIntegerRange(value, i16, 0, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) }) } orelse return error.JSError,
-            .MYSQL_TYPE_LONG => Value{ .int = globalObject.validateIntegerRange(value, i32, 0, .{ .min = std.math.minInt(i32), .max = std.math.maxInt(i32) }) } orelse return error.JSError,
-            .MYSQL_TYPE_LONGLONG => Value{ .long = globalObject.validateIntegerRange(value, i64, 0, .{ .min = std.math.minInt(i64), .max = std.math.maxInt(i64) }) } orelse return error.JSError,
+            .MYSQL_TYPE_SHORT => Value{ .short = globalObject.validateIntegerRange(value, i16, 0, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) }) orelse return error.JSError },
+            .MYSQL_TYPE_LONG => Value{ .int = globalObject.validateIntegerRange(value, i32, 0, .{ .min = std.math.minInt(i32), .max = std.math.maxInt(i32) }) orelse return error.JSError },
+            .MYSQL_TYPE_LONGLONG => Value{ .long = globalObject.validateIntegerRange(value, i64, 0, .{ .min = std.math.minInt(i64), .max = std.math.maxInt(i64) }) orelse return error.JSError },
             .MYSQL_TYPE_FLOAT => Value{ .float = @floatCast(try value.coerceToDoubleCheckingErrors(globalObject)) },
             .MYSQL_TYPE_DOUBLE => Value{ .double = try value.coerceToDoubleCheckingErrors(globalObject) },
             .MYSQL_TYPE_TIME => Value{ .time = try Time.fromJS(value, globalObject) },
@@ -254,8 +250,7 @@ pub const Value = union(enum) {
 
                 if (value.as(JSC.WebCore.Blob)) |blob| {
                     if (blob.needsToReadFile()) {
-                        globalObject.throwInvalidArguments("File blobs are not supported", .{});
-                        return error.JSError;
+                        return globalObject.throwInvalidArguments("File blobs are not supported", .{});
                     }
                     return Value{ .bytes = JSC.ZigString.Slice.fromUTF8NeverFree(blob.sharedView()) };
                 }
@@ -266,8 +261,7 @@ pub const Value = union(enum) {
                     return Value{ .string = str.toUTF8(bun.default_allocator) };
                 }
 
-                globalObject.throwInvalidArguments("Expected a string, blob, or array buffer", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments("Expected a string, blob, or array buffer", .{});
             },
 
             .MYSQL_TYPE_JSON => {
@@ -319,8 +313,7 @@ pub const Value = union(enum) {
                 return Timestamp.fromUnixTimestamp(@intFromFloat(double));
             }
 
-            globalObject.throwInvalidArguments("Expected a date or number", .{});
-            return error.JSError;
+            return globalObject.throwInvalidArguments("Expected a date or number", .{});
         }
 
         pub fn toUnixTimestamp(this: Timestamp) f64 {
@@ -417,38 +410,34 @@ pub const Value = union(enum) {
             }
         }
 
-        pub fn toBinary(this: *const DateTime, field_type: FieldType) BoundedArray(u8, 11) {
-            var out = BoundedArray(u8, 11){};
-
+        pub fn toBinary(this: *const DateTime, field_type: FieldType, buffer: []u8) u8 {
             switch (field_type) {
                 .MYSQL_TYPE_YEAR => {
-                    std.mem.writeInt(u16, out.buffer[0..2], this.year, .little);
-                    out.len = 2;
+                    std.mem.writeInt(u16, buffer[0..2], this.year, .little);
+                    return 2;
                 },
                 .MYSQL_TYPE_DATE => {
-                    std.mem.writeInt(u16, out.buffer[0..2], this.year, .little);
-                    out.buffer[2] = this.month;
-                    out.buffer[3] = this.day;
-                    out.len = 4;
+                    std.mem.writeInt(u16, buffer[0..2], this.year, .little);
+                    buffer[2] = this.month;
+                    buffer[3] = this.day;
+                    return 4;
                 },
                 .MYSQL_TYPE_DATETIME => {
-                    std.mem.writeInt(u16, out.buffer[0..2], this.year, .little);
-                    out.buffer[2] = this.month;
-                    out.buffer[3] = this.day;
-                    out.buffer[4] = this.hour;
-                    out.buffer[5] = this.minute;
-                    out.buffer[6] = this.second;
+                    std.mem.writeInt(u16, buffer[0..2], this.year, .little);
+                    buffer[2] = this.month;
+                    buffer[3] = this.day;
+                    buffer[4] = this.hour;
+                    buffer[5] = this.minute;
+                    buffer[6] = this.second;
                     if (this.microsecond == 0) {
-                        out.len = 7;
+                        return 7;
                     } else {
-                        std.mem.writeInt(u32, out.buffer[7..11], this.microsecond, .little);
-                        out.len = 11;
+                        std.mem.writeInt(u32, buffer[7..11], this.microsecond, .little);
+                        return 11;
                     }
                 },
                 else => unreachable,
             }
-
-            return out;
         }
 
         pub fn toUnixTimestamp(this: *const DateTime) i64 {
@@ -500,8 +489,7 @@ pub const Value = union(enum) {
                 return DateTime.fromUnixTimestamp(@intFromFloat(double));
             }
 
-            globalObject.throwInvalidArguments("Expected a date or number", .{});
-            return error.JSError;
+            return globalObject.throwInvalidArguments("Expected a date or number", .{});
         }
     };
 
@@ -521,28 +509,27 @@ pub const Value = union(enum) {
                 const int = value.toInt64();
                 return Time.fromUnixTimestamp(int);
             } else {
-                globalObject.throwInvalidArguments("Expected a date or number", .{});
-                return error.JSError;
+                return globalObject.throwInvalidArguments("Expected a date or number", .{});
             }
         }
 
         pub fn fromUnixTimestamp(timestamp: i64) Time {
-            var t: Time = .{};
-            t.negative = timestamp < 0;
-            t.days = @truncate(@divFloor(timestamp, 86400));
-            t.hours = @truncate(@divFloor(@mod(timestamp, 86400), 3600));
-            t.minutes = @truncate(@divFloor(@mod(timestamp, 3600), 60));
-            t.seconds = @truncate(@mod(timestamp, 60));
-            return t;
+            return .{
+                .negative = timestamp < 0,
+                .days = @intCast(@divFloor(timestamp, 86400)),
+                .hours = @intCast(@divFloor(@mod(timestamp, 86400), 3600)),
+                .minutes = @intCast(@divFloor(@mod(timestamp, 3600), 60)),
+                .seconds = @intCast(@mod(timestamp, 60)),
+            };
         }
 
         pub fn toUnixTimestamp(this: *const Time) i64 {
             var total_ms: i64 = 0;
-            total_ms += @as(i64, this.days) * 86400000;
-            total_ms += @as(i64, this.hours) * 3600000;
-            total_ms += @as(i64, this.minutes) * 60000;
-            total_ms += @as(i64, this.seconds) * 1000;
-            total_ms += @divFloor(this.microseconds, 1000);
+            total_ms +|= @as(i64, this.days) *| 86400000;
+            total_ms +|= @as(i64, this.hours) *| 3600000;
+            total_ms +|= @as(i64, this.minutes) *| 60000;
+            total_ms +|= @as(i64, this.seconds) *| 1000;
+            total_ms +|= @divFloor(this.microseconds, 1000);
             return total_ms;
         }
 
@@ -572,11 +559,11 @@ pub const Value = union(enum) {
         pub fn toJS(this: Time, globalObject: *JSC.JSGlobalObject) JSValue {
             _ = globalObject; // autofix
             var total_ms: i64 = 0;
-            total_ms += @as(i64, this.days) * 86400000;
-            total_ms += @as(i64, this.hours) * 3600000;
-            total_ms += @as(i64, this.minutes) * 60000;
-            total_ms += @as(i64, this.seconds) * 1000;
-            total_ms += @divFloor(this.microseconds, 1000);
+            total_ms +|= @as(i64, this.days) * 86400000;
+            total_ms +|= @as(i64, this.hours) * 3600000;
+            total_ms +|= @as(i64, this.minutes) * 60000;
+            total_ms +|= @as(i64, this.seconds) * 1000;
+            total_ms +|= @divFloor(this.microseconds, 1000);
 
             if (this.negative) {
                 total_ms = -total_ms;
@@ -585,27 +572,25 @@ pub const Value = union(enum) {
             return JSValue.jsNumber(@floatFromInt(total_ms));
         }
 
-        pub fn toBinary(this: Time, field_type: FieldType, out_buffer: []u8) BoundedArray(u8, 13) {
-            var bounded = BoundedArray(u8, 13).init(out_buffer);
+        pub fn toBinary(this: Time, field_type: FieldType, buffer: []u8) u8 {
             switch (field_type) {
                 .MYSQL_TYPE_TIME, .MYSQL_TYPE_TIME2 => {
-                    bounded.buffer[1] = if (this.negative) 1 else 0;
-                    std.mem.writeInt(u32, bounded.buffer[2..6], this.days, .little);
-                    bounded.buffer[6] = this.hours;
-                    bounded.buffer[7] = this.minutes;
-                    bounded.buffer[8] = this.seconds;
+                    buffer[1] = if (this.negative) 1 else 0;
+                    std.mem.writeInt(u32, buffer[2..6], this.days, .little);
+                    buffer[6] = this.hours;
+                    buffer[7] = this.minutes;
+                    buffer[8] = this.seconds;
                     if (this.microseconds == 0) {
-                        bounded.buffer[0] = 8; // length
-                        bounded.len = 9;
+                        buffer[0] = 8; // length
+                        return 9;
                     } else {
-                        bounded.buffer[0] = 12; // length
-                        std.mem.writeInt(u32, bounded.buffer[9..], this.microseconds, .little);
-                        bounded.len = 12;
+                        buffer[0] = 12; // length
+                        std.mem.writeInt(u32, buffer[9..], this.microseconds, .little);
+                        return 12;
                     }
                 },
                 else => unreachable,
             }
-            return bounded;
         }
     };
 
@@ -639,6 +624,12 @@ pub const Value = union(enum) {
             var js_str = bun.String.createUTF8(str.items);
             return js_str.transferToJS(globalObject);
         }
+
+        pub fn toBinary(this: Decimal, field_type: FieldType) !Data {
+            _ = this; // autofix
+            _ = field_type; // autofix
+            bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});
+        }
     };
 
     pub fn toJS(this: *const Value, globalObject: *JSC.JSGlobalObject) JSValue {
@@ -649,9 +640,8 @@ pub const Value = union(enum) {
                 var out = bun.String.createUTF8(str.slice());
                 return out.transferToJS(globalObject);
             },
-            .bytes => JSValue.createBuffer(globalObject, this.bytes.slice(), null),
-            .long => |l| JSValue.toInt64(@floatFromInt(l)),
-            inline .int, .float, .double, .short, .ushort, .uint, .ulong => |t| JSValue.jsNumber(t),
+            .bytes => JSC.ArrayBuffer.createBuffer(globalObject, this.bytes.slice()),
+            inline .long, .int, .float, .double, .short, .ushort, .uint, .ulong => |t| JSValue.jsNumber(t),
             inline .timestamp, .date, .time, .decimal => |*d| d.toJS(globalObject),
         };
     }

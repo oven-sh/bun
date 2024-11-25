@@ -576,7 +576,7 @@ pub const OKPacket = struct {
 // Error Packet
 pub const ErrorPacket = struct {
     header: u8 = 0xff,
-    error_code: u16,
+    error_code: u16 = 0,
     sql_state_marker: ?u8 = null,
     sql_state: ?[5]u8 = null,
     error_message: Data = .{ .empty = {} },

@@ -4171,7 +4171,7 @@ pub const JSValue = enum(i64) {
     pub fn coerceToDoubleCheckingErrors(
         this: JSValue,
         globalObject: *JSC.JSGlobalObject,
-    ) f64 {
+    ) JSError!f64 {
         const num = this.coerceToDouble(globalObject);
         if (globalObject.hasException()) {
             return error.JSError;

@@ -115,9 +115,9 @@ pub const AuthMethod = enum {
     pub fn scramble(this: AuthMethod, password: []const u8, auth_data: []const u8, buf: *[32]u8) ![]u8 {
         const len = scrambleLength(this);
         switch (this) {
-            .mysql_native_password => @memcpy(buf[0..len], try protocol.Auth.mysql_native_password.scramble(password, auth_data)),
-            .caching_sha2_password => @memcpy(buf[0..len], try protocol.Auth.caching_sha2_password.scramble(password, auth_data)),
-            .sha256_password => @memcpy(buf[0..len], try protocol.Auth.mysql_native_password.scramble(password, auth_data)),
+            .mysql_native_password => @memcpy(buf[0..len], &try protocol.Auth.mysql_native_password.scramble(password, auth_data)),
+            .caching_sha2_password => @memcpy(buf[0..len], &try protocol.Auth.caching_sha2_password.scramble(password, auth_data)),
+            .sha256_password => @memcpy(buf[0..len], &try protocol.Auth.mysql_native_password.scramble(password, auth_data)),
         }
 
         return buf[0..len];
@@ -929,7 +929,7 @@ pub const MySQLConnection = struct {
                 this.fail("Authentication failed", error.AuthenticationFailed);
             },
 
-            @intFromEnum(protocol.PacketType.AUTH_SWITCH) => {
+            protocol.PacketType.AUTH_SWITCH => {
                 var auth_switch = protocol.AuthSwitchRequest{};
                 try auth_switch.decode(reader);
                 defer auth_switch.deinit();
@@ -953,12 +953,12 @@ pub const MySQLConnection = struct {
 
     pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: protocol.NewReader(Context)) !void {
         // Get the current request if any
-        if (this.requests.items.len == 0) {
+        if (this.requests.readableLength() == 0) {
             debug("Received unexpected command response", .{});
             return error.UnexpectedPacket;
         }
 
-        const request = this.requests.items[0];
+        const request = this.requests.peekItem(0);
 
         // Handle based on request type
         if (request.statement) |statement| {
@@ -1528,14 +1528,14 @@ pub const MySQLQuery = struct {
         }
         while (iter.next()) |js_value| {
             const param = execute.param_types[i];
-            const value = try Value.fromJS(
+            var value = try Value.fromJS(
                 js_value,
                 globalObject,
                 param,
                 // TODO: unsigned
                 false,
-                bun.default_allocator,
             );
+            defer value.deinit();
             params[i] = try value.toData(param);
             i += 1;
         }

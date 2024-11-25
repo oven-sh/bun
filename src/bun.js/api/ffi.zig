@@ -2440,20 +2440,26 @@ const CompilerRT = struct {
         .bun_call = &JSC.C.JSObjectCallAsFunction,
     } else undefined;
 
-    noinline fn memset(
+    fn memset(
         dest: [*]u8,
         c: u8,
         byte_count: usize,
-    ) callconv(.C) void {
+    ) callconv(.C) [*]u8 {
         @memset(dest[0..byte_count], c);
+        return dest;
     }
 
-    noinline fn memcpy(
+    fn memcpy(
         noalias dest: [*]u8,
         noalias source: [*]const u8,
         byte_count: usize,
-    ) callconv(.C) void {
+    ) callconv(.C) [*]u8 {
         @memcpy(dest[0..byte_count], source[0..byte_count]);
+        return dest;
+    }
+
+    fn breakpoint() callconv(.C) void {
+        @breakpoint();
     }
 
     pub fn define(state: *TCC.TCCState) void {
@@ -2503,6 +2509,12 @@ const CompilerRT = struct {
         _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
         _ = TCC.tcc_add_symbol(state, "NapiHandleScope__open", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__open);
         _ = TCC.tcc_add_symbol(state, "NapiHandleScope__close", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__close);
+        // If you need to debug the generated wrapper functions, you can insert calls to this
+        // function in src/bun.js/api/FFI.h or in the code generated here to have it stop in a
+        // debugger. You'll still be looking at a disassembly view, though, since TCC doesn't create
+        // debug info. Be absolutely sure to not leave those calls in when you're done, since they
+        // will just crash Bun if no debugger is running.
+        _ = TCC.tcc_add_symbol(state, "__builtin_debugtrap", &breakpoint);
 
         _ = TCC.tcc_add_symbol(
             state,

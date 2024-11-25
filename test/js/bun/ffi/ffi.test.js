@@ -1,10 +1,11 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
 import { isGlibcVersionAtLeast } from "harness";
 import { platform } from "os";
+import { spawnSync } from "bun";
 
 import {
-  dlopen as _dlopen,
+  dlopen,
   CFunction,
   CString,
   JSCallback,
@@ -16,15 +17,19 @@ import {
   viewSource,
 } from "bun:ffi";
 
-const dlopen = (...args) => {
-  try {
-    return _dlopen(...args);
-  } catch (err) {
-    console.error("To enable this test, run `make compile-ffi-test`.");
-    throw err;
+beforeAll(() => {
+  const platformFlags = platform() == "win32" ? [] : ["-fPIC", "-undefined", "dynamic_lookup"];
+  const compile = spawnSync({
+    cmd: ["clang", "-g3", "-O0", "-shared", ...platformFlags, "-o", `ffi-test.${suffix}`, "ffi-test.c"],
+    cwd: import.meta.dir,
+    stderr: "inherit",
+    stdout: "inherit",
+    stdin: "inherit",
+  });
+  if (!compile.success) {
+    throw new Error("failed to compile FFI tests");
   }
-};
-const ok = existsSync("/tmp/bun-ffi-test." + suffix);
+}, 5000);
 
 it("ffi print", async () => {
   await Bun.write(
@@ -243,55 +248,55 @@ function getTypes(fast) {
 
     cb_identity_true: {
       returns: "bool",
-      args: ["ptr"],
+      args: ["callback"],
     },
     cb_identity_false: {
       returns: "bool",
-      args: ["ptr"],
+      args: ["callback"],
     },
     cb_identity_42_char: {
       returns: "char",
-      args: ["ptr"],
+      args: ["callback"],
     },
     cb_identity_42_float: {
       returns: "float",
-      args: ["ptr"],
+      args: ["callback"],
     },
     cb_identity_42_double: {
       returns: "double",
-      args: ["ptr"],
+      args: ["callback"],
     },
     cb_identity_42_uint8_t: {
       returns: "uint8_t",
-      args: ["ptr"],
+      args: ["callback"],
     },
     cb_identity_neg_42_int8_t: {
       returns: "int8_t",
-      args: ["ptr"],
+      args: ["callback"],
     },
     cb_identity_42_uint16_t: {
       returns: "uint16_t",
-      args: ["ptr"],
+      args: ["callback"],
     },
     cb_identity_42_uint32_t: {
       returns: "uint32_t",
-      args: ["ptr"],
+      args: ["callback"],
     },
     cb_identity_42_uint64_t: {
       returns: uint64_t,
-      args: ["ptr"],
+      args: ["callback"],
     },
     cb_identity_neg_42_int16_t: {
       returns: "int16_t",
-      args: ["ptr"],
+      args: ["callback"],
     },
     cb_identity_neg_42_int32_t: {
       returns: "int32_t",
-      args: ["ptr"],
+      args: ["callback"],
     },
     cb_identity_neg_42_int64_t: {
       returns: int64_t,
-      args: ["ptr"],
+      args: ["callback"],
     },
 
     return_a_function_ptr_to_function_that_returns_true: {
@@ -311,178 +316,173 @@ function getTypes(fast) {
       returns: "ptr",
       args: [],
     },
+    memset_and_memcpy_work: {
+      returns: "bool",
+      args: [],
+    },
   };
+}
+
+function passCallbackThroughCIdentityFunction(cFunction, value, type) {
+  const cb = new JSCallback(() => value, { returns: type, args: [] });
+  const returned = cFunction(cb);
+  cb.close();
+  return returned;
 }
 
 function ffiRunner(fast) {
   describe("FFI runner" + (fast ? " (fast int)" : ""), () => {
     const types = getTypes(fast);
-    const {
-      symbols: {
-        returns_true,
-        returns_false,
-        return_a_function_ptr_to_function_that_returns_true,
-        returns_42_char,
-        returns_42_float,
-        returns_42_double,
-        returns_42_uint8_t,
-        returns_neg_42_int8_t,
-        returns_42_uint16_t,
-        returns_42_uint32_t,
-        returns_42_uint64_t,
-        returns_neg_42_int16_t,
-        returns_neg_42_int32_t,
-        returns_neg_42_int64_t,
-        identity_char,
-        identity_float,
-        identity_bool,
-        identity_double,
-        identity_int8_t,
-        identity_int16_t,
-        identity_int32_t,
-        identity_int64_t,
-        identity_uint8_t,
-        identity_uint16_t,
-        identity_uint32_t,
-        identity_uint64_t,
-        add_char,
-        add_float,
-        add_double,
-        add_int8_t,
-        add_int16_t,
-        add_int32_t,
-        add_int64_t,
-        add_uint8_t,
-        add_uint16_t,
-        identity_ptr,
-        add_uint32_t,
-        add_uint64_t,
-        is_null,
-        does_pointer_equal_42_as_int32_t,
-        ptr_should_point_to_42_as_int32_t,
-        cb_identity_true,
-        cb_identity_false,
-        cb_identity_42_char,
-        cb_identity_42_float,
-        cb_identity_42_double,
-        cb_identity_42_uint8_t,
-        cb_identity_neg_42_int8_t,
-        cb_identity_42_uint16_t,
-        cb_identity_42_uint32_t,
-        cb_identity_42_uint64_t,
-        cb_identity_neg_42_int16_t,
-        cb_identity_neg_42_int32_t,
-        cb_identity_neg_42_int64_t,
-        getDeallocatorCalledCount,
-        getDeallocatorCallback,
-        getDeallocatorBuffer,
-      },
+    let c = {},
       close,
-    } = dlopen("/tmp/bun-ffi-test.dylib", types);
+      uncalledFunctions = [];
+
+    beforeAll(() => {
+      const lib = dlopen(import.meta.dir + `/ffi-test.${suffix}`, types);
+      uncalledFunctions.push(...Object.keys(lib.symbols));
+      for (const [name, fn] of Object.entries(lib.symbols)) {
+        c[name] = (...args) => {
+          if (uncalledFunctions.includes(name)) {
+            uncalledFunctions.splice(uncalledFunctions.indexOf(name), 1);
+          }
+          return fn(...args);
+        };
+      }
+      close = lib.close;
+    });
+
+    it("provides working builtin implementations", () => {
+      expect(c.memset_and_memcpy_work()).toBeTrue();
+    });
+
     it("primitives", () => {
       Bun.gc(true);
-      expect(returns_true()).toBe(true);
+      expect(c.returns_true()).toBe(true);
       Bun.gc(true);
-      expect(returns_false()).toBe(false);
+      expect(c.returns_false()).toBe(false);
 
-      expect(returns_42_char()).toBe(42);
-      if (fast) expect(returns_42_uint64_t().valueOf()).toBe(42);
-      else expect(returns_42_uint64_t().valueOf()).toBe(42n);
+      expect(c.returns_42_char()).toBe(42);
+      if (fast) expect(c.returns_42_uint64_t()).toBe(42);
+      else expect(c.returns_42_uint64_t()).toBe(42n);
       Bun.gc(true);
-      expect(Math.fround(returns_42_float())).toBe(Math.fround(42.41999804973602));
-      expect(returns_42_double()).toBe(42.42);
-      expect(returns_42_uint8_t()).toBe(42);
-      expect(returns_neg_42_int8_t()).toBe(-42);
-      expect(returns_42_uint16_t()).toBe(42);
-      expect(returns_42_uint32_t()).toBe(42);
-      if (fast) expect(returns_42_uint64_t()).toBe(42);
-      else expect(returns_42_uint64_t()).toBe(42n);
-      expect(returns_neg_42_int16_t()).toBe(-42);
-      expect(returns_neg_42_int32_t()).toBe(-42);
-      expect(identity_int32_t(10)).toBe(10);
+      expect(Math.fround(c.returns_42_float())).toBe(Math.fround(42.41999804973602));
+      expect(c.returns_42_double()).toBe(42.42);
+      expect(c.returns_42_uint8_t()).toBe(42);
+      expect(c.returns_neg_42_int8_t()).toBe(-42);
+      expect(c.returns_42_uint16_t()).toBe(42);
+      expect(c.returns_42_uint32_t()).toBe(42);
+      if (fast) expect(c.returns_42_uint64_t()).toBe(42);
+      else expect(c.returns_42_uint64_t()).toBe(42n);
+      expect(c.returns_neg_42_int16_t()).toBe(-42);
+      expect(c.returns_neg_42_int32_t()).toBe(-42);
+      expect(c.identity_int32_t(10)).toBe(10);
       Bun.gc(true);
-      if (fast) expect(returns_neg_42_int64_t()).toBe(-42);
-      else expect(returns_neg_42_int64_t()).toBe(-42n);
+      if (fast) expect(c.returns_neg_42_int64_t()).toBe(-42);
+      else expect(c.returns_neg_42_int64_t()).toBe(-42n);
 
-      expect(identity_char(10)).toBe(10);
+      expect(c.identity_char(10)).toBe(10);
 
-      expect(identity_float(10.199999809265137)).toBe(10.199999809265137);
+      expect(c.identity_float(10.199999809265137)).toBe(10.199999809265137);
+      expect(c.identity_float(42)).toBe(42);
 
-      expect(identity_bool(true)).toBe(true);
+      expect(c.identity_bool(true)).toBe(true);
 
-      expect(identity_bool(false)).toBe(false);
-      expect(identity_double(10.100000000000364)).toBe(10.100000000000364);
+      expect(c.identity_bool(false)).toBe(false);
+      expect(c.identity_double(10.100000000000364)).toBe(10.100000000000364);
+      expect(c.identity_double(42)).toBe(42);
 
-      expect(identity_int8_t(10)).toBe(10);
-      expect(identity_int16_t(10)).toBe(10);
+      expect(c.identity_int8_t(10)).toBe(10);
+      expect(c.identity_int16_t(10)).toBe(10);
 
-      if (fast) expect(identity_int64_t(10)).toBe(10);
-      else expect(identity_int64_t(10)).toBe(10n);
-      expect(identity_uint8_t(10)).toBe(10);
-      expect(identity_uint16_t(10)).toBe(10);
-      expect(identity_uint32_t(10)).toBe(10);
-      if (fast) expect(identity_uint64_t(10)).toBe(10);
-      else expect(identity_uint64_t(10)).toBe(10n);
+      if (fast) expect(c.identity_int64_t(10)).toBe(10);
+      else expect(c.identity_int64_t(10)).toBe(10n);
+      expect(c.identity_uint8_t(10)).toBe(10);
+      expect(c.identity_uint16_t(10)).toBe(10);
+      expect(c.identity_uint32_t(10)).toBe(10);
+      if (fast) expect(c.identity_uint64_t(10)).toBe(10);
+      else expect(c.identity_uint64_t(10)).toBe(10n);
       Bun.gc(true);
       var bigArray = new BigUint64Array(8);
       new Uint8Array(bigArray.buffer).fill(255);
       var bigIntArray = new BigInt64Array(bigArray.buffer);
-      expect(identity_uint64_t(bigArray[0])).toBe(bigArray[0]);
-      expect(identity_uint64_t(bigArray[0] - BigInt(1))).toBe(bigArray[0] - BigInt(1));
+      expect(c.identity_uint64_t(bigArray[0])).toBe(bigArray[0]);
+      expect(c.identity_uint64_t(bigArray[0] - BigInt(1))).toBe(bigArray[0] - BigInt(1));
       if (fast) {
-        expect(add_uint64_t(BigInt(-1) * bigArray[0], bigArray[0])).toBe(0);
-        expect(add_uint64_t(BigInt(-1) * bigArray[0] + BigInt(10), bigArray[0])).toBe(10);
+        expect(c.add_uint64_t(BigInt(-1) * bigArray[0], bigArray[0])).toBe(0);
+        expect(c.add_uint64_t(BigInt(-1) * bigArray[0] + BigInt(10), bigArray[0])).toBe(10);
       } else {
-        expect(add_uint64_t(BigInt(-1) * bigArray[0], bigArray[0])).toBe(0n);
-        expect(add_uint64_t(BigInt(-1) * bigArray[0] + BigInt(10), bigArray[0])).toBe(10n);
+        expect(c.add_uint64_t(BigInt(-1) * bigArray[0], bigArray[0])).toBe(0n);
+        expect(c.add_uint64_t(BigInt(-1) * bigArray[0] + BigInt(10), bigArray[0])).toBe(10n);
       }
       if (fast) {
-        expect(identity_uint64_t(0)).toBe(0);
-        expect(identity_uint64_t(100)).toBe(100);
-        expect(identity_uint64_t(BigInt(100))).toBe(100);
+        expect(c.identity_uint64_t(0)).toBe(0);
+        expect(c.identity_uint64_t(100)).toBe(100);
+        expect(c.identity_uint64_t(BigInt(100))).toBe(100);
 
-        expect(identity_int64_t(bigIntArray[0])).toBe(-1);
-        expect(identity_int64_t(bigIntArray[0] - BigInt(1))).toBe(-2);
+        expect(c.identity_int64_t(bigIntArray[0])).toBe(-1);
+        expect(c.identity_int64_t(bigIntArray[0] - BigInt(1))).toBe(-2);
       } else {
-        expect(identity_uint64_t(0)).toBe(0n);
-        expect(identity_uint64_t(100)).toBe(100n);
-        expect(identity_uint64_t(BigInt(100))).toBe(100n);
+        expect(c.identity_uint64_t(0)).toBe(0n);
+        expect(c.identity_uint64_t(100)).toBe(100n);
+        expect(c.identity_uint64_t(BigInt(100))).toBe(100n);
 
-        expect(identity_int64_t(bigIntArray[0])).toBe(bigIntArray[0]);
-        expect(identity_int64_t(bigIntArray[0] - BigInt(1))).toBe(bigIntArray[0] - BigInt(1));
+        expect(c.identity_int64_t(bigIntArray[0])).toBe(bigIntArray[0]);
+        expect(c.identity_int64_t(bigIntArray[0] - BigInt(1))).toBe(bigIntArray[0] - BigInt(1));
       }
       Bun.gc(true);
-      expect(add_char.native(1, 1)).toBe(2);
+      expect(c.add_char(1, 1)).toBe(2);
 
-      expect(add_float(2.4, 2.8)).toBe(Math.fround(5.2));
-      expect(add_double(4.2, 0.1)).toBe(4.3);
-      expect(add_int8_t(1, 1)).toBe(2);
-      expect(add_int16_t(1, 1)).toBe(2);
-      expect(add_int32_t(1, 1)).toBe(2);
-      if (fast) expect(add_int64_t(1, 1)).toBe(2);
-      else expect(add_int64_t(1n, 1n)).toBe(2n);
-      expect(add_uint8_t(1, 1)).toBe(2);
-      expect(add_uint16_t(1, 1)).toBe(2);
-      expect(add_uint32_t(1, 1)).toBe(2);
+      expect(c.add_float(2.4, 2.8)).toBe(Math.fround(5.2));
+      expect(c.add_double(4.2, 0.1)).toBe(4.3);
+      expect(c.add_int8_t(1, 1)).toBe(2);
+      expect(c.add_int16_t(1, 1)).toBe(2);
+      expect(c.add_int32_t(1, 1)).toBe(2);
+      if (fast) expect(c.add_int64_t(1, 1)).toBe(2);
+      else expect(c.add_int64_t(1n, 1n)).toBe(2n);
+      expect(c.add_uint8_t(1, 1)).toBe(2);
+      expect(c.add_uint16_t(1, 1)).toBe(2);
+      expect(c.add_uint32_t(1, 1)).toBe(2);
       Bun.gc(true);
-      expect(is_null(null)).toBe(true);
-      const cptr = ptr_should_point_to_42_as_int32_t();
+      expect(c.is_null(null)).toBe(true);
+      const cptr = c.ptr_should_point_to_42_as_int32_t();
       expect(cptr != 0).toBe(true);
       expect(typeof cptr === "number").toBe(true);
-      expect(does_pointer_equal_42_as_int32_t(cptr)).toBe(true);
+      expect(c.does_pointer_equal_42_as_int32_t(cptr)).toBe(true);
       const buffer = toBuffer(cptr, 0, 4);
       expect(buffer.readInt32(0)).toBe(42);
       expect(new DataView(toArrayBuffer(cptr, 0, 4), 0, 4).getInt32(0, true)).toBe(42);
       expect(ptr(buffer)).toBe(cptr);
-      expect(new CString(cptr, 0, 1).toString()).toBe("*");
-      expect(identity_ptr(cptr)).toBe(cptr);
-      const second_ptr = ptr(new Buffer(8));
-      expect(identity_ptr(second_ptr)).toBe(second_ptr);
+      expect(new CString(cptr, 0, 1).toString()).toBe(String.fromCharCode(42));
+      expect(c.identity_ptr(cptr)).toBe(cptr);
+      const second_ptr = ptr(Buffer.alloc(8));
+      expect(c.identity_ptr(second_ptr)).toBe(second_ptr);
+
+      expect(passCallbackThroughCIdentityFunction(c.cb_identity_true, true, "bool")).toBe(true);
+      expect(passCallbackThroughCIdentityFunction(c.cb_identity_false, false, "bool")).toBe(false);
+      expect(passCallbackThroughCIdentityFunction(c.cb_identity_42_char, 42, "char")).toBe(42);
+      expect(passCallbackThroughCIdentityFunction(c.cb_identity_42_float, 42, "f32")).toBe(42);
+      expect(passCallbackThroughCIdentityFunction(c.cb_identity_42_double, 42, "f64")).toBe(42);
+      expect(passCallbackThroughCIdentityFunction(c.cb_identity_42_uint8_t, 42, "u8")).toBe(42);
+      expect(passCallbackThroughCIdentityFunction(c.cb_identity_neg_42_int8_t, -42, "i8")).toBe(-42);
+      expect(passCallbackThroughCIdentityFunction(c.cb_identity_42_uint16_t, 42, "u16")).toBe(42);
+      expect(passCallbackThroughCIdentityFunction(c.cb_identity_42_uint32_t, 42, "u32")).toBe(42);
+      expect(
+        passCallbackThroughCIdentityFunction(c.cb_identity_42_uint64_t, fast ? 42 : 42n, fast ? "u64_fast" : "u64"),
+      ).toBe(fast ? 42 : 42n);
+      expect(passCallbackThroughCIdentityFunction(c.cb_identity_neg_42_int16_t, -42, "i16")).toBe(-42);
+      expect(passCallbackThroughCIdentityFunction(c.cb_identity_neg_42_int32_t, -42, "i32")).toBe(-42);
+      expect(
+        passCallbackThroughCIdentityFunction(
+          c.cb_identity_neg_42_int64_t,
+          fast ? -42 : -42n,
+          fast ? "i64_fast" : "i64",
+        ),
+      ).toBe(fast ? -42 : -42n);
     });
 
     it("CFunction", () => {
       var myCFunction = new CFunction({
-        ptr: return_a_function_ptr_to_function_that_returns_true(),
+        ptr: c.return_a_function_ptr_to_function_that_returns_true(),
         returns: "bool",
       });
       expect(myCFunction()).toBe(true);
@@ -577,22 +577,41 @@ function ffiRunner(fast) {
     });
 
     describe("integer identities work for all possible values", () => {
+      function limits(bits, signed) {
+        // 2^n
+        const twoN = 1n << BigInt(bits);
+        // 2^(n-1)
+        const twoNMinus1 = 1n << BigInt(bits - 1);
+        if (signed) {
+          if (bits > 32) {
+            return { min: -twoNMinus1, max: twoNMinus1 - 1n };
+          } else {
+            return { min: Number(-twoNMinus1), max: Number(twoNMinus1) - 1 };
+          }
+        } else {
+          if (bits > 32) {
+            return { min: 0n, max: twoN - 1n };
+          } else {
+            return { min: 0, max: Number(twoN) - 1 };
+          }
+        }
+      }
+
       const cases = [
-        { type: "int8_t", min: -128, max: 127, fn: identity_int8_t },
-        { type: "int16_t", min: -32768, max: 32767, fn: identity_int16_t },
-        { type: "int32_t", min: -2147483648, max: 2147483647, fn: identity_int32_t },
-        { type: "int64_t", min: -9223372036854775808n, max: 9223372036854775807n, fn: identity_int64_t },
-        { type: "uint8_t", min: 0, max: 255, fn: identity_uint8_t },
-        { type: "uint16_t", min: 0, max: 65535, fn: identity_uint16_t },
-        { type: "uint32_t", min: 0, max: 4294967295, fn: identity_uint32_t },
-        { type: "uint64_t", min: 0n, max: 18446744073709551615n, fn: identity_uint64_t },
+        { type: "int8_t", ...limits(8, true), fn: c.identity_int8_t },
+        { type: "int16_t", ...limits(16, true), fn: c.identity_int16_t },
+        { type: "int32_t", ...limits(32, true), fn: c.identity_int32_t },
+        { type: fast ? "i64_fast" : "int64_t", ...limits(64, true), fn: c.identity_int64_t },
+        { type: "uint8_t", ...limits(8, false), fn: c.identity_uint8_t },
+        { type: "uint16_t", ...limits(16, false), fn: c.identity_uint16_t },
+        { type: "uint32_t", ...limits(32, false), fn: c.identity_uint32_t },
+        { type: fast ? "u64_fast" : "uint64_t", ...limits(64, false), fn: c.identity_uint64_t },
       ];
 
       for (const { type, min, max, fn } of cases) {
         const bigint = typeof min === "bigint";
-        const inc = bigint
-          ? //
-            (max - min) / 32768n
+        const inc = bigint //
+          ? (max - min) / 32768n
           : Math.ceil((max - min) / 32768);
         it(type, () => {
           expect(bigint ? BigInt(fn(min)) : fn(min)).toBe(min);
@@ -608,6 +627,9 @@ function ffiRunner(fast) {
 
     afterAll(() => {
       close();
+      if (uncalledFunctions.length > 0) {
+        throw new Error(`these FFI functions were not tested:\n    ${uncalledFunctions.join("\n    ")}`);
+      }
     });
   });
 }
@@ -645,14 +667,10 @@ it("read", () => {
   delete globalThis.buffer;
 });
 
-if (ok) {
-  describe("run ffi", () => {
-    ffiRunner(false);
-    ffiRunner(true);
-  });
-} else {
-  it.skip("run ffi", () => {});
-}
+describe("run ffi", () => {
+  ffiRunner(false);
+  ffiRunner(true);
+});
 
 it("dlopen throws an error instead of returning it", () => {
   let err;

@@ -108,30 +108,32 @@ $ zig build-lib add.cpp -dynamic -lc -lc++
 
 The following `FFIType` values are supported.
 
-| `FFIType`  | C Type         | Aliases                     |
-| ---------- | -------------- | --------------------------- |
-| buffer     | `char*`        |                             |
-| cstring    | `char*`        |                             |
-| function   | `(void*)(*)()` | `fn`, `callback`            |
-| ptr        | `void*`        | `pointer`, `void*`, `char*` |
-| i8         | `int8_t`       | `int8_t`                    |
-| i16        | `int16_t`      | `int16_t`                   |
-| i32        | `int32_t`      | `int32_t`, `int`            |
-| i64        | `int64_t`      | `int64_t`                   |
-| i64_fast   | `int64_t`      |                             |
-| u8         | `uint8_t`      | `uint8_t`                   |
-| u16        | `uint16_t`     | `uint16_t`                  |
-| u32        | `uint32_t`     | `uint32_t`                  |
-| u64        | `uint64_t`     | `uint64_t`                  |
-| u64_fast   | `uint64_t`     |                             |
-| f32        | `float`        | `float`                     |
-| f64        | `double`       | `double`                    |
-| bool       | `bool`         |                             |
-| char       | `char`         |                             |
-| napi_env   | `napi_env`     |                             |
-| napi_value | `napi_value`   |                             |
+| `FFIType`  | C Type       | Aliases                     |
+| ---------- | ------------ | --------------------------- |
+| buffer     | `char*`      |                             |
+| cstring    | `char*`      |                             |
+| function   | `void (*)()` | `fn`, `callback`            |
+| ptr        | `void*`      | `pointer`, `void*`, `char*` |
+| i8         | `int8_t`     | `int8_t`                    |
+| i16        | `int16_t`    | `int16_t`                   |
+| i32        | `int32_t`    | `int32_t`, `int`            |
+| i64        | `int64_t`    | `int64_t`                   |
+| i64_fast   | `int64_t`    |                             |
+| u8         | `uint8_t`    | `uint8_t`                   |
+| u16        | `uint16_t`   | `uint16_t`                  |
+| u32        | `uint32_t`   | `uint32_t`                  |
+| u64        | `uint64_t`   | `uint64_t`                  |
+| u64_fast   | `uint64_t`   |                             |
+| f32        | `float`      | `float`                     |
+| f64        | `double`     | `double`                    |
+| bool       | `bool`       |                             |
+| char       | `char`       |                             |
+| napi_env   | `napi_env`   |                             |
+| napi_value | `napi_value` |                             |
 
 Note: `buffer` arguments must be a `TypedArray` or `DataView`.
+
+`i64_fast` and `u64_fast` types are passed and returned as either a `Number`, or a `BigInt` when the numeric value is outside of the safe integer range (`Number.MIN_SAFE_INTEGER` to `Number.MAX_SAFE_INTEGER`, or -(2^53 - 1) to 2^53 - 1 inclusive). `i64` and `u64` always use `BigInt`, which may be easier to work with (since it's a consistent type) but adds overhead in cases where the numeric value doesn't actually need `BigInt` to be represented.
 
 ## Strings
 

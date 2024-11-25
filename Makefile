@@ -630,10 +630,6 @@ boringssl: boringssl-build boringssl-copy
 .PHONY: boringssl-debug
 boringssl-debug: boringssl-build-debug boringssl-copy
 
-.PHONY: compile-ffi-test
-compile-ffi-test:
-	clang $(OPTIMIZATION_LEVEL) -shared -undefined dynamic_lookup -o /tmp/bun-ffi-test.dylib -fPIC ./test/js/bun/ffi/ffi-test.c
-
 sqlite:
 
 .PHONY: zstd

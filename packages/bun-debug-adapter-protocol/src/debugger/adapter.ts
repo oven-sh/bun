@@ -294,7 +294,7 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
 
   /**
    * Gets the inspector url. This is deprecated and exists for compat.
-   * @deprecated You should get the inspector directly, and if it's a WebSocketInspector you can access `.url` direclty.
+   * @deprecated You should get the inspector directly (with .getInspector()), and if it's a WebSocketInspector you can access `.url` direclty.
    */
   get url(): string {
     // This code has been migrated from a time when the inspector was always a WebSocketInspector.

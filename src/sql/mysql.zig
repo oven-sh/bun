@@ -40,30 +40,57 @@ pub const SSLMode = enum(u8) {
 pub const Data = sql.Data;
 // MySQL capability flags
 pub const Capabilities = packed struct(u32) {
+    /// Use the improved version of MySQL authentication
     CLIENT_LONG_PASSWORD: bool = false,
+    /// Return number of found (matched) rows, not number of changed rows
     CLIENT_FOUND_ROWS: bool = false,
+    /// Get all column flags
     CLIENT_LONG_FLAG: bool = false,
+    /// Database name can be specified on connect
     CLIENT_CONNECT_WITH_DB: bool = false,
+    /// Don't allow database.table.column syntax
     CLIENT_NO_SCHEMA: bool = false,
+    /// Can use compression protocol
     CLIENT_COMPRESS: bool = false,
+    /// ODBC client
     CLIENT_ODBC: bool = false,
+    /// Can use LOAD DATA LOCAL
     CLIENT_LOCAL_FILES: bool = false,
+    /// Ignore spaces before '('
     CLIENT_IGNORE_SPACE: bool = false,
+    /// New 4.1 protocol - Indicates that the client supports the MySQL 4.1 protocol features
+    /// including prepared statements, long passwords, and secure authentication.
+    /// This flag is required for modern MySQL connections.
     CLIENT_PROTOCOL_41: bool = false,
+    /// This is an interactive client
     CLIENT_INTERACTIVE: bool = false,
+    /// Switch to SSL after handshake
     CLIENT_SSL: bool = false,
+    /// Ignore SIGPIPE
     CLIENT_IGNORE_SIGPIPE: bool = false,
+    /// Client knows about transactions
     CLIENT_TRANSACTIONS: bool = false,
+    /// Reserved for future use
     CLIENT_RESERVED: bool = false,
+    /// Use secure authentication
     CLIENT_SECURE_CONNECTION: bool = false,
+    /// Enable/disable multi-stmt support
     CLIENT_MULTI_STATEMENTS: bool = false,
+    /// Enable/disable multi-results
     CLIENT_MULTI_RESULTS: bool = false,
+    /// Multi-results and OUT parameters in PS-protocol
     CLIENT_PS_MULTI_RESULTS: bool = false,
+    /// Client supports plugin authentication
     CLIENT_PLUGIN_AUTH: bool = false,
+    /// Client supports connection attributes
     CLIENT_CONNECT_ATTRS: bool = false,
+    /// Enable authentication response packet to be larger than 255 bytes
     CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA: bool = false,
+    /// Client can handle expired passwords
     CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS: bool = false,
+    /// Client supports session tracking
     CLIENT_SESSION_TRACK: bool = false,
+    /// Client expects EOF packet to be replaced by OK packet
     CLIENT_DEPRECATE_EOF: bool = false,
     _padding: u7 = 0,
 
@@ -113,7 +140,12 @@ pub const AuthMethod = enum {
     sha256_password,
 
     pub fn scramble(this: AuthMethod, password: []const u8, auth_data: []const u8, buf: *[32]u8) ![]u8 {
+        if (password.len == 0) {
+            return &.{};
+        }
+
         const len = scrambleLength(this);
+
         switch (this) {
             .mysql_native_password => @memcpy(buf[0..len], &try protocol.Auth.mysql_native_password.scramble(password, auth_data)),
             .caching_sha2_password => @memcpy(buf[0..len], &try protocol.Auth.caching_sha2_password.scramble(password, auth_data)),
@@ -138,19 +170,33 @@ pub const AuthMethod = enum {
 
 // MySQL connection status flags
 pub const StatusFlags = packed struct {
+    /// Indicates if a transaction is currently active
     SERVER_STATUS_IN_TRANS: bool = false,
+    /// Indicates if autocommit mode is enabled
     SERVER_STATUS_AUTOCOMMIT: bool = false,
+    /// Indicates there are more result sets from this query
     SERVER_MORE_RESULTS_EXISTS: bool = false,
+    /// Query used a suboptimal index
     SERVER_STATUS_NO_GOOD_INDEX_USED: bool = false,
+    /// Query performed a full table scan with no index
     SERVER_STATUS_NO_INDEX_USED: bool = false,
+    /// Indicates an open cursor exists
     SERVER_STATUS_CURSOR_EXISTS: bool = false,
+    /// Last row in result set has been sent
     SERVER_STATUS_LAST_ROW_SENT: bool = false,
+    /// Database was dropped
     SERVER_STATUS_DB_DROPPED: bool = false,
+    /// Backslash escaping is disabled
     SERVER_STATUS_NO_BACKSLASH_ESCAPES: bool = false,
+    /// Server's metadata has changed
     SERVER_STATUS_METADATA_CHANGED: bool = false,
+    /// Query execution was considered slow
     SERVER_QUERY_WAS_SLOW: bool = false,
+    /// Statement has output parameters
     SERVER_PS_OUT_PARAMS: bool = false,
+    /// Transaction is in read-only mode
     SERVER_STATUS_IN_TRANS_READONLY: bool = false,
+    /// Session state has changed
     SERVER_SESSION_STATE_CHANGED: bool = false,
     _padding: u2 = 0,
 
@@ -191,7 +237,7 @@ pub const ConnectionState = enum {
 // Add after the existing code:
 
 const Socket = uws.AnySocket;
-pub const DEFAULT_CHARSET = 45; // utf8mb4
+pub const DEFAULT_CHARSET = types.CharacterSet.utf8mb4;
 const PreparedStatementsMap = std.HashMapUnmanaged(u64, *MySQLStatement, bun.IdentityContext(u64), 80);
 const SocketMonitor = @import("./SocketMonitor.zig");
 
@@ -241,7 +287,7 @@ pub const MySQLConnection = struct {
     server_version: bun.ByteList = .{},
     connection_id: u32 = 0,
     capabilities: Capabilities = .{},
-    character_set: u8 = 0,
+    character_set: types.CharacterSet = .utf8mb4,
     status_flags: StatusFlags = .{},
 
     auth_plugin: ?AuthMethod = null,
@@ -405,15 +451,6 @@ pub const MySQLConnection = struct {
         var vm = this.globalObject.bunVM();
         defer vm.drainMicrotasks();
         this.fail("Connection closed", error.ConnectionClosed);
-    }
-
-    fn start(this: *MySQLConnection) !void {
-        try this.sendHandshakeResponse();
-
-        const event_loop = this.globalObject.bunVM().eventLoop();
-        event_loop.enter();
-        defer event_loop.exit();
-        this.flushData();
     }
 
     pub fn ref(this: *@This()) void {
@@ -640,7 +677,7 @@ pub const MySQLConnection = struct {
             .tls_ctx = tls_ctx,
             .ssl_mode = ssl_mode,
             .tls_status = if (ssl_mode != .disable) .pending else .none,
-            .character_set = DEFAULT_CHARSET,
+            .character_set = .utf8mb4,
         };
 
         ptr.updateHasPendingActivity();
@@ -706,14 +743,13 @@ pub const MySQLConnection = struct {
 
     pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
         this.socket = socket;
-
+        this.status = .handshaking;
         this.poll_ref.ref(this.globalObject.bunVM());
         this.updateHasPendingActivity();
 
-        this.start() catch |err| {
-            this.fail("Failed to start connection", err);
-            return;
-        };
+        // Do nothing, the server will start the handshake process.
+        // Set a timeout so that we at least don't do nothing forever.
+        socket.setTimeout(120);
     }
 
     pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
@@ -742,6 +778,10 @@ pub const MySQLConnection = struct {
     pub fn onData(this: *MySQLConnection, data: []const u8) void {
         this.ref();
         const vm = this.globalObject.bunVM();
+
+        // Clear the timeout.
+        this.socket.setTimeout(0);
+
         defer {
             if (this.status == .connected and this.requests.readableLength() == 0 and this.write_buffer.remaining().len == 0) {
                 // Don't keep the process alive when there's nothing to do.
@@ -779,9 +819,7 @@ pub const MySQLConnection = struct {
                     this.read_buffer.write(bun.default_allocator, data[offset..]) catch @panic("failed to write to read buffer");
                 } else {
                     if (comptime bun.Environment.allow_assert) {
-                        if (@errorReturnTrace()) |trace| {
-                            debug("Error: {s}\n{}", .{ @errorName(err), trace });
-                        }
+                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
                     }
                     this.fail("Failed to read data", err);
                 }
@@ -871,7 +909,7 @@ pub const MySQLConnection = struct {
             \\Handshake
             \\   Server Version: {s}
             \\   Connection ID:  {d}
-            \\   Character Set:  {d} (utf8mb4)
+            \\   Character Set:  {d} ({s})
             \\   Capabilities:   [ {} ]
             \\   Status Flags:   [ {} ]
             \\
@@ -879,6 +917,7 @@ pub const MySQLConnection = struct {
             this.server_version.slice(),
             this.connection_id,
             this.character_set,
+            this.character_set.label(),
             this.capabilities,
             this.status_flags,
         });
@@ -989,10 +1028,18 @@ pub const MySQLConnection = struct {
     }
 
     pub fn sendHandshakeResponse(this: *MySQLConnection) !void {
-        // First validate we have credentials if needed
-        if (this.auth_plugin != null and this.password.len == 0) {
-            this.fail("Password required for authentication", error.PasswordRequired);
-            return;
+        // Only require password for caching_sha2_password when connecting for the first time
+        if (this.auth_plugin) |plugin| {
+            const requires_password = switch (plugin) {
+                .caching_sha2_password => false, // Allow empty password, server will handle auth flow
+                .sha256_password => true, // Always requires password
+                .mysql_native_password => false, // Allows empty password
+            };
+
+            if (requires_password and this.password.len == 0) {
+                this.fail("Password required for authentication", error.PasswordRequired);
+                return;
+            }
         }
 
         var response = protocol.HandshakeResponse41{
@@ -1011,13 +1058,13 @@ pub const MySQLConnection = struct {
                 .CLIENT_MULTI_STATEMENTS = true,
                 .CLIENT_MULTI_RESULTS = true,
                 .CLIENT_PS_MULTI_RESULTS = true,
-                .CLIENT_FOUND_ROWS = true, // Return found rows instead of affected rows
-                .CLIENT_LONG_PASSWORD = true, // Enable long password support
-                .CLIENT_LONG_FLAG = true, // Get longer flags in protocol
-                .CLIENT_LOCAL_FILES = true, // Enable LOAD DATA LOCAL
-                .CLIENT_IGNORE_SPACE = true, // Ignore spaces before '('
-                .CLIENT_INTERACTIVE = true, // Interactive client
-                .CLIENT_IGNORE_SIGPIPE = true, // Don't exit on SIGPIPE
+                .CLIENT_FOUND_ROWS = true,
+                .CLIENT_LONG_PASSWORD = true,
+                .CLIENT_LONG_FLAG = true,
+                .CLIENT_LOCAL_FILES = true,
+                .CLIENT_IGNORE_SPACE = true,
+                .CLIENT_INTERACTIVE = true,
+                .CLIENT_IGNORE_SIGPIPE = true,
 
                 // Database specific
                 .CLIENT_CONNECT_WITH_DB = this.database.len > 0,
@@ -1027,9 +1074,9 @@ pub const MySQLConnection = struct {
 
                 // Session tracking
                 .CLIENT_SESSION_TRACK = true,
-                .CLIENT_CONNECT_ATTRS = true, // Allow connection attributes
+                .CLIENT_CONNECT_ATTRS = true,
             },
-            .max_packet_size = 16777216, // 16MB
+            .max_packet_size = 16777216,
             .character_set = DEFAULT_CHARSET,
             .username = .{ .temporary = this.user },
             .database = .{ .temporary = this.database },
@@ -1054,13 +1101,14 @@ pub const MySQLConnection = struct {
                 this.fail("Missing auth data from server", error.MissingAuthData);
                 return;
             }
-            const scrambled = try plugin.scramble(this.password, this.auth_data, &scrambled_buf);
-            response.auth_response = .{ .temporary = scrambled };
+
+            response.auth_response = .{ .temporary = try plugin.scramble(this.password, this.auth_data, &scrambled_buf) };
         }
 
         try response.write(this.writer());
         this.flushData();
-        this.state = .handshaking;
+
+        this.socket.setTimeout(0);
     }
 
     pub fn sendAuthSwitchResponse(this: *MySQLConnection, auth_method: mysql.AuthMethod, plugin_data: []const u8) !void {

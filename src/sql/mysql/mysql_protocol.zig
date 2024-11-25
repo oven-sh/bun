@@ -378,18 +378,28 @@ pub fn decodeLengthInt(bytes: []const u8) ?struct { value: u64, bytes_read: usiz
 }
 
 // MySQL packet header
-pub const PacketHeader = packed struct(u32) {
+pub const PacketHeader = struct {
     length: u24,
     sequence_id: u8,
 
     pub fn decode(bytes: []const u8) ?PacketHeader {
         if (bytes.len < 4) return null;
 
-        return @bitCast(bytes[0..4].*);
+        return PacketHeader{
+            .length = @as(u24, bytes[0]) |
+                (@as(u24, bytes[1]) << 8) |
+                (@as(u24, bytes[2]) << 16),
+            .sequence_id = bytes[3],
+        };
     }
 
     pub fn encode(self: PacketHeader) [4]u8 {
-        return @bitCast(self);
+        return [4]u8{
+            @intCast(self.length & 0xff),
+            @intCast((self.length >> 8) & 0xff),
+            @intCast((self.length >> 16) & 0xff),
+            self.sequence_id,
+        };
     }
 };
 
@@ -401,7 +411,7 @@ pub const HandshakeV10 = struct {
     auth_plugin_data_part_1: [8]u8 = undefined,
     auth_plugin_data_part_2: []const u8 = &[_]u8{},
     capability_flags: mysql.Capabilities = .{},
-    character_set: u8 = 0,
+    character_set: types.CharacterSet = .utf8mb4,
     status_flags: mysql.StatusFlags = .{},
     auth_plugin_name: Data = .{ .empty = {} },
 
@@ -435,7 +445,7 @@ pub const HandshakeV10 = struct {
         const capabilities_lower = try reader.int(u16);
 
         // Character set
-        this.character_set = try reader.int(u8);
+        this.character_set = @enumFromInt(try reader.int(u8));
 
         // Status flags
         this.status_flags = mysql.StatusFlags.fromInt(try reader.int(u16));
@@ -472,7 +482,7 @@ pub const HandshakeV10 = struct {
 pub const HandshakeResponse41 = struct {
     capability_flags: mysql.Capabilities,
     max_packet_size: u32 = 16777216, // 16MB default
-    character_set: u8,
+    character_set: types.CharacterSet = .utf8mb4,
     username: Data,
     auth_response: Data,
     database: Data,
@@ -503,7 +513,7 @@ pub const HandshakeResponse41 = struct {
         try writer.int4(this.max_packet_size);
 
         // Character set
-        try writer.int1(this.character_set);
+        try writer.int1(@intFromEnum(this.character_set));
 
         // Reserved bytes (23 bytes of 0)
         try writer.write(&[_]u8{0} ** 23);

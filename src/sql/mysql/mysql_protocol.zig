@@ -45,7 +45,7 @@ pub const StackReader = struct {
         this.message_start.* = this.offset.*;
     }
 
-    pub fn ensureLength(this: @This(), length: usize) bool {
+    pub fn ensureCapacity(this: @This(), length: usize) bool {
         return this.buffer.len >= (this.offset.* + length);
     }
 
@@ -81,10 +81,6 @@ pub const StackReader = struct {
         }
 
         this.offset.* += ucount;
-    }
-
-    pub fn ensureCapacity(this: StackReader, count: usize) bool {
-        return this.buffer.len >= (this.offset.* + count);
     }
 
     pub fn read(this: StackReader, count: usize) anyerror!Data {
@@ -126,17 +122,19 @@ pub fn NewWriterWrap(
         const offsetFn = offsetFn_;
         pub const Ctx = Context;
 
+        pub const is_wrapped = true;
+
         pub const WrappedWriter = @This();
 
-        pub inline fn write(this: @This(), data: []const u8) anyerror!void {
+        pub fn write(this: @This(), data: []const u8) anyerror!void {
             try writeFn(this.wrapped, data);
         }
 
-        pub inline fn offset(this: @This()) usize {
+        pub fn offset(this: @This()) usize {
             return offsetFn(this.wrapped);
         }
 
-        pub inline fn pwrite(this: @This(), data: []const u8, i: usize) anyerror!void {
+        pub fn pwrite(this: @This(), data: []const u8, i: usize) anyerror!void {
             try pwriteFn(this.wrapped, data, i);
         }
 
@@ -195,24 +193,26 @@ pub fn NewReaderWrap(
 
         pub const Ctx = Context;
 
-        pub inline fn markMessageStart(this: @This()) void {
+        pub const is_wrapped = true;
+
+        pub fn markMessageStart(this: @This()) void {
             markMessageStartFn(this.wrapped);
         }
 
-        pub inline fn read(this: @This(), count: usize) anyerror!Data {
-            return try readFn(this.wrapped, count);
+        pub fn read(this: @This(), count: usize) anyerror!Data {
+            return readFn(this.wrapped, count);
         }
 
-        pub fn skip(this: @This(), count: isize) anyerror!void {
-            skipFn(this.wrapped, count);
+        pub fn skip(this: @This(), count: anytype) void {
+            skipFn(this.wrapped, @as(isize, @intCast(count)));
         }
 
         pub fn peek(this: @This()) []const u8 {
             return peekFn(this.wrapped);
         }
 
-        pub inline fn readZ(this: @This()) anyerror!Data {
-            return try readZFn(this.wrapped);
+        pub fn readZ(this: @This()) anyerror!Data {
+            return readZFn(this.wrapped);
         }
 
         pub fn byte(this: @This()) !u8 {
@@ -220,7 +220,7 @@ pub fn NewReaderWrap(
             return data.slice()[0];
         }
 
-        pub inline fn ensureCapacity(this: @This(), count: usize) anyerror!void {
+        pub fn ensureCapacity(this: @This(), count: usize) anyerror!void {
             if (!ensureCapacityFn(this.wrapped, count)) {
                 return error.ShortRead;
             }
@@ -238,10 +238,18 @@ pub fn NewReaderWrap(
 }
 
 pub fn NewReader(comptime Context: type) type {
-    return NewReaderWrap(Context, Context.markMessageStart, Context.peek, Context.skip, Context.ensureLength, Context.read, Context.readZ);
+    if (@hasDecl(Context, "is_wrapped")) {
+        return Context;
+    }
+
+    return NewReaderWrap(Context, Context.markMessageStart, Context.peek, Context.skip, Context.ensureCapacity, Context.read, Context.readZ);
 }
 
 pub fn NewWriter(comptime Context: type) type {
+    if (@hasDecl(Context, "is_wrapped")) {
+        return Context;
+    }
+
     return NewWriterWrap(Context, Context.offset, Context.write, Context.pwrite);
 }
 
@@ -249,7 +257,20 @@ fn decoderWrap(comptime Container: type, comptime decodeFn: anytype) type {
     return struct {
         pub fn decode(this: *Container, context: anytype) anyerror!void {
             const Context = @TypeOf(context);
-            try decodeFn(this, Context, NewReader(Context){ .wrapped = context });
+            if (@hasDecl(Context, "is_wrapped")) {
+                try decodeFn(this, Context, context);
+            } else {
+                try decodeFn(this, Context, .{ .wrapped = context });
+            }
+        }
+
+        pub fn decodeAllocator(this: *Container, allocator: std.mem.Allocator, context: anytype) anyerror!void {
+            const Context = @TypeOf(context);
+            if (@hasDecl(Context, "is_wrapped")) {
+                try decodeFn(this, allocator, Context, context);
+            } else {
+                try decodeFn(this, allocator, Context, .{ .wrapped = context });
+            }
         }
     };
 }
@@ -258,7 +279,11 @@ fn writeWrap(comptime Container: type, comptime writeFn: anytype) type {
     return struct {
         pub fn write(this: *Container, context: anytype) anyerror!void {
             const Context = @TypeOf(context);
-            try writeFn(this, Context, NewWriter(Context){ .wrapped = context });
+            if (@hasDecl(Context, "is_wrapped")) {
+                try writeFn(this, Context, context);
+            } else {
+                try writeFn(this, Context, .{ .wrapped = context });
+            }
         }
     };
 }
@@ -413,7 +438,7 @@ pub const HandshakeV10 = struct {
         }
 
         // Skip reserved bytes
-        try reader.skip(10);
+        reader.skip(10);
 
         // Auth plugin data part 2
         const remaining_auth_len = @max(13, auth_plugin_data_len - 8);
@@ -536,7 +561,7 @@ pub const OKPacket = struct {
         // Affected rows (length encoded integer)
         if (decodeLengthInt(reader.peek())) |result| {
             this.affected_rows = result.value;
-            try reader.skip(result.bytes_read);
+            reader.skip(result.bytes_read);
         } else {
             return error.InvalidOKPacket;
         }
@@ -544,7 +569,7 @@ pub const OKPacket = struct {
         // Last insert ID (length encoded integer)
         if (decodeLengthInt(reader.peek())) |result| {
             this.last_insert_id = result.value;
-            try reader.skip(result.bytes_read);
+            reader.skip(result.bytes_read);
         } else {
             return error.InvalidOKPacket;
         }
@@ -565,7 +590,7 @@ pub const OKPacket = struct {
             if (decodeLengthInt(reader.peek())) |result| {
                 const state_data = try reader.read(@intCast(result.value));
                 this.session_state_changes = state_data;
-                try reader.skip(result.bytes_read);
+                reader.skip(result.bytes_read);
             }
         }
     }
@@ -602,7 +627,7 @@ pub const ErrorPacket = struct {
             this.sql_state = sql_state_data.slice()[0..5].*;
         } else {
             // No SQL state, rewind one byte
-            try reader.skip(-1);
+            reader.skip(-1);
         }
 
         // Read the error message (rest of packet)
@@ -848,32 +873,32 @@ pub const ColumnDefinition41 = struct {
     pub fn decodeInternal(this: *ColumnDefinition41, comptime Context: type, reader: NewReader(Context)) !void {
         // Length encoded strings
         if (decodeLengthInt(reader.peek())) |result| {
-            try reader.skip(result.bytes_read);
+            reader.skip(result.bytes_read);
             this.catalog = try reader.read(@intCast(result.value));
         } else return error.InvalidColumnDefinition;
 
         if (decodeLengthInt(reader.peek())) |result| {
-            try reader.skip(result.bytes_read);
+            reader.skip(result.bytes_read);
             this.schema = try reader.read(@intCast(result.value));
         } else return error.InvalidColumnDefinition;
 
         if (decodeLengthInt(reader.peek())) |result| {
-            try reader.skip(result.bytes_read);
+            reader.skip(result.bytes_read);
             this.table = try reader.read(@intCast(result.value));
         } else return error.InvalidColumnDefinition;
 
         if (decodeLengthInt(reader.peek())) |result| {
-            try reader.skip(result.bytes_read);
+            reader.skip(result.bytes_read);
             this.org_table = try reader.read(@intCast(result.value));
         } else return error.InvalidColumnDefinition;
 
         if (decodeLengthInt(reader.peek())) |result| {
-            try reader.skip(result.bytes_read);
+            reader.skip(result.bytes_read);
             this.name = try reader.read(@intCast(result.value));
         } else return error.InvalidColumnDefinition;
 
         if (decodeLengthInt(reader.peek())) |result| {
-            try reader.skip(result.bytes_read);
+            reader.skip(result.bytes_read);
             this.org_name = try reader.read(@intCast(result.value));
         } else return error.InvalidColumnDefinition;
 
@@ -888,7 +913,7 @@ pub const ColumnDefinition41 = struct {
         this.decimals = try reader.int(u8);
 
         // Skip filler
-        try reader.skip(2);
+        reader.skip(2);
     }
 
     pub const decode = decoderWrap(ColumnDefinition41, decodeInternal).decode;
@@ -898,7 +923,7 @@ fn decodeBinaryValue(field_type: types.FieldType, unsigned: bool, comptime Conte
     return switch (field_type) {
         .MYSQL_TYPE_TINY => blk: {
             const val = try reader.byte();
-            break :blk Value{ .bool = val[0] != 0 };
+            break :blk Value{ .bool = val != 0 };
         },
         .MYSQL_TYPE_SHORT => if (unsigned)
             Value{ .ushort = try reader.int(u16) }
@@ -915,38 +940,42 @@ fn decodeBinaryValue(field_type: types.FieldType, unsigned: bool, comptime Conte
         .MYSQL_TYPE_FLOAT => Value{ .float = @bitCast(try reader.int(u32)) },
         .MYSQL_TYPE_DOUBLE => Value{ .double = @bitCast(try reader.int(u64)) },
         .MYSQL_TYPE_TIME => switch (try reader.byte()) {
-            0 => Value{ .null = .{} },
-            8, 12 => |l| Value{ .time = try Value.Time.fromBinary(reader.read(l)) },
+            0 => Value{ .null = {} },
+            8, 12 => |l| Value{ .time = try Value.Time.fromData(&try reader.read(l)) },
             else => return error.InvalidBinaryValue,
         },
         .MYSQL_TYPE_DATE => switch (try reader.byte()) {
-            0 => Value{ .null = .{} },
-            4 => Value{ .date = try Value.DateTime.fromBinary(reader.read(4)) },
+            0 => Value{ .null = {} },
+            4 => Value{ .date = try Value.DateTime.fromData(&try reader.read(4)) },
             else => error.InvalidBinaryValue,
         },
         .MYSQL_TYPE_DATETIME => switch (try reader.byte()) {
-            0 => Value{ .null = .{} },
-            11, 7, 4 => |l| Value{ .date = try Value.DateTime.fromBinary(reader.read(l)) },
+            0 => Value{ .null = {} },
+            11, 7, 4 => |l| Value{ .date = try Value.DateTime.fromData(&try reader.read(l)) },
             else => error.InvalidBinaryValue,
         },
         .MYSQL_TYPE_TIMESTAMP => switch (try reader.byte()) {
-            0 => Value{ .null = .{} },
-            4, 7 => |l| Value{ .timestamp = try Value.Timestamp.fromBinary(reader.read(l)) },
+            0 => Value{ .null = {} },
+            4, 7 => |l| Value{ .timestamp = try Value.Timestamp.fromData(&try reader.read(l)) },
             else => error.InvalidBinaryValue,
+        },
+        .MYSQL_TYPE_STRING, .MYSQL_TYPE_VARCHAR, .MYSQL_TYPE_VAR_STRING => blk: {
+            if (decodeLengthInt(reader.peek())) |result| {
+                reader.skip(result.bytes_read);
+                const val = try reader.read(@intCast(result.value));
+                break :blk .{ .string_data = val };
+            } else return error.InvalidBinaryValue;
         },
         .MYSQL_TYPE_TINY_BLOB,
         .MYSQL_TYPE_MEDIUM_BLOB,
         .MYSQL_TYPE_LONG_BLOB,
         .MYSQL_TYPE_BLOB,
-        .MYSQL_TYPE_STRING,
-        .MYSQL_TYPE_VARCHAR,
-        .MYSQL_TYPE_VAR_STRING,
         .MYSQL_TYPE_JSON,
         => blk: {
             if (decodeLengthInt(reader.peek())) |result| {
-                try reader.skip(result.bytes_read);
+                reader.skip(result.bytes_read);
                 const val = try reader.read(@intCast(result.value));
-                break :blk .{ .bytes = val };
+                break :blk .{ .bytes_data = val };
             } else return error.InvalidBinaryValue;
         },
         else => return error.UnsupportedColumnType,
@@ -955,14 +984,14 @@ fn decodeBinaryValue(field_type: types.FieldType, unsigned: bool, comptime Conte
 
 // Result set header packet
 pub const ResultSetHeader = struct {
-    field_count: u64,
+    field_count: u64 = 0,
     extra: ?u64 = null,
 
     pub fn decodeInternal(this: *ResultSetHeader, comptime Context: type, reader: NewReader(Context)) !void {
         // Field count (length encoded integer)
         if (decodeLengthInt(reader.peek())) |result| {
             this.field_count = result.value;
-            try reader.skip(result.bytes_read);
+            reader.skip(result.bytes_read);
         } else {
             return error.InvalidResultSetHeader;
         }
@@ -971,7 +1000,7 @@ pub const ResultSetHeader = struct {
         if (reader.peek().len > 0) {
             if (decodeLengthInt(reader.peek())) |result| {
                 this.extra = result.value;
-                try reader.skip(result.bytes_read);
+                reader.skip(result.bytes_read);
             }
         }
     }
@@ -1268,14 +1297,14 @@ pub const Auth = struct {
 // Result set packet types
 pub const ResultSet = struct {
     pub const Header = struct {
-        field_count: u64,
+        field_count: u64 = 0,
         extra: ?u64 = null,
 
         pub fn decodeInternal(this: *Header, comptime Context: type, reader: NewReader(Context)) !void {
             // Field count (length encoded integer)
             if (decodeLengthInt(reader.peek())) |result| {
                 this.field_count = result.value;
-                try reader.skip(result.bytes_read);
+                reader.skip(result.bytes_read);
             } else {
                 return error.InvalidResultSetHeader;
             }
@@ -1284,7 +1313,7 @@ pub const ResultSet = struct {
             if (reader.peek().len > 0) {
                 if (decodeLengthInt(reader.peek())) |result| {
                     this.extra = result.value;
-                    try reader.skip(result.bytes_read);
+                    reader.skip(result.bytes_read);
                 }
             }
         }
@@ -1299,7 +1328,7 @@ pub const ResultSet = struct {
 
         extern fn MySQL__toJSFromRow(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, *anyopaque, usize) JSC.JSValue;
         pub fn toJS(this: *Row, structure_value: JSValue, array_value: JSValue, globalObject: *JSC.JSGlobalObject) JSValue {
-            return MySQL__toJSFromRow(globalObject, structure_value, array_value, this.values, this.columns.len);
+            return MySQL__toJSFromRow(globalObject, structure_value, array_value, this.values.ptr, this.columns.len);
         }
 
         pub fn deinit(this: *Row, allocator: std.mem.Allocator) void {
@@ -1330,12 +1359,12 @@ pub const ResultSet = struct {
 
             for (values) |*value| {
                 if (decodeLengthInt(reader.peek())) |result| {
-                    try reader.skip(result.bytes_read);
+                    reader.skip(result.bytes_read);
                     if (result.value == 0xfb) { // NULL value
                         value.* = .{ .null = {} };
                     } else {
                         value.* = .{
-                            .string = try reader.read(@intCast(result.value)),
+                            .string_data = try reader.read(@intCast(result.value)),
                         };
                     }
                 } else {
@@ -1373,18 +1402,18 @@ pub const ResultSet = struct {
                 const is_null = (null_bitmap.slice()[byte_pos] & (@as(u8, 1) << bit_pos)) != 0;
 
                 if (is_null) {
-                    value.* = .{ .empty = {} };
+                    value.* = .{ .null = {} };
                     continue;
                 }
 
                 const column = this.columns[i];
-                value.* = try decodeBinaryValue(column.column_type, Context, reader);
+                value.* = try decodeBinaryValue(column.column_type, column.flags.UNSIGNED, Context, reader);
             }
 
             this.values = values;
         }
 
-        pub const decode = decoderWrap(Row, decodeInternal).decode;
+        pub const decode = decoderWrap(Row, decodeInternal).decodeAllocator;
     };
 };
 
@@ -1392,7 +1421,7 @@ pub const ResultSet = struct {
 pub const PreparedStatement = struct {
     pub const Prepare = struct {
         command: CommandType = .COM_STMT_PREPARE,
-        query: Data,
+        query: Data = .{ .empty = {} },
 
         pub fn deinit(this: *Prepare) void {
             this.query.deinit();
@@ -1441,7 +1470,7 @@ pub const PreparedStatement = struct {
         /// Whether to send parameter types. Set to true for first execution, false for subsequent executions
         new_params_bind_flag: bool = true,
         /// Parameter values to bind to the prepared statement
-        params: []const Data = &[_]Data{},
+        params: []Data = &[_]Data{},
         /// Types of each parameter in the prepared statement
         param_types: []const types.FieldType = &[_]types.FieldType{},
 
@@ -1504,7 +1533,7 @@ pub const PreparedStatement = struct {
 
     pub const Close = struct {
         command: CommandType = .COM_STMT_CLOSE,
-        statement_id: u32,
+        statement_id: u32 = 0,
 
         pub fn writeInternal(this: *const Close, comptime Context: type, writer: NewWriter(Context)) !void {
             try writer.int1(@intFromEnum(this.command));
@@ -1516,7 +1545,7 @@ pub const PreparedStatement = struct {
 
     pub const Reset = struct {
         command: CommandType = .COM_STMT_RESET,
-        statement_id: u32,
+        statement_id: u32 = 0,
 
         pub fn writeInternal(this: *const Reset, comptime Context: type, writer: NewWriter(Context)) !void {
             try writer.int1(@intFromEnum(this.command));

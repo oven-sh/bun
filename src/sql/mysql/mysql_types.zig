@@ -183,7 +183,9 @@ pub const Value = union(enum) {
     double: f64,
 
     string: JSC.ZigString.Slice,
+    string_data: Data,
     bytes: JSC.ZigString.Slice,
+    bytes_data: Data,
     date: DateTime,
     timestamp: Timestamp,
     time: Time,
@@ -191,7 +193,8 @@ pub const Value = union(enum) {
 
     pub fn deinit(this: *Value, allocator: std.mem.Allocator) void {
         switch (this.*) {
-            inline .string, .bytes => |*slice| slice.deinit(allocator),
+            inline .string, .bytes => |*slice| slice.deinit(),
+            inline .string_data, .bytes_data => |*data| data.deinit(),
             .decimal => |*decimal| decimal.deinit(allocator),
             else => {},
         }
@@ -219,6 +222,7 @@ pub const Value = union(enum) {
                 stream.pos = d.toBinary(field_type, &buffer);
             },
             .decimal => |dec| return try dec.toBinary(field_type),
+            .string_data, .bytes_data => |data| return data,
             .string, .bytes => |slice| return if (slice.len > 0)
                 Data{ .temporary = slice.slice() }
             else
@@ -285,6 +289,10 @@ pub const Value = union(enum) {
         seconds: u32,
         microseconds: u24,
 
+        pub fn fromData(data: *const Data) !Timestamp {
+            return fromBinary(data.slice());
+        }
+
         pub fn fromBinary(val: []const u8) Timestamp {
             return .{
                 // Bytes 0-3: [seconds]  (32-bit little-endian unsigned integer)
@@ -347,6 +355,10 @@ pub const Value = union(enum) {
         minute: u8 = 0,
         second: u8 = 0,
         microsecond: u32 = 0,
+
+        pub fn fromData(data: *const Data) !DateTime {
+            return fromBinary(data.slice());
+        }
 
         pub fn fromBinaryDate(val: []const u8) DateTime {
             return .{
@@ -532,6 +544,10 @@ pub const Value = union(enum) {
             return total_ms;
         }
 
+        pub fn fromData(data: *const Data) !Time {
+            return fromBinary(data.slice());
+        }
+
         pub fn fromBinary(val: []const u8) Time {
             if (val.len == 0) {
                 return Time{};
@@ -542,14 +558,14 @@ pub const Value = union(enum) {
 
             if (length >= 8) {
                 time.negative = val[1] != 0;
-                time.days = std.mem.readInt(.little, val[2..6]);
+                time.days = std.mem.readInt(u32, val[2..6], .little);
                 time.hours = val[6];
                 time.minutes = val[7];
                 time.seconds = val[8];
             }
 
             if (length > 8) {
-                time.microseconds = std.mem.readInt(.little, val[9..13]);
+                time.microseconds = std.mem.readInt(u32, val[9..13], .little);
             }
 
             return time;
@@ -584,7 +600,7 @@ pub const Value = union(enum) {
                         return 9;
                     } else {
                         buffer[0] = 12; // length
-                        std.mem.writeInt(u32, buffer[9..], this.microseconds, .little);
+                        std.mem.writeInt(u32, buffer[9..][0..4], this.microseconds, .little);
                         return 12;
                     }
                 },
@@ -629,17 +645,27 @@ pub const Value = union(enum) {
             _ = field_type; // autofix
             bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});
         }
+
+        pub fn fromData(data: *const Data) !Decimal {
+            return fromBinary(data.slice());
+        }
+
+        pub fn fromBinary(val: []const u8) Decimal {
+            _ = val; // autofix
+            // TODO: handle overflow
+            bun.todoPanic(@src(), "Decimal.fromBinary not implemented", .{});
+        }
     };
 
     pub fn toJS(this: *const Value, globalObject: *JSC.JSGlobalObject) JSValue {
         return switch (this.*) {
             .null => JSValue.jsNull(),
             .bool => |b| JSValue.jsBoolean(b),
-            .string => |*str| {
+            inline .string, .string_data => |*str| {
                 var out = bun.String.createUTF8(str.slice());
                 return out.transferToJS(globalObject);
             },
-            .bytes => JSC.ArrayBuffer.createBuffer(globalObject, this.bytes.slice()),
+            inline .bytes, .bytes_data => |*data| JSC.ArrayBuffer.createBuffer(globalObject, data.slice()),
             inline .long, .int, .float, .double, .short, .ushort, .uint, .ulong => |t| JSValue.jsNumber(t),
             inline .timestamp, .date, .time, .decimal => |*d| d.toJS(globalObject),
         };

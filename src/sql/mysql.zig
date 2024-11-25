@@ -741,7 +741,7 @@ pub const MySQLConnection = struct {
         this.ref();
         const vm = this.globalObject.bunVM();
         defer {
-            if (this.status == .connected and this.requests.items.len == 0 and this.write_buffer.remaining().len == 0) {
+            if (this.status == .connected and this.requests.readableLength() == 0 and this.write_buffer.remaining().len == 0) {
                 // Don't keep the process alive when there's nothing to do.
                 this.poll_ref.unref(vm);
             } else if (this.status == .connected) {
@@ -823,12 +823,12 @@ pub const MySQLConnection = struct {
 
             // Read packet header
             const header = protocol.PacketHeader.decode(reader.peek()) orelse break;
-            try reader.skip(protocol.PACKET_HEADER_SIZE);
+            reader.skip(protocol.PACKET_HEADER_SIZE);
 
             // Ensure we have the full packet
             reader.ensureCapacity(header.length) catch |err| {
                 if (err == error.ShortRead) {
-                    try reader.skip(-@as(isize, @intCast(protocol.PACKET_HEADER_SIZE)));
+                    reader.skip(-@as(isize, @intCast(protocol.PACKET_HEADER_SIZE)));
                 }
 
                 return err;
@@ -848,7 +848,7 @@ pub const MySQLConnection = struct {
                 },
             }
 
-            try reader.skip(header.length);
+            reader.skip(header.length);
         }
     }
 
@@ -908,7 +908,7 @@ pub const MySQLConnection = struct {
 
     pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: protocol.NewReader(Context)) !void {
         const first_byte = try reader.int(u8);
-        try reader.skip(-1);
+        reader.skip(-1);
 
         switch (first_byte) {
             @intFromEnum(protocol.PacketType.OK) => {
@@ -1017,7 +1017,7 @@ pub const MySQLConnection = struct {
             };
         }
 
-        try response.writeInternal(Writer, this.writer());
+        try response.write(this.writer());
         this.flushData();
     }
 
@@ -1031,7 +1031,7 @@ pub const MySQLConnection = struct {
             .temporary = try auth_method.scramble(this.password, plugin_data, &scrambled_buf),
         };
 
-        try response.writeInternal(Writer, this.writer());
+        try response.write(this.writer());
         this.flushData();
     }
 
@@ -1090,7 +1090,7 @@ pub const MySQLConnection = struct {
                 return;
             }
 
-            this.connection.read_buffer.head += ucount;
+            this.connection.read_buffer.head += @intCast(ucount);
         }
 
         pub fn ensureCapacity(this: Reader, count: usize) bool {
@@ -1132,7 +1132,7 @@ pub const MySQLConnection = struct {
 
     pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, reader: protocol.NewReader(Context)) !void {
         const first_byte = try reader.int(u8);
-        try reader.skip(-1);
+        reader.skip(-1);
 
         switch (first_byte) {
             @intFromEnum(protocol.PacketType.OK) => {
@@ -1212,7 +1212,7 @@ pub const MySQLConnection = struct {
 
     pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: protocol.NewReader(Context)) !void {
         const first_byte = try reader.int(u8);
-        try reader.skip(-1);
+        reader.skip(-1);
 
         switch (first_byte) {
             @intFromEnum(protocol.PacketType.OK) => {
@@ -1265,7 +1265,7 @@ pub const MySQLConnection = struct {
                     // Start reading rows
                     while (true) {
                         const row_first_byte = try reader.byte();
-                        try reader.skip(-1);
+                        reader.skip(-1);
 
                         switch (row_first_byte) {
                             @intFromEnum(protocol.PacketType.EOF) => {
@@ -1300,12 +1300,12 @@ pub const MySQLConnection = struct {
                                     .binary = request.binary,
                                 };
                                 defer row.deinit(allocator);
-                                try row.decodeInternal(allocator, Context, reader);
+                                try row.decode(allocator, reader);
 
                                 const pending_value = MySQLQuery.pendingValueGetCached(request.thisValue) orelse .zero;
 
                                 // Process row data
-                                const row_value = row.toJS(request.statement.?.structure(request.thisValue, globalThis), pending_value, request.globalThis);
+                                const row_value = row.toJS(request.statement.?.structure(request.thisValue, globalThis), pending_value, globalThis);
                                 if (globalThis.hasException()) {
                                     request.onJSError(globalThis.tryTakeException().?, globalThis);
                                     return error.JSError;
@@ -1329,7 +1329,7 @@ pub const MySQLConnection = struct {
             .statement_id = statement.statement_id,
         };
 
-        try close.writeInternal(Writer, this.writer());
+        try close.write(this.writer());
         this.flushData();
     }
 
@@ -1338,7 +1338,7 @@ pub const MySQLConnection = struct {
             .statement_id = statement.statement_id,
         };
 
-        try reset.writeInternal(Writer, this.writer());
+        try reset.write(this.writer());
         this.flushData();
     }
 };
@@ -1346,7 +1346,7 @@ pub const MySQLConnection = struct {
 pub const MySQLStatement = struct {
     cached_structure: JSC.Strong = .{},
     ref_count: u32 = 1,
-    statement_id: u32,
+    statement_id: u32 = 0,
     params: []const types.FieldType = &[_]types.FieldType{},
     columns: []const protocol.ColumnDefinition41 = &[_]protocol.ColumnDefinition41{},
     signature: Signature,
@@ -1508,7 +1508,7 @@ pub const MySQLQuery = struct {
         };
         defer execute.deinit();
         try this.bind(&execute, globalObject);
-        try execute.writeInternal(writer);
+        try execute.write(writer);
         this.status = .written;
     }
 
@@ -1535,7 +1535,7 @@ pub const MySQLQuery = struct {
                 // TODO: unsigned
                 false,
             );
-            defer value.deinit();
+            defer value.deinit(bun.default_allocator);
             params[i] = try value.toData(param);
             i += 1;
         }
@@ -1674,6 +1674,14 @@ pub const MySQLQuery = struct {
         return .undefined;
     }
 
+    pub fn doCancel(this: *MySQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        _ = callframe;
+        _ = globalObject;
+        _ = this;
+
+        return .undefined;
+    }
+
     pub fn doRun(this: *MySQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         var arguments_ = callframe.arguments_old(2);
         const arguments = arguments_.slice();
@@ -1739,6 +1747,7 @@ pub const MySQLQuery = struct {
                 .signature = signature,
                 .ref_count = 2,
                 .status = .parsing,
+                .statement_id = 0,
             };
             this.statement = stmt;
             entry.value_ptr.* = stmt;

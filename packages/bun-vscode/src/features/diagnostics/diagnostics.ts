@@ -165,10 +165,6 @@ class BunDiagnosticsManager {
 
     debugAdapter.on("LifecycleReporter.error", event => this.handleLifecycleError(event));
 
-    debugAdapter.on("Inspector.connected", () => {
-      output.appendLine("Inspector connected");
-    });
-
     const ok = await debugAdapter.start();
 
     if (!ok) {

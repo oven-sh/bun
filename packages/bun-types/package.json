@@ -3,14 +3,16 @@
   "license": "MIT",
   "main": "",
   "types": "index.d.ts",
-  "description": "Type definitions for Bun, an incredibly fast JavaScript runtime",
+  "description": "Type definitions and documentation for Bun, an incredibly fast JavaScript runtime",
   "repository": {
     "type": "git",
     "url": "https://github.com/oven-sh/bun",
     "directory": "packages/bun-types"
   },
   "files": [
-    "*.d.ts"
+    "*.d.ts",
+    "docs/**/*.md",
+    "docs/*.md"
   ],
   "homepage": "https://bun.sh",
   "dependencies": {
@@ -25,7 +27,8 @@
   },
   "scripts": {
     "prebuild": "echo $(pwd)",
-    "build": "bun scripts/build.ts && bun run fmt",
+    "copy-docs": "rm -rf docs && cp -r ../../docs/ ./docs",
+    "build": "bun run copy-docs && bun scripts/build.ts && bun run fmt",
     "test": "tsc",
     "fmt": "echo $(which biome) && biome format --write ."
   },

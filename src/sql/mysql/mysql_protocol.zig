@@ -141,8 +141,8 @@ pub fn NewWriterWrap(
 
             pub fn end(this: *@This()) !void {
                 const new_offset = offsetFn(this.ctx.wrapped);
-                const length = new_offset - this.offset;
-                this.header.length = @intCast(length - PACKET_HEADER_SIZE);
+                const length = new_offset - (this.offset + PACKET_HEADER_SIZE); // Adjust start position
+                this.header.length = @intCast(length);
                 try pwrite(this.ctx, &this.header.encode(), this.offset);
             }
         };
@@ -338,50 +338,67 @@ pub fn encodeLengthInt(value: u64) std.BoundedArray(u8, 9) {
         array.buffer[0] = @intCast(value);
     } else if (value < 65536) {
         array.len = 3;
-        array.buffer[0..3].* = [_]u8{ 0xfc, @intCast(value & 0xff), @intCast((value >> 8) & 0xff) };
+        array.buffer[0] = 0xfc;
+        array.buffer[1] = @intCast(value & 0xff);
+        array.buffer[2] = @intCast((value >> 8) & 0xff);
     } else if (value < 16777216) {
         array.len = 4;
-        array.buffer[0..4].* = [_]u8{ 0xfd, @intCast(value & 0xff), @intCast((value >> 8) & 0xff), @intCast((value >> 16) & 0xff) };
+        array.buffer[0] = 0xfd;
+        array.buffer[1] = @intCast(value & 0xff);
+        array.buffer[2] = @intCast((value >> 8) & 0xff);
+        array.buffer[3] = @intCast((value >> 16) & 0xff);
     } else {
         array.len = 9;
-        array.buffer[0..9].* = [_]u8{
-            0xfe,
-            @intCast(value & 0xff),
-            @intCast((value >> 8) & 0xff),
-            @intCast((value >> 16) & 0xff),
-            @intCast((value >> 24) & 0xff),
-            @intCast((value >> 32) & 0xff),
-            @intCast((value >> 40) & 0xff),
-            @intCast((value >> 48) & 0xff),
-            @intCast((value >> 56) & 0xff),
-        };
+        array.buffer[0] = 0xfe;
+        array.buffer[1] = @intCast(value & 0xff);
+        array.buffer[2] = @intCast((value >> 8) & 0xff);
+        array.buffer[3] = @intCast((value >> 16) & 0xff);
+        array.buffer[4] = @intCast((value >> 24) & 0xff);
+        array.buffer[5] = @intCast((value >> 32) & 0xff);
+        array.buffer[6] = @intCast((value >> 40) & 0xff);
+        array.buffer[7] = @intCast((value >> 48) & 0xff);
+        array.buffer[8] = @intCast((value >> 56) & 0xff);
     }
-
     return array;
 }
 
 pub fn decodeLengthInt(bytes: []const u8) ?struct { value: u64, bytes_read: usize } {
     if (bytes.len == 0) return null;
 
-    switch (bytes[0]) {
+    const first_byte = bytes[0];
+
+    switch (first_byte) {
         0xfc => {
             if (bytes.len < 3) return null;
-            const value = bytes[1..3].*;
-            return .{ .value = @as(u64, @as(u16, @bitCast(value))), .bytes_read = 3 };
+            return .{
+                .value = @as(u64, bytes[1]) | (@as(u64, bytes[2]) << 8),
+                .bytes_read = 3,
+            };
         },
         0xfd => {
             if (bytes.len < 4) return null;
-            const value = bytes[1..4].*;
-            return .{ .value = @as(u64, @as(u24, @bitCast(value))), .bytes_read = 4 };
+            return .{
+                .value = @as(u64, bytes[1]) |
+                    (@as(u64, bytes[2]) << 8) |
+                    (@as(u64, bytes[3]) << 16),
+                .bytes_read = 4,
+            };
         },
         0xfe => {
             if (bytes.len < 9) return null;
-            const value = bytes[0..8].*;
-            return .{ .value = @bitCast(value), .bytes_read = 9 };
+            return .{
+                .value = @as(u64, bytes[1]) |
+                    (@as(u64, bytes[2]) << 8) |
+                    (@as(u64, bytes[3]) << 16) |
+                    (@as(u64, bytes[4]) << 24) |
+                    (@as(u64, bytes[5]) << 32) |
+                    (@as(u64, bytes[6]) << 40) |
+                    (@as(u64, bytes[7]) << 48) |
+                    (@as(u64, bytes[8]) << 56),
+                .bytes_read = 9,
+            };
         },
-        else => {
-            return .{ .value = bytes[0], .bytes_read = 1 };
-        },
+        else => return .{ .value = first_byte, .bytes_read = 1 },
     }
 }
 
@@ -419,7 +436,7 @@ pub const HandshakeV10 = struct {
     auth_plugin_data_part_1: [8]u8 = undefined,
     auth_plugin_data_part_2: []const u8 = &[_]u8{},
     capability_flags: mysql.Capabilities = .{},
-    character_set: types.CharacterSet = .utf8mb4,
+    character_set: types.CharacterSet = types.CharacterSet.default,
     status_flags: mysql.StatusFlags = .{},
     auth_plugin_name: Data = .{ .empty = {} },
 
@@ -489,8 +506,8 @@ pub const HandshakeV10 = struct {
 // Client authentication response
 pub const HandshakeResponse41 = struct {
     capability_flags: mysql.Capabilities,
-    max_packet_size: u32 = 16777216, // 16MB default
-    character_set: types.CharacterSet = .utf8mb4,
+    max_packet_size: u32 = 0xFFFFFF, // 16MB default
+    character_set: types.CharacterSet = types.CharacterSet.default,
     username: Data,
     auth_response: Data,
     database: Data,
@@ -515,80 +532,51 @@ pub const HandshakeResponse41 = struct {
         var packet = try writer.start(1);
         defer packet.end() catch {};
 
-        const server_caps = this.capability_flags;
+        // Write client capabilities flags
+        try writer.int4(this.capability_flags.toInt());
+        debug("Client capabilities: [{}] {d}", .{ this.capability_flags, this.capability_flags.toInt() });
 
-        const final_caps = mysql.Capabilities{
-            // Must-have capabilities
-            .CLIENT_PROTOCOL_41 = true,
-            .CLIENT_SECURE_CONNECTION = true,
-            .CLIENT_PLUGIN_AUTH = true,
-            .CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = true,
-            .CLIENT_LONG_PASSWORD = true,
-
-            // Optional capabilities - only if server supports them
-            .CLIENT_CONNECT_WITH_DB = server_caps.CLIENT_CONNECT_WITH_DB and this.database.slice().len > 0,
-            .CLIENT_DEPRECATE_EOF = server_caps.CLIENT_DEPRECATE_EOF,
-            .CLIENT_LONG_FLAG = server_caps.CLIENT_LONG_FLAG,
-            .CLIENT_TRANSACTIONS = server_caps.CLIENT_TRANSACTIONS,
-            .CLIENT_MULTI_STATEMENTS = server_caps.CLIENT_MULTI_STATEMENTS,
-            .CLIENT_MULTI_RESULTS = server_caps.CLIENT_MULTI_RESULTS,
-            .CLIENT_PS_MULTI_RESULTS = server_caps.CLIENT_PS_MULTI_RESULTS,
-            .CLIENT_SSL = server_caps.CLIENT_SSL,
-
-            // Everything else off
-            .CLIENT_FOUND_ROWS = false,
-            .CLIENT_NO_SCHEMA = false,
-            .CLIENT_COMPRESS = false,
-            .CLIENT_ODBC = false,
-            .CLIENT_LOCAL_FILES = false,
-            .CLIENT_IGNORE_SPACE = false,
-            .CLIENT_INTERACTIVE = false,
-            .CLIENT_IGNORE_SIGPIPE = false,
-            .CLIENT_RESERVED = false,
-            .CLIENT_CONNECT_ATTRS = false,
-            .CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS = false,
-            .CLIENT_SESSION_TRACK = false,
-        };
-
-        try writer.int4(final_caps.toInt());
-        this.capability_flags = final_caps;
-
-        // Max packet size
+        // Write max packet size (16MB default)
         try writer.int4(this.max_packet_size);
 
-        // Character set
+        // Write character set
         try writer.int1(@intFromEnum(this.character_set));
 
-        // Reserved bytes (23 bytes of 0)
+        // Write 23 bytes of padding
         try writer.write(&[_]u8{0} ** 23);
 
-        // Username - null terminated
+        // Write username (null terminated)
         try writer.writeZ(this.username.slice());
 
-        // Auth response - for empty password, send empty response
+        // Write auth response based on capabilities
         const auth_data = this.auth_response.slice();
-        if (final_caps.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA) {
-            // For empty password, send length=0
+        if (this.capability_flags.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA) {
+            // Write length-encoded number followed by auth data
             try writer.write(encodeLengthInt(auth_data.len).slice());
-            if (auth_data.len > 0) {
-                try writer.write(auth_data);
-            }
-        } else {
+            try writer.write(auth_data);
+        } else if (this.capability_flags.CLIENT_SECURE_CONNECTION) {
+            // Write length byte followed by auth data
             try writer.int1(@intCast(auth_data.len));
-            if (auth_data.len > 0) {
-                try writer.write(auth_data);
-            }
+            try writer.write(auth_data);
+        } else {
+            // Write null-terminated auth data
+            try writer.writeZ(auth_data);
         }
 
-        // Database name if requested
-        if (final_caps.CLIENT_CONNECT_WITH_DB and this.database.slice().len > 0) {
+        // Write database name if requested
+        if (this.capability_flags.CLIENT_CONNECT_WITH_DB and this.database.slice().len > 0) {
             try writer.writeZ(this.database.slice());
         }
 
-        // Auth plugin name if supported
-        if (final_caps.CLIENT_PLUGIN_AUTH) {
+        // Write auth plugin name if supported
+        if (this.capability_flags.CLIENT_PLUGIN_AUTH) {
             try writer.writeZ(this.auth_plugin_name.slice());
         }
+
+        // Connect attributes are not implemented yet
+        // if (this.capability_flags.CLIENT_CONNECT_ATTRS) {
+        //     // TODO: Implement connect attributes
+        // }
     }
 
     pub const write = writeWrap(HandshakeResponse41, writeInternal).write;

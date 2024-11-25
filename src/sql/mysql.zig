@@ -40,59 +40,81 @@ pub const SSLMode = enum(u8) {
 pub const Data = sql.Data;
 // MySQL capability flags
 pub const Capabilities = packed struct(u32) {
-    /// Use the improved version of MySQL authentication
     CLIENT_LONG_PASSWORD: bool = false,
-    /// Return number of found (matched) rows, not number of changed rows
     CLIENT_FOUND_ROWS: bool = false,
-    /// Get all column flags
     CLIENT_LONG_FLAG: bool = false,
-    /// Database name can be specified on connect
     CLIENT_CONNECT_WITH_DB: bool = false,
-    /// Don't allow database.table.column syntax
     CLIENT_NO_SCHEMA: bool = false,
-    /// Can use compression protocol
     CLIENT_COMPRESS: bool = false,
-    /// ODBC client
     CLIENT_ODBC: bool = false,
-    /// Can use LOAD DATA LOCAL
     CLIENT_LOCAL_FILES: bool = false,
-    /// Ignore spaces before '('
     CLIENT_IGNORE_SPACE: bool = false,
-    /// New 4.1 protocol - Indicates that the client supports the MySQL 4.1 protocol features
-    /// including prepared statements, long passwords, and secure authentication.
-    /// This flag is required for modern MySQL connections.
     CLIENT_PROTOCOL_41: bool = false,
-    /// This is an interactive client
     CLIENT_INTERACTIVE: bool = false,
-    /// Switch to SSL after handshake
     CLIENT_SSL: bool = false,
-    /// Ignore SIGPIPE
     CLIENT_IGNORE_SIGPIPE: bool = false,
-    /// Client knows about transactions
     CLIENT_TRANSACTIONS: bool = false,
-    /// Reserved for future use
     CLIENT_RESERVED: bool = false,
-    /// Use secure authentication
     CLIENT_SECURE_CONNECTION: bool = false,
-    /// Enable/disable multi-stmt support
     CLIENT_MULTI_STATEMENTS: bool = false,
-    /// Enable/disable multi-results
     CLIENT_MULTI_RESULTS: bool = false,
-    /// Multi-results and OUT parameters in PS-protocol
     CLIENT_PS_MULTI_RESULTS: bool = false,
-    /// Client supports plugin authentication
     CLIENT_PLUGIN_AUTH: bool = false,
-    /// Client supports connection attributes
     CLIENT_CONNECT_ATTRS: bool = false,
-    /// Enable authentication response packet to be larger than 255 bytes
     CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA: bool = false,
-    /// Client can handle expired passwords
     CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS: bool = false,
-    /// Client supports session tracking
     CLIENT_SESSION_TRACK: bool = false,
-    /// Client expects EOF packet to be replaced by OK packet
     CLIENT_DEPRECATE_EOF: bool = false,
-    _padding: u7 = 0,
+    CLIENT_OPTIONAL_RESULTSET_METADATA: bool = false,
+    CLIENT_ZSTD_COMPRESSION_ALGORITHM: bool = false,
+    CLIENT_QUERY_ATTRIBUTES: bool = false,
+    MULTI_FACTOR_AUTHENTICATION: bool = false,
+    CLIENT_CAPABILITY_EXTENSION: bool = false,
+    CLIENT_SSL_VERIFY_SERVER_CERT: bool = false,
+    CLIENT_REMEMBER_OPTIONS: bool = false,
+
+    // Constants with correct shift values from MySQL protocol
+    pub const CLIENT_LONG_PASSWORD = 1; // 1 << 0
+    pub const CLIENT_FOUND_ROWS = 2; // 1 << 1
+    pub const CLIENT_LONG_FLAG = 4; // 1 << 2
+    pub const CLIENT_CONNECT_WITH_DB = 8; // 1 << 3
+    pub const CLIENT_NO_SCHEMA = 16; // 1 << 4
+    pub const CLIENT_COMPRESS = 32; // 1 << 5
+    pub const CLIENT_ODBC = 64; // 1 << 6
+    pub const CLIENT_LOCAL_FILES = 128; // 1 << 7
+    pub const CLIENT_IGNORE_SPACE = 256; // 1 << 8
+    pub const CLIENT_PROTOCOL_41 = 512; // 1 << 9
+    pub const CLIENT_INTERACTIVE = 1024; // 1 << 10
+    pub const CLIENT_SSL = 2048; // 1 << 11
+    pub const CLIENT_IGNORE_SIGPIPE = 4096; // 1 << 12
+    pub const CLIENT_TRANSACTIONS = 8192; // 1 << 13
+    pub const CLIENT_RESERVED = 16384; // 1 << 14
+    pub const CLIENT_SECURE_CONNECTION = 32768; // 1 << 15
+    pub const CLIENT_MULTI_STATEMENTS = 65536; // 1 << 16
+    pub const CLIENT_MULTI_RESULTS = 131072; // 1 << 17
+    pub const CLIENT_PS_MULTI_RESULTS = 262144; // 1 << 18
+    pub const CLIENT_PLUGIN_AUTH = 524288; // 1 << 19
+    pub const CLIENT_CONNECT_ATTRS = 1048576; // 1 << 20
+    pub const CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 2097152; // 1 << 21
+    pub const CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS = 4194304; // 1 << 22
+    pub const CLIENT_SESSION_TRACK = 8388608; // 1 << 23
+    pub const CLIENT_DEPRECATE_EOF = 16777216; // 1 << 24
+    pub const CLIENT_OPTIONAL_RESULTSET_METADATA = 33554432; // 1 << 25
+    pub const CLIENT_ZSTD_COMPRESSION_ALGORITHM = 67108864; // 1 << 26
+    pub const CLIENT_QUERY_ATTRIBUTES = 134217728; // 1 << 27
+    pub const MULTI_FACTOR_AUTHENTICATION = 268435456; // 1 << 28
+    pub const CLIENT_CAPABILITY_EXTENSION = 536870912; // 1 << 29
+    pub const CLIENT_SSL_VERIFY_SERVER_CERT = 1073741824; // 1 << 30
+    pub const CLIENT_REMEMBER_OPTIONS = 2147483648; // 1 << 31
+
+    pub fn reject(this: *Capabilities) void {
+        this.CLIENT_ZSTD_COMPRESSION_ALGORITHM = false;
+        this.MULTI_FACTOR_AUTHENTICATION = false;
+        this.CLIENT_CAPABILITY_EXTENSION = false;
+        this.CLIENT_SSL_VERIFY_SERVER_CERT = false;
+        this.CLIENT_REMEMBER_OPTIONS = false;
+        this.CLIENT_COMPRESS = false;
+    }
 
     pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
         var first = true;
@@ -110,7 +132,49 @@ pub const Capabilities = packed struct(u32) {
     }
 
     pub fn toInt(this: Capabilities) u32 {
-        return @bitCast(this);
+        var value: u32 = 0;
+
+        const fields = .{
+            "CLIENT_LONG_PASSWORD",
+            "CLIENT_FOUND_ROWS",
+            "CLIENT_LONG_FLAG",
+            "CLIENT_CONNECT_WITH_DB",
+            "CLIENT_NO_SCHEMA",
+            "CLIENT_COMPRESS",
+            "CLIENT_ODBC",
+            "CLIENT_LOCAL_FILES",
+            "CLIENT_IGNORE_SPACE",
+            "CLIENT_PROTOCOL_41",
+            "CLIENT_INTERACTIVE",
+            "CLIENT_SSL",
+            "CLIENT_IGNORE_SIGPIPE",
+            "CLIENT_TRANSACTIONS",
+            "CLIENT_RESERVED",
+            "CLIENT_SECURE_CONNECTION",
+            "CLIENT_MULTI_STATEMENTS",
+            "CLIENT_MULTI_RESULTS",
+            "CLIENT_PS_MULTI_RESULTS",
+            "CLIENT_PLUGIN_AUTH",
+            "CLIENT_CONNECT_ATTRS",
+            "CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA",
+            "CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS",
+            "CLIENT_SESSION_TRACK",
+            "CLIENT_DEPRECATE_EOF",
+            "CLIENT_OPTIONAL_RESULTSET_METADATA",
+            "CLIENT_ZSTD_COMPRESSION_ALGORITHM",
+            "CLIENT_QUERY_ATTRIBUTES",
+            "MULTI_FACTOR_AUTHENTICATION",
+            "CLIENT_CAPABILITY_EXTENSION",
+            "CLIENT_SSL_VERIFY_SERVER_CERT",
+            "CLIENT_REMEMBER_OPTIONS",
+        };
+        inline for (fields) |field| {
+            if (@field(this, field)) {
+                value |= @field(Capabilities, field);
+            }
+        }
+
+        return value;
     }
 
     pub fn fromInt(flags: u32) Capabilities {
@@ -237,7 +301,7 @@ pub const ConnectionState = enum {
 // Add after the existing code:
 
 const Socket = uws.AnySocket;
-pub const DEFAULT_CHARSET = types.CharacterSet.utf8mb4;
+pub const DEFAULT_CHARSET = types.CharacterSet.default;
 const PreparedStatementsMap = std.HashMapUnmanaged(u64, *MySQLStatement, bun.IdentityContext(u64), 80);
 const SocketMonitor = @import("./SocketMonitor.zig");
 
@@ -287,7 +351,7 @@ pub const MySQLConnection = struct {
     server_version: bun.ByteList = .{},
     connection_id: u32 = 0,
     capabilities: Capabilities = .{},
-    character_set: types.CharacterSet = .utf8mb4,
+    character_set: types.CharacterSet = types.CharacterSet.default,
     status_flags: StatusFlags = .{},
 
     auth_plugin: ?AuthMethod = null,
@@ -677,7 +741,7 @@ pub const MySQLConnection = struct {
             .tls_ctx = tls_ctx,
             .ssl_mode = ssl_mode,
             .tls_status = if (ssl_mode != .disable) .pending else .none,
-            .character_set = .utf8mb4,
+            .character_set = types.CharacterSet.default,
         };
 
         ptr.updateHasPendingActivity();
@@ -909,7 +973,7 @@ pub const MySQLConnection = struct {
             \\   Server Version: {s}
             \\   Connection ID:  {d}
             \\   Character Set:  {d} ({s})
-            \\   Capabilities:   [ {} ]
+            \\   Server Capabilities:   [ {} ] {d}
             \\   Status Flags:   [ {} ]
             \\
         , .{
@@ -918,6 +982,7 @@ pub const MySQLConnection = struct {
             this.character_set,
             this.character_set.label(),
             this.capabilities,
+            this.capabilities.toInt(),
             this.status_flags,
         });
 

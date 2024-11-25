@@ -646,7 +646,7 @@ pub const Value = union(enum) {
             .null => JSValue.jsNull(),
             .bool => |b| JSValue.jsBoolean(b),
             .string => |*str| {
-                var out = bun.String.createUTF8(str.items);
+                var out = bun.String.createUTF8(str.slice());
                 return out.transferToJS(globalObject);
             },
             .bytes => JSValue.createBuffer(globalObject, this.bytes.slice(), null),

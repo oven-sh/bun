@@ -272,8 +272,8 @@ pub const PacketType = enum(u8) {
     LOCAL_INFILE = 0xfb,
 
     // Client/server packets
-    HANDSHAKE = 0x0a,
-    AUTH_SWITCH = 0xfe,
+    pub const HANDSHAKE = 0x0a;
+    pub const AUTH_SWITCH = 0xfe;
 };
 
 // Length-encoded integer encoding/decoding

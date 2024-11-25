@@ -512,6 +512,10 @@ function loadOptions(o) {
       }
     }
 
+    if (!urlString) {
+      urlString = env.DATABASE_URL;
+    }
+
     if (urlString) {
       url = new URL(urlString);
       o = {};

@@ -132,28 +132,6 @@ pub fn NewWriterWrap(
             try writeFn(this.wrapped, data);
         }
 
-        pub const LengthWriter = struct {
-            index: usize,
-            context: WrappedWriter,
-
-            pub fn write(this: LengthWriter) anyerror!void {
-                try this.context.pwrite(&Int32(this.context.offset() - this.index), this.index);
-            }
-
-            pub fn writeExcludingSelf(this: LengthWriter) anyerror!void {
-                try this.context.pwrite(&Int32(this.context.offset() -| (this.index + 4)), this.index);
-            }
-        };
-
-        pub inline fn length(this: @This()) anyerror!LengthWriter {
-            const i = this.offset();
-            try this.int4(0);
-            return LengthWriter{
-                .index = i,
-                .context = this,
-            };
-        }
-
         pub inline fn offset(this: @This()) usize {
             return offsetFn(this.wrapped);
         }
@@ -283,10 +261,6 @@ fn writeWrap(comptime Container: type, comptime writeFn: anytype) type {
             try writeFn(this, Context, NewWriter(Context){ .wrapped = context });
         }
     };
-}
-
-fn Int32(value: anytype) [4]u8 {
-   return
 }
 
 // MySQL packet types
@@ -766,7 +740,13 @@ pub const StmtExecutePacket = struct {
         }
     }
 
-    pub fn writeInternal(this: *const StmtExecutePacket, comptime Context: type, writer: NewWriter(Context), iter: *sql.QueryBindingIterator, ) !void {
+    pub fn writeInternal(
+        this: *const StmtExecutePacket,
+        comptime Context: type,
+        writer: NewWriter(Context),
+        iter: *sql.QueryBindingIterator,
+    ) !void {
+        _ = iter; // autofix
         try writer.int1(@intFromEnum(this.command));
         try writer.int4(this.statement_id);
         try writer.int1(this.flags);

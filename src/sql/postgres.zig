@@ -1359,7 +1359,11 @@ pub const PostgresSQLConnection = struct {
             .password = password,
             .options = options,
             .options_buf = options_buf,
-            .socket = undefined,
+            .socket = .{
+                .SocketTCP = .{
+                    .socket = .{ .detached = {} },
+                },
+            },
             .requests = PostgresRequest.Queue.init(bun.default_allocator),
             .statements = PreparedStatementsMap{},
             .tls_config = tls_config,
@@ -1662,7 +1666,9 @@ pub const PostgresSQLConnection = struct {
 
             switch (this.tag) {
                 .string => {
-                    this.value.string.deref();
+                    if (this.value.string != null) {
+                        this.value.string.?.deref();
+                    }
                 },
                 .json => {
                     this.value.json.deref();

@@ -1722,7 +1722,7 @@ pub const ThreadSafeFunction = struct {
             return this.env.setLastError(.closing);
         }
         _ = this.thread_count.fetchAdd(1, .seq_cst);
-        return .ok;
+        return this.env.ok();
     }
 
     pub fn release(this: *ThreadSafeFunction, mode: napi_threadsafe_function_release_mode, already_locked: bool) napi_status {
@@ -1748,7 +1748,7 @@ pub const ThreadSafeFunction = struct {
             }
         }
 
-        return .ok;
+        return this.env.ok();
     }
 };
 
@@ -1785,10 +1785,10 @@ pub export fn napi_create_threadsafe_function(
         .callback = if (call_js_cb) |c| .{
             .c = .{
                 .napi_threadsafe_function_call_js = c,
-                .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(env), vm.global),
+                .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(env.toJS()), vm.global),
             },
         } else .{
-            .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(env), vm.global),
+            .js = if (func == .zero) .{} else JSC.Strong.create(func.withAsyncContextIfNeeded(env.toJS()), vm.global),
         },
         .ctx = context,
         .queue = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),

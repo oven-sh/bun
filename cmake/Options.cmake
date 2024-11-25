@@ -48,6 +48,16 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
+if(LINUX)
+  if(EXISTS "/etc/alpine-release")
+    set(DEFAULT_ABI "musl")
+  else()
+    set(DEFAULT_ABI "gnu")
+  endif()
+
+  optionx(ABI "musl|gnu" "The ABI to use (e.g. musl, gnu)" DEFAULT ${DEFAULT_ABI})
+endif()
+
 if(ARCH STREQUAL "x64")
   optionx(ENABLE_BASELINE BOOL "If baseline features should be used for older CPUs (e.g. disables AVX, AVX2)" DEFAULT OFF)
 endif()

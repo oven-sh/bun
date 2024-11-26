@@ -615,6 +615,15 @@ function getEmoji(string) {
   if (/no|fail|error|failure/i.test(string)) {
     return "❌";
   }
+  if (/bug|debug/i.test(string)) {
+    return "🐞";
+  }
+  if (/assert/i.test(string)) {
+    return "🚧";
+  }
+  if (/release/i.test(string)) {
+    return "🏆";
+  }
   return "";
 }
 
@@ -1002,6 +1011,7 @@ async function getPipeline() {
         {
           key: "canary",
           select: "Is this a canary build?",
+          required: false,
           default: "true",
           options: [
             {
@@ -1015,8 +1025,29 @@ async function getPipeline() {
           ],
         },
         {
+          key: "profile",
+          select: "Which profile do you want to build?",
+          required: false,
+          default: "release",
+          options: [
+            {
+              label: getEmoji("release"),
+              value: "release",
+            },
+            {
+              label: getEmoji("assert"),
+              value: "assert",
+            },
+            {
+              label: getEmoji("debug"),
+              value: "debug",
+            },
+          ],
+        },
+        {
           key: "build-platforms",
           select: "Which platforms do you want to build?",
+          required: false,
           multiple: true,
           default: buildPlatforms.map(getTargetKey),
           options: buildPlatforms.map(platform => {

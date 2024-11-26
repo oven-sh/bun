@@ -989,7 +989,7 @@ async function getPipeline() {
 
 async function main() {
   startGroup("Generating pipeline...");
-  const pipeline = getPipeline();
+  const pipeline = await getPipeline();
   const content = toYaml(pipeline);
   const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
   writeFile(contentPath, content);

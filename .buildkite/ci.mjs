@@ -1023,7 +1023,10 @@ async function main() {
 
   if (isBuildkite) {
     startGroup("Uploading pipeline...");
-    await uploadArtifact(contentPath);
+    await Promise.all([
+      spawnSafe(["buildkite-agent", "pipeline", "upload", contentPath], { stdio: "inherit" }),
+      uploadArtifact(contentPath),
+    ]);
   }
 }
 

@@ -453,7 +453,7 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
     }
 }
 
-extern "C" void JSBundlerPlugin__tombestone(Bun::JSBundlerPlugin* plugin)
+extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
 {
     plugin->plugin.tombstone();
 }

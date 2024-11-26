@@ -176,7 +176,7 @@ class BunDiagnosticsManager {
 
     debugAdapter.initialize({
       adapterID: "bun-vsc-terminal-debug-adapter",
-      enableControlFlowProfiler: true,
+      enableControlFlowProfiler: false,
       enableLifecycleAgentReporter: true,
       sendImmediatePreventExit: false,
       enableDebugger: false, // Performance overhead when debugger is enabled

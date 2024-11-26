@@ -295,6 +295,8 @@ class Debugger {
           }
         },
       },
+    }).catch(err => {
+      $debug("error:", err);
     });
   }
 
@@ -447,6 +449,8 @@ async function connectToUnixServer(
         }
       },
     },
+  }).catch(error => {
+    $debug("error:", error);
   });
 
   return socket;
@@ -571,7 +575,7 @@ function notify(options): void {
       },
       data: () => {}, // required or it errors
     },
-  }).finally(() => {
+  }).catch(() => {
     // Best-effort
   });
 }

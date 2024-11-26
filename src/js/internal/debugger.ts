@@ -295,6 +295,8 @@ class Debugger {
           }
         },
       },
+    }).catch(err => {
+      $debug("error:", err);
     });
   }
 

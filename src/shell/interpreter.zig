@@ -809,8 +809,7 @@ pub const ParsedShellScript = struct {
             if (err == shell.ParseError.Lex) {
                 assert(lex_result != null);
                 const str = lex_result.?.combineErrors(shargs.arena_allocator());
-                globalThis.throwPretty("{s}", .{str});
-                return .zero;
+                return globalThis.throwPretty("{s}", .{str});
             }
 
             if (parser) |*p| {
@@ -818,8 +817,7 @@ pub const ParsedShellScript = struct {
                     assert(p.errors.items.len > 0);
                 }
                 const errstr = p.combineErrors();
-                globalThis.throwPretty("{s}", .{errstr});
-                return .zero;
+                return globalThis.throwPretty("{s}", .{errstr});
             }
 
             return globalThis.throwError(err, "failed to lex/parse shell");

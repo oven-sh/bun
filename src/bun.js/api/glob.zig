@@ -242,12 +242,11 @@ fn makeGlobWalker(
     const error_on_broken_symlinks = matchOpts.error_on_broken_symlinks;
     const only_files = matchOpts.only_files;
 
+    var globWalker = try alloc.create(GlobWalker);
+    errdefer alloc.destroy(globWalker);
+    globWalker.* = .{};
+
     if (cwd != null) {
-        var globWalker = try alloc.create(GlobWalker);
-        errdefer alloc.free(globWalker);
-
-        globWalker.* = .{};
-
         switch (try globWalker.initWithCwd(
             arena,
             this.pattern,
@@ -265,10 +264,7 @@ fn makeGlobWalker(
         }
         return globWalker;
     }
-    var globWalker = try alloc.create(GlobWalker);
-    errdefer alloc.free(globWalker);
 
-    globWalker.* = .{};
     switch (try globWalker.init(
         arena,
         this.pattern,
@@ -283,7 +279,6 @@ fn makeGlobWalker(
         },
         else => {},
     }
-
     return globWalker;
 }
 

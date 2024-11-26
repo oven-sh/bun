@@ -1,4 +1,3 @@
-// @ts-ignore
 import { appendFileSync } from "node:fs";
 import {
   getAbi,
@@ -9,11 +8,13 @@ import {
   getBuildArtifacts,
   getBuildId,
   getBuildLabel,
+  getBuildNumber,
   getBuildUrl,
   getCommit,
   getCommitMessage,
   getDistro,
   getDistroVersion,
+  getFileUrl,
   getHostname,
   getKernel,
   getMainBranch,
@@ -32,9 +33,13 @@ import {
   isMainBranch,
   isMergeQueue,
   isPullRequest,
+  isWindows,
+  spawnSafe,
   startGroup,
   tmpdir,
+  unzip,
 } from "../../../scripts/utils.mjs";
+
 declare global {
   const process: {
     env: Record<string, string | undefined>;
@@ -79,34 +84,45 @@ export function setEnv(name: string, value: string | undefined) {
   }
 }
 
+export function print(object: unknown) {
+  if (isBuildkite) {
+    if (object instanceof Object) {
+      Object.entries(object).forEach(([k, v]) => {
+        console.log(`${k}: ${v}`);
+      });
+    } else {
+      console.log(object);
+    }
+  } else {
+    console.dir(object, { depth: null });
+  }
+}
+
 export function printEnvironment() {
   startGroup("Machine", () => {
-    console.dir(
-      {
-        "Operating System": getOs(),
-        "Architecture": getArch(),
-        "Kernel": getKernel(),
-        "Linux": isLinux
-          ? {
-              "ABI": getAbi(),
-              "ABI Version": getAbiVersion(),
-            }
-          : undefined,
-        "Distro": getDistro(),
-        "Distro Version": getDistroVersion(),
-        "Hostname": getHostname(),
-        "CI": isCI
-          ? {
-              "Tailscale IP": getTailscaleIp(),
-              "Public IP": getPublicIp(),
-            }
-          : undefined,
-        "Username": getUsername(),
-        "Working Directory": process.cwd(),
-        "Temporary Directory": tmpdir(),
-      },
-      { depth: null },
-    );
+    print({
+      "Operating System": getOs(),
+      "Architecture": getArch(),
+      "Kernel": getKernel(),
+      "Linux": isLinux
+        ? {
+            "ABI": getAbi(),
+            "ABI Version": getAbiVersion(),
+          }
+        : undefined,
+      "Distro": getDistro(),
+      "Distro Version": getDistroVersion(),
+      "Hostname": getHostname(),
+      "CI": isCI
+        ? {
+            "Tailscale IP": getTailscaleIp(),
+            "Public IP": getPublicIp(),
+          }
+        : undefined,
+      "Username": getUsername(),
+      "Working Directory": process.cwd(),
+      "Temporary Directory": tmpdir(),
+    });
   });
 
   if (isCI) {
@@ -118,43 +134,50 @@ export function printEnvironment() {
   }
 
   startGroup("Repository", () => {
-    console.dir(
-      {
-        "Repository": getRepository(),
-        "Commit": getCommit(),
-        "Commit Message": getCommitMessage(),
-        "Branch": getBranch(),
-        "Main Branch": getMainBranch(),
-        "Is Fork": isFork(),
-        "Is Merge Queue": isMergeQueue(),
-        "Is Main Branch": isMainBranch(),
-        "Is Pull Request": isPullRequest(),
-        "Pull Request": isPullRequest() ? getPullRequest() : undefined,
-        "Target Branch": isPullRequest() ? getTargetBranch() : undefined,
-      },
-      { depth: null },
-    );
+    print({
+      "Repository": getRepository(),
+      "Commit": getCommit(),
+      "Commit Message": getCommitMessage(),
+      "Branch": getBranch(),
+      "Main Branch": getMainBranch(),
+      "Is Fork": isFork(),
+      "Is Merge Queue": isMergeQueue(),
+      "Is Main Branch": isMainBranch(),
+      "Is Pull Request": isPullRequest(),
+      "Pull Request": isPullRequest() ? getPullRequest() : undefined,
+      "Target Branch": isPullRequest() ? getTargetBranch() : undefined,
+    });
   });
 
   if (isCI) {
     startGroup("CI", () => {
-      console.dir(
-        {
-          "CI": {
-            "Build ID": getBuildId(),
-            "Build Label": getBuildLabel(),
-            "Build URL": getBuildUrl(),
-            "Buildkite": isBuildkite
-              ? {
-                  "Build Artifacts": getBuildArtifacts(),
-                }
-              : undefined,
-          },
-          "Bootstrap Version": getBootstrapVersion(),
+      print({
+        "CI": {
+          "Build ID": getBuildId(),
+          "Build Label": getBuildLabel(),
+          "Build URL": getBuildUrl(),
+          "Buildkite": isBuildkite
+            ? {
+                "Build Artifacts": getBuildArtifacts(),
+              }
+            : undefined,
         },
-        { depth: null },
-      );
+        "Bootstrap Version": getBootstrapVersion(),
+      });
     });
   }
 }
-export { spawnSafe } from "../../../scripts/utils.mjs";
+export {
+  getBootstrapVersion,
+  getBuildNumber,
+  getBuildUrl,
+  getFileUrl,
+  isCI,
+  isGithubAction,
+  isLinux,
+  isWindows,
+  spawnSafe,
+  startGroup,
+  tmpdir,
+  unzip,
+};

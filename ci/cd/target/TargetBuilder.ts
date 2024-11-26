@@ -1,33 +1,13 @@
-import { Abi, Agent, Arch, Os } from "../agent/Agent";
-import { _Platform } from "../platform/Platform.Builder";
-import { Target } from "./Target._";
-
-export type _Target<Step> = {
-  getTargetKey: () => string;
-  getTargetLabel: () => string;
-  getBuildToolchain: () => string;
-  getBuildAgent: (platform: _Platform<Step>) => Agent;
-  getZigAgent: () => Agent;
-  getParallelism: () => number;
-};
+import { type Abi, type Arch, type Os } from "../agent/Agent.ts";
+import { type PipelineOptions } from "../pipeline/Pipeline.ts";
+import { Target, type TargetPrototype } from "./Target.ts";
 
 export class TargetBuilder<Step> {
   private os?: Os;
   private arch?: Arch;
   private abi?: Abi;
   private baseline?: boolean;
-
-  static linux<Step>(arch: Arch): TargetBuilder<Step> {
-    return new TargetBuilder().setOs("linux").setArch(arch);
-  }
-
-  static darwin<Step>(arch: Arch): TargetBuilder<Step> {
-    return new TargetBuilder().setOs("darwin").setArch(arch);
-  }
-
-  static windows<Step>(arch: Arch): TargetBuilder<Step> {
-    return new TargetBuilder().setOs("windows").setArch(arch);
-  }
+  private options?: PipelineOptions;
 
   setArch(arch: Arch): this {
     this.arch = arch;
@@ -49,13 +29,22 @@ export class TargetBuilder<Step> {
     return this;
   }
 
-  build(): Target & _Target<Step> {
+  setOptions(options: PipelineOptions) {
+    this.options = options;
+    return this;
+  }
+
+  build(): Target & TargetPrototype<Step> {
     if (!this.os) {
       throw new Error("os is required");
     }
 
     if (!this.arch) {
       throw new Error("arch is required");
+    }
+
+    if (this.options === undefined) {
+      throw new Error("options required");
     }
 
     let target: Target = {
@@ -76,8 +65,8 @@ export class TargetBuilder<Step> {
       getTargetKey: () => Target.getTargetKey(target),
       getTargetLabel: () => Target.getTargetLabel(target),
       getBuildToolchain: () => Target.getBuildToolchain(target),
-      getBuildAgent: () => Target.getBuildAgent(target),
-      getZigAgent: () => Target.getZigAgent(target),
+      getBuildAgent: () => Target.getBuildAgent(target, this.options!),
+      getZigAgent: () => Target.getZigAgent(target, this.options!),
       getParallelism: () => Target.getParallelism(target),
     };
   }

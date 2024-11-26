@@ -1,18 +1,15 @@
-import { Platform } from "../platform/Platform._";
-import { _Platform, PlatformBuilder } from "../platform/Platform.Builder";
-import { Target } from "../target/Target._";
-import { _Target, TargetBuilder } from "../target/Target.Builder";
-import { Buildkite } from "./buildkite/Buildkite._";
-import { BuildkiteStep } from "./buildkite/Buildkite.Step._";
-import { BuildkiteStepBuilder } from "./buildkite/Buildkite.Step.Builder";
-import { Pipeline } from "./Pipeline._";
-import { PipelineOptions } from "./Pipeline.Options._";
-import { PipelineTargetSteps } from "./Pipeline.Builder._";
-import { isMainBranch, isMergeQueue } from "../../machine/code/Git";
+import { isMainBranch, isMergeQueue } from "../../../machine/code/git.ts";
+import { Platform, type PlatformPrototype } from "../../platform/Platform.ts";
+import { PlatformBuilder } from "../../platform/PlatformBuilder.ts";
+import { Target, type TargetPrototype } from "../../target/Target.ts";
+import { TargetBuilder } from "../../target/TargetBuilder.ts";
+import { Pipeline, type PipelineOptions, type PipelineTargetSteps } from "../Pipeline.ts";
+import { BuildkiteContext, type BuildkiteStep } from "./BuildkiteContext.ts";
+import { BuildkiteStepBuilder } from "./BuildkiteStepBuilder.ts";
 
 export class BuildkitePipelineTargetSteps implements PipelineTargetSteps<BuildkiteStep> {
-  private platform: Platform & _Platform<BuildkiteStep>;
-  private target: Target & _Target<BuildkiteStep>;
+  private platform: Platform & PlatformPrototype<BuildkiteStep>;
+  private target: Target & TargetPrototype<BuildkiteStep>;
   private options: PipelineOptions;
 
   constructor(platform: Platform, options: PipelineOptions) {
@@ -31,6 +28,7 @@ export class BuildkitePipelineTargetSteps implements PipelineTargetSteps<Buildki
       .setArch(platform.arch)
       .setAbi(platform.abi)
       .setBaseline(platform.baseline)
+      .setOptions(options)
       .build();
 
     this.options = options;
@@ -45,7 +43,7 @@ export class BuildkitePipelineTargetSteps implements PipelineTargetSteps<Buildki
       .setAgents(this.platform.getBuildAgent())
       .setRetry(Pipeline.getRetry())
       .setCancelOnBuildFailing(isMergeQueue())
-      .setEnv(Buildkite.getBuildEnv(this.platform))
+      .setEnv(BuildkiteContext.getBuildEnv(this.platform))
       .setDependsOn(this.platform.getDependsOn())
       .build();
   };
@@ -58,7 +56,7 @@ export class BuildkitePipelineTargetSteps implements PipelineTargetSteps<Buildki
       .setCancelOnBuildFailing(isMergeQueue())
       .setEnv({
         BUN_CPP_ONLY: "ON",
-        ...Buildkite.getBuildEnv(this.platform),
+        ...BuildkiteContext.getBuildEnv(this.platform),
       })
       .setDependsOn(this.platform.getDependsOn())
       .build();
@@ -74,7 +72,7 @@ export class BuildkitePipelineTargetSteps implements PipelineTargetSteps<Buildki
       .setAgents(this.target.getZigAgent())
       .setRetry(Pipeline.getRetry(1)) // FIXME: Sometimes zig build hangs, so we need to retry once
       .setCancelOnBuildFailing(isMergeQueue())
-      .setEnv(Buildkite.getBuildEnv(this.platform))
+      .setEnv(BuildkiteContext.getBuildEnv(this.platform))
       .setDependsOn(this.platform.getDependsOn())
       .build();
   };
@@ -92,7 +90,7 @@ export class BuildkitePipelineTargetSteps implements PipelineTargetSteps<Buildki
       .setCancelOnBuildFailing(isMergeQueue())
       .setEnv({
         BUN_LINK_ONLY: "ON",
-        ...Buildkite.getBuildEnv(this.platform),
+        ...BuildkiteContext.getBuildEnv(this.platform),
       })
       .build();
   };
@@ -100,7 +98,7 @@ export class BuildkitePipelineTargetSteps implements PipelineTargetSteps<Buildki
   getTestBunStep = (): BuildkiteStep => {
     return new BuildkiteStepBuilder(
       `${this.platform.getPlatformKey()}-test-bun`,
-      `./scripts/runner.node.mjs --step ${this.platform.getPlatformKey()}-build-bun`,
+      `bun ./ci/runner.node.ts --step ${this.platform.getPlatformKey()}-build-bun`,
     )
       .setLabel(`${this.platform.getPlatformLabel()} - test-bun`)
       .setDependsOn([...this.platform.getDependsOn(`${this.platform.getPlatformKey()}-test-bun`)])

@@ -516,7 +516,7 @@
       "request": "launch",
       "name": "bun test [*] (ci)",
       "program": "node",
-      "args": ["test/runner.node.mjs"],
+      "args": ["ci/runner.node.ts"],
       "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
@@ -1217,7 +1217,7 @@
       "request": "launch",
       "name": "Windows: bun test [*] (ci)",
       "program": "node",
-      "args": ["test/runner.node.mjs"],
+      "args": ["ci/runner.node.ts"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {

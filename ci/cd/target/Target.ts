@@ -1,6 +1,8 @@
-import { Abi, Agent, Arch, Os } from "../agent/Agent";
-import { Buildkite } from "../pipeline/buildkite/Buildkite._";
-import { PlatformBuilder } from "../platform/Platform.Builder";
+import { type Abi, type Agent, type Arch, type Os } from "../agent/Agent.ts";
+import { BuildkiteContext } from "../pipeline/buildkite/BuildkiteContext.ts";
+import { type PipelineOptions } from "../pipeline/Pipeline.ts";
+import { type PlatformPrototype } from "../platform/Platform.ts";
+import { PlatformBuilder } from "../platform/PlatformBuilder.ts";
 
 export interface Target {
   os: Os;
@@ -8,6 +10,15 @@ export interface Target {
   abi?: Abi | undefined;
   baseline?: boolean;
 }
+
+export type TargetPrototype<Step> = {
+  getTargetKey: () => string;
+  getTargetLabel: () => string;
+  getBuildToolchain: () => string;
+  getBuildAgent: (platform: PlatformPrototype<Step>) => Agent;
+  getZigAgent: () => Agent;
+  getParallelism: () => number;
+};
 
 export class Target {
   static getTargetKey = (target: Target): string => {
@@ -24,7 +35,7 @@ export class Target {
 
   static getTargetLabel = (target: Target): string => {
     const { os, arch, abi, baseline } = target;
-    let label = `${Buildkite.getEmoji(os)} ${arch}`;
+    let label = `${BuildkiteContext.getEmoji(os)} ${arch}`;
     if (abi) {
       label += `-${abi}`;
     }
@@ -54,10 +65,13 @@ export class Target {
    * @param {Target} target
    * @returns {Agent}
    */
-  static getBuildAgent = (target: Target): Agent => {
+  static getBuildAgent = (target: Target, options: PipelineOptions): Agent => {
     const { os, arch, abi } = target;
-    const platform = (() =>
-      (abi ? new PlatformBuilder().setAbi(abi) : new PlatformBuilder()).setOs(os).setArch(arch))().build();
+    const platform = (abi ? new PlatformBuilder().setAbi(abi) : new PlatformBuilder())
+      .setOs(os)
+      .setArch(arch)
+      .setOptions(options)
+      .build();
 
     if (platform.isUsingNewAgent()) {
       const instanceType = arch === "aarch64" ? "c8g.8xlarge" : "c7i.8xlarge";
@@ -75,7 +89,7 @@ export class Target {
    * @param {Target} target
    * @returns {Agent}
    */
-  static getZigAgent = (target: Target): Agent => {
+  static getZigAgent = (target: Target, options: PipelineOptions): Agent => {
     const { arch } = target;
     const instanceType = arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge";
     const image = `linux-${arch}-debian-11-v5`;
@@ -84,11 +98,12 @@ export class Target {
       .setDistro("debian")
       .setRelease("11")
       .setArch(arch)
+      .setOptions(options)
       .build();
 
-    return platform.getEmphemeralAgent("v2", { 
+    return platform.getEmphemeralAgent("v2", {
       instanceType,
-      image
+      image,
     });
     // TODO: Temporarily disable due to configuration
     // return {

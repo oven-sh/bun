@@ -1,21 +1,8 @@
-import { Abi, Agent, Arch, Os } from "../agent/Agent";
-import { PipelineOptions } from "../pipeline/Pipeline.Options._";
-import { Target } from "../target/Target._";
-import { Platform } from "./Platform._";
-import { PlatformTargets } from "./Platform.Targets";
-
-export type _Platform<Step> = {
-  getPlatformKey: () => string;
-  getPlatformLabel: () => string;
-  getImageKey: () => string;
-  getImageLabel: () => string;
-  isUsingNewAgent: () => boolean;
-  getEmphemeralAgent: (version: "v1" | "v2", instance: {image?: string; instanceType: string}) => Agent;
-  getTestAgent: () => Agent;
-  getBuildAgent: () => Agent;
-  getBuildImageStep: () => Step;
-  getDependsOn: (step?: string) => string[];
-};
+import { type Abi, type Arch, type Os } from "../agent/Agent.ts";
+import { type PipelineOptions } from "../pipeline/Pipeline.ts";
+import { Target } from "../target/Target.ts";
+import { Platform, type PlatformPrototype } from "./Platform.ts";
+import { PlatformTargets } from "./PlatformTargets.ts";
 
 export class PlatformBuilder<Step> {
   private os?: Os;
@@ -25,18 +12,6 @@ export class PlatformBuilder<Step> {
   private distro?: string;
   private release?: string;
   private options?: PipelineOptions;
-
-  static linux<Step>(arch: Arch, release: string): PlatformBuilder<Step> {
-    return new PlatformBuilder<Step>().setOs("linux").setArch(arch).setRelease(release);
-  }
-
-  static darwin<Step>(arch: Arch, release: string): PlatformBuilder<Step> {
-    return new PlatformBuilder<Step>().setOs("darwin").setArch(arch).setRelease(release);
-  }
-
-  static windows<Step>(arch: Arch, release: string): PlatformBuilder<Step> {
-    return new PlatformBuilder<Step>().setOs("windows").setArch(arch).setRelease(release);
-  }
 
   setArch(arch: Arch): this {
     this.arch = arch;
@@ -73,13 +48,17 @@ export class PlatformBuilder<Step> {
     return this;
   }
 
-  build(): Platform & _Platform<Step> {
+  build(): Platform & PlatformPrototype<Step> {
     if (!this.os) {
       throw new Error("os is required");
     }
 
     if (!this.arch) {
       throw new Error("arch is required");
+    }
+
+    if (!this.options) {
+      throw new Error("options required");
     }
 
     let platform: Platform = {
@@ -102,7 +81,7 @@ export class PlatformBuilder<Step> {
 
     return {
       ...platform,
-      getPlatformKey: () => Platform.getPlatformKey(platform),
+      getPlatformKey: () => Platform.getPlatformKey(platform, this.options!),
       getPlatformLabel: () => Platform.getPlatformLabel(platform),
       getImageKey: () => Platform.getImageKey(platform),
       getImageLabel: () => Platform.getImageLabel(platform),
@@ -112,7 +91,7 @@ export class PlatformBuilder<Step> {
       getTestAgent: () => Platform.getTestAgent(platform, this.options!),
       getBuildImageStep: () => Platform.getBuildImageStep(platform, this.options!) as Step,
       getDependsOn: (step?: string) => PlatformTargets.getDependsOn(platform, step, this.options),
-      getBuildAgent: () => Target.getBuildAgent(platform),
+      getBuildAgent: () => Target.getBuildAgent(platform, this.options!),
     };
   }
 }

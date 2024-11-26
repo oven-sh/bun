@@ -1,6 +1,6 @@
-import { PipelineOptions } from "../pipeline/Pipeline.Options._";
-import { Platform } from "./Platform._";
-import { PlatformBuilder } from "./Platform.Builder";
+import { type PipelineOptions } from "../pipeline/Pipeline.ts";
+import { type Platform } from "./Platform.ts";
+import { PlatformBuilder } from "./PlatformBuilder.ts";
 
 export class PlatformTargets {
   static buildPlatforms = <Step>(options: PipelineOptions) =>
@@ -30,7 +30,7 @@ export class PlatformTargets {
     );
 
   /**
-   * @type {Platform[]}
+   * @type {Function}
    */
   static testPlatforms = <Step>(options: PipelineOptions) =>
     (

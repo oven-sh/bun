@@ -1,19 +1,15 @@
-#!/usr/bin/env node --include=tsx
+#!/usr/bin/env node --experimental-strip-types
 
-// TODO: Install @types/node, check on status of running typescript on CI
-// @ts-ignore
-import { writeFileSync, mkdirSync } from "node:fs";
-// @ts-ignore
-import { join, dirname } from "node:path";
-import { PipelineOptionsBuilder } from "./cd/pipeline/Pipeline.Options.Builder";
-import { BuildkiteBuild } from "./cd/pipeline/buildkite/Buildkite.Build._";
-import { BuildkitePipeline } from "./cd/pipeline/buildkite/Buildkite.Pipeline._";
-import { uploadArtifact } from "./machine/Artifact";
-import { printEnvironment, spawnSafe } from "./machine/context/Process";
-import { getCanaryRevision, isBuildkite } from "./machine/executor/Buildkite";
-import { toYaml } from "./machine/format/Yaml";
-import { SpawnOptions } from "../scripts/utils.mjs";
-import { generateBuildkitePipeline } from "./codegen/Codegen.Buildkite.Pipeline";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { PipelineOptionsBuilder } from "./cd/pipeline/PipelineOptionsBuilder.ts";
+import { BuildkitePipeline, type BuildkiteBuild } from "./cd/pipeline/buildkite/BuildkitePipeline.ts";
+import { type SpawnOptions } from "./cd/runner/Spawn.ts";
+import { generateBuildkitePipeline } from "./codegen/buildkite-pipeline.ts";
+import { uploadArtifact } from "./machine/artifact.ts";
+import { printEnvironment, spawnSafe } from "./machine/context/process.ts";
+import { getCanaryRevision, isBuildkite } from "./machine/executor/buildkite.ts";
+import { toYaml } from "./machine/format/yaml.ts";
 
 async function writeBuildkitePipelineYaml({
   options,

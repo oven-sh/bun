@@ -1,5 +1,5 @@
-import { Agent } from "../../agent/Agent";
-import { BuildkiteStep } from "./Buildkite.Step._";
+import { type Agent } from "../../agent/Agent.ts";
+import { type BuildkiteStep } from "./BuildkiteContext.ts";
 
 export class BuildkiteStepBuilder {
   private key: string;

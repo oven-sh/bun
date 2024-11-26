@@ -8,4 +8,4 @@ function run_command() {
   { set +x; } 2>/dev/null
 }
 
-run_command npx -y tsx "ci/buildkite.ts"
+run_command npm --experimental-strip-types "ci/generate-buildkite-pipeline.node.ts"

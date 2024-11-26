@@ -1,10 +1,12 @@
-import { PipelineOptionsBuilder } from "../cd/pipeline/Pipeline.Options.Builder";
-import { getCommitMessage, isMainBranch } from "../machine/code/Git";
-import { isDocumentationFile, isTestFile } from "../resources/Files";
+import { PipelineOptionsBuilder } from "../cd/pipeline/PipelineOptionsBuilder.ts";
+import { getCommitMessage, isMainBranch } from "../machine/code/git.ts";
 
 type PipelineOptionsBuilderUnknown = PipelineOptionsBuilder<{ id: string }>;
 
-export class CommitMessage {
+const isDocumentationFile = (filename: string) => /^(\.vscode|\.github|bench|docs|examples)|\.(md)$/i.test(filename);
+const isTestFile = (filename: string) => /^test/i.test(filename) || /runner\.node\.mjs$/i.test(filename);
+
+export class CommitMessages {
   static force = ({ changedFiles }: Pick<PipelineOptionsBuilderUnknown, "changedFiles">) => {
     let forceBuild: boolean | undefined;
     let ciFileChanged: boolean | undefined;

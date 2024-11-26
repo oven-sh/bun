@@ -1,7 +1,43 @@
-import { CommitMessage } from "../../../command/CommitMessage";
-import { getEnv } from "../../../machine/context/Process";
-import { getLastSuccessfulBuild } from "../../../machine/executor/Buildkite";
-import { BuildkiteBuild } from "./Buildkite.Build._";
+import { CommitMessages } from "../../../command/CommitMessages.ts";
+import { getEnv } from "../../../machine/context/process.ts";
+import { getLastSuccessfulBuild } from "../../../machine/executor/buildkite.ts";
+import { type Agent } from "../../agent/Agent.ts";
+
+export type BuildkiteBuild = {
+  id: string;
+  commit_id: string;
+  branch_name: string;
+  state?: string;
+  path?: string;
+};
+
+/**
+ * @link https://buildkite.com/docs/pipelines/command-step
+ */
+export type BuildkiteStep = {
+  key: string;
+  label?: string;
+  agents?: Agent;
+  env?: Record<string, string | undefined>;
+  command?: string;
+  depends_on?: string[];
+  retry?: {
+    automatic: Array<{
+      exit_status?: number | undefined;
+      limit: number;
+      signal_reason?: string | undefined;
+    }>;
+  };
+  cancel_on_build_failing?: boolean;
+  soft_fail?: boolean | Record<string, number>[];
+  parallelism?: number;
+  concurrency?: number;
+  concurrency_group?: string;
+  priority?: number;
+  timeout_in_minutes?: number;
+  group?: string;
+  steps?: BuildkiteStep[];
+};
 
 export class BuildkitePipeline {
   constructor() {}
@@ -50,7 +86,7 @@ export class BuildkitePipeline {
       console.log(" - Yes, because RELEASE environment variable is set");
       return true;
     } else {
-      return CommitMessage.release() ?? false;
+      return CommitMessages.release() ?? false;
     }
   };
 }

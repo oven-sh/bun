@@ -1,11 +1,9 @@
-import { getBootstrapVersion, getBuildNumber } from "../../../scripts/utils.mjs";
-import { Abi, Agent, Arch, Os } from "../agent/Agent";
-import { Buildkite } from "../pipeline/buildkite/Buildkite._";
-import { BuildkiteStep } from "../pipeline/buildkite/Buildkite.Step._";
-import { Pipeline } from "../pipeline/Pipeline._";
-import { PipelineOptions } from "../pipeline/Pipeline.Options._";
-import { TargetBuilder } from "../target/Target.Builder";
-import { PlatformBuilder } from "./Platform.Builder";
+import { getBootstrapVersion, getBuildNumber } from "../../machine/context/process.ts";
+import { type Abi, type Agent, type Arch, type Os } from "../agent/Agent.ts";
+import { BuildkiteContext, type BuildkiteStep } from "../pipeline/buildkite/BuildkiteContext.ts";
+import { Pipeline, type PipelineOptions } from "../pipeline/Pipeline.ts";
+import { TargetBuilder } from "../target/TargetBuilder.ts";
+import { PlatformBuilder } from "./PlatformBuilder.ts";
 
 export interface Platform {
   os: Os;
@@ -16,10 +14,30 @@ export interface Platform {
   release: string;
 }
 
+export type PlatformPrototype<Step> = {
+  getPlatformKey: () => string;
+  getPlatformLabel: () => string;
+  getImageKey: () => string;
+  getImageLabel: () => string;
+  isUsingNewAgent: () => boolean;
+  getEmphemeralAgent: (version: "v1" | "v2", instance: { image?: string; instanceType: string }) => Agent;
+  getTestAgent: () => Agent;
+  getBuildAgent: () => Agent;
+  getBuildImageStep: () => Step;
+  getDependsOn: (step?: string) => string[];
+};
+
 export class Platform {
-  static getPlatformKey = (platform: Platform): string => {
+  static getPlatformKey = (platform: Platform, options: PipelineOptions): string => {
     const { os, arch, abi, baseline, distro, release } = platform;
-    const target = new TargetBuilder().setOs(os).setArch(arch).setAbi(abi).setBaseline(baseline).build().getTargetKey();
+    const target = new TargetBuilder()
+      .setOs(os)
+      .setArch(arch)
+      .setAbi(abi)
+      .setBaseline(baseline)
+      .setOptions(options)
+      .build()
+      .getTargetKey();
     if (distro) {
       return `${target}-${distro}-${release.replace(/\./g, "")}`;
     }
@@ -28,7 +46,7 @@ export class Platform {
 
   static getPlatformLabel = (platform: Platform): string => {
     const { os, arch, baseline, distro, release } = platform;
-    let label = `${Buildkite.getEmoji(distro || os)} ${release} ${arch}`;
+    let label = `${BuildkiteContext.getEmoji(distro || os)} ${release} ${arch}`;
     if (baseline) {
       label += "-baseline";
     }
@@ -49,7 +67,7 @@ export class Platform {
    */
   static getImageLabel = (platform: Platform): string => {
     const { os, arch, distro, release } = platform;
-    return `${Buildkite.getEmoji(distro || os)} ${release} ${arch}`;
+    return `${BuildkiteContext.getEmoji(distro || os)} ${release} ${arch}`;
   };
 
   /**
@@ -128,7 +146,7 @@ export class Platform {
 
     if (isUsingNewAgent()) {
       const instanceType = arch === "aarch64" ? "t4g.large" : "t3.large";
-      return getEmphemeralAgent("v2",  { instanceType });
+      return getEmphemeralAgent("v2", { instanceType });
     }
     if (os === "darwin") {
       return {

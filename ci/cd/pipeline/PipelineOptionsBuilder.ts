@@ -1,5 +1,5 @@
-import { CommitMessage } from "../../command/CommitMessage";
-import { PipelineOptions } from "./Pipeline.Options._";
+import { CommitMessages } from "../../command/CommitMessages.ts";
+import { type PipelineOptions } from "./Pipeline.ts";
 
 export class PipelineOptionsBuilder<Build extends { id: string }> {
   private skip: {
@@ -13,24 +13,27 @@ export class PipelineOptionsBuilder<Build extends { id: string }> {
   };
   public forceBuild: boolean;
   public ciFileChanged: boolean;
+  public lastBuild: Build | undefined;
+  public changedFiles: string[];
+  public buildRelease: boolean;
 
-  constructor(
-    public lastBuild: Build | undefined,
-    public changedFiles: string[],
-    public buildRelease: boolean,
-  ) {
-    let { forceBuild, ciFileChanged } = CommitMessage.force(this);
+  constructor(lastBuild: Build | undefined, changedFiles: string[], buildRelease: boolean) {
+    this.lastBuild = lastBuild;
+    this.changedFiles = changedFiles;
+    this.buildRelease = buildRelease;
+
+    let { forceBuild, ciFileChanged } = CommitMessages.force(this);
     {
       this.forceBuild = forceBuild ?? false;
       this.ciFileChanged = ciFileChanged ?? false;
     }
 
-    let skipAll = CommitMessage.skipCi(this);
-    let skipBuild = CommitMessage.skipBuild(this);
-    let skipTests = CommitMessage.skipTests();
-    let buildImages = CommitMessage.buildImages(this);
+    let skipAll = CommitMessages.skipCi(this);
+    let skipBuild = CommitMessages.skipBuild(this);
+    let skipTests = CommitMessages.skipTests();
+    let buildImages = CommitMessages.buildImages(this);
     let publishImages: boolean | undefined;
-    ({ buildImages, publishImages } = CommitMessage.publishImages(this));
+    ({ buildImages, publishImages } = CommitMessages.publishImages(this));
     {
       this.skip = {
         all: skipAll || false,

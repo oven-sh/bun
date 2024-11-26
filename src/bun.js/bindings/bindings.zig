@@ -3379,8 +3379,7 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwError(this: *JSGlobalObject, err: anyerror, comptime fmt: [:0]const u8) bun.JSError {
         if (err == error.OutOfMemory) {
-            this.throwOutOfMemory();
-            return error.JSError;
+            return this.throwOutOfMemory();
         }
 
         var str = ZigString.init(try std.fmt.allocPrint(this.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}));

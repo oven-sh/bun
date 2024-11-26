@@ -1304,11 +1304,9 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (try arg.getTruthy(global, "hostname") orelse try arg.getTruthy(global, "host")) |host| {
-                const host_str = host.toSlice(
-                    global,
-                    bun.default_allocator,
-                );
+            if (try arg.getStringish(global, "hostname") orelse try arg.getStringish(global, "host")) |host| {
+                defer host.deref();
+                const host_str = host.toUTF8(bun.default_allocator);
                 defer host_str.deinit();
 
                 if (host_str.len > 0) {
@@ -1318,11 +1316,9 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (try arg.getTruthy(global, "unix")) |unix| {
-                const unix_str = unix.toSlice(
-                    global,
-                    bun.default_allocator,
-                );
+            if (try arg.getStringish(global, "unix")) |unix| {
+                defer unix.deref();
+                const unix_str = unix.toUTF8(bun.default_allocator);
                 defer unix_str.deinit();
                 if (unix_str.len > 0) {
                     if (has_hostname) {
@@ -1359,7 +1355,7 @@ pub const ServerConfig = struct {
             if (global.hasException()) return error.JSError;
 
             if (try arg.getTruthy(global, "app")) |bake_args_js| {
-                if (!bun.FeatureFlags.bake) {
+                if (!bun.FeatureFlags.bake()) {
                     return global.throwInvalidArguments("To use the experimental \"app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
                 }
                 if (!allow_bake_config) {
@@ -1827,6 +1823,28 @@ pub const AnyRequestContext = struct {
             else => @panic("Unexpected AnyRequestContext tag"),
         }
     }
+
+    pub fn deref(self: AnyRequestContext) void {
+        if (self.tagged_pointer.isNull()) {
+            return;
+        }
+
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                self.tagged_pointer.as(HTTPServer.RequestContext).deref();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                self.tagged_pointer.as(HTTPSServer.RequestContext).deref();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                self.tagged_pointer.as(DebugHTTPServer.RequestContext).deref();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                self.tagged_pointer.as(DebugHTTPSServer.RequestContext).deref();
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
+        }
+    }
 };
 
 // This is defined separately partially to work-around an LLVM debugger bug.
@@ -2125,7 +2143,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     ctx.end("", ctx.shouldCloseConnection());
                     return;
                 }
-                // avoid writing the status again and missmatching the content-length
+                // avoid writing the status again and mismatching the content-length
                 if (ctx.flags.has_written_status) {
                     ctx.end("", ctx.shouldCloseConnection());
                     return;
@@ -5070,7 +5088,7 @@ pub const ServerWebSocket = struct {
 
         if (result.isAnyError()) {
             globalThis.throwValue(result);
-            return JSValue.jsUndefined();
+            return .zero;
         }
 
         return result;
@@ -5334,7 +5352,7 @@ pub const ServerWebSocket = struct {
         callframe: *JSC.CallFrame,
         comptime name: string,
         comptime opcode: uws.Opcode,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args = callframe.arguments_old(2);
 
         if (this.isClosed()) {
@@ -5381,8 +5399,7 @@ pub const ServerWebSocket = struct {
                         },
                     }
                 } else {
-                    globalThis.throwPretty("{s} requires a string or BufferSource", .{name});
-                    return .zero;
+                    return globalThis.throwPretty("{s} requires a string or BufferSource", .{name});
                 }
             }
         }
@@ -6499,33 +6516,25 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.destroy();
         }
 
-        pub fn init(config: ServerConfig, global: *JSGlobalObject) bun.JSOOM!*ThisServer {
+        pub fn init(config: *ServerConfig, global: *JSGlobalObject) bun.JSOOM!*ThisServer {
             const base_url = try bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/"));
             errdefer bun.default_allocator.free(base_url);
 
-            const dev_server = if (bun.FeatureFlags.bake) if (config.bake) |bake_options| dev_server: {
-                bun.Output.warn(
-                    \\Be advised that Bun Bake is highly experimental, and its API
-                    \\will have breaking changes. Join the <magenta>#bake<r> Discord
-                    \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
-                    \\
-                    \\
-                , .{});
-                bun.Output.flush();
+            const dev_server = if (config.bake) |*bake_options| dev_server: {
+                bun.bake.printWarning();
 
-                break :dev_server bun.bake.DevServer.init(.{
+                break :dev_server try bun.bake.DevServer.init(.{
+                    .arena = bake_options.arena.allocator(),
                     .root = bake_options.root,
                     .framework = bake_options.framework,
                     .vm = global.bunVM(),
-                }) catch |err| {
-                    return global.throwError(err, "while initializing Bun Dev Server");
-                };
-            } else null else null;
+                });
+            } else null;
             errdefer if (dev_server) |d| d.deinit();
 
             var server = ThisServer.new(.{
                 .globalThis = global,
-                .config = config,
+                .config = config.*,
                 .base_url_string_for_joining = base_url,
                 .vm = JSC.VirtualMachine.get(),
                 .allocator = Arena.getThreadlocalDefault(),
@@ -6533,12 +6542,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             });
 
             if (RequestContext.pool == null) {
-                RequestContext.pool = try server.allocator.create(RequestContext.RequestContextStackAllocator);
-                RequestContext.pool.?.* = RequestContext.RequestContextStackAllocator.init(
-                    if (comptime bun.heap_breakdown.enabled)
-                        bun.typedAllocator(RequestContext)
-                    else
-                        bun.default_allocator,
+                RequestContext.pool = bun.create(
+                    server.allocator,
+                    RequestContext.RequestContextStackAllocator,
+                    RequestContext.RequestContextStackAllocator.init(bun.typedAllocator(RequestContext)),
                 );
             }
 
@@ -6887,7 +6894,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 req: *uws.Request,
                 resp: *App.Response,
             ) SavedRequest {
-                _ = resp; // autofix
                 // By saving a request, all information from `req` must be
                 // copied since the provided uws.Request will be re-used for
                 // future requests (stack allocated).
@@ -6897,7 +6903,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     .js_request = JSC.Strong.create(prepared.js_request, global),
                     .request = prepared.request_object,
                     .ctx = AnyRequestContext.init(prepared.ctx),
-                    .response = uws.AnyResponse,
+                    .response = uws.AnyResponse.init(resp),
                 };
             }
         };
@@ -7257,6 +7263,12 @@ pub const SavedRequest = struct {
     js_request: JSC.Strong,
     request: *Request,
     ctx: AnyRequestContext,
+    response: uws.AnyResponse,
+
+    pub fn deinit(sr: *SavedRequest) void {
+        sr.js_request.deinit();
+        sr.ctx.deref();
+    }
 
     pub const Union = union(enum) {
         stack: *uws.Request,

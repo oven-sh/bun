@@ -508,7 +508,7 @@ pub const Crypto = struct {
             // i don't think its a real scenario, but just in case
             buf = globalThis.allocator().alloc(u8, keylen) catch {
                 globalThis.throw("Failed to allocate memory", .{});
-                return .undefined;
+                return .zero;
             };
             needs_deinit = true;
         } else {
@@ -565,7 +565,7 @@ pub const Crypto = struct {
         const len = a.len;
         if (b.len != len) {
             globalThis.throw("Input buffers must have the same byte length", .{});
-            return .undefined;
+            return .zero;
         }
         return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
     }
@@ -667,7 +667,7 @@ pub const Crypto = struct {
                         encoding_value = arguments[0];
                         break :brk JSC.Node.Encoding.fromJS(encoding_value, globalThis) orelse {
                             globalThis.ERR_UNKNOWN_ENCODING("Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
-                            return .undefined;
+                            return .zero;
                         };
                     }
                 }

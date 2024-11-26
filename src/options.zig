@@ -1454,6 +1454,7 @@ pub const BundleOptions = struct {
     tsconfig_override: ?string = null,
     target: Target = Target.browser,
     main_fields: []const string = Target.DefaultMainFields.get(Target.browser),
+    /// TODO: remove this in favor accessing bundler.log
     log: *logger.Log,
     external: ExternalModules = ExternalModules{},
     entry_points: []const string,

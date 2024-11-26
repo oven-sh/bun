@@ -2700,10 +2700,7 @@ pub const SemverObject = struct {
         };
     }
 
-    pub fn satisfies(
-        globalThis: *JSC.JSGlobalObject,
-        callFrame: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+    pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback = std.heap.stackFallback(512, arena.allocator());
@@ -2718,8 +2715,8 @@ pub const SemverObject = struct {
         const left_arg = arguments[0];
         const right_arg = arguments[1];
 
-        const left_string = left_arg.toStringOrNull(globalThis) orelse return .false;
-        const right_string = right_arg.toStringOrNull(globalThis) orelse return .false;
+        const left_string = left_arg.toStringOrNull(globalThis) orelse return .zero;
+        const right_string = right_arg.toStringOrNull(globalThis) orelse return .zero;
 
         const left = left_string.toSlice(globalThis, allocator);
         defer left.deinit();

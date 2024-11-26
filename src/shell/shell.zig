@@ -4398,8 +4398,7 @@ pub const TestingAPIs = struct {
 
         if (lex_result.errors.len > 0) {
             const str = lex_result.combineErrors(arena.allocator());
-            globalThis.throwPretty("{s}", .{str});
-            return .zero;
+            return globalThis.throwPretty("{s}", .{str});
         }
 
         var test_tokens = std.ArrayList(Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch {
@@ -4475,14 +4474,12 @@ pub const TestingAPIs = struct {
             if (err == ParseError.Lex) {
                 if (bun.Environment.allow_assert) assert(out_lex_result != null);
                 const str = out_lex_result.?.combineErrors(arena.allocator());
-                globalThis.throwPretty("{s}", .{str});
-                return .zero;
+                return globalThis.throwPretty("{s}", .{str});
             }
 
             if (out_parser) |*p| {
                 const errstr = p.combineErrors();
-                globalThis.throwPretty("{s}", .{errstr});
-                return .zero;
+                return globalThis.throwPretty("{s}", .{errstr});
             }
 
             return globalThis.throwError(err, "failed to lex/parse shell");

@@ -3303,37 +3303,24 @@ pub const JSGlobalObject = opaque {
         return err;
     }
 
-    pub fn throw(
-        this: *JSGlobalObject,
-        comptime fmt: [:0]const u8,
-        args: anytype,
-    ) void {
+    pub fn throw(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) void {
         const instance = this.createErrorInstance(fmt, args);
-        if (instance != .zero)
-            this.vm().throwError(this, instance);
+        bun.assert(instance != .zero);
+        this.vm().throwError(this, instance);
     }
 
-    pub fn throw2(
-        this: *JSGlobalObject,
-        comptime fmt: [:0]const u8,
-        args: anytype,
-    ) JSError {
+    pub fn throw2(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSError {
         const instance = this.createErrorInstance(fmt, args);
         bun.assert(instance != .zero);
         return this.vm().throwError2(this, instance);
     }
 
-    pub fn throwPretty(
-        this: *JSGlobalObject,
-        comptime fmt: [:0]const u8,
-        args: anytype,
-    ) void {
+    pub fn throwPretty(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
         const instance = switch (Output.enable_ansi_colors) {
             inline else => |enabled| this.createErrorInstance(Output.prettyFmt(fmt, enabled), args),
         };
-
-        if (instance != .zero)
-            this.vm().throwError(this, instance);
+        bun.assert(instance != .zero);
+        return this.vm().throwError2(this, instance);
     }
     extern fn JSC__JSGlobalObject__queueMicrotaskCallback(*JSGlobalObject, *anyopaque, Function: *const (fn (*anyopaque) callconv(.C) void)) void;
     pub fn queueMicrotaskCallback(

@@ -5330,7 +5330,7 @@ pub const ServerWebSocket = struct {
         callframe: *JSC.CallFrame,
         comptime name: string,
         comptime opcode: uws.Opcode,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const args = callframe.arguments_old(2);
 
         if (this.isClosed()) {
@@ -5377,8 +5377,7 @@ pub const ServerWebSocket = struct {
                         },
                     }
                 } else {
-                    globalThis.throwPretty("{s} requires a string or BufferSource", .{name});
-                    return .zero;
+                    return globalThis.throwPretty("{s} requires a string or BufferSource", .{name});
                 }
             }
         }

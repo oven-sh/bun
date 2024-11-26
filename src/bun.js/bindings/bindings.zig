@@ -5506,7 +5506,7 @@ pub const JSValue = enum(i64) {
             return error.JSError;
         }
 
-        const str = prop.toBunString(global);
+        const str = try prop.toBunString(global);
         if (global.hasException()) {
             str.deref();
             return error.JSError;

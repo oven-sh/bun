@@ -447,6 +447,8 @@ async function connectToUnixServer(
         }
       },
     },
+  }).catch(error => {
+    $debug("error:", error);
   });
 
   return socket;

@@ -66,7 +66,7 @@ pub const OS = struct {
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return .undefined;
+            return .zero;
         };
     }
 
@@ -313,11 +313,8 @@ pub const OS = struct {
         const arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
         if (arguments.len > 0 and !arguments[0].isNumber()) {
-            globalThis.ERR_INVALID_ARG_TYPE(
-                "getPriority() expects a number",
-                .{},
-            ).throw();
-            return .undefined;
+            globalThis.ERR_INVALID_ARG_TYPE("getPriority() expects a number", .{}).throw();
+            return .zero;
         }
 
         const pid = if (arguments.len > 0) arguments[0].asInt32() else 0;
@@ -339,7 +336,7 @@ pub const OS = struct {
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return .undefined;
+            return .zero;
         }
 
         return JSC.JSValue.jsNumberFromInt32(priority);
@@ -422,7 +419,7 @@ pub const OS = struct {
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return .undefined;
+            return .zero;
         }
         defer C.freeifaddrs(interface_start);
 
@@ -733,7 +730,7 @@ pub const OS = struct {
                 globalThis,
             );
             globalThis.vm().throwError(globalThis, err);
-            return .undefined;
+            return .zero;
         }
 
         const pid = if (arguments.len == 2) arguments[0].coerce(i32, globalThis) else 0;
@@ -747,7 +744,7 @@ pub const OS = struct {
                 globalThis,
             );
             globalThis.vm().throwError(globalThis, err);
-            return .undefined;
+            return .zero;
         }
 
         const errcode = C.setProcessPriority(pid, priority);
@@ -762,7 +759,7 @@ pub const OS = struct {
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return .undefined;
+                return .zero;
             },
             .ACCES => {
                 const err = JSC.SystemError{
@@ -774,7 +771,7 @@ pub const OS = struct {
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return .undefined;
+                return .zero;
             },
             else => {},
         }

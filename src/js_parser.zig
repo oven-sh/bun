@@ -1073,11 +1073,9 @@ pub const ImportScanner = struct {
         for (stmts) |_stmt| {
             var stmt = _stmt; // copy
             switch (stmt.data) {
-                .s_import => |st__| {
-                    var st = st__.*;
-                    defer {
-                        st__.* = st;
-                    }
+                .s_import => |import_ptr| {
+                    var st = import_ptr.*;
+                    defer import_ptr.* = st;
 
                     const record: *ImportRecord = &p.import_records.items[st.import_record_index];
 
@@ -5934,10 +5932,9 @@ fn NewParser_(
                         }
                     }
 
-                    return p.newExpr(E.Dot{
-                        .target = p.newExpr(E.Identifier.init(ns_alias.namespace_ref), loc),
-                        .name = ns_alias.alias,
-                        .name_loc = loc,
+                    return p.newExpr(E.ImportIdentifier{
+                        .ref = ident.ref,
+                        .was_originally_identifier = true,
                     }, loc);
                 }
             }
@@ -9805,12 +9802,12 @@ fn NewParser_(
                                 const namespace_ref = p.storeNameInRef(
                                     std.fmt.allocPrint(
                                         p.allocator,
-                                        "import_{any}",
+                                        "import_{}",
                                         .{
                                             path_name.fmtIdentifier(),
                                         },
-                                    ) catch unreachable,
-                                ) catch unreachable;
+                                    ) catch bun.outOfMemory(),
+                                ) catch bun.outOfMemory();
 
                                 if (comptime track_symbol_usage_during_parse_pass) {
                                     // In the scan pass, we need _some_ way of knowing *not* to mark as unused
@@ -16224,7 +16221,7 @@ fn NewParser_(
 
                     // Handle assigning to a constant
                     if (in.assign_target != .none) {
-                        if (p.symbols.items[result.ref.innerIndex()].kind == .constant) {
+                        if (p.symbols.items[result.ref.innerIndex()].kind == .constant) { // TODO: silence this for runtime transpiler
                             const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
                             var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
                             notes[0] = logger.Data{
@@ -22932,7 +22929,6 @@ fn NewParser_(
                     end += 1;
                 }
 
-                // TODO(@paperdave): leak
                 const non_exported_statements = stmts[0..end];
 
                 const caught_ref = p.generateTempRef("_catch");

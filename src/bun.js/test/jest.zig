@@ -1711,8 +1711,7 @@ inline fn createScope(
     const args = arguments.slice();
 
     if (args.len == 0) {
-        globalThis.throwPretty("{s} expects a description or function", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects a description or function", .{signature});
     }
 
     var description = args[0];
@@ -1726,8 +1725,7 @@ inline fn createScope(
 
     if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
         if (tag != .todo and tag != .skip) {
-            globalThis.throwPretty("{s} expects a function", .{signature});
-            return .zero;
+            return globalThis.throwPretty("{s} expects a function", .{signature});
         }
     }
 
@@ -1737,28 +1735,24 @@ inline fn createScope(
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
-                globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
             }
             timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
-                globalThis.throwPretty("{s} expects retry to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
             }
             // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
-                globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
             }
             // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
         }
     } else if (!options.isEmptyOrUndefinedOrNull()) {
-        globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
     }
 
     const parent = DescribeScope.active.?;
@@ -1858,13 +1852,12 @@ inline fn createIfScope(
     comptime signature: string,
     comptime Scope: type,
     comptime tag: Tag,
-) JSValue {
+) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(1);
     const args = arguments.slice();
 
     if (args.len == 0) {
-        globalThis.throwPretty("{s} expects a condition", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects a condition", .{signature});
     }
 
     const name = ZigString.static(property);
@@ -1981,8 +1974,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
     const args = arguments.slice();
 
     if (args.len < 2) {
-        globalThis.throwPretty("{s} a description and callback function", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} a description and callback function", .{signature});
     }
 
     var description = args[0];
@@ -1990,8 +1982,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
     var options = if (args.len > 2) args[2] else .zero;
 
     if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
-        globalThis.throwPretty("{s} expects a function", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects a function", .{signature});
     }
 
     var timeout_ms: u32 = std.math.maxInt(u32);
@@ -2000,28 +1991,24 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
-                globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
             }
             timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
-                globalThis.throwPretty("{s} expects retry to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
             }
             // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
-                globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
             }
             // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
         }
     } else if (!options.isEmptyOrUndefinedOrNull()) {
-        globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
     }
 
     const parent = DescribeScope.active.?;
@@ -2147,19 +2134,17 @@ inline fn createEach(
     comptime property: [:0]const u8,
     comptime signature: string,
     comptime is_test: bool,
-) JSValue {
+) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(1);
     const args = arguments.slice();
 
     if (args.len == 0) {
-        globalThis.throwPretty("{s} expects an array", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects an array", .{signature});
     }
 
     var array = args[0];
     if (array == .zero or !array.jsType().isArray()) {
-        globalThis.throwPretty("{s} expects an array", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects an array", .{signature});
     }
 
     const allocator = getAllocator(globalThis);

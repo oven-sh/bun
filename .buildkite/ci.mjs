@@ -965,6 +965,7 @@ async function getPipeline() {
   if (isBuildManual()) {
     steps.push({
       key: "options",
+      block: "Select options",
       fields: [
         {
           key: "canary",

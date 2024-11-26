@@ -3382,9 +3382,17 @@ pub const JSGlobalObject = opaque {
             return this.throwOutOfMemory();
         }
 
-        var str = ZigString.init(try std.fmt.allocPrint(this.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}));
-        defer this.bunVM().allocator.free(ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
-        str.markUTF8();
+        // If we're throwing JSError, that means either:
+        // - We're throwing an exception while another exception is already active
+        // - We're incorrectly returning JSError from a function that did not throw.
+        bun.debugAssert(err != error.JSError);
+
+        // Avoid tiny extra allocation
+        var stack = std.heap.stackFallback(128, bun.default_allocator);
+        const allocator_ = stack.get();
+        const buffer = try std.fmt.allocPrint(allocator_, comptime "{s} " ++ fmt, .{@errorName(err)});
+        defer allocator_.free(buffer);
+        const str = ZigString.initUTF8(buffer);
         const err_value = str.toErrorInstance(this);
         return this.vm().throwError2(this, err_value);
     }

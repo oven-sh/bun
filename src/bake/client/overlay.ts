@@ -11,10 +11,18 @@
 // added or previous ones are solved.
 import { BundlerMessageLevel } from "../enums";
 import { css } from "../macros" with { type: "macro" };
-import { BundlerMessage, BundlerMessageLocation, BundlerNote, decodeSerializedError, type DeserializedFailure } from "./error-serialization";
+import {
+  BundlerMessage,
+  BundlerMessageLocation,
+  BundlerNote,
+  decodeSerializedError,
+  type DeserializedFailure,
+} from "./error-serialization";
 import { DataViewReader } from "./reader";
 
 if (side !== "client") throw new Error("Not client side!");
+
+export let hasFatalError = false;
 
 // I would have used JSX, but TypeScript types interfere in odd ways.
 function elem(tagName: string, props?: null | Record<string, string>, children?: (HTMLElement | Text)[]) {
@@ -122,10 +130,18 @@ export function onErrorMessage(view: DataView) {
   updateErrorOverlay();
 }
 
-export function onErrorClearedMessage() {
-  errors.keys().forEach(key => updatedErrorOwners.add(key));
-  errors.clear();
-  updateErrorOverlay();
+export const enum RuntimeErrorType {
+  recoverable,
+  /** Requires that clearances perform a full page reload */
+  fatal,
+}
+
+export function onRuntimeError(err: any, type: RuntimeErrorType) {
+  if (type === RuntimeErrorType.fatal) {
+    hasFatalError = true;
+  }
+ 
+  console.error(err);
 }
 
 /**
@@ -172,11 +188,22 @@ export function updateErrorOverlay() {
     // Create the element for the root if it does not yet exist.
     if (!dom) {
       let title;
+      let btn;
       const root = elem("div", { class: "message-group" }, [
-        elem("button", { class: "file-name" }, [
-          title = textNode()
-        ]),
+        (btn = elem("button", { class: "file-name" }, [(title = textNode())])),
       ]);
+      btn.addEventListener("click", () => {
+        const firstLocation = errors.get(owner)?.messages[0]?.location;
+        if (!firstLocation) return;
+        let fileName = title.textContent.replace(/^\//, "");
+        fetch("/_bun/src/" + fileName, {
+          headers: {
+            "Open-In-Editor": "1",
+            "Editor-Line": firstLocation.line.toString(),
+            "Editor-Column": firstLocation.column.toString(),
+          },
+        });
+      });
       dom = { root, title, messages: [] };
       // TODO: sorted insert?
       domErrorList.appendChild(root);
@@ -203,50 +230,48 @@ export function updateErrorOverlay() {
   setModalVisible(true);
 }
 
-const bundleLogLevelToName = [
-  "error",
-  "warn",
-  "note",
-  "debug",
-  "verbose",
-];
+const bundleLogLevelToName = ["error", "warn", "note", "debug", "verbose"];
 
 function renderBundlerMessage(msg: BundlerMessage) {
-  return elem('div', { class: 'message' }, [
-    renderErrorMessageLine(msg.level, msg.message),
-    ...msg.location ? renderCodeLine(msg.location, msg.level) : [],
-    ...msg.notes.map(renderNote),
-  ].flat(1));
+  return elem(
+    "div",
+    { class: "message" },
+    [
+      renderErrorMessageLine(msg.level, msg.message),
+      ...(msg.location ? renderCodeLine(msg.location, msg.level) : []),
+      ...msg.notes.map(renderNote),
+    ].flat(1),
+  );
 }
 
 function renderErrorMessageLine(level: BundlerMessageLevel, text: string) {
   const levelName = bundleLogLevelToName[level];
-  if(IS_BUN_DEVELOPMENT && !levelName) {
+  if (IS_BUN_DEVELOPMENT && !levelName) {
     throw new Error("Unknown log level: " + level);
   }
-  return elem('div', { class: 'message-text' } , [
-    elemText('span', { class: 'log-' + levelName }, levelName),
-    elemText('span', { class: 'log-colon' }, ': '),
-    elemText('span', { class: 'log-text' }, text),
+  return elem("div", { class: "message-text" }, [
+    elemText("span", { class: "log-" + levelName }, levelName),
+    elemText("span", { class: "log-colon" }, ": "),
+    elemText("span", { class: "log-text" }, text),
   ]);
 }
 
 function renderCodeLine(location: BundlerMessageLocation, level: BundlerMessageLevel) {
   return [
-    elem('div', { class: 'code-line' }, [
-      elemText('code', { class: 'line-num' }, `${location.line}`),
-      elemText('pre', { class: 'code-view' }, location.lineText),
+    elem("div", { class: "code-line" }, [
+      elemText("code", { class: "line-num" }, `${location.line}`),
+      elemText("pre", { class: "code-view" }, location.lineText),
     ]),
-    elem('div', { class: 'highlight-wrap log-' + bundleLogLevelToName[level] }, [
-      elemText('span', { class: 'space' }, '_'.repeat(`${location.line}`.length + location.column - 1)),
-      elemText('span', { class: 'line' }, '_'.repeat(location.length)),
-    ])
+    elem("div", { class: "highlight-wrap log-" + bundleLogLevelToName[level] }, [
+      elemText("span", { class: "space" }, "_".repeat(`${location.line}`.length + location.column - 1)),
+      elemText("span", { class: "line" }, "_".repeat(location.length)),
+    ]),
   ];
 }
 
 function renderNote(note: BundlerNote) {
   return [
     renderErrorMessageLine(BundlerMessageLevel.note, note.message),
-    ...note.location ? renderCodeLine(note.location, BundlerMessageLevel.note) : [],
+    ...(note.location ? renderCodeLine(note.location, BundlerMessageLevel.note) : []),
   ];
 }

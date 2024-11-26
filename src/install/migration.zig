@@ -77,7 +77,7 @@ pub fn detectAndLoadOtherLockfile(
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
                 Output.prettyErrorln("Error: {s}", .{@errorName(err)});
-                log.printForLogLevel(Output.errorWriter()) catch {};
+                log.print(Output.errorWriter()) catch {};
                 Output.prettyErrorln("Invalid NPM package-lock.json\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
                 Global.exit(1);
             }
@@ -782,6 +782,7 @@ pub fn migrateNPMLockfile(
                         sliced.slice,
                         &sliced,
                         log,
+                        manager,
                     ) orelse {
                         return error.InvalidNPMLockfile;
                     };

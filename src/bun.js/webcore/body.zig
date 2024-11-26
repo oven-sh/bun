@@ -23,13 +23,11 @@ const Properties = @import("../base.zig").Properties;
 const castObj = @import("../base.zig").castObj;
 const getAllocator = @import("../base.zig").getAllocator;
 
-const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
-const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 const NullableAllocator = bun.NullableAllocator;
 
@@ -532,10 +530,7 @@ pub const Body = struct {
             }
         }
 
-        pub fn fromJS(
-            globalThis: *JSGlobalObject,
-            value: JSValue,
-        ) ?Value {
+        pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) bun.JSError!Value {
             value.ensureStillAlive();
 
             if (value.isEmptyOrUndefinedOrNull()) {
@@ -581,8 +576,7 @@ pub const Body = struct {
                         .InternalBlob = .{
                             .bytes = std.ArrayList(u8){
                                 .items = bun.default_allocator.dupe(u8, bytes) catch {
-                                    globalThis.vm().throwError(globalThis, ZigString.static("Failed to clone ArrayBufferView").toErrorInstance(globalThis));
-                                    return null;
+                                    return globalThis.vm().throwError2(globalThis, ZigString.static("Failed to clone ArrayBufferView").toErrorInstance(globalThis));
                                 },
                                 .capacity = bytes.len,
                                 .allocator = bun.default_allocator,
@@ -617,8 +611,7 @@ pub const Body = struct {
 
             if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |readable| {
                 if (readable.isDisturbed(globalThis)) {
-                    globalThis.throw("ReadableStream has already been used", .{});
-                    return null;
+                    return globalThis.throw2("ReadableStream has already been used", .{});
                 }
 
                 switch (readable.ptr) {
@@ -645,14 +638,13 @@ pub const Body = struct {
                 .Blob = Blob.get(globalThis, value, true, false) catch |err| {
                     if (!globalThis.hasException()) {
                         if (err == error.InvalidArguments) {
-                            globalThis.throwInvalidArguments("Expected an Array", .{});
-                            return null;
+                            return globalThis.throwInvalidArguments("Expected an Array", .{});
                         }
 
-                        globalThis.throwInvalidArguments("Invalid Body object", .{});
+                        return globalThis.throwInvalidArguments("Invalid Body object", .{});
                     }
 
-                    return null;
+                    return error.JSError;
                 },
             };
         }
@@ -1093,10 +1085,10 @@ pub const Body = struct {
     pub fn extract(
         globalThis: *JSGlobalObject,
         value: JSValue,
-    ) ?Body {
+    ) bun.JSError!Body {
         var body = Body{ .value = Value{ .Null = {} } };
 
-        body.value = Value.fromJS(globalThis, value) orelse return null;
+        body.value = try Value.fromJS(globalThis, value);
         if (body.value == .Blob)
             assert(body.value.Blob.allocator == null); // owned by Body
 
@@ -1110,7 +1102,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSC.JSValue {
+        ) bun.JSError!JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
@@ -1167,7 +1159,7 @@ pub fn BodyMixin(comptime Type: type) type {
         fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: JSC.WebCore.Lifetime) fn (*AnyBlob, *JSC.JSGlobalObject) JSC.JSValue {
             return struct {
                 fn wrap(this: *AnyBlob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-                    return Fn(this, globalObject, lifetime);
+                    return JSC.toJSHostValue(globalObject, Fn(this, globalObject, lifetime));
                 }
             }.wrap;
         }
@@ -1176,7 +1168,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSC.JSValue {
+        ) bun.JSError!JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
@@ -1206,7 +1198,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSC.JSValue {
+        ) bun.JSError!JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1234,7 +1226,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSC.JSValue {
+        ) bun.JSError!JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1260,7 +1252,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSC.JSValue {
+        ) bun.JSError!JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1310,7 +1302,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSC.JSValue {
+        ) bun.JSError!JSC.JSValue {
             return getBlobWithThisValue(this, globalObject, callframe.this());
         }
 
@@ -1512,15 +1504,15 @@ pub const BodyValueBufferer = struct {
         }
     }
 
-    pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
-        var args = callframe.arguments(2);
+    pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        var args = callframe.arguments_old(2);
         var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
         sink.handleResolveStream(true);
         return JSValue.jsUndefined();
     }
 
-    pub fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
-        const args = callframe.arguments(2);
+    pub fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const args = callframe.arguments_old(2);
         var sink = args.ptr[args.len - 1].asPromisePtr(@This());
         const err = args.ptr[0];
         sink.handleRejectStream(err, true);
@@ -1708,12 +1700,10 @@ pub const BodyValueBufferer = struct {
 
     comptime {
         if (!JSC.is_bindgen) {
-            @export(onResolveStream, .{
-                .name = Export[0].symbol_name,
-            });
-            @export(onRejectStream, .{
-                .name = Export[1].symbol_name,
-            });
+            const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
+            @export(jsonResolveStream, .{ .name = Export[0].symbol_name });
+            const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
+            @export(jsonRejectStream, .{ .name = Export[1].symbol_name });
         }
     }
 };

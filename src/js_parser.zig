@@ -1073,11 +1073,9 @@ pub const ImportScanner = struct {
         for (stmts) |_stmt| {
             var stmt = _stmt; // copy
             switch (stmt.data) {
-                .s_import => |st__| {
-                    var st = st__.*;
-                    defer {
-                        st__.* = st;
-                    }
+                .s_import => |import_ptr| {
+                    var st = import_ptr.*;
+                    defer import_ptr.* = st;
 
                     const record: *ImportRecord = &p.import_records.items[st.import_record_index];
 
@@ -2872,7 +2870,7 @@ pub const Parser = struct {
         use_define_for_class_fields: bool = false,
         suppress_warnings_about_weird_code: bool = true,
         filepath_hash_for_hmr: u32 = 0,
-        features: RuntimeFeatures = RuntimeFeatures{},
+        features: RuntimeFeatures = .{},
 
         tree_shaking: bool = false,
         bundle: bool = false,
@@ -2890,6 +2888,10 @@ pub const Parser = struct {
         /// Used for inlining the state of import.meta.main during visiting
         import_meta_main_value: ?bool = null,
         lower_import_meta_main_for_node_js: bool = false,
+
+        /// When using react fast refresh or server components, the framework is
+        /// able to customize what import sources are used.
+        framework: ?*bun.bake.Framework = null,
 
         pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
             bun.assert(!this.bundle);
@@ -2928,7 +2930,6 @@ pub const Parser = struct {
         pub fn init(jsx: options.JSX.Pragma, loader: options.Loader) Options {
             var opts = Options{
                 .ts = loader.isTypeScript(),
-
                 .jsx = jsx,
             };
             opts.jsx.parse = loader.isJSX();
@@ -3110,7 +3111,7 @@ pub const Parser = struct {
         const stmts = p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts) catch |err| {
             if (comptime Environment.isWasm) {
                 Output.print("JSParser.parse: caught error {s} at location: {d}\n", .{ @errorName(err), p.lexer.loc().start });
-                p.log.printForLogLevel(Output.writer()) catch {};
+                p.log.print(Output.writer()) catch {};
             }
             return err;
         };
@@ -3513,7 +3514,7 @@ pub const Parser = struct {
                     decls[0] = .{
                         .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
                         .value = p.newExpr(
-                            E.UTF8String{
+                            E.String{
                                 .data = p.source.path.name.dir,
                             },
                             logger.Loc.Empty,
@@ -3525,7 +3526,7 @@ pub const Parser = struct {
                     decls[@as(usize, @intFromBool(uses_dirname))] = .{
                         .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
                         .value = p.newExpr(
-                            E.UTF8String{
+                            E.String{
                                 .data = p.source.path.text,
                             },
                             logger.Loc.Empty,
@@ -4169,8 +4170,39 @@ pub const Parser = struct {
             }
         }
 
+        if (p.server_components_wrap_ref.isValid()) {
+            const fw = p.options.framework orelse @panic("server components requires a framework configured, but none was set");
+            const sc = fw.server_components.?;
+            try p.generateReactRefreshImport(
+                &before,
+                sc.server_runtime_import,
+                &.{
+                    .{
+                        .name = sc.server_register_client_reference,
+                        .ref = p.server_components_wrap_ref,
+                        .enabled = true,
+                    },
+                },
+            );
+        }
+
         if (p.react_refresh.register_used or p.react_refresh.signature_used) {
-            try p.generateReactRefreshImport(&before);
+            try p.generateReactRefreshImport(
+                &before,
+                if (p.options.framework) |fw| fw.react_fast_refresh.?.import_source else "react-refresh/runtime",
+                &.{
+                    .{
+                        .name = "register",
+                        .enabled = p.react_refresh.register_used,
+                        .ref = p.react_refresh.register_ref,
+                    },
+                    .{
+                        .name = "createSignatureFunctionForTransform",
+                        .enabled = p.react_refresh.signature_used,
+                        .ref = p.react_refresh.create_signature_ref,
+                    },
+                },
+            );
         }
 
         var parts_slice: []js_ast.Part = &([_]js_ast.Part{});
@@ -4789,9 +4821,13 @@ fn NewParser_(
 
         jsx_imports: JSXImport.Symbols = .{},
 
-        // only applicable when `.options.features.react_fast_refresh` is set.
-        // populated before visit pass starts.
+        /// only applicable when `.options.features.react_fast_refresh` is set.
+        /// populated before visit pass starts.
         react_refresh: ReactRefresh = .{},
+
+        /// only applicable when `.options.features.server_components` is
+        /// configured to wrap exports. populated before visit pass starts.
+        server_components_wrap_ref: Ref = Ref.None,
 
         jest: Jest = .{},
 
@@ -5896,10 +5932,9 @@ fn NewParser_(
                         }
                     }
 
-                    return p.newExpr(E.Dot{
-                        .target = p.newExpr(E.Identifier.init(ns_alias.namespace_ref), loc),
-                        .name = ns_alias.alias,
-                        .name_loc = loc,
+                    return p.newExpr(E.ImportIdentifier{
+                        .ref = ident.ref,
+                        .was_originally_identifier = true,
                     }, loc);
                 }
             }
@@ -6067,13 +6102,30 @@ fn NewParser_(
             }) catch unreachable;
         }
 
-        pub fn generateReactRefreshImport(p: *P, parts: *ListManaged(js_ast.Part)) !void {
+        pub fn generateReactRefreshImport(
+            p: *P,
+            parts: *ListManaged(js_ast.Part),
+            import_path: []const u8,
+            clauses: []const ReactRefreshImportClause,
+        ) !void {
             switch (p.options.features.hot_module_reloading) {
-                inline else => |hmr| try p.generateReactRefreshImportHmr(parts, hmr),
+                inline else => |hmr| try p.generateReactRefreshImportHmr(parts, import_path, clauses, hmr),
             }
         }
 
-        fn generateReactRefreshImportHmr(p: *P, parts: *ListManaged(js_ast.Part), comptime hot_module_reloading: bool) !void {
+        const ReactRefreshImportClause = struct {
+            name: []const u8,
+            enabled: bool,
+            ref: Ref,
+        };
+
+        fn generateReactRefreshImportHmr(
+            p: *P,
+            parts: *ListManaged(js_ast.Part),
+            import_path: []const u8,
+            clauses: []const ReactRefreshImportClause,
+            comptime hot_module_reloading: bool,
+        ) !void {
             // If `hot_module_reloading`, we are going to generate a require call:
             //
             //     const { $RefreshSig$, $RefreshReg$ } = require("react-refresh/runtime")`
@@ -6083,7 +6135,7 @@ fn NewParser_(
             // already a CommonJS module, and it will actually be more efficient
             // at runtime this way.
             const allocator = p.allocator;
-            const import_record_index = p.addImportRecordByRange(.stmt, logger.Range.None, "react-refresh/runtime");
+            const import_record_index = p.addImportRecordByRange(.stmt, logger.Range.None, import_path);
 
             const Item = if (hot_module_reloading) B.Object.Property else js_ast.ClauseItem;
 
@@ -6102,18 +6154,7 @@ fn NewParser_(
             });
             try p.module_scope.generated.push(allocator, namespace_ref);
 
-            inline for (.{
-                .{
-                    .name = "register",
-                    .enabled = p.react_refresh.register_used,
-                    .ref = p.react_refresh.register_ref,
-                },
-                .{
-                    .name = "createSignatureFunctionForTransform",
-                    .enabled = p.react_refresh.signature_used,
-                    .ref = p.react_refresh.create_signature_ref,
-                },
-            }) |entry| {
+            for (clauses) |entry| {
                 if (entry.enabled) {
                     items.appendAssumeCapacity(if (hot_module_reloading) .{
                         .key = p.newExpr(E.String{ .data = entry.name }, logger.Loc.Empty),
@@ -6749,8 +6790,18 @@ fn NewParser_(
             }
 
             if (p.options.features.react_fast_refresh) {
-                p.react_refresh.create_signature_ref = (try p.declareGeneratedSymbol(.other, "$RefreshSig$"));
-                p.react_refresh.register_ref = (try p.declareGeneratedSymbol(.other, "$RefreshReg$"));
+                p.react_refresh.create_signature_ref = try p.declareGeneratedSymbol(.other, "$RefreshSig$");
+                p.react_refresh.register_ref = try p.declareGeneratedSymbol(.other, "$RefreshReg$");
+            }
+
+            switch (p.options.features.server_components) {
+                .none, .client_side => {},
+                .wrap_exports_for_client_reference => {
+                    p.server_components_wrap_ref = try p.declareGeneratedSymbol(.other, "registerClientReference");
+                },
+                // TODO: these wrapping modes.
+                .wrap_anon_server_functions => {},
+                .wrap_exports_for_server_reference => {},
             }
         }
 
@@ -9751,12 +9802,12 @@ fn NewParser_(
                                 const namespace_ref = p.storeNameInRef(
                                     std.fmt.allocPrint(
                                         p.allocator,
-                                        "import_{any}",
+                                        "import_{}",
                                         .{
                                             path_name.fmtIdentifier(),
                                         },
-                                    ) catch unreachable,
-                                ) catch unreachable;
+                                    ) catch bun.outOfMemory(),
+                                ) catch bun.outOfMemory();
 
                                 if (comptime track_symbol_usage_during_parse_pass) {
                                     // In the scan pass, we need _some_ way of knowing *not* to mark as unused
@@ -11014,7 +11065,7 @@ fn NewParser_(
             if (strings.eqlComptime(name, "require") and p.lexer.token == .t_open_paren) {
                 // "import ns = require('x')"
                 try p.lexer.next();
-                const path = p.newExpr(p.lexer.toEString(), p.lexer.loc());
+                const path = p.newExpr(try p.lexer.toEString(), p.lexer.loc());
                 try p.lexer.expect(.t_string_literal);
                 try p.lexer.expect(.t_close_paren);
                 if (!opts.is_typescript_declare) {
@@ -11052,16 +11103,16 @@ fn NewParser_(
         fn parseClauseAlias(p: *P, kind: string) !string {
             const loc = p.lexer.loc();
 
-            // The alias may now be a string (see https://github.com/tc39/ecma262/pull/2154)
+            // The alias may now be a utf-16 (not wtf-16) string (see https://github.com/tc39/ecma262/pull/2154)
             if (p.lexer.token == .t_string_literal) {
-                if (p.lexer.string_literal_is_ascii) {
-                    return p.lexer.string_literal_slice;
-                } else if (p.lexer.utf16ToStringWithValidation(p.lexer.string_literal)) |alias| {
-                    return alias;
-                } else |_| {
+                var estr = try p.lexer.toEString();
+                if (estr.isUTF8()) {
+                    return estr.slice8();
+                } else if (strings.toUTF8AllocWithTypeWithoutInvalidSurrogatePairs(p.lexer.allocator, []const u16, estr.slice16())) |alias_utf8| {
+                    return alias_utf8;
+                } else |err| {
                     const r = p.source.rangeOfString(loc);
-                    // TODO: improve error message
-                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Invalid {s} alias because it contains an unpaired Unicode surrogate (like emoji)", .{kind});
+                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Invalid {s} alias because it contains an unpaired Unicode surrogate ({s})", .{ kind, @errorName(err) });
                     return p.source.textForRange(r);
                 }
             }
@@ -11735,7 +11786,7 @@ fn NewParser_(
 
                 // Parse the name
                 if (p.lexer.token == .t_string_literal) {
-                    value.name = p.lexer.toUTF8EString().data;
+                    value.name = (try p.lexer.toUTF8EString()).slice8();
                     needs_symbol = js_lexer.isIdentifier(value.name);
                 } else if (p.lexer.isIdentifierOrKeyword()) {
                     value.name = p.lexer.identifier;
@@ -12084,9 +12135,10 @@ fn NewParser_(
         }
 
         pub fn parsePath(p: *P) !ParsedPath {
+            const path_text = try p.lexer.toUTF8EString();
             var path = ParsedPath{
                 .loc = p.lexer.loc(),
-                .text = p.lexer.string_literal_slice,
+                .text = path_text.slice8(),
                 .is_macro = false,
                 .import_tag = .none,
             };
@@ -12126,11 +12178,10 @@ fn NewParser_(
                                 }
                             }
                         } else if (p.lexer.token == .t_string_literal) {
-                            if (p.lexer.string_literal_is_ascii) {
-                                inline for (comptime std.enums.values(SupportedAttribute)) |t| {
-                                    if (strings.eqlComptime(p.lexer.string_literal_slice, @tagName(t))) {
-                                        break :brk t;
-                                    }
+                            const string_literal_text = (try p.lexer.toUTF8EString()).slice8();
+                            inline for (comptime std.enums.values(SupportedAttribute)) |t| {
+                                if (strings.eqlComptime(string_literal_text, @tagName(t))) {
+                                    break :brk t;
                                 }
                             }
                         } else {
@@ -12144,44 +12195,43 @@ fn NewParser_(
                     try p.lexer.expect(.t_colon);
 
                     try p.lexer.expect(.t_string_literal);
-                    if (p.lexer.string_literal_is_ascii) {
-                        if (supported_attribute) |attr| {
-                            switch (attr) {
-                                .type => {
-                                    const type_attr = p.lexer.string_literal_slice;
-                                    if (strings.eqlComptime(type_attr, "macro")) {
-                                        path.is_macro = true;
-                                    } else if (strings.eqlComptime(type_attr, "sqlite")) {
-                                        path.import_tag = .with_type_sqlite;
-                                        if (has_seen_embed_true) {
-                                            path.import_tag = .with_type_sqlite_embedded;
-                                        }
-                                    } else if (strings.eqlComptime(type_attr, "json")) {
-                                        path.import_tag = .with_type_json;
-                                    } else if (strings.eqlComptime(type_attr, "toml")) {
-                                        path.import_tag = .with_type_toml;
-                                    } else if (strings.eqlComptime(type_attr, "text")) {
-                                        path.import_tag = .with_type_text;
-                                    } else if (strings.eqlComptime(type_attr, "file")) {
-                                        path.import_tag = .with_type_file;
+                    const string_literal_text = (try p.lexer.toUTF8EString()).slice8();
+                    if (supported_attribute) |attr| {
+                        switch (attr) {
+                            .type => {
+                                const type_attr = string_literal_text;
+                                if (strings.eqlComptime(type_attr, "macro")) {
+                                    path.is_macro = true;
+                                } else if (strings.eqlComptime(type_attr, "sqlite")) {
+                                    path.import_tag = .with_type_sqlite;
+                                    if (has_seen_embed_true) {
+                                        path.import_tag = .with_type_sqlite_embedded;
                                     }
-                                },
-                                .embed => {
-                                    if (strings.eqlComptime(p.lexer.string_literal_slice, "true")) {
-                                        has_seen_embed_true = true;
-                                        if (path.import_tag == .with_type_sqlite) {
-                                            path.import_tag = .with_type_sqlite_embedded;
-                                        }
+                                } else if (strings.eqlComptime(type_attr, "json")) {
+                                    path.import_tag = .with_type_json;
+                                } else if (strings.eqlComptime(type_attr, "toml")) {
+                                    path.import_tag = .with_type_toml;
+                                } else if (strings.eqlComptime(type_attr, "text")) {
+                                    path.import_tag = .with_type_text;
+                                } else if (strings.eqlComptime(type_attr, "file")) {
+                                    path.import_tag = .with_type_file;
+                                }
+                            },
+                            .embed => {
+                                if (strings.eqlComptime(string_literal_text, "true")) {
+                                    has_seen_embed_true = true;
+                                    if (path.import_tag == .with_type_sqlite) {
+                                        path.import_tag = .with_type_sqlite_embedded;
                                     }
-                                },
-                                .bunBakeGraph => {
-                                    if (strings.eqlComptime(p.lexer.string_literal_slice, "ssr")) {
-                                        path.import_tag = .bake_resolve_to_ssr_graph;
-                                    } else {
-                                        try p.lexer.addRangeError(p.lexer.range(), "'bunBakeGraph' can only be set to 'ssr'", .{}, true);
-                                    }
-                                },
-                            }
+                                }
+                            },
+                            .bunBakeGraph => {
+                                if (strings.eqlComptime(string_literal_text, "ssr")) {
+                                    path.import_tag = .bake_resolve_to_ssr_graph;
+                                } else {
+                                    try p.lexer.addRangeError(p.lexer.range(), "'bunBakeGraph' can only be set to 'ssr'", .{}, true);
+                                }
+                            },
                         }
                     }
 
@@ -12405,13 +12455,12 @@ fn NewParser_(
         }
 
         fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, comptime name: string) !Ref {
-            const genName = generatedSymbolName(name);
+            // The bundler runs the renamer, so it is ok to not append a hash
             if (p.options.bundle) {
-                const ref = try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, genName, true);
-                return ref;
+                return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, name, true);
             }
 
-            return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, genName, true);
+            return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, generatedSymbolName(name), true);
         }
 
         fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
@@ -13735,7 +13784,7 @@ fn NewParser_(
                 try p.lexer.rescanCloseBraceAsTemplateToken();
 
                 const tail: E.Template.Contents = brk: {
-                    if (!include_raw) break :brk .{ .cooked = p.lexer.toEString() };
+                    if (!include_raw) break :brk .{ .cooked = try p.lexer.toEString() };
                     break :brk .{ .raw = p.lexer.rawTemplateContents() };
                 };
 
@@ -13761,7 +13810,7 @@ fn NewParser_(
         // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
         pub fn parseStringLiteral(p: *P) anyerror!Expr {
             const loc = p.lexer.loc();
-            var str = p.lexer.toEString();
+            var str = try p.lexer.toEString();
             str.prefer_template = p.lexer.token == .t_no_substitution_template_literal;
 
             const expr = p.newExpr(str, loc);
@@ -14647,7 +14696,7 @@ fn NewParser_(
             }
 
             p.log.level = .verbose;
-            p.log.printForLogLevel(panic_stream.writer()) catch unreachable;
+            p.log.print(panic_stream.writer()) catch unreachable;
 
             Output.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
         }
@@ -14846,7 +14895,7 @@ fn NewParser_(
                     return try p.parseStringLiteral();
                 },
                 .t_template_head => {
-                    const head = p.lexer.toEString();
+                    const head = try p.lexer.toEString();
 
                     const parts = try p.parseTemplateParts(false);
 
@@ -15433,7 +15482,7 @@ fn NewParser_(
             try p.lexer.nextInsideJSXElement();
             if (p.lexer.token == .t_string_literal) {
                 previous_string_with_backslash_loc.start = @max(p.lexer.loc().start, p.lexer.previous_backslash_quote_in_jsx.loc.start);
-                const expr = p.newExpr(p.lexer.toEString(), previous_string_with_backslash_loc.*);
+                const expr = p.newExpr(try p.lexer.toEString(), previous_string_with_backslash_loc.*);
 
                 try p.lexer.nextInsideJSXElement();
                 return expr;
@@ -15569,7 +15618,7 @@ fn NewParser_(
                                 //  <div foo="foo" />
                                 // note: template literals are not supported, operations on strings are not supported either
                                 T.t_string_literal => {
-                                    const key = p.newExpr(p.lexer.toEString(), p.lexer.loc());
+                                    const key = p.newExpr(try p.lexer.toEString(), p.lexer.loc());
                                     try p.lexer.next();
                                     try props.append(G.Property{ .value = key, .key = key, .kind = .normal });
                                 },
@@ -15642,7 +15691,7 @@ fn NewParser_(
             while (true) {
                 switch (p.lexer.token) {
                     .t_string_literal => {
-                        try children.append(p.newExpr(p.lexer.toEString(), loc));
+                        try children.append(p.newExpr(try p.lexer.toEString(), loc));
                         try p.lexer.nextJSXElementChild();
                     },
                     .t_open_brace => {
@@ -16172,7 +16221,7 @@ fn NewParser_(
 
                     // Handle assigning to a constant
                     if (in.assign_target != .none) {
-                        if (p.symbols.items[result.ref.innerIndex()].kind == .constant) {
+                        if (p.symbols.items[result.ref.innerIndex()].kind == .constant) { // TODO: silence this for runtime transpiler
                             const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
                             var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
                             notes[0] = logger.Data{
@@ -16292,24 +16341,7 @@ fn NewParser_(
 
                             const runtime = if (p.options.jsx.runtime == .automatic) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
                             const is_key_after_spread = e_.flags.contains(.is_key_after_spread);
-                            var children_count = e_.children.len;
-
-                            const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and
-                                tag.data == .e_string and tag.data.e_string.isUTF8() and js_lexer.ChildlessJSXTags.has(tag.data.e_string.slice(p.allocator));
-
-                            children_count = if (is_childless_tag) 0 else children_count;
-
-                            if (children_count != e_.children.len) {
-                                // Error: meta is a void element tag and must neither have `children` nor use `dangerouslySetInnerHTML`.
-                                // ^ from react-dom
-                                p.log.addWarningFmt(
-                                    p.source,
-                                    tag.loc,
-                                    p.allocator,
-                                    "\\<{s} /> is a void element and must not have \"children\"",
-                                    .{tag.data.e_string.slice(p.allocator)},
-                                ) catch {};
-                            }
+                            const children_count = e_.children.len;
 
                             // TODO: maybe we should split these into two different AST Nodes
                             // That would reduce the amount of allocations a little
@@ -17457,6 +17489,31 @@ fn NewParser_(
                         if (!ReactRefresh.isHookName(original_name)) break :try_record_hook;
                         p.handleReactRefreshHookCall(e_, original_name);
                     }
+
+                    // Implement constant folding for 'string'.charCodeAt(n)
+                    if (e_.args.len == 1) if (e_.target.data.as(.e_dot)) |dot| {
+                        if (dot.target.data == .e_string and
+                            dot.target.data.e_string.isUTF8() and
+                            bun.strings.eqlComptime(dot.name, "charCodeAt"))
+                        {
+                            const str = dot.target.data.e_string.data;
+                            const arg1 = e_.args.at(0).unwrapInlined();
+                            if (arg1.data == .e_number) {
+                                const float = arg1.data.e_number.value;
+                                if (@mod(float, 1) == 0 and
+                                    float < @as(f64, @floatFromInt(str.len)) and
+                                    float >= 0)
+                                {
+                                    const char = str[@intFromFloat(float)];
+                                    if (char < 0x80) {
+                                        return p.newExpr(E.Number{
+                                            .value = @floatFromInt(char),
+                                        }, expr.loc);
+                                    }
+                                }
+                            }
+                        }
+                    };
 
                     return expr;
                 },
@@ -18647,12 +18704,11 @@ fn NewParser_(
                 },
                 // TODO: e_inlined_enum -> .e_string -> "length" should inline the length
                 .e_string => |str| {
-                    // Disable until https://github.com/oven-sh/bun/issues/4217 is fixed
-                    if (comptime FeatureFlags.minify_javascript_string_length) {
-                        if (p.options.features.minify_syntax) {
-                            // minify "long-string".length to 11
-                            if (strings.eqlComptime(name, "length")) {
-                                return p.newExpr(E.Number{ .value = @floatFromInt(str.javascriptLength()) }, loc);
+                    if (p.options.features.minify_syntax) {
+                        // minify "long-string".length to 11
+                        if (strings.eqlComptime(name, "length")) {
+                            if (str.javascriptLength()) |len| {
+                                return p.newExpr(E.Number{ .value = @floatFromInt(len) }, loc);
                             }
                         }
                     }
@@ -19386,6 +19442,22 @@ fn NewParser_(
                     data.kind = kind;
                     try stmts.append(stmt.*);
 
+                    if (data.is_export and p.options.features.server_components.wrapsExports()) {
+                        for (data.decls.slice()) |*decl| try_annotate: {
+                            const val = decl.value orelse break :try_annotate;
+                            switch (val.data) {
+                                .e_arrow, .e_function => {},
+                                else => break :try_annotate,
+                            }
+                            const id = switch (decl.binding.data) {
+                                .b_identifier => |id| id.ref,
+                                else => break :try_annotate,
+                            };
+                            const original_name = p.symbols.items[id.innerIndex()].original_name;
+                            decl.value = p.wrapValueForServerComponentReference(val, original_name);
+                        }
+                    }
+
                     if (p.options.features.react_fast_refresh and p.current_scope == p.module_scope) {
                         for (data.decls.slice()) |decl| try_register: {
                             const val = decl.value orelse break :try_register;
@@ -19929,7 +20001,25 @@ fn NewParser_(
                             return;
                         }
 
-                        stmts.append(stmt.*) catch bun.outOfMemory();
+                        if (p.options.features.server_components.wrapsExports() and data.func.flags.contains(.is_export)) {
+                            // Convert this into `export var <name> = registerClientReference(<func>, ...);`
+                            const name = data.func.name.?;
+                            // From the inner scope, have code reference the wrapped function.
+                            data.func.name = null;
+                            try stmts.append(p.s(S.Local{
+                                .kind = .k_var,
+                                .is_export = true,
+                                .decls = try G.Decl.List.fromSlice(p.allocator, &.{.{
+                                    .binding = p.b(B.Identifier{ .ref = name_ref }, name.loc),
+                                    .value = p.wrapValueForServerComponentReference(
+                                        p.newExpr(E.Function{ .func = data.func }, stmt.loc),
+                                        original_name,
+                                    ),
+                                }}),
+                            }, stmt.loc));
+                        } else {
+                            stmts.append(stmt.*) catch bun.outOfMemory();
+                        }
                     } else if (mark_as_dead) {
                         if (p.options.features.replace_exports.getPtr(original_name)) |replacement| {
                             _ = p.injectReplacementExport(stmts, name_ref, data.func.name.?.loc, replacement);
@@ -22839,7 +22929,6 @@ fn NewParser_(
                     end += 1;
                 }
 
-                // TODO(@paperdave): leak
                 const non_exported_statements = stmts[0..end];
 
                 const caught_ref = p.generateTempRef("_catch");
@@ -23015,6 +23104,35 @@ fn NewParser_(
 
                 p.react_refresh.register_used = true;
             }
+        }
+
+        pub fn wrapValueForServerComponentReference(p: *P, val: Expr, original_name: []const u8) Expr {
+            bun.assert(p.options.features.server_components.wrapsExports());
+            bun.assert(p.current_scope == p.module_scope);
+
+            if (p.options.features.server_components == .wrap_exports_for_server_reference)
+                bun.todoPanic(@src(), "registerServerReference", .{});
+
+            const module_path = p.newExpr(E.String{
+                .data = if (p.options.jsx.development)
+                    p.source.path.pretty
+                else
+                    bun.todoPanic(@src(), "TODO: unique_key here", .{}),
+            }, logger.Loc.Empty);
+
+            // registerClientReference(
+            //   Comp,
+            //   "src/filepath.tsx",
+            //   "Comp"
+            // );
+            return p.newExpr(E.Call{
+                .target = Expr.initIdentifier(p.server_components_wrap_ref, logger.Loc.Empty),
+                .args = js_ast.ExprNodeList.fromSlice(p.allocator, &.{
+                    val,
+                    module_path,
+                    p.newExpr(E.String{ .data = original_name }, logger.Loc.Empty),
+                }) catch bun.outOfMemory(),
+            }, logger.Loc.Empty);
         }
 
         pub fn handleReactRefreshHookCall(p: *P, hook_call: *E.Call, original_name: []const u8) void {

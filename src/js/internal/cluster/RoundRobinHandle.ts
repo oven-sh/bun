@@ -94,7 +94,7 @@ export default class RoundRobinHandle {
       remove(handle);
     }
 
-    this.handle.close();
+    this.handle?.stop(false);
     this.handle = null;
     return true;
   }

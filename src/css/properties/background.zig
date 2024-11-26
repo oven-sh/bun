@@ -5,6 +5,8 @@ const ArrayList = std.ArrayListUnmanaged;
 
 pub const css = @import("../css_parser.zig");
 
+const Property = css.Property;
+const VendorPrefix = css.VendorPrefix;
 const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -42,6 +44,11 @@ pub const Background = struct {
     origin: BackgroundOrigin,
     /// How the background should be clipped.
     clip: BackgroundClip,
+
+    pub fn deinit(_: *@This(), _: Allocator) void {
+        // TODO: implement this
+        // not necessary right now because all allocations in CSS parser are in arena
+    }
 
     pub fn parse(input: *css.Parser) css.Result(@This()) {
         var color: ?CssColor = null;
@@ -201,6 +208,33 @@ pub const Background = struct {
                 try dest.writeStr("none");
             }
         }
+    }
+
+    pub fn getImage(this: *const @This()) *const Image {
+        return &this.image;
+    }
+
+    pub fn withImage(this: *const @This(), allocator: Allocator, image: Image) @This() {
+        var ret = this.*;
+        ret.image = .none;
+        ret = ret.deepClone(allocator);
+        ret.image = image;
+        return ret;
+    }
+
+    pub fn getFallback(this: *const @This(), allocator: Allocator, kind: css.ColorFallbackKind) Background {
+        var ret: Background = this.*;
+        // Dummy values for the clone
+        ret.color = CssColor.default();
+        ret.image = Image.default();
+        ret = ret.deepClone(allocator);
+        ret.color = this.color.getFallback(allocator, kind);
+        ret.image = this.image.getFallback(allocator, kind);
+        return ret;
+    }
+
+    pub fn getNecessaryFallbacks(this: *const @This(), targets: css.targets.Targets) css.ColorFallbackKind {
+        return this.color.getNecessaryFallbacks(targets).bitwiseOr(this.getImage().getNecessaryFallbacks(targets));
     }
 
     pub inline fn deepClone(this: *const @This(), allocator: Allocator) @This() {
@@ -393,6 +427,10 @@ pub const BackgroundRepeat = struct {
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
     }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A [`<repeat-style>`](https://www.w3.org/TR/css-backgrounds-3/#typedef-repeat-style) value,
@@ -456,6 +494,10 @@ pub const BackgroundClip = enum {
 
     pub usingnamespace css.DefineEnumProperty(@This());
 
+    pub fn default() BackgroundClip {
+        return .@"border-box";
+    }
+
     pub fn eqlOrigin(this: *const @This(), other: *const BackgroundOrigin) bool {
         return switch (this.*) {
             .@"border-box" => other.* == .@"border-box",
@@ -480,3 +522,533 @@ pub const AspectRatio = struct {
     /// A preferred aspect ratio for the box, specified as width / height.
     ratio: ?Ratio,
 };
+
+pub const BackgroundProperty = packed struct(u16) {
+    @"background-color": bool = false,
+    @"background-image": bool = false,
+    @"background-position-x": bool = false,
+    @"background-position-y": bool = false,
+    @"background-repeat": bool = false,
+    @"background-size": bool = false,
+    @"background-attachment": bool = false,
+    @"background-origin": bool = false,
+    @"background-clip": bool = false,
+    __unused: u7 = 0,
+
+    pub usingnamespace css.Bitflags(@This());
+
+    pub const @"background-color" = BackgroundProperty{ .@"background-color" = true };
+    pub const @"background-image" = BackgroundProperty{ .@"background-image" = true };
+    pub const @"background-position-x" = BackgroundProperty{ .@"background-position-x" = true };
+    pub const @"background-position-y" = BackgroundProperty{ .@"background-position-y" = true };
+    pub const @"background-position" = BackgroundProperty{ .@"background-position-x" = true, .@"background-position-y" = true };
+    pub const @"background-repeat" = BackgroundProperty{ .@"background-repeat" = true };
+    pub const @"background-size" = BackgroundProperty{ .@"background-size" = true };
+    pub const @"background-attachment" = BackgroundProperty{ .@"background-attachment" = true };
+    pub const @"background-origin" = BackgroundProperty{ .@"background-origin" = true };
+    pub const @"background-clip" = BackgroundProperty{ .@"background-clip" = true };
+    pub const background = BackgroundProperty{
+        .@"background-color" = true,
+        .@"background-image" = true,
+        .@"background-position-x" = true,
+        .@"background-position-y" = true,
+        .@"background-repeat" = true,
+        .@"background-size" = true,
+        .@"background-attachment" = true,
+        .@"background-origin" = true,
+        .@"background-clip" = true,
+    };
+
+    pub fn fromPropertyId(property_id: css.PropertyId) ?BackgroundProperty {
+        return switch (property_id) {
+            .@"background-color" => BackgroundProperty{ .@"background-color" = true },
+            .@"background-image" => BackgroundProperty{ .@"background-image" = true },
+            .@"background-position-x" => BackgroundProperty{ .@"background-position-x" = true },
+            .@"background-position-y" => BackgroundProperty{ .@"background-position-y" = true },
+            .@"background-position" => BackgroundProperty{ .@"background-position-x" = true, .@"background-position-y" = true },
+            .@"background-repeat" => BackgroundProperty{ .@"background-repeat" = true },
+            .@"background-size" => BackgroundProperty{ .@"background-size" = true },
+            .@"background-attachment" => BackgroundProperty{ .@"background-attachment" = true },
+            .@"background-origin" => BackgroundProperty{ .@"background-origin" = true },
+            .background => BackgroundProperty{
+                .@"background-color" = true,
+                .@"background-image" = true,
+                .@"background-position-x" = true,
+                .@"background-position-y" = true,
+                .@"background-repeat" = true,
+                .@"background-size" = true,
+                .@"background-attachment" = true,
+                .@"background-origin" = true,
+                .@"background-clip" = true,
+            },
+            else => null,
+        };
+    }
+};
+
+pub const BackgroundHandler = struct {
+    color: ?CssColor = null,
+    images: ?css.SmallList(Image, 1) = null,
+    has_prefix: bool = false,
+    x_positions: ?css.SmallList(HorizontalPosition, 1) = null,
+    y_positions: ?css.SmallList(VerticalPosition, 1) = null,
+    repeats: ?css.SmallList(BackgroundRepeat, 1) = null,
+    sizes: ?css.SmallList(BackgroundSize, 1) = null,
+    attachments: ?css.SmallList(BackgroundAttachment, 1) = null,
+    origins: ?css.SmallList(BackgroundOrigin, 1) = null,
+    clips: ?struct { css.SmallList(BackgroundClip, 1), VendorPrefix } = null,
+    decls: ArrayList(Property) = undefined,
+    flushed_properties: BackgroundProperty = undefined,
+    has_any: bool = false,
+
+    pub fn handleProperty(
+        this: *BackgroundHandler,
+        property: *const Property,
+        dest: *css.DeclarationList,
+        context: *css.PropertyHandlerContext,
+    ) bool {
+        const allocator = context.allocator;
+        switch (property.*) {
+            .@"background-color" => |*val| {
+                this.flushHelper(allocator, "color", CssColor, val, dest, context);
+                this.color = val.deepClone(allocator);
+            },
+            .@"background-image" => |*val| {
+                this.backgroundHelper(allocator, SmallList(Image, 1), val, property, dest, context);
+                this.images = val.deepClone(allocator);
+            },
+            .@"background-position" => |val| {
+                const x_positions = this.initSmallListHelper(HorizontalPosition, 1, "x_positions", allocator, val.len());
+                const y_positions = this.initSmallListHelper(VerticalPosition, 1, "y_positions", allocator, val.len());
+                for (val.slice(), x_positions, y_positions) |position, *x, *y| {
+                    x.* = position.x.deepClone(allocator);
+                    y.* = position.y.deepClone(allocator);
+                }
+            },
+            .@"background-position-x" => |val| {
+                if (this.x_positions) |*x_positions| x_positions.deinit(allocator);
+                this.x_positions = val.deepClone(allocator);
+            },
+            .@"background-position-y" => |val| {
+                if (this.y_positions) |*y_positions| y_positions.deinit(allocator);
+                this.y_positions = val.deepClone(allocator);
+            },
+            .@"background-repeat" => |val| {
+                if (this.repeats) |*repeats| repeats.deinit(allocator);
+                this.repeats = val.deepClone(allocator);
+            },
+            .@"background-size" => |val| {
+                if (this.sizes) |*sizes| sizes.deinit(allocator);
+                this.sizes = val.deepClone(allocator);
+            },
+            .@"background-attachment" => |val| {
+                if (this.attachments) |*attachments| attachments.deinit(allocator);
+                this.attachments = val.deepClone(allocator);
+            },
+            .@"background-origin" => |val| {
+                if (this.origins) |*origins| origins.deinit(allocator);
+                this.origins = val.deepClone(allocator);
+            },
+            .@"background-clip" => |*x| {
+                const val: *const SmallList(BackgroundClip, 1) = &x.*[0];
+                const vendor_prefix: VendorPrefix = x.*[1];
+                if (this.clips) |*clips_and_vp| {
+                    var clips: *SmallList(BackgroundClip, 1) = &clips_and_vp.*[0];
+                    const vp: *VendorPrefix = &clips_and_vp.*[1];
+                    if (!vendor_prefix.eql(vp.*) and !val.eql(clips)) {
+                        this.flush(allocator, dest, context);
+                        clips.deinit(allocator);
+                        this.clips = .{ val.deepClone(allocator), vendor_prefix };
+                    } else {
+                        if (!val.eql(clips)) {
+                            clips.deinit(allocator);
+                            clips.* = val.deepClone(allocator);
+                        }
+                        vp.insert(vendor_prefix);
+                    }
+                } else {
+                    this.clips = .{ val.deepClone(allocator), vendor_prefix };
+                }
+            },
+            .background => |*val| {
+                var images = SmallList(Image, 1).initCapacity(allocator, val.len());
+                for (val.slice()) |*b| {
+                    images.appendAssumeCapacity(b.image.deepClone(allocator));
+                }
+                this.backgroundHelper(allocator, SmallList(Image, 1), &images, property, dest, context);
+                const color = val.last().?.color.deepClone(allocator);
+                this.flushHelper(allocator, "color", CssColor, &color, dest, context);
+                var clips = SmallList(BackgroundClip, 1).initCapacity(allocator, val.len());
+                for (val.slice()) |*b| {
+                    clips.appendAssumeCapacity(b.clip.deepClone(allocator));
+                }
+                var clips_vp = VendorPrefix{ .none = true };
+                if (this.clips) |*clips_and_vp| {
+                    if (!clips_vp.eql(clips_and_vp.*[1]) and !clips_and_vp.*[0].eql(&clips_and_vp[0])) {
+                        this.flush(allocator, dest, context);
+                    } else {
+                        clips_vp.insert(clips_and_vp.*[1]);
+                    }
+                }
+
+                if (this.color) |*c| c.deinit(allocator);
+                this.color = color;
+                if (this.images) |*i| i.deinit(allocator);
+                this.images = images;
+                const x_positions = this.initSmallListHelper(HorizontalPosition, 1, "x_positions", allocator, val.len());
+                const y_positions = this.initSmallListHelper(VerticalPosition, 1, "y_positions", allocator, val.len());
+                const repeats = this.initSmallListHelper(BackgroundRepeat, 1, "repeats", allocator, val.len());
+                const sizes = this.initSmallListHelper(BackgroundSize, 1, "sizes", allocator, val.len());
+                const attachments = this.initSmallListHelper(BackgroundAttachment, 1, "attachments", allocator, val.len());
+                const origins = this.initSmallListHelper(BackgroundOrigin, 1, "origins", allocator, val.len());
+
+                for (
+                    val.slice(),
+                    x_positions,
+                    y_positions,
+                    repeats,
+                    sizes,
+                    attachments,
+                    origins,
+                ) |*b, *x, *y, *r, *s, *a, *o| {
+                    x.* = b.position.x.deepClone(allocator);
+                    y.* = b.position.y.deepClone(allocator);
+                    r.* = b.repeat.deepClone(allocator);
+                    s.* = b.size.deepClone(allocator);
+                    a.* = b.attachment.deepClone(allocator);
+                    o.* = b.origin.deepClone(allocator);
+                }
+
+                this.clips = .{ clips, clips_vp };
+            },
+            .unparsed => |*val| {
+                if (isBackgroundProperty(val.property_id)) {
+                    this.flush(allocator, dest, context);
+                    var unparsed = val.deepClone(allocator);
+                    context.addUnparsedFallbacks(&unparsed);
+                    if (BackgroundProperty.fromPropertyId(val.property_id)) |prop| {
+                        this.flushed_properties.insert(prop);
+                    }
+
+                    dest.append(allocator, Property{ .unparsed = unparsed }) catch bun.outOfMemory();
+                } else return false;
+            },
+            else => return false,
+        }
+
+        this.has_any = true;
+        return true;
+    }
+
+    // Either get the value from the field on `this` or initialize a new one
+    fn initSmallListHelper(
+        this: *@This(),
+        comptime T: type,
+        comptime N: comptime_int,
+        comptime field: []const u8,
+        allocator: Allocator,
+        length: u32,
+    ) []T {
+        if (@field(this, field)) |*list| {
+            list.clearRetainingCapacity();
+            list.ensureTotalCapacity(allocator, length);
+            list.setLen(length);
+            return list.slice_mut();
+        } else {
+            @field(this, field) = SmallList(T, N).initCapacity(allocator, length);
+            @field(this, field).?.setLen(length);
+            return @field(this, field).?.slice_mut();
+        }
+    }
+
+    fn backgroundHelper(
+        this: *@This(),
+        allocator: Allocator,
+        comptime T: type,
+        val: *const T,
+        property: *const Property,
+        dest: *css.DeclarationList,
+        context: *css.PropertyHandlerContext,
+    ) void {
+        this.flushHelper(allocator, "images", T, val, dest, context);
+
+        // Store prefixed properties. Clear if we hit an unprefixed property and we have
+        // targets. In this case, the necessary prefixes will be generated.
+        this.has_prefix = val.any(struct {
+            pub fn predicate(item: *const Image) bool {
+                return item.hasVendorPrefix();
+            }
+        }.predicate);
+        if (this.has_prefix) {
+            this.decls.append(allocator, property.deepClone(allocator)) catch bun.outOfMemory();
+        } else if (context.targets.browsers != null) {
+            this.decls.clearRetainingCapacity();
+        }
+    }
+
+    fn flushHelper(
+        this: *@This(),
+        allocator: Allocator,
+        comptime field: []const u8,
+        comptime T: type,
+        val: *const T,
+        dest: *css.DeclarationList,
+        context: *css.PropertyHandlerContext,
+    ) void {
+        if (@field(this, field) != null and
+            !@field(this, field).?.eql(val) and
+            context.targets.browsers != null and !val.isCompatible(context.targets.browsers.?))
+        {
+            this.flush(allocator, dest, context);
+        }
+    }
+
+    fn flush(this: *@This(), allocator: Allocator, dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
+        if (!this.has_any) return;
+        this.has_any = false;
+        const push = struct {
+            fn push(self: *BackgroundHandler, alloc: Allocator, d: *css.DeclarationList, comptime property_field_name: []const u8, val: anytype) void {
+                d.append(alloc, @unionInit(Property, property_field_name, val)) catch bun.outOfMemory();
+                const prop = @field(BackgroundProperty, property_field_name);
+                self.flushed_properties.insert(prop);
+            }
+        }.push;
+
+        var maybe_color: ?CssColor = bun.take(&this.color);
+        var maybe_images: ?css.SmallList(Image, 1) = bun.take(&this.images);
+        var maybe_x_positions: ?css.SmallList(HorizontalPosition, 1) = bun.take(&this.x_positions);
+        var maybe_y_positions: ?css.SmallList(VerticalPosition, 1) = bun.take(&this.y_positions);
+        var maybe_repeats: ?css.SmallList(BackgroundRepeat, 1) = bun.take(&this.repeats);
+        var maybe_sizes: ?css.SmallList(BackgroundSize, 1) = bun.take(&this.sizes);
+        var maybe_attachments: ?css.SmallList(BackgroundAttachment, 1) = bun.take(&this.attachments);
+        var maybe_origins: ?css.SmallList(BackgroundOrigin, 1) = bun.take(&this.origins);
+        var maybe_clips: ?struct { css.SmallList(BackgroundClip, 1), css.VendorPrefix } = bun.take(&this.clips);
+        defer {
+            if (maybe_color) |*c| c.deinit(allocator);
+            if (maybe_images) |*i| i.deinit(allocator);
+            if (maybe_x_positions) |*x| x.deinit(allocator);
+            if (maybe_y_positions) |*y| y.deinit(allocator);
+            if (maybe_repeats) |*r| r.deinit(allocator);
+            if (maybe_sizes) |*s| s.deinit(allocator);
+            if (maybe_attachments) |*a| a.deinit(allocator);
+            if (maybe_origins) |*o| o.deinit(allocator);
+            if (maybe_clips) |*c| c.*[0].deinit(allocator);
+        }
+
+        if (maybe_color != null and
+            maybe_images != null and
+            maybe_x_positions != null and
+            maybe_y_positions != null and
+            maybe_repeats != null and
+            maybe_sizes != null and
+            maybe_attachments != null and
+            maybe_origins != null and
+            maybe_clips != null)
+        {
+            const color = &maybe_color.?;
+            var images = &maybe_images.?;
+            var x_positions = &maybe_x_positions.?;
+            var y_positions = &maybe_y_positions.?;
+            var repeats = &maybe_repeats.?;
+            var sizes = &maybe_sizes.?;
+            var attachments = &maybe_attachments.?;
+            var origins = &maybe_origins.?;
+            var clips = &maybe_clips.?;
+
+            // Only use shorthand syntax if the number of layers matches on all properties.
+            const len = images.len();
+            if (x_positions.len() == len and
+                y_positions.len() == len and
+                repeats.len() == len and
+                sizes.len() == len and attachments.len() == len and origins.len() == len and clips[0].len() == len)
+            {
+                const clip_prefixes = if (clips.*[0].any(struct {
+                    fn predicate(clip: *const BackgroundClip) bool {
+                        return clip.* == BackgroundClip.text;
+                    }
+                }.predicate)) context.targets.prefixes(clips.*[1], .background_clip) else clips.*[1];
+                const clip_property = if (!clip_prefixes.eql(css.VendorPrefix{ .none = true }))
+                    css.Property{ .@"background-clip" = .{ clips.*[0].deepClone(allocator), clip_prefixes } }
+                else
+                    null;
+
+                var backgrounds = SmallList(Background, 1).initCapacity(allocator, len);
+                for (
+                    images.slice(),
+                    x_positions.slice(),
+                    y_positions.slice(),
+                    repeats.slice(),
+                    sizes.slice(),
+                    attachments.slice(),
+                    origins.slice(),
+                    clips.*[0].slice(),
+                    0..,
+                ) |image, x_position, y_position, repeat, size, attachment, origin, clip, i| {
+                    backgrounds.appendAssumeCapacity(Background{
+                        .color = if (i == len - 1) color.deepClone(allocator) else CssColor.default(),
+                        .image = image,
+                        .position = BackgroundPosition{ .x = x_position, .y = y_position },
+                        .repeat = repeat,
+                        .size = size,
+                        .attachment = attachment,
+                        .origin = origin,
+                        .clip = if (clip_prefixes.eql(css.VendorPrefix{ .none = true })) clip else BackgroundClip.default(),
+                    });
+                }
+                defer {
+                    images.clearRetainingCapacity();
+                    x_positions.clearRetainingCapacity();
+                    y_positions.clearRetainingCapacity();
+                    repeats.clearRetainingCapacity();
+                    sizes.clearRetainingCapacity();
+                    attachments.clearRetainingCapacity();
+                    origins.clearRetainingCapacity();
+                    clips.*[0].clearRetainingCapacity();
+                }
+
+                if (!this.flushed_properties.intersects(BackgroundProperty.background)) {
+                    for (backgrounds.getFallbacks(allocator, context.targets).slice()) |fallback| {
+                        push(this, allocator, dest, "background", fallback);
+                    }
+                }
+
+                push(this, allocator, dest, "background", backgrounds);
+
+                if (clip_property) |clip| {
+                    dest.append(allocator, clip) catch bun.outOfMemory();
+                    this.flushed_properties.insert(BackgroundProperty.@"background-clip");
+                }
+
+                this.reset(allocator);
+                return;
+            }
+        }
+
+        if (bun.take(&maybe_color)) |color_| {
+            var color: CssColor = color_;
+            if (!this.flushed_properties.contains(BackgroundProperty.@"background-color")) {
+                for (color.getFallbacks(allocator, context.targets).slice()) |fallback| {
+                    push(this, allocator, dest, "background-color", fallback);
+                }
+            }
+            push(this, allocator, dest, "background-color", color);
+        }
+
+        if (bun.take(&maybe_images)) |images_| {
+            var images: css.SmallList(Image, 1) = images_;
+            if (!this.flushed_properties.contains(BackgroundProperty.@"background-image")) {
+                var fallbacks = images.getFallbacks(allocator, context.targets);
+                for (fallbacks.slice()) |fallback| {
+                    push(this, allocator, dest, "background-image", fallback);
+                }
+            }
+            push(this, allocator, dest, "background-image", images);
+        }
+
+        if (maybe_x_positions != null and maybe_y_positions != null and maybe_x_positions.?.len() == maybe_y_positions.?.len()) {
+            var positions = SmallList(BackgroundPosition, 1).initCapacity(allocator, maybe_x_positions.?.len());
+            for (maybe_x_positions.?.slice(), maybe_y_positions.?.slice()) |x, y| {
+                positions.appendAssumeCapacity(BackgroundPosition{ .x = x, .y = y });
+            }
+            maybe_x_positions.?.clearRetainingCapacity();
+            maybe_y_positions.?.clearRetainingCapacity();
+            push(this, allocator, dest, "background-position", positions);
+        } else {
+            if (bun.take(&maybe_x_positions)) |x| {
+                push(this, allocator, dest, "background-position-x", x);
+            }
+            if (bun.take(&maybe_y_positions)) |y| {
+                push(this, allocator, dest, "background-position-y", y);
+            }
+        }
+
+        if (bun.take(&maybe_repeats)) |rep| {
+            push(this, allocator, dest, "background-repeat", rep);
+        }
+
+        if (bun.take(&maybe_sizes)) |rep| {
+            push(this, allocator, dest, "background-size", rep);
+        }
+
+        if (bun.take(&maybe_attachments)) |rep| {
+            push(this, allocator, dest, "background-attachment", rep);
+        }
+
+        if (bun.take(&maybe_origins)) |rep| {
+            push(this, allocator, dest, "background-origin", rep);
+        }
+
+        if (bun.take(&maybe_clips)) |c| {
+            const clips: css.SmallList(BackgroundClip, 1), const vp: css.VendorPrefix = c;
+            const prefixes = if (clips.any(struct {
+                pub fn predicate(clip: *const BackgroundClip) bool {
+                    return clip.* == BackgroundClip.text;
+                }
+            }.predicate)) context.targets.prefixes(vp, css.prefixes.Feature.background_clip) else vp;
+            dest.append(
+                allocator,
+                Property{
+                    .@"background-clip" = .{ clips.deepClone(allocator), prefixes },
+                },
+            ) catch bun.outOfMemory();
+            this.flushed_properties.insert(BackgroundProperty.@"background-clip");
+        }
+
+        this.reset(allocator);
+    }
+
+    fn reset(this: *@This(), allocator: Allocator) void {
+        if (this.color) |c| c.deinit(allocator);
+        this.color = null;
+        if (this.images) |*i| i.deinit(allocator);
+        this.images = null;
+        if (this.x_positions) |*x| x.deinit(allocator);
+        this.x_positions = null;
+        if (this.y_positions) |*y| y.deinit(allocator);
+        this.y_positions = null;
+        if (this.repeats) |*r| r.deinit(allocator);
+        this.repeats = null;
+        if (this.sizes) |*s| s.deinit(allocator);
+        this.sizes = null;
+        if (this.attachments) |*a| a.deinit(allocator);
+        this.attachments = null;
+        if (this.origins) |*o| o.deinit(allocator);
+        this.origins = null;
+        if (this.clips) |*c| c.*[0].deinit(allocator);
+        this.clips = null;
+    }
+
+    pub fn finalize(this: *@This(), dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
+        const allocator = context.allocator;
+        // If the last declaration is prefixed, pop the last value
+        // so it isn't duplicated when we flush.
+        if (this.has_prefix) {
+            var prop = this.decls.pop();
+            prop.deinit(allocator);
+        }
+
+        dest.appendSlice(allocator, this.decls.items) catch bun.outOfMemory();
+        this.decls.clearRetainingCapacity();
+
+        this.flush(allocator, dest, context);
+        this.flushed_properties = BackgroundProperty.empty();
+    }
+};
+
+fn isBackgroundProperty(property_id: css.PropertyId) bool {
+    return switch (property_id) {
+        .@"background-color",
+        .@"background-image",
+        .@"background-position",
+        .@"background-position-x",
+        .@"background-position-y",
+        .@"background-repeat",
+        .@"background-size",
+        .@"background-attachment",
+        .@"background-origin",
+        .@"background-clip",
+        .background,
+        => true,
+        else => false,
+    };
+}

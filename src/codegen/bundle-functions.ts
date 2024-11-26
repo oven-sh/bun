@@ -221,6 +221,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const build = await Bun.build({
       entrypoints: [tmpFile],
       define,
+      target: "bun",
       minify: { syntax: true, whitespace: false },
     });
     if (!build.success) {
@@ -229,7 +230,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     if (build.outputs.length !== 1) {
       throw new Error("expected one output");
     }
-    const output = await build.outputs[0].text();
+    let output = (await build.outputs[0].text()).replaceAll("// @bun\n", "");
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];

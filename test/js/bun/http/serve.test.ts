@@ -2073,3 +2073,95 @@ it("allow custom timeout per request", async () => {
   expect(res.status).toBe(200);
   expect(res.text()).resolves.toBe("Hello, World!");
 }, 20_000);
+
+it("#6462", async () => {
+  let headers: string[] = [];
+  using server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      for (const key of request.headers.keys()) {
+        headers = headers.concat([[key, request.headers.get(key)]]);
+      }
+      return new Response(
+        JSON.stringify({
+          "headers": headers,
+        }),
+        { status: 200 },
+      );
+    },
+  });
+
+  const bytes = Buffer.from(`GET / HTTP/1.1\r\nConnection: close\r\nHost: ${server.hostname}\r\nTest!: test\r\n\r\n`);
+  const { promise, resolve } = Promise.withResolvers();
+  await Bun.connect({
+    port: server.port,
+    hostname: server.hostname,
+    socket: {
+      open(socket) {
+        const wrote = socket.write(bytes);
+        console.log("wrote", wrote);
+      },
+      data(socket, data) {
+        console.log(data.toString("utf8"));
+      },
+      close(socket) {
+        resolve();
+      },
+    },
+  });
+  await promise;
+
+  expect(headers).toStrictEqual([
+    ["connection", "close"],
+    ["host", "localhost"],
+    ["test!", "test"],
+  ]);
+});
+
+it("#6583", async () => {
+  const callback = mock();
+  using server = Bun.serve({
+    fetch: callback,
+    port: 0,
+    hostname: "localhost",
+  });
+  const { promise, resolve } = Promise.withResolvers();
+  await Bun.connect({
+    port: server.port,
+    hostname: server.hostname,
+    tls: true,
+    socket: {
+      open(socket) {
+        socket.write("GET / HTTP/1.1\r\nConnection: close\r\nHost: localhost\r\n\r\n");
+      },
+      data(socket, data) {
+        console.log(data.toString("utf8"));
+      },
+      close(socket) {
+        resolve();
+      },
+    },
+  });
+  await promise;
+  expect(callback).not.toHaveBeenCalled();
+});
+
+it("do the best effort to flush everything", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(ctrl) {
+            ctrl.write("b");
+            await Bun.sleep(10);
+            ctrl.write("un");
+          },
+        }),
+      );
+    },
+  });
+  let response = await fetch(server.url);
+  expect(await response.text()).toBe("bun");
+});

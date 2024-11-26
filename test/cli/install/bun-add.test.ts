@@ -2,7 +2,7 @@ import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
-import { join, relative } from "path";
+import { join, relative, resolve } from "path";
 import {
   check_npm_auth_type,
   dummyAfterAll,
@@ -927,9 +927,9 @@ it("should add aliased dependency (GitHub)", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
     "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
-  );
+  expect(
+    resolve(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))),
+  ).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"));
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",

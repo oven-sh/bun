@@ -23,6 +23,8 @@ interface BundlerPlugin {
   onResolveAsync(internalID, a, b, c): void;
   addError(internalID, error, number): void;
   addFilter(filter, namespace, number): void;
+  generateDeferPromise(): Promise<void>;
+  promises: Array<Promise<any>> | undefined;
 }
 
 // Extra types
@@ -47,7 +49,14 @@ interface PluginBuilderExt extends PluginBuilder {
   esbuild: any;
 }
 
-export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: BuildConfigExt) {
+export function runSetupFunction(
+  this: BundlerPlugin,
+  setup: Setup,
+  config: BuildConfigExt,
+  promises: Array<Promise<any>> | undefined,
+  is_last: boolean,
+) {
+  this.promises = promises;
   var onLoadPlugins = new Map<string, [RegExp, AnyFunction][]>();
   var onResolvePlugins = new Map<string, [RegExp, AnyFunction][]>();
 
@@ -97,6 +106,21 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
 
   function onResolve(filterObject, callback) {
     validate(filterObject, callback, onResolvePlugins);
+  }
+
+  const self = this;
+  function onStart(callback) {
+    if (!$isCallable(callback)) {
+      throw new TypeError("callback must be a function");
+    }
+
+    const ret = callback();
+    if ($isPromise(ret)) {
+      if (($getPromiseInternalField(ret, $promiseFieldFlags) & $promiseStateMask) != $promiseStateFulfilled) {
+        self.promises ??= [];
+        self.promises.push(ret);
+      }
+    }
   }
 
   const processSetupResult = () => {
@@ -151,7 +175,11 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
       }
     }
 
-    return anyOnLoad || anyOnResolve;
+    if (is_last) {
+      this.promises = undefined;
+    }
+
+    return this.promises;
   };
 
   var setupResult = setup({
@@ -160,7 +188,7 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     onEnd: notImplementedIssueFn(2771, "On-end callbacks"),
     onLoad,
     onResolve,
-    onStart: notImplementedIssueFn(2771, "On-start callbacks"),
+    onStart,
     resolve: notImplementedIssueFn(2771, "build.resolve()"),
     module: () => {
       throw new TypeError("module() is not supported in Bun.build() yet. Only via Bun.plugin() at runtime");
@@ -184,8 +212,19 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     if ($getPromiseInternalField(setupResult, $promiseFieldFlags) & $promiseStateFulfilled) {
       setupResult = $getPromiseInternalField(setupResult, $promiseFieldReactionsOrResult);
     } else {
-      return setupResult.$then(processSetupResult);
+      return setupResult.$then(() => {
+        if (is_last && self.promises !== undefined && self.promises.length > 0) {
+          const awaitAll = Promise.all(self.promises);
+          return awaitAll.$then(processSetupResult);
+        }
+        return processSetupResult();
+      });
     }
+  }
+
+  if (is_last && this.promises !== undefined && this.promises.length > 0) {
+    const awaitAll = Promise.all(this.promises);
+    return awaitAll.$then(processSetupResult);
   }
 
   return processSetupResult();
@@ -299,7 +338,8 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
   const LOADERS_MAP = $LoaderLabelToId;
   const loaderName = $LoaderIdToLabel[defaultLoaderId];
 
-  var promiseResult = (async (internalID, path, namespace, defaultLoader) => {
+  const generateDefer = () => this.generateDeferPromise(internalID);
+  var promiseResult = (async (internalID, path, namespace, defaultLoader, generateDefer) => {
     var results = this.onLoad.$get(namespace);
     if (!results) {
       this.onLoadAsync(internalID, null, null);
@@ -314,6 +354,7 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
           // suffix
           // pluginData
           loader: defaultLoader,
+          defer: generateDefer,
         });
 
         while (
@@ -332,7 +373,19 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
           continue;
         }
 
-        var { contents, loader = defaultLoader } = result as OnLoadResultSourceCode & OnLoadResultObject;
+        var { contents, loader = defaultLoader } = result as any;
+        if ((loader as any) === 'object') {
+          if (!('exports' in result)) {
+            throw new TypeError('onLoad plugin returning loader: "object" must have "exports" property');
+          }
+          try {
+            contents = JSON.stringify(result.exports);
+            loader = 'json';
+          } catch (e) {
+            throw new TypeError('When using Bun.build, onLoad plugin must return a JSON-serializable object: ' + e) ;
+          }
+        }
+
         if (!(typeof contents === "string") && !$isTypedArrayView(contents)) {
           throw new TypeError('onLoad plugins must return an object with "contents" as a string or Uint8Array');
         }
@@ -346,14 +399,14 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
           throw new TypeError(`Loader ${loader} is not supported.`);
         }
 
-        this.onLoadAsync(internalID, contents, chosenLoader);
+        this.onLoadAsync(internalID, contents as any, chosenLoader);
         return null;
       }
     }
 
     this.onLoadAsync(internalID, null, null);
     return null;
-  })(internalID, path, namespace, loaderName);
+  })(internalID, path, namespace, loaderName, generateDefer);
 
   while (
     promiseResult &&

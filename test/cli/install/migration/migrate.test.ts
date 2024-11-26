@@ -68,11 +68,13 @@ test("migrate package with dependency on root package", async () => {
 
   fs.cpSync(join(import.meta.dir, "migrate-package-with-dependency-on-root"), testDir, { recursive: true });
 
-  Bun.spawnSync([bunExe(), "install"], {
+  const { stdout } = Bun.spawnSync([bunExe(), "install"], {
     env: bunEnv,
     cwd: join(testDir),
+    stdout: "pipe",
   });
 
+  expect(stdout.toString()).toContain("success!");
   expect(fs.existsSync(join(testDir, "node_modules", "test-pkg", "package.json"))).toBeTrue();
 });
 

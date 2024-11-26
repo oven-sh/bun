@@ -12,6 +12,7 @@
 #include <cmath>
 #include <limits>
 
+#include "JSAbortSignal.h"
 #include "JSBufferEncodingType.h"
 #include "BunProcess.h"
 #include "ErrorCode.h"
@@ -94,6 +95,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateString, (JSC::JSGlobalObject * globa
     auto name = callFrame->argument(1);
     return V::validateString(scope, globalObject, value, name);
 }
+
+JSC::EncodedJSValue V::validateString(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
+{
+    if (!value.isString()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "string"_s, value);
+    }
+    return JSValue::encode(jsUndefined());
+}
+
 JSC::EncodedJSValue V::validateString(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name)
 {
     if (!value.isString()) {
@@ -138,12 +148,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_checkRangesOrGetDefault, (JSC::JSGlobalObjec
     auto name = callFrame->argument(1);
     auto lower = callFrame->argument(2);
     auto upper = callFrame->argument(3);
-    auto def = callFrame->argument(4);
 
     auto finite = Bun::V::validateFiniteNumber(scope, globalObject, number, name);
     RETURN_IF_EXCEPTION(scope, {});
     auto finite_real = JSValue::decode(finite).asBoolean();
     if (!finite_real) {
+        auto def = callFrame->argument(4);
         return JSValue::encode(def);
     }
 
@@ -265,10 +275,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateAbortSignal, (JSC::JSGlobalObject * 
     auto name = callFrame->argument(1);
 
     if (!signal.isUndefined()) {
-        if (signal.isNull()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "AbortSignal"_s, signal);
-        if (!signal.isObject()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "AbortSignal"_s, signal);
+        auto* object = signal.getObject();
+        if (!object) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "AbortSignal"_s, signal);
+        if (object->inherits<WebCore::JSAbortSignal>()) {
+            return JSValue::encode(jsUndefined());
+        }
 
-        auto propin = signal.getObject()->hasProperty(globalObject, Identifier::fromString(vm, "aborted"_s));
+        auto propin = object->hasProperty(globalObject, Identifier::fromString(vm, "aborted"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!propin) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "AbortSignal"_s, signal);
     }
@@ -378,19 +391,32 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto data = callFrame->argument(0);
     auto encoding = callFrame->argument(1);
 
     auto normalized = WebCore::parseEnumeration<BufferEncodingType>(*globalObject, encoding);
-    // no check to throw ERR_UNKNOWN_ENCODING ? it's not in node but feels like it would be apt here
+    if (normalized == BufferEncodingType::hex) {
+        auto data = callFrame->argument(0);
 
-    auto length = data.get(globalObject, Identifier::fromString(vm, "length"_s));
-    RETURN_IF_EXCEPTION(scope, {});
-    auto length_num = length.toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (normalized == BufferEncodingType::hex && std::fmod(length_num, 2.0) != 0) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encoding, makeString("is invalid for data of length "_s, length_num));
+        size_t length = 0;
+        if (data.isString()) {
+            length = data.toString(globalObject)->length();
+        } else if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(data)) {
+            length = view->length();
+        } else if (auto* buffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(data)) {
+            if (auto* impl = buffer->impl()) {
+                length = impl->byteLength();
+            }
+        } else if (auto* object = data.getObject()) {
+            JSValue lengthValue = object->getIfPropertyExists(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, {});
+            length = lengthValue.toLength(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        if (length % 2 != 0) {
+            return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encoding, makeString("is invalid for data of length "_s, length));
+        }
     }
+
     return JSValue::encode(jsUndefined());
 }
 
@@ -400,9 +426,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePlainFunction, (JSC::JSGlobalObject 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
-    auto name = callFrame->argument(1);
 
     if (!value.isCallable()) {
+        auto name = callFrame->argument(1);
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);
     }
     return JSValue::encode(jsUndefined());
@@ -437,5 +463,4 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globa
     }
     return JSValue::encode(jsUndefined());
 }
-
 }

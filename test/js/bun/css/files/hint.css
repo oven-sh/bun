@@ -1,0 +1,561 @@
+/*! Hint.css - v3.0.0 - 2023-11-29
+* https://kushagra.dev/lab/hint/
+* Copyright (c) 2023 Kushagra Gour */
+
+/*-------------------------------------*\
+	HINT.css - A CSS tooltip library
+\*-------------------------------------*/
+/**
+ * HINT.css is a tooltip library made in pure CSS.
+ *
+ * Source: https://github.com/chinchang/hint.css
+ * Demo: http://kushagragour.in/lab/hint/
+ *
+ */
+/**
+ * source: hint-core.scss
+ *
+ * Defines the basic styling for the tooltip.
+ * Each tooltip is made of 2 parts:
+ * 	1) body (:after)
+ * 	2) arrow (:before)
+ *
+ * Classes added:
+ * 	1) hint
+ */
+ [class*=hint--] {
+  position: relative;
+  display: inline-block;
+  /**
+   * tooltip arrow
+   */
+  /**
+   * tooltip body
+   */
+}
+[class*=hint--]:before, [class*=hint--]:after {
+  position: absolute;
+  transform: translate3d(0, 0, 0);
+  visibility: hidden;
+  opacity: 0;
+  z-index: 1000000;
+  pointer-events: none;
+  transition: 0.3s ease;
+  transition-delay: 0ms;
+}
+[class*=hint--]:hover:before, [class*=hint--]:hover:after {
+  visibility: visible;
+  opacity: 1;
+}
+[class*=hint--]:hover:before, [class*=hint--]:hover:after {
+  transition-delay: 100ms;
+}
+[class*=hint--]:before {
+  content: "";
+  position: absolute;
+  background: transparent;
+  border: 6px solid transparent;
+  background-color: hsl(0, 0%, 22%);
+  clip-path: polygon(0% 0%, 100% 0%, 100% 100%);
+  z-index: 1000001;
+}
+[class*=hint--]:after {
+  background: hsl(0, 0%, 22%);
+  color: white;
+  padding: 8px 10px;
+  font-size: 1rem;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  line-height: 1rem;
+  white-space: nowrap;
+}
+[class*=hint--][aria-label]:after {
+  content: attr(aria-label);
+}
+[class*=hint--][data-hint]:after {
+  content: attr(data-hint);
+}
+
+[aria-label=""]:before, [aria-label=""]:after,
+[data-hint=""]:before,
+[data-hint=""]:after {
+  display: none !important;
+}
+
+/**
+ * source: hint-position.scss
+ *
+ * Defines the positoning logic for the tooltips.
+ *
+ * Classes added:
+ * 	1) hint--top
+ * 	2) hint--bottom
+ * 	3) hint--left
+ * 	4) hint--right
+ */
+/**
+ * top tooltip
+ */
+.hint--top {
+  --rotation: 135deg;
+}
+.hint--top:before {
+  margin-bottom: -5.5px;
+  transform: rotate(var(--rotation));
+}
+.hint--top:before, .hint--top:after {
+  bottom: 100%;
+  left: 50%;
+}
+.hint--top:before {
+  left: calc(50% - 6px);
+}
+.hint--top:after {
+  transform: translateX(-50%);
+}
+.hint--top:hover:before {
+  transform: translateY(-8px) rotate(var(--rotation));
+}
+.hint--top:hover:after {
+  transform: translateX(-50%) translateY(-8px);
+}
+
+/**
+ * bottom tooltip
+ */
+.hint--bottom {
+  --rotation: -45deg;
+}
+.hint--bottom:before {
+  margin-top: -5.5px;
+  transform: rotate(var(--rotation));
+}
+.hint--bottom:before, .hint--bottom:after {
+  top: 100%;
+  left: 50%;
+}
+.hint--bottom:before {
+  left: calc(50% - 6px);
+}
+.hint--bottom:after {
+  transform: translateX(-50%);
+}
+.hint--bottom:hover:before {
+  transform: translateY(8px) rotate(var(--rotation));
+}
+.hint--bottom:hover:after {
+  transform: translateX(-50%) translateY(8px);
+}
+
+/**
+ * right tooltip
+ */
+.hint--right {
+  --rotation: -135deg;
+}
+.hint--right:before {
+  margin-left: -5.5px;
+  margin-bottom: -6px;
+  transform: rotate(var(--rotation));
+}
+.hint--right:after {
+  margin-bottom: calc(-1 * (1rem + 16px) / 2);
+}
+.hint--right:before, .hint--right:after {
+  left: 100%;
+  bottom: 50%;
+}
+.hint--right:hover:before {
+  transform: translateX(8px) rotate(var(--rotation));
+}
+.hint--right:hover:after {
+  transform: translateX(8px);
+}
+
+/**
+ * left tooltip
+ */
+.hint--left {
+  --rotation: 45deg;
+}
+.hint--left:before {
+  margin-right: -5.5px;
+  margin-bottom: -6px;
+  transform: rotate(var(--rotation));
+}
+.hint--left:after {
+  margin-bottom: calc(-1 * (1rem + 16px) / 2);
+}
+.hint--left:before, .hint--left:after {
+  right: 100%;
+  bottom: 50%;
+}
+.hint--left:hover:before {
+  transform: translateX(-8px) rotate(var(--rotation));
+}
+.hint--left:hover:after {
+  transform: translateX(-8px);
+}
+
+/**
+ * top-left tooltip
+ */
+.hint--top-left {
+  --rotation: 135deg;
+}
+.hint--top-left:before {
+  margin-bottom: -5.5px;
+  transform: rotate(var(--rotation));
+}
+.hint--top-left:before, .hint--top-left:after {
+  bottom: 100%;
+  left: 50%;
+}
+.hint--top-left:before {
+  left: calc(50% - 6px);
+}
+.hint--top-left:after {
+  transform: translateX(-100%);
+}
+.hint--top-left:after {
+  margin-left: 12px;
+}
+.hint--top-left:hover:before {
+  transform: translateY(-8px) rotate(var(--rotation));
+}
+.hint--top-left:hover:after {
+  transform: translateX(-100%) translateY(-8px);
+}
+
+/**
+ * top-right tooltip
+ */
+.hint--top-right {
+  --rotation: 135deg;
+}
+.hint--top-right:before {
+  margin-bottom: -5.5px;
+  transform: rotate(var(--rotation));
+}
+.hint--top-right:before, .hint--top-right:after {
+  bottom: 100%;
+  left: 50%;
+}
+.hint--top-right:before {
+  left: calc(50% - 6px);
+}
+.hint--top-right:after {
+  transform: translateX(0);
+}
+.hint--top-right:after {
+  margin-left: -12px;
+}
+.hint--top-right:hover:before {
+  transform: translateY(-8px) rotate(var(--rotation));
+}
+.hint--top-right:hover:after {
+  transform: translateY(-8px);
+}
+
+/**
+ * bottom-left tooltip
+ */
+.hint--bottom-left {
+  --rotation: -45deg;
+}
+.hint--bottom-left:before {
+  margin-top: -5.5px;
+  transform: rotate(var(--rotation));
+}
+.hint--bottom-left:before, .hint--bottom-left:after {
+  top: 100%;
+  left: 50%;
+}
+.hint--bottom-left:before {
+  left: calc(50% - 6px);
+}
+.hint--bottom-left:after {
+  transform: translateX(-100%);
+}
+.hint--bottom-left:after {
+  margin-left: 12px;
+}
+.hint--bottom-left:hover:before {
+  transform: translateY(8px) rotate(var(--rotation));
+}
+.hint--bottom-left:hover:after {
+  transform: translateX(-100%) translateY(8px);
+}
+
+/**
+ * bottom-right tooltip
+ */
+.hint--bottom-right {
+  --rotation: -45deg;
+}
+.hint--bottom-right:before {
+  margin-top: -5.5px;
+  transform: rotate(var(--rotation));
+}
+.hint--bottom-right:before, .hint--bottom-right:after {
+  top: 100%;
+  left: 50%;
+}
+.hint--bottom-right:before {
+  left: calc(50% - 6px);
+}
+.hint--bottom-right:after {
+  transform: translateX(0);
+}
+.hint--bottom-right:after {
+  margin-left: -12px;
+}
+.hint--bottom-right:hover:before {
+  transform: translateY(8px) rotate(var(--rotation));
+}
+.hint--bottom-right:hover:after {
+  transform: translateY(8px);
+}
+
+/**
+ * source: hint-sizes.scss
+ *
+ * Defines width restricted tooltips that can span
+ * across multiple lines.
+ *
+ * Classes added:
+ * 	1) hint--small
+ * 	2) hint--medium
+ * 	3) hint--large
+ * 	4) hint--fit
+ *
+ */
+.hint--small:after,
+.hint--medium:after,
+.hint--large:after,
+.hint--fit:after {
+  box-sizing: border-box;
+  white-space: normal;
+  line-height: 1.4em;
+  word-wrap: break-word;
+}
+
+.hint--small:after {
+  width: 80px;
+}
+
+.hint--medium:after {
+  width: 150px;
+}
+
+.hint--large:after {
+  width: 300px;
+}
+
+.hint--fit:after {
+  width: 100%;
+}
+
+/**
+ * source: hint-theme.scss
+ *
+ * Defines basic theme for tooltips.
+ *
+ */
+[class*=hint--] {
+  /**
+   * tooltip body
+   */
+}
+[class*=hint--]:after {
+  text-shadow: 0 1px 0px black;
+  box-shadow: 4px 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+/**
+ * source: hint-color-types.scss
+ *
+ * Contains tooltips of various types based on color differences.
+ *
+ * Classes added:
+ * 	1) hint--error
+ * 	2) hint--warning
+ * 	3) hint--info
+ * 	4) hint--success
+ *
+ */
+/**
+ * Error
+ */
+.hint--error:after {
+  background-color: hsl(1, 40%, 50%);
+  text-shadow: 0 1px 0px #592726;
+}
+.hint--error:before {
+  background-color: hsl(1, 40%, 50%);
+}
+
+/**
+ * Warning
+ */
+.hint--warning:after {
+  background-color: hsl(38, 46%, 54%);
+  text-shadow: 0 1px 0px #6c5328;
+}
+.hint--warning:before {
+  background-color: hsl(38, 46%, 54%);
+}
+
+/**
+ * Info
+ */
+.hint--info:after {
+  background-color: hsl(200, 50%, 45%);
+  text-shadow: 0 1px 0px #1a3c4d;
+}
+.hint--info:before {
+  background-color: hsl(200, 50%, 45%);
+}
+
+/**
+ * Success
+ */
+.hint--success:after {
+  background-color: hsl(121, 32%, 40%);
+  text-shadow: 0 1px 0px #1a321a;
+}
+.hint--success:before {
+  background-color: hsl(121, 32%, 40%);
+}
+
+/**
+ * source: hint-always.scss
+ *
+ * Defines a persisted tooltip which shows always.
+ *
+ * Classes added:
+ * 	1) hint--always
+ *
+ */
+.hint--always:after, .hint--always:before {
+  opacity: 1;
+  visibility: visible;
+}
+.hint--always.hint--top:before {
+  transform: translateY(-8px) rotate(var(--rotation));
+}
+.hint--always.hint--top:after {
+  transform: translateX(-50%) translateY(-8px);
+}
+.hint--always.hint--top-left:before {
+  transform: translateY(-8px) rotate(var(--rotation));
+}
+.hint--always.hint--top-left:after {
+  transform: translateX(-100%) translateY(-8px);
+}
+.hint--always.hint--top-right:before {
+  transform: translateY(-8px) rotate(var(--rotation));
+}
+.hint--always.hint--top-right:after {
+  transform: translateY(-8px);
+}
+.hint--always.hint--bottom:before {
+  transform: translateY(8px) rotate(var(--rotation));
+}
+.hint--always.hint--bottom:after {
+  transform: translateX(-50%) translateY(8px);
+}
+.hint--always.hint--bottom-left:before {
+  transform: translateY(8px) rotate(var(--rotation));
+}
+.hint--always.hint--bottom-left:after {
+  transform: translateX(-100%) translateY(8px);
+}
+.hint--always.hint--bottom-right:before {
+  transform: translateY(8px) rotate(var(--rotation));
+}
+.hint--always.hint--bottom-right:after {
+  transform: translateY(8px);
+}
+.hint--always.hint--left:before {
+  transform: translateX(-8px) rotate(var(--rotation));
+}
+.hint--always.hint--left:after {
+  transform: translateX(-8px);
+}
+.hint--always.hint--right:before {
+  transform: translateX(8px) rotate(var(--rotation));
+}
+.hint--always.hint--right:after {
+  transform: translateX(8px);
+}
+
+/**
+ * source: hint-rounded.scss
+ *
+ * Defines rounded corner tooltips.
+ *
+ * Classes added:
+ * 	1) hint--rounded
+ *
+ */
+.hint--rounded:before {
+  border-radius: 0 4px 0 0;
+}
+.hint--rounded:after {
+  border-radius: 4px;
+}
+
+/**
+ * source: hint-effects.scss
+ *
+ * Defines various transition effects for the tooltips.
+ *
+ * Classes added:
+ * 	1) hint--no-animate
+ * 	2) hint--bounce
+ *
+ */
+.hint--no-animate:before, .hint--no-animate:after {
+  transition-duration: 0ms;
+}
+
+.hint--bounce:before, .hint--bounce:after {
+  transition: opacity 0.3s ease, visibility 0.3s ease, transform 0.3s cubic-bezier(0.71, 1.7, 0.77, 1.24);
+}
+
+@supports (transition-timing-function: linear(0, 1)) {
+  .hint--bounce:before, .hint--bounce:after {
+    --spring-easing: linear(
+    	0,
+    	0.009,
+    	0.035 2.1%,
+    	0.141 4.4%,
+    	0.723 12.9%,
+    	0.938,
+    	1.077 20.4%,
+    	1.121,
+    	1.149 24.3%,
+    	1.159,
+    	1.163 27%,
+    	1.154,
+    	1.129 32.8%,
+    	1.051 39.6%,
+    	1.017 43.1%,
+    	0.991,
+    	0.977 51%,
+    	0.975 57.1%,
+    	0.997 69.8%,
+    	1.003 76.9%,
+    	1
+    );
+    transition: opacity 0.3s ease, visibility 0.3s ease, transform 0.5s var(--spring-easing);
+  }
+}
+.hint--no-shadow:before, .hint--no-shadow:after {
+  text-shadow: initial;
+  box-shadow: initial;
+}
+
+.hint--no-arrow:before {
+  display: none;
+}

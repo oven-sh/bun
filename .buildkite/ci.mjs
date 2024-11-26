@@ -949,6 +949,10 @@ function getEmoji(string) {
  * @typedef {Object} SelectInput
  * @property {string} key
  * @property {string} select
+ * @property {string | string[]} [default]
+ * @property {boolean} [required]
+ * @property {boolean} [multiple]
+ * @property {string} [hint]
  * @property {SelectOption[]} [options]
  */
 
@@ -956,10 +960,6 @@ function getEmoji(string) {
  * @typedef {Object} SelectOption
  * @property {string} label
  * @property {string} value
- * @property {string | string[]} [default]
- * @property {boolean} [required]
- * @property {boolean} [multiple]
- * @property {string} [hint]
  */
 
 /**
@@ -973,6 +973,7 @@ async function getPipeline() {
     steps.push({
       key: "options",
       block: "Select options",
+      blocked_state: "running",
       fields: [
         {
           key: "canary",
@@ -992,6 +993,8 @@ async function getPipeline() {
         {
           key: "build-platforms",
           select: "Which platforms do you want to build?",
+          multiple: true,
+          default: buildPlatforms.map(getTargetKey),
           options: buildPlatforms.map(platform => {
             return {
               label: getTargetLabel(platform),
@@ -1002,6 +1005,8 @@ async function getPipeline() {
         {
           key: "test-platforms",
           select: "Which platforms do you want to test?",
+          multiple: true,
+          default: testPlatforms.map(getTargetKey),
           options: testPlatforms.map(platform => {
             return {
               label: getTargetLabel(platform),

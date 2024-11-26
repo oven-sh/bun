@@ -586,10 +586,10 @@ function getBuildkiteEmoji(string, buildkite) {
   if (/windows|win|microsoft/i.test(string)) {
     return ":windows:";
   }
-  if (/yes|ok|pass|success/i.test(string)) {
+  if (/true|yes|ok|pass|success/i.test(string)) {
     return ":white_check_mark:";
   }
-  if (/no|fail|error|failure/i.test(string)) {
+  if (/false|no|fail|error|failure/i.test(string)) {
     return ":x:";
   }
   return "";
@@ -609,10 +609,10 @@ function getEmoji(string) {
   if (/windows|win|microsoft/i.test(string)) {
     return "🪟";
   }
-  if (/yes|ok|pass|success/i.test(string)) {
+  if (/true|yes|ok|pass|success/i.test(string)) {
     return "✅";
   }
-  if (/no|fail|error|failure/i.test(string)) {
+  if (/false|no|fail|error|failure/i.test(string)) {
     return "❌";
   }
   if (/bug|debug/i.test(string)) {
@@ -1015,11 +1015,11 @@ async function getPipeline() {
           default: "true",
           options: [
             {
-              label: getEmoji("yes"),
+              label: `${getEmoji("yes")} Yes`,
               value: "true",
             },
             {
-              label: getEmoji("no"),
+              label: `${getEmoji("no")} No`,
               value: "false",
             },
           ],
@@ -1031,15 +1031,15 @@ async function getPipeline() {
           default: "release",
           options: [
             {
-              label: getEmoji("release"),
+              label: `${getEmoji("release")} Release`,
               value: "release",
             },
             {
-              label: getEmoji("assert"),
+              label: `${getEmoji("assert")} Release & Assertions`,
               value: "assert",
             },
             {
-              label: getEmoji("debug"),
+              label: `${getEmoji("debug")} Debug`,
               value: "debug",
             },
           ],
@@ -1064,6 +1064,32 @@ async function getPipeline() {
               value: getTargetKey(platform),
             };
           }),
+        },
+        {
+          key: "test-platforms",
+          select: "Which platforms do you want to test?",
+          required: false,
+          multiple: true,
+          default: testPlatforms.map(getTargetKey),
+          options: [...new Map(testPlatforms.map(platform => [getImageKey(platform), platform])).values()].map(
+            platform => {
+              const { os, arch, abi, distro, release } = platform;
+              let label = `${getEmoji(os)} ${arch}`;
+              if (abi) {
+                label += `-${abi}`;
+              }
+              if (distro) {
+                label += ` ${distro}`;
+              }
+              if (release) {
+                label += ` ${release}`;
+              }
+              return {
+                label,
+                value: getTargetKey(platform),
+              };
+            },
+          ),
         },
       ],
     });

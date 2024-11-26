@@ -1749,30 +1749,42 @@ pub const BundleV2 = struct {
         }
     };
 
-    pub fn onLoadAsync(
-        this: *BundleV2,
-        load: *bun.JSC.API.JSBundler.Load,
-    ) void {
-        this.loop().enqueueTaskConcurrent(
-            bun.JSC.API.JSBundler.Load,
-            BundleV2,
-            load,
-            BundleV2.onLoad,
-            .task,
-        );
+    pub fn onLoadAsync(this: *BundleV2, load: *bun.JSC.API.JSBundler.Load) void {
+        switch (this.loop().*) {
+            .js => |jsc_event_loop| {
+                jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(load, onLoadFromJsLoop));
+            },
+            .mini => |*mini| {
+                mini.enqueueTaskConcurrentWithExtraCtx(
+                    bun.JSC.API.JSBundler.Load,
+                    BundleV2,
+                    load,
+                    BundleV2.onLoad,
+                    .task,
+                );
+            },
+        }
     }
 
-    pub fn onResolveAsync(
-        this: *BundleV2,
-        resolve: *bun.JSC.API.JSBundler.Resolve,
-    ) void {
-        this.loop().enqueueTaskConcurrent(
-            bun.JSC.API.JSBundler.Resolve,
-            BundleV2,
-            resolve,
-            BundleV2.onResolve,
-            .task,
-        );
+    pub fn onResolveAsync(this: *BundleV2, resolve: *bun.JSC.API.JSBundler.Resolve) void {
+        switch (this.loop().*) {
+            .js => |jsc_event_loop| {
+                jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(resolve, onResolveFromJsLoop));
+            },
+            .mini => |*mini| {
+                mini.enqueueTaskConcurrentWithExtraCtx(
+                    bun.JSC.API.JSBundler.Resolve,
+                    BundleV2,
+                    resolve,
+                    BundleV2.onResolve,
+                    .task,
+                );
+            },
+        }
+    }
+
+    pub fn onLoadFromJsLoop(load: *bun.JSC.API.JSBundler.Load) void {
+        onLoad(load, load.bv2);
     }
 
     pub fn onLoad(load: *bun.JSC.API.JSBundler.Load, this: *BundleV2) void {
@@ -1783,7 +1795,7 @@ pub const BundleV2 = struct {
                 this.graph.heap.gc(true);
             }
         }
-        var log = &load.completion.?.log;
+        const log = this.bundler.log;
 
         switch (load.value.consume()) {
             .no_match => {
@@ -1836,6 +1848,10 @@ pub const BundleV2 = struct {
         }
     }
 
+    pub fn onResolveFromJsLoop(resolve: *bun.JSC.API.JSBundler.Resolve) void {
+        onResolve(resolve, resolve.bv2);
+    }
+
     pub fn onResolve(resolve: *bun.JSC.API.JSBundler.Resolve, this: *BundleV2) void {
         defer resolve.deinit();
         defer this.decrementScanCounter();
@@ -1846,7 +1862,7 @@ pub const BundleV2 = struct {
                 this.graph.heap.gc(true);
             }
         }
-        var log = &resolve.completion.?.log;
+        const log = this.bundler.log;
 
         switch (resolve.value.consume()) {
             .no_match => {
@@ -2240,18 +2256,16 @@ pub const BundleV2 = struct {
                 });
                 this.incrementScanCounter();
 
-                resolve.* = JSC.API.JSBundler.Resolve.create(
-                    .{
-                        .ImportRecord = .{
-                            .record = import_record,
-                            .source_file = source_file,
-                            .import_record_index = import_record_index,
-                            .importer_source_index = source_index,
-                            .original_target = original_target,
-                        },
-                    },
-                    this.completion.?,
-                );
+                resolve.* = JSC.API.JSBundler.Resolve.init(this, .{
+                    .kind = import_record.kind,
+                    .source_file = source_file,
+                    .namespace = import_record.path.namespace,
+                    .specifier = import_record.path.text,
+                    .importer_source_index = source_index,
+                    .import_record_index = import_record_index,
+                    .range = import_record.range,
+                    .original_target = original_target,
+                });
                 resolve.dispatch();
                 return true;
             }
@@ -2271,14 +2285,8 @@ pub const BundleV2 = struct {
                     parse.path.namespace,
                     parse.path.text,
                 });
-                const load = bun.default_allocator.create(JSC.API.JSBundler.Load) catch unreachable;
-                load.* = JSC.API.JSBundler.Load.create(
-                    this.completion.?,
-                    parse.source_index,
-                    parse.path.loader(&this.bundler.options.loaders) orelse options.Loader.js,
-                    parse.path,
-                );
-                load.parse_task = parse;
+                const load = bun.default_allocator.create(JSC.API.JSBundler.Load) catch bun.outOfMemory();
+                load.* = JSC.API.JSBundler.Load.init(this, parse);
                 load.dispatch();
                 return true;
             }

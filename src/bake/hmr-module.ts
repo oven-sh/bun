@@ -17,6 +17,11 @@ export const enum LoadModuleType {
   UserDynamic,
 }
 
+interface DepEntry {
+  _callback: ExportsCallbackFunction;
+  _expectedImports: string[] | undefined;
+}
+
 /**
  * This object is passed as the CommonJS "module", but has a bunch of
  * non-standard properties that are used for implementing hot-module reloading.
@@ -33,7 +38,7 @@ export class HotModule<E = any> {
   _import_meta: ImportMeta | undefined = undefined;
   _cached_failure: any = undefined;
   // modules that import THIS module
-  _deps: Map<HotModule, ExportsCallbackFunction | undefined> = new Map();
+  _deps: Map<HotModule, DepEntry | undefined> = new Map();
 
   constructor(id: Id) {
     this.id = id;
@@ -41,18 +46,26 @@ export class HotModule<E = any> {
 
   require(id: Id, onReload?: ExportsCallbackFunction) {
     const mod = loadModule(id, LoadModuleType.UserDynamic);
-    mod._deps.set(this, onReload);
+    mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: undefined } : undefined);
     return mod.exports;
   }
 
-  importSync(id: Id, onReload?: ExportsCallbackFunction) {
+  importSync(id: Id, onReload?: ExportsCallbackFunction, expectedImports?: string[]) {
     const mod = loadModule(id, LoadModuleType.AssertPresent);
-    // insert into the map if not present
-    mod._deps.set(this, onReload);
+    mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: expectedImports } : undefined);
     const { exports, __esModule } = mod;
-    return __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
+    const object = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
+    if (expectedImports) {
+      for (const key of expectedImports) {
+        if (!(key in object)) {
+          throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
+        }
+      }
+    }
+    return object;
   }
 
+  /// Equivalent to `import()` in ES modules
   async dynamicImport(specifier: string, opts?: ImportCallOptions) {
     const mod = loadModule(specifier, LoadModuleType.UserDynamic);
     // insert into the map if not present
@@ -76,7 +89,16 @@ if (side === "server") {
 }
 
 function initImportMeta(m: HotModule): ImportMeta {
-  throw new Error("TODO: import meta object");
+  return {
+    url: `bun://${m.id}`,
+    main: false,
+    // @ts-ignore
+    hot: {
+      accept() {
+        throw new Error("Not implemented");
+      },
+    }
+  };
 }
 
 /**

@@ -18,13 +18,14 @@ pub const UserOptions = struct {
     root: []const u8,
     framework: Framework,
     bundler_options: SplitBundlerOptions,
-    // bundler_plugin: ?*Plugin,
 
     pub fn deinit(options: *UserOptions) void {
         options.arena.deinit();
         options.allocations.free();
+        if (options.bundler_options.plugin) |p| p.deinit();
     }
 
+    /// Currently, this function must run at the top of the event loop.
     pub fn fromJS(config: JSValue, global: *JSC.JSGlobalObject) !UserOptions {
         if (!config.isObject()) {
             return global.throwInvalidArguments("'" ++ api_name ++ "' is not an object", .{});
@@ -35,7 +36,7 @@ pub const UserOptions = struct {
 
         var allocations = StringRefList.empty;
         errdefer allocations.free();
-        var bundler_options: SplitBundlerOptions = .{};
+        var bundler_options = SplitBundlerOptions.empty;
 
         const framework = try Framework.fromJS(
             try config.get(global, "framework") orelse {
@@ -58,6 +59,46 @@ pub const UserOptions = struct {
                     return global.throwError(err, "while querying current working directory");
                 },
             };
+
+        if (try config.get(global, "plugins")) |plugin_array| {
+            const plugin = bundler_options.plugin orelse Plugin.create(global, .bun);
+            bundler_options.plugin = plugin;
+            const empty_object = JSValue.createEmptyObject(global, 0);
+
+            var iter = plugin_array.arrayIterator(global);
+            while (iter.next()) |plugin_config| {
+                if (!plugin_config.isObject()) {
+                    return global.throwInvalidArguments("Expected plugin to be an object", .{});
+                }
+
+                if (try plugin_config.getOptional(global, "name", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    if (slice.len == 0) {
+                        return global.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
+                    }
+                } else {
+                    return global.throwInvalidArguments("Expected plugin to have a name", .{});
+                }
+
+                const function = try plugin_config.getFunction(global, "setup") orelse {
+                    return global.throwInvalidArguments("Expected plugin to have a setup() function", .{});
+                };
+                const plugin_result = try plugin.addPlugin(function, empty_object, .null, false, true);
+                if (plugin_result.asAnyPromise()) |promise| {
+                    promise.setHandled(global.vm());
+                    global.bunVM().waitForPromise(promise);
+                    switch (promise.unwrap(global.vm(), .mark_handled)) {
+                        .pending => unreachable,
+                        .fulfilled => |val| {
+                            _ = val;
+                        },
+                        .rejected => |err| {
+                            return global.throwValue2(err);
+                        },
+                    }
+                }
+            }
+        }
 
         return .{
             .arena = arena,
@@ -86,11 +127,20 @@ const StringRefList = struct {
     pub const empty: StringRefList = .{ .strings = .{} };
 };
 
-const SplitBundlerOptions = struct {
+pub const SplitBundlerOptions = struct {
+    plugin: ?*Plugin = null,
     all: BuildConfigSubset = .{},
     client: BuildConfigSubset = .{},
     server: BuildConfigSubset = .{},
     ssr: BuildConfigSubset = .{},
+
+    pub const empty: SplitBundlerOptions = .{
+        .plugin = null,
+        .all = .{},
+        .client = .{},
+        .server = .{},
+        .ssr = .{},
+    };
 };
 
 const BuildConfigSubset = struct {
@@ -646,6 +696,14 @@ pub fn addImportMetaDefines(
         "import.meta.env.STATIC",
         Define.Data.initBoolean(mode == .production_static),
     );
+
+    if (mode != .development) {
+        try define.insert(
+            allocator,
+            "import.meta.hot",
+            Define.Data.initBoolean(false),
+        );
+    }
 }
 
 pub const server_virtual_source: bun.logger.Source = .{

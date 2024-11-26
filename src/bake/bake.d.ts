@@ -9,9 +9,6 @@ declare module "bun" {
 
   declare namespace Bake {
     interface Options {
-      /** Will be replaced by fileSystemRouters */
-      routes: {}[];
-
       /**
        * Bun provides built-in support for using React as a framework by passing
        * 'react' as the framework name. Otherwise, frameworks are config objects.
@@ -24,7 +21,6 @@ declare module "bun" {
       framework: Framework | "react";
       // Note: To contribute to 'bun-framework-react', it can be run from this file:
       // https://github.com/oven-sh/bun/blob/main/src/bake/bun-framework-react/index.ts
-
       /**
        * A subset of the options from Bun.build can be configured. Keep in mind,
        * your framework may set different defaults.
@@ -32,6 +28,10 @@ declare module "bun" {
        * @default {}
        */
       bundlerOptions?: BundlerOptions | undefined;
+      /**
+       * These plugins are applied after `framework.plugins`
+       */
+      plugins?: BunPlugin[] | undefined;
     }
 
     /** Bake only allows a subset of options from `Bun.build` */
@@ -114,6 +114,8 @@ declare module "bun" {
        * @default false
        */
       reactFastRefresh?: boolean | ReactFastRefreshOptions | undefined;
+      /** Framework bundler plugins load before the user-provided ones. */
+      plugins?: BunPlugin[];
 
       // /**
       //  * Called after the list of routes is updated. This can be used to
@@ -123,6 +125,7 @@ declare module "bun" {
       // onRouteListUpdate?: (routes: OnRouteListUpdateItem) => void;
     }
 
+    /** Using `code` here will cause import resolution to happen from the root. */
     type BuiltInModule = { import: string; code: string } | { import: string; path: string };
 
     /**
@@ -388,7 +391,7 @@ declare module "bun" {
        *         return { exhaustive: false };
        *     }
        */
-      getParams?: (paramsMetadata: ParamsMetadata) => Awaitable<ParamsResult>;
+      getParams?: (paramsMetadata: ParamsMetadata) => Awaitable<GetParamIterator>;
       /**
        * When a dynamic build uses static assets, Bun can map content types in the
        * user's `Accept` header to the different static files.
@@ -424,6 +427,14 @@ declare module "bun" {
 
     interface ClientEntryPoint {
       // No exports
+    }
+
+    interface DevServerHookEntryPoint {
+      default: (dev: DevServerHookAPI) => Awaitable<void>;
+    }
+
+    interface DevServerHookAPI {
+      // TODO:
     }
 
     /**
@@ -476,7 +487,7 @@ declare module "bun" {
     }
   }
 
-  interface GenericServeOptions {
+  declare interface GenericServeOptions {
     /** Add a fullstack web app to this server using Bun Bake */
     app?: Bake.Options | undefined;
   }

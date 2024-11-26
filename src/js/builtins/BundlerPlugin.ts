@@ -1,5 +1,4 @@
 import type {
-  AnyFunction,
   BuildConfig,
   BunPlugin,
   OnLoadCallback,
@@ -9,6 +8,7 @@ import type {
   PluginBuilder,
   PluginConstraints,
 } from "bun";
+type AnyFunction = (...args: any[]) => any;
 
 // This API expects 4 functions:
 // It should be generic enough to reuse for Bun.plugin() eventually, too.
@@ -31,15 +31,13 @@ interface BundlerPlugin {
 type Setup = BunPlugin["setup"];
 type MinifyObj = Exclude<BuildConfig["minify"], boolean>;
 interface BuildConfigExt extends BuildConfig {
-  // we support esbuild-style entryPoints
+  // we support esbuild-style 'entryPoints' capitalization
   entryPoints?: string[];
   // plugins is guaranteed to not be null
   plugins: BunPlugin[];
 }
 interface PluginBuilderExt extends PluginBuilder {
-  // these functions aren't implemented yet, so we dont publicly expose them
   resolve: AnyFunction;
-  onStart: AnyFunction;
   onEnd: AnyFunction;
   onDispose: AnyFunction;
   // we partially support initialOptions. it's read-only and a subset of
@@ -55,6 +53,7 @@ export function runSetupFunction(
   config: BuildConfigExt,
   promises: Array<Promise<any>> | undefined,
   is_last: boolean,
+  isBake: boolean,
 ) {
   this.promises = promises;
   var onLoadPlugins = new Map<string, [RegExp, AnyFunction][]>();
@@ -110,6 +109,9 @@ export function runSetupFunction(
 
   const self = this;
   function onStart(callback) {
+    if(isBake) {
+      throw new TypeError("onStart() is not supported in Bake yet");
+    }
     if (!$isCallable(callback)) {
       throw new TypeError("callback must be a function");
     }
@@ -248,7 +250,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           path: inputPath,
           importer,
           namespace: inputNamespace,
-          // resolveDir
+          resolveDir: inputNamespace === "file" ? require("node:path").dirname(importer) : undefined,
           kind,
           // pluginData
         });

@@ -16,6 +16,7 @@ pub const Options = struct {
     root: []const u8,
     vm: *VirtualMachine,
     framework: bake.Framework,
+    bundler_options: bake.SplitBundlerOptions,
 
     // Debugging features
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
@@ -93,6 +94,7 @@ generation: usize = 0,
 bundles_since_last_error: usize = 0,
 
 framework: bake.Framework,
+bundler_options: bake.SplitBundlerOptions,
 // Each logical graph gets its own bundler configuration
 server_bundler: Bundler,
 client_bundler: Bundler,
@@ -238,6 +240,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .graph_safety_lock = bun.DebugThreadLock.unlocked,
         .dump_dir = dump_dir,
         .framework = options.framework,
+        .bundler_options = options.bundler_options,
         .emit_visualizer_events = 0,
         .has_pre_crash_handler = options.dump_state_on_crash,
         .css_files = .{},
@@ -906,6 +909,7 @@ fn startAsyncBundle(
         heap,
     );
     bv2.bun_watcher = dev.bun_watcher;
+    bv2.plugins = dev.bundler_options.plugin;
     bv2.asynchronous = true;
 
     {

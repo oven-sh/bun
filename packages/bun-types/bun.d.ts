@@ -3899,6 +3899,10 @@ declare module "bun" {
      * The namespace of the importer.
      */
     namespace: string;
+    /** 
+     * The directory to perform file-based resolutions in.
+     */
+    resolveDir: string;
     /**
      * The kind of import this resolve is for.
      */
@@ -4007,6 +4011,12 @@ declare module "bun" {
      * ```
      */
     module(specifier: string, callback: () => OnLoadResult | Promise<OnLoadResult>): void;
+
+    /**
+     * Inject a module into the development server's runtime, to be loaded
+     * before all other user code.
+     */
+    addDevServerHook(module: string, side: 'client' | 'server'): void;
   }
 
   interface BunPlugin {

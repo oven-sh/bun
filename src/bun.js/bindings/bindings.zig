@@ -3088,7 +3088,7 @@ pub const JSGlobalObject = opaque {
             if (global.hasException()) {
                 if (comptime bun.Environment.isDebug) bun.Output.panic("attempted to throw OutOfMemory without an exception", .{});
             } else {
-                global.throwOutOfMemory();
+                global.throwOutOfMemory() catch {};
             }
             return null_value;
         }
@@ -3096,7 +3096,7 @@ pub const JSGlobalObject = opaque {
         if (possible_errors.JSError and err == error.JSError) {
             if (!global.hasException()) {
                 if (comptime bun.Environment.isDebug) bun.Output.panic("attempted to throw JSError without an exception", .{});
-                global.throwOutOfMemory();
+                global.throwOutOfMemory() catch {};
             }
             return null_value;
         }
@@ -3379,8 +3379,7 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwError(this: *JSGlobalObject, err: anyerror, comptime fmt: [:0]const u8) bun.JSError {
         if (err == error.OutOfMemory) {
-            this.throwOutOfMemory();
-            return error.JSError;
+            return this.throwOutOfMemory();
         }
 
         var str = ZigString.init(try std.fmt.allocPrint(this.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}));

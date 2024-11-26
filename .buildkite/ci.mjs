@@ -996,6 +996,121 @@ function getEmoji(string) {
  */
 
 /**
+ * @returns {BlockStep}
+ */
+function getOptionsStep() {
+  const booleanOptions = [
+    {
+      label: `${getEmoji("yes")} Yes`,
+      value: "true",
+    },
+    {
+      label: `${getEmoji("no")} No`,
+      value: "false",
+    },
+  ];
+
+  return {
+    key: "options",
+    block: "Select options",
+    blocked_state: "running",
+    fields: [
+      {
+        key: "skip-build",
+        select: "Do you want to skip the build?",
+        required: false,
+        default: "false",
+        options: booleanOptions,
+      },
+      {
+        key: "skip-tests",
+        select: "Do you want to skip the tests?",
+        required: false,
+        default: "false",
+        options: booleanOptions,
+      },
+      {
+        key: "canary",
+        select: "If building, is this a canary build?",
+        required: false,
+        default: "true",
+        options: booleanOptions,
+      },
+      {
+        key: "profile",
+        select: "If building, which profiles do you want to build?",
+        required: false,
+        multiple: true,
+        default: ["release"],
+        options: [
+          {
+            label: `${getEmoji("release")} Release`,
+            value: "release",
+          },
+          {
+            label: `${getEmoji("assert")} Release & Assertions`,
+            value: "assert",
+          },
+          {
+            label: `${getEmoji("debug")} Debug`,
+            value: "debug",
+          },
+        ],
+      },
+      {
+        key: "build-platforms",
+        select: "If building, which platforms do you want to build?",
+        hint: "If this is left blank, all platforms are built",
+        required: false,
+        multiple: true,
+        default: [],
+        options: buildPlatforms.map(platform => {
+          const { os, arch, abi, baseline } = platform;
+          let label = `${getEmoji(os)} ${arch}`;
+          if (abi) {
+            label += `-${abi}`;
+          }
+          if (baseline) {
+            label += `-baseline`;
+          }
+          return {
+            label,
+            value: getTargetKey(platform),
+          };
+        }),
+      },
+      {
+        key: "test-platforms",
+        select: "If testing, which platforms do you want to test?",
+        hint: "If this is left blank, all platforms are tested",
+        required: false,
+        multiple: true,
+        default: [],
+        options: [...new Map(testPlatforms.map(platform => [getImageKey(platform), platform])).values()].map(
+          platform => {
+            const { os, arch, abi, distro, release } = platform;
+            let label = `${getEmoji(os)} ${arch}`;
+            if (abi) {
+              label += `-${abi}`;
+            }
+            if (distro) {
+              label += ` ${distro}`;
+            }
+            if (release) {
+              label += ` ${release}`;
+            }
+            return {
+              label,
+              value: getTargetKey(platform),
+            };
+          },
+        ),
+      },
+    ],
+  };
+}
+
+/**
  * @returns {Promise<Pipeline>}
  */
 async function getPipeline() {
@@ -1003,96 +1118,7 @@ async function getPipeline() {
   const steps = [];
 
   if (isBuildManual() || true) {
-    steps.push({
-      key: "options",
-      block: "Select options",
-      blocked_state: "running",
-      fields: [
-        {
-          key: "canary",
-          select: "Is this a canary build?",
-          required: false,
-          default: "true",
-          options: [
-            {
-              label: `${getEmoji("yes")} Yes`,
-              value: "true",
-            },
-            {
-              label: `${getEmoji("no")} No`,
-              value: "false",
-            },
-          ],
-        },
-        {
-          key: "profile",
-          select: "Which profile do you want to build?",
-          required: false,
-          default: "release",
-          options: [
-            {
-              label: `${getEmoji("release")} Release`,
-              value: "release",
-            },
-            {
-              label: `${getEmoji("assert")} Release & Assertions`,
-              value: "assert",
-            },
-            {
-              label: `${getEmoji("debug")} Debug`,
-              value: "debug",
-            },
-          ],
-        },
-        {
-          key: "build-platforms",
-          select: "Which platforms do you want to build?",
-          required: false,
-          multiple: true,
-          default: buildPlatforms.map(getTargetKey),
-          options: buildPlatforms.map(platform => {
-            const { os, arch, abi, baseline } = platform;
-            let label = `${getEmoji(os)} ${arch}`;
-            if (abi) {
-              label += `-${abi}`;
-            }
-            if (baseline) {
-              label += `-baseline`;
-            }
-            return {
-              label,
-              value: getTargetKey(platform),
-            };
-          }),
-        },
-        {
-          key: "test-platforms",
-          select: "Which platforms do you want to test?",
-          required: false,
-          multiple: true,
-          default: testPlatforms.map(getTargetKey),
-          options: [...new Map(testPlatforms.map(platform => [getImageKey(platform), platform])).values()].map(
-            platform => {
-              const { os, arch, abi, distro, release } = platform;
-              let label = `${getEmoji(os)} ${arch}`;
-              if (abi) {
-                label += `-${abi}`;
-              }
-              if (distro) {
-                label += ` ${distro}`;
-              }
-              if (release) {
-                label += ` ${release}`;
-              }
-              return {
-                label,
-                value: getTargetKey(platform),
-              };
-            },
-          ),
-        },
-      ],
-    });
+    steps.push(getOptionsStep());
   }
 
   steps.push({

@@ -2524,7 +2524,10 @@ export function printEnvironment() {
     });
 
     startGroup("Limits", () => {
-      spawnSync(["ulimit", "-a"], { stdio: "inherit" });
+      const shell = which(["sh", "bash"]);
+      if (shell) {
+        spawnSync([shell, "-c", "ulimit -a"], { stdio: "inherit" });
+      }
     });
   }
 
@@ -2549,5 +2552,29 @@ export function printEnvironment() {
       console.log("Build Label:", getBuildLabel());
       console.log("Build URL:", getBuildUrl()?.toString());
     });
+  }
+}
+
+/**
+ * @returns {number | undefined}
+ */
+export function getLoggedInUserCount() {
+  if (isWindows) {
+    const pwsh = which(["pwsh", "powershell"]);
+    if (pwsh) {
+      const { error, stdout } = spawnSync([
+        pwsh,
+        "-Command",
+        `Get-CimInstance -ClassName Win32_Process -Filter "Name = 'sshd.exe'" | Get-CimAssociatedInstance -Association Win32_SessionProcess | Get-CimAssociatedInstance -Association Win32_LoggedOnUser | Where-Object {$_.Name -ne 'SYSTEM'} | Measure-Object | Select-Object -ExpandProperty Count`,
+      ]);
+      if (!error) {
+        return parseInt(stdout) || undefined;
+      }
+    }
+  }
+
+  const { error, stdout } = spawnSync(["who"]);
+  if (!error) {
+    return stdout.split("\n").filter(line => /tty|pts/i.test(line)).length;
   }
 }

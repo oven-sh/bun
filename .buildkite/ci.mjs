@@ -248,9 +248,10 @@ function getPipeline(options) {
    * @param {Platform} platform
    * @param {string} [instanceType]
    * @param {number} [cpuCount]
+   * @param {boolean} [preemptible]
    * @returns {Agent}
    */
-  const getEmphemeralAgent = (version, platform, instanceType, cpuCount) => {
+  const getEmphemeralAgent = (version, platform, instanceType, cpuCount, preemptible) => {
     const { os, arch, abi, distro, release } = platform;
     if (version === "v1") {
       return {
@@ -283,6 +284,7 @@ function getPipeline(options) {
       "image-name": image,
       "instance-type": instanceType,
       "cpu-count": cpuCount,
+      "preemptible": preemptible,
     };
   };
 
@@ -294,7 +296,7 @@ function getPipeline(options) {
     const { arch } = platform;
     const instanceType = arch === "aarch64" ? "c8g.16xlarge" : "c7i.16xlarge";
     const cpuCount = 64;
-    return getEmphemeralAgent("v2", platform, instanceType, cpuCount);
+    return getEmphemeralAgent("v2", platform, instanceType, cpuCount, !isMainBranch());
   };
 
   /**
@@ -317,7 +319,7 @@ function getPipeline(options) {
       instanceType = "c7i.xlarge";
       cpuCount = 4;
     }
-    return getEmphemeralAgent("v2", platform, instanceType, cpuCount);
+    return getEmphemeralAgent("v2", platform, instanceType, cpuCount, true);
   };
 
   /**
@@ -639,11 +641,8 @@ function getPipeline(options) {
     { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", tier: "todo" },
     { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2", tier: "todo" },
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
-    { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.17", tier: "previous" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
-    { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.17", tier: "previous" },
     { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20", tier: "latest" },
-    { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.17", tier: "previous" },
     { os: "windows", arch: "x64", release: "2025", tier: "latest" },
     { os: "windows", arch: "x64", release: "2022", tier: "previous" },
     { os: "windows", arch: "x64", release: "2019", tier: "oldest" },

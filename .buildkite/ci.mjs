@@ -985,6 +985,11 @@ async function getPipeline() {
     });
   }
 
+  steps.push({
+    key: "uname",
+    command: "uname -a",
+  });
+
   return { steps };
 }
 

@@ -438,7 +438,7 @@ export const aws = {
         "InstanceMetadataTags": "enabled",
       }),
       ["tag-specifications"]: JSON.stringify(tagSpecification),
-      ["key-name"]: "ashcon-bun",
+      // ["key-name"]: "ashcon-bun",
     });
 
     return aws.toMachine(instance, { ...options, username });
@@ -708,7 +708,7 @@ function getCloudInit(cloudInit) {
   // https://cloudinit.readthedocs.io/en/stable/
   return `#cloud-config
 
-  write_files:
+    write_files:
       - path: /etc/ssh/sshd_config
         content: |
           PermitRootLogin yes

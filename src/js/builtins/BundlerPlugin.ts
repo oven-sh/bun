@@ -373,7 +373,19 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
           continue;
         }
 
-        var { contents, loader = defaultLoader } = result as OnLoadResultSourceCode & OnLoadResultObject;
+        var { contents, loader = defaultLoader } = result as any;
+        if ((loader as any) === 'object') {
+          if (!('exports' in result)) {
+            throw new TypeError('onLoad plugin returning loader: "object" must have "exports" property');
+          }
+          try {
+            contents = JSON.stringify(result.exports);
+            loader = 'json';
+          } catch (e) {
+            throw new TypeError('When using Bun.build, onLoad plugin must return a JSON-serializable object: ' + e) ;
+          }
+        }
+
         if (!(typeof contents === "string") && !$isTypedArrayView(contents)) {
           throw new TypeError('onLoad plugins must return an object with "contents" as a string or Uint8Array');
         }
@@ -387,7 +399,7 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
           throw new TypeError(`Loader ${loader} is not supported.`);
         }
 
-        this.onLoadAsync(internalID, contents, chosenLoader);
+        this.onLoadAsync(internalID, contents as any, chosenLoader);
         return null;
       }
     }

@@ -237,7 +237,7 @@ pub const StatWatcher = struct {
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Arguments {
             const vm = ctx.vm();
             const path = try PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator) orelse {
-                return ctx.throwInvalidArguments2("filename must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
             };
 
             var listener: JSC.JSValue = .zero;
@@ -254,9 +254,9 @@ pub const StatWatcher = struct {
                     // default false
                     bigint = (try options_or_callable.getBooleanStrict(ctx, "bigint")) orelse false;
 
-                    if (options_or_callable.get(ctx, "interval")) |interval_| {
+                    if (try options_or_callable.get(ctx, "interval")) |interval_| {
                         if (!interval_.isNumber() and !interval_.isAnyInt()) {
-                            return ctx.throwInvalidArguments2("interval must be a number", .{});
+                            return ctx.throwInvalidArguments("interval must be a number", .{});
                         }
                         interval = interval_.coerce(i32, ctx);
                     }
@@ -270,7 +270,7 @@ pub const StatWatcher = struct {
             }
 
             if (listener == .zero) {
-                return ctx.throwInvalidArguments2("Expected \"listener\" callback", .{});
+                return ctx.throwInvalidArguments("Expected \"listener\" callback", .{});
             }
 
             return Arguments{

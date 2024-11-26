@@ -32,7 +32,10 @@ async function doBuildkiteAgent(action) {
 
   let homePath, cachePath, logsPath, agentLogPath, pidPath;
   if (isWindows) {
-    throw new Error("TODO: Windows");
+    homePath = "C:\\buildkite-agent";
+    cachePath = join(homePath, "cache");
+    logsPath = join(homePath, "logs");
+    agentLogPath = join(logsPath, "buildkite-agent.log");
   } else {
     homePath = "/var/lib/buildkite-agent";
     cachePath = "/var/cache/buildkite-agent";
@@ -44,6 +47,19 @@ async function doBuildkiteAgent(action) {
   async function install() {
     const command = process.execPath;
     const args = [realpathSync(process.argv[1]), "start"];
+
+    if (isWindows) {
+      const serviceCommand = [
+        "New-Service",
+        "-Name",
+        "buildkite-agent",
+        "-StartupType",
+        "Automatic",
+        "-BinaryPathName",
+        `${escape(command)} ${escape(args.map(escape).join(" "))}`,
+      ];
+      await spawnSafe(["powershell", "-Command", serviceCommand.join(" ")], { stdio: "inherit" });
+    }
 
     if (isOpenRc()) {
       const servicePath = "/etc/init.d/buildkite-agent";
@@ -81,7 +97,7 @@ async function doBuildkiteAgent(action) {
         [Service]
         Type=simple
         User=${username}
-        ExecStart=${escape(command)} ${escape(args.map(escape).join(" "))}
+        ExecStart=${escape(command)} ${args.map(escape).join(" ")}
         RestartSec=5
         Restart=on-failure
         KillMode=process

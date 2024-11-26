@@ -98,11 +98,11 @@ pub const JSBundler = struct {
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
-            if (config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
+            if (try config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
                 this.experimental_css = if (enable_css.isBoolean())
                     enable_css.toBoolean()
                 else if (enable_css.isObject()) true: {
-                    if (enable_css.getTruthy(globalThis, "chunking")) |enable_chunking| {
+                    if (try enable_css.getTruthy(globalThis, "chunking")) |enable_chunking| {
                         this.css_chunking = if (enable_chunking.isBoolean()) enable_css.toBoolean() else false;
                     }
 
@@ -118,20 +118,20 @@ pub const JSBundler = struct {
                 var i: usize = 0;
                 while (iter.next()) |plugin| : (i += 1) {
                     if (!plugin.isObject()) {
-                        return globalThis.throwInvalidArguments2("Expected plugin to be an object", .{});
+                        return globalThis.throwInvalidArguments("Expected plugin to be an object", .{});
                     }
 
                     if (try plugin.getOptional(globalThis, "name", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (slice.len == 0) {
-                            return globalThis.throwInvalidArguments2("Expected plugin to have a non-empty name", .{});
+                            return globalThis.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
                         }
                     } else {
-                        return globalThis.throwInvalidArguments2("Expected plugin to have a name", .{});
+                        return globalThis.throwInvalidArguments("Expected plugin to have a name", .{});
                     }
 
                     const function = try plugin.getFunction(globalThis, "setup") orelse {
-                        return globalThis.throwInvalidArguments2("Expected plugin to have a setup() function", .{});
+                        return globalThis.throwInvalidArguments("Expected plugin to have a setup() function", .{});
                     };
 
                     var bun_plugins: *Plugin = plugins.* orelse brk: {
@@ -193,7 +193,7 @@ pub const JSBundler = struct {
                 this.target = target;
 
                 if (target != .bun and this.bytecode) {
-                    return globalThis.throwInvalidArguments2("target must be 'bun' when bytecode is true", .{});
+                    return globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
                 }
             }
 
@@ -214,7 +214,7 @@ pub const JSBundler = struct {
                 try this.footer.appendSliceExact(slice.slice());
             }
 
-            if (config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
+            if (try config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
                 if (bun.FeatureFlags.breaking_changes_1_2 and config.isBoolean()) {
                     if (source_map_js == .true) {
                         this.source_map = if (has_out_dir)
@@ -239,7 +239,7 @@ pub const JSBundler = struct {
                 this.format = format;
 
                 if (this.bytecode and format != .cjs) {
-                    return globalThis.throwInvalidArguments2("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+                    return globalThis.throwInvalidArguments("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
                 }
             }
 
@@ -247,7 +247,7 @@ pub const JSBundler = struct {
                 this.code_splitting = hot;
             }
 
-            if (config.getTruthy(globalThis, "minify")) |minify| {
+            if (try config.getTruthy(globalThis, "minify")) |minify| {
                 if (minify.isBoolean()) {
                     const value = minify.toBoolean();
                     this.minify.whitespace = value;
@@ -264,21 +264,19 @@ pub const JSBundler = struct {
                         this.minify.identifiers = syntax;
                     }
                 } else {
-                    return globalThis.throwInvalidArguments2("Expected minify to be a boolean or an object", .{});
+                    return globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
                 }
             }
 
             if (try config.getArray(globalThis, "entrypoints") orelse try config.getArray(globalThis, "entryPoints")) |entry_points| {
                 var iter = entry_points.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
-                    var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                        return globalThis.throwInvalidArguments2("Expected entrypoints to be an array of strings", .{});
-                    };
+                    var slice = try entry_point.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.entry_points.insert(slice.slice());
                 }
             } else {
-                return globalThis.throwInvalidArguments2("Expected entrypoints to be an array of strings", .{});
+                return globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
             }
 
             if (try config.getBooleanLoose(globalThis, "emitDCEAnnotations")) |flag| {
@@ -289,24 +287,20 @@ pub const JSBundler = struct {
                 this.ignore_dce_annotations = flag;
             }
 
-            if (config.getTruthy(globalThis, "conditions")) |conditions_value| {
+            if (try config.getTruthy(globalThis, "conditions")) |conditions_value| {
                 if (conditions_value.isString()) {
-                    var slice = conditions_value.toSliceOrNull(globalThis) orelse {
-                        return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
-                    };
+                    var slice = try conditions_value.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.conditions.insert(slice.slice());
                 } else if (conditions_value.jsType().isArray()) {
                     var iter = conditions_value.arrayIterator(globalThis);
                     while (iter.next()) |entry_point| {
-                        var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                            return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
-                        };
+                        var slice = try entry_point.toSliceOrNull(globalThis);
                         defer slice.deinit();
                         try this.conditions.insert(slice.slice());
                     }
                 } else {
-                    return globalThis.throwInvalidArguments2("Expected conditions to be an array of strings", .{});
+                    return globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
                 }
             }
 
@@ -328,15 +322,13 @@ pub const JSBundler = struct {
                 defer path.deinit();
 
                 var dir = std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
-                    globalThis.throwPretty("{s}: failed to open root directory: {s}", .{ @errorName(err), path.slice() });
-                    return error.JSError;
+                    return globalThis.throwPretty("{s}: failed to open root directory: {s}", .{ @errorName(err), path.slice() });
                 };
                 defer dir.close();
 
                 var rootdir_buf: bun.PathBuffer = undefined;
                 const rootdir = bun.getFdPath(bun.toFD(dir.fd), &rootdir_buf) catch |err| {
-                    globalThis.throwPretty("{s}: failed to get full root directory path: {s}", .{ @errorName(err), path.slice() });
-                    return error.JSError;
+                    return globalThis.throwPretty("{s}: failed to get full root directory path: {s}", .{ @errorName(err), path.slice() });
                 };
                 try this.rootdir.appendSliceExact(rootdir);
             }
@@ -344,9 +336,7 @@ pub const JSBundler = struct {
             if (try config.getOwnArray(globalThis, "external")) |externals| {
                 var iter = externals.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
-                    var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                        return globalThis.throwInvalidArguments2("Expected external to be an array of strings", .{});
-                    };
+                    var slice = try entry_point.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.external.insert(slice.slice());
                 }
@@ -355,9 +345,7 @@ pub const JSBundler = struct {
             if (try config.getOwnArray(globalThis, "drop")) |drops| {
                 var iter = drops.arrayIterator(globalThis);
                 while (iter.next()) |entry| {
-                    var slice = entry.toSliceOrNull(globalThis) orelse {
-                        return globalThis.throwInvalidArguments2("Expected drop to be an array of strings", .{});
-                    };
+                    var slice = try entry.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.drop.insert(slice.slice());
                 }
@@ -375,7 +363,7 @@ pub const JSBundler = struct {
                 try this.public_path.appendSliceExact(slice.slice());
             }
 
-            if (config.getTruthy(globalThis, "naming")) |naming| {
+            if (try config.getTruthy(globalThis, "naming")) |naming| {
                 if (naming.isString()) {
                     if (try config.getOptional(globalThis, "naming", ZigString.Slice)) |slice| {
                         defer slice.deinit();
@@ -413,13 +401,13 @@ pub const JSBundler = struct {
                         this.names.asset.data = this.names.owned_asset.list.items;
                     }
                 } else {
-                    return globalThis.throwInvalidArguments2("Expected naming to be a string or an object", .{});
+                    return globalThis.throwInvalidArguments("Expected naming to be a string or an object", .{});
                 }
             }
 
             if (try config.getOwnObject(globalThis, "define")) |define| {
                 if (!define.isObject()) {
-                    return globalThis.throwInvalidArguments2("define must be an object", .{});
+                    return globalThis.throwInvalidArguments("define must be an object", .{});
                 }
 
                 var define_iter = JSC.JSPropertyIterator(.{
@@ -433,7 +421,7 @@ pub const JSBundler = struct {
                     const value_type = property_value.jsType();
 
                     if (!value_type.isStringLike()) {
-                        return globalThis.throwInvalidArguments2("define \"{s}\" must be a JSON string", .{prop});
+                        return globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
                     }
 
                     var val = JSC.ZigString.init("");
@@ -467,7 +455,7 @@ pub const JSBundler = struct {
 
                 while (loader_iter.next()) |prop| {
                     if (!prop.hasPrefixComptime(".") or prop.length() < 2) {
-                        return globalThis.throwInvalidArguments2("loader property names must be file extensions, such as '.txt'", .{});
+                        return globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
                     }
 
                     loader_values[loader_iter.i] = try loader_iter.value.toEnumFromMap(
@@ -548,10 +536,9 @@ pub const JSBundler = struct {
     fn build(
         globalThis: *JSC.JSGlobalObject,
         arguments: []const JSC.JSValue,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         if (arguments.len == 0 or !arguments[0].isObject()) {
-            globalThis.throwInvalidArguments("Expected a config object to be passed to Bun.build", .{});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected a config object to be passed to Bun.build", .{});
         }
 
         var plugins: ?*Plugin = null;
@@ -587,7 +574,7 @@ pub const JSBundler = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(1);
+        const arguments = callframe.arguments_old(1);
         return build(globalThis, arguments.slice());
     }
 
@@ -868,26 +855,30 @@ pub const JSBundler = struct {
             globalObject: *JSC.JSGlobalObject,
         ) JSValue {
             if (this.called_defer) {
-                globalObject.throw("can't call .defer() more than once within an onLoad plugin", .{});
-                return .undefined;
+                globalObject.throw("Can't call .defer() more than once within an onLoad plugin", .{});
+                return .zero;
             }
+
             this.called_defer = true;
 
-            _ = this.parse_task.ctx.graph.deferred_pending.fetchAdd(1, .acq_rel);
-            _ = @atomicRmw(usize, &this.parse_task.ctx.graph.parse_pending, .Sub, 1, .acq_rel);
+            debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s})", .{ @intFromPtr(this), this.path });
 
-            debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s}) parse_pending={d} deferred_pending={d}", .{
-                @intFromPtr(this),
-                this.path,
-                @atomicLoad(
-                    usize,
-                    &this.parse_task.ctx.graph.parse_pending,
-                    .monotonic,
-                ),
-                this.parse_task.ctx.graph.deferred_pending.load(.monotonic),
-            });
+            // Notify the bundler thread about the deferral. This will decrement
+            switch (this.parse_task.ctx.loop().*) {
+                .js => |jsc_event_loop| {
+                    jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this.parse_task.ctx, BundleV2.onNotifyDefer));
+                },
+                .mini => |*mini| {
+                    mini.enqueueTaskConcurrentWithExtraCtx(
+                        Load,
+                        BundleV2,
+                        this,
+                        BundleV2.onNotifyDeferMini,
+                        .task,
+                    );
+                },
+            }
 
-            defer this.parse_task.ctx.loop().wakeup();
             const promise: JSValue = if (this.completion) |c| c.plugins.?.appendDeferPromise() else return .undefined;
             return promise;
         }
@@ -942,7 +933,7 @@ pub const JSBundler = struct {
             return plugin;
         }
 
-        extern fn JSBundlerPlugin__tombestone(*Plugin) void;
+        extern fn JSBundlerPlugin__tombstone(*Plugin) void;
 
         extern fn JSBundlerPlugin__anyMatches(
             *Plugin,
@@ -1052,9 +1043,13 @@ pub const JSBundler = struct {
             JSC.markBinding(@src());
             const tracer = bun.tracy.traceNamed(@src(), "JSBundler.addPlugin");
             defer tracer.end();
-            const value = JSBundlerPlugin__runSetupFunction(this, object, config, onstart_promises_array, JSValue.jsBoolean(is_last));
-            if (value == .zero) return error.JSError;
-            return value;
+            return JSBundlerPlugin__runSetupFunction(
+                this,
+                object,
+                config,
+                onstart_promises_array,
+                JSValue.jsBoolean(is_last),
+            ).unwrap();
         }
 
         pub fn drainDeferred(this: *Plugin, rejected: bool) void {
@@ -1063,7 +1058,7 @@ pub const JSBundler = struct {
 
         pub fn deinit(this: *Plugin) void {
             JSC.markBinding(@src());
-            JSBundlerPlugin__tombestone(this);
+            JSBundlerPlugin__tombstone(this);
             JSC.JSValue.fromCell(this).unprotect();
         }
 
@@ -1080,7 +1075,7 @@ pub const JSBundler = struct {
             JSC.JSValue,
             JSC.JSValue,
             JSC.JSValue,
-        ) JSValue;
+        ) JSValue.MaybeException;
 
         pub export fn JSBundlerPlugin__addError(
             ctx: *anyopaque,
@@ -1343,3 +1338,4 @@ pub const BuildArtifact = struct {
 };
 
 const Output = bun.Output;
+const BundleV2 = bun.bundle_v2.BundleV2;

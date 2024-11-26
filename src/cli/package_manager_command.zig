@@ -76,7 +76,7 @@ pub const PackageManagerCommand = struct {
             Global.crash();
         };
 
-        const load_result = BinaryLockfile.load(&lockfile_source, ctx.allocator, ctx.log, .binary) catch bun.outOfMemory();
+        const load_result = BinaryLockfile.load(&lockfile_source, pm, ctx.allocator, ctx.log, .binary) catch bun.outOfMemory();
 
         const lockfile = handleLoadLockfileErrors(load_result, &pm.options);
 
@@ -208,7 +208,7 @@ pub const PackageManagerCommand = struct {
             Output.flush();
             return;
         } else if (strings.eqlComptime(subcommand, "hash")) {
-            const load_lockfile = BinaryLockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+            const load_lockfile = BinaryLockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
             const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
 
             _ = try lockfile.hasMetaHashChanged(false, lockfile.packages.len);
@@ -219,7 +219,7 @@ pub const PackageManagerCommand = struct {
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-print")) {
-            const load_lockfile = BinaryLockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+            const load_lockfile = BinaryLockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
             const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
 
             Output.flush();
@@ -228,7 +228,7 @@ pub const PackageManagerCommand = struct {
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-string")) {
-            const load_lockfile = BinaryLockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+            const load_lockfile = BinaryLockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
             const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
 
             _ = try lockfile.hasMetaHashChanged(true, lockfile.packages.len);
@@ -301,7 +301,7 @@ pub const PackageManagerCommand = struct {
             try TrustCommand.exec(ctx, pm, args);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "ls")) {
-            const load_lockfile = BinaryLockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+            const load_lockfile = BinaryLockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
             const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
 
             Output.flush();
@@ -388,6 +388,7 @@ pub const PackageManagerCommand = struct {
                 Global.exit(1);
             }
             const load_lockfile = @import("../install/migration.zig").detectAndLoadOtherLockfileFromCwd(
+                pm,
                 ctx.allocator,
                 pm.log,
                 &pm.options,
@@ -401,7 +402,7 @@ pub const PackageManagerCommand = struct {
             }
             const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
             const save_format: BinaryLockfile.Format = if (pm.options.save_text_lockfile) .text else .binary;
-            lockfile.saveToDisk(save_format);
+            lockfile.saveToDisk(save_format, pm.options.log_level.isVerbose());
             Global.exit(0);
         }
 

@@ -439,7 +439,7 @@ pub const Error = struct {
     }
 
     pub fn toJS(this: Error, ctx: JSC.C.JSContextRef) JSC.C.JSObjectRef {
-        return this.toSystemError().toErrorInstance(ctx.ptr()).asObjectRef();
+        return this.toSystemError().toErrorInstance(ctx).asObjectRef();
     }
 
     pub fn toJSC(this: Error, ptr: *JSC.JSGlobalObject) JSC.JSValue {

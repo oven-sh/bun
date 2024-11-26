@@ -178,6 +178,7 @@ pub const FolderResolution = union(Tag) {
 
             try package.parseWithJSON(
                 lockfile,
+                manager,
                 manager.allocator,
                 manager.log,
                 json.source,
@@ -208,6 +209,7 @@ pub const FolderResolution = union(Tag) {
 
             try package.parse(
                 lockfile,
+                manager,
                 manager.allocator,
                 manager.log,
                 source,

@@ -258,6 +258,7 @@ pub const LoadResult = union(enum) {
 };
 
 pub fn loadFromCwd(
+    manager: ?*PackageManager,
     allocator: Allocator,
     log: *logger.Log,
     // comptime from_stdin: bool,
@@ -290,12 +291,15 @@ pub fn loadFromCwd(
                 };
             }
             if (comptime attempt_migrate) {
-                return migration.detectAndLoadOtherLockfileFromCwd(
-                    allocator,
-                    log,
-                    install_options,
-                    workspace_json_cache,
-                );
+                if (manager) |pm| {
+                    return migration.detectAndLoadOtherLockfileFromCwd(
+                        pm,
+                        allocator,
+                        log,
+                        install_options,
+                        workspace_json_cache,
+                    );
+                }
             }
 
             return .not_found;
@@ -314,6 +318,7 @@ pub fn loadFromCwd(
 
     const loaded = load(
         &logger.Source.initPathString(format.filename(), contents),
+        manager,
         allocator,
         log,
         format,
@@ -328,6 +333,7 @@ pub fn loadFromCwd(
 
 pub fn load(
     source: *const logger.Source,
+    pm: ?*PackageManager,
     allocator: Allocator,
     log: *logger.Log,
     format: Format,
@@ -363,7 +369,7 @@ pub fn load(
     this.overrides = .{};
     this.patched_dependencies = .{};
 
-    const load_result = Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
+    const load_result = Lockfile.Serializer.load(this, &stream, allocator, log, pm) catch |err| {
         return LoadResult{ .err = .{ .step = .parse_file, .err = err, .lockfile_path = "bun.lockb" } };
     };
 
@@ -823,6 +829,7 @@ pub const Tree = struct {
 /// Our in-memory representation is all that's left.
 pub fn maybeCloneFilteringRootPackages(
     old: *Lockfile,
+    manager: *PackageManager,
     features: Features,
     comptime log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
@@ -862,10 +869,10 @@ pub fn maybeCloneFilteringRootPackages(
         log.deinit();
     }
 
-    return try old.clean(&log, features.dev_dependencies, null, log_level);
+    return try old.clean(manager, &log, features.dev_dependencies, null, log_level);
 }
 
-fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequest, exact_versions: bool) !void {
+fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: []PackageManager.UpdateRequest, exact_versions: bool) !void {
     const root_deps_list: Lockfile.DependencySlice = old.packages.items(.dependencies)[0];
     if (@as(usize, root_deps_list.off) < old.buffers.dependencies.items.len) {
         var string_builder = old.stringBuilder();
@@ -926,6 +933,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
                                 sliced.slice,
                                 &sliced,
                                 null,
+                                manager,
                             ) orelse Dependency.Version{};
                         }
                     }
@@ -996,7 +1004,7 @@ pub fn cleanWithUpdates(
     comptime log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
     if (updates.len > 0) {
-        try old.preprocessUpdateRequests(updates, exact_versions);
+        try old.preprocessUpdateRequests(manager, updates, exact_versions);
     }
 
     // preinstall_state is used during installPackages. the indexes(package ids) need
@@ -1010,6 +1018,7 @@ pub fn cleanWithUpdates(
     @memset(preinstall_state.items, .unknown);
 
     const new = try old.clean(
+        manager,
         log,
         manager.options.local_package_features.dev_dependencies,
         .{
@@ -1057,6 +1066,7 @@ pub fn cleanWithUpdates(
 
 pub fn clean(
     old: *Lockfile,
+    manager: *PackageManager,
     log: *logger.Log,
     prefer_dev_dependencies: bool,
     preinstall_state: ?Cloner.PreinstallStatePair,
@@ -1086,7 +1096,7 @@ pub fn clean(
         var builder = new.stringBuilder();
         old.overrides.count(old, &builder);
         try builder.allocate();
-        new.overrides = try old.overrides.clone(old, new, &builder);
+        new.overrides = try old.overrides.clone(manager, old, new, &builder);
     }
 
     // Step 1. Recreate the lockfile with only the packages that are still alive
@@ -1101,6 +1111,7 @@ pub fn clean(
     var cloner = Cloner{
         .old = old,
         .lockfile = new,
+        .manager = manager,
         .mapping = package_id_mapping,
         .clone_queue = clone_queue_,
         .log = log,
@@ -1109,7 +1120,7 @@ pub fn clean(
     };
 
     // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
-    _ = try root.clone(old, new, package_id_mapping, &cloner);
+    _ = try root.clone(manager, old, new, package_id_mapping, &cloner);
 
     // Clone workspace_paths and workspace_versions at the end.
     if (old.workspace_paths.count() > 0 or old.workspace_versions.count() > 0) {
@@ -1246,6 +1257,7 @@ const Cloner = struct {
     log: *logger.Log,
     preinstall: ?PreinstallStatePair,
     prefer_dev_dependencies: bool,
+    manager: *PackageManager,
 
     pub const PreinstallStatePair = struct {
         old: []Install.PreinstallState,
@@ -1266,6 +1278,7 @@ const Cloner = struct {
             const old_package = this.old.packages.get(to_clone.old_resolution);
 
             this.lockfile.buffers.resolutions.items[to_clone.resolve_id] = try old_package.clone(
+                this.manager,
                 this.old,
                 this.lockfile,
                 this.mapping,
@@ -1328,8 +1341,6 @@ pub const Printer = struct {
     options: PackageManager.Options,
     successfully_installed: ?Bitset = null,
 
-    manager: ?*PackageManager,
-
     updates: []const PackageManager.UpdateRequest = &[_]PackageManager.UpdateRequest{},
 
     pub const Format = enum { yarn };
@@ -1367,7 +1378,7 @@ pub const Printer = struct {
 
         _ = try FileSystem.init(null);
 
-        const load_from_disk = Lockfile.loadFromCwd(allocator, log, false, {}, {});
+        const load_from_disk = Lockfile.loadFromCwd(null, allocator, log, false, {}, {});
         const lockfile = switch (load_from_disk) {
             .err => |cause| {
                 switch (cause.step) {
@@ -1448,7 +1459,6 @@ pub const Printer = struct {
         var printer = Printer{
             .lockfile = lockfile,
             .options = options,
-            .manager = null,
         };
 
         switch (format) {
@@ -1461,6 +1471,7 @@ pub const Printer = struct {
     pub const Tree = struct {
         fn printInstalledWorkspaceSection(
             this: *const Printer,
+            manager: *PackageManager,
             comptime Writer: type,
             writer: Writer,
             comptime enable_ansi_colors: bool,
@@ -1484,7 +1495,7 @@ pub const Printer = struct {
 
             // find the updated packages
             for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
-                switch (shouldPrintPackageInstall(this, @intCast(dep_id), installed, id_map)) {
+                switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map)) {
                     .yes, .no, .@"return" => {},
                     .update => |update_info| {
                         printed_new_install.* = true;
@@ -1506,7 +1517,7 @@ pub const Printer = struct {
             }
 
             for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
-                switch (shouldPrintPackageInstall(this, @intCast(dep_id), installed, id_map)) {
+                switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map)) {
                     .@"return" => return,
                     .yes => {},
                     .no, .update => continue,
@@ -1531,7 +1542,7 @@ pub const Printer = struct {
                     printed_update = false;
                     try writer.writeAll("\n");
                 }
-                try printInstalledPackage(this, &dep, package_id, enable_ansi_colors, Writer, writer);
+                try printInstalledPackage(this, manager, &dep, package_id, enable_ansi_colors, Writer, writer);
             }
         }
 
@@ -1551,6 +1562,7 @@ pub const Printer = struct {
 
         fn shouldPrintPackageInstall(
             this: *const Printer,
+            manager: *PackageManager,
             dep_id: DependencyID,
             installed: *const Bitset,
             id_map: ?[]DependencyID,
@@ -1577,22 +1589,20 @@ pub const Printer = struct {
 
             if (!installed.isSet(package_id)) return .no;
 
-            if (this.manager) |manager| {
-                const resolution = this.lockfile.packages.items(.resolution)[package_id];
-                if (resolution.tag == .npm) {
-                    const name = dependency.name.slice(this.lockfile.buffers.string_bytes.items);
-                    if (manager.updating_packages.get(name)) |entry| {
-                        if (entry.original_version) |original_version| {
-                            if (!original_version.eql(resolution.value.npm.version)) {
-                                return .{
-                                    .update = .{
-                                        .version = original_version,
-                                        .version_buf = entry.original_version_string_buf,
-                                        .resolution = resolution,
-                                        .dependency_id = dep_id,
-                                    },
-                                };
-                            }
+            const resolution = this.lockfile.packages.items(.resolution)[package_id];
+            if (resolution.tag == .npm) {
+                const name = dependency.name.slice(this.lockfile.buffers.string_bytes.items);
+                if (manager.updating_packages.get(name)) |entry| {
+                    if (entry.original_version) |original_version| {
+                        if (!original_version.eql(resolution.value.npm.version)) {
+                            return .{
+                                .update = .{
+                                    .version = original_version,
+                                    .version_buf = entry.original_version_string_buf,
+                                    .resolution = resolution,
+                                    .dependency_id = dep_id,
+                                },
+                            };
                         }
                     }
                 }
@@ -1630,6 +1640,7 @@ pub const Printer = struct {
 
         fn printInstalledPackage(
             this: *const Printer,
+            manager: *PackageManager,
             dependency: *const Dependency,
             package_id: PackageID,
             comptime enable_ansi_colors: bool,
@@ -1641,27 +1652,25 @@ pub const Printer = struct {
             const resolution: Resolution = packages_slice.items(.resolution)[package_id];
             const name = dependency.name.slice(string_buf);
 
-            if (this.manager) |manager| {
-                const package_name = packages_slice.items(.name)[package_id].slice(string_buf);
-                if (manager.formatLaterVersionInCache(this.lockfile, package_name, dependency.name_hash, resolution)) |later_version_fmt| {
-                    const fmt = comptime brk: {
-                        if (enable_ansi_colors) {
-                            break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
-                        } else {
-                            break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
-                        }
-                    };
-                    try writer.print(
-                        fmt,
-                        .{
-                            name,
-                            resolution.fmt(string_buf, .posix),
-                            later_version_fmt,
-                        },
-                    );
+            const package_name = packages_slice.items(.name)[package_id].slice(string_buf);
+            if (manager.formatLaterVersionInCache(this.lockfile, package_name, dependency.name_hash, resolution)) |later_version_fmt| {
+                const fmt = comptime brk: {
+                    if (enable_ansi_colors) {
+                        break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
+                    } else {
+                        break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
+                    }
+                };
+                try writer.print(
+                    fmt,
+                    .{
+                        name,
+                        resolution.fmt(string_buf, .posix),
+                        later_version_fmt,
+                    },
+                );
 
-                    return;
-                }
+                return;
             }
 
             const fmt = comptime brk: {
@@ -1685,6 +1694,7 @@ pub const Printer = struct {
         /// - Prints a leading and trailing blank newline with diffs
         pub fn print(
             this: *const Printer,
+            manager: *PackageManager,
             comptime Writer: type,
             writer: Writer,
             comptime enable_ansi_colors: bool,
@@ -1724,7 +1734,7 @@ pub const Printer = struct {
                     for (workspaces_to_print.items) |workspace_dep_id| {
                         const workspace_package_id = resolutions_buffer[workspace_dep_id];
                         for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
-                            switch (shouldPrintPackageInstall(this, @intCast(dep_id), installed, id_map)) {
+                            switch (shouldPrintPackageInstall(this, manager, @intCast(dep_id), installed, id_map)) {
                                 .yes => found_workspace_to_print = true,
                                 else => {},
                             }
@@ -1733,6 +1743,7 @@ pub const Printer = struct {
 
                     try printInstalledWorkspaceSection(
                         this,
+                        manager,
                         Writer,
                         writer,
                         enable_ansi_colors,
@@ -1746,6 +1757,7 @@ pub const Printer = struct {
                     for (workspaces_to_print.items) |workspace_dep_id| {
                         try printInstalledWorkspaceSection(
                             this,
+                            manager,
                             Writer,
                             writer,
                             enable_ansi_colors,
@@ -1759,7 +1771,7 @@ pub const Printer = struct {
                 } else {
                     // just print installed packages for the current workspace
                     var workspace_package_id: DependencyID = 0;
-                    if (PackageManager.get().workspace_name_hash) |workspace_name_hash| {
+                    if (manager.workspace_name_hash) |workspace_name_hash| {
                         for (resolutions_list[0].begin()..resolutions_list[0].end()) |dep_id| {
                             const dep = dependencies_buffer[dep_id];
                             if (dep.behavior.isWorkspace() and dep.name_hash == workspace_name_hash) {
@@ -1771,6 +1783,7 @@ pub const Printer = struct {
 
                     try printInstalledWorkspaceSection(
                         this,
+                        manager,
                         Writer,
                         writer,
                         enable_ansi_colors,
@@ -1865,7 +1878,6 @@ pub const Printer = struct {
 
                         {
                             const fmt = comptime Output.prettyFmt("<r> <d>- <r><b>{s}<r>\n", enable_ansi_colors);
-                            const manager = PackageManager.get();
 
                             if (manager.track_installed_bin == .pending) {
                                 if (iterator.next() catch null) |bin_name| {
@@ -2128,7 +2140,7 @@ pub fn verifyData(this: *const Lockfile) !void {
     }
 }
 
-pub fn saveToDisk(this: *Lockfile, format: Format) void {
+pub fn saveToDisk(this: *Lockfile, format: Format, verbose_log: bool) void {
     if (comptime Environment.allow_assert) {
         this.verifyData() catch |err| {
             Output.errGeneric("failed to verify lockfile: {s}", .{@errorName(err)});
@@ -2146,7 +2158,7 @@ pub fn saveToDisk(this: *Lockfile, format: Format) void {
         var bytes = std.ArrayList(u8).init(bun.default_allocator);
         var total_size: usize = 0;
         var end_pos: usize = 0;
-        Lockfile.Serializer.save(this, &bytes, &total_size, &end_pos) catch |err| {
+        Lockfile.Serializer.save(this, verbose_log, &bytes, &total_size, &end_pos) catch |err| {
             Output.err(err, "failed to serialize lockfile", .{});
             Global.crash();
         };
@@ -2530,14 +2542,14 @@ pub const OverrideMap = struct {
         }
     }
 
-    pub fn clone(this: *OverrideMap, old_lockfile: *Lockfile, new_lockfile: *Lockfile, new_builder: *Lockfile.StringBuilder) !OverrideMap {
+    pub fn clone(this: *OverrideMap, pm: *PackageManager, old_lockfile: *Lockfile, new_lockfile: *Lockfile, new_builder: *Lockfile.StringBuilder) !OverrideMap {
         var new = OverrideMap{};
         try new.map.ensureTotalCapacity(new_lockfile.allocator, this.map.entries.len);
 
         for (this.map.keys(), this.map.values()) |k, v| {
             new.map.putAssumeCapacity(
                 k,
-                try v.clone(old_lockfile.buffers.string_bytes.items, @TypeOf(new_builder), new_builder),
+                try v.clone(pm, old_lockfile.buffers.string_bytes.items, @TypeOf(new_builder), new_builder),
             );
         }
 
@@ -2587,6 +2599,7 @@ pub const OverrideMap = struct {
     /// It is assumed the input map is uninitialized (zero entries)
     pub fn parseAppend(
         this: *OverrideMap,
+        pm: *PackageManager,
         lockfile: *Lockfile,
         root_package: *Lockfile.Package,
         log: *logger.Log,
@@ -2598,9 +2611,9 @@ pub const OverrideMap = struct {
             assert(this.map.entries.len == 0); // only call parse once
         }
         if (expr.asProperty("overrides")) |overrides| {
-            try this.parseFromOverrides(lockfile, root_package, json_source, log, overrides.expr, builder);
+            try this.parseFromOverrides(pm, lockfile, root_package, json_source, log, overrides.expr, builder);
         } else if (expr.asProperty("resolutions")) |resolutions| {
-            try this.parseFromResolutions(lockfile, root_package, json_source, log, resolutions.expr, builder);
+            try this.parseFromResolutions(pm, lockfile, root_package, json_source, log, resolutions.expr, builder);
         }
         debug("parsed {d} overrides", .{this.map.entries.len});
     }
@@ -2608,6 +2621,7 @@ pub const OverrideMap = struct {
     /// https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
     pub fn parseFromOverrides(
         this: *OverrideMap,
+        pm: *PackageManager,
         lockfile: *Lockfile,
         root_package: *Lockfile.Package,
         source: logger.Source,
@@ -2667,6 +2681,7 @@ pub const OverrideMap = struct {
             if (try parseOverrideValue(
                 "override",
                 lockfile,
+                pm,
                 root_package,
                 source,
                 value.loc,
@@ -2684,6 +2699,7 @@ pub const OverrideMap = struct {
     /// yarn berry: https://yarnpkg.com/configuration/manifest#resolutions
     pub fn parseFromResolutions(
         this: *OverrideMap,
+        pm: *PackageManager,
         lockfile: *Lockfile,
         root_package: *Lockfile.Package,
         source: logger.Source,
@@ -2737,6 +2753,7 @@ pub const OverrideMap = struct {
             if (try parseOverrideValue(
                 "resolution",
                 lockfile,
+                pm,
                 root_package,
                 source,
                 value.loc,
@@ -2754,6 +2771,7 @@ pub const OverrideMap = struct {
     pub fn parseOverrideValue(
         comptime field: []const u8,
         lockfile: *Lockfile,
+        package_manager: *PackageManager,
         root_package: *Lockfile.Package,
         source: logger.Source,
         loc: logger.Loc,
@@ -2801,6 +2819,7 @@ pub const OverrideMap = struct {
                 literalSliced.slice,
                 &literalSliced,
                 log,
+                package_manager,
             ) orelse {
                 try log.addWarningFmt(&source, loc, lockfile.allocator, "Invalid " ++ field ++ " value \"{s}\"", .{value});
                 return null;
@@ -3292,6 +3311,7 @@ pub const Package = extern struct {
 
     pub fn clone(
         this: *const Lockfile.Package,
+        pm: *PackageManager,
         old: *Lockfile,
         new: *Lockfile,
         package_id_mapping: []PackageID,
@@ -3390,6 +3410,7 @@ pub const Package = extern struct {
 
         for (old_dependencies, dependencies) |old_dep, *new_dep| {
             new_dep.* = try old_dep.clone(
+                pm,
                 old_string_buf,
                 *Lockfile.StringBuilder,
                 builder,
@@ -3423,6 +3444,7 @@ pub const Package = extern struct {
 
     pub fn fromPackageJSON(
         lockfile: *Lockfile,
+        pm: *PackageManager,
         package_json: *PackageJSON,
         comptime features: Features,
     ) !Lockfile.Package {
@@ -3482,7 +3504,7 @@ pub const Package = extern struct {
             for (package_dependencies) |dep| {
                 if (!dep.behavior.isEnabled(features)) continue;
 
-                dependencies[0] = try dep.clone(source_buf, @TypeOf(&string_builder), &string_builder);
+                dependencies[0] = try dep.clone(pm, source_buf, @TypeOf(&string_builder), &string_builder);
                 dependencies = dependencies[1..];
                 if (dependencies.len == 0) break;
             }
@@ -3512,6 +3534,7 @@ pub const Package = extern struct {
     }
 
     pub fn fromNPM(
+        pm: *PackageManager,
         allocator: Allocator,
         lockfile: *Lockfile,
         log: *logger.Log,
@@ -3665,6 +3688,7 @@ pub const Package = extern struct {
                             sliced.slice,
                             &sliced,
                             log,
+                            pm,
                         ) orelse Dependency.Version{},
                     };
 
@@ -3754,6 +3778,7 @@ pub const Package = extern struct {
         };
 
         pub fn generate(
+            pm: *PackageManager,
             allocator: Allocator,
             log: *logger.Log,
             from_lockfile: *Lockfile,
@@ -3966,10 +3991,11 @@ pub const Package = extern struct {
 
                                 var workspace = Package{};
 
-                                const json = PackageManager.get().workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
+                                const json = pm.workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
 
                                 try workspace.parseWithJSON(
                                     to_lockfile,
+                                    pm,
                                     allocator,
                                     log,
                                     source,
@@ -3983,6 +4009,7 @@ pub const Package = extern struct {
 
                                 var from_pkg = from_lockfile.packages.get(from_resolutions[i]);
                                 const diff = try generate(
+                                    pm,
                                     allocator,
                                     log,
                                     from_lockfile,
@@ -4050,6 +4077,7 @@ pub const Package = extern struct {
     pub fn parse(
         package: *Lockfile.Package,
         lockfile: *Lockfile,
+        pm: *PackageManager,
         allocator: Allocator,
         log: *logger.Log,
         source: logger.Source,
@@ -4066,6 +4094,7 @@ pub const Package = extern struct {
 
         try package.parseWithJSON(
             lockfile,
+            pm,
             allocator,
             log,
             source,
@@ -4078,6 +4107,7 @@ pub const Package = extern struct {
 
     fn parseDependency(
         lockfile: *Lockfile,
+        pm: *PackageManager,
         allocator: Allocator,
         log: *logger.Log,
         source: logger.Source,
@@ -4127,6 +4157,7 @@ pub const Package = extern struct {
             tag,
             &sliced,
             log,
+            pm,
         ) orelse Dependency.Version{};
         var workspace_range: ?Semver.Query.Group = null;
         const name_hash = switch (dependency_version.tag) {
@@ -4197,6 +4228,7 @@ pub const Package = extern struct {
                             .workspace,
                             &path,
                             log,
+                            pm,
                         )) |dep| {
                             found_workspace = true;
                             dependency_version = dep;
@@ -4734,6 +4766,7 @@ pub const Package = extern struct {
     pub fn parseWithJSON(
         package: *Lockfile.Package,
         lockfile: *Lockfile,
+        pm: *PackageManager,
         allocator: Allocator,
         log: *logger.Log,
         source: logger.Source,
@@ -4913,7 +4946,7 @@ pub const Package = extern struct {
                         total_dependencies_count += try processWorkspaceNamesArray(
                             &workspace_names,
                             allocator,
-                            &PackageManager.get().workspace_package_json_cache,
+                            &pm.workspace_package_json_cache,
                             log,
                             arr,
                             &source,
@@ -4937,7 +4970,7 @@ pub const Package = extern struct {
                                     total_dependencies_count += try processWorkspaceNamesArray(
                                         &workspace_names,
                                         allocator,
-                                        &PackageManager.get().workspace_package_json_cache,
+                                        &pm.workspace_package_json_cache,
                                         log,
                                         packages_query.data.e_array,
                                         &source,
@@ -5280,6 +5313,7 @@ pub const Package = extern struct {
 
                     if (try parseDependency(
                         lockfile,
+                        pm,
                         allocator,
                         log,
                         source,
@@ -5322,6 +5356,7 @@ pub const Package = extern struct {
 
                                 if (try parseDependency(
                                     lockfile,
+                                    pm,
                                     allocator,
                                     log,
                                     source,
@@ -5374,7 +5409,7 @@ pub const Package = extern struct {
 
         // This function depends on package.dependencies being set, so it is done at the very end.
         if (comptime features.is_main) {
-            try lockfile.overrides.parseAppend(lockfile, package, log, source, json, &string_builder);
+            try lockfile.overrides.parseAppend(pm, lockfile, package, log, source, json, &string_builder);
         }
 
         string_builder.clamp();
@@ -5821,6 +5856,7 @@ const Buffers = struct {
 
     pub fn save(
         lockfile: *Lockfile,
+        verbose_log: bool,
         allocator: Allocator,
         comptime StreamType: type,
         stream: StreamType,
@@ -5829,7 +5865,7 @@ const Buffers = struct {
     ) !void {
         const buffers = lockfile.buffers;
         inline for (sizes.names) |name| {
-            if (PackageManager.get().options.log_level.isVerbose()) {
+            if (verbose_log) {
                 Output.prettyErrorln("Saving {d} {s}", .{ @field(buffers, name).items.len, name });
             }
 
@@ -5927,7 +5963,7 @@ const Buffers = struct {
         return error.@"Lockfile is missing resolution data";
     }
 
-    pub fn load(stream: *Stream, allocator: Allocator, log: *logger.Log) !Buffers {
+    pub fn load(stream: *Stream, allocator: Allocator, log: *logger.Log, pm_: ?*PackageManager) !Buffers {
         var this = Buffers{};
         var external_dependency_list_: std.ArrayListUnmanaged(Dependency.External) = std.ArrayListUnmanaged(Dependency.External){};
 
@@ -5941,9 +5977,10 @@ const Buffers = struct {
 
             if (comptime Type == @TypeOf(this.dependencies)) {
                 external_dependency_list_ = try readArray(stream, allocator, std.ArrayListUnmanaged(Dependency.External));
-
-                if (PackageManager.get().options.log_level.isVerbose()) {
-                    Output.prettyErrorln("Loaded {d} {s}", .{ external_dependency_list_.items.len, name });
+                if (pm_) |pm| {
+                    if (pm.options.log_level.isVerbose()) {
+                        Output.prettyErrorln("Loaded {d} {s}", .{ external_dependency_list_.items.len, name });
+                    }
                 }
             } else if (comptime Type == @TypeOf(this.trees)) {
                 var tree_list = try readArray(stream, allocator, std.ArrayListUnmanaged(Tree.External));
@@ -5956,8 +5993,10 @@ const Buffers = struct {
                 }
             } else {
                 @field(this, name) = try readArray(stream, allocator, Type);
-                if (PackageManager.get().options.log_level.isVerbose()) {
-                    Output.prettyErrorln("Loaded {d} {s}", .{ @field(this, name).items.len, name });
+                if (pm_) |pm| {
+                    if (pm.options.log_level.isVerbose()) {
+                        Output.prettyErrorln("Loaded {d} {s}", .{ @field(this, name).items.len, name });
+                    }
                 }
             }
 
@@ -5975,6 +6014,7 @@ const Buffers = struct {
             .log = log,
             .allocator = allocator,
             .buffer = string_buf,
+            .package_manager = pm_,
         };
 
         this.dependencies.expandToCapacity();
@@ -6022,7 +6062,7 @@ pub const Serializer = struct {
     const has_empty_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "eMpTrUsT".*));
     const has_overrides_tag: u64 = @bitCast(@as([8]u8, "oVeRriDs".*));
 
-    pub fn save(this: *Lockfile, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
+    pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
 
         // we clone packages with the z_allocator to make sure bytes are zeroed.
         // TODO: investigate if we still need this now that we have `padding_checker.zig`
@@ -6077,7 +6117,7 @@ pub const Serializer = struct {
         }
 
         try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(writer), writer);
-        try Lockfile.Buffers.save(this, z_allocator, StreamType, stream, @TypeOf(writer), writer);
+        try Lockfile.Buffers.save(this, verbose_log, z_allocator, StreamType, stream, @TypeOf(writer), writer);
         try writer.writeInt(u64, 0, .little);
 
         // < Bun v1.0.4 stopped right here when reading the lockfile
@@ -6205,6 +6245,7 @@ pub const Serializer = struct {
         stream: *Stream,
         allocator: Allocator,
         log: *logger.Log,
+        manager: ?*PackageManager,
     ) !Serializer.LoadResult {
         var res: Serializer.LoadResult = .{};
         var reader = stream.reader();
@@ -6239,7 +6280,12 @@ pub const Serializer = struct {
         lockfile.packages = packages_load_result.list;
         res.packages_need_update = packages_load_result.needs_update;
 
-        lockfile.buffers = try Lockfile.Buffers.load(stream, allocator, log);
+        lockfile.buffers = try Lockfile.Buffers.load(
+            stream,
+            allocator,
+            log,
+            manager,
+        );
         if ((try stream.reader().readInt(u64, .little)) != 0) {
             return error.@"Lockfile is malformed (expected 0 at the end)";
         }
@@ -6364,6 +6410,7 @@ pub const Serializer = struct {
                         .allocator = allocator,
                         .log = log,
                         .buffer = lockfile.buffers.string_bytes.items,
+                        .package_manager = manager,
                     };
                     for (overrides_name_hashes.items, override_versions_external.items) |name, value| {
                         map.putAssumeCapacity(name, Dependency.toDependency(value, context));

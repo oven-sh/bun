@@ -400,6 +400,10 @@ function expectBundled(
   dryRun = false,
   ignoreFilter = false,
 ): Promise<BundlerTestRef> | BundlerTestRef {
+  if (!new Error().stack!.includes('test/bundler/')) {
+    throw new Error(`All bundler tests must be placed in ./test/bundler/ so that regressions can be quickly detected locally via the 'bun test bundler' command`);
+  }
+
   var { expect, it, test } = testForFile(currentFile ?? callerSourceOrigin());
   if (!ignoreFilter && FILTER && !filterMatches(id)) return testRef(id, opts);
 
@@ -1572,7 +1576,7 @@ for (const [key, blob] of build.outputs) {
           let result = out!.toUnixString().trim();
 
           // no idea why this logs. ¯\_(ツ)_/¯
-          result = result.replace(`[EventLoop] enqueueTaskConcurrent(RuntimeTranspilerStore)\n`, "");
+          result = result.replace(/\[Event_?Loop\] enqueueTaskConcurrent\(RuntimeTranspilerStore\)\n/gi, "");
 
           if (typeof expected === "string") {
             expected = dedent(expected).trim();
@@ -1614,7 +1618,7 @@ for (const [key, blob] of build.outputs) {
     return testRef(id, opts);
   })();
 }
-let anyOnly = false;
+
 /** Shorthand for test and expectBundled. See `expectBundled` for what this does.
  */
 export function itBundled(
@@ -1680,12 +1684,6 @@ function formatError(err: ErrorMeta) {
 
 function filterMatches(id: string) {
   return FILTER === id || FILTER + "Dev" === id || FILTER + "Prod" === id;
-}
-
-interface SourceMapDecodedLocation {
-  line: number;
-  column: number;
-  source: string;
 }
 
 interface SourceMap {

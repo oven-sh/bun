@@ -786,6 +786,7 @@ pub fn migrateNPMLockfile(
                         sliced.slice,
                         &sliced,
                         log,
+                        manager,
                     ) orelse {
                         return error.InvalidNPMLockfile;
                     };

@@ -37,7 +37,7 @@ pub const UntrustedCommand = struct {
         Output.prettyError("<r><b>bun pm untrusted <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n\n", .{});
         Output.flush();
 
-        const load_lockfile = BinaryLockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+        const load_lockfile = BinaryLockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
         var lockfile = PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, &pm.options);
         lockfile.updateLockfileIfNeeded(load_lockfile);
 
@@ -187,7 +187,7 @@ pub const TrustCommand = struct {
 
         if (args.len == 2) errorExpectedArgs();
 
-        const load_lockfile = BinaryLockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+        const load_lockfile = BinaryLockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
         var lockfile = PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, &pm.options);
         lockfile.updateLockfileIfNeeded(load_lockfile);
 
@@ -424,7 +424,7 @@ pub const TrustCommand = struct {
         }
 
         const save_format: BinaryLockfile.Format = if (pm.options.save_text_lockfile) .text else .binary;
-        lockfile.saveToDisk(save_format);
+        lockfile.saveToDisk(save_format, pm.options.log_level.isVerbose());
 
         var buffer_writer = try bun.js_printer.BufferWriter.init(ctx.allocator);
         try buffer_writer.buffer.list.ensureTotalCapacity(ctx.allocator, package_json_contents.len + 1);

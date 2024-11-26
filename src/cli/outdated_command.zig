@@ -45,6 +45,7 @@ pub const OutdatedCommand = struct {
 
     fn outdated(ctx: Command.Context, original_cwd: string, manager: *PackageManager, comptime log_level: PackageManager.Options.LogLevel) !void {
         const load_lockfile_result = BinaryLockfile.loadFromCwd(
+            manager,
             manager.allocator,
             manager.log,
             true,
@@ -354,9 +355,11 @@ pub const OutdatedCommand = struct {
                 const package_name = pkg_names[package_id].slice(string_buf);
                 var expired = false;
                 const manifest = manager.manifests.byNameAllowExpired(
+                    manager,
                     manager.options.scopeForPackageName(package_name),
                     package_name,
                     &expired,
+                    .load_from_memory_fallback_to_disk,
                 ) orelse continue;
 
                 const latest = manifest.findByDistTag("latest") orelse continue;
@@ -475,9 +478,11 @@ pub const OutdatedCommand = struct {
 
                     var expired = false;
                     const manifest = manager.manifests.byNameAllowExpired(
+                        manager,
                         manager.options.scopeForPackageName(package_name),
                         package_name,
                         &expired,
+                        .load_from_memory_fallback_to_disk,
                     ) orelse continue;
 
                     const latest = manifest.findByDistTag("latest") orelse continue;
@@ -499,7 +504,7 @@ pub const OutdatedCommand = struct {
                         else
                             "";
 
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         Output.pretty("{s}<d>{s}<r>", .{ package_name, behavior_str });
@@ -508,7 +513,7 @@ pub const OutdatedCommand = struct {
 
                     {
                         // current version
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
@@ -519,7 +524,7 @@ pub const OutdatedCommand = struct {
 
                     {
                         // update version
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
@@ -530,7 +535,7 @@ pub const OutdatedCommand = struct {
 
                     {
                         // latest version
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
@@ -540,7 +545,7 @@ pub const OutdatedCommand = struct {
                     }
 
                     if (was_filtered) {
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         const workspace_name = pkg_names[workspace_pkg_id].slice(string_buf);
@@ -549,7 +554,7 @@ pub const OutdatedCommand = struct {
                         for (workspace_name.len..workspace_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                     }
 
-                    Output.pretty("{s}\n", .{table.verticalEdge()});
+                    Output.pretty("{s}\n", .{table.symbols.verticalEdge()});
                 }
             }
         }
@@ -584,8 +589,10 @@ pub const OutdatedCommand = struct {
 
                 const package_name = pkg_names[package_id].slice(string_buf);
                 _ = manager.manifests.byName(
+                    manager,
                     manager.options.scopeForPackageName(package_name),
                     package_name,
+                    .load_from_memory_fallback_to_disk,
                 ) orelse {
                     const task_id = Install.Task.Id.forManifest(package_name);
                     if (manager.hasCreatedNetworkTask(task_id, dep.behavior.optional)) continue;
@@ -595,7 +602,7 @@ pub const OutdatedCommand = struct {
                     var task = manager.getNetworkTask();
                     task.* = .{
                         .lockfile = lockfile,
-                        .package_manager = PackageManager.get(),
+                        .package_manager = manager,
                         .callback = undefined,
                         .task_id = task_id,
                         .allocator = manager.allocator,

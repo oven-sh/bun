@@ -600,7 +600,7 @@ pub const IniTestingAPIs = struct {
     }
 
     pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments_ = callframe.arguments(1);
+        const arguments_ = callframe.arguments_old(1);
         const arguments = arguments_.slice();
 
         const jsstr = arguments[0];
@@ -615,8 +615,7 @@ pub const IniTestingAPIs = struct {
         try parser.parse(parser.arena.allocator());
 
         return parser.out.toJS(bun.default_allocator, globalThis) catch |e| {
-            globalThis.throwError(e, "failed to turn AST into JS");
-            return .undefined;
+            return globalThis.throwError(e, "failed to turn AST into JS");
         };
     }
 };

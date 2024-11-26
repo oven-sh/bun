@@ -915,7 +915,7 @@ pub fn normalizeStringGenericTZ(
 
         // real path element.
         // add slash if needed
-        if (buf_i != buf_start and !options.isSeparator(buf[buf_i - 1])) {
+        if (buf_i != buf_start and buf_i > 0 and !options.isSeparator(buf[buf_i - 1])) {
             buf[buf_i] = options.separator;
             buf_i += 1;
         }

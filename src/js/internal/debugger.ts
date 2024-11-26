@@ -575,7 +575,7 @@ function notify(options): void {
       },
       data: () => {}, // required or it errors
     },
-  }).finally(() => {
+  }).catch(() => {
     // Best-effort
   });
 }

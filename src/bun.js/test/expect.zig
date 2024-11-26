@@ -4422,7 +4422,7 @@ pub const Expect = struct {
     pub fn executeCustomMatcher(globalThis: *JSGlobalObject, matcher_name: bun.String, matcher_fn: JSValue, args: []const JSValue, flags: Expect.Flags, silent: bool) bool {
         // prepare the this object
         const matcher_context = globalThis.bunVM().allocator.create(ExpectMatcherContext) catch {
-            globalThis.throwOutOfMemory() catch {};
+            globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
             return false;
         };
         matcher_context.flags = flags;
@@ -5101,7 +5101,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         const args_count = captured_args.getLength(globalThis);
         var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
         var matcher_args = std.ArrayList(JSValue).initCapacity(allocator.get(), args_count + 1) catch {
-            globalThis.throwOutOfMemory() catch {};
+            globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
             return false;
         };
         matcher_args.appendAssumeCapacity(received);

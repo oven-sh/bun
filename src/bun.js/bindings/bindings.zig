@@ -5210,7 +5210,7 @@ pub const JSValue = enum(i64) {
     ) ?ZigString.Slice {
         var str = this.toStringOrNull(globalThis) orelse return null;
         return str.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch {
-            globalThis.throwOutOfMemory() catch {};
+            globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
             return null;
         };
     }

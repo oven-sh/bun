@@ -1,4 +1,4 @@
-import { getEnv } from "./context/Process";
+import { getEnv } from "./context/process.ts";
 
 export const isDebug = getEnv("DEBUG", false) === "1";
 

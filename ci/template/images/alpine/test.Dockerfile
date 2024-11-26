@@ -15,6 +15,6 @@ RUN file /root/bun
 RUN ldd /root/bun
 RUN /root/bun
 
-RUN ./scripts/runner.node.mjs --exec-path /root/bun
+RUN ./ci/runner.node.ts --exec-path /root/bun
 
 # docker build -f ./ci/alpine/test.Dockerfile --progress=plain .

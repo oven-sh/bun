@@ -14,3 +14,17 @@ export class Pipeline {
     };
   };
 }
+
+export type PipelineOptions = {
+  buildId?: string;
+  buildImages?: boolean;
+  publishImages?: boolean;
+  skipTests?: boolean;
+};
+export type PipelineTargetSteps<Step> = {
+  getBuildVendorStep: () => Step;
+  getBuildCppStep: () => Step;
+  getBuildZigStep: () => Step;
+  getBuildBunStep: () => Step;
+  getTestBunStep: () => Step;
+};

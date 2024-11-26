@@ -1,11 +1,10 @@
-import { Buildkite } from "../cd/pipeline/buildkite/Buildkite._";
-import { BuildkiteStep } from "../cd/pipeline/buildkite/Buildkite.Step._";
-import { BuildkiteStepBuilder } from "../cd/pipeline/buildkite/Buildkite.Step.Builder";
-import { BuildkitePipelineTargetSteps } from "../cd/pipeline/Pipeline.Builder.Buildkite";
-import { PipelineOptions } from "../cd/pipeline/Pipeline.Options._";
-import { PlatformTargets } from "../cd/platform/Platform.Targets";
-import { TargetBuilder } from "../cd/target/Target.Builder";
-import { isFork, isMainBranch } from "../machine/code/Git";
+import { BuildkiteContext, type BuildkiteStep } from "../cd/pipeline/buildkite/BuildkiteContext.ts";
+import { BuildkitePipelineTargetSteps } from "../cd/pipeline/buildkite/BuildkitePipelineTargetSteps.ts";
+import { BuildkiteStepBuilder } from "../cd/pipeline/buildkite/BuildkiteStepBuilder.ts";
+import { type PipelineOptions } from "../cd/pipeline/Pipeline.ts";
+import { PlatformTargets } from "../cd/platform/PlatformTargets.ts";
+import { TargetBuilder } from "../cd/target/TargetBuilder.ts";
+import { isFork, isMainBranch } from "../machine/code/git.ts";
 
 /**
  * Build and test Bun on macOS, Linux, and Windows.
@@ -36,6 +35,7 @@ export function generateBuildkitePipeline(options: PipelineOptions) {
       .setArch(arch)
       .setAbi(abi)
       .setBaseline(baseline)
+      .setOptions(options)
       .build();
 
     const platformSteps: BuildkiteStep[] = [];
@@ -66,7 +66,12 @@ export function generateBuildkitePipeline(options: PipelineOptions) {
       continue;
     }
 
-    steps.push(new BuildkiteStepBuilder(getTargetKey(), getTargetLabel()).setSteps(platformSteps).build());
+    steps.push(
+      new BuildkiteStepBuilder(getTargetKey(), getTargetLabel())
+        .setGroup(getTargetLabel())
+        .setSteps(platformSteps)
+        .build(),
+    );
 
     if (isMainBranch() && !isFork()) {
       steps.push(
@@ -90,7 +95,7 @@ export function generateBuildkitePipeline(options: PipelineOptions) {
     }
 
     return {
-      priority: Buildkite.getPriority(),
+      priority: BuildkiteContext.getPriority(),
       steps,
     };
   }

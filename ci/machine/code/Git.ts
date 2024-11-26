@@ -1,13 +1,13 @@
+import { spawnSync } from "node:child_process";
 import {
   getBranch as getBranch_,
   getCommit as getCommit_,
   getCommitMessage as getCommitMessage_,
   getMainBranch as getMainBranch_,
   getTargetBranch as getTargetBranch_,
-  isMainBranch as isMainBranch_,
   isFork as isFork_,
+  isMainBranch as isMainBranch_,
   isMergeQueue as isMergeQueue_,
-  // @ts-ignore
 } from "../../../scripts/utils.mjs";
 
 let __branch: string | undefined;
@@ -73,3 +73,27 @@ export const isMergeQueue = () => {
   }
   return __isMergeQueue;
 };
+
+let __revision: string | undefined;
+export function getRevision({ execPath, spawnTimeout }: { execPath: string; spawnTimeout: number }) {
+  if (__revision === undefined) {
+    try {
+      const { error, stdout } = spawnSync(execPath, ["--revision"], {
+        encoding: "utf-8",
+        timeout: spawnTimeout,
+        env: {
+          PATH: process.env.PATH,
+          BUN_DEBUG_QUIET_LOGS: "1",
+        },
+      });
+      if (error) {
+        throw error;
+      }
+      __revision = stdout.trim();
+      return __revision;
+    } catch (error) {
+      console.warn(error);
+      return "<unknown>";
+    }
+  }
+}

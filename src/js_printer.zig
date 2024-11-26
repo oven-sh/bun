@@ -6003,15 +6003,19 @@ pub fn printWithWriterAndPlatform(
             printer.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
             printer.printSpace();
             printer.print("{\n");
-            printer.indent();
-            printer.printSymbol(printer.options.commonjs_module_ref);
-            printer.print(".exports = ");
-            printer.printExpr(.{
-                .data = func.body.stmts[0].data.s_lazy_export,
-                .loc = func.body.stmts[0].loc,
-            }, .comma, .{});
-            printer.print("; // bun .s_lazy_export\n");
-            printer.indent();
+            if (func.body.stmts[0].data.s_lazy_export != .e_undefined) {
+                printer.indent();
+                printer.printIndent();
+                printer.printSymbol(printer.options.commonjs_module_ref);
+                printer.print(".exports = ");
+                printer.printExpr(.{
+                    .data = func.body.stmts[0].data.s_lazy_export,
+                    .loc = func.body.stmts[0].loc,
+                }, .comma, .{});
+                printer.print("; // bun .s_lazy_export\n");
+                printer.unindent();
+            }
+            printer.printIndent();
             printer.print("}");
         }
         printer.print(",\n");

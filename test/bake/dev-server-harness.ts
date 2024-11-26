@@ -33,6 +33,11 @@ export interface DevServerTest {
    * Provide this object or `files['bun.app.ts']` for a dynamic one.
    */
   framework?: Bake.Framework | "react";
+  /**
+   * Source code for a TSX file that `export default`s an array of BunPlugin,
+   * combined with the `framework` option.
+   */
+  pluginFile?: string;
   /** Starting files */
   files: FileObject;
   test: (dev: Dev) => Promise<void>;
@@ -303,16 +308,27 @@ export function devTest(description: string, options: DevServerTest) {
       if (!options.framework) {
         throw new Error("Must specify a options.framework or provide a bun.app.ts file");
       }
+      if (options.pluginFile) {
+        fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
+      }
       fs.writeFileSync(
         path.join(root, "bun.app.ts"),
         dedent`
+          ${options.pluginFile ? 
+            `import plugins from './pluginFile.ts';` : "let plugins = undefined;"
+          }
           export default {
             app: {
               framework: ${JSON.stringify(options.framework)},
+              plugins,
             },
           };
         `,
       );
+    } else {
+      if (options.pluginFile) {
+        throw new Error("Cannot provide both bun.app.ts and pluginFile");
+      }
     }
     fs.writeFileSync(
       path.join(root, "harness_start.ts"),
@@ -327,7 +343,7 @@ export function devTest(description: string, options: DevServerTest) {
 
     await using devProcess = Bun.spawn({
       cwd: root,
-      cmd: [process.execPath, "./bun.app.ts"],
+      cmd: [process.execPath, "./harness_start.ts"],
       env: mergeWindowEnvs([
         bunEnv,
         {

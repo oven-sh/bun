@@ -6527,6 +6527,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     .arena = bake_options.arena.allocator(),
                     .root = bake_options.root,
                     .framework = bake_options.framework,
+                    .bundler_options = bake_options.bundler_options,
                     .vm = global.bunVM(),
                 });
             } else null;

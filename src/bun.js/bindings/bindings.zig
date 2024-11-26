@@ -3088,7 +3088,7 @@ pub const JSGlobalObject = opaque {
             if (global.hasException()) {
                 if (comptime bun.Environment.isDebug) bun.Output.panic("attempted to throw OutOfMemory without an exception", .{});
             } else {
-                global.throwOutOfMemory();
+                global.throwOutOfMemory() catch {};
             }
             return null_value;
         }
@@ -3096,7 +3096,7 @@ pub const JSGlobalObject = opaque {
         if (possible_errors.JSError and err == error.JSError) {
             if (!global.hasException()) {
                 if (comptime bun.Environment.isDebug) bun.Output.panic("attempted to throw JSError without an exception", .{});
-                global.throwOutOfMemory();
+                global.throwOutOfMemory() catch {};
             }
             return null_value;
         }

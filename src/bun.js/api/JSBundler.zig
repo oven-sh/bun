@@ -858,7 +858,7 @@ pub const JSBundler = struct {
         ) JSValue {
             if (this.called_defer) {
                 globalObject.throw("can't call .defer() more than once within an onLoad plugin", .{});
-                return .undefined;
+                return .zero;
             }
             this.called_defer = true;
 

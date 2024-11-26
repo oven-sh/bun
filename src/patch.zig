@@ -1098,7 +1098,7 @@ pub const TestingAPIs = struct {
         const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
-        const old_folder_jsval = arguments.nextEat() orelse return globalThis.throw2("expected 2 strings", .{});
+        const old_folder_jsval = arguments.nextEat() orelse return globalThis.throw2("expected 2 strings", .{});;
         const old_folder_bunstr = try old_folder_jsval.toBunString(globalThis);
         defer old_folder_bunstr.deref();
 
@@ -1122,7 +1122,7 @@ pub const TestingAPIs = struct {
             .err => |e| {
                 defer e.deinit();
                 globalThis.throw("failed to make diff: {s}", .{e.items});
-                return .undefined;
+                return .zero;
             },
         };
     }
@@ -1148,7 +1148,7 @@ pub const TestingAPIs = struct {
 
         if (args.patchfile.apply(bun.default_allocator, args.dirfd)) |err| {
             globalThis.throwValue(err.toErrorInstance(globalThis));
-            return .undefined;
+            return .zero;
         }
 
         return .true;
@@ -1160,7 +1160,7 @@ pub const TestingAPIs = struct {
 
         const patchfile_src_js = arguments.nextEat() orelse {
             globalThis.throw("TestingAPIs.parse: expected at least 1 argument, got 0", .{});
-            return .undefined;
+            return .zero;
         };
         const patchfile_src_bunstr = try patchfile_src_js.toBunString(globalThis);
         const patchfile_src = patchfile_src_bunstr.toUTF8(bun.default_allocator);
@@ -1176,7 +1176,7 @@ pub const TestingAPIs = struct {
 
         const str = std.json.stringifyAlloc(bun.default_allocator, patchfile, .{}) catch {
             globalThis.throwOutOfMemory();
-            return .undefined;
+            return .zero;
         };
         const outstr = bun.String.fromUTF8(str);
         return outstr.toJS(globalThis);

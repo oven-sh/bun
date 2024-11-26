@@ -1383,3 +1383,21 @@ export function libcPathForDlopen() {
       throw new Error("TODO");
   }
 }
+
+export function cwdScope(cwd: string) {
+  const original = process.cwd();
+  process.chdir(cwd);
+  return {
+    [Symbol.dispose]() {
+      process.chdir(original);
+    },
+  };
+}
+
+export function rmScope(path: string) {
+  return {
+    [Symbol.dispose]() {
+      fs.rmSync(path, { recursive: true, force: true });
+    },
+  };
+}

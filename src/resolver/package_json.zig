@@ -850,6 +850,7 @@ pub const PackageJSON = struct {
                 if (package_json.name.len > 0 and package_json.version.len > 0) {
                     if (r.install_info) |info| {
                         const lockfile = info.lockfile;
+                        const pm = info.manager;
                         const tag = Dependency.Version.Tag.infer(package_json.version);
 
                         if (tag == .npm) {
@@ -977,6 +978,8 @@ pub const PackageJSON = struct {
                                     const version_str = version_value.asString(allocator) orelse continue;
                                     const sliced_str = Semver.SlicedString.init(version_str, version_str);
 
+                                    const manager = r.getPackageManagerAndLockfile().manager;
+
                                     if (Dependency.parse(
                                         allocator,
                                         name,
@@ -984,7 +987,7 @@ pub const PackageJSON = struct {
                                         version_str,
                                         &sliced_str,
                                         r.log,
-                                        r.package_manager,
+                                        manager,
                                     )) |dependency_version| {
                                         const dependency = Dependency{
                                             .name = name,

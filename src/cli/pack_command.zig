@@ -102,6 +102,7 @@ pub const PackCommand = struct {
         Output.flush();
 
         const load_from_disk_result = BinaryLockfile.loadFromCwd(
+            manager,
             manager.allocator,
             manager.log,
             false,

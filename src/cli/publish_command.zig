@@ -280,7 +280,7 @@ pub const PublishCommand = struct {
                 ctx: Command.Context,
                 manager: *PackageManager,
             ) FromWorkspaceError!Context(directory_publish) {
-                const load_from_disk_result = BinaryLockfile.loadFromCwd(manager.allocator, manager.log, false, {}, {});
+                const load_from_disk_result = BinaryLockfile.loadFromCwd(manager, manager.allocator, manager.log, false, {}, {});
 
                 var pack_ctx: Pack.Context = .{
                     .allocator = ctx.allocator,

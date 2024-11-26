@@ -900,7 +900,7 @@ pub const Lockfile = struct {
                     var buf: bun.PathBuffer = undefined;
                     const cache_path = this.manager.cachedNPMPackageFolderNamePrint(&buf, name, npm.version, null);
                     var is_expired = false;
-                    if (this.manager.manifests.byNameAllowExpired(this.manager.options.scopeForPackageName(pkg_name), pkg_name, &is_expired)) |manifest| {
+                    if (this.manager.manifests.byNameAllowExpired(this.manager, this.manager.options.scopeForPackageName(pkg_name), pkg_name, &is_expired, .load_from_memory_fallback_to_disk)) |manifest| {
                         if (manifest.findByVersion(npm.version)) |find| {
                             _ = find;
                             // const cpu = find.package.cpu;

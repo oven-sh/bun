@@ -38,6 +38,7 @@ const S = JSAst.S;
 const debug = Output.scoped(.migrate, false);
 
 pub fn detectAndLoadOtherLockfileFromCwd(
+    manager: *Install.PackageManager,
     allocator: Allocator,
     log: *logger.Log,
     install_options: *const Install.PackageManager.Options,
@@ -53,6 +54,7 @@ pub fn detectAndLoadOtherLockfileFromCwd(
         const lockfile_path = bun.getFdPathZ(lockfile.handle, &lockfile_path_buf) catch break :npm;
         const data = lockfile.readToEnd(allocator).unwrap() catch break :npm;
         const migrate_result = migrateNPMLockfile(
+            manager,
             allocator,
             log,
             data,
@@ -126,6 +128,7 @@ const dependency_keys = .{
 
 pub fn migrateNPMLockfile(
     // this: *BinaryLockfile,
+    manager: *Install.PackageManager,
     allocator: Allocator,
     log: *logger.Log,
     data: string,
@@ -1074,7 +1077,7 @@ pub fn migrateNPMLockfile(
     // This is definitely a memory leak, but it's fine because there is no install api, so this can only be leaked once per process.
     // This operation is neccecary because callers of `loadFromCwd` assume the data is written into the passed `this`.
     // You'll find that not cleaning the lockfile will cause `bun install` to not actually install anything since it doesnt have any hoisted trees.
-    this.* = (try this.clean(log, install_options.local_package_features.dev_dependencies, null, .silent)).*;
+    this.* = (try this.clean(manager, log, install_options.local_package_features.dev_dependencies, null, .silent)).*;
 
     // if (Environment.isDebug) {
     //     const dump_file = try std.fs.cwd().createFileZ("after-clean.json", .{});

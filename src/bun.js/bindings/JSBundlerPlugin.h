@@ -56,13 +56,42 @@ public:
         void *external;
     } OnBeforeParseArgs;
 
-    class NativePluginList : public NamespaceList {
+    /// In native plugins, the regular expression could be called concurrently on multiple threads.
+    /// Therefore, we need a mutex to synchronize access.
+    typedef std::pair<Yarr::RegularExpression, std::shared_ptr<std::mutex>> NativeFilterRegexp;
+
+    class NativePluginList {
     public:
         using PerNamespaceCallbackList = Vector<std::pair<JSBundlerPluginNativeOnBeforeParseCallback, Bun::NapiExternal*>>;
+
+        Vector<NativeFilterRegexp> fileNamespace = {};
+        Vector<String> namespaces = {};
+        Vector<Vector<NativeFilterRegexp>> groups = {};
+        BunPluginTarget target { BunPluginTargetBun };
+
         PerNamespaceCallbackList fileCallbacks = {};
         Vector<PerNamespaceCallbackList> namespaceCallbacks = {};
+
         int call(JSC::VM& vm, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, void* onBeforeParseArgs, void* onBeforeParseResult);
         void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, NapiExternal* external);
+
+        Vector<NativeFilterRegexp>* group(const String& namespaceStr, unsigned& index)
+        {
+            if (namespaceStr.isEmpty()) {
+                index = std::numeric_limits<unsigned>::max();
+                return &fileNamespace;
+            }
+
+            size_t length = namespaces.size();
+            for (size_t i = 0; i < length; i++) {
+                if (namespaces[i] == namespaceStr) {
+                    index = i;
+                    return &groups[i];
+                }
+            }
+
+            return nullptr;
+        }
     };
 
 public:

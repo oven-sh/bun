@@ -231,7 +231,26 @@ static JSBundlerPluginNativeOnBeforeParseCallback nativeCallbackFromJS(JSC::JSGl
 void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, NapiExternal* external)
 {
     unsigned index = 0;
-    this->BundlerPlugin::NamespaceList::append(vm, filter, namespaceString, index);
+
+    {
+        auto* nsGroup = group(namespaceString, index);
+
+        if (nsGroup == nullptr) {
+            namespaces.append(namespaceString);
+            groups.append(Vector<NativeFilterRegexp> {});
+            nsGroup = &groups.last();
+            index = namespaces.size() - 1;
+        }
+
+        Yarr::RegularExpression regex(
+            StringView(filter->pattern()),
+            filter->flags());
+
+        NativeFilterRegexp nativeFilterRegexp = std::make_pair(regex, std::make_shared<std::mutex>());
+
+        nsGroup->append(nativeFilterRegexp);
+    }
+    
     if (index == std::numeric_limits<unsigned>::max()) {
         this->fileCallbacks.append(std::make_pair(callback, external));
     } else {
@@ -261,11 +280,16 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, int* shouldContinue, void
     const WTF::String& path = pathString->toWTFString(BunString::ZeroCopy);
     for (size_t i = 0, total = callbacks.size(); i < total && *shouldContinue; ++i) {
         Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
-        if (group->at(i).match(path) > -1) {
-            ((OnBeforeParseArgs*) (onBeforeParseArgs))->external = callbacks[i].second->value();
-            callbacks[i].first(1, onBeforeParseArgs, onBeforeParseResult);
-            count++;
+
+        {
+            std::lock_guard<std::mutex> lock(*group->at(i).second);
+            if (group->at(i).first.match(path) > -1) {
+                ((OnBeforeParseArgs*) (onBeforeParseArgs))->external = callbacks[i].second->value();
+                callbacks[i].first(1, onBeforeParseArgs, onBeforeParseResult);
+                count++;
+            }
         }
+
         if (OnBeforeParsePlugin__isDone(bunContextPtr)) {
             return count;
         }
@@ -282,7 +306,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    JSC::RegExpObject* regExp = jsCast<JSC::RegExpObject*>(callFrame->argument(0));
+    JSC::RegExpObject* jsRegexp = jsCast<JSC::RegExpObject*>(callFrame->argument(0));
+    RegExp* reggie = jsRegexp->regExp();
+    RegExp* newRegexp = RegExp::create(vm, reggie->pattern(), reggie->flags());
+
     WTF::String namespaceStr = callFrame->argument(1).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (namespaceStr == "file"_s) {
@@ -334,7 +361,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
         }
     }
 
-    thisObject->plugin.onBeforeParse.append(vm, regExp->regExp(), namespaceStr, callback, externalPtr);
+    thisObject->plugin.onBeforeParse.append(vm, newRegexp, namespaceStr, callback, externalPtr);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -440,7 +467,6 @@ extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, 
 
 extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, void* context, uint8_t defaultLoaderId)
 {
-    printf("JSBundlerPlugin %p\n", plugin);
     WTF::String namespaceStringStr = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : WTF::String();
     WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
 

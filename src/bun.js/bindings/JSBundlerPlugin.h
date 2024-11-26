@@ -46,16 +46,7 @@ public:
         void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, unsigned& index);
     };
 
-    typedef struct {
-        size_t __struct_size;
-        void *context;
-        const char *path_ptr;
-        size_t path_len;
-        const char *namespace_ptr;
-        size_t namespace_len;
-        unsigned char default_loader;
-        void *external;
-    } OnBeforeParseArgs;
+    #include "../../../packages/bun-native-bundler-plugin-api/bundler_plugin.h"
 
     /// In native plugins, the regular expression could be called concurrently on multiple threads.
     /// Therefore, we need a mutex to synchronize access.

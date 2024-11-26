@@ -3817,6 +3817,24 @@ pub const ParseTask = struct {
 
         result: ?*OnBeforeParseResult = null,
 
+        const headers = @cImport({
+            @cInclude("packages/bun-native-bundler-plugin-api/bundler_plugin.h");
+        });
+
+        comptime {
+            std.debug.assert(@sizeOf(OnBeforeParseArguments) == @sizeOf(headers.OnBeforeParseArguments));
+            std.debug.assert(@alignOf(OnBeforeParseArguments) == @alignOf(headers.OnBeforeParseArguments));
+
+            std.debug.assert(@sizeOf(BunLogOptions) == @sizeOf(headers.BunLogOptions));
+            std.debug.assert(@alignOf(BunLogOptions) == @alignOf(headers.BunLogOptions));
+
+            std.debug.assert(@sizeOf(OnBeforeParseResult) == @sizeOf(headers.OnBeforeParseResult));
+            std.debug.assert(@alignOf(OnBeforeParseResult) == @alignOf(headers.OnBeforeParseResult));
+
+            std.debug.assert(@sizeOf(BunLogOptions) == @sizeOf(headers.BunLogOptions));
+            std.debug.assert(@alignOf(BunLogOptions) == @alignOf(headers.BunLogOptions));
+        }
+
         const OnBeforeParseArguments = extern struct {
             struct_size: usize = @sizeOf(OnBeforeParseArguments),
             context: *OnBeforeParsePlugin,

@@ -286,7 +286,7 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, int* shouldContinue, void
             if (group->at(i).first.match(path) > -1) {
                 Bun::NapiExternal* external = callbacks[i].second;
                 if (external) {
-                    ((OnBeforeParseArgs*) (onBeforeParseArgs))->external = external->value();
+                    ((OnBeforeParseArguments*) (onBeforeParseArgs))->external = external->value();
                 }
                 callbacks[i].first(onBeforeParseArgs, onBeforeParseResult);
                 count++;
@@ -620,7 +620,7 @@ extern "C" int JSBundlerPlugin__callOnBeforeParsePlugins(
     void* bunContextPtr,
     const BunString* namespaceStr,
     const BunString* pathString,
-    BundlerPlugin::OnBeforeParseArgs* onBeforeParseArgs,
+    BundlerPlugin::OnBeforeParseArguments* onBeforeParseArgs,
     void* onBeforeParseResult,
     int* shouldContinue)
 {

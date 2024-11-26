@@ -2,6 +2,7 @@ import { plugin } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import path, { dirname, join, resolve } from "path";
 import source from "./native_plugin.c" with { type: "file" };
+import bundlerPluginHeader from "../../../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { itBundled } from "bundler/expectBundled";
 
@@ -12,6 +13,7 @@ describe("native-plugins", () => {
 
   beforeAll(async () => {
     const files = {
+      "bun-native-bundler-plugin-api/bundler_plugin.h": await Bun.file(bundlerPluginHeader).text(),
       "plugin.c": await Bun.file(source).text(),
       "package.json": JSON.stringify({
         "name": "fake-plugin",
@@ -41,7 +43,8 @@ console.log(JSON.stringify(json));`,
         "targets": [
           {
             "target_name": "xXx123_foo_counter_321xXx",
-            "sources": [ "plugin.c" ]
+            "sources": [ "plugin.c" ],
+            "include_dirs": [ "." ]
           }
         ]
       }`,
@@ -321,6 +324,52 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     expect(result.success).toBeFalse();
     const log = result.logs[0];
     expect(log.message).toContain("Throwing an error");
+    expect(log.level).toBe("error");
+  });
+
+  it("works with versioning", async () => {
+    const filter = /\.ts/;
+
+    const prelude = /* ts */ `import values from "./stuff.ts"
+  const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
+      `;
+    await Bun.$`echo ${prelude} > index.ts`;
+
+    const resultPromise = Bun.build({
+      outdir,
+      entrypoints: [path.join(tempdir, "index.ts")],
+      plugins: [
+        {
+          name: "xXx123_foo_counter_321xXx",
+          setup(build) {
+            const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+            const external = napiModule.createExternal();
+            napiModule.setThrowsErrors(external, true);
+
+            build.onBeforeParse({ filter }, { napiModule, symbol: "incompatible_version_plugin_impl", external });
+
+            build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
+              await defer();
+              let count = 0;
+              try {
+                count = napiModule.getFooCount(external);
+              } catch (e) {}
+              return {
+                contents: JSON.stringify({ fooCount: count }),
+                loader: "json",
+              };
+            });
+          },
+        },
+      ],
+    });
+
+    const result = await resultPromise;
+
+    if (result.success) console.log(result);
+    expect(result.success).toBeFalse();
+    const log = result.logs[0];
+    expect(log.message).toContain("This plugin is built for a newer version of Bun than the one currently running.");
     expect(log.level).toBe("error");
   });
 });

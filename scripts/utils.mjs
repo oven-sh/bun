@@ -1082,6 +1082,18 @@ export function getBuildLabel() {
 }
 
 /**
+ * @returns {boolean | undefined}
+ */
+export function isBuildManual() {
+  if (isBuildkite) {
+    const buildSource = getEnv("BUILDKITE_SOURCE", false);
+    if (buildSource) {
+      return buildSource === "ui";
+    }
+  }
+}
+
+/**
  * @param {string} [os]
  * @returns {number}
  */
@@ -1093,7 +1105,8 @@ export function getBootstrapVersion(os) {
   const scriptContent = readFile(scriptPath, { cache: true });
   const match = /# Version: (\d+)/.exec(scriptContent);
   if (match) {
-    return parseInt(match[1]);
+    const [, version] = match;
+    return parseInt(version);
   }
   return 0;
 }
@@ -2450,11 +2463,19 @@ export function toYaml(obj, indent = 0) {
   return result;
 }
 
+/** @type {string | undefined} */
+let lastGroup;
+
 /**
  * @param {string} title
  * @param {function} [fn]
  */
 export function startGroup(title, fn) {
+  if (lastGroup && lastGroup !== title) {
+    lastGroup = title;
+    endGroup();
+  }
+
   if (isGithubAction) {
     console.log(`::group::${stripAnsi(title)}`);
   } else if (isBuildkite) {
@@ -2478,6 +2499,10 @@ export function startGroup(title, fn) {
 }
 
 export function endGroup() {
+  if (lastGroup) {
+    lastGroup = undefined;
+  }
+
   if (isGithubAction) {
     console.log("::endgroup::");
   } else {

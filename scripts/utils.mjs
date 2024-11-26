@@ -44,7 +44,7 @@ export function getEnv(name, required = true) {
 export const isBuildkite = getEnv("BUILDKITE", false) === "true";
 export const isGithubAction = getEnv("GITHUB_ACTIONS", false) === "true";
 export const isCI = getEnv("CI", false) === "true" || isBuildkite || isGithubAction;
-export const isDebug = getEnv("DEBUG", false) === "1" || isCI;
+export const isDebug = getEnv("DEBUG", false) === "1";
 
 /**
  * @param {string} name

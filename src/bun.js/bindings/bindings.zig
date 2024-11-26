@@ -5402,10 +5402,8 @@ pub const JSValue = enum(i64) {
         if (prop.isNull() or prop == .false) {
             return null;
         }
-
         if (prop.isSymbol()) {
-            _ = global.throwInvalidPropertyTypeValue(property, "string", prop);
-            return error.JSError;
+            return global.throwInvalidPropertyTypeValue(property, "string", prop);
         }
 
         const str = prop.toBunString(global);
@@ -5413,11 +5411,9 @@ pub const JSValue = enum(i64) {
             str.deref();
             return error.JSError;
         }
-
         if (str.isEmpty()) {
             return null;
         }
-
         return str;
     }
 

@@ -15,7 +15,32 @@ typedef struct {
     atomic_size_t foo_count;
     // For testing logging error logic
     atomic_bool throws_an_error;
+
+    atomic_size_t compilation_ctx_freed_count;
 } External;
+
+typedef struct {
+    const char *source_ptr;
+    size_t source_len;
+    atomic_size_t *free_counter;
+} CompilationCtx;
+
+CompilationCtx *compilation_ctx_new(const char *source_ptr, size_t source_len, atomic_size_t *free_counter) {
+    CompilationCtx *ctx = malloc(sizeof(CompilationCtx));
+    ctx->source_ptr = source_ptr;
+    ctx->source_len = source_len;
+    ctx->free_counter = free_counter;
+    return ctx;
+}
+
+void compilation_ctx_free(CompilationCtx *ctx) {
+    printf("Freed compilation ctx!\n");
+    if (ctx->free_counter != NULL) {
+        atomic_fetch_add(ctx->free_counter, 1);
+    }
+    free((void*)ctx->source_ptr);
+    free(ctx);
+}
 
 void log_error(const OnBeforeParseArguments* args, const OnBeforeParseResult* result, BunLogLevel level, const char* message, size_t message_len) {
     BunLogOptions options = (BunLogOptions) {
@@ -82,18 +107,21 @@ void plugin_impl(const OnBeforeParseArguments* args, OnBeforeParseResult* result
                 cursor = strnstr((const char*) cursor, "foo", (size_t) (end - cursor));
             } else break;
         }
+        atomic_size_t *free_counter = NULL;
         if (args->external) {
             External *external = (External*)args->external;
             atomic_fetch_add(&external->foo_count, foo_count);
+            free_counter = &external->compilation_ctx_freed_count;
         }
         result->source_ptr = (uint8_t*)new_source;
         result->source_len = result->source_len;
+        result->plugin_source_code_context = compilation_ctx_new(new_source, result->source_len, free_counter);
+        result->free_plugin_source_code_context = (void *)compilation_ctx_free;
     } else {
         result->source_ptr = NULL;
         result->source_len = 0;
         result->loader = 0;
     }
-
 }
 
 void finalizer(napi_env env, void* data, void* hint) {
@@ -113,7 +141,9 @@ napi_value create_external(napi_env env, napi_callback_info info) {
         return NULL;
     }
 
+    *external = (External){};
     external->foo_count = 0;
+    external->compilation_ctx_freed_count = 0;
 
     // Create the external wrapper
     napi_value result;
@@ -162,6 +192,39 @@ napi_value set_throws_errors(napi_env env, napi_callback_info info) {
     return NULL;
 }
 
+napi_value get_compilation_ctx_freed_count(napi_env env, napi_callback_info info) {
+    napi_status status;
+    External* external;
+
+    size_t argc = 1;
+    napi_value args[1];
+    status = napi_get_cb_info(env, info, &argc, args, NULL, NULL);
+    if (status != napi_ok) {
+        napi_throw_error(env, NULL, "Failed to parse arguments");
+        return NULL;
+    }
+
+    if (argc < 1) {
+        napi_throw_error(env, NULL, "Wrong number of arguments");
+        return NULL;
+    }
+
+    status = napi_get_value_external(env, args[0], (void**)&external);
+    if (status != napi_ok) {
+        napi_throw_error(env, NULL, "Failed to get external");
+        return NULL;
+    }
+
+    napi_value result;
+    status = napi_create_int32(env, atomic_load(&external->compilation_ctx_freed_count), &result);
+    if (status != napi_ok) {
+        napi_throw_error(env, NULL, "Failed to create array");
+        return NULL;
+    }
+
+    return result;
+}
+
 napi_value get_foo_count(napi_env env, napi_callback_info info) {
     napi_status status;
     External* external;
@@ -205,6 +268,7 @@ napi_value get_foo_count(napi_env env, napi_callback_info info) {
 napi_value Init(napi_env env, napi_value exports) {
     napi_status status;
     napi_value fn_get_names;
+    napi_value fn_get_compilation_ctx_freed_count;
     napi_value fn_create_external;
     napi_value fn_set_throws_errors;
 
@@ -217,6 +281,18 @@ napi_value Init(napi_env env, napi_value exports) {
     status = napi_set_named_property(env, exports, "getFooCount", fn_get_names);
     if (status != napi_ok) {
         napi_throw_error(env, NULL, "Failed to add get_names function to exports");
+        return NULL;
+    }
+
+    // Register get_compilation_ctx_freed_count function  
+    status = napi_create_function(env, NULL, 0, get_compilation_ctx_freed_count, NULL, &fn_get_compilation_ctx_freed_count);
+    if (status != napi_ok) {
+        napi_throw_error(env, NULL, "Failed to create get_compilation_ctx_freed_count function");
+        return NULL;
+    }
+    status = napi_set_named_property(env, exports, "getCompilationCtxFreedCount", fn_get_compilation_ctx_freed_count);
+    if (status != napi_ok) {
+        napi_throw_error(env, NULL, "Failed to add get_compilation_ctx_freed_count function to exports");
         return NULL;
     }
 

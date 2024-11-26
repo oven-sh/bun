@@ -36,8 +36,9 @@ describe("native-plugins", () => {
       "index.ts": /* ts */ `import values from "./stuff.ts";
 import json from "./lmao.json";
 const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
-console.log(JSON.stringify(json));`,
-      "stuff.ts": `sdfjldjfakdjfsdf`,
+console.log(JSON.stringify(json));
+values;`,
+      "stuff.ts": `export default { foo: "bar" }`,
       "lmao.json": ``,
       "binding.gyp": /* gyp */ `{
         "targets": [
@@ -68,6 +69,9 @@ console.log(JSON.stringify(json));`,
   it("works in a basic case", async () => {
     await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
 
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+
     const result = await Bun.build({
       outdir,
       entrypoints: [path.join(tempdir, "index.ts")],
@@ -75,9 +79,6 @@ console.log(JSON.stringify(json));`,
         {
           name: "xXx123_foo_counter_321xXx",
           setup(build) {
-            const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
-            const external = napiModule.createExternal();
-
             build.onBeforeParse({ filter: /\.ts/ }, { napiModule, symbol: "plugin_impl", external });
 
             build.onLoad({ filter: /lmao\.json/ }, async ({ defer }) => {
@@ -96,7 +97,10 @@ console.log(JSON.stringify(json));`,
     if (!result.success) console.log(result);
     expect(result.success).toBeTrue();
     const output = await Bun.$`${bunExe()} run dist/index.js`.cwd(tempdir).json();
-    expect(output).toStrictEqual({ fooCount: 8 });
+    expect(output).toStrictEqual({ fooCount: 9 });
+
+    const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
+    expect(compilationCtxFreedCount).toBe(2);
   });
 
   it("doesn't explode when there are a lot of concurrent files", async () => {
@@ -116,6 +120,9 @@ console.log(JSON.stringify(json));`,
     await Bun.$`echo ${files.map(([fp]) => fp).join("\n")} >> index.ts`;
     await Bun.$`echo ${files.map(([, varname]) => `console.log(JSON.stringify(${varname}))`).join("\n")} >> index.ts`;
 
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+
     const result = await Bun.build({
       outdir,
       entrypoints: [path.join(tempdir, "index.ts")],
@@ -123,9 +130,6 @@ console.log(JSON.stringify(json));`,
         {
           name: "xXx123_foo_counter_321xXx",
           setup(build) {
-            const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
-            const external = napiModule.createExternal();
-
             build.onBeforeParse({ filter: /\.ts/ }, { napiModule, symbol: "plugin_impl", external });
 
             build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
@@ -142,6 +146,7 @@ console.log(JSON.stringify(json));`,
     });
 
     if (!result.success) console.log(result);
+    console.log(result);
     expect(result.success).toBeTrue();
     const output = await Bun.$`${bunExe()} run dist/index.js`.cwd(tempdir).text();
     const outputJsons = output
@@ -149,8 +154,11 @@ console.log(JSON.stringify(json));`,
       .split("\n")
       .map(s => JSON.parse(s));
     for (const json of outputJsons) {
-      expect(json).toStrictEqual({ fooCount: 8 });
+      expect(json).toStrictEqual({ fooCount: 9 });
     }
+
+    const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
+    expect(compilationCtxFreedCount).toBe(2);
   });
 
   // We clone the RegExp object in the C++ code so this test ensures that there
@@ -173,6 +181,10 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     await Bun.$`echo ${prelude} > index.ts`;
     await Bun.$`echo ${files.map(([fp]) => fp).join("\n")} >> index.ts`;
     await Bun.$`echo ${files.map(([, varname]) => `console.log(JSON.stringify(${varname}))`).join("\n")} >> index.ts`;
+    await Bun.$`echo '(() => values)();' >> index.ts`;
+
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
 
     const resultPromise = Bun.build({
       outdir,
@@ -181,9 +193,6 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
         {
           name: "xXx123_foo_counter_321xXx",
           setup(build) {
-            const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
-            const external = napiModule.createExternal();
-
             build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl", external });
 
             build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
@@ -217,8 +226,11 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       .split("\n")
       .map(s => JSON.parse(s));
     for (const json of outputJsons) {
-      expect(json).toStrictEqual({ fooCount: 8 });
+      expect(json).toStrictEqual({ fooCount: 9 });
     }
+
+    const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
+    expect(compilationCtxFreedCount).toBe(2);
   });
 
   it("doesn't explode when passing invalid external", async () => {
@@ -289,6 +301,9 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       `;
     await Bun.$`echo ${prelude} > index.ts`;
 
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+
     const resultPromise = Bun.build({
       outdir,
       entrypoints: [path.join(tempdir, "index.ts")],
@@ -296,8 +311,6 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
         {
           name: "xXx123_foo_counter_321xXx",
           setup(build) {
-            const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
-            const external = napiModule.createExternal();
             napiModule.setThrowsErrors(external, true);
 
             build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl", external });
@@ -325,6 +338,9 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     const log = result.logs[0];
     expect(log.message).toContain("Throwing an error");
     expect(log.level).toBe("error");
+
+    const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
+    expect(compilationCtxFreedCount).toBe(0);
   });
 
   it("works with versioning", async () => {
@@ -335,6 +351,9 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       `;
     await Bun.$`echo ${prelude} > index.ts`;
 
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+
     const resultPromise = Bun.build({
       outdir,
       entrypoints: [path.join(tempdir, "index.ts")],
@@ -342,10 +361,6 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
         {
           name: "xXx123_foo_counter_321xXx",
           setup(build) {
-            const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
-            const external = napiModule.createExternal();
-            napiModule.setThrowsErrors(external, true);
-
             build.onBeforeParse({ filter }, { napiModule, symbol: "incompatible_version_plugin_impl", external });
 
             build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
@@ -371,5 +386,8 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     const log = result.logs[0];
     expect(log.message).toContain("This plugin is built for a newer version of Bun than the one currently running.");
     expect(log.level).toBe("error");
+
+    const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
+    expect(compilationCtxFreedCount).toBe(0);
   });
 });

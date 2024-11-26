@@ -2824,3 +2824,8 @@ extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value
     }
     return napi_ok;
 }
+
+extern "C" JSGlobalObject* NapiEnv__globalObject(napi_env env)
+{
+    return env->globalObject();
+}

@@ -27,7 +27,26 @@ fn genericFailure() napi_status {
 }
 const Async = bun.Async;
 
-pub const napi_env = *JSC.JSGlobalObject;
+pub const NapiEnv = opaque {
+    pub fn toJS(self: *NapiEnv) *JSC.JSGlobalObject {
+        return NapiEnv__globalObject(self);
+    }
+
+    extern fn NapiEnv__globalObject(*NapiEnv) *JSC.JSGlobalObject;
+};
+
+fn envIsNull() napi_status {
+    // in this case we don't actually have an environment to set the last error on, so it doesn't
+    // make sense to call napi_set_last_error
+    @setCold(true);
+    return @intFromEnum(napi_status.invalid_arg);
+}
+
+/// This is nullable because native modules may pass null pointers for the NAPI environment, which
+/// is an error that our NAPI functions need to handle (by returning napi_invalid_arg). To specify
+/// a Zig API that uses a never-null napi_env, use `*NapiEnv`.
+pub const napi_env = ?*NapiEnv;
+
 pub const Ref = opaque {
     pub fn create(globalThis: *JSC.JSGlobalObject, value: JSValue) *Ref {
         JSC.markBinding(@src());
@@ -262,20 +281,26 @@ pub export fn napi_get_null(env: napi_env, result_: ?*napi_value) napi_status {
     return .ok;
 }
 pub extern fn napi_get_global(env: napi_env, result: *napi_value) napi_status;
-pub export fn napi_get_boolean(env: napi_env, value: bool, result_: ?*napi_value) napi_status {
+pub export fn napi_get_boolean(env_: napi_env, value: bool, result_: ?*napi_value) napi_status {
     log("napi_get_boolean", .{});
+    const env = env_ orelse {
+        return invalidArg();
+    };
     const result = result_ orelse {
         return invalidArg();
     };
     result.set(env, JSValue.jsBoolean(value));
     return .ok;
 }
-pub export fn napi_create_array(env: napi_env, result_: ?*napi_value) napi_status {
+pub export fn napi_create_array(env_: napi_env, result_: ?*napi_value) napi_status {
     log("napi_create_array", .{});
+    const env = env_ orelse {
+        return invalidArg();
+    };
     const result = result_ orelse {
         return invalidArg();
     };
-    result.set(env, JSValue.createEmptyArray(env, 0));
+    result.set(env, JSValue.createEmptyArray(env.toJS(), 0));
     return .ok;
 }
 pub export fn napi_create_array_with_length(env: napi_env, length: usize, result_: ?*napi_value) napi_status {

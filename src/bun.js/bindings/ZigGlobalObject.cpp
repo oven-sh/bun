@@ -2487,6 +2487,11 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject*
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
+extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* globalObject)
+{
+    return globalObject->makeNapiEnvForFFI();
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionReadableStreamToArrayBuffer);
 JSC_DEFINE_HOST_FUNCTION(functionReadableStreamToArrayBuffer, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -4352,6 +4357,26 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }
+}
+
+napi_env GlobalObject::makeNapiEnv(const napi_module& mod)
+{
+    m_napiEnvs.append(std::make_unique<napi_env__>(this, mod));
+    return m_napiEnvs.last().get();
+}
+
+napi_env GlobalObject::makeNapiEnvForFFI()
+{
+    auto out = makeNapiEnv(napi_module {
+        .nm_version = 9,
+        .nm_flags = 0,
+        .nm_filename = "ffi://",
+        .nm_register_func = nullptr,
+        .nm_modname = "[ffi]",
+        .nm_priv = nullptr,
+        .reserved = {},
+    });
+    return out;
 }
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"

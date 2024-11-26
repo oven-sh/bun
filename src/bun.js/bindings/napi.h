@@ -7,7 +7,7 @@
 #include "headers-handwritten.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/CallFrame.h>
-#include "js_native_api.h"
+#include "node_api.h"
 #include <JavaScriptCore/JSWeakValue.h>
 #include "JSFFIFunction.h"
 #include "ZigGlobalObject.h"
@@ -22,6 +22,22 @@ namespace Napi {
 JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject);
 }
 
+struct napi_env__ {
+public:
+    napi_env__(Zig::GlobalObject* globalObject, const napi_module& napiModule)
+        : m_globalObject(globalObject)
+        , m_napiModule(napiModule)
+    {
+    }
+
+    inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
+    inline const napi_module& napiModule() const { return m_napiModule; }
+
+private:
+    Zig::GlobalObject* m_globalObject = nullptr;
+    napi_module m_napiModule;
+};
+
 namespace Zig {
 
 using namespace JSC;
@@ -33,7 +49,7 @@ static inline JSValue toJS(napi_value val)
 
 static inline Zig::GlobalObject* toJS(napi_env val)
 {
-    return reinterpret_cast<Zig::GlobalObject*>(val);
+    return val->globalObject();
 }
 
 static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObject)

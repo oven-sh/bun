@@ -54,6 +54,9 @@ class GlobalInternals;
 #include "BunHttp2CommonStrings.h"
 #include "BunGlobalScope.h"
 
+typedef struct napi_env__* napi_env;
+struct napi_module;
+
 namespace WebCore {
 class WorkerGlobalScope;
 class SubtleCrypto;
@@ -572,6 +575,10 @@ public:
     LazyProperty<JSGlobalObject, CustomGetterSetter> m_lazyStackCustomGetterSetter;
 
     bool hasOverridenModuleResolveFilenameFunction = false;
+
+    WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
+    napi_env makeNapiEnv(const napi_module&);
+    napi_env makeNapiEnvForFFI();
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

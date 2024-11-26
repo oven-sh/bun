@@ -74,7 +74,7 @@ function getTargetKey(target) {
  */
 function getTargetLabel(target) {
   const { os, arch, abi, baseline, profile } = target;
-  let label = `${getEmoji(os)} ${arch}`;
+  let label = `${getBuildkiteEmoji(os)} ${arch}`;
   if (abi) {
     label += `-${abi}`;
   }
@@ -181,7 +181,7 @@ function getPlatformKey(platform) {
  */
 function getPlatformLabel(platform) {
   const { os, arch, baseline, profile, distro, release } = platform;
-  let label = `${getEmoji(distro || os)} ${release} ${arch}`;
+  let label = `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
   if (baseline) {
     label += "-baseline";
   }
@@ -210,7 +210,7 @@ function getImageKey(platform) {
  */
 function getImageLabel(platform) {
   const { os, arch, distro, release } = platform;
-  return `${getEmoji(distro || os)} ${release} ${arch}`;
+  return `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
 }
 
 /**
@@ -567,10 +567,11 @@ function getBuildImageStep(platform, dryRun) {
 
 /**
  * @param {string} string
+ * @param {boolean} [buildkite]
  * @returns {string}
  * @link https://github.com/buildkite/emojis#emoji-reference
  */
-function getEmoji(string) {
+function getBuildkiteEmoji(string, buildkite) {
   if (/darwin|mac|apple/i.test(string)) {
     return ":darwin:";
   }
@@ -590,6 +591,29 @@ function getEmoji(string) {
   }
   if (/no|fail|error|failure/i.test(string)) {
     return ":x:";
+  }
+  return "";
+}
+
+/**
+ * @param {string} string
+ * @returns {string}
+ */
+function getEmoji(string) {
+  if (/darwin|mac|apple/i.test(string)) {
+    return "🍎";
+  }
+  if (/linux|debian|ubuntu|alpine/i.test(string)) {
+    return "🐧";
+  }
+  if (/windows|win|microsoft/i.test(string)) {
+    return "🪟";
+  }
+  if (/yes|ok|pass|success/i.test(string)) {
+    return "✅";
+  }
+  if (/no|fail|error|failure/i.test(string)) {
+    return "❌";
   }
   return "";
 }
@@ -996,20 +1020,16 @@ async function getPipeline() {
           multiple: true,
           default: buildPlatforms.map(getTargetKey),
           options: buildPlatforms.map(platform => {
+            const { os, arch, abi, baseline } = platform;
+            let label = `${getEmoji(os)} ${arch}`;
+            if (abi) {
+              label += `-${abi}`;
+            }
+            if (baseline) {
+              label += `-baseline`;
+            }
             return {
-              label: getTargetLabel(platform),
-              value: getTargetKey(platform),
-            };
-          }),
-        },
-        {
-          key: "test-platforms",
-          select: "Which platforms do you want to test?",
-          multiple: true,
-          default: testPlatforms.map(getTargetKey),
-          options: testPlatforms.map(platform => {
-            return {
-              label: getTargetLabel(platform),
+              label,
               value: getTargetKey(platform),
             };
           }),

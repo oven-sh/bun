@@ -989,6 +989,26 @@ async function getPipeline() {
             },
           ],
         },
+        {
+          key: "build-platforms",
+          select: "Which platforms do you want to build?",
+          options: buildPlatforms.map(platform => {
+            return {
+              label: getTargetLabel(platform),
+              value: getTargetKey(platform),
+            };
+          }),
+        },
+        {
+          key: "test-platforms",
+          select: "Which platforms do you want to test?",
+          options: testPlatforms.map(platform => {
+            return {
+              label: getTargetLabel(platform),
+              value: getTargetKey(platform),
+            };
+          }),
+        },
       ],
     });
   }

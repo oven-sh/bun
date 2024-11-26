@@ -777,10 +777,7 @@ pub const ParsedShellScript = struct {
         var template_args = template_args_js.arrayIterator(globalThis);
 
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, shargs.arena_allocator());
-        var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
             for (jsstrings.items[0..]) |bunstr| {
                 bunstr.deref();
@@ -789,10 +786,7 @@ pub const ParsedShellScript = struct {
         }
         var jsobjs = std.ArrayList(JSValue).init(shargs.arena_allocator());
         var script = std.ArrayList(u8).init(shargs.arena_allocator());
-        if (!(bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        })) {
+        if (!(try bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script))) {
             return .undefined;
         }
 

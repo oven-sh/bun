@@ -2395,8 +2395,8 @@ pub const JSPromise = extern struct {
         const Wrapper = struct {
             args: Args,
 
-            pub fn call(this: *@This(), _: *JSC.JSGlobalObject) JSC.JSValue {
-                return @call(.auto, Fn, this.args);
+            pub fn call(this: *@This(), g: *JSC.JSGlobalObject) JSC.JSValue {
+                return toJSHostValue(g, @call(.auto, Fn, this.args));
             }
         };
 
@@ -2851,8 +2851,8 @@ pub const AnyPromise = union(enum) {
         const Wrapper = struct {
             args: Args,
 
-            pub fn call(wrap_: *@This(), _: *JSC.JSGlobalObject) JSC.JSValue {
-                return @call(.auto, Fn, wrap_.args);
+            pub fn call(wrap_: *@This(), global: *JSC.JSGlobalObject) JSC.JSValue {
+                return toJSHostValue(global, @call(.auto, Fn, wrap_.args));
             }
         };
 
@@ -2953,8 +2953,9 @@ pub const JSGlobalObject = opaque {
     }
 
     extern fn JSGlobalObject__throwOutOfMemoryError(this: *JSGlobalObject) void;
-    pub fn throwOutOfMemory(this: *JSGlobalObject) void {
+    pub fn throwOutOfMemory(this: *JSGlobalObject) bun.JSError {
         JSGlobalObject__throwOutOfMemoryError(this);
+        return error.JSError;
     }
 
     pub fn throwOutOfMemoryValue(this: *JSGlobalObject) JSValue {
@@ -3412,7 +3413,7 @@ pub const JSGlobalObject = opaque {
     pub fn takeException(this: *JSGlobalObject, proof: bun.JSError) JSValue {
         switch (proof) {
             error.JSError => {},
-            error.OutOfMemory => this.throwOutOfMemory(),
+            error.OutOfMemory => this.throwOutOfMemory() catch {},
         }
 
         return this.tryTakeException() orelse {
@@ -5209,7 +5210,7 @@ pub const JSValue = enum(i64) {
     ) ?ZigString.Slice {
         var str = this.toStringOrNull(globalThis) orelse return null;
         return str.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch {
-            globalThis.throwOutOfMemory();
+            globalThis.throwOutOfMemory() catch {};
             return null;
         };
     }

@@ -1255,7 +1255,7 @@ pub const Fetch = struct {
                         const js_cert = X509.toJS(x509, globalObject) catch |err| {
                             switch (err) {
                                 error.JSError => {},
-                                error.OutOfMemory => globalObject.throwOutOfMemory(),
+                                error.OutOfMemory => globalObject.throwOutOfMemory() catch {},
                             }
                             const check_result = globalObject.tryTakeException().?;
                             // mark to wait until deinit
@@ -2465,10 +2465,7 @@ pub const Fetch = struct {
                                 return JSPromise.rejectedPromiseValue(globalThis, err);
                             }
                             defer href.deref();
-                            const buffer = std.fmt.allocPrint(allocator, "{s}{}", .{ url_proxy_buffer, href }) catch {
-                                globalThis.throwOutOfMemory();
-                                return .zero;
-                            };
+                            const buffer = try std.fmt.allocPrint(allocator, "{s}{}", .{ url_proxy_buffer, href });
                             url = ZigURL.parse(buffer[0..url.href.len]);
                             if (url.isFile()) {
                                 url_type = URLType.file;
@@ -2778,10 +2775,7 @@ pub const Fetch = struct {
 
                 var pathlike: JSC.Node.PathOrFileDescriptor = .{
                     .path = .{
-                        .encoded_slice = ZigString.Slice.init(bun.default_allocator, bun.default_allocator.dupe(u8, temp_file_path) catch {
-                            globalThis.throwOutOfMemory();
-                            return .zero;
-                        }),
+                        .encoded_slice = ZigString.Slice.init(bun.default_allocator, try bun.default_allocator.dupe(u8, temp_file_path)),
                     },
                 };
 

@@ -1607,14 +1607,14 @@ pub const SinkDestructor = struct {
     }
 };
 
-pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
+pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
     return struct {
         sink: SinkType,
 
         const ThisSink = @This();
 
-        pub const shim = JSC.Shimmer("", name_, @This());
-        pub const name = std.fmt.comptimePrint("{s}", .{name_});
+        pub const shim = JSC.Shimmer("", abi_name, @This());
+        pub const name = abi_name;
 
         // This attaches it to JS
         pub const SinkSignal = extern struct {
@@ -1659,12 +1659,6 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             JSC.markBinding(@src());
 
             return shim.cppFn("createObject", .{ globalThis, object, destructor });
-        }
-
-        pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) ?*anyopaque {
-            JSC.markBinding(@src());
-
-            return shim.cppFn("fromJS", .{ globalThis, value });
         }
 
         pub fn setDestroyCallback(value: JSValue, callback: usize) void {
@@ -1720,32 +1714,48 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             shim.cppFn("detachPtr", .{ptr});
         }
 
-        inline fn getThis(globalThis: *JSGlobalObject, callframe: *const JSC.CallFrame) ?*ThisSink {
-            return @as(
-                *ThisSink,
-                @ptrCast(@alignCast(
-                    fromJS(
-                        globalThis,
-                        callframe.this(),
-                    ) orelse return null,
-                )),
-            );
+        // The code generator encodes two distinct failure types using 0 and 1
+        const FromJSResult = enum(usize) {
+            /// The sink has been closed and the wrapped type is freed.
+            detached = 0,
+            /// JS exception has not yet been thrown
+            cast_failed = 1,
+            /// *ThisSink
+            _,
+        };
+        const fromJSExtern = @extern(
+            *const fn (value: JSValue) callconv(.C) FromJSResult,
+            .{ .name = abi_name ++ "__fromJS" },
+        );
+
+        pub fn fromJS(value: JSValue) ?*ThisSink {
+            switch (fromJSExtern(value)) {
+                .detached, .cast_failed => return null,
+                else => |ptr| return @ptrFromInt(@intFromEnum(ptr)),
+            }
         }
 
-        fn invalidThis(globalThis: *JSGlobalObject) JSValue {
-            const err = JSC.toTypeError(.ERR_INVALID_THIS, "Expected Sink", .{}, globalThis);
-            globalThis.vm().throwError(globalThis, err);
-            return .zero;
+        fn getThis(global: *JSGlobalObject, callframe: *const JSC.CallFrame) !*ThisSink {
+            switch (fromJSExtern(callframe.this())) {
+                .detached => {
+                    global.throw("This " ++ abi_name ++ " has already been closed. A \"direct\" ReadableStream terminates its underlying socket once `async pull()` returns.", .{});
+                    return error.JSError;
+                },
+                .cast_failed => {
+                    const err = JSC.toTypeError(.ERR_INVALID_THIS, "Expected " ++ abi_name, .{}, global);
+                    return global.vm().throwError2(global, err);
+                },
+                else => |ptr| return @ptrFromInt(@intFromEnum(ptr)),
+            }
         }
 
         pub fn unprotect(this: *@This()) void {
-            _ = this; // autofix
-
+            _ = this;
         }
 
         pub fn write(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
-            var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
+            const this = try getThis(globalThis, callframe);
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
@@ -1838,7 +1848,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
         pub fn close(globalThis: *JSGlobalObject, sink_ptr: ?*anyopaque) callconv(.C) JSValue {
             JSC.markBinding(@src());
-            var this = @as(*ThisSink, @ptrCast(@alignCast(sink_ptr orelse return invalidThis(globalThis))));
+            const this: *ThisSink = @ptrCast(@alignCast(sink_ptr orelse return .undefined));
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
@@ -1853,7 +1863,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         pub fn flush(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
 
-            var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
+            const this = try getThis(globalThis, callframe);
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
@@ -1888,7 +1898,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         pub fn start(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
 
-            var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
+            const this = try getThis(globalThis, callframe);
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
@@ -1897,10 +1907,10 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 }
             }
 
-            if (comptime @hasField(StreamStart, name_)) {
+            if (comptime @hasField(StreamStart, abi_name)) {
                 return this.sink.start(
                     if (callframe.argumentsCount() > 0)
-                        try StreamStart.fromJSWithTag(globalThis, callframe.argument(0), comptime @field(StreamStart, name_))
+                        try StreamStart.fromJSWithTag(globalThis, callframe.argument(0), comptime @field(StreamStart, abi_name))
                     else
                         StreamStart{ .empty = {} },
                 ).toJS(globalThis);
@@ -1917,7 +1927,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         pub fn end(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
 
-            var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
+            const this = try getThis(globalThis, callframe);
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
@@ -3077,10 +3087,10 @@ pub const FileSink = struct {
     pub const IOWriter = bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose);
     pub const Poll = IOWriter;
 
-    fn Bun__ForceFileSinkToBeSynchronousOnWindows(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) callconv(.C) void {
+    fn Bun__ForceFileSinkToBeSynchronousOnWindows(jsvalue: JSC.JSValue) callconv(.C) void {
         comptime bun.assert(Environment.isWindows);
 
-        var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(globalObject, jsvalue) orelse return));
+        var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(jsvalue) orelse return));
         this.force_sync_on_windows = true;
     }
 

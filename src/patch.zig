@@ -1100,14 +1100,14 @@ pub const TestingAPIs = struct {
 
         const old_folder_jsval = arguments.nextEat() orelse {
             globalThis.throw("expected 2 strings", .{});
-            return .undefined;
+            return .zero;
         };
         const old_folder_bunstr = old_folder_jsval.toBunString(globalThis);
         defer old_folder_bunstr.deref();
 
         const new_folder_jsval = arguments.nextEat() orelse {
             globalThis.throw("expected 2 strings", .{});
-            return .undefined;
+            return .zero;
         };
         const new_folder_bunstr = new_folder_jsval.toBunString(globalThis);
         defer new_folder_bunstr.deref();
@@ -1128,7 +1128,7 @@ pub const TestingAPIs = struct {
             .err => |e| {
                 defer e.deinit();
                 globalThis.throw("failed to make diff: {s}", .{e.items});
-                return .undefined;
+                return .zero;
             },
         };
     }
@@ -1154,7 +1154,7 @@ pub const TestingAPIs = struct {
 
         if (args.patchfile.apply(bun.default_allocator, args.dirfd)) |err| {
             globalThis.throwValue(err.toErrorInstance(globalThis));
-            return .undefined;
+            return .zero;
         }
 
         return .true;
@@ -1166,7 +1166,7 @@ pub const TestingAPIs = struct {
 
         const patchfile_src_js = arguments.nextEat() orelse {
             globalThis.throw("TestingAPIs.parse: expected at least 1 argument, got 0", .{});
-            return .undefined;
+            return .zero;
         };
         const patchfile_src_bunstr = patchfile_src_js.toBunString(globalThis);
         const patchfile_src = patchfile_src_bunstr.toUTF8(bun.default_allocator);
@@ -1180,10 +1180,7 @@ pub const TestingAPIs = struct {
         };
         defer patchfile.deinit(bun.default_allocator);
 
-        const str = std.json.stringifyAlloc(bun.default_allocator, patchfile, .{}) catch {
-            globalThis.throwOutOfMemory();
-            return .undefined;
-        };
+        const str = try std.json.stringifyAlloc(bun.default_allocator, patchfile, .{});
         const outstr = bun.String.fromUTF8(str);
         return outstr.toJS(globalThis);
     }

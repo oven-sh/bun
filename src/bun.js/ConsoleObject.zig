@@ -91,7 +91,7 @@ pub fn messageWithTypeAndLevel(
 ) callconv(JSC.conv) void {
     messageWithTypeAndLevel_(ctype, message_type, level, global, vals, len) catch |err| switch (err) {
         error.JSError => {},
-        error.OutOfMemory => global.throwOutOfMemory(),
+        error.OutOfMemory => global.throwOutOfMemory() catch {}, // TODO: properly propagate exception upwards
     };
 }
 fn messageWithTypeAndLevel_(

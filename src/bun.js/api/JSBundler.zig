@@ -322,15 +322,13 @@ pub const JSBundler = struct {
                 defer path.deinit();
 
                 var dir = std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
-                    globalThis.throwPretty("{s}: failed to open root directory: {s}", .{ @errorName(err), path.slice() });
-                    return error.JSError;
+                    return globalThis.throwPretty("{s}: failed to open root directory: {s}", .{ @errorName(err), path.slice() });
                 };
                 defer dir.close();
 
                 var rootdir_buf: bun.PathBuffer = undefined;
                 const rootdir = bun.getFdPath(bun.toFD(dir.fd), &rootdir_buf) catch |err| {
-                    globalThis.throwPretty("{s}: failed to get full root directory path: {s}", .{ @errorName(err), path.slice() });
-                    return error.JSError;
+                    return globalThis.throwPretty("{s}: failed to get full root directory path: {s}", .{ @errorName(err), path.slice() });
                 };
                 try this.rootdir.appendSliceExact(rootdir);
             }
@@ -544,17 +542,7 @@ pub const JSBundler = struct {
         }
 
         var plugins: ?*Plugin = null;
-        const config = Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator()) catch |err| {
-            switch (err) {
-                error.JSError => {
-                    return .zero;
-                },
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                },
-            }
-        };
+        const config = try Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator());
 
         return bun.BundleV2.generateFromJavaScript(
             config,
@@ -562,14 +550,7 @@ pub const JSBundler = struct {
             globalThis,
             globalThis.bunVM().eventLoop(),
             bun.default_allocator,
-        ) catch |err| {
-            switch (err) {
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                },
-            }
-        };
+        );
     }
 
     pub fn buildFn(
@@ -857,26 +838,30 @@ pub const JSBundler = struct {
             globalObject: *JSC.JSGlobalObject,
         ) JSValue {
             if (this.called_defer) {
-                globalObject.throw("can't call .defer() more than once within an onLoad plugin", .{});
-                return .undefined;
+                globalObject.throw("Can't call .defer() more than once within an onLoad plugin", .{});
+                return .zero;
             }
+
             this.called_defer = true;
 
-            _ = this.parse_task.ctx.graph.deferred_pending.fetchAdd(1, .acq_rel);
-            _ = @atomicRmw(usize, &this.parse_task.ctx.graph.parse_pending, .Sub, 1, .acq_rel);
+            debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s})", .{ @intFromPtr(this), this.path });
 
-            debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s}) parse_pending={d} deferred_pending={d}", .{
-                @intFromPtr(this),
-                this.path,
-                @atomicLoad(
-                    usize,
-                    &this.parse_task.ctx.graph.parse_pending,
-                    .monotonic,
-                ),
-                this.parse_task.ctx.graph.deferred_pending.load(.monotonic),
-            });
+            // Notify the bundler thread about the deferral. This will decrement
+            switch (this.parse_task.ctx.loop().*) {
+                .js => |jsc_event_loop| {
+                    jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this.parse_task.ctx, BundleV2.onNotifyDefer));
+                },
+                .mini => |*mini| {
+                    mini.enqueueTaskConcurrentWithExtraCtx(
+                        Load,
+                        BundleV2,
+                        this,
+                        BundleV2.onNotifyDeferMini,
+                        .task,
+                    );
+                },
+            }
 
-            defer this.parse_task.ctx.loop().wakeup();
             const promise: JSValue = if (this.completion) |c| c.plugins.?.appendDeferPromise() else return .undefined;
             return promise;
         }
@@ -931,7 +916,7 @@ pub const JSBundler = struct {
             return plugin;
         }
 
-        extern fn JSBundlerPlugin__tombestone(*Plugin) void;
+        extern fn JSBundlerPlugin__tombstone(*Plugin) void;
 
         extern fn JSBundlerPlugin__anyMatches(
             *Plugin,
@@ -1041,9 +1026,13 @@ pub const JSBundler = struct {
             JSC.markBinding(@src());
             const tracer = bun.tracy.traceNamed(@src(), "JSBundler.addPlugin");
             defer tracer.end();
-            const value = JSBundlerPlugin__runSetupFunction(this, object, config, onstart_promises_array, JSValue.jsBoolean(is_last));
-            if (value == .zero) return error.JSError;
-            return value;
+            return JSBundlerPlugin__runSetupFunction(
+                this,
+                object,
+                config,
+                onstart_promises_array,
+                JSValue.jsBoolean(is_last),
+            ).unwrap();
         }
 
         pub fn drainDeferred(this: *Plugin, rejected: bool) void {
@@ -1052,7 +1041,7 @@ pub const JSBundler = struct {
 
         pub fn deinit(this: *Plugin) void {
             JSC.markBinding(@src());
-            JSBundlerPlugin__tombestone(this);
+            JSBundlerPlugin__tombstone(this);
             JSC.JSValue.fromCell(this).unprotect();
         }
 
@@ -1069,7 +1058,7 @@ pub const JSBundler = struct {
             JSC.JSValue,
             JSC.JSValue,
             JSC.JSValue,
-        ) JSValue;
+        ) JSValue.MaybeException;
 
         pub export fn JSBundlerPlugin__addError(
             ctx: *anyopaque,
@@ -1332,3 +1321,4 @@ pub const BuildArtifact = struct {
 };
 
 const Output = bun.Output;
+const BundleV2 = bun.bundle_v2.BundleV2;

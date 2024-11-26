@@ -157,6 +157,8 @@ export function replaceModules(modules: any) {
 export const serverManifest = {};
 export const clientManifest = {};
 
+export let onServerSideReload: (() => Promise<void>) | null = null;
+
 if (side === "server") {
   const server_module = new HotModule("bun:bake/server");
   server_module.__esModule = true;
@@ -174,7 +176,9 @@ if (side === "client") {
   const server_module = new HotModule("bun:bake/client");
   server_module.__esModule = true;
   server_module.exports = {
-    bundleRouteForDevelopment: async () => {},
+    onServerSideReload: async (cb) => {
+      onServerSideReload = cb;
+    },
   };
   registry.set(server_module.id, server_module);
 }

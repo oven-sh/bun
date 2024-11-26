@@ -3195,7 +3195,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                         },
                     };
 
-                    var server = try ServerType.init(config, globalObject);
+                    var server = try ServerType.init(&config, globalObject);
                     if (globalObject.hasException()) {
                         return .zero;
                     }
@@ -3228,15 +3228,11 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
         return .zero;
     };
 
-    switch (escaped) {
-        .static => |val| {
-            return ZigString.init(val).toJS(globalObject);
-        },
-        .original => return input_value,
-        .allocated => |escaped_html| {
-            return ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject);
-        },
-    }
+    return switch (escaped) {
+        .static => |val| ZigString.init(val).toJS(globalObject),
+        .original => input_value,
+        .allocated => |escaped_html| ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject),
+    };
 }
 
 pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: JSValue, ptr: [*]const u8, len: usize) JSValue {

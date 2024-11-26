@@ -2881,9 +2881,13 @@ JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* glob
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::createAggregateError(globalObject, vm, errorStructure, array, message, options, nullptr, JSC::TypeNothing, false)));
 }
-// static JSC::JSNativeStdFunction* resolverFunction;
-// static JSC::JSNativeStdFunction* rejecterFunction;
-// static bool resolverFunctionInitialized = false;
+JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGlobalObject* global, JSC::JSArray* array, BunString message, JSValue options)
+{
+    JSC::VM& vm = global->vm();
+    JSC::Structure* errorStructure = global->errorStructure(JSC::ErrorType::AggregateError);
+    WTF::String messageString = message.toWTFString();
+    return JSC::JSValue::encode(JSC::createAggregateError(global, vm, errorStructure, array, JSC::jsString(vm, messageString), options, nullptr, JSC::TypeNothing, false));
+}
 
 JSC__JSValue ZigString__toAtomicValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
 {

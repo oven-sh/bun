@@ -962,7 +962,7 @@ async function getPipeline() {
   /** @type {Step[]} */
   const steps = [];
 
-  if (isBuildManual()) {
+  if (isBuildManual() || true) {
     steps.push({
       key: "options",
       block: "Select options",
@@ -985,13 +985,14 @@ async function getPipeline() {
     });
   }
 
-  steps.push(
-    getBuildVendorStep({
+  steps.push({
+    depends_on: ["options"],
+    ...getBuildVendorStep({
       os: "darwin",
       arch: "aarch64",
       release: "14",
     }),
-  );
+  });
 
   return { steps };
 }

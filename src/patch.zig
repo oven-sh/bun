@@ -1098,7 +1098,7 @@ pub const TestingAPIs = struct {
         const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
-        const old_folder_jsval = arguments.nextEat() orelse return globalThis.throw2("expected 2 strings", .{});;
+        const old_folder_jsval = arguments.nextEat() orelse return globalThis.throw2("expected 2 strings", .{});
         const old_folder_bunstr = try old_folder_jsval.toBunString(globalThis);
         defer old_folder_bunstr.deref();
 

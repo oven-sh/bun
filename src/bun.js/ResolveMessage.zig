@@ -116,7 +116,7 @@ pub const ResolveMessage = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const args_ = callframe.arguments(1);
+        const args_ = callframe.arguments_old(1);
         const args = args_.ptr[0..args_.len];
         if (args.len > 0) {
             if (!args[0].isString()) {

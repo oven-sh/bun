@@ -151,7 +151,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
     const args = callFrame.argumentsAsArray(2);
     if (args[0].isUndefined()) {
         globalThis.throwInvalidArgumentType("color", "input", "string, number, or object");
-        return JSC.JSValue.jsUndefined();
+        return .zero;
     }
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -166,7 +166,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
         if (!args[1].isEmptyOrUndefinedOrNull()) {
             if (!args[1].isString()) {
                 globalThis.throwInvalidArgumentType("color", "format", "string");
-                return JSC.JSValue.jsUndefined();
+                return .zero;
             }
 
             break :brk try args[1].toEnum(globalThis, "format", OutputColorFormat);
@@ -228,27 +228,27 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                 },
                 else => {
                     globalThis.throw("Expected array length 3 or 4", .{});
-                    return JSC.JSValue.jsUndefined();
+                    return .zero;
                 },
             }
         } else if (args[0].isObject()) {
-            const r = colorIntFromJS(globalThis, args[0].get(globalThis, "r") orelse .zero, "r") orelse return .zero;
+            const r = colorIntFromJS(globalThis, try args[0].get(globalThis, "r") orelse .zero, "r") orelse return .zero;
 
             if (globalThis.hasException()) {
                 return .zero;
             }
-            const g = colorIntFromJS(globalThis, args[0].get(globalThis, "g") orelse .zero, "g") orelse return .zero;
+            const g = colorIntFromJS(globalThis, try args[0].get(globalThis, "g") orelse .zero, "g") orelse return .zero;
 
             if (globalThis.hasException()) {
                 return .zero;
             }
-            const b = colorIntFromJS(globalThis, args[0].get(globalThis, "b") orelse .zero, "b") orelse return .zero;
+            const b = colorIntFromJS(globalThis, try args[0].get(globalThis, "b") orelse .zero, "b") orelse return .zero;
 
             if (globalThis.hasException()) {
                 return .zero;
             }
 
-            const a: ?u8 = if (args[0].getTruthy(globalThis, "a")) |a_value| brk2: {
+            const a: ?u8 = if (try args[0].getTruthy(globalThis, "a")) |a_value| brk2: {
                 if (a_value.isNumber()) {
                     break :brk2 @intCast(@mod(@as(i64, @intFromFloat(a_value.asNumber() * 255.0)), 256));
                 }
@@ -284,7 +284,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
             }
 
             globalThis.throw("color() failed to parse {s}", .{@tagName(err.basic().kind)});
-            return JSC.JSValue.jsUndefined();
+            return .zero;
         },
         .result => |*result| {
             const format: OutputColorFormat = if (unresolved_format == .ansi) switch (bun.Output.Source.colorDepth()) {

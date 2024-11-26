@@ -113,29 +113,29 @@ const ScanOpts = struct {
                 return out;
             }
             globalThis.throw("{s}: expected first argument to be an object", .{fnName});
-            return null;
+            return error.JSError;
         }
 
-        if (optsObj.getTruthy(globalThis, "onlyFiles")) |only_files| {
+        if (try optsObj.getTruthy(globalThis, "onlyFiles")) |only_files| {
             out.only_files = if (only_files.isBoolean()) only_files.asBoolean() else false;
         }
 
-        if (optsObj.getTruthy(globalThis, "throwErrorOnBrokenSymlink")) |error_on_broken| {
+        if (try optsObj.getTruthy(globalThis, "throwErrorOnBrokenSymlink")) |error_on_broken| {
             out.error_on_broken_symlinks = if (error_on_broken.isBoolean()) error_on_broken.asBoolean() else false;
         }
 
-        if (optsObj.getTruthy(globalThis, "followSymlinks")) |followSymlinksVal| {
+        if (try optsObj.getTruthy(globalThis, "followSymlinks")) |followSymlinksVal| {
             out.follow_symlinks = if (followSymlinksVal.isBoolean()) followSymlinksVal.asBoolean() else false;
         }
 
-        if (optsObj.getTruthy(globalThis, "absolute")) |absoluteVal| {
+        if (try optsObj.getTruthy(globalThis, "absolute")) |absoluteVal| {
             out.absolute = if (absoluteVal.isBoolean()) absoluteVal.asBoolean() else false;
         }
 
-        if (optsObj.getTruthy(globalThis, "cwd")) |cwdVal| {
+        if (try optsObj.getTruthy(globalThis, "cwd")) |cwdVal| {
             if (!cwdVal.isString()) {
                 globalThis.throw("{s}: invalid `cwd`, not a string", .{fnName});
-                return null;
+                return error.JSError;
             }
 
             {
@@ -146,7 +146,7 @@ const ScanOpts = struct {
             }
         }
 
-        if (optsObj.getTruthy(globalThis, "dot")) |dot| {
+        if (try optsObj.getTruthy(globalThis, "dot")) |dot| {
             out.dot = if (dot.isBoolean()) dot.asBoolean() else false;
         }
 
@@ -309,7 +309,7 @@ fn makeGlobWalker(
 pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Glob {
     const alloc = getAllocator(globalThis);
 
-    const arguments_ = callframe.arguments(1);
+    const arguments_ = callframe.arguments_old(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const pat_arg: JSValue = arguments.nextEat() orelse {
@@ -368,7 +368,7 @@ fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void 
 pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
-    const arguments_ = callframe.arguments(1);
+    const arguments_ = callframe.arguments_old(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
@@ -392,7 +392,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
 pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
-    const arguments_ = callframe.arguments(1);
+    const arguments_ = callframe.arguments_old(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
@@ -423,17 +423,17 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     var arena = Arena.init(alloc);
     defer arena.deinit();
 
-    const arguments_ = callframe.arguments(1);
+    const arguments_ = callframe.arguments_old(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const str_arg = arguments.nextEat() orelse {
         globalThis.throw("Glob.matchString: expected 1 arguments, got 0", .{});
-        return .undefined;
+        return .zero;
     };
 
     if (!str_arg.isString()) {
         globalThis.throw("Glob.matchString: first argument is not a string", .{});
-        return .undefined;
+        return .zero;
     }
 
     var str = str_arg.toSlice(globalThis, arena.allocator());
@@ -446,13 +446,13 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
 
         var codepoints = std.ArrayList(u32).initCapacity(alloc, this.pattern.len * 2) catch {
             globalThis.throwOutOfMemory();
-            return .undefined;
+            return .zero;
         };
         errdefer codepoints.deinit();
 
         convertUtf8(&codepoints, this.pattern) catch {
             globalThis.throwOutOfMemory();
-            return .undefined;
+            return .zero;
         };
 
         this.pattern_codepoints = codepoints;

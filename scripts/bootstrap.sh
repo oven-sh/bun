@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 4
+# Version: 5
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -327,7 +327,8 @@ check_package_manager() {
 	print "Updating package manager..."
 	case "$pm" in
 	apt)
-		DEBIAN_FRONTEND=noninteractive package_manager update -y
+		export DEBIAN_FRONTEND=noninteractive
+		package_manager update -y
 		;;
 	apk)
 		package_manager update
@@ -373,7 +374,7 @@ package_manager() {
 		while ! sudo -n apt-get update -y; do
 			sleep 1
 		done
-		DEBIAN_FRONTEND=noninteractive execute_sudo apt-get "$@"
+		execute_sudo apt-get "$@"
 		;;
 	dnf)
 		case "$distro" in
@@ -569,28 +570,25 @@ install_nodejs() {
 		install_packages nodejs
 		;;
 	esac
+
+	# Some distros do not install the node headers by default.
+	# These are needed for certain FFI tests, such as: `cc.test.ts`
+	case "$distro" in
+	alpine | amzn)
+		install_nodejs_headers
+		;;
+	esac
+}
+
+install_nodejs_headers() {
+	headers_tar="$(download_file "https://nodejs.org/download/release/v$(nodejs_version_exact)/node-v$(nodejs_version_exact)-headers.tar.gz")"
+	headers_dir="$(dirname "$headers_tar")"
+	execute tar -xzf "$headers_tar" -C "$headers_dir"
+	headers_include="$headers_dir/node-v$(nodejs_version_exact)/include"
+	execute_sudo cp -R "$headers_include/" "/usr"
 }
 
 install_bun() {
-	case "$os-$abi" in
-	linux-musl)
-		case "$arch" in
-		x64)
-			exe="$(download_file https://pub-61e0d0e2da4146a099e4545a59a9f0f7.r2.dev/bun-musl-x64)"
-			;;
-		aarch64)
-			exe="$(download_file https://pub-61e0d0e2da4146a099e4545a59a9f0f7.r2.dev/bun-musl-arm64)"
-			;;
-		esac
-		execute chmod +x "$exe"
-		execute mkdir -p "$home/.bun/bin"
-		execute mv "$exe" "$home/.bun/bin/bun"
-		execute ln -fs "$home/.bun/bin/bun" "$home/.bun/bin/bunx"
-		link_to_bin "$home/.bun/bin"
-		return
-		;;
-	esac
-
 	bash="$(require bash)"
 	script=$(download_file "https://bun.sh/install")
 
@@ -957,6 +955,13 @@ install_chrome_dependencies() {
 			xorg-x11-fonts-misc \
 			xorg-x11-fonts-Type1 \
 			xorg-x11-utils
+		;;
+	esac
+
+	case "$distro" in
+	amzn)
+		install_packages \
+			mesa-libgbm
 		;;
 	esac
 }

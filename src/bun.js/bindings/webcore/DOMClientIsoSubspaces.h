@@ -698,9 +698,9 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceObserver;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceObserverEntryList;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformancePaintTiming;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceResourceTiming;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceServerTiming;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceTiming;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceResourceTiming;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceServerTiming;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRemoteDOMWindow;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResizeObserver;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResizeObserverEntry;

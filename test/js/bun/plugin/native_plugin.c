@@ -12,9 +12,12 @@
 
 typedef struct {
     atomic_size_t foo_count;
+    // For testing logging error logic
+    atomic_bool throws_an_error;
 } External;
 
 typedef struct {
+    size_t __struct_size;
     void* bun;
     const uint8_t* path_ptr;
     size_t path_len;
@@ -27,6 +30,7 @@ typedef struct {
 typedef struct BunLogOptions BunLogOptions;
 
 typedef struct OnBeforeParseResult {
+    size_t __struct_size;
     uint8_t* source_ptr;
     size_t source_len;
     uint8_t loader;
@@ -39,7 +43,61 @@ typedef struct OnBeforeParseResult {
     void (*log)(const OnBeforeParseArguments* args, BunLogOptions* options);
 }  OnBeforeParseResult;
 
-void plugin_impl(int version, const OnBeforeParseArguments* args, OnBeforeParseResult* result) {
+typedef struct BunLogOptions {
+    size_t __struct_size;
+    const uint8_t* message_ptr;
+    size_t message_len;
+    const uint8_t* path_ptr;
+    size_t path_len;
+    const uint8_t* source_line_text_ptr;
+    size_t source_line_text_len;
+    int8_t level;
+    int line;
+    int lineEnd;
+    int column;
+    int columnEnd;
+} BunLogOptions;
+
+typedef enum {
+    BUN_LOG_LEVEL_VERBOSE = 0,
+    BUN_LOG_LEVEL_DEBUG = 1,
+    BUN_LOG_LEVEL_INFO = 2,
+    BUN_LOG_LEVEL_WARN = 3,
+    BUN_LOG_LEVEL_ERROR = 4,
+} BunLogLevel;
+
+
+void log_error(const OnBeforeParseArguments* args, const OnBeforeParseResult* result, BunLogLevel level, const char* message, size_t message_len) {
+    BunLogOptions options = (BunLogOptions) {
+        .message_ptr = (uint8_t*)message,
+        .message_len = message_len,
+        .path_ptr = args->path_ptr,
+        .path_len = args->path_len,
+        .source_line_text_ptr = NULL,
+        .source_line_text_len = 0,
+        .level = level,
+        .line = 0,
+        .lineEnd = 0,
+        .column = 0,
+        .columnEnd = 0,
+    };
+    (result->log)(args, &options);
+}
+
+void plugin_impl(const OnBeforeParseArguments* args, OnBeforeParseResult* result) {
+    // if (args->__struct_size < sizeof(OnBeforeParseArguments)) {
+    //     log_error(args, result, BUN_LOG_LEVEL_ERROR, "Invalid OnBeforeParseArguments struct size", sizeof("Invalid OnBeforeParseArguments struct size") - 1);
+    //     return;
+    // }
+
+    if (args->external) {
+        External* external = (External*)args->external;
+        if (atomic_load(&external->throws_an_error)) {
+            log_error(args, result, BUN_LOG_LEVEL_ERROR, "Throwing an error", sizeof("Throwing an error") - 1);
+            return;
+        }
+    }
+
     int fetch_result = result->fetchSourceCode(args, result);
     if (fetch_result != 0) {
         printf("FUCK\n");
@@ -74,8 +132,10 @@ void plugin_impl(int version, const OnBeforeParseArguments* args, OnBeforeParseR
                 cursor = strnstr((const char*) cursor, "foo", (size_t) (end - cursor));
             } else break;
         }
-        External *external = (External*)args->external;
-        atomic_fetch_add(&external->foo_count, foo_count);
+        if (args->external) {
+            External *external = (External*)args->external;
+            atomic_fetch_add(&external->foo_count, foo_count);
+        }
         result->source_ptr = (uint8_t*)new_source;
         result->source_len = result->source_len;
     } else {
@@ -87,7 +147,6 @@ void plugin_impl(int version, const OnBeforeParseArguments* args, OnBeforeParseR
 }
 
 void finalizer(napi_env env, void* data, void* hint) {
-    printf("FREEING EXTERNAL!\n");
     External* external = (External*)data;
     if (external != NULL) {
         free(external);
@@ -116,6 +175,41 @@ napi_value create_external(napi_env env, napi_callback_info info) {
     }
 
     return result;
+}
+
+napi_value set_throws_errors(napi_env env, napi_callback_info info) {
+    napi_status status;
+    External* external;
+
+    size_t argc = 1;
+    napi_value args[1];
+    status = napi_get_cb_info(env, info, &argc, args, NULL, NULL);
+    if (status != napi_ok) {
+        napi_throw_error(env, NULL, "Failed to parse arguments");
+        return NULL;
+    }
+
+    if (argc < 1) {
+        napi_throw_error(env, NULL, "Wrong number of arguments");
+        return NULL;
+    }
+
+    status = napi_get_value_external(env, args[0], (void**)&external);
+    if (status != napi_ok) {
+        napi_throw_error(env, NULL, "Failed to get external");
+        return NULL;
+    }
+
+    bool throws;
+    status = napi_get_value_bool(env, args[0], &throws);
+    if (status != napi_ok) {
+        napi_throw_error(env, NULL, "Failed to get boolean value");
+        return NULL;
+    }
+
+    atomic_store(&external->throws_an_error, throws);
+
+    return NULL;
 }
 
 napi_value get_foo_count(napi_env env, napi_callback_info info) {
@@ -162,6 +256,7 @@ napi_value Init(napi_env env, napi_value exports) {
     napi_status status;
     napi_value fn_get_names;
     napi_value fn_create_external;
+    napi_value fn_set_throws_errors;
 
     // Register get_names function
     status = napi_create_function(env, NULL, 0, get_foo_count, NULL, &fn_get_names);
@@ -172,6 +267,18 @@ napi_value Init(napi_env env, napi_value exports) {
     status = napi_set_named_property(env, exports, "getFooCount", fn_get_names);
     if (status != napi_ok) {
         napi_throw_error(env, NULL, "Failed to add get_names function to exports");
+        return NULL;
+    }
+
+    // Register set_throws_errors function  
+    status = napi_create_function(env, NULL, 0, set_throws_errors, NULL, &fn_set_throws_errors);
+    if (status != napi_ok) {
+        napi_throw_error(env, NULL, "Failed to create set_throws_errors function");
+        return NULL;
+    }
+    status = napi_set_named_property(env, exports, "setThrowsErrors", fn_set_throws_errors);
+    if (status != napi_ok) {
+        napi_throw_error(env, NULL, "Failed to add set_throws_errors function to exports");
         return NULL;
     }
 

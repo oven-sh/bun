@@ -284,8 +284,11 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, int* shouldContinue, void
         {
             std::lock_guard<std::mutex> lock(*group->at(i).second);
             if (group->at(i).first.match(path) > -1) {
-                ((OnBeforeParseArgs*) (onBeforeParseArgs))->external = callbacks[i].second->value();
-                callbacks[i].first(1, onBeforeParseArgs, onBeforeParseResult);
+                Bun::NapiExternal* external = callbacks[i].second;
+                if (external) {
+                    ((OnBeforeParseArgs*) (onBeforeParseArgs))->external = external->value();
+                }
+                callbacks[i].first(onBeforeParseArgs, onBeforeParseResult);
                 count++;
             }
         }
@@ -306,6 +309,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
+    // Clone the regexp so we don't have to worry about it being used concurrently with the JS thread.
+    // TODO: Should we have a regexp object for every thread in the thread pool? Then we could avoid using
+    // a mutex to synchronize access to the same regexp from multiple threads.
     JSC::RegExpObject* jsRegexp = jsCast<JSC::RegExpObject*>(callFrame->argument(0));
     RegExp* reggie = jsRegexp->regExp();
     RegExp* newRegexp = RegExp::create(vm, reggie->pattern(), reggie->flags());

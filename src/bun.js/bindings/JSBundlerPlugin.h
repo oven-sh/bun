@@ -10,7 +10,7 @@
 typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginOnResolveAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
-typedef void (*JSBundlerPluginNativeOnBeforeParseCallback)(int, void*, void*);
+typedef void (*JSBundlerPluginNativeOnBeforeParseCallback)( void*, void*);
 
 namespace Bun {
 
@@ -47,6 +47,7 @@ public:
     };
 
     typedef struct {
+        size_t __struct_size;
         void *context;
         const char *path_ptr;
         size_t path_len;

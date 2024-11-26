@@ -3818,6 +3818,7 @@ pub const ParseTask = struct {
         result: ?*OnBeforeParseResult = null,
 
         const OnBeforeParseArguments = extern struct {
+            struct_size: usize = @sizeOf(OnBeforeParseArguments),
             context: *OnBeforeParsePlugin,
             path_ptr: [*]const u8 = "",
             path_len: usize = 0,
@@ -3828,6 +3829,7 @@ pub const ParseTask = struct {
         };
 
         const BunLogOptions = extern struct {
+            struct_size: usize = @sizeOf(BunLogOptions),
             message_ptr: ?[*]const u8 = null,
             message_len: usize = 0,
             path_ptr: ?[*]const u8 = null,
@@ -3906,6 +3908,7 @@ pub const ParseTask = struct {
         };
 
         const OnBeforeParseResult = extern struct {
+            struct_size: usize = @sizeOf(OnBeforeParseResult),
             source_ptr: ?[*]const u8 = null,
             source_len: usize = 0,
             loader: Loader,

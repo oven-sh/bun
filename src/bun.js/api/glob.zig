@@ -244,6 +244,7 @@ fn makeGlobWalker(
 
     if (cwd != null) {
         var globWalker = try alloc.create(GlobWalker);
+        errdefer alloc.free(globWalker);
 
         globWalker.* = .{};
 
@@ -265,6 +266,7 @@ fn makeGlobWalker(
         return globWalker;
     }
     var globWalker = try alloc.create(GlobWalker);
+    errdefer alloc.free(globWalker);
 
     globWalker.* = .{};
     switch (try globWalker.init(

@@ -1095,19 +1095,19 @@ const PatchLinesParser = struct {
 
 pub const TestingAPIs = struct {
     pub fn makeDiff(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const old_folder_jsval = arguments.nextEat() orelse {
             globalThis.throw("expected 2 strings", .{});
-            return .undefined;
+            return .zero;
         };
         const old_folder_bunstr = old_folder_jsval.toBunString(globalThis);
         defer old_folder_bunstr.deref();
 
         const new_folder_jsval = arguments.nextEat() orelse {
             globalThis.throw("expected 2 strings", .{});
-            return .undefined;
+            return .zero;
         };
         const new_folder_bunstr = new_folder_jsval.toBunString(globalThis);
         defer new_folder_bunstr.deref();
@@ -1128,7 +1128,7 @@ pub const TestingAPIs = struct {
             .err => |e| {
                 defer e.deinit();
                 globalThis.throw("failed to make diff: {s}", .{e.items});
-                return .undefined;
+                return .zero;
             },
         };
     }
@@ -1154,19 +1154,19 @@ pub const TestingAPIs = struct {
 
         if (args.patchfile.apply(bun.default_allocator, args.dirfd)) |err| {
             globalThis.throwValue(err.toErrorInstance(globalThis));
-            return .undefined;
+            return .zero;
         }
 
         return .true;
     }
     /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
     pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_src_js = arguments.nextEat() orelse {
             globalThis.throw("TestingAPIs.parse: expected at least 1 argument, got 0", .{});
-            return .undefined;
+            return .zero;
         };
         const patchfile_src_bunstr = patchfile_src_js.toBunString(globalThis);
         const patchfile_src = patchfile_src_bunstr.toUTF8(bun.default_allocator);
@@ -1182,14 +1182,14 @@ pub const TestingAPIs = struct {
 
         const str = std.json.stringifyAlloc(bun.default_allocator, patchfile, .{}) catch {
             globalThis.throwOutOfMemory();
-            return .undefined;
+            return .zero;
         };
         const outstr = bun.String.fromUTF8(str);
         return outstr.toJS(globalThis);
     }
 
     pub fn parseApplyArgs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSC.Node.Maybe(ApplyArgs, JSC.JSValue) {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_js = arguments.nextEat() orelse {

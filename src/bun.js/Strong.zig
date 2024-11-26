@@ -99,7 +99,7 @@ pub const Strong = struct {
     }
 
     pub fn set(this: *Strong, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-        var ref: *StrongImpl = this.ref orelse {
+        const ref: *StrongImpl = this.ref orelse {
             if (value == .zero) return;
             this.ref = StrongImpl.init(globalThis, value);
             this.globalThis = globalThis;
@@ -110,12 +110,12 @@ pub const Strong = struct {
     }
 
     pub fn clear(this: *Strong) void {
-        var ref: *StrongImpl = this.ref orelse return;
+        const ref: *StrongImpl = this.ref orelse return;
         ref.clear();
     }
 
     pub fn deinit(this: *Strong) void {
-        var ref: *StrongImpl = this.ref orelse return;
+        const ref: *StrongImpl = this.ref orelse return;
         this.ref = null;
         ref.deinit();
     }

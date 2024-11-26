@@ -83,30 +83,30 @@ pub const ShellErr = union(enum) {
         }
     }
 
-    pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) void {
+    pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) bun.JSError {
         defer this.deinit(bun.default_allocator);
         switch (this.*) {
             .sys => {
                 const err = this.sys.toErrorInstance(globalThis);
-                globalThis.throwValue(err);
+                return globalThis.throwValue2(err);
             },
             .custom => {
                 var str = JSC.ZigString.init(this.custom);
                 str.markUTF8();
                 const err_value = str.toErrorInstance(globalThis);
-                globalThis.throwValue(err_value);
+                return globalThis.throwValue2(err_value);
                 // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
             .invalid_arguments => {
-                globalThis.throwInvalidArguments("{s}", .{this.invalid_arguments.val});
+                return globalThis.throwInvalidArguments("{s}", .{this.invalid_arguments.val});
             },
             .todo => {
-                globalThis.throwTODO(this.todo);
+                return globalThis.throwTODO(this.todo);
             },
         }
     }
 
-    pub fn throwMini(this: @This()) void {
+    pub fn throwMini(this: @This()) noreturn {
         defer this.deinit(bun.default_allocator);
         switch (this) {
             .sys => |err| {
@@ -4316,11 +4316,11 @@ pub const TestingAPIs = struct {
     pub fn disabledOnThisPlatform(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (comptime bun.Environment.isWindows) return JSValue.false;
 
-        const arguments_ = callframe.arguments(1);
+        const arguments_ = callframe.arguments_old(1);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string = arguments.nextEat() orelse {
             globalThis.throw("shellInternals.disabledOnPosix: expected 1 arguments, got 0", .{});
-            return .undefined;
+            return .zero;
         };
 
         const bunstr = string.toBunString(globalThis);
@@ -4340,11 +4340,11 @@ pub const TestingAPIs = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
             globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
-            return .undefined;
+            return .zero;
         };
 
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -4352,13 +4352,13 @@ pub const TestingAPIs = struct {
 
         const template_args_js = arguments.nextEat() orelse {
             globalThis.throw("shell: expected 2 arguments, got 0", .{});
-            return .undefined;
+            return .zero;
         };
         var template_args = template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
         var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
             globalThis.throwOutOfMemory();
-            return .undefined;
+            return .zero;
         };
         defer {
             for (jsstrings.items[0..]) |bunstr| {
@@ -4376,7 +4376,7 @@ pub const TestingAPIs = struct {
         var script = std.ArrayList(u8).init(arena.allocator());
         if (!(shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
             globalThis.throwOutOfMemory();
-            return JSValue.undefined;
+            return .zero;
         })) {
             return .undefined;
         }
@@ -4398,25 +4398,24 @@ pub const TestingAPIs = struct {
 
         if (lex_result.errors.len > 0) {
             const str = lex_result.combineErrors(arena.allocator());
-            globalThis.throwPretty("{s}", .{str});
-            return .undefined;
+            return globalThis.throwPretty("{s}", .{str});
         }
 
         var test_tokens = std.ArrayList(Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch {
             globalThis.throwOutOfMemory();
-            return JSValue.undefined;
+            return .zero;
         };
         for (lex_result.tokens) |tok| {
             const test_tok = Test.TestToken.from_real(tok, lex_result.strpool);
             test_tokens.append(test_tok) catch {
                 globalThis.throwOutOfMemory();
-                return JSValue.undefined;
+                return .zero;
             };
         }
 
         const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, test_tokens.items[0..], .{}) catch {
             globalThis.throwOutOfMemory();
-            return JSValue.undefined;
+            return .zero;
         };
 
         defer globalThis.bunVM().allocator.free(str);
@@ -4428,11 +4427,11 @@ pub const TestingAPIs = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
             globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
-            return .undefined;
+            return .zero;
         };
 
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
@@ -4440,13 +4439,13 @@ pub const TestingAPIs = struct {
 
         const template_args_js = arguments.nextEat() orelse {
             globalThis.throw("shell: expected 2 arguments, got 0", .{});
-            return .undefined;
+            return .zero;
         };
         var template_args = template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
         var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
             globalThis.throwOutOfMemory();
-            return .undefined;
+            return .zero;
         };
         defer {
             for (jsstrings.items[0..]) |bunstr| {
@@ -4463,7 +4462,7 @@ pub const TestingAPIs = struct {
         var script = std.ArrayList(u8).init(arena.allocator());
         if (!(shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
             globalThis.throwOutOfMemory();
-            return JSValue.undefined;
+            return .zero;
         })) {
             return .undefined;
         }
@@ -4475,14 +4474,12 @@ pub const TestingAPIs = struct {
             if (err == ParseError.Lex) {
                 if (bun.Environment.allow_assert) assert(out_lex_result != null);
                 const str = out_lex_result.?.combineErrors(arena.allocator());
-                globalThis.throwPretty("{s}", .{str});
-                return .undefined;
+                return globalThis.throwPretty("{s}", .{str});
             }
 
             if (out_parser) |*p| {
                 const errstr = p.combineErrors();
-                globalThis.throwPretty("{s}", .{errstr});
-                return .undefined;
+                return globalThis.throwPretty("{s}", .{errstr});
             }
 
             return globalThis.throwError(err, "failed to lex/parse shell");
@@ -4490,7 +4487,7 @@ pub const TestingAPIs = struct {
 
         const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{}) catch {
             globalThis.throwOutOfMemory();
-            return JSValue.undefined;
+            return .zero;
         };
 
         defer globalThis.bunVM().allocator.free(str);

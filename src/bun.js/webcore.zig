@@ -24,7 +24,7 @@ pub const Lifetime = enum {
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1).slice();
+    const arguments = callframe.arguments_old(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
 
@@ -74,7 +74,7 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSErr
 }
 
 fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(1).slice();
+    const arguments = callframe.arguments_old(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
 
@@ -212,7 +212,7 @@ pub const Prompt = struct {
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(3).slice();
+        const arguments = callframe.arguments_old(3).slice();
         var state = std.heap.stackFallback(2048, bun.default_allocator);
         const allocator = state.get();
         var output = bun.Output.writer();
@@ -508,7 +508,7 @@ pub const Crypto = struct {
             // i don't think its a real scenario, but just in case
             buf = globalThis.allocator().alloc(u8, keylen) catch {
                 globalThis.throw("Failed to allocate memory", .{});
-                return .undefined;
+                return .zero;
             };
             needs_deinit = true;
         } else {
@@ -545,34 +545,27 @@ pub const Crypto = struct {
         return .zero;
     }
 
-    pub fn timingSafeEqual(
-        _: *@This(),
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(2).slice();
+    pub fn timingSafeEqual(_: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const arguments = callframe.arguments_old(2).slice();
 
         if (arguments.len < 2) {
-            globalThis.throwInvalidArguments("Expected 2 typed arrays but got nothing", .{});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected 2 typed arrays but got nothing", .{});
         }
 
         const array_buffer_a = arguments[0].asArrayBuffer(globalThis) orelse {
-            globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
         };
         const a = array_buffer_a.byteSlice();
 
         const array_buffer_b = arguments[1].asArrayBuffer(globalThis) orelse {
-            globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[1].jsType())});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[1].jsType())});
         };
         const b = array_buffer_b.byteSlice();
 
         const len = a.len;
         if (b.len != len) {
             globalThis.throw("Input buffers must have the same byte length", .{});
-            return .undefined;
+            return .zero;
         }
         return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
     }
@@ -600,15 +593,13 @@ pub const Crypto = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(1).slice();
+        const arguments = callframe.arguments_old(1).slice();
         if (arguments.len == 0) {
-            globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
         }
 
         var array_buffer = arguments[0].asArrayBuffer(globalThis) orelse {
-            globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
-            return .undefined;
+            return globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
         };
         const slice = array_buffer.byteSlice();
 
@@ -676,7 +667,7 @@ pub const Crypto = struct {
                         encoding_value = arguments[0];
                         break :brk JSC.Node.Encoding.fromJS(encoding_value, globalThis) orelse {
                             globalThis.ERR_UNKNOWN_ENCODING("Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
-                            return .undefined;
+                            return .zero;
                         };
                     }
                 }

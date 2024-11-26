@@ -1058,11 +1058,13 @@ const Scanner = struct {
             return false;
         }
 
-        if (jest.Jest.runner.?.test_options.coverage.skip_test_files) {
-            const name_without_extension = slice[0 .. slice.len - ext.len];
-            inline for (test_name_suffixes) |suffix| {
-                if (strings.endsWithComptime(name_without_extension, suffix)) {
-                    return false;
+        if (jest.Jest.runner) |runner| {
+            if (runner.test_options.coverage.skip_test_files) {
+                const name_without_extension = slice[0 .. slice.len - ext.len];
+                inline for (test_name_suffixes) |suffix| {
+                    if (strings.endsWithComptime(name_without_extension, suffix)) {
+                        return false;
+                    }
                 }
             }
         }
@@ -1304,6 +1306,11 @@ pub const TestCommand = struct {
 
         var results = try std.ArrayList(PathString).initCapacity(ctx.allocator, ctx.positionals.len);
         defer results.deinit();
+
+        // Start the debugger before we scan for files
+        // But, don't block the main thread waiting if they used --inspect-wait.
+        //
+        try vm.ensureDebugger(false);
 
         const test_files, const search_count = scan: {
             if (for (ctx.positionals) |arg| {
@@ -1599,13 +1606,13 @@ pub const TestCommand = struct {
 
                 if (files.len > 1) {
                     for (files[0 .. files.len - 1]) |file_name| {
-                        TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch {};
+                        TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
                         reporter.jest.default_timeout_override = std.math.maxInt(u32);
                         Global.mimalloc_cleanup(false);
                     }
                 }
 
-                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator, true) catch {};
+                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator, true) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
             }
         };
 
@@ -1769,3 +1776,12 @@ pub const TestCommand = struct {
         }
     }
 };
+
+fn handleTopLevelTestErrorBeforeJavaScriptStart(err: anyerror) noreturn {
+    if (comptime Environment.isDebug) {
+        if (err != error.ModuleNotFound) {
+            Output.debugWarn("Unhandled error: {s}\n", .{@errorName(err)});
+        }
+    }
+    Global.exit(1);
+}

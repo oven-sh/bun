@@ -4,11 +4,11 @@ import { join } from "node:path";
 import * as vscode from "vscode";
 import {
   type DAP,
-  DebugAdapter,
   getAvailablePort,
   getRandomId,
   TCPSocketSignal,
   UnixSignal,
+  WebSocketDebugAdapter,
 } from "../../../bun-debug-adapter-protocol";
 
 export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
@@ -101,16 +101,18 @@ async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
   }
 
   const { env } = creationOptions as vscode.TerminalOptions;
-  if (env["BUN_INSPECT"]) {
+  if (env && env["BUN_INSPECT"]) {
     return;
   }
+
+  const session = new TerminalDebugSession();
+  await session.initialize();
+
+  const { adapter, signal } = session;
 
   const stopOnEntry = getConfig("debugTerminal.stopOnEntry") === true;
   const query = stopOnEntry ? "break=1" : "wait=1";
 
-  const debugSession = new TerminalDebugSession();
-  await debugSession.initialize();
-  const { adapter, signal } = debugSession;
   const debug = vscode.window.createTerminal({
     ...creationOptions,
     name: "JavaScript Debug Terminal",
@@ -234,7 +236,10 @@ interface RuntimeExceptionThrownEvent {
 }
 
 class FileDebugSession extends DebugSession {
-  adapter: DebugAdapter;
+  // If these classes are moved/published, we should make sure
+  // we remove these non-null assertions so consumers of
+  // this lib are not running into these hard
+  adapter!: WebSocketDebugAdapter;
   sessionId?: string;
   untitledDocPath?: string;
   bunEvalPath?: string;
@@ -258,7 +263,7 @@ class FileDebugSession extends DebugSession {
         : `ws+unix://${tmpdir()}/${uniqueId}.sock`;
 
     const { untitledDocPath, bunEvalPath } = this;
-    this.adapter = new DebugAdapter(url, untitledDocPath, bunEvalPath);
+    this.adapter = new WebSocketDebugAdapter(url, untitledDocPath, bunEvalPath);
 
     if (untitledDocPath) {
       this.adapter.on("Adapter.response", (response: DebugProtocolResponse) => {
@@ -319,7 +324,7 @@ class FileDebugSession extends DebugSession {
 }
 
 class TerminalDebugSession extends FileDebugSession {
-  signal: TCPSocketSignal | UnixSignal;
+  signal!: TCPSocketSignal | UnixSignal;
 
   constructor() {
     super();

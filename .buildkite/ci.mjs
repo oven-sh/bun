@@ -1018,7 +1018,7 @@ function getOptionsStep() {
       {
         key: "skip-build",
         select: "Do you want to skip the build?",
-        hint: "If true, ",
+        hint: "If true, artifacts will be downloaded from the last successful build",
         required: false,
         default: "false",
         options: booleanOptions,
@@ -1033,6 +1033,7 @@ function getOptionsStep() {
       {
         key: "canary",
         select: "If building, is this a canary build?",
+        hint: "If you are building for a named release, this should be false",
         required: false,
         default: "true",
         options: booleanOptions,
@@ -1118,7 +1119,7 @@ function getOptionsStep() {
       {
         key: "publish-images",
         select: "Do you want to re-build and publish the base images?",
-        hint: "This can take 2-3 hours to complete and overwrite the existing images, only do so if you've already tested. Did you remember to bump the version in the scripts/bootstrap.{sh,ps1} scripts?",
+        hint: "This can take 2-3 hours to complete, only do so if you've tested locally",
         required: false,
         default: "false",
         options: booleanOptions,

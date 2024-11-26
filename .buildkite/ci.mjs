@@ -977,6 +977,7 @@ async function getPipeline() {
         {
           key: "canary",
           select: "Is this a canary build?",
+          default: "true",
           options: [
             {
               label: getEmoji("yes"),

@@ -11,7 +11,10 @@ expect.extend({ toMatchNodeModulesAt });
 const root = join(import.meta.dir, "../");
 
 async function tempDirToBuildIn() {
-  const dir = tmpdirSync();
+  const dir = tmpdirSync(
+    "next-" + Math.ceil(performance.now() * 1000).toString(36) + Math.random().toString(36).substring(2, 8),
+  );
+  console.log("Temp dir: " + dir);
   const copy = [
     ".eslintrc.json",
     "bun.lockb",
@@ -103,21 +106,33 @@ test(
     console.log("Node Dir: " + nodeDir);
 
     const nextPath = "node_modules/next/dist/bin/next";
-
+    const tmp1 = tmpdirSync();
     console.time("[bun] next build");
     const bunBuild = Bun.spawn([bunExe(), "--bun", nextPath, "build"], {
       cwd: bunDir,
       stdio: ["ignore", "pipe", "inherit"],
       env: {
         ...bunEnv,
+        NODE_NO_WARNINGS: "1",
         NODE_ENV: "production",
+        TMPDIR: tmp1,
+        TEMP: tmp1,
+        TMP: tmp1,
       },
     });
 
+    const tmp2 = tmpdirSync();
     console.time("[node] next build");
     const nodeBuild = Bun.spawn(["node", nextPath, "build"], {
       cwd: nodeDir,
-      env: { ...bunEnv, NODE_NO_WARNINGS: "1", NODE_ENV: "production" },
+      env: {
+        ...bunEnv,
+        NODE_NO_WARNINGS: "1",
+        NODE_ENV: "production",
+        TMPDIR: tmp2,
+        TEMP: tmp2,
+        TMP: tmp2,
+      },
       stdio: ["ignore", "pipe", "inherit"],
     });
     await Promise.all([

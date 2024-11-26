@@ -898,7 +898,14 @@ function getEmoji(string) {
  */
 
 /**
- * @typedef {CommandStep | BlockStep} Step
+ * @typedef {GroupStep | CommandStep | BlockStep} Step
+ */
+
+/**
+ * @typedef {Object} GroupStep
+ * @property {string} key
+ * @property {string} group
+ * @property {Step[]} steps
  */
 
 /**
@@ -986,12 +993,18 @@ async function getPipeline() {
   }
 
   steps.push({
-    depends_on: ["options"],
-    ...getBuildVendorStep({
-      os: "darwin",
-      arch: "aarch64",
-      release: "14",
-    }),
+    group: "uname",
+    key: "uname",
+    steps: [
+      {
+        key: "uname-a",
+        command: "uname -a",
+        agents: {
+          queue: "test-darwin",
+        },
+        depends_on: ["options"],
+      },
+    ],
   });
 
   return { steps };

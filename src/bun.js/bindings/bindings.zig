@@ -5292,22 +5292,12 @@ pub const JSValue = enum(i64) {
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
         if (bun.Environment.isDebug)
             bun.assert(this.isObject());
-        const result = JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name)).deprecatedUnwrapHidingException();
 
-        return switch (result) {
-            .zero, .undefined, .property_does_not_exist_on_object => null,
-            else => |val| val,
-        };
-    }
+        const unwrapped = JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name)).deprecatedUnwrapHidingException() orelse
+            return null;
 
-    pub fn fastGetWithError(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) JSError!?JSValue {
-        if (bun.Environment.isDebug)
-            bun.assert(this.isObject());
-
-        return switch (JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name))) {
-            .zero => error.JSError,
+        return switch (unwrapped) {
             .undefined => null,
-            .property_does_not_exist_on_object => null,
             else => |val| val,
         };
     }
@@ -5321,7 +5311,6 @@ pub const JSValue = enum(i64) {
         return result;
     }
 
-    extern fn JSC__JSValue__fastGet(value: JSValue, global: *JSGlobalObject, builtin_id: u8) JSValue;
     extern fn JSC__JSValue__fastGetOwn(value: JSValue, globalObject: *JSGlobalObject, property: BuiltinName) JSValue;
     pub fn fastGetOwn(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
         const result = JSC__JSValue__fastGetOwn(this, global, builtin_name);
@@ -5354,7 +5343,6 @@ pub const JSValue = enum(i64) {
             return switch (value) {
                 // footgun! caller must check hasException on every `get` or else Bun will crash
                 .thrown_exception => null,
-
                 .does_not_exist => null,
                 else => @enumFromInt(@intFromEnum(value)),
             };
@@ -5372,6 +5360,7 @@ pub const JSValue = enum(i64) {
         }
     };
     extern fn JSC__JSValue__getIfPropertyExistsImpl(target: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) GetResult;
+    extern fn JSC__JSValue__fastGet(value: JSValue, global: *JSGlobalObject, builtin_id: u8) GetResult;
 
     pub fn getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSValue {
         return cppFn("getIfPropertyExistsFromPath", .{ this, global, path });
@@ -5442,11 +5431,7 @@ pub const JSValue = enum(i64) {
             }
         }
 
-        return switch (JSC__JSValue__getIfPropertyExistsImpl(target, global, property_slice.ptr, @intCast(property_slice.len))) {
-            .zero => error.JSError,
-            .undefined, .property_does_not_exist_on_object => null,
-            else => |val| val,
-        };
+        return JSC__JSValue__getIfPropertyExistsImpl(target, global, property_slice.ptr, @intCast(property_slice.len)).unwrap(global);
     }
 
     extern fn JSC__JSValue__getOwn(value: JSValue, globalObject: *JSGlobalObject, propertyName: *const bun.String) JSValue;
@@ -7310,7 +7295,7 @@ pub const test_apis = struct {
     /// steps into the fastGet code path.
     pub fn fastGet(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
         const arg = callframe.argumentsAsArray(1)[0];
-        if (arg.isObject()) return .undefined; // assertion
+        if (!arg.isObject()) return .undefined; // assertion
         return try arg.get(global, "headers") orelse JSC.jsNumber(404);
     }
     /// One can verify this takes the correct code path by placing a debugger
@@ -7318,7 +7303,7 @@ pub const test_apis = struct {
     /// then see that it steps into the getter code path.
     pub fn slowGet(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
         const arg = callframe.argumentsAsArray(1)[0];
-        if (arg.isObject()) return .undefined; // assertion
+        if (!arg.isObject()) return .undefined; // assertion
         return try arg.get(global, "something") orelse JSC.jsNumber(404);
     }
 };

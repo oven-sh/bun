@@ -707,6 +707,7 @@ function getCloudInit(cloudInit) {
 
   // https://cloudinit.readthedocs.io/en/stable/
   return `#cloud-config
+
   write_files:
       - path: /etc/ssh/sshd_config
         content: |

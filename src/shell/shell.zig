@@ -3747,7 +3747,7 @@ pub fn shellCmdFromJS(
     out_jsobjs: *std.ArrayList(JSValue),
     jsstrings: *std.ArrayList(bun.String),
     out_script: *std.ArrayList(u8),
-) !bool {
+) bun.JSError!bool {
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
     var jsobjref_buf: [128]u8 = [_]u8{0} ** 128;
 
@@ -3780,7 +3780,7 @@ pub fn handleTemplateValue(
     out_script: *std.ArrayList(u8),
     jsstrings: *std.ArrayList(bun.String),
     jsobjref_buf: []u8,
-) !bool {
+) bun.JSError!bool {
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
     if (template_value != .zero) {
         if (template_value.asArrayBuffer(globalThis)) |array_buffer| {
@@ -3788,7 +3788,7 @@ pub fn handleTemplateValue(
             const idx = out_jsobjs.items.len;
             template_value.protect();
             try out_jsobjs.append(template_value);
-            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
+            const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
             return true;
         }
@@ -3810,7 +3810,7 @@ pub fn handleTemplateValue(
             const idx = out_jsobjs.items.len;
             template_value.protect();
             try out_jsobjs.append(template_value);
-            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
+            const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
             return true;
         }
@@ -3821,7 +3821,7 @@ pub fn handleTemplateValue(
             const idx = out_jsobjs.items.len;
             template_value.protect();
             try out_jsobjs.append(template_value);
-            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
+            const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
             return true;
         }
@@ -3832,7 +3832,7 @@ pub fn handleTemplateValue(
             const idx = out_jsobjs.items.len;
             template_value.protect();
             try out_jsobjs.append(template_value);
-            const slice = try std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx });
+            const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
             return true;
         }
@@ -4007,7 +4007,7 @@ pub fn assertSpecialChar(c: u8) void {
 /// Characters that need to be backslashed inside double quotes
 const BACKSLASHABLE_CHARS = [_]u8{ '$', '`', '"', '\\' };
 
-pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !bool {
+pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) bun.OOM!bool {
     if (bunstr.isUTF16()) {
         const res = try escapeUtf16(bunstr.utf16(), outbuf, add_quotes);
         return !res.is_invalid;
@@ -4356,10 +4356,7 @@ pub const TestingAPIs = struct {
         };
         var template_args = template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
-        var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
             for (jsstrings.items[0..]) |bunstr| {
                 bunstr.deref();
@@ -4374,10 +4371,7 @@ pub const TestingAPIs = struct {
         }
 
         var script = std.ArrayList(u8).init(arena.allocator());
-        if (!(shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        })) {
+        if (!(try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script))) {
             return .undefined;
         }
 
@@ -4398,26 +4392,16 @@ pub const TestingAPIs = struct {
 
         if (lex_result.errors.len > 0) {
             const str = lex_result.combineErrors(arena.allocator());
-            globalThis.throwPretty("{s}", .{str});
-            return .zero;
+            return globalThis.throwPretty("{s}", .{str});
         }
 
-        var test_tokens = std.ArrayList(Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        var test_tokens = try std.ArrayList(Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len);
         for (lex_result.tokens) |tok| {
             const test_tok = Test.TestToken.from_real(tok, lex_result.strpool);
-            test_tokens.append(test_tok) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
-            };
+            try test_tokens.append(test_tok);
         }
 
-        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, test_tokens.items[0..], .{}) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, test_tokens.items[0..], .{});
 
         defer globalThis.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
@@ -4444,10 +4428,7 @@ pub const TestingAPIs = struct {
         };
         var template_args = template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
-        var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
             for (jsstrings.items[0..]) |bunstr| {
                 bunstr.deref();
@@ -4461,10 +4442,7 @@ pub const TestingAPIs = struct {
             }
         }
         var script = std.ArrayList(u8).init(arena.allocator());
-        if (!(shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        })) {
+        if (!(try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script))) {
             return .undefined;
         }
 
@@ -4475,23 +4453,18 @@ pub const TestingAPIs = struct {
             if (err == ParseError.Lex) {
                 if (bun.Environment.allow_assert) assert(out_lex_result != null);
                 const str = out_lex_result.?.combineErrors(arena.allocator());
-                globalThis.throwPretty("{s}", .{str});
-                return .zero;
+                return globalThis.throwPretty("{s}", .{str});
             }
 
             if (out_parser) |*p| {
                 const errstr = p.combineErrors();
-                globalThis.throwPretty("{s}", .{errstr});
-                return .zero;
+                return globalThis.throwPretty("{s}", .{errstr});
             }
 
             return globalThis.throwError(err, "failed to lex/parse shell");
         };
 
-        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{}) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{});
 
         defer globalThis.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);

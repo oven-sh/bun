@@ -2,7 +2,8 @@
 /// <reference path="../../bake/bake.d.ts" />
 import type { Bake } from "bun";
 
-type RenderStatic = Bake.ServerEntryPoint["prerender"];
+type FrameworkPrerender = Bake.ServerEntryPoint["prerender"];
+type FrameworkGetParams = Bake.ServerEntryPoint["getParams"];
 type TypeAndFlags = number;
 type FileIndex = number;
 
@@ -14,7 +15,7 @@ export function renderRoutesForProdStatic(
   outBase: string,
   allServerFiles: string[],
   // Indexed by router type index
-  renderStatic: RenderStatic[],
+  renderStatic: FrameworkPrerender[],
   clientEntryUrl: string[],
   // Indexed by route index
   patterns: string[],
@@ -67,7 +68,7 @@ export function renderRoutesForProdStatic(
       const callback = renderStatic[type];
       $assert(callback != null && $isCallable(callback));
       const results = await callback({
-        scripts: [clientEntryUrl[type]],
+        modules: [clientEntryUrl[type]],
         modulepreload: [],
         styles: styles[i],
         layouts,

@@ -201,9 +201,7 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
       .filter(x => x.type === "zig")
       .flatMap(call => [
         `export fn ${symbol(call)}_workaround(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {`,
-        `  return global.errorUnionToCPP(@import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), call.filename))}).${
-          call.symbol
-        }(global));`,
+        `  return JSC.toJSHostValue(global, @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), call.filename))}).${call.symbol}(global));`,
         "}",
       ]),
     ...wrapperCalls

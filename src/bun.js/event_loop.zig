@@ -483,7 +483,7 @@ pub const Task = TaggedPointerUnion(.{
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
     ServerAllConnectionsClosedTask,
-    bun.bake.DevServer.HotReloadTask,
+    bun.bake.DevServer.HotReloadEvent,
     bun.bundle_v2.DeferredBatchTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
@@ -1036,8 +1036,8 @@ pub const EventLoop = struct {
                     // special case: we return
                     return 0;
                 },
-                @field(Task.Tag, typeBaseName(@typeName(bun.bake.DevServer.HotReloadTask))) => {
-                    const hmr_task: *bun.bake.DevServer.HotReloadTask = task.get(bun.bake.DevServer.HotReloadTask).?;
+                @field(Task.Tag, typeBaseName(@typeName(bun.bake.DevServer.HotReloadEvent))) => {
+                    const hmr_task: *bun.bake.DevServer.HotReloadEvent = task.get(bun.bake.DevServer.HotReloadEvent).?;
                     hmr_task.run();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
@@ -2025,13 +2025,6 @@ pub const AnyEventLoop = union(enum) {
     mini: MiniEventLoop,
 
     pub const Task = AnyTaskWithExtraContext;
-
-    pub fn fromJSC(
-        this: *AnyEventLoop,
-        jsc: *EventLoop,
-    ) void {
-        this.* = .{ .js = jsc };
-    }
 
     pub fn wakeup(this: *AnyEventLoop) void {
         this.loop().wakeup();

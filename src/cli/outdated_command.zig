@@ -499,7 +499,7 @@ pub const OutdatedCommand = struct {
                         else
                             "";
 
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         Output.pretty("{s}<d>{s}<r>", .{ package_name, behavior_str });
@@ -508,7 +508,7 @@ pub const OutdatedCommand = struct {
 
                     {
                         // current version
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
@@ -519,7 +519,7 @@ pub const OutdatedCommand = struct {
 
                     {
                         // update version
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
@@ -530,7 +530,7 @@ pub const OutdatedCommand = struct {
 
                     {
                         // latest version
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
@@ -540,7 +540,7 @@ pub const OutdatedCommand = struct {
                     }
 
                     if (was_filtered) {
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         const workspace_name = pkg_names[workspace_pkg_id].slice(string_buf);
@@ -549,7 +549,7 @@ pub const OutdatedCommand = struct {
                         for (workspace_name.len..workspace_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                     }
 
-                    Output.pretty("{s}\n", .{table.verticalEdge()});
+                    Output.pretty("{s}\n", .{table.symbols.verticalEdge()});
                 }
             }
         }

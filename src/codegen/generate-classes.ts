@@ -1731,7 +1731,7 @@ const JavaScriptCoreBindings = struct {
           return @as(*${typeName}, ${typeName}.constructor(globalObject, callFrame) catch |err| switch (err) {
             error.JSError => return null,
             error.OutOfMemory => {
-              globalObject.throwOutOfMemory();
+              globalObject.throwOutOfMemory() catch {};
               return null;
             },
           });

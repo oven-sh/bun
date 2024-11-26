@@ -985,10 +985,13 @@ async function getPipeline() {
     });
   }
 
-  steps.push({
-    key: "uname",
-    command: "uname -a",
-  });
+  steps.push(
+    getBuildVendorStep({
+      os: "darwin",
+      arch: "aarch64",
+      release: "14",
+    }),
+  );
 
   return { steps };
 }

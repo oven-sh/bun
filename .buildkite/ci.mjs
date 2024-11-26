@@ -409,7 +409,7 @@ function getBuildVendorStep(platform) {
   return {
     key: `${getTargetKey(platform)}-build-vendor`,
     label: `${getTargetLabel(platform)} - build-vendor`,
-    depends_on: getDependsOn(platform),
+    // depends_on: getDependsOn(platform),
     agents: getCppAgent(platform),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),

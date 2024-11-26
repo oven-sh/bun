@@ -1,3 +1,4 @@
+import * as cp from "node:child_process";
 import ts from "typescript";
 import * as vscode from "vscode";
 
@@ -101,9 +102,20 @@ export function registerTestCodeLens(context: vscode.ExtensionContext) {
   );
 }
 
+const outputChannel = vscode.window.createOutputChannel("Bun - Test Results", {
+  log: true,
+});
+
+const appendLines = (chunk: { toString(): string }) => {
+  const lines = chunk.toString().split("\n");
+  for (const line of lines) {
+    outputChannel.appendLine(line);
+  }
+};
+
 // Tracking only one active terminal, so there will be only one terminal running at a time.
 // Example: when user clicks "Run Test" button, the previous terminal will be disposed.
-let activeTerminal: vscode.Terminal | null = null;
+let childProcess: cp.ChildProcess | null = null;
 
 /**
  * This function registers the test runner commands.
@@ -142,52 +154,69 @@ export function registerTestRunner(context: vscode.ExtensionContext) {
 
       const packageJsonPath: string | undefined = packagesRootPaths.find(path => filePath.includes(path));
 
-      if (activeTerminal) {
-        activeTerminal.dispose();
-        activeTerminal = null;
+      if (childProcess) {
+        outputChannel.clear();
+        childProcess.kill("SIGINT");
+        childProcess = null;
       }
 
       const cwd = packageJsonPath ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
 
-      const message = isWatchMode
-        ? `Watching \x1b[1m\x1b[32m${testName ?? filePath}\x1b[0m test`
-        : `Running \x1b[1m\x1b[32m${testName ?? filePath}\x1b[0m test`;
-
-      const terminalOptions: vscode.TerminalOptions = {
-        cwd,
-        name: "Bun Test Runner",
-        location: vscode.TerminalLocation.Panel,
-        message,
-        hideFromUser: true,
-      };
-
-      activeTerminal = vscode.window.createTerminal(terminalOptions);
-      activeTerminal.show();
+      // const terminalOptions: vscode.TerminalOptions = {
+      //   cwd,
+      //   name: "Bun Test Runner",
+      //   location: vscode.TerminalLocation.Panel,
+      //   message,
+      //   hideFromUser: true,
+      // };
 
       let command = customScript;
 
+      const args: string[] = [];
+
       if (filePath.length !== 0) {
-        command += ` ${filePath}`;
+        args.push(filePath);
       }
 
       if (testName && testName.length) {
         if (customScriptSetting.length) {
           // escape the quotes in the test name
-          command += ` -t "${testName}"`;
+          args.push("-t", `"${testName}"`);
         } else {
-          command += ` -t "${testName}"`;
+          args.push("-t", `"${testName}"`);
         }
       }
 
       if (isWatchMode) {
-        command += ` --watch`;
+        args.push("--watch");
       }
 
       if (customFlag.length) {
-        command += ` ${customFlag}`;
+        args.push(customFlag);
       }
 
-      activeTerminal.sendText(command);
+      const thisProcess = cp.spawn(command, args, {
+        cwd,
+        env: {},
+        stdio: ["inherit", "pipe", "pipe"],
+        shell: true,
+      });
+
+      childProcess = thisProcess;
+
+      outputChannel.show(true);
+
+      thisProcess.stdout?.on("data", appendLines);
+      thisProcess.stderr?.on("data", appendLines);
+
+      thisProcess.once("close", code => {
+        if (childProcess === thisProcess) {
+          outputChannel.appendLine("Process exited with code " + (code ?? "unknown"));
+        }
+      });
+
+      // childProcess.stdout?.pipe(writer);
+      // childProcess.stderr?.pipe(writer);?
     },
   );
 

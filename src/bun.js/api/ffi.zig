@@ -784,10 +784,7 @@ pub const FFI = struct {
                 error.JSException => {
                     return error.JSError;
                 },
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory();
-                    return error.JSError;
-                },
+                error.OutOfMemory => |e| return e,
             }
         };
         defer {

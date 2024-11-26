@@ -1334,22 +1334,13 @@ pub const PackageManifest = struct {
 
             // TODO: we can add more information. for now just versions is fine
 
-            writer.print("{{\"name\":\"{s}\",\"versions\":[", .{package_manifest.name()}) catch {
-                global.throwOutOfMemory();
-                return .zero;
-            };
+            try writer.print("{{\"name\":\"{s}\",\"versions\":[", .{package_manifest.name()});
 
             for (package_manifest.versions, 0..) |version, i| {
                 if (i == package_manifest.versions.len - 1)
-                    writer.print("\"{}\"]}}", .{version.fmt(package_manifest.string_buf)}) catch {
-                        global.throwOutOfMemory();
-                        return .zero;
-                    }
+                    try writer.print("\"{}\"]}}", .{version.fmt(package_manifest.string_buf)})
                 else
-                    writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)}) catch {
-                        global.throwOutOfMemory();
-                        return .zero;
-                    };
+                    try writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)});
             }
 
             var result = bun.String.fromUTF8(buf.items);

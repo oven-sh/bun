@@ -275,10 +275,7 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     defer outbuf.deinit();
 
     if (bun.shell.needsEscapeBunstr(bunstr)) {
-        const result = bun.shell.escapeBunStr(bunstr, &outbuf, true) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const result = try bun.shell.escapeBunStr(bunstr, &outbuf, true);
         if (!result) {
             globalThis.throw("String has invalid utf-16: {s}", .{bunstr.byteSlice()});
             return .zero;
@@ -335,10 +332,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     };
 
     if (tokenize) {
-        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, lexer_output.tokens.items[0..], .{}) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, lexer_output.tokens.items[0..], .{});
         defer globalThis.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
         return bun_str.toJS(globalThis);
@@ -348,10 +342,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         const ast_node = parser.parse() catch |err| {
             return globalThis.throwError(err, "failed to parse braces");
         };
-        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, ast_node, .{}) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, ast_node, .{});
         defer globalThis.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
         return bun_str.toJS(globalThis);
@@ -361,10 +352,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         return bun.String.toJSArray(globalThis, &.{brace_str});
     }
 
-    var expanded_strings = arena.allocator().alloc(std.ArrayList(u8), expansion_count) catch {
-        globalThis.throwOutOfMemory();
-        return .zero;
-    };
+    var expanded_strings = try arena.allocator().alloc(std.ArrayList(u8), expansion_count);
 
     for (0..expansion_count) |i| {
         expanded_strings[i] = std.ArrayList(u8).init(arena.allocator());
@@ -376,14 +364,10 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         expanded_strings,
         lexer_output.contains_nested,
     ) catch {
-        globalThis.throwOutOfMemory();
-        return .zero;
+        return globalThis.throwOutOfMemory();
     };
 
-    var out_strings = arena.allocator().alloc(bun.String, expansion_count) catch {
-        globalThis.throwOutOfMemory();
-        return .zero;
-    };
+    var out_strings = try arena.allocator().alloc(bun.String, expansion_count);
     for (0..expansion_count) |i| {
         out_strings[i] = bun.String.fromBytes(expanded_strings[i].items[0..]);
     }
@@ -517,15 +501,12 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     switch (formatOptions.enable_colors) {
         inline else => |colors| table_printer.printTable(Writer, writer, colors) catch {
             if (!globalThis.hasException())
-                globalThis.throwOutOfMemory();
+                return globalThis.throwOutOfMemory();
             return .zero;
         },
     }
 
-    buffered_writer.flush() catch return {
-        globalThis.throwOutOfMemory();
-        return .zero;
-    };
+    try buffered_writer.flush();
 
     var out = bun.String.createUTF8(array.slice());
     return out.transferToJS(globalThis);
@@ -967,13 +948,10 @@ fn doResolveWithArgs(ctx: js.JSContextRef, specifier: bun.String, from: bun.Stri
         const allocator = stack.get();
         var arraylist = std.ArrayList(u8).initCapacity(allocator, 1024) catch unreachable;
         defer arraylist.deinit();
-        arraylist.writer().print("{any}{any}", .{
+        try arraylist.writer().print("{any}{any}", .{
             errorable.result.value,
             query_string,
-        }) catch {
-            ctx.throwOutOfMemory();
-            return error.JSError;
-        };
+        });
 
         return ZigString.initUTF8(arraylist.items).toJS(ctx);
     }
@@ -4500,17 +4478,11 @@ pub const JSZlib = struct {
                 const estimated_size: u32 = @bitCast(compressed[compressed.len - 4 ..][0..4].*);
                 // If it's > 256 MB, let's rely on dynamic allocation to minimize the risk of OOM.
                 if (estimated_size > 0 and estimated_size < 256 * 1024 * 1024) {
-                    break :brk std.ArrayListUnmanaged(u8).initCapacity(allocator, @max(estimated_size, 64)) catch {
-                        globalThis.throwOutOfMemory();
-                        return .zero;
-                    };
+                    break :brk try std.ArrayListUnmanaged(u8).initCapacity(allocator, @max(estimated_size, 64));
                 }
             }
 
-            break :brk std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
-            };
+            break :brk try std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32);
         };
 
         switch (library) {
@@ -4543,8 +4515,7 @@ pub const JSZlib = struct {
             .libdeflate => {
                 var decompressor: *bun.libdeflate.Decompressor = bun.libdeflate.Decompressor.alloc() orelse {
                     list.deinit(allocator);
-                    globalThis.throwOutOfMemory();
-                    return .zero;
+                    return globalThis.throwOutOfMemory();
                 };
                 defer decompressor.deinit();
                 while (true) {
@@ -4555,14 +4526,12 @@ pub const JSZlib = struct {
                     if (result.status == .insufficient_space) {
                         if (list.capacity > 1024 * 1024 * 1024) {
                             list.deinit(allocator);
-                            globalThis.throwOutOfMemory();
-                            return .zero;
+                            return globalThis.throwOutOfMemory();
                         }
 
                         list.ensureTotalCapacity(allocator, list.capacity * 2) catch {
                             list.deinit(allocator);
-                            globalThis.throwOutOfMemory();
-                            return .zero;
+                            return globalThis.throwOutOfMemory();
                         };
                         continue;
                     }
@@ -4622,13 +4591,10 @@ pub const JSZlib = struct {
 
         switch (library) {
             .zlib => {
-                var list = std.ArrayListUnmanaged(u8).initCapacity(
+                var list = try std.ArrayListUnmanaged(u8).initCapacity(
                     allocator,
                     if (compressed.len > 512) compressed.len else 32,
-                ) catch {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                };
+                );
 
                 var reader = zlib.ZlibCompressorArrayList.init(compressed, &list, allocator, .{
                     .windowBits = 15,
@@ -4658,20 +4624,16 @@ pub const JSZlib = struct {
             },
             .libdeflate => {
                 var compressor: *bun.libdeflate.Compressor = bun.libdeflate.Compressor.alloc(level orelse 6) orelse {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
+                    return globalThis.throwOutOfMemory();
                 };
                 const encoding: bun.libdeflate.Encoding = if (is_gzip) .gzip else .deflate;
                 defer compressor.deinit();
 
-                var list = std.ArrayListUnmanaged(u8).initCapacity(
+                var list = try std.ArrayListUnmanaged(u8).initCapacity(
                     allocator,
                     // This allocation size is unfortunate, but it's not clear how to avoid it with libdeflate.
                     compressor.maxBytesNeeded(compressed, encoding),
-                ) catch {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                };
+                );
 
                 while (true) {
                     const result = compressor.compress(compressed, list.allocatedSlice(), encoding);

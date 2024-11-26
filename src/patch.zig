@@ -1180,10 +1180,7 @@ pub const TestingAPIs = struct {
         };
         defer patchfile.deinit(bun.default_allocator);
 
-        const str = std.json.stringifyAlloc(bun.default_allocator, patchfile, .{}) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const str = try std.json.stringifyAlloc(bun.default_allocator, patchfile, .{});
         const outstr = bun.String.fromUTF8(str);
         return outstr.toJS(globalThis);
     }

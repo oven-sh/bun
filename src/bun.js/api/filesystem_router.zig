@@ -287,7 +287,7 @@ pub const FileSystemRouter = struct {
 
         const url_path = URLPath.parse(path.slice()) catch |err| {
             globalThis.throw("{s} parsing path: {s}", .{ @errorName(err), path.slice() });
-            return JSValue.zero;
+            return .zero;
         };
         var params = Router.Param.List{};
         defer params.deinit(globalThis.allocator());

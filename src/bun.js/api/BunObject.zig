@@ -263,7 +263,7 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     const arguments = callframe.arguments_old(1);
     if (arguments.len < 1) {
         globalThis.throw("shell escape expected at least 1 argument", .{});
-        return .undefined;
+        return .zero;
     }
 
     const jsval = arguments.ptr[0];
@@ -277,11 +277,11 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     if (bun.shell.needsEscapeBunstr(bunstr)) {
         const result = bun.shell.escapeBunStr(bunstr, &outbuf, true) catch {
             globalThis.throwOutOfMemory();
-            return .undefined;
+            return .zero;
         };
         if (!result) {
             globalThis.throw("String has invalid utf-16: {s}", .{bunstr.byteSlice()});
-            return .undefined;
+            return .zero;
         }
         var str = bun.String.createUTF8(outbuf.items[0..]);
         return str.transferToJS(globalThis);
@@ -297,7 +297,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 
     const brace_str_js = arguments.nextEat() orelse {
         globalThis.throw("braces: expected at least 1 argument, got 0", .{});
-        return .undefined;
+        return .zero;
     };
     const brace_str = brace_str_js.toBunString(globalThis);
     defer brace_str.deref();
@@ -337,7 +337,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     if (tokenize) {
         const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, lexer_output.tokens.items[0..], .{}) catch {
             globalThis.throwOutOfMemory();
-            return JSValue.undefined;
+            return .zero;
         };
         defer globalThis.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
@@ -350,7 +350,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         };
         const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, ast_node, .{}) catch {
             globalThis.throwOutOfMemory();
-            return JSValue.undefined;
+            return .zero;
         };
         defer globalThis.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
@@ -363,7 +363,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 
     var expanded_strings = arena.allocator().alloc(std.ArrayList(u8), expansion_count) catch {
         globalThis.throwOutOfMemory();
-        return .undefined;
+        return .zero;
     };
 
     for (0..expansion_count) |i| {
@@ -377,12 +377,12 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         lexer_output.contains_nested,
     ) catch {
         globalThis.throwOutOfMemory();
-        return .undefined;
+        return .zero;
     };
 
     var out_strings = arena.allocator().alloc(bun.String, expansion_count) catch {
         globalThis.throwOutOfMemory();
-        return .undefined;
+        return .zero;
     };
     for (0..expansion_count) |i| {
         out_strings[i] = bun.String.fromBytes(expanded_strings[i].items[0..]);
@@ -398,7 +398,7 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
         globalThis.throw("which: expected 1 argument, got 0", .{});
-        return .undefined;
+        return .zero;
     };
 
     var path_str: ZigString.Slice = ZigString.Slice.empty;
@@ -421,7 +421,7 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 
     if (bin_str.len >= bun.MAX_PATH_BYTES) {
         globalThis.throw("bin path is too long", .{});
-        return .undefined;
+        return .zero;
     }
 
     if (bin_str.len == 0) {
@@ -611,7 +611,7 @@ pub fn registerMacro(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     if (!arguments[1].isCell() or !arguments[1].isCallable(globalObject.vm())) {
         // TODO: add "toTypeOf" helper
         globalObject.throw("Macro must be a function", .{});
-        return .undefined;
+        return .zero;
     }
 
     const get_or_put_result = VirtualMachine.get().macros.getOrPut(id) catch unreachable;
@@ -755,7 +755,7 @@ pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.
                     if (editor_choice == null) {
                         edit.* = prev;
                         globalThis.throw("Could not find editor \"{s}\"", .{sliced.slice()});
-                        return .undefined;
+                        return .zero;
                     } else if (edit.name.ptr == edit.path.ptr) {
                         edit.name = arguments.arena.allocator().dupe(u8, edit.path) catch unreachable;
                         edit.path = edit.path;
@@ -858,7 +858,7 @@ pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     // The argument must be a number
     if (!arg.isNumber()) {
         globalObject.throwInvalidArgumentType("sleepSync", "milliseconds", "number");
-        return .undefined;
+        return .zero;
     }
 
     //NOTE: if argument is > max(i32) then it will be truncated
@@ -2078,7 +2078,7 @@ pub const Crypto = struct {
                     .err => {
                         const error_instance = value.toErrorInstance(globalObject);
                         globalObject.throwValue(error_instance);
-                        return JSC.JSValue.undefined;
+                        return .zero;
                     },
                     .pass => |pass| {
                         return JSC.JSValue.jsBoolean(pass);
@@ -2316,7 +2316,7 @@ pub const Crypto = struct {
             if (arguments.len > 2 and !arguments[2].isEmptyOrUndefinedOrNull()) {
                 if (!arguments[2].isString()) {
                     globalObject.throwInvalidArgumentType("verify", "algorithm", "string");
-                    return JSC.JSValue.undefined;
+                    return .zero;
                 }
 
                 const algorithm_string = arguments[2].getZigString(globalObject);
@@ -2325,7 +2325,7 @@ pub const Crypto = struct {
                     if (!globalObject.hasException()) {
                         globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
                     }
-                    return JSC.JSValue.undefined;
+                    return .zero;
                 };
             }
 
@@ -2333,7 +2333,7 @@ pub const Crypto = struct {
                 if (!globalObject.hasException()) {
                     globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
                 }
-                return JSC.JSValue.undefined;
+                return .zero;
             };
 
             var hash_ = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[1]) orelse {
@@ -2341,7 +2341,7 @@ pub const Crypto = struct {
                 if (!globalObject.hasException()) {
                     globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
                 }
-                return JSC.JSValue.undefined;
+                return .zero;
             };
 
             defer password.deinit();
@@ -3225,7 +3225,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
     const input_slice = ptr[0..len];
     const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
         globalObject.vm().throwError(globalObject, bun.String.static("Out of memory").toJS(globalObject));
-        return .undefined;
+        return .zero;
     };
 
     return switch (escaped) {
@@ -3244,7 +3244,7 @@ pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: J
 
     const escaped = strings.escapeHTMLForLatin1Input(allocator, input_slice) catch {
         globalObject.vm().throwError(globalObject, bun.String.static("Out of memory").toJS(globalObject));
-        return .undefined;
+        return .zero;
     };
 
     switch (escaped) {

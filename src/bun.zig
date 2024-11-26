@@ -3003,7 +3003,11 @@ pub const Dirname = struct {
 
 pub noinline fn outOfMemory() noreturn {
     @setCold(true);
-    crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
+    if (comptime Environment.isNative) {
+        crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
+    } else {
+        @panic("Bun has crashed");
+    }
 }
 
 pub fn todoPanic(src: std.builtin.SourceLocation, comptime format: string, args: anytype) noreturn {

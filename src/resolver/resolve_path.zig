@@ -2044,6 +2044,10 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     globalObject: *bun.JSC.JSGlobalObject,
     in: bun.String,
 ) bun.String {
+    if (comptime bun.Environment.isWasm) {
+        unreachable;
+    }
+
     const str = in.toUTF8WithoutRef(bun.default_allocator);
     defer str.deinit();
 

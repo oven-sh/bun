@@ -359,6 +359,9 @@ fn startsWithRedactedItem(text: string, comptime item: string) ?struct { usize, 
 
 /// Returns offset and length of first secret found.
 pub fn startsWithSecret(str: string) ?struct { usize, usize } {
+    if (comptime bun.Environment.isWasm) {
+        unreachable;
+    }
     if (startsWithRedactedItem(str, "_auth")) |auth| {
         const offset, const len = auth;
         return .{ offset, len };
@@ -1107,6 +1110,10 @@ pub fn eqlCaseInsensitiveASCII(a: string, b: string, comptime check_len: bool) b
 
     bun.unsafeAssert(b.len > 0);
     bun.unsafeAssert(a.len > 0);
+
+    if (comptime bun.Environment.isWasm) {
+        return std.ascii.eqlIgnoreCase(a, b);
+    }
 
     return bun.C.strncasecmp(a.ptr, b.ptr, a.len) == 0;
 }

@@ -263,7 +263,7 @@ pub const Source = struct {
         pub fn restore() void {
             if (Environment.isWindows) {
                 WindowsStdio.restore();
-            } else {
+            } else if (comptime bun.Environment.isNative) {
                 bun.C.bun_restore_stdio();
             }
         }

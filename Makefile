@@ -727,7 +727,7 @@ build-obj-wasm:
 
 .PHONY: build-obj-wasm-small
 build-obj-wasm-small:
-	$(ZIG) build bun-wasm -Doptimize=ReleaseFast -Dtarget=wasm32-freestanding
+	$(ZIG) build obj -Doptimize=ReleaseFast -Dtarget=wasm32-freestanding
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init', '_getTests']" \
 		-Oz -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
 		$(BUN_DEPS_DIR)/$(MIMALLOC_FILE).wasm  \
@@ -829,8 +829,7 @@ fmt: fmt-cpp fmt-zig
 
 .PHONY: api
 api:
-	./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
-	$(ZIG) fmt src/api/schema.zig
+	
 
 .PHONY: node-fallbacks
 node-fallbacks:

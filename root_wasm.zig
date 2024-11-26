@@ -10,6 +10,9 @@ pub const JavaScriptCore = struct {
     }
 
     pub const ZigString = struct {};
+    pub const JSGlobalObject = struct {};
+    pub const JSValue = enum(i64) {};
+    pub const RuntimeTranspilerCache = struct {};
 };
 
 pub const C = struct {};

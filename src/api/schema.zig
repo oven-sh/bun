@@ -117,7 +117,7 @@ pub const Reader = struct {
     pub inline fn readInt(this: *Self, comptime T: type) !T {
         const slice = try this.read(@sizeOf(T));
 
-        return std.mem.readIntSliceNative(T, slice);
+        return std.mem.readInt(T, slice, .little);
     }
 
     pub inline fn readBool(this: *Self) !bool {

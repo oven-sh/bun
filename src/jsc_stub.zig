@@ -9,3 +9,5 @@ pub const API = struct {
 pub const Node = struct {};
 
 pub const VirtualMachine = struct {};
+pub const JSGlobalObject = struct {};
+pub const RuntimeTranspilerCache = struct {};

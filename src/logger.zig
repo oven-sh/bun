@@ -276,7 +276,7 @@ pub const Data = struct {
                 const line_text_right_trimmed = std.mem.trimRight(u8, line_text_, " \r\n\t");
                 const line_text = std.mem.trimLeft(u8, line_text_right_trimmed, "\n\r");
                 if (location.column > -1 and line_text.len > 0) {
-                    var line_offset_for_second_line: usize = @intCast(location.column - 1);
+                    var line_offset_for_second_line: u64 = @intCast(location.column - 1);
 
                     if (location.line > -1) {
                         switch (kind == .err or kind == .warn) {
@@ -300,7 +300,7 @@ pub const Data = struct {
                         .redact_sensitive_information = redact_sensitive_information,
                     })});
 
-                    try to.writeByteNTimes(' ', line_offset_for_second_line);
+                    try to.writeByteNTimes(' ', @intCast(line_offset_for_second_line));
                     if ((comptime enable_ansi_colors) and message_color.len > 0) {
                         try to.writeAll(message_color);
                         try to.writeAll(color_name);

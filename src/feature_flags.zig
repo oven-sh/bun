@@ -156,7 +156,7 @@ pub fn isLibdeflateEnabled() bool {
 }
 
 /// Enable Bun Kit's experimental bundler tools
-pub const bake = env.is_canary or env.isDebug;
+pub const bake = bun.Environment.isNative and (env.is_canary or env.isDebug);
 
 /// Additional debugging features for Bake, such as the incremental visualizer.
 pub const bake_debugging_features = bake and (env.is_canary or env.isDebug);

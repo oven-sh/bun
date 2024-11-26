@@ -1809,7 +1809,7 @@ pub const E = struct {
         pub fn toStringFromF64(value: f64, allocator: std.mem.Allocator) ?string {
             if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
                 const int_value = @as(i64, @intFromFloat(value));
-                const abs = @as(u64, @intCast(@abs(int_value)));
+                const abs = @as(usize, @intCast(@abs(int_value)));
 
                 // do not allocate for a small set of constant numbers: -100 through 100
                 if (abs < double_digit.len) {

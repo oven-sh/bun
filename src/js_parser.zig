@@ -4035,10 +4035,12 @@ pub const Parser = struct {
             for (p.import_records.items) |*item| {
                 // skip if they did import it
                 if (strings.eqlComptime(item.path.text, "bun:test") or strings.eqlComptime(item.path.text, "@jest/globals") or strings.eqlComptime(item.path.text, "vitest")) {
-                    if (p.options.features.runtime_transpiler_cache) |cache| {
-                        // If we rewrote import paths, we need to disable the runtime transpiler cache
-                        if (!strings.eqlComptime(item.path.text, "bun:test")) {
-                            cache.input_hash = null;
+                    if (Environment.isNative) {
+                        if (p.options.features.runtime_transpiler_cache) |cache| {
+                            // If we rewrote import paths, we need to disable the runtime transpiler cache
+                            if (!strings.eqlComptime(item.path.text, "bun:test")) {
+                                cache.input_hash = null;
+                            }
                         }
                     }
 
@@ -4099,9 +4101,11 @@ pub const Parser = struct {
                 .tag = .bun_test,
             }) catch unreachable;
 
-            // If we injected jest globals, we need to disable the runtime transpiler cache
-            if (p.options.features.runtime_transpiler_cache) |cache| {
-                cache.input_hash = null;
+            if (comptime Environment.isNative) {
+                // If we injected jest globals, we need to disable the runtime transpiler cache
+                if (p.options.features.runtime_transpiler_cache) |cache| {
+                    cache.input_hash = null;
+                }
             }
         }
 

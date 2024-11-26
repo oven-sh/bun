@@ -912,7 +912,7 @@ fn NewPrinter(
             const written = @call(
                 .always_inline,
                 std.fmt.bufPrint,
-                .{ ptr[0..len], str, args },
+                .{ ptr[0..@intCast(len)], str, args },
             ) catch unreachable;
 
             p.writer.advance(written.len);
@@ -5564,7 +5564,7 @@ pub const BufferWriter = struct {
         return ctx.last_bytes[0];
     }
 
-    pub fn reserveNext(ctx: *BufferWriter, count: u64) anyerror![*]u8 {
+    pub fn reserveNext(ctx: *BufferWriter, count: usize) anyerror![*]u8 {
         try ctx.buffer.growIfNeeded(count);
         return @as([*]u8, @ptrCast(&ctx.buffer.list.items.ptr[ctx.buffer.list.items.len]));
     }

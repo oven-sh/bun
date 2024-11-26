@@ -346,20 +346,14 @@ function getPipeline(options) {
   const getZigAgent = platform => {
     const { arch } = platform;
     const instanceType = arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge";
-    return {
-      robobun: true,
-      robobun2: true,
+    const cpuCount = 8;
+    const zigPlatform = {
       os: "linux",
       arch,
       distro: "debian",
       release: "11",
-      "image-name": `linux-${arch}-debian-11-v5`, // v5 is not on main yet
-      "instance-type": instanceType,
     };
-    // TODO: Temporarily disable due to configuration
-    // return {
-    //   queue: "build-zig",
-    // };
+    return getEmphemeralAgent("v2", zigPlatform, instanceType, cpuCount, !isMainBranch());
   };
 
   /**

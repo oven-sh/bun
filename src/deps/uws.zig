@@ -3374,6 +3374,21 @@ pub const AnyResponse = union(enum) {
             .TCP => |resp| resp.runCorkedWithType(UserDataType, handler, opcional_data),
         };
     }
+
+    pub fn upgrade(
+        this: AnyResponse,
+        comptime Data: type,
+        data: Data,
+        sec_web_socket_key: []const u8,
+        sec_web_socket_protocol: []const u8,
+        sec_web_socket_extensions: []const u8,
+        ctx: ?*uws_socket_context_t,
+    ) void {
+        return switch (this) {
+            .SSL => |resp| resp.upgrade(Data, data, sec_web_socket_key, sec_web_socket_protocol, sec_web_socket_extensions, ctx),
+            .TCP => |resp| resp.upgrade(Data, data, sec_web_socket_key, sec_web_socket_protocol, sec_web_socket_extensions, ctx),
+        };
+    }
 };
 pub fn NewApp(comptime ssl: bool) type {
     return opaque {

@@ -5817,11 +5817,53 @@ pub const NodeHTTPResponse = struct {
     /// Did we receive the last chunk of data during pause?
     is_data_buffered_during_pause_last: bool = false,
 
-    upgrade_ctx: ?*uws.uws_socket_context_t = null,
+    upgrade_context: UpgradeCTX = .{},
 
     const log = bun.Output.scoped(.NodeHTTPResponse, false);
     pub usingnamespace JSC.Codegen.JSNodeHTTPResponse;
     pub usingnamespace bun.NewRefCounted(@This(), deinit);
+
+    pub const UpgradeCTX = struct {
+        context: ?*uws.uws_socket_context_t = null,
+        // request will be detached when go async
+        request: ?*uws.Request = null,
+
+        // we need to store this, if we wanna to enable async upgrade
+        sec_websocket_key: []const u8 = "",
+        sec_websocket_protocol: []const u8 = "",
+        sec_websocket_extensions: []const u8 = "",
+
+        // this can be called multiple times
+        pub fn deinit(this: *UpgradeCTX) void {
+            const sec_websocket_key = this.sec_websocket_key;
+            const sec_websocket_protocol = this.sec_websocket_protocol;
+            const sec_websocket_extensions = this.sec_websocket_extensions;
+            this.* = .{};
+            if (sec_websocket_extensions.len > 0) bun.default_allocator.free(sec_websocket_extensions);
+            if (sec_websocket_protocol.len > 0) bun.default_allocator.free(sec_websocket_protocol);
+            if (sec_websocket_key.len > 0) bun.default_allocator.free(sec_websocket_key);
+        }
+
+        pub fn preserveWebSocketHeadersIfNeeded(this: *UpgradeCTX) void {
+            if (this.request) |request| {
+                this.request = null;
+
+                const sec_websocket_key = request.header("sec-websocket-key") orelse "";
+                const sec_websocket_protocol = request.header("sec-websocket-protocol") orelse "";
+                const sec_websocket_extensions = request.header("sec-websocket-extensions") orelse "";
+
+                if (sec_websocket_key.len > 0) {
+                    this.sec_websocket_key = bun.default_allocator.dupe(u8, sec_websocket_key) catch bun.outOfMemory();
+                }
+                if (sec_websocket_protocol.len > 0) {
+                    this.sec_websocket_protocol = bun.default_allocator.dupe(u8, sec_websocket_protocol) catch bun.outOfMemory();
+                }
+                if (sec_websocket_extensions.len > 0) {
+                    this.sec_websocket_extensions = bun.default_allocator.dupe(u8, sec_websocket_extensions) catch bun.outOfMemory();
+                }
+            }
+        }
+    };
 
     pub const BodyReadState = enum(u8) {
         none = 0,
@@ -5834,7 +5876,94 @@ pub const NodeHTTPResponse = struct {
         return Bun__getNodeHTTPResponseThisValue(@intFromBool(this.response == .SSL), this.response.socket());
     }
 
+    pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_protocol: ZigString, sec_websocket_extensions: ZigString) bool {
+        const upgrade_ctx = this.upgrade_context.context orelse return false;
+        const ws_handler = this.server.webSocketHandler() orelse return false;
+        defer {
+            this.upgrade_context.deinit();
+            this.setOnAbortedHandler();
+        }
+        data_value.ensureStillAlive();
+
+        const ws = ServerWebSocket.new(.{
+            .handler = ws_handler,
+            .this_value = data_value,
+        });
+
+        if (this.upgrade_context.request) |request| {
+            this.upgrade_context = .{};
+
+            var sec_websocket_protocol_str: ?ZigString.Slice = null;
+            var sec_websocket_extensions_str: ?ZigString.Slice = null;
+
+            const sec_websocket_protocol_value = brk: {
+                if (sec_websocket_protocol.isEmpty()) {
+                    break :brk request.header("sec-websocket-protocol") orelse "";
+                }
+                sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);
+                break :brk sec_websocket_protocol_str.?.slice();
+            };
+
+            const sec_websocket_extensions_value = brk: {
+                if (sec_websocket_extensions.isEmpty()) {
+                    break :brk request.header("sec-websocket-extensions") orelse "";
+                }
+                sec_websocket_extensions_str = sec_websocket_protocol.toSlice(bun.default_allocator);
+                break :brk sec_websocket_extensions_str.?.slice();
+            };
+            defer {
+                if (sec_websocket_protocol_str) |str| str.deinit();
+                if (sec_websocket_extensions_str) |str| str.deinit();
+            }
+
+            this.response.upgrade(
+                *ServerWebSocket,
+                ws,
+                request.header("sec-websocket-key") orelse "",
+                sec_websocket_protocol_value,
+                sec_websocket_extensions_value,
+                upgrade_ctx,
+            );
+            return true;
+        }
+
+        var sec_websocket_protocol_str: ?ZigString.Slice = null;
+        var sec_websocket_extensions_str: ?ZigString.Slice = null;
+
+        const sec_websocket_protocol_value = brk: {
+            if (sec_websocket_protocol.isEmpty()) {
+                break :brk this.upgrade_context.sec_websocket_protocol;
+            }
+            sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);
+            break :brk sec_websocket_protocol_str.?.slice();
+        };
+
+        const sec_websocket_extensions_value = brk: {
+            if (sec_websocket_extensions.isEmpty()) {
+                break :brk this.upgrade_context.sec_websocket_extensions;
+            }
+            sec_websocket_extensions_str = sec_websocket_protocol.toSlice(bun.default_allocator);
+            break :brk sec_websocket_extensions_str.?.slice();
+        };
+        defer {
+            if (sec_websocket_protocol_str) |str| str.deinit();
+            if (sec_websocket_extensions_str) |str| str.deinit();
+        }
+
+        this.response.upgrade(
+            *ServerWebSocket,
+            ws,
+            this.upgrade_context.sec_websocket_key,
+            sec_websocket_protocol_value,
+            sec_websocket_extensions_value,
+            upgrade_ctx,
+        );
+
+        return true;
+    }
     pub fn maybeStopReadingBody(this: *NodeHTTPResponse, vm: *JSC.VirtualMachine) void {
+        this.upgrade_context.deinit(); // we can discart the upgrade context now
+
         if ((this.aborted or this.ended) and (this.body_read_ref.has or this.body_read_state == .pending) and !this.onDataCallback.has()) {
             const had_ref = this.body_read_ref.has;
             this.response.clearOnData();
@@ -5880,6 +6009,8 @@ pub const NodeHTTPResponse = struct {
 
         this.clearJSValues();
         this.clearOnDataCallback();
+        this.upgrade_context.deinit();
+
         this.buffered_request_body_data_during_pause.deinitWithAllocator(bun.default_allocator);
         const server = this.server;
         this.js_ref.unref(JSC.VirtualMachine.get());
@@ -5917,7 +6048,10 @@ pub const NodeHTTPResponse = struct {
         }
 
         const response = NodeHTTPResponse.new(.{
-            .upgrade_ctx = @ptrCast(upgrade_ctx),
+            .upgrade_context = .{
+                .context = @ptrCast(upgrade_ctx),
+                .request = request,
+            },
             .server = AnyServer{ .ptr = AnyServer.Ptr.from(@ptrFromInt(any_server_tag)) },
             .response = switch (is_ssl != 0) {
                 true => uws.AnyResponse{ .SSL = @ptrCast(response_ptr) },
@@ -5942,6 +6076,8 @@ pub const NodeHTTPResponse = struct {
     pub fn setOnAbortedHandler(this: *NodeHTTPResponse) void {
         this.response.onAborted(*NodeHTTPResponse, onAbort, this);
         this.response.onTimeout(*NodeHTTPResponse, onTimeout, this);
+        // detach and
+        this.upgrade_context.preserveWebSocketHeadersIfNeeded();
     }
 
     fn isDone(this: *const NodeHTTPResponse) bool {
@@ -6884,11 +7020,86 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (object.as(NodeHTTPResponse)) |nodeHttpResponse| {
-                if (nodeHttpResponse.aborted or nodeHttpResponse.ended or nodeHttpResponse.upgrade_ctx == null) {
+                if (nodeHttpResponse.aborted or nodeHttpResponse.ended) {
                     return JSC.jsBoolean(false);
                 }
 
-                return JSC.jsBoolean(false);
+                var data_value = JSC.JSValue.zero;
+
+                // if we converted a HeadersInit to a Headers object, we need to free it
+                var fetch_headers_to_deref: ?*JSC.FetchHeaders = null;
+
+                defer {
+                    if (fetch_headers_to_deref) |fh| {
+                        fh.deref();
+                    }
+                }
+
+                var sec_websocket_protocol = ZigString.Empty;
+                var sec_websocket_extensions = ZigString.Empty;
+
+                if (optional) |opts| {
+                    getter: {
+                        if (opts.isEmptyOrUndefinedOrNull()) {
+                            break :getter;
+                        }
+
+                        if (!opts.isObject()) {
+                            globalThis.throwInvalidArguments("upgrade options must be an object", .{});
+                            return error.JSError;
+                        }
+
+                        if (opts.fastGet(globalThis, .data)) |headers_value| {
+                            data_value = headers_value;
+                        }
+
+                        if (globalThis.hasException()) {
+                            return error.JSError;
+                        }
+
+                        if (opts.fastGet(globalThis, .headers)) |headers_value| {
+                            if (headers_value.isEmptyOrUndefinedOrNull()) {
+                                break :getter;
+                            }
+
+                            var fetch_headers_to_use: *JSC.FetchHeaders = headers_value.as(JSC.FetchHeaders) orelse brk: {
+                                if (headers_value.isObject()) {
+                                    if (JSC.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
+                                        fetch_headers_to_deref = fetch_headers;
+                                        break :brk fetch_headers;
+                                    }
+                                }
+                                break :brk null;
+                            } orelse {
+                                if (!globalThis.hasException()) {
+                                    globalThis.throwInvalidArguments("upgrade options.headers must be a Headers or an object", .{});
+                                }
+                                return error.JSError;
+                            };
+
+                            if (globalThis.hasException()) {
+                                return error.JSError;
+                            }
+
+                            if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
+                                sec_websocket_protocol = protocol;
+                            }
+
+                            if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
+                                sec_websocket_extensions = protocol;
+                            }
+
+                            // we must write the status first so that 200 OK isn't written
+                            nodeHttpResponse.response.writeStatus("101 Switching Protocols");
+                            fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, nodeHttpResponse.response.socket());
+                        }
+
+                        if (globalThis.hasException()) {
+                            return error.JSError;
+                        }
+                    }
+                }
+                return JSC.jsBoolean(nodeHttpResponse.upgrade(data_value, sec_websocket_protocol, sec_websocket_extensions));
             }
 
             var request = object.as(Request) orelse {
@@ -7008,7 +7219,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             sec_websocket_extensions = protocol;
                         }
 
-                        // TODO: should we cork?
                         // we must write the status first so that 200 OK isn't written
                         resp.writeStatus("101 Switching Protocols");
                         fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, resp);
@@ -8514,6 +8724,18 @@ pub const AnyServer = packed struct {
             Ptr.case(DebugHTTPSServer) => &this.ptr.as(DebugHTTPSServer).config,
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
+    }
+
+    pub fn webSocketHandler(this: AnyServer) ?*WebSocketServer.Handler {
+        const server_config: *ServerConfig = switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => &this.ptr.as(HTTPServer).config,
+            Ptr.case(HTTPSServer) => &this.ptr.as(HTTPSServer).config,
+            Ptr.case(DebugHTTPServer) => &this.ptr.as(DebugHTTPServer).config,
+            Ptr.case(DebugHTTPSServer) => &this.ptr.as(DebugHTTPSServer).config,
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
+        };
+        if (server_config.websocket == null) return null;
+        return &server_config.websocket.?.handler;
     }
 
     pub fn from(server: anytype) AnyServer {

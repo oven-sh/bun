@@ -444,7 +444,7 @@ pub const FFI = struct {
                 return error.DeferredErrors;
             }
 
-            for (this.symbols.map.values()) |symbol| {
+            for (this.symbols.map.values()) |*symbol| {
                 if (symbol.needsNapiEnv()) {
                     _ = TCC.tcc_add_symbol(state, "Bun__thisFFIModuleNapiEnv", globalThis);
                     break;

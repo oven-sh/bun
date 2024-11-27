@@ -9062,7 +9062,9 @@ pub const PackageManager = struct {
             Output.flush();
         }
 
-        if (manager.options.positionals.len == 1) {
+        const is_dot = (manager.options.positionals.len >= 2 and strings.eqlComptime(manager.options.positionals[1], "."));
+
+        if (manager.options.positionals.len == 1 or is_dot) {
             // bun link
 
             var lockfile: Lockfile = undefined;
@@ -9244,7 +9246,9 @@ pub const PackageManager = struct {
             Output.flush();
         }
 
-        if (manager.options.positionals.len == 1) {
+        const is_dot = (manager.options.positionals.len >= 2 and strings.eqlComptime(manager.options.positionals[1], "."));
+
+        if (manager.options.positionals.len == 1 or is_dot) {
             // bun unlink
 
             var lockfile: Lockfile = undefined;

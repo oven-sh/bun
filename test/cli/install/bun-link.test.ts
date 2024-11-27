@@ -354,6 +354,40 @@ it("should link scoped package", async () => {
   expect(err4).toContain(`error: Package "${link_name}" is not linked`);
   expect((await new Response(stdout4).text()).split(/\r?\n/)).toEqual([expect.stringContaining("bun link v1."), ""]);
   expect(await exited4).toBe(1);
+
+  const {
+    stdout: stdout5,
+    stderr: stderr5,
+    exited: exited5,
+  } = spawn({
+    cmd: [bunExe(), "link", "."],
+    cwd: link_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err5 = await new Response(stderr5).text();
+  expect(err5.split(/\r?\n/)).toEqual([""]);
+  expect(await new Response(stdout5).text()).toContain(`Success! Registered "${link_name}"`);
+  expect(await exited5).toBe(0);
+
+  const {
+    stdout: stdout6,
+    stderr: stderr6,
+    exited: exited6,
+  } = spawn({
+    cmd: [bunExe(), "unlink", "."],
+    cwd: link_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err6 = await new Response(stderr6).text();
+  expect(err6.split(/\r?\n/)).toEqual([""]);
+  expect(await new Response(stdout6).text()).toContain(`success: unlinked package "${link_name}"`);
+  expect(await exited6).toBe(0);
 });
 
 it("should link dependency without crashing", async () => {

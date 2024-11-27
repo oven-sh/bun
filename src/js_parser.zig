@@ -23837,7 +23837,7 @@ pub const ConvertESMExportsForHmr = struct {
 
                 if (st.kind.isReassignable()) {
                     for (st.decls.slice()) |decl| {
-                        try ctx.visitBindingForKitModuleExports(p, decl.binding, true);
+                        try ctx.visitBindingToExport(p, decl.binding, true);
                     }
                 } else {
                     // TODO: remove this dupe
@@ -23861,13 +23861,13 @@ pub const ConvertESMExportsForHmr = struct {
                                     });
                                 } else {
                                     dupe_decls.appendAssumeCapacity(decl);
-                                    try ctx.visitBindingForKitModuleExports(p, decl.binding, false);
+                                    try ctx.visitBindingToExport(p, decl.binding, false);
                                 }
                             },
 
                             else => {
                                 dupe_decls.appendAssumeCapacity(decl);
-                                try ctx.visitBindingForKitModuleExports(p, decl.binding, false);
+                                try ctx.visitBindingToExport(p, decl.binding, false);
                             },
                         }
                     }
@@ -23948,12 +23948,11 @@ pub const ConvertESMExportsForHmr = struct {
             .s_export_clause => |st| {
                 for (st.items) |item| {
                     const ref = item.name.ref.?;
-                    try ctx.visitRefForBakeModuleExports(p, ref, item.name.loc, false);
+                    try ctx.visitRefToExport(p, ref, item.alias, item.name.loc, false);
                 }
 
                 return; // do not emit a statement here
             },
-
             .s_export_from => |st| stmt: {
                 for (st.items) |item| {
                     const ref = item.name.ref.?;
@@ -23965,7 +23964,7 @@ pub const ConvertESMExportsForHmr = struct {
                             .import_record_index = st.import_record_index,
                         };
                     }
-                    try ctx.visitRefForBakeModuleExports(p, ref, item.name.loc, true);
+                    try ctx.visitRefToExport(p, ref, item.alias, item.name.loc, true);
                 }
 
                 const gop = try ctx.imports_seen.getOrPut(p.allocator, st.import_record_index);
@@ -23982,7 +23981,6 @@ pub const ConvertESMExportsForHmr = struct {
             .s_export_star => {
                 bun.todoPanic(@src(), "hot-module-reloading instrumentation for 'export * from'", .{});
             },
-
             // De-duplicate import statements. It is okay to disregard
             // named/default imports here as we always rewrite them as
             // full qualified property accesses (need to so live-bindings)
@@ -23996,7 +23994,7 @@ pub const ConvertESMExportsForHmr = struct {
         try ctx.stmts.append(p.allocator, new_stmt);
     }
 
-    fn visitBindingForKitModuleExports(
+    fn visitBindingToExport(
         ctx: *ConvertESMExportsForHmr,
         p: anytype,
         binding: Binding,
@@ -24005,30 +24003,30 @@ pub const ConvertESMExportsForHmr = struct {
         switch (binding.data) {
             .b_missing => {},
             .b_identifier => |id| {
-                try ctx.visitRefForBakeModuleExports(p, id.ref, binding.loc, is_live_binding);
+                try ctx.visitRefToExport(p, id.ref, null, binding.loc, is_live_binding);
             },
             .b_array => |array| {
                 for (array.items) |item| {
-                    try ctx.visitBindingForKitModuleExports(p, item.binding, is_live_binding);
+                    try ctx.visitBindingToExport(p, item.binding, is_live_binding);
                 }
             },
             .b_object => |object| {
                 for (object.properties) |item| {
-                    try ctx.visitBindingForKitModuleExports(p, item.value, is_live_binding);
+                    try ctx.visitBindingToExport(p, item.value, is_live_binding);
                 }
             },
         }
     }
 
-    fn visitRefForBakeModuleExports(
+    fn visitRefToExport(
         ctx: *ConvertESMExportsForHmr,
         p: anytype,
         ref: Ref,
+        export_symbol_name: ?[]const u8,
         loc: logger.Loc,
         is_live_binding_source: bool,
     ) !void {
         const symbol = p.symbols.items[ref.inner_index];
-        std.debug.print("yolo {s}, {s}\n", .{ symbol.original_name, @tagName(symbol.kind) });
         const id = if (symbol.kind == .import)
             Expr.init(E.ImportIdentifier, .{ .ref = ref }, loc)
         else
@@ -24039,7 +24037,7 @@ pub const ConvertESMExportsForHmr = struct {
             // mostly because here, these might not even be live
             // bindings, and re-exports are so, so common.
             const key = Expr.init(E.String, .{
-                .data = symbol.original_name,
+                .data = export_symbol_name orelse symbol.original_name,
             }, loc);
 
             // This is technically incorrect in that we've marked this as a
@@ -24069,7 +24067,7 @@ pub const ConvertESMExportsForHmr = struct {
             // 'abc,'
             try ctx.export_props.append(p.allocator, .{
                 .key = Expr.init(E.String, .{
-                    .data = symbol.original_name,
+                    .data = export_symbol_name orelse symbol.original_name,
                 }, loc),
                 .value = id,
             });

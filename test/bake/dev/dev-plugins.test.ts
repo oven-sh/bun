@@ -1,5 +1,5 @@
 // CSS tests concern bundling bugs with CSS files
-import { devTest, minimalFramework, Step } from "../dev-server-harness";
+import { devTest, minimalFramework } from "../dev-server-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
 devTest("onResolve", {

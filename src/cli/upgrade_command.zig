@@ -87,7 +87,9 @@ pub const Version = struct {
 
     pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
     pub const triplet = platform_label ++ "-" ++ arch_label;
-    const suffix = if (Environment.baseline) "-baseline" else "";
+    const suffix_abi = if (Environment.isMusl) "-musl" else "";
+    const suffix_cpu = if (Environment.baseline) "-baseline" else "";
+    const suffix = suffix_abi ++ suffix_cpu;
     pub const folder_name = "bun-" ++ triplet ++ suffix;
     pub const baseline_folder_name = "bun-" ++ triplet ++ "-baseline";
     pub const zip_filename = folder_name ++ ".zip";

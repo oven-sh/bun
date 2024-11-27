@@ -22,6 +22,8 @@ import { DataViewReader } from "./reader";
 
 if (side !== "client") throw new Error("Not client side!");
 
+export let hasFatalError = false;
+
 // I would have used JSX, but TypeScript types interfere in odd ways.
 function elem(tagName: string, props?: null | Record<string, string>, children?: (HTMLElement | Text)[]) {
   const node = document.createElement(tagName);
@@ -128,10 +130,18 @@ export function onErrorMessage(view: DataView) {
   updateErrorOverlay();
 }
 
-export function onErrorClearedMessage() {
-  errors.keys().forEach(key => updatedErrorOwners.add(key));
-  errors.clear();
-  updateErrorOverlay();
+export const enum RuntimeErrorType {
+  recoverable,
+  /** Requires that clearances perform a full page reload */
+  fatal,
+}
+
+export function onRuntimeError(err: any, type: RuntimeErrorType) {
+  if (type === RuntimeErrorType.fatal) {
+    hasFatalError = true;
+  }
+ 
+  console.error(err);
 }
 
 /**

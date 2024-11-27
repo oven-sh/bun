@@ -393,7 +393,7 @@ pub const PackageManagerCommand = struct {
             }
             handleLoadLockfileErrors(load_lockfile, pm);
             const lockfile = load_lockfile.ok.lockfile;
-            lockfile.saveToDisk(pm.options.lockfile_path);
+            lockfile.saveToDisk(pm.options.lockfile_path, pm.options.log_level.isVerbose());
             Global.exit(0);
         }
 

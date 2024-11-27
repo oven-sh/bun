@@ -66,7 +66,7 @@ pub const OS = struct {
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return .undefined;
+            return .zero;
         };
     }
 
@@ -309,15 +309,12 @@ pub const OS = struct {
     pub fn getPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
-        var args_ = callframe.arguments(1);
+        var args_ = callframe.arguments_old(1);
         const arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
         if (arguments.len > 0 and !arguments[0].isNumber()) {
-            globalThis.ERR_INVALID_ARG_TYPE(
-                "getPriority() expects a number",
-                .{},
-            ).throw();
-            return .undefined;
+            globalThis.ERR_INVALID_ARG_TYPE("getPriority() expects a number", .{}).throw();
+            return .zero;
         }
 
         const pid = if (arguments.len > 0) arguments[0].asInt32() else 0;
@@ -339,7 +336,7 @@ pub const OS = struct {
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return .undefined;
+            return .zero;
         }
 
         return JSC.JSValue.jsNumberFromInt32(priority);
@@ -422,7 +419,7 @@ pub const OS = struct {
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return .undefined;
+            return .zero;
         }
         defer C.freeifaddrs(interface_start);
 
@@ -576,7 +573,7 @@ pub const OS = struct {
             }
 
             // Does this entry already exist?
-            if (ret.get(globalThis, interface_name)) |array| {
+            if (ret.get_unsafe(globalThis, interface_name)) |array| {
                 // Add this interface entry to the existing array
                 const next_index = @as(u32, @intCast(array.getLength(globalThis)));
                 array.putIndex(globalThis, next_index, interface);
@@ -691,7 +688,7 @@ pub const OS = struct {
 
             // Does this entry already exist?
             const interface_name = bun.span(iface.name);
-            if (ret.get(globalThis, interface_name)) |array| {
+            if (ret.get_unsafe(globalThis, interface_name)) |array| {
                 // Add this interface entry to the existing array
                 const next_index = @as(u32, @intCast(array.getLength(globalThis)));
                 array.putIndex(globalThis, next_index, interface);
@@ -722,7 +719,7 @@ pub const OS = struct {
     pub fn setPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
-        var args_ = callframe.arguments(2);
+        var args_ = callframe.arguments_old(2);
         var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
         if (arguments.len == 0) {
@@ -733,7 +730,7 @@ pub const OS = struct {
                 globalThis,
             );
             globalThis.vm().throwError(globalThis, err);
-            return .undefined;
+            return .zero;
         }
 
         const pid = if (arguments.len == 2) arguments[0].coerce(i32, globalThis) else 0;
@@ -747,7 +744,7 @@ pub const OS = struct {
                 globalThis,
             );
             globalThis.vm().throwError(globalThis, err);
-            return .undefined;
+            return .zero;
         }
 
         const errcode = C.setProcessPriority(pid, priority);
@@ -762,7 +759,7 @@ pub const OS = struct {
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return .undefined;
+                return .zero;
             },
             .ACCES => {
                 const err = JSC.SystemError{
@@ -774,7 +771,7 @@ pub const OS = struct {
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return .undefined;
+                return .zero;
             },
             else => {},
         }

@@ -2145,3 +2145,23 @@ it("#6583", async () => {
   await promise;
   expect(callback).not.toHaveBeenCalled();
 });
+
+it("do the best effort to flush everything", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(ctrl) {
+            ctrl.write("b");
+            await Bun.sleep(10);
+            ctrl.write("un");
+          },
+        }),
+      );
+    },
+  });
+  let response = await fetch(server.url);
+  expect(await response.text()).toBe("bun");
+});

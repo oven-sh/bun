@@ -26,7 +26,7 @@ interface Exports {
 declare let server_exports: Exports;
 server_exports = {
   async handleRequest(req, routerTypeMain, routeModules, clientEntryUrl, styles, params) {
-    if (IS_BUN_DEVELOPMENT) {
+    if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_BAKE_JS) {
       console.log("handleRequest", {
         routeModules,
         clientEntryUrl,
@@ -49,7 +49,7 @@ server_exports = {
 
     const response = await serverRenderer(req, {
       styles: styles,
-      scripts: [clientEntryUrl],
+      modules: [clientEntryUrl],
       layouts,
       pageModule,
       modulepreload: [],

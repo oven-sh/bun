@@ -6519,24 +6519,25 @@ pub const visible = struct {
     };
 };
 
-pub const QuoteEscapeFormat = struct {
-    data: []const u8,
-
-    pub fn format(self: QuoteEscapeFormat, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        var i: usize = 0;
-        while (std.mem.indexOfAnyPos(u8, self.data, i, "\"\n\\")) |j| : (i = j + 1) {
-            try writer.writeAll(self.data[i..j]);
-            try writer.writeAll(switch (self.data[j]) {
-                '"' => "\\\"",
-                '\n' => "\\n",
-                '\\' => "\\\\",
-                else => unreachable,
-            });
-        }
-        if (i == self.data.len) return;
-        try writer.writeAll(self.data[i..]);
-    }
+pub const QuoteEscapeFormatFlags = struct {
+    quote_char: u8,
+    ascii_only: bool = false,
+    json: bool = false,
+    str_encoding: Encoding = .utf8,
 };
+/// usage: print(" string: '{'}' ", .{formatEscapesJS("hello'world!")});
+pub fn formatEscapes(str: []const u8, comptime flags: QuoteEscapeFormatFlags) QuoteEscapeFormat(flags) {
+    return .{ .data = str };
+}
+fn QuoteEscapeFormat(comptime flags: QuoteEscapeFormatFlags) type {
+    return struct {
+        data: []const u8,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try bun.js_printer.writePreQuotedString(self.data, @TypeOf(writer), writer, flags.quote_char, false, flags.json, flags.str_encoding);
+        }
+    };
+}
 
 /// Generic. Works on []const u8, []const u16, etc
 pub inline fn indexOfScalar(input: anytype, scalar: std.meta.Child(@TypeOf(input))) ?usize {

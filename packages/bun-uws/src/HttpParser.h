@@ -626,6 +626,15 @@ namespace uWS
             /* Parse query */
             const char *querySeparatorPtr = (const char *) memchr(req->headers->value.data(), '?', req->headers->value.length());
             req->querySeparator = (unsigned int) ((querySeparatorPtr ? querySeparatorPtr : req->headers->value.data() + req->headers->value.length()) - req->headers->value.data());
+            
+            // lets check if content len is valid before calling requestHandler
+            if(contentLengthStringLen) {
+                remainingStreamingBytes = toUnsignedInteger(contentLengthString);
+                if (remainingStreamingBytes == UINT64_MAX) {
+                    /* Parser error */
+                    return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
+                }
+            }
 
             // lets check if content len is valid before calling requestHandler
             if(contentLengthStringLen) {
@@ -685,6 +694,7 @@ namespace uWS
                     consumedTotal += consumed;
                 }
             } else if (contentLengthStringLen) {
+
                 if (!CONSUME_MINIMALLY) {
                     unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
                     dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);

@@ -7227,6 +7227,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     app.listenWithConfig(*ThisServer, this, onListen, .{
                         .port = tcp.port,
                         .host = host,
+                        // IPV6_ONLY is the default for bun, different from node it also set exclusive port in case reuse port is not set
                         .options = (if (this.config.reuse_port) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_EXCLUSIVE_PORT) | uws.LIBUS_SOCKET_IPV6_ONLY,
                     });
                 },
@@ -7237,7 +7238,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         this,
                         onListen,
                         unix,
-                        if (this.config.reuse_port) 0 else 1,
+                        // IPV6_ONLY is the default for bun, different from node it also set exclusive port in case reuse port is not set
+                        (if (this.config.reuse_port) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_EXCLUSIVE_PORT) | uws.LIBUS_SOCKET_IPV6_ONLY,
                     );
                 },
             }

@@ -376,17 +376,14 @@ pub const Crypto = struct {
 
         if (keylen_value.isEmptyOrUndefinedOrNull() or !keylen_value.isAnyInt()) {
             const err = globalThis.createInvalidArgs("keylen must be an integer", .{});
-            globalThis.throwValue(err);
-            return .zero;
+            return globalThis.throwValue(err);
         }
 
         const keylen_int = keylen_value.to(i64);
         if (keylen_int < 0) {
-            globalThis.throwValue(globalThis.createRangeError("keylen must be a positive integer", .{}));
-            return .zero;
+            return globalThis.throwValue(globalThis.createRangeError("keylen must be a positive integer", .{}));
         } else if (keylen_int > 0x7fffffff) {
-            globalThis.throwValue(globalThis.createRangeError("keylen must be less than 2^31", .{}));
-            return .zero;
+            return globalThis.throwValue(globalThis.createRangeError("keylen must be less than 2^31", .{}));
         }
 
         var blockSize: ?usize = null;
@@ -400,8 +397,7 @@ pub const Crypto = struct {
                 break :outer;
 
             if (!options_value.isObject()) {
-                globalThis.throwValue(globalThis.createInvalidArgs("options must be an object", .{}));
-                return .zero;
+                return globalThis.throwValue(globalThis.createInvalidArgs("options must be an object", .{}));
             }
 
             if (try options_value.getTruthy(globalThis, "cost") orelse try options_value.getTruthy(globalThis, "N")) |N_value| {
@@ -507,8 +503,7 @@ pub const Crypto = struct {
         if (keylen > buf.len) {
             // i don't think its a real scenario, but just in case
             buf = globalThis.allocator().alloc(u8, keylen) catch {
-                globalThis.throw("Failed to allocate memory", .{});
-                return .zero;
+                return globalThis.throw("Failed to allocate memory", .{});
             };
             needs_deinit = true;
         } else {
@@ -562,8 +557,7 @@ pub const Crypto = struct {
 
         const len = a.len;
         if (b.len != len) {
-            globalThis.throw("Input buffers must have the same byte length", .{});
-            return .zero;
+            return globalThis.throw("Input buffers must have the same byte length", .{});
         }
         return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
     }
@@ -579,8 +573,7 @@ pub const Crypto = struct {
 
         const len = a.len;
         if (b.len != len) {
-            globalThis.throw("Input buffers must have the same byte length", .{});
-            return .zero;
+            return globalThis.throw("Input buffers must have the same byte length", .{});
         }
 
         return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
@@ -721,7 +714,7 @@ pub const Crypto = struct {
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Crypto {
-        return globalThis.throw2("Crypto is not constructable", .{});
+        return globalThis.throw("Crypto is not constructable", .{});
     }
 
     pub export fn CryptoObject__create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {

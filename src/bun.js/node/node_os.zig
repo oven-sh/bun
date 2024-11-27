@@ -65,8 +65,7 @@ pub const OS = struct {
                 .code = bun.String.static(@tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR)),
             };
 
-            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return .zero;
+            return globalThis.throwValue(err.toErrorInstance(globalThis));
         };
     }
 
@@ -334,8 +333,7 @@ pub const OS = struct {
                 .syscall = bun.String.static("uv_os_getpriority"),
             };
 
-            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return .zero;
+            return globalThis.throwValue(err.toErrorInstance(globalThis));
         }
 
         return JSC.JSValue.jsNumberFromInt32(priority);
@@ -405,7 +403,7 @@ pub const OS = struct {
         };
     }
 
-    fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         // getifaddrs sets a pointer to a linked list
         var interface_start: ?*C.ifaddrs = null;
         const rc = C.getifaddrs(&interface_start);
@@ -417,8 +415,7 @@ pub const OS = struct {
                 .syscall = bun.String.static("getifaddrs"),
             };
 
-            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return .zero;
+            return globalThis.throwValue(err.toErrorInstance(globalThis));
         }
         defer C.freeifaddrs(interface_start);
 
@@ -588,7 +585,7 @@ pub const OS = struct {
         return ret;
     }
 
-    fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         var ifaces: [*]libuv.uv_interface_address_t = undefined;
         var count: c_int = undefined;
         const err = libuv.uv_interface_addresses(&ifaces, &count);
@@ -600,8 +597,7 @@ pub const OS = struct {
                 .errno = err,
                 .syscall = bun.String.static("uv_interface_addresses"),
             };
-            globalThis.vm().throwError(globalThis, sys_err.toErrorInstance(globalThis));
-            return .zero;
+            return globalThis.throwValue(sys_err.toErrorInstance(globalThis));
         }
         defer libuv.uv_free_interface_addresses(ifaces, count);
 
@@ -728,8 +724,7 @@ pub const OS = struct {
                 .{},
                 globalThis,
             );
-            globalThis.vm().throwError(globalThis, err);
-            return .zero;
+            return globalThis.throwValue(err);
         }
 
         const pid = if (arguments.len == 2) arguments[0].coerce(i32, globalThis) else 0;
@@ -742,8 +737,7 @@ pub const OS = struct {
                 .{},
                 globalThis,
             );
-            globalThis.vm().throwError(globalThis, err);
-            return .zero;
+            return globalThis.throwValue(err);
         }
 
         const errcode = C.setProcessPriority(pid, priority);
@@ -757,8 +751,7 @@ pub const OS = struct {
                     .syscall = bun.String.static("uv_os_setpriority"),
                 };
 
-                globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return .zero;
+                return globalThis.throwValue(err.toErrorInstance(globalThis));
             },
             .ACCES => {
                 const err = JSC.SystemError{
@@ -769,8 +762,7 @@ pub const OS = struct {
                     .syscall = bun.String.static("uv_os_setpriority"),
                 };
 
-                globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return .zero;
+                return globalThis.throwValue(err.toErrorInstance(globalThis));
             },
             else => {},
         }
@@ -808,8 +800,7 @@ pub const OS = struct {
                     .errno = err,
                     .syscall = bun.String.static("uv_uptime"),
                 };
-                globalThis.vm().throwError(globalThis, sys_err.toErrorInstance(globalThis));
-                return .zero;
+                return globalThis.throwValue(sys_err.toErrorInstance(globalThis));
             }
             return JSC.JSValue.jsNumber(uptime_value);
         }

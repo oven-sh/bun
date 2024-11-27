@@ -5551,7 +5551,7 @@ pub const NodeFS = struct {
                 .message = bun.String.init(buf),
                 .code = bun.String.init(@errorName(err)),
                 .path = bun.String.init(args.path.slice()),
-            }).toErrorInstance(args.global_this));
+            }).toErrorInstance(args.global_this)) catch {};
             return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
         };
         return Maybe(Return.Watch){ .result = watcher };

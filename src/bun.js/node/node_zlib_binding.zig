@@ -329,8 +329,7 @@ pub const SNativeZlib = struct {
         }
         const mode_int: i64 = @intFromFloat(mode_double);
         if (mode_int < 1 or mode_int > 7) {
-            _ = globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 1, .max = 7 });
-            return error.JSError;
+            return globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 1, .max = 7 });
         }
 
         const ptr = SNativeZlib.new(.{
@@ -685,8 +684,7 @@ pub const SNativeBrotli = struct {
         }
         const mode_int: i64 = @intFromFloat(mode_double);
         if (mode_int < 8 or mode_int > 9) {
-            _ = globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 8, .max = 9 });
-            return error.JSError;
+            return globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 8, .max = 9 });
         }
 
         const ptr = @This().new(.{

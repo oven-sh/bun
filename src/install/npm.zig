@@ -1286,8 +1286,7 @@ pub const PackageManifest = struct {
         pub fn jsParseManifest(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
             const args = callFrame.arguments_old(2).slice();
             if (args.len < 2 or !args[0].isString() or !args[1].isString()) {
-                global.throw("expected manifest filename and registry string arguments", .{});
-                return .zero;
+                return global.throw("expected manifest filename and registry string arguments", .{});
             }
 
             const manifest_filename_str = args[0].toBunString(global);
@@ -1303,8 +1302,7 @@ pub const PackageManifest = struct {
             defer registry.deinit();
 
             const manifest_file = std.fs.openFileAbsolute(manifest_filename.slice(), .{}) catch |err| {
-                global.throw("failed to open manifest file \"{s}\": {s}", .{ manifest_filename.slice(), @errorName(err) });
-                return .zero;
+                return global.throw("failed to open manifest file \"{s}\": {s}", .{ manifest_filename.slice(), @errorName(err) });
             };
             defer manifest_file.close();
 
@@ -1320,13 +1318,11 @@ pub const PackageManifest = struct {
             };
 
             const maybe_package_manifest = Serializer.loadByFile(bun.default_allocator, &scope, File.from(manifest_file)) catch |err| {
-                global.throw("failed to load manifest file: {s}", .{@errorName(err)});
-                return .zero;
+                return global.throw("failed to load manifest file: {s}", .{@errorName(err)});
             };
 
             const package_manifest: PackageManifest = maybe_package_manifest orelse {
-                global.throw("manifest is invalid ", .{});
-                return .zero;
+                return global.throw("manifest is invalid ", .{});
             };
 
             var buf: std.ArrayListUnmanaged(u8) = .{};

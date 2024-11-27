@@ -20,7 +20,7 @@ pub const BuildMessage = struct {
     pub usingnamespace JSC.Codegen.JSBuildMessage;
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*BuildMessage {
-        return globalThis.throw2("BuildMessage is not constructable", .{});
+        return globalThis.throw("BuildMessage is not constructable", .{});
     }
 
     pub fn getNotes(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {

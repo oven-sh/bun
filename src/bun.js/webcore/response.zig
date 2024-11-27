@@ -633,7 +633,7 @@ pub const Response = struct {
                 } else {
                     if (!globalThis.hasException()) {
                         const err = globalThis.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
-                        globalThis.throwValue(err);
+                        return globalThis.throwValue(err);
                     }
                     return error.JSError;
                 }

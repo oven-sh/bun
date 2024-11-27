@@ -419,7 +419,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 params_buf.append(ctx.allocator, route.part.param) catch unreachable;
             },
             .catch_all, .catch_all_optional => {
-                global.throw("catch-all routes are not supported in static site generation", .{});
+                return global.throw("catch-all routes are not supported in static site generation", .{});
             },
             else => {},
         }
@@ -438,7 +438,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                     params_buf.append(ctx.allocator, parent.part.param) catch unreachable;
                 },
                 .catch_all, .catch_all_optional => {
-                    global.throw("catch-all routes are not supported in static site generation", .{});
+                    return global.throw("catch-all routes are not supported in static site generation", .{});
                 },
                 else => {},
             }
@@ -531,8 +531,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             Output.flush();
         },
         .rejected => |err| {
-            vm.global.throwValue(err);
-            return error.JSError;
+            return vm.global.throwValue(err);
         },
     }
 }
@@ -549,8 +548,7 @@ fn loadModule(vm: *VirtualMachine, global: *JSC.JSGlobalObject, key: JSValue) !J
             return BakeGetModuleNamespace(global, key);
         },
         .rejected => |err| {
-            vm.global.throwValue(err);
-            return error.JSError;
+            return vm.global.throwValue(err);
         },
     }
 }
@@ -615,11 +613,10 @@ export fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specif
     defer referrer.deinit();
 
     if (bun.resolver.isPackagePath(specifier.slice())) {
-        global.throw("Non-relative import {} from {} are not allowed in production assets. This is a bug in Bun's bundler", .{
+        return global.throw("Non-relative import {} from {} are not allowed in production assets. This is a bug in Bun's bundler", .{
             bun.fmt.quote(specifier.slice()),
             bun.fmt.quote(referrer.slice()),
-        });
-        return bun.String.dead;
+        }) catch bun.String.dead;
     }
 
     if (Environment.allow_assert)

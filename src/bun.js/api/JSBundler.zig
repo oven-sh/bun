@@ -159,14 +159,14 @@ pub const JSBundler = struct {
                                     plugin_result = val;
                                 },
                                 .rejected => |err| {
-                                    return globalThis.throwValue2(err);
+                                    return globalThis.throwValue(err);
                                 },
                             }
                         }
                     }
 
                     if (plugin_result.toError()) |err| {
-                        return globalThis.throwValue2(err);
+                        return globalThis.throwValue(err);
                     } else if (globalThis.hasException()) {
                         return error.JSError;
                     }
@@ -833,13 +833,9 @@ pub const JSBundler = struct {
             completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
         }
 
-        export fn JSBundlerPlugin__onDefer(
-            this: *Load,
-            globalObject: *JSC.JSGlobalObject,
-        ) JSValue {
+        export fn JSBundlerPlugin__onDefer(this: *Load, globalObject: *JSC.JSGlobalObject) JSValue {
             if (this.called_defer) {
-                globalObject.throw("Can't call .defer() more than once within an onLoad plugin", .{});
-                return .zero;
+                return globalObject.throw("Can't call .defer() more than once within an onLoad plugin", .{}) catch .zero;
             }
 
             this.called_defer = true;

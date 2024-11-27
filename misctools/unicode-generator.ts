@@ -102,7 +102,7 @@ class Generator<Elem> {
     output += "};\n\n";
 
     // Stage 2
-    output += `pub const stage2: [${tables.stage2.length}]u16 = .{`;
+    output += `pub const stage2: [${tables.stage2.length}]u8 = .{`;
     output += tables.stage2.join(",");
     output += "};\n\n";
 

@@ -23,6 +23,20 @@ const idContinueESNextSet = new Set(require("@unicode/unicode-15.1.0/Binary_Prop
 // Exclude known problematic codepoints
 const ID_Continue_mistake = new Set([0x30fb, 0xff65]);
 
+function bitsToU64Array(bits: number[]): bigint[] {
+  const result: bigint[] = [];
+  for (let i = 0; i < bits.length; i += 64) {
+    let value = 0n;
+    for (let j = 0; j < 64 && i + j < bits.length; j++) {
+      if (bits[i + j]) {
+        value |= 1n << BigInt(j);
+      }
+    }
+    result.push(value);
+  }
+  return result;
+}
+
 async function generateTable(table: string, name: string, checkFn: (cp: number) => boolean) {
   const context: Context<boolean> = {
     get: (cp: number) => checkFn(cp),
@@ -32,18 +46,24 @@ async function generateTable(table: string, name: string, checkFn: (cp: number) 
   const generator = new Generator(context);
   const tables = await generator.generate();
 
-  const zigCode = Generator.writeZig(table, tables, (value: boolean) => value.toString());
-
   return `
 pub fn ${name}(cp: u21) bool {
     if (cp > 0x10FFFF) return false;
     const high = cp >> 8;
     const low = cp & 0xFF;
-    const stage2_idx = ${table}(bool).stage1[high];
-    const stage3_idx = ${table}(bool).stage2[stage2_idx + low];
-    return ${table}(bool).stage3[stage3_idx];
+    const stage2_idx = ${table}.stage1[high];
+    const bit_pos = stage2_idx + low;
+    const u64_idx = bit_pos >> 6;
+    const bit_idx = @as(u6, @intCast(bit_pos & 63));
+    return (${table}.stage2[u64_idx] & (@as(u64, 1) << bit_idx)) != 0;
 }
-${zigCode}
+const ${table} = struct {
+    pub const stage1 = [_]u16{${tables.stage1.join(",")}};
+    pub const stage2 = [_]u64{${bitsToU64Array(tables.stage2)
+      .map(n => n.toString())
+      .join(",")}};
+};
+
 `;
 }
 

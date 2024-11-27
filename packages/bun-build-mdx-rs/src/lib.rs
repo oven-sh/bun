@@ -29,7 +29,13 @@ pub unsafe extern "C" fn bun_mdx_rs(
   // Leave it as JSX for Bun to handle
   options.jsx = true;
 
-  let path = handle.path();
+  let path = match handle.path() {
+    Ok(path) => path,
+    Err(e) => {
+      handle.log_error(&format!("Failed to get path: {:?}", e));
+      return;
+    }
+  };
   options.filepath = Some(path.to_owned());
 
   match compile(source_str, &options) {

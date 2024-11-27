@@ -2,7 +2,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use std::{any::TypeId, ffi::c_void};
+use std::{any::TypeId, ffi::c_void, str::Utf8Error};
 
 pub mod sys {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
@@ -45,6 +45,39 @@ impl Drop for SourceCodeContext {
 pub type BunLogLevel = sys::BunLogLevel;
 pub type BunLoader = sys::BunLoader;
 
+fn get_from_raw_str(ptr: *const u8, len: usize) -> Result<&'static str> {
+    // Windows allows invalid UTF-16 strings in the filesystem. These get converted to WTF-8 in Zig.
+    // Meaning the string may contain invalid UTF-8, we'll have to use the safe checked version.
+    #[cfg(target_os = "windows")]
+    {
+        Ok(std::str::from_utf8(unsafe {
+            std::slice::from_raw_parts(ptr, len)
+        })?)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // SAFETY: The source code comes from Zig, which uses UTF-8, so this should be safe.
+        Ok(unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, len)) })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Error {
+    Utf8(Utf8Error),
+    IncompatiblePluginVersion,
+    ExternalTypeMismatch,
+    Unknown,
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+impl From<Utf8Error> for Error {
+    fn from(value: Utf8Error) -> Self {
+        Self::Utf8(value)
+    }
+}
+
 /// A safe handle for the arguments + result struct for the
 /// `OnBeforeParse` bundler lifecycle hook.
 ///
@@ -80,7 +113,7 @@ impl<'a> OnBeforeParse<'a> {
     pub fn from_raw(
         args: &'a sys::OnBeforeParseArguments,
         result: &'a mut sys::OnBeforeParseResult,
-    ) -> Result<Self, ()> {
+    ) -> Result<Self> {
         if args.__struct_size < std::mem::size_of::<sys::OnBeforeParseArguments>()
             || result.__struct_size < std::mem::size_of::<sys::OnBeforeParseResult>()
         {
@@ -103,7 +136,7 @@ impl<'a> OnBeforeParse<'a> {
             unsafe {
                 (result.log.unwrap())(args, &mut log_options);
             }
-            return Err(());
+            return Err(Error::IncompatiblePluginVersion);
         }
 
         Ok(Self {
@@ -113,24 +146,12 @@ impl<'a> OnBeforeParse<'a> {
         })
     }
 
-    pub fn path(&self) -> &str {
-        // SAFETY: The string comes from Zig, which uses UTF-8, so this should be safe.
-        unsafe {
-            std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-                self.args_raw.path_ptr,
-                self.args_raw.path_len,
-            ))
-        }
+    pub fn path(&self) -> Result<&'static str> {
+        get_from_raw_str(self.args_raw.path_ptr, self.args_raw.path_len)
     }
 
-    pub fn namespace(&self) -> &str {
-        // SAFETY: The string comes from Zig, which uses UTF-8, so this should be safe.
-        unsafe {
-            std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-                self.args_raw.namespace_ptr,
-                self.args_raw.namespace_len,
-            ))
-        }
+    pub fn namespace(&self) -> Result<&'static str> {
+        get_from_raw_str(self.args_raw.namespace_ptr, self.args_raw.namespace_len)
     }
 
     /// Get the external object from the `OnBeforeParse` arguments.
@@ -181,7 +202,7 @@ impl<'a> OnBeforeParse<'a> {
     ///     },
     /// };
     /// ```
-    pub unsafe fn external<T: 'static + Sync>(&self) -> Result<Option<&'static T>, ()> {
+    pub unsafe fn external<T: 'static + Sync>(&self) -> Result<Option<&'static T>> {
         if self.args_raw.external.is_null() {
             return Ok(None);
         }
@@ -190,7 +211,7 @@ impl<'a> OnBeforeParse<'a> {
 
         unsafe {
             if (*external).type_id != TypeId::of::<T>() {
-                return Err(());
+                return Err(Error::ExternalTypeMismatch);
             }
 
             Ok((*external).object.as_ref())
@@ -198,7 +219,7 @@ impl<'a> OnBeforeParse<'a> {
     }
 
     /// The same as [`crate::bun_native_plugin::OnBeforeParse::external`], but returns a mutable reference.
-    pub fn external_mut<T: 'static + Sync>(&self) -> Result<Option<&mut T>, ()> {
+    pub fn external_mut<T: 'static + Sync>(&self) -> Result<Option<&mut T>> {
         if self.args_raw.external.is_null() {
             return Ok(None);
         }
@@ -207,7 +228,7 @@ impl<'a> OnBeforeParse<'a> {
 
         unsafe {
             if (*external).type_id != TypeId::of::<T>() {
-                return Err(());
+                return Err(Error::ExternalTypeMismatch);
             }
 
             Ok((*external).object.as_mut())
@@ -215,28 +236,26 @@ impl<'a> OnBeforeParse<'a> {
     }
 
     /// Get the input source code for the current file.
-    pub fn input_source_code(&mut self) -> Result<&'static str, ()> {
+    ///
+    /// On Windows, this function may return an `Err(Error::Utf8(...))` if the
+    /// source code contains invalid UTF-8.
+    pub fn input_source_code(&mut self) -> Result<&'static str> {
         let fetch_result =
             unsafe { (self.result_raw.fetchSourceCode.unwrap())(self.args_raw, self.result_raw) };
 
         if fetch_result != 0 {
-            Err(())
+            Err(Error::Unknown)
         } else {
-            // SAFETY: The source code comes from Zig, which uses UTF-8, so this should be safe.
-            Ok(unsafe {
-                std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-                    self.result_raw.source_ptr,
-                    self.result_raw.source_len,
-                ))
-            })
+            get_from_raw_str(self.result_raw.source_ptr, self.result_raw.source_len)
         }
     }
 
     /// Set the output source code for the current file.
-    pub fn set_output_source_code(&mut self, mut source: String, loader: BunLogLevel) {
+    pub fn set_output_source_code(&mut self, source: String, loader: BunLoader) {
+        let source_cap = source.capacity();
+        let source = source.leak();
         let source_ptr = source.as_mut_ptr();
         let source_len = source.len();
-        let source_cap = source.capacity();
 
         if self.compilation_context.is_null() {
             self.compilation_context = Box::into_raw(Box::new(SourceCodeContext {
@@ -261,6 +280,8 @@ impl<'a> OnBeforeParse<'a> {
             context.source_cap = source_cap;
         }
         self.result_raw.loader = loader as u8;
+        self.result_raw.source_ptr = source_ptr;
+        self.result_raw.source_len = source_len;
     }
 
     /// Set the output loader for the current file.

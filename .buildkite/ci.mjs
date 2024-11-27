@@ -987,7 +987,8 @@ function getOptionsApplyStep() {
  * @returns {Promise<PipelineOptions | undefined>}
  */
 async function getPipelineOptions() {
-  const isManual = isBuildManual();
+  const isManual = false;
+  isBuildManual();
   if (isManual && !process.argv.includes("--apply")) {
     return;
   }
@@ -1143,13 +1144,11 @@ async function getPipeline(options = {}) {
     [...buildPlatforms, ...testPlatforms].map(platform => {
       const groupKey = getTargetKey(platform);
       const groupBuildSteps = buildSteps.get(groupKey) ?? [];
-      const groupTestSteps = [...testSteps.entries()]
-        .filter(([key]) => key.startsWith(groupKey))
-        .flatMap(([, steps]) => steps);
+      const groupTestSteps = testSteps.get(groupKey) ?? [];
       return [
         groupKey,
         {
-          group: getTargetLabel(platform),
+          group: getTargetKey(platform),
           label: getTargetLabel(platform),
           steps: [...groupBuildSteps, ...groupTestSteps],
         },

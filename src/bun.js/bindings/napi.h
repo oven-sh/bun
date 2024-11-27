@@ -33,9 +33,32 @@ public:
     inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
     inline const napi_module& napiModule() const { return m_napiModule; }
 
+    void cleanup()
+    {
+        if (m_instanceDataFinalizer) {
+            m_instanceDataFinalizer(this, m_instanceData, m_instanceDataFinalizerHint);
+        }
+    }
+
+    void setInstanceData(void* data, napi_finalize finalizer, void* hint)
+    {
+        m_instanceData = data;
+        m_instanceDataFinalizer = finalizer;
+        m_instanceDataFinalizerHint = hint;
+    }
+
+    inline void* getInstanceData() const
+    {
+        return m_instanceData;
+    }
+
 private:
     Zig::GlobalObject* m_globalObject = nullptr;
     napi_module m_napiModule;
+
+    void* m_instanceData = nullptr;
+    napi_finalize m_instanceDataFinalizer = nullptr;
+    void* m_instanceDataFinalizerHint = nullptr;
 };
 
 namespace Zig {

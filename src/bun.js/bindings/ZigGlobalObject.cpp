@@ -1204,9 +1204,8 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 
 GlobalObject::~GlobalObject()
 {
-    if (napiInstanceDataFinalizer) {
-        napi_finalize finalizer = reinterpret_cast<napi_finalize>(napiInstanceDataFinalizer);
-        finalizer(napiInstanceDataEnv, napiInstanceData, napiInstanceDataFinalizerHint);
+    for (const auto& env : m_napiEnvs) {
+        env->cleanup();
     }
 
     if (auto* ctx = scriptExecutionContext()) {

@@ -2556,13 +2556,11 @@ extern "C" napi_status napi_get_instance_data(napi_env env,
 {
     NAPI_PREMABLE
 
-    Zig::GlobalObject* globalObject = toJS(env);
     if (UNLIKELY(data == nullptr)) {
         return napi_invalid_arg;
     }
 
-    ASSERT(globalObject->napiInstanceDataEnv == env);
-    *data = globalObject->napiInstanceData;
+    *data = env->getInstanceData();
     return napi_ok;
 }
 
@@ -2617,14 +2615,7 @@ extern "C" napi_status napi_set_instance_data(napi_env env,
     void* finalize_hint)
 {
     NAPI_PREMABLE
-
-    Zig::GlobalObject* globalObject = toJS(env);
-    globalObject->napiInstanceData = data;
-    globalObject->napiInstanceDataEnv = env;
-
-    globalObject->napiInstanceDataFinalizer = reinterpret_cast<void*>(finalize_cb);
-    globalObject->napiInstanceDataFinalizerHint = finalize_hint;
-
+    env->setInstanceData(data, finalize_cb, finalize_hint);
     return napi_ok;
 }
 

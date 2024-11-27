@@ -449,14 +449,6 @@ public:
     // To do that, we count the number of times we register a module.
     int napiModuleRegisterCallCount = 0;
 
-    // NAPI instance data
-    // This is not a correct implementation
-    // Addon modules can override each other's data
-    void* napiInstanceData = nullptr;
-    struct napi_env__* napiInstanceDataEnv = nullptr;
-    void* napiInstanceDataFinalizer = nullptr;
-    void* napiInstanceDataFinalizerHint = nullptr;
-
     // Used by napi_type_tag_object to associate a 128-bit type ID with JS objects.
     // Should only use JSCell* keys and NapiTypeTag values.
     LazyProperty<JSGlobalObject, JSC::JSWeakMap> m_napiTypeTags;

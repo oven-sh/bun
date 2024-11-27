@@ -3935,6 +3935,20 @@ declare module "bun" {
   };
 
   interface PluginBuilder {
+    /**
+     * Register a callback which will be invoked when bundling starts.
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   setup(builder) {
+     *     builder.onStart(() => {
+     *       console.log("bundle just started!!")
+     *     });
+     *   },
+     * });
+     * ```
+     */
+    onStart(callback: OnStartCallback): void;
     onBeforeParse(
       constraints: PluginConstraints,
       callback: { napiModule: unknown; symbol: string; external?: unknown | undefined },
@@ -3971,20 +3985,6 @@ declare module "bun" {
      * ```
      */
     onResolve(constraints: PluginConstraints, callback: OnResolveCallback): void;
-    /**
-     * Register a callback which will be invoked when bundling starts.
-     * @example
-     * ```ts
-     * Bun.plugin({
-     *   setup(builder) {
-     *     builder.onStart(() => {
-     *       console.log("bundle just started!!")
-     *     });
-     *   },
-     * });
-     * ```
-     */
-    onStart(callback: OnStartCallback): void;
     /**
      * The config object passed to `Bun.build` as is. Can be mutated.
      */

@@ -438,7 +438,7 @@ export const aws = {
         "InstanceMetadataTags": "enabled",
       }),
       ["tag-specifications"]: JSON.stringify(tagSpecification),
-      // ["key-name"]: "ashcon-bun",
+      ["key-name"]: "ashcon-bun",
     });
 
     return aws.toMachine(instance, { ...options, username });

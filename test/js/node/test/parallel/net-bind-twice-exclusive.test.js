@@ -34,6 +34,6 @@ test("net.Server should not allow binding to the same port twice", done => {
       });
     },
   );
-}, 100000);
+});
 
 //<#END_FILE: test-net-bind-twice.js

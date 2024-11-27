@@ -45,30 +45,37 @@ async function tempDirToBuildIn() {
   return dir;
 }
 
+async function hashFile(file: string, path: string, hashes: Record<string, string>) {
+  try {
+    const contents = await fs.readFile(path);
+    hashes[file] = Bun.CryptoHasher.hash("sha256", contents, "hex");
+  } catch (error) {
+    console.error("error", error, "in", path);
+    throw error;
+  }
+}
+
 async function hashAllFiles(dir: string) {
-  console.log("Hashing");
-  const files = (await fs.readdir(dir, { recursive: true, withFileTypes: true })).sort();
-  const hashes: Record<string, string> = {};
-  const promises = new Array(files.length);
-  for (let i = 0; i < promises.length; i++) {
-    if (!(files[i].isFile() || files[i].isSymbolicLink())) {
-      i--;
-      promises.length--;
-      continue;
+  console.time("Hashing");
+  try {
+    const files = (await fs.readdir(dir, { recursive: true, withFileTypes: true }))
+      .filter(x => x.isFile() || x.isSymbolicLink())
+      .sort((a, b) => {
+        return a.name.localeCompare(b.name);
+      });
+
+    const hashes: Record<string, string> = {};
+    const batchSize = 4;
+
+    while (files.length > 0) {
+      const batch = files.splice(0, batchSize);
+      await Promise.all(batch.map(file => hashFile(file.name, join(file.parentPath, file.name), hashes)));
     }
 
-    promises[i] = (async function (file, path) {
-      try {
-        const contents = await fs.readFile(path);
-        hashes[file] = Bun.CryptoHasher.hash("sha256", contents, "hex");
-      } catch (error) {
-        console.error("error", error, "in", path);
-        throw error;
-      }
-    })(files[i].name, join(dir, files[i].name));
+    return hashes;
+  } finally {
+    console.timeEnd("Hashing");
   }
-  await Promise.all(promises);
-  return hashes;
 }
 
 function normalizeOutput(stdout: string) {

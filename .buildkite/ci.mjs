@@ -1149,7 +1149,7 @@ function getOptionsApplyStep() {
     command: "node ./.buildkite/ci.mjs --apply",
     depends_on: ["options"],
     agents: {
-      queue: "test-darwin",
+      queue: getEnv("BUILDKITE_AGENT_META_DATA_QUEUE", false),
     },
   };
 }

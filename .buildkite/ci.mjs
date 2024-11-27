@@ -1204,13 +1204,18 @@ function getOptionsApplyStep() {
 }
 
 /**
- * @returns {Promise<PipelineOptions>}
+ * @returns {Promise<PipelineOptions | undefined>}
  */
 async function getPipelineOptions() {
+  const isManual = isBuildManual();
+  if (isManual && !process.argv.includes("--apply")) {
+    return;
+  }
+
   const buildPlatformsMap = new Map(buildPlatforms.map(platform => [getTargetKey(platform), platform]));
   const testPlatformsMap = new Map(testPlatforms.map(platform => [getPlatformKey(platform), platform]));
 
-  if (isBuildManual()) {
+  if (isManual) {
     const { fields } = getOptionsStep();
     const keys = fields?.map(({ key }) => key) ?? [];
     const values = await Promise.all(keys.map(getBuildMetadata));
@@ -1336,8 +1341,11 @@ async function getPipeline(options) {
 }
 
 async function main() {
+  startGroup("Generating options...");
+  const options = await getPipelineOptions();
+
   startGroup("Generating pipeline...");
-  const pipeline = await getPipeline();
+  const pipeline = await getPipeline(options);
   const content = toYaml(pipeline);
   const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
   writeFile(contentPath, content);

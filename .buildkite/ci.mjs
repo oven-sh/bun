@@ -1226,18 +1226,24 @@ async function getPipelineOptions() {
         ?.map(item => item.trim())
         ?.filter(Boolean);
 
+    const buildPlatformKeys = parseArray(options["build-platforms"]);
+    const testPlatformKeys = parseArray(options["test-platforms"]);
     return {
       canary: parseBoolean(options["canary"]),
       skipBuilds: parseBoolean(options["skip-builds"]),
       forceBuilds: parseBoolean(options["force-builds"]),
       skipTests: parseBoolean(options["skip-tests"]),
-      buildProfiles: parseArray(options["build-profiles"]),
-      buildPlatforms: parseArray(options["build-platforms"])?.map(platform => buildPlatformsMap.get(platform)),
-      testPlatforms: parseArray(options["test-platforms"])?.map(platform => testPlatformsMap.get(platform)),
       testFiles: parseArray(options["test-files"]),
       buildImages: parseBoolean(options["build-images"]),
       publishImages: parseBoolean(options["publish-images"]),
       unifiedBuilds: parseBoolean(options["unified-builds"]),
+      buildProfiles: parseArray(options["build-profiles"]),
+      buildPlatforms: buildPlatformKeys?.length
+        ? buildPlatformKeys.map(key => buildPlatformsMap.get(key))
+        : Array.from(buildPlatformsMap.values()),
+      testPlatforms: testPlatformKeys?.length
+        ? testPlatformKeys.map(key => testPlatformsMap.get(key))
+        : Array.from(testPlatformsMap.values()),
     };
   }
 
@@ -1257,67 +1263,72 @@ async function getPipelineOptions() {
   };
 
   return {
+    canary:
+      !parseBoolean(getEnv("RELEASE", false) || "false") &&
+      !/\[(release|build release|release build)\]/i.test(commitMessage),
     skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     buildImages: parseOption(/\[(build images?)\]/i),
     publishImages: parseOption(/\[(publish images?)\]/i),
-    canary:
-      !parseBoolean(getEnv("RELEASE", false) || "false") &&
-      !/\[(release|build release|release build)\]/i.test(commitMessage),
+    buildPlatforms: Array.from(buildPlatformsMap.values()),
+    testPlatforms: Array.from(testPlatformsMap.values()),
+    buildProfiles: ["release"],
   };
 }
 
 /**
+ * @param {PipelineOptions} [options]
  * @returns {Promise<Pipeline>}
  */
-async function getPipeline() {
+async function getPipeline(options) {
   /** @type {Step[]} */
   const steps = [];
 
-  if (isBuildManual() && !process.argv.includes("--apply")) {
-    steps.push(getOptionsStep(), getOptionsApplyStep());
-    return { steps };
+  if (!options) {
+    if (isBuildManual()) {
+      steps.push(getOptionsStep(), getOptionsApplyStep());
+      return { steps };
+    }
+    options = {};
   }
-
-  const options = await getPipelineOptions();
-  console.log("Pipeline options:", options);
 
   const { skipEverything } = options;
   if (skipEverything) {
     return { steps };
   }
 
-  const { skipBuilds, forceBuilds, unifiedBuilds, buildProfiles, buildPlatforms } = options;
-  if (!skipBuilds || forceBuilds) {
-    for (const platform of buildPlatforms) {
-      for (const profile of buildProfiles) {
-        const { os, arch } = platform;
-        const target = {
-          ...platform,
-          profile: profile === "release" ? undefined : profile,
-        };
+  const { buildPlatforms = [], buildProfiles = [], skipBuilds, forceBuilds, unifiedBuilds } = options;
+  for (const platform of buildPlatforms) {
+    if (skipBuilds && !forceBuilds) {
+      continue;
+    }
 
-        /** @type {Step[]} */
-        const buildSteps = [];
-        if (unifiedBuilds || (os === "darwin" && arch === "aarch64")) {
-          buildSteps.push(getBuildBunStep(target));
-        } else {
-          buildSteps.push(
-            getBuildVendorStep(target),
-            getBuildCppStep(target),
-            getBuildZigStep(target),
-            getLinkBunStep(target),
-          );
-        }
+    for (const profile of buildProfiles) {
+      const target = {
+        ...platform,
+        profile: profile === "release" ? undefined : profile,
+      };
 
-        steps.push({
-          key: getTargetKey(target),
-          group: getTargetLabel(target),
-          steps: buildSteps,
-        });
+      /** @type {Step[]} */
+      const buildSteps = [];
+      if (unifiedBuilds) {
+        buildSteps.push(getBuildBunStep(target));
+      } else {
+        buildSteps.push(
+          getBuildVendorStep(target),
+          getBuildCppStep(target),
+          getBuildZigStep(target),
+          getLinkBunStep(target),
+        );
       }
+
+      steps.push({
+        key: getTargetKey(target),
+        group: getTargetLabel(target),
+        steps: buildSteps,
+      });
     }
   }
 

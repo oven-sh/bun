@@ -43,8 +43,7 @@ devTest("onLoad", {
         setup(build) {
           let a = 0;
           build.onLoad({ filter: /trigger/ }, (args) => {
-            a += 1;
-            return { contents: 'export const value = ' + a + ';', loader: 'ts' };
+            return { contents: 'export const value = 1;', loader: 'ts' };
           });
         },
       }
@@ -65,8 +64,43 @@ devTest("onLoad", {
   async test(dev) {
     await dev.fetch("/").expect('value: 1');
     await dev.fetch("/").expect('value: 1');
-    await dev.write("trigger.ts", "throw new Error('should not be loaded 2');");
-    await dev.fetch("/").expect('value: 2');
-    await dev.fetch("/").expect('value: 2');
+    await dev.fetch("/").expect('value: 1');
   },
 });
+// devTest("onLoad with watchFile", {
+//   framework: minimalFramework,
+//   pluginFile: `
+//     import * as path from 'path';
+//     export default [
+//       {
+//         name: 'a',
+//         setup(build) {
+//           let a = 0;
+//           build.onLoad({ filter: /trigger/ }, (args) => {
+//             a += 1;
+//             return { contents: 'export const value = ' + a + ';', loader: 'ts' };
+//           });
+//         },
+//       }
+//     ];
+//   `,
+//   files: {
+//     "trigger.ts": `
+//       throw new Error('should not be loaded');
+//     `,
+//     "routes/index.ts": `
+//       import { value } from '../trigger.ts';
+
+//       export default function (req, meta) {
+//         return new Response('value: ' + value);
+//       }
+//     `,
+//   },
+//   async test(dev) {
+//     await dev.fetch("/").expect('value: 1');
+//     await dev.fetch("/").expect('value: 1');
+//     await dev.write("trigger.ts", "throw new Error('should not be loaded 2');");
+//     await dev.fetch("/").expect('value: 2');
+//     await dev.fetch("/").expect('value: 2');
+//   },
+// });

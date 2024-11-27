@@ -22,7 +22,7 @@ interface BundlerPlugin {
   /** Binding to `JSBundlerPlugin__addError` */
   addError(internalID: number, error: any, which: number): void;
   addFilter(filter, namespace, number): void;
-  generateDeferPromise(): Promise<void>;
+  generateDeferPromise(id: number): Promise<void>;
   promises: Array<Promise<any>> | undefined;
 }
 
@@ -335,12 +335,12 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
   }
 }
 
-export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespace, defaultLoaderId) {
+export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespace, defaultLoaderId, isServerSide: boolean) {
   const LOADERS_MAP = $LoaderLabelToId;
   const loaderName = $LoaderIdToLabel[defaultLoaderId];
 
   const generateDefer = () => this.generateDeferPromise(internalID);
-  var promiseResult = (async (internalID, path, namespace, defaultLoader, generateDefer) => {
+  var promiseResult = (async (internalID, path, namespace, isServerSide, defaultLoader, generateDefer) => {
     var results = this.onLoad.$get(namespace);
     if (!results) {
       this.onLoadAsync(internalID, null, null);
@@ -356,6 +356,7 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
           // pluginData
           loader: defaultLoader,
           defer: generateDefer,
+          side: isServerSide ? "server" : "client",
         });
 
         while (
@@ -407,7 +408,7 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
 
     this.onLoadAsync(internalID, null, null);
     return null;
-  })(internalID, path, namespace, loaderName, generateDefer);
+  })(internalID, path, namespace, isServerSide, loaderName, generateDefer);
 
   while (
     promiseResult &&

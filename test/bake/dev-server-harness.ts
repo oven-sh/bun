@@ -293,7 +293,7 @@ class OutputLineStream extends EventEmitter {
   }
 }
 
-export function devTest(description: string, options: DevServerTest) {
+export function devTest<T extends DevServerTest>(description: string, options: T): T {
   // Capture the caller name as part of the test tempdir
   const callerLocation = snapshotCallerLocation();
   const caller = stackTraceFileName(callerLocation);
@@ -305,7 +305,7 @@ export function devTest(description: string, options: DevServerTest) {
   // TODO: Tests are too flaky on Windows. Cannot reproduce locally.
   if (isWindows) {
     jest.test.todo(`DevServer > ${basename}.${count}: ${description}`);
-    return;
+    return options;
   }
 
   jest.test(`DevServer > ${basename}.${count}: ${description}`, async () => {
@@ -377,4 +377,5 @@ export function devTest(description: string, options: DevServerTest) {
       throw err;
     }
   });
+  return options;
 }

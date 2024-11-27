@@ -1,7 +1,7 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { devTest, minimalFramework, Step } from "../dev-server-harness";
 
-devTest("live bindings with `var`", {
+const liveBindingTest = devTest("live bindings with `var`", {
   framework: minimalFramework,
   files: {
     "state.ts": `
@@ -40,4 +40,74 @@ devTest("live bindings with `var`", {
     await dev.fetch("/").expect("Value: -1");
     await dev.fetch("/").expect("Value: -2");
   },
+});
+devTest("live bindings through export clause", {
+  framework: minimalFramework,
+  files: {
+    "state.ts": `
+      export var value = 0;
+      export function increment() {
+        value++;
+      }
+    `,
+    "proxy.ts": `
+      import { value } from './state';
+      export { value as live };
+    `,
+    "routes/index.ts": `
+      import { increment } from '../state';
+      import { live } from '../proxy';
+      export default function(req, meta) {
+        increment();
+        return new Response('State: ' + live);
+      }
+    `,
+  },
+  test: liveBindingTest.test,
+});
+devTest("live bindings through export from", {
+  framework: minimalFramework,
+  files: {
+    "state.ts": `
+      export var value = 0;
+      export function increment() {
+        value++;
+      }
+    `,
+    "proxy.ts": `
+      export { value as live } from './state';
+    `,
+    "routes/index.ts": `
+      import { increment } from '../state';
+      import { live } from '../proxy';
+      export default function(req, meta) {
+        increment();
+        return new Response('State: ' + live);
+      }
+    `,
+  },
+  test: liveBindingTest.test,
+});
+devTest("live bindings through export star", {
+  framework: minimalFramework,
+  files: {
+    "state.ts": `
+      export var value = 0;
+      export function increment() {
+        value++;
+      }
+    `,
+    "proxy.ts": `
+      export * from './state';
+    `,
+    "routes/index.ts": `
+      import { increment } from '../state';
+      import { live } from '../proxy';
+      export default function(req, meta) {
+        increment();
+        return new Response('State: ' + live);
+      }
+    `,
+  },
+  test: liveBindingTest.test,
 });

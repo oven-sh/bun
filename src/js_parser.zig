@@ -8986,64 +8986,62 @@ fn NewParser_(
             try p.is_import_item.ensureUnusedCapacity(p.allocator, count_excluding_namespace);
             var remap_count: u32 = 0;
             // Link the default item to the namespace
-            if (stmt.default_name) |*name_loc| {
-                outer: {
-                    const name = p.loadNameFromRef(name_loc.ref.?);
-                    const ref = try p.declareSymbol(.import, name_loc.loc, name);
-                    name_loc.ref = ref;
-                    try p.is_import_item.put(p.allocator, ref, {});
+            if (stmt.default_name) |*name_loc| outer: {
+                const name = p.loadNameFromRef(name_loc.ref.?);
+                const ref = try p.declareSymbol(.import, name_loc.loc, name);
+                name_loc.ref = ref;
+                try p.is_import_item.put(p.allocator, ref, {});
 
-                    // ensure every e_import_identifier holds the namespace
-                    if (p.options.features.hot_module_reloading) {
-                        const symbol = &p.symbols.items[ref.inner_index];
-                        if (symbol.namespace_alias == null) {
-                            symbol.namespace_alias = .{
-                                .namespace_ref = stmt.namespace_ref,
-                                .alias = "default",
-                                .import_record_index = stmt.import_record_index,
-                            };
-                        }
-                    }
-
-                    if (macro_remap) |*remap| {
-                        if (remap.get("default")) |remapped_path| {
-                            const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
-                            try p.macro.refs.put(ref, new_import_id);
-
-                            p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
-                            p.import_records.items[new_import_id].is_unused = true;
-                            if (comptime only_scan_imports_and_do_not_visit) {
-                                p.import_records.items[new_import_id].is_internal = true;
-                                p.import_records.items[new_import_id].path.is_disabled = true;
-                            }
-                            stmt.default_name = null;
-                            remap_count += 1;
-                            break :outer;
-                        }
-                    }
-
-                    if (comptime track_symbol_usage_during_parse_pass) {
-                        p.parse_pass_symbol_uses.put(name, .{
-                            .ref = ref,
+                // ensure every e_import_identifier holds the namespace
+                if (p.options.features.hot_module_reloading) {
+                    const symbol = &p.symbols.items[ref.inner_index];
+                    if (symbol.namespace_alias == null) {
+                        symbol.namespace_alias = .{
+                            .namespace_ref = stmt.namespace_ref,
+                            .alias = "default",
                             .import_record_index = stmt.import_record_index,
-                        }) catch unreachable;
+                        };
                     }
+                }
 
-                    if (is_macro) {
-                        try p.macro.refs.put(ref, stmt.import_record_index);
+                if (macro_remap) |*remap| {
+                    if (remap.get("default")) |remapped_path| {
+                        const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);
+                        try p.macro.refs.put(ref, new_import_id);
+
+                        p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
+                        p.import_records.items[new_import_id].is_unused = true;
+                        if (comptime only_scan_imports_and_do_not_visit) {
+                            p.import_records.items[new_import_id].is_internal = true;
+                            p.import_records.items[new_import_id].path.is_disabled = true;
+                        }
                         stmt.default_name = null;
+                        remap_count += 1;
                         break :outer;
                     }
-
-                    if (comptime ParsePassSymbolUsageType != void) {
-                        p.parse_pass_symbol_uses.put(name, .{
-                            .ref = ref,
-                            .import_record_index = stmt.import_record_index,
-                        }) catch unreachable;
-                    }
-
-                    item_refs.putAssumeCapacity(name, name_loc.*);
                 }
+
+                if (comptime track_symbol_usage_during_parse_pass) {
+                    p.parse_pass_symbol_uses.put(name, .{
+                        .ref = ref,
+                        .import_record_index = stmt.import_record_index,
+                    }) catch unreachable;
+                }
+
+                if (is_macro) {
+                    try p.macro.refs.put(ref, stmt.import_record_index);
+                    stmt.default_name = null;
+                    break :outer;
+                }
+
+                if (comptime ParsePassSymbolUsageType != void) {
+                    p.parse_pass_symbol_uses.put(name, .{
+                        .ref = ref,
+                        .import_record_index = stmt.import_record_index,
+                    }) catch unreachable;
+                }
+
+                item_refs.putAssumeCapacity(name, name_loc.*);
             }
             var end: usize = 0;
 
@@ -12469,7 +12467,6 @@ fn NewParser_(
 
         fn declareSymbolMaybeGenerated(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string, comptime is_generated: bool) !Ref {
             // p.checkForNonBMPCodePoint(loc, name)
-
             if (comptime !is_generated) {
                 // Forbid declaring a symbol with a reserved word in strict mode
                 if (p.isStrictMode() and name.ptr != arguments_str.ptr and js_lexer.StrictModeReservedWords.has(name)) {
@@ -19046,16 +19043,6 @@ fn NewParser_(
                     }
                 },
                 .s_export_from => |data| {
-                    // When HMR is enabled, we need to transform this into
-                    // import {foo} from "./foo";
-                    // export {foo};
-
-                    // From:
-                    // export {foo as default} from './foo';
-                    // To:
-                    // import {default as foo} from './foo';
-                    // export {foo};
-
                     // "export {foo} from 'path'"
                     const name = p.loadNameFromRef(data.namespace_ref);
 
@@ -19079,7 +19066,7 @@ fn NewParser_(
 
                             const _name = p.loadNameFromRef(old_ref);
 
-                            const ref = try p.newSymbol(.other, _name);
+                            const ref = try p.newSymbol(.import, _name);
                             try p.current_scope.generated.push(p.allocator, ref);
                             try p.recordDeclaredSymbol(ref);
                             data.items[j] = item;
@@ -19093,11 +19080,10 @@ fn NewParser_(
                             return;
                         }
                     } else {
-
                         // This is a re-export and the symbols created here are used to reference
                         for (data.items) |*item| {
                             const _name = p.loadNameFromRef(item.name.ref.?);
-                            const ref = try p.newSymbol(.other, _name);
+                            const ref = try p.newSymbol(.import, _name);
                             try p.current_scope.generated.push(p.allocator, ref);
                             try p.recordDeclaredSymbol(ref);
                             item.name.ref = ref;
@@ -23961,19 +23947,37 @@ pub const ConvertESMExportsForHmr = struct {
             },
             .s_export_clause => |st| {
                 for (st.items) |item| {
-                    try ctx.export_props.append(p.allocator, .{
-                        .key = Expr.init(E.String, .{
-                            .data = item.alias,
-                        }, stmt.loc),
-                        .value = Expr.initIdentifier(item.name.ref.?, item.name.loc),
-                    });
+                    const ref = item.name.ref.?;
+                    try ctx.visitRefForBakeModuleExports(p, ref, item.name.loc, false);
                 }
 
                 return; // do not emit a statement here
             },
 
-            .s_export_from => {
-                bun.todoPanic(@src(), "hot-module-reloading instrumentation for 'export {{ ... }} from'", .{});
+            .s_export_from => |st| stmt: {
+                for (st.items) |item| {
+                    const ref = item.name.ref.?;
+                    const symbol = &p.symbols.items[ref.innerIndex()];
+                    if (symbol.namespace_alias == null) {
+                        symbol.namespace_alias = .{
+                            .namespace_ref = st.namespace_ref,
+                            .alias = item.original_name,
+                            .import_record_index = st.import_record_index,
+                        };
+                    }
+                    try ctx.visitRefForBakeModuleExports(p, ref, item.name.loc, true);
+                }
+
+                const gop = try ctx.imports_seen.getOrPut(p.allocator, st.import_record_index);
+                if (gop.found_existing) return;
+                break :stmt Stmt.alloc(S.Import, .{
+                    .import_record_index = st.import_record_index,
+                    .is_single_line = true,
+                    .default_name = null,
+                    .items = st.items,
+                    .namespace_ref = st.namespace_ref,
+                    .star_name_loc = null,
+                }, stmt.loc);
             },
             .s_export_star => {
                 bun.todoPanic(@src(), "hot-module-reloading instrumentation for 'export * from'", .{});
@@ -24001,7 +24005,7 @@ pub const ConvertESMExportsForHmr = struct {
         switch (binding.data) {
             .b_missing => {},
             .b_identifier => |id| {
-                try ctx.visitRefForKitModuleExports(p, id.ref, binding.loc, is_live_binding);
+                try ctx.visitRefForBakeModuleExports(p, id.ref, binding.loc, is_live_binding);
             },
             .b_array => |array| {
                 for (array.items) |item| {
@@ -24016,16 +24020,24 @@ pub const ConvertESMExportsForHmr = struct {
         }
     }
 
-    fn visitRefForKitModuleExports(
+    fn visitRefForBakeModuleExports(
         ctx: *ConvertESMExportsForHmr,
         p: anytype,
         ref: Ref,
         loc: logger.Loc,
-        is_live_binding: bool,
+        is_live_binding_source: bool,
     ) !void {
         const symbol = p.symbols.items[ref.inner_index];
-        const id = Expr.initIdentifier(ref, loc);
-        if (is_live_binding) {
+        std.debug.print("yolo {s}, {s}\n", .{ symbol.original_name, @tagName(symbol.kind) });
+        const id = if (symbol.kind == .import)
+            Expr.init(E.ImportIdentifier, .{ .ref = ref }, loc)
+        else
+            Expr.initIdentifier(ref, loc);
+        if (is_live_binding_source or symbol.kind == .import) {
+            // TODO: instead of requiring getters for live-bindings,
+            // a callback propagation system should be considered.
+            // mostly because here, these might not even be live
+            // bindings, and re-exports are so, so common.
             const key = Expr.init(E.String, .{
                 .data = symbol.original_name,
             }, loc);
@@ -24052,24 +24064,7 @@ pub const ConvertESMExportsForHmr = struct {
                     },
                 } }, loc),
             });
-            // 'set abc(abc2) { abc = abc2 }'
-            try ctx.export_props.append(p.allocator, .{
-                .kind = .set,
-                .key = key,
-                .value = Expr.init(E.Function, .{ .func = .{
-                    .args = try p.allocator.dupe(G.Arg, &.{.{
-                        .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = arg1 }, loc),
-                    }}),
-                    .body = .{
-                        .stmts = try p.allocator.dupe(Stmt, &.{
-                            Stmt.alloc(S.SExpr, .{
-                                .value = Expr.assign(id, Expr.initIdentifier(arg1, loc)),
-                            }, loc),
-                        }),
-                        .loc = loc,
-                    },
-                } }, loc),
-            });
+            // no setter is added since live bindings are read-only
         } else {
             // 'abc,'
             try ctx.export_props.append(p.allocator, .{

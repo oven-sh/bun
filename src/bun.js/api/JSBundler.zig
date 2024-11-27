@@ -771,6 +771,7 @@ pub const JSBundler = struct {
                 load.namespace,
                 load,
                 load.default_loader,
+                load.bakeGraph() != .client,
             );
         }
 
@@ -881,6 +882,7 @@ pub const JSBundler = struct {
             path: *const String,
             context: *anyopaque,
             u8,
+            bool,
         ) void;
 
         extern fn JSBundlerPlugin__matchOnResolve(
@@ -921,6 +923,7 @@ pub const JSBundler = struct {
             namespace: []const u8,
             context: *anyopaque,
             default_loader: options.Loader,
+            is_server_side: bool,
         ) void {
             JSC.markBinding(@src());
             const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnLoad");
@@ -933,7 +936,7 @@ pub const JSBundler = struct {
             const path_string = bun.String.createUTF8(path);
             defer namespace_string.deref();
             defer path_string.deref();
-            JSBundlerPlugin__matchOnLoad(this, &namespace_string, &path_string, context, @intFromEnum(default_loader));
+            JSBundlerPlugin__matchOnLoad(this, &namespace_string, &path_string, context, @intFromEnum(default_loader), is_server_side);
         }
 
         pub fn matchOnResolve(

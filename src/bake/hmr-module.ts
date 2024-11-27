@@ -39,6 +39,7 @@ export class HotModule<E = any> {
   _cached_failure: any = undefined;
   // modules that import THIS module
   _deps: Map<HotModule, DepEntry | undefined> = new Map();
+  _onDispose: HotDisposeFunction[] | undefined = undefined;
 
   constructor(id: Id) {
     this.id = id;
@@ -55,13 +56,14 @@ export class HotModule<E = any> {
     mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: expectedImports } : undefined);
     const { exports, __esModule } = mod;
     const object = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
-    if (expectedImports) {
-      for (const key of expectedImports) {
-        if (!(key in object)) {
-          throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
-        }
-      }
-    }
+    // TODO: restore this validation. not correct due to import cycles which are allowed usually
+    // if (expectedImports) {
+    //   for (const key of expectedImports) {
+    //     if (!(key in object)) {
+    //       throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
+    //     }
+    //   }
+    // }
     return object;
   }
 
@@ -93,12 +95,71 @@ function initImportMeta(m: HotModule): ImportMeta {
     url: `bun://${m.id}`,
     main: false,
     // @ts-ignore
-    hot: {
-      accept() {
-        throw new Error("Not implemented");
-      },
-    }
+    get hot() {
+      const hot = new Hot(m);
+      Object.defineProperty(this, "hot", { value: hot });
+      return hot;
+    },
   };
+}
+
+type HotAcceptFunction = (esmExports: any | void) => void;
+type HotArrayAcceptFunction = (esmExports: (any | void)[]) => void;
+type HotDisposeFunction = (data: any) => void;
+type HotEventHandler = (data: any) => void;
+
+class Hot {
+  private _module: HotModule;
+
+  constructor(module: HotModule) {
+    this._module = module;
+  }
+
+  accept(
+    arg1: string | readonly string[] | HotAcceptFunction,
+    arg2: HotAcceptFunction | HotArrayAcceptFunction | undefined,
+  ) {
+    console.warn("TODO: implement ImportMetaHot.accept (called from " + JSON.stringify(this._module.id) + ")");
+  }
+
+  dispose(cb: HotDisposeFunction) {
+    (this._module._onDispose ??= []).push(cb);
+  }
+
+  prune(cb: HotDisposeFunction) {
+    throw new Error("TODO: implement ImportMetaHot.prune");
+  }
+
+  invalidate() {
+    throw new Error("TODO: implement ImportMetaHot.invalidate");
+  }
+
+  on(event: string, cb: HotEventHandler) {
+    if (isUnsupportedViteEventName(event)) {
+      throw new Error(`Unsupported event name: ${event}`);
+    }
+
+    throw new Error("TODO: implement ImportMetaHot.on");
+  }
+
+  off(event: string, cb: HotEventHandler) {
+    throw new Error("TODO: implement ImportMetaHot.off");
+  }
+
+  send(event: string, cb: HotEventHandler) {
+    throw new Error("TODO: implement ImportMetaHot.send");
+  }
+}
+
+function isUnsupportedViteEventName(str: string) {
+  return str === 'vite:beforeUpdate'
+    || str === 'vite:afterUpdate'
+    || str === 'vite:beforeFullReload'
+    || str === 'vite:beforePrune'
+    || str === 'vite:invalidate'
+    || str === 'vite:error'
+    || str === 'vite:ws:disconnect'
+    || str === 'vite:ws:connect';
 }
 
 /**

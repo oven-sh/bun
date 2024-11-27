@@ -4360,7 +4360,7 @@ pub const Expect = struct {
     /// Execute the custom matcher for the given args (the left value + the args passed to the matcher call).
     /// This function is called both for symmetric and asymmetric matching.
     /// If silent=false, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
-    pub fn executeCustomMatcher(globalThis: *JSGlobalObject, matcher_name: bun.String, matcher_fn: JSValue, args: []const JSValue, flags: Expect.Flags, silent: bool) bun.JSError!void {
+    pub fn executeCustomMatcher(globalThis: *JSGlobalObject, matcher_name: bun.String, matcher_fn: JSValue, args: []const JSValue, flags: Expect.Flags, silent: bool) bun.JSError!bool {
         // prepare the this object
         const matcher_context = try globalThis.bunVM().allocator.create(ExpectMatcherContext);
         matcher_context.flags = flags;
@@ -4398,6 +4398,7 @@ pub const Expect = struct {
             if (result.isObject()) {
                 if (try result.get(globalThis, "pass")) |pass_value| {
                     pass = pass_value.toBoolean();
+                    if (globalThis.hasException()) return false;
 
                     if (result.fastGet(globalThis, .message)) |message_value| {
                         if (!message_value.isString() and !message_value.isCallable(globalThis.vm())) {
@@ -4418,7 +4419,7 @@ pub const Expect = struct {
         }
 
         if (flags.not) pass = !pass;
-        if (pass or silent) return;
+        if (pass or silent) return pass;
 
         // handle failure
         var message_text: bun.String = bun.String.dead;
@@ -4492,7 +4493,7 @@ pub const Expect = struct {
         matcher_args.appendAssumeCapacity(value);
         for (0..args_count) |i| matcher_args.appendAssumeCapacity(args_ptr[i]);
 
-        try executeCustomMatcher(globalThis, matcher_name, matcher_fn, matcher_args.items, expect.flags, false);
+        _ = try executeCustomMatcher(globalThis, matcher_name, matcher_fn, matcher_args.items, expect.flags, false);
 
         return thisValue;
     }
@@ -5015,8 +5016,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
             matcher_args.appendAssumeCapacity(captured_args.getIndex(globalThis, @truncate(i)));
         }
 
-        Expect.executeCustomMatcher(globalThis, matcher_name, matcher_fn, matcher_args.items, this.flags, true) catch return false;
-        return true;
+        return Expect.executeCustomMatcher(globalThis, matcher_name, matcher_fn, matcher_args.items, this.flags, true) catch false;
     }
 
     pub fn asymmetricMatch(this: *ExpectCustomAsymmetricMatcher, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {

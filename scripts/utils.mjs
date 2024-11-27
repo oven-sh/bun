@@ -728,6 +728,7 @@ export function getGithubToken() {
  * @property {string} [body]
  * @property {Record<string, string | undefined>} [headers]
  * @property {number} [timeout]
+ * @property {boolean} [cache]
  * @property {number} [retries]
  * @property {boolean} [json]
  * @property {boolean} [arrayBuffer]
@@ -741,6 +742,9 @@ export function getGithubToken() {
  * @property {Error | undefined} error
  * @property {any} body
  */
+
+/** @type {Record<string, CurlResult | undefined>} */
+let cachedResults;
 
 /**
  * @param {string} url
@@ -756,6 +760,15 @@ export async function curl(url, options = {}) {
   let json = options["json"];
   let arrayBuffer = options["arrayBuffer"];
   let filename = options["filename"];
+
+  let cacheKey;
+  let cache = options["cache"];
+  if (cache) {
+    cacheKey = `${method} ${href}`;
+    if (cachedResults?.[cacheKey]) {
+      return cachedResults[cacheKey];
+    }
+  }
 
   if (typeof headers["Authorization"] === "undefined") {
     if (hostname === "api.github.com" || hostname === "uploads.github.com") {
@@ -814,6 +827,11 @@ export async function curl(url, options = {}) {
     if (status === 400 || status === 404 || status === 422) {
       break;
     }
+  }
+
+  if (cacheKey) {
+    cachedResults ||= {};
+    cachedResults[cacheKey] = { status, statusText, error, body };
   }
 
   return {
@@ -1249,7 +1267,7 @@ export async function getLastSuccessfulBuild() {
     }
 
     while (url) {
-      const { error, body } = await curl(`${url}.json`, { json: true });
+      const { error, body } = await curl(`${url}.json`, { json: true, cache: true });
       if (error) {
         return;
       }
@@ -2576,12 +2594,14 @@ export function printEnvironment() {
       }
     });
 
-    startGroup("Limits", () => {
-      const shell = which(["sh", "bash"]);
-      if (shell) {
-        spawnSync([shell, "-c", "ulimit -a"], { stdio: "inherit" });
-      }
-    });
+    if (isPosix) {
+      startGroup("Limits", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "ulimit -a"], { stdio: "inherit" });
+        }
+      });
+    }
   }
 
   startGroup("Repository", () => {

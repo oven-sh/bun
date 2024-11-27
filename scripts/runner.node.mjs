@@ -60,6 +60,10 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: undefined,
     },
+    ["build-id"]: {
+      type: "string",
+      default: undefined,
+    },
     ["bail"]: {
       type: "boolean",
       default: false,
@@ -101,7 +105,7 @@ async function runTests() {
   let execPath;
   if (options["step"]) {
     downloadLoop: for (let i = 0; i < 10; i++) {
-      execPath = await getExecPathFromBuildKite(options["step"]);
+      execPath = await getExecPathFromBuildKite(options["step"], options["build-id"]);
       for (let j = 0; j < 10; j++) {
         const { error } = spawnSync(execPath, ["--version"], {
           encoding: "utf-8",
@@ -1081,9 +1085,10 @@ function getExecPath(bunExe) {
 
 /**
  * @param {string} target
+ * @param {string} [buildId]
  * @returns {Promise<string>}
  */
-async function getExecPathFromBuildKite(target) {
+async function getExecPathFromBuildKite(target, buildId) {
   if (existsSync(target) || target.includes("/")) {
     return getExecPath(target);
   }
@@ -1092,7 +1097,6 @@ async function getExecPathFromBuildKite(target) {
   mkdirSync(releasePath, { recursive: true });
 
   const args = ["artifact", "download", "**", releasePath, "--step", target];
-  const buildId = process.env["BUILDKITE_ARTIFACT_BUILD_ID"];
   if (buildId) {
     args.push("--build", buildId);
   }

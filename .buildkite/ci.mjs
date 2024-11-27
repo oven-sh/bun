@@ -287,27 +287,17 @@ function getEc2Agent(platform, options) {
 
 /**
  * @param {Platform} platform
- * @returns {Agent}
- */
-function getBuildAgent(platform) {
-  const { os, arch, abi } = platform;
-  return {
-    queue: `build-${os}`,
-    os,
-    arch,
-    abi,
-  };
-}
-
-/**
- * @param {Platform} platform
  * @returns {string}
  */
 function getCppAgent(platform) {
   const { os, arch } = platform;
 
   if (os === "darwin") {
-    return getBuildAgent(platform);
+    return {
+      queue: `build-${os}`,
+      os,
+      arch,
+    };
   }
 
   return getEc2Agent(platform, {
@@ -323,22 +313,22 @@ function getCppAgent(platform) {
 function getZigAgent(platform) {
   const { arch } = platform;
 
-  // return {
-  //   queue: "build-zig",
-  // };
+  return {
+    queue: "build-zig",
+  };
 
-  return getEc2Agent(
-    {
-      os: "linux",
-      arch,
-      distro: "debian",
-      release: "11",
-    },
-    {
-      instanceType: arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge",
-      cpuCount: 8,
-    },
-  );
+  // return getEc2Agent(
+  //   {
+  //     os: "linux",
+  //     arch,
+  //     distro: "debian",
+  //     release: "11",
+  //   },
+  //   {
+  //     instanceType: arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge",
+  //     cpuCount: 8,
+  //   },
+  // );
 }
 
 /**
@@ -360,7 +350,7 @@ function getTestAgent(platform) {
   // at 8GB of memory, so use 16GB instead.
   if (os === "windows") {
     return getEc2Agent(platform, {
-      instanceType: arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge",
+      instanceType: "c7i.2xlarge",
       cpuCount: 8,
     });
   }
@@ -401,7 +391,6 @@ function getBuildVendorStep(platform) {
   return {
     key: `${getTargetKey(platform)}-build-vendor`,
     label: `${getTargetLabel(platform)} - build-vendor`,
-    // depends_on: getDependsOn(platform),
     agents: getCppAgent(platform),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
@@ -418,7 +407,6 @@ function getBuildCppStep(platform) {
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
-    // depends_on: getDependsOn(platform),
     agents: getCppAgent(platform),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
@@ -455,7 +443,6 @@ function getBuildZigStep(platform) {
   return {
     key: `${getTargetKey(platform)}-build-zig`,
     label: `${getTargetLabel(platform)} - build-zig`,
-    // depends_on: getDependsOn(platform),
     agents: getZigAgent(platform),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
@@ -477,7 +464,7 @@ function getLinkBunStep(platform) {
       `${getTargetKey(platform)}-build-cpp`,
       `${getTargetKey(platform)}-build-zig`,
     ],
-    agents: getBuildAgent(platform),
+    agents: getCppAgent(platform),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {
@@ -505,35 +492,47 @@ function getBuildBunStep(platform) {
 }
 
 /**
+ * @typedef {Object} TestOptions
+ * @property {string} [buildId]
+ * @property {boolean} [unifiedTests]
+ * @property {string[]} [testFiles]
+ */
+
+/**
  * @param {Platform} platform
+ * @param {TestOptions} [options]
  * @returns {Step}
  */
-function getTestBunStep(platform) {
+function getTestBunStep(platform, options = {}) {
   const { os } = platform;
+  const { buildId, unifiedTests, testFiles } = options;
 
-  let env;
-  let depends = [];
+  const args = [`--step=${getTargetKey(platform)}-build-bun`];
   if (buildId) {
-    env = {
-      BUILDKITE_ARTIFACT_BUILD_ID: buildId,
-    };
-  } else {
-    depends = [`${getTargetKey(platform)}-build-bun`];
+    args.push(`--build-id=${buildId}`);
+  }
+  if (testFiles) {
+    args.push(...testFiles.map(testFile => `--include=${testFile}`));
+  }
+
+  const depends = [];
+  if (!buildId) {
+    depends.push(`${getTargetKey(platform)}-build-bun`);
   }
 
   return {
     key: `${getPlatformKey(platform)}-test-bun`,
     label: `${getPlatformLabel(platform)} - test-bun`,
-    depends_on: [...depends /*...getDependsOn(platform)*/],
+    depends_on: depends,
     agents: getTestAgent(platform),
     cancel_on_build_failing: isMergeQueue(),
     retry: getRetry(),
     soft_fail: isMainBranch() ? true : [{ exit_status: 2 }],
-    parallelism: os === "darwin" ? 2 : 10,
+    parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
     command:
       os === "windows"
-        ? `node .\\scripts\\runner.node.mjs --step ${getTargetKey(platform)}-build-bun`
-        : `./scripts/runner.node.mjs --step ${getTargetKey(platform)}-build-bun`,
+        ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
+        : `./scripts/runner.node.mjs ${args.join(" ")}`,
     env,
   };
 }
@@ -574,6 +573,21 @@ function getBuildImageStep(platform, dryRun) {
 }
 
 /**
+ * @param {Platform[]} [buildPlatforms]
+ * @returns {Step}
+ */
+function getReleaseStep(buildPlatforms) {
+  return {
+    key: "release",
+    label: getBuildkiteEmoji("release"),
+    agents: {
+      queue: "test-darwin",
+    },
+    command: ".buildkite/scripts/upload-release.sh",
+  };
+}
+
+/**
  * @param {string} string
  * @param {boolean} [buildkite]
  * @returns {string}
@@ -605,6 +619,9 @@ function getBuildkiteEmoji(string) {
   }
   if (/clipboard/i.test(string)) {
     return ":clipboard:";
+  }
+  if (/github/i.test(string)) {
+    return ":github:";
   }
   return "";
 }
@@ -643,6 +660,9 @@ function getEmoji(string) {
   }
   if (/clipboard/i.test(string)) {
     return "📋";
+  }
+  if (/release/i.test(string)) {
+    return ":rocket:";
   }
   return "";
 }
@@ -935,7 +955,7 @@ function getEmoji(string) {
 
 /**
  * @typedef {Object} Pipeline
- * @property {Step[]} steps
+ * @property {Step[]} [steps]
  */
 
 /**
@@ -1022,6 +1042,7 @@ function getEmoji(string) {
  * @property {Platform[]} [testPlatforms]
  * @property {string[]} [testFiles]
  * @property {boolean} [unifiedBuilds]
+ * @property {boolean} [unifiedTests]
  */
 
 /**
@@ -1183,6 +1204,14 @@ function getOptionsStep() {
         default: "false",
         options: booleanOptions,
       },
+      {
+        key: "unified-tests",
+        select: "Do you want to run tests in a single step?",
+        hint: "If true, tests will not be split into seperate steps (this will be very slow)",
+        required: false,
+        default: "false",
+        options: booleanOptions,
+      },
     ],
   };
 }
@@ -1242,6 +1271,7 @@ async function getPipelineOptions() {
       buildImages: parseBoolean(options["build-images"]),
       publishImages: parseBoolean(options["publish-images"]),
       unifiedBuilds: parseBoolean(options["unified-builds"]),
+      unifiedTests: parseBoolean(options["unified-tests"]),
       buildProfiles: parseArray(options["build-profiles"]),
       buildPlatforms: buildPlatformKeys?.length
         ? buildPlatformKeys.map(key => buildPlatformsMap.get(key))
@@ -1287,22 +1317,20 @@ async function getPipelineOptions() {
  * @param {PipelineOptions} [options]
  * @returns {Promise<Pipeline>}
  */
-async function getPipeline(options) {
-  /** @type {Step[]} */
-  const steps = [];
-
-  if (!options) {
-    if (isBuildManual()) {
-      steps.push(getOptionsStep(), getOptionsApplyStep());
-      return { steps };
-    }
-    options = {};
+async function getPipeline(options = {}) {
+  if (isBuildManual() && !Object.keys(options).length) {
+    return {
+      steps: [getOptionsStep(), getOptionsApplyStep()],
+    };
   }
 
   const { skipEverything } = options;
   if (skipEverything) {
-    return { steps };
+    return {};
   }
+
+  /** @type {Map<string, Step[]>} */
+  const buildSteps = new Map();
 
   const { buildPlatforms = [], buildProfiles = [], skipBuilds, forceBuilds, unifiedBuilds } = options;
   for (const platform of buildPlatforms) {
@@ -1316,12 +1344,13 @@ async function getPipeline(options) {
         profile: profile === "release" ? undefined : profile,
       };
 
-      /** @type {Step[]} */
-      const buildSteps = [];
+      const key = getTargetKey(target);
+      const steps = buildSteps.get(key) ?? [];
+
       if (unifiedBuilds) {
-        buildSteps.push(getBuildBunStep(target));
+        steps.push(getBuildBunStep(target));
       } else {
-        buildSteps.push(
+        steps.push(
           getBuildVendorStep(target),
           getBuildCppStep(target),
           getBuildZigStep(target),
@@ -1329,12 +1358,57 @@ async function getPipeline(options) {
         );
       }
 
-      steps.push({
-        key: getTargetKey(target),
-        group: getTargetLabel(target),
-        steps: buildSteps,
-      });
+      buildSteps.set(key, steps);
     }
+  }
+
+  /** @type {Map<string, Step[]>} */
+  const testSteps = new Map();
+
+  const { testPlatforms = [], skipTests, forceTests, unifiedTests, testFiles } = options;
+  for (const platform of testPlatforms) {
+    if (skipTests && !forceTests) {
+      continue;
+    }
+
+    const key = getTargetKey(platform);
+    const steps = testSteps.get(key) ?? [];
+
+    if (buildSteps.has(key)) {
+      steps.push(getTestBunStep(platform, { unifiedTests, testFiles }));
+    } else {
+      const lastBuild = await getLastSuccessfulBuild();
+      if (lastBuild) {
+        const { id: buildId } = lastBuild;
+        steps.push(getTestBunStep(platform, { unifiedTests, testFiles, buildId }));
+      }
+    }
+
+    testSteps.set(key, steps);
+  }
+
+  /** @type {Map<string, GroupStep>} */
+  const groupSteps = new Map(
+    [...buildPlatforms, ...testPlatforms].map(platform => {
+      const groupKey = getTargetKey(platform);
+      const groupBuildSteps = buildSteps.get(groupKey) ?? [];
+      const groupTestSteps = testSteps.get(groupKey) ?? [];
+      return [
+        groupKey,
+        {
+          group: getTargetLabel(platform),
+          label: getTargetLabel(platform),
+          steps: [...groupBuildSteps, ...groupTestSteps],
+        },
+      ];
+    }),
+  );
+
+  /** @type {Step[]} */
+  const steps = [...groupSteps.values()];
+
+  if (isMainBranch()) {
+    steps.push(getReleaseStep(buildPlatforms));
   }
 
   return { steps };
@@ -1343,6 +1417,9 @@ async function getPipeline(options) {
 async function main() {
   startGroup("Generating options...");
   const options = await getPipelineOptions();
+  if (options) {
+    console.log("Generated options:", options);
+  }
 
   startGroup("Generating pipeline...");
   const pipeline = await getPipeline(options);

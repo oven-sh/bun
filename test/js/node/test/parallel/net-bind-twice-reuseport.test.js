@@ -21,8 +21,10 @@ test("net.Server should not allow binding to the same port twice", done => {
 
     const port = server1.address().port;
     server2.listen({ ...options, port }, () => {
-      server1.close(() => {
-        done();
+      server2.close(() => {
+        server1.close(() => {
+          done();
+        });
       });
     });
 

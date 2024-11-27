@@ -583,6 +583,9 @@ function getBuildkiteEmoji(string, buildkite) {
   if (/false|no|fail|error|failure/i.test(string)) {
     return ":x:";
   }
+  if (/gear|settings|configure/i.test(string)) {
+    return ":gear:";
+  }
   return "";
 }
 
@@ -614,6 +617,9 @@ function getEmoji(string) {
   }
   if (/release/i.test(string)) {
     return "🏆";
+  }
+  if (/gear|settings|configure/i.test(string)) {
+    return "⚙️";
   }
   return "";
 }
@@ -1010,7 +1016,8 @@ function getOptionsStep() {
 
   return {
     key: "options",
-    block: "Configure build",
+    block: getBuildkiteEmoji("gear"),
+    prompt: "Customize the build options",
     blocked_state: "running",
     fields: [
       {
@@ -1144,9 +1151,11 @@ function getOptionsStep() {
  * @returns {Step}
  */
 function getOptionsApplyStep() {
+  const command = getEnv("BUILDKITE_COMMAND");
   return {
     key: "options-apply",
-    command: "node ./.buildkite/ci.mjs --apply",
+    label: getBuildkiteEmoji("gear"),
+    command: `${command} --apply`,
     depends_on: ["options"],
     agents: {
       queue: getEnv("BUILDKITE_AGENT_META_DATA_QUEUE", false),

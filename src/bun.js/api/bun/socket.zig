@@ -2488,7 +2488,6 @@ fn NewSocket(comptime ssl: bool) type {
         ) bun.JSError!JSValue {
             JSC.markBinding(@src());
             const args = callframe.arguments_old(1);
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
             if (args.len > 0 and args.ptr[0].toBoolean()) {
                 this.socket.shutdownRead();
             } else {

@@ -5855,7 +5855,6 @@ pub const NodeHTTPResponse = struct {
         const sec_websocket_protocol_value = brk: {
             if (sec_websocket_protocol.isEmpty()) {
                 break :brk this.upgrade_context.sec_websocket_protocol;
-
             }
             sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);
             break :brk sec_websocket_protocol_str.?.slice();
@@ -6043,7 +6042,6 @@ pub const NodeHTTPResponse = struct {
 
         return JSC.JSValue.jsNumber(this.response.getBufferedAmount());
     }
-
 
     pub fn jsRef(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (!this.isDone()) {

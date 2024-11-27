@@ -3216,7 +3216,7 @@ pub const AnyResponse = union(enum) {
             .TCP => |resp| resp.state(),
         };
     }
-    
+
     pub fn init(response: anytype) AnyResponse {
         return switch (@TypeOf(response)) {
             *NewApp(true).Response => .{ .SSL = response },

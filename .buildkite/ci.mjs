@@ -1293,6 +1293,7 @@ async function getPipeline() {
   if (!skipBuilds || forceBuilds) {
     for (const platform of buildPlatforms) {
       for (const profile of buildProfiles) {
+        const { os, arch } = platform;
         const target = {
           ...platform,
           profile: profile === "release" ? undefined : profile,
@@ -1300,7 +1301,7 @@ async function getPipeline() {
 
         /** @type {Step[]} */
         const buildSteps = [];
-        if (unifiedBuilds) {
+        if (unifiedBuilds || (os === "darwin" && arch === "aarch64")) {
           buildSteps.push(getBuildBunStep(target));
         } else {
           buildSteps.push(

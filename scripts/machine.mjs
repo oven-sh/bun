@@ -241,7 +241,9 @@ export const aws = {
    * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/terminate-instances.html
    */
   async terminateInstances(...instanceIds) {
-    await aws.spawn($`ec2 terminate-instances --instance-ids ${instanceIds}`);
+    await aws.spawn($`ec2 terminate-instances --instance-ids ${instanceIds}`, {
+      throwOnError: error => !/InvalidInstanceID\.NotFound/i.test(inspect(error)),
+    });
   },
 
   /**

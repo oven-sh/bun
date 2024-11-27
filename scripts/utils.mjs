@@ -1413,6 +1413,30 @@ export async function unzip(filename, output) {
 }
 
 /**
+ * @param {string} value
+ * @returns {boolean | undefined}
+ */
+export function parseBoolean(value) {
+  if (/^(true|yes|1|on)$/i.test(value)) {
+    return true;
+  }
+  if (/^(false|no|0|off)$/i.test(value)) {
+    return false;
+  }
+}
+
+/**
+ * @param {string} value
+ * @returns {number | undefined}
+ */
+export function parseNumber(value) {
+  const number = Number(value);
+  if (!isNaN(number)) {
+    return number;
+  }
+}
+
+/**
  * @param {string} string
  * @returns {"darwin" | "linux" | "windows"}
  */

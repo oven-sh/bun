@@ -28,6 +28,8 @@ import {
   printEnvironment,
   isBuildManual,
   startGroup,
+  getBuildMetadata,
+  parseBoolean,
 } from "../scripts/utils.mjs";
 
 /**
@@ -35,8 +37,8 @@ import {
  * @typedef {"aarch64" | "x64"} Arch
  * @typedef {"musl"} Abi
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
- * @typedef {"latest" | "previous" | "oldest" | "eol" | "todo"} Tier
- * @typedef {"assert" | "debug"} Profile
+ * @typedef {"latest" | "previous" | "oldest" | "eol"} Tier
+ * @typedef {"release" | "assert" | "debug"} Profile
  */
 
 /**
@@ -120,21 +122,16 @@ const buildPlatforms = [
  * @type {Platform[]}
  */
 const testPlatforms = [
-  { os: "darwin", arch: "aarch64", release: "15", tier: "todo" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
-  { os: "darwin", arch: "x64", release: "15", tier: "todo" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
   { os: "darwin", arch: "x64", release: "13", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "11", tier: "previous" },
-  { os: "linux", arch: "aarch64", distro: "debian", release: "10", tier: "todo" },
   { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "11", tier: "previous" },
-  { os: "linux", arch: "x64", distro: "debian", release: "10", tier: "todo" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11", tier: "previous" },
-  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "10", tier: "todo" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04", tier: "oldest" },
@@ -144,12 +141,6 @@ const testPlatforms = [
   { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "22.04", tier: "previous" },
   { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "20.04", tier: "oldest" },
-  { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", tier: "todo" },
-  { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2", tier: "todo" },
-  { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", tier: "todo" },
-  { os: "linux", arch: "x64", distro: "amazonlinux", release: "2", tier: "todo" },
-  { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", tier: "todo" },
-  { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2", tier: "todo" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20", tier: "latest" },
@@ -627,14 +618,6 @@ function getEmoji(string) {
   return "";
 }
 
-/**
- * @typedef PipelineOptions
- * @property {string} [buildId]
- * @property {boolean} [buildImages]
- * @property {boolean} [publishImages]
- * @property {boolean} [skipTests]
- */
-
 // /**
 //  * @param {PipelineOptions} options
 //  */
@@ -996,6 +979,21 @@ function getEmoji(string) {
  */
 
 /**
+ * @typedef {Object} PipelineOptions
+ * @property {boolean} [skipEverything]
+ * @property {boolean} [skipBuilds]
+ * @property {boolean} [forceBuilds]
+ * @property {boolean} [skipTests]
+ * @property {boolean} [canary]
+ * @property {Profile[]} [buildProfiles]
+ * @property {Platform[]} [buildPlatforms]
+ * @property {Platform[]} [testPlatforms]
+ * @property {string[]} [testFiles]
+ * @property {boolean} [buildImages]
+ * @property {boolean} [publishImages]
+ */
+
+/**
  * @returns {BlockStep}
  */
 function getOptionsStep() {
@@ -1016,9 +1014,17 @@ function getOptionsStep() {
     blocked_state: "running",
     fields: [
       {
-        key: "skip-build",
+        key: "skip-builds",
         select: "Do you want to skip the build?",
         hint: "If true, artifacts will be downloaded from the last successful build",
+        required: false,
+        default: "false",
+        options: booleanOptions,
+      },
+      {
+        key: "force-builds",
+        select: "Do you want to force the build?",
+        hint: "If true, the build will run even if no source files have changed",
         required: false,
         default: "false",
         options: booleanOptions,
@@ -1039,7 +1045,7 @@ function getOptionsStep() {
         options: booleanOptions,
       },
       {
-        key: "profile",
+        key: "build-profiles",
         select: "If building, which profiles do you want to build?",
         required: false,
         multiple: true,
@@ -1109,6 +1115,12 @@ function getOptionsStep() {
         ),
       },
       {
+        key: "test-files",
+        text: "If testing, which files do you want to test?",
+        hint: "If specified, only run test paths that include the list of strings (e.g. 'test/js', 'test/cli/hot/watch.ts')",
+        required: false,
+      },
+      {
         key: "build-images",
         select: "Do you want to re-build the base images?",
         hint: "This can take 2-3 hours to complete, only do so if you've tested locally",
@@ -1129,15 +1141,71 @@ function getOptionsStep() {
 }
 
 /**
+ * @returns {Step}
+ */
+function getOptionsApplyStep() {
+  return {
+    key: "options-apply",
+    command: "node ./.buildkite/ci.mjs --apply",
+    depends_on: ["options"],
+  };
+}
+
+/**
+ * @returns {Promise<PipelineOptions>}
+ */
+async function getPipelineOptions() {
+  const buildPlatformsMap = new Map(buildPlatforms.map(platform => [getTargetKey(platform), platform]));
+  const testPlatformsMap = new Map(testPlatforms.map(platform => [getPlatformKey(platform), platform]));
+
+  if (isBuildManual()) {
+    const { fields } = getOptionsStep();
+    const keys = fields?.map(({ key }) => key) ?? [];
+    const values = await Promise.all(keys.map(getBuildMetadata));
+    const options = Object.fromEntries(keys.map((key, index) => [key, values[index]]));
+
+    return {
+      skipBuilds: parseBoolean(options["skip-builds"]),
+      forceBuilds: parseBoolean(options["force-builds"]),
+      skipTests: parseBoolean(options["skip-tests"]),
+      canary: parseBoolean(options["canary"]),
+      buildProfiles: Array.from(options["build-profiles"] || []),
+      buildPlatforms: Array.from(options["build-platforms"] || []).map(platform => buildPlatformsMap.get(platform)),
+      testPlatforms: Array.from(options["test-platforms"] || []).map(platform => testPlatformsMap.get(platform)),
+      testFiles: Array.from(options["test-files"] || []),
+      buildImages: parseBoolean(options["build-images"]),
+      publishImages: parseBoolean(options["publish-images"]),
+    };
+  }
+
+  const commitMessage = getCommitMessage();
+  return {
+    skipEverything: /\[(skip ci|no ci)\]/i.test(commitMessage),
+    skipBuilds: /\[(skip builds?|no builds?|only tests?)\]/i.test(commitMessage),
+    forceBuilds: /\[(force builds?)\]/i.test(commitMessage),
+    skipTests: /\[(skip tests?|no tests?|only builds?)\]/i.test(commitMessage),
+    buildImages: /\[(build images?)\]/i.test(commitMessage),
+    publishImages: /\[(publish images?)\]/i.test(commitMessage),
+    canary:
+      !parseBoolean(getEnv("RELEASE", false) || "false") &&
+      !/\[(release|build release|release build)\]/i.test(commitMessage),
+  };
+}
+
+/**
  * @returns {Promise<Pipeline>}
  */
 async function getPipeline() {
   /** @type {Step[]} */
   const steps = [];
 
-  if (isBuildManual() || true) {
-    steps.push(getOptionsStep());
+  if (isBuildManual() && !process.argv.includes("--apply")) {
+    steps.push(getOptionsStep(), getOptionsApplyStep());
+    return { steps };
   }
+
+  const options = await getPipelineOptions();
+  console.log("Pipeline options:", options);
 
   steps.push({
     group: "uname",
@@ -1149,7 +1217,6 @@ async function getPipeline() {
         agents: {
           queue: "test-darwin",
         },
-        depends_on: ["options"],
       },
     ],
   });

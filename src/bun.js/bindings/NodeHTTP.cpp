@@ -883,6 +883,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
             isSSL, nodeHTTPResponseObject);
 
         socket->strongThis.set(vm, socket);
+
         response->getHttpResponseData()->socketData = socket;
 
         args.append(socket);

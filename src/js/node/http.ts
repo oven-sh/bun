@@ -486,6 +486,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     }
     return super.resume();
   }
+
+  get [kInternalSocketData]() {
+    return this[kHandle]?.response;
+  }
 } as unknown as typeof import("node:net").Socket;
 
 function createServer(options, callback) {
@@ -948,7 +952,7 @@ const ServerPrototype = {
           http_res.once("close", onClose);
           const upgrade = http_req.headers.upgrade;
           if (upgrade) {
-            server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
+            server.emit("upgrade", http_req, socket, kEmptyBuffer);
           } else {
             server.emit("request", http_req, http_res);
           }

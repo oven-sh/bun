@@ -1,0 +1,61 @@
+name: Update libarchive
+
+on:
+  schedule:
+    - cron: "0 0 * * 0"
+  workflow_dispatch:
+
+jobs:
+  check-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check libarchive version
+        id: check-version
+        run: |
+          CURRENT_VERSION=$(grep -oP 'LIBARCHIVE_VERSION\s+\K\S+' cmake/targets/BuildLibArchive.cmake)
+          if [ -z "$CURRENT_VERSION" ]; then
+            echo "Error: Could not find current version in BuildLibArchive.cmake"
+            exit 1
+          fi
+          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+          LATEST_RELEASE=$(curl -sL https://api.github.com/repos/libarchive/libarchive/releases/latest)
+          LATEST_TAG=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+          LATEST_SHA=$(curl -sL "https://api.github.com/repos/libarchive/libarchive/git/ref/tags/$LATEST_TAG" | jq -r '.object.sha')
+          if [ -z "$LATEST_SHA" ]; then
+            echo "Error: Could not fetch latest version from GitHub API"
+            exit 1
+          fi
+          if [ ${#LATEST_SHA} -ne 40 ]; then
+            echo "Error: Invalid SHA length"
+            exit 1
+          fi
+          echo "latest=$LATEST_SHA" >> $GITHUB_OUTPUT
+
+      - name: Create PR if update needed
+        if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="update-libarchive-${GITHUB_SHA::8}"
+          git checkout -b "$BRANCH"
+
+          sed -i "s/LIBARCHIVE_VERSION\s\+[0-9a-f]\+/LIBARCHIVE_VERSION ${{ steps.check-version.outputs.latest }}/" cmake/targets/BuildLibArchive.cmake
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cmake/targets/BuildLibArchive.cmake
+          git commit -m "deps: update libarchive to ${{ steps.check-version.outputs.latest }}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "deps: update libarchive to ${LATEST_SHA::8}" \
+            --body "Updates libarchive from ${CURRENT_VERSION::8} to ${LATEST_SHA::8}" \
+            --base main \
+            --head "$BRANCH"

@@ -326,13 +326,11 @@ pub const SNativeZlib = struct {
 
         var mode = arguments[0];
         if (!mode.isNumber()) {
-            _ = globalThis.throwInvalidArgumentTypeValue("mode", "number", mode);
-            return error.JSError;
+            return globalThis.throwInvalidArgumentTypeValue("mode", "number", mode);
         }
         const mode_double = mode.asNumber();
         if (@mod(mode_double, 1.0) != 0.0) {
-            _ = globalThis.throwInvalidArgumentTypeValue("mode", "integer", mode);
-            return error.JSError;
+            return globalThis.throwInvalidArgumentTypeValue("mode", "integer", mode);
         }
         const mode_int: i64 = @intFromFloat(mode_double);
         if (mode_int < 1 or mode_int > 7) {
@@ -686,13 +684,11 @@ pub const SNativeBrotli = struct {
 
         var mode = arguments[0];
         if (!mode.isNumber()) {
-            _ = globalThis.throwInvalidArgumentTypeValue("mode", "number", mode);
-            return error.JSError;
+            return globalThis.throwInvalidArgumentTypeValue("mode", "number", mode);
         }
         const mode_double = mode.asNumber();
         if (@mod(mode_double, 1.0) != 0.0) {
-            _ = globalThis.throwInvalidArgumentTypeValue("mode", "integer", mode);
-            return error.JSError;
+            return globalThis.throwInvalidArgumentTypeValue("mode", "integer", mode);
         }
         const mode_int: i64 = @intFromFloat(mode_double);
         if (mode_int < 8 or mode_int > 9) {

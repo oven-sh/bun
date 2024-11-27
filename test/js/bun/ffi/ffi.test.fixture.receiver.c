@@ -35,6 +35,38 @@ typedef _Bool bool;
 #define true 1
 #define false 0
 
+#ifndef SRC_JS_NATIVE_API_TYPES_H_
+typedef struct napi_env__ *napi_env;
+typedef int64_t napi_value;
+typedef enum {
+  napi_ok,
+  napi_invalid_arg,
+  napi_object_expected,
+  napi_string_expected,
+  napi_name_expected,
+  napi_function_expected,
+  napi_number_expected,
+  napi_boolean_expected,
+  napi_array_expected,
+  napi_generic_failure,
+  napi_pending_exception,
+  napi_cancelled,
+  napi_escape_called_twice,
+  napi_handle_scope_mismatch,
+  napi_callback_scope_mismatch,
+  napi_queue_full,
+  napi_closing,
+  napi_bigint_expected,
+  napi_date_expected,
+  napi_arraybuffer_expected,
+  napi_detachable_arraybuffer_expected,
+  napi_would_deadlock // unused
+} napi_status;
+void* NapiHandleScope__open(void* napi_env, bool detached);
+void NapiHandleScope__close(void* napi_env, void* handleScope);
+extern struct napi_env__ Bun__thisFFIModuleNapiEnv;
+#endif
+
 
 #ifdef INJECT_BEFORE
 // #include <stdint.h>
@@ -45,14 +77,14 @@ typedef _Bool bool;
 // begin with a 15-bit pattern within the range 0x0002..0xFFFC.
 #define DoubleEncodeOffsetBit 49
 #define DoubleEncodeOffset    (1ll << DoubleEncodeOffsetBit)
-#define OtherTag              0x2
-#define BoolTag               0x4
-#define UndefinedTag          0x8
+#define OtherTag              0x2ll
+#define BoolTag               0x4ll
+#define UndefinedTag          0x8ll
 #define TagValueFalse            (OtherTag | BoolTag | false)
 #define TagValueTrue             (OtherTag | BoolTag | true)
 #define TagValueUndefined        (OtherTag | UndefinedTag)
 #define TagValueNull             (OtherTag)
-#define NotCellMask  NumberTag | OtherTag
+#define NotCellMask  (int64_t)(NumberTag | OtherTag)
 
 #define MAX_INT32 2147483648
 #define MAX_INT52 9007199254740991
@@ -69,6 +101,8 @@ typedef union EncodedJSValue {
 #if USE_JSVALUE64
   JSCell *ptr;
 #endif
+
+napi_value asNapiValue;
 
 #if IS_BIG_ENDIAN
   struct {
@@ -140,6 +174,11 @@ static int32_t JSVALUE_TO_INT32(EncodedJSValue val) __attribute__((__always_inli
 static float JSVALUE_TO_FLOAT(EncodedJSValue val) __attribute__((__always_inline__));
 static double JSVALUE_TO_DOUBLE(EncodedJSValue val) __attribute__((__always_inline__));
 static bool JSVALUE_TO_BOOL(EncodedJSValue val) __attribute__((__always_inline__));
+static uint8_t GET_JSTYPE(EncodedJSValue val) __attribute__((__always_inline__));
+static bool JSTYPE_IS_TYPED_ARRAY(uint8_t type) __attribute__((__always_inline__));
+static bool JSCELL_IS_TYPED_ARRAY(EncodedJSValue val) __attribute__((__always_inline__));
+static void* JSVALUE_TO_TYPED_ARRAY_VECTOR(EncodedJSValue val) __attribute__((__always_inline__));
+static uint64_t JSVALUE_TO_TYPED_ARRAY_LENGTH(EncodedJSValue val) __attribute__((__always_inline__));
 
 static bool JSVALUE_IS_CELL(EncodedJSValue val) {
   return !(val.asInt64 & NotCellMask);
@@ -153,6 +192,25 @@ static bool JSVALUE_IS_NUMBER(EncodedJSValue val) {
   return val.asInt64 & NumberTag;
 }
 
+static uint8_t GET_JSTYPE(EncodedJSValue val) {
+  return *(uint8_t*)((uint8_t*)val.asPtr + JSCell__offsetOfType);
+}
+
+static bool JSTYPE_IS_TYPED_ARRAY(uint8_t type) {
+  return type >= JSTypeArrayBufferViewMin && type <= JSTypeArrayBufferViewMax;
+}
+
+static bool JSCELL_IS_TYPED_ARRAY(EncodedJSValue val) {
+  return JSVALUE_IS_CELL(val) && JSTYPE_IS_TYPED_ARRAY(GET_JSTYPE(val));
+}
+
+static void* JSVALUE_TO_TYPED_ARRAY_VECTOR(EncodedJSValue val) {
+  return *(void**)((char*)val.asPtr + JSArrayBufferView__offsetOfVector);
+}
+
+static uint64_t JSVALUE_TO_TYPED_ARRAY_LENGTH(EncodedJSValue val) {
+  return *(uint64_t*)((char*)val.asPtr + JSArrayBufferView__offsetOfLength);
+}
 
 // JSValue numbers-as-pointers are represented as a 52-bit integer
 // Previously, the pointer was stored at the end of the 64-bit value
@@ -162,6 +220,11 @@ static bool JSVALUE_IS_NUMBER(EncodedJSValue val) {
 static void* JSVALUE_TO_PTR(EncodedJSValue val) {
   if (val.asInt64 == TagValueNull)
     return 0;
+
+  if (JSCELL_IS_TYPED_ARRAY(val)) {
+      return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
+  }
+
   val.asInt64 -= DoubleEncodeOffset;
   size_t ptr = (size_t)val.asDouble;
   return (void*)ptr;
@@ -242,6 +305,10 @@ static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) {
 
   if (JSVALUE_IS_NUMBER(value)) {
     return (uint64_t)JSVALUE_TO_DOUBLE(value);
+  }
+
+  if (JSCELL_IS_TYPED_ARRAY(value)) {
+    return (uint64_t)JSVALUE_TO_TYPED_ARRAY_LENGTH(value);
   }
 
   return JSVALUE_TO_UINT64_SLOW(value);

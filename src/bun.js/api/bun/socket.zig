@@ -1474,13 +1474,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const initialDelay: u32 = brk: {
                 if (args.len > 1) {
-                    if (globalThis.validateIntegerRange(args.ptr[1], i32, 0, .{
-                        .min = 0,
-                        .field_name = "initialDelay",
-                    })) |signedDelay| {
-                        break :brk @intCast(signedDelay);
-                    }
-                    return .zero;
+                    break :brk @intCast(try globalThis.validateIntegerRange(args.ptr[1], i32, 0, .{ .min = 0, .field_name = "initialDelay" }));
                 }
                 break :brk 0;
             };
@@ -2209,7 +2203,8 @@ fn NewSocket(comptime ssl: bool) type {
                     return .fail;
                 } orelse {
                     if (!globalObject.hasException()) {
-                        _ = globalObject.throwInvalidArgumentTypeValue("data", "string, buffer, or blob", data_value);
+                        globalObject.throwInvalidArgumentTypeValue("data", "string, buffer, or blob", data_value) catch {};
+                        return .fail;
                     }
                     return .fail;
                 };
@@ -2320,7 +2315,8 @@ fn NewSocket(comptime ssl: bool) type {
                     return .fail;
                 } orelse {
                     if (!globalObject.hasException()) {
-                        _ = globalObject.throwInvalidArgumentTypeValue("data", "string, buffer, or blob", args[0]);
+                        globalObject.throwInvalidArgumentTypeValue("data", "string, buffer, or blob", args[0]) catch {};
+                        return .fail;
                     }
                     return .fail;
                 };

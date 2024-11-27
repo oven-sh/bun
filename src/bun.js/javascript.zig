@@ -433,17 +433,9 @@ comptime {
     const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
     @export(Bun__Process__send, .{ .name = "Bun__Process__send" });
 }
-pub fn Bun__Process__send_(
-    globalObject: *JSGlobalObject,
-    callFrame: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
-    var message, var handle, var options_, var callback = callFrame.arguments_old(4).ptr;
-
-    if (message == .zero) message = .undefined;
-    if (handle == .zero) handle = .undefined;
-    if (options_ == .zero) options_ = .undefined;
-    if (callback == .zero) callback = .undefined;
+    var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
 
     if (handle.isFunction()) {
         callback = handle;
@@ -453,7 +445,7 @@ pub fn Bun__Process__send_(
         callback = options_;
         options_ = .undefined;
     } else if (!options_.isUndefined()) {
-        if (!globalObject.validateObject("options", options_, .{})) return .zero;
+        try globalObject.validateObject("options", options_, .{});
     }
 
     const S = struct {

@@ -310,6 +310,8 @@ pub const SocketConfig = struct {
     default_data: JSC.JSValue = .zero,
     exclusive: bool = false,
     allowHalfOpen: bool = false,
+    reusePort: bool = false,
+    ipv6Only: bool = false,
 
     pub fn fromJS(vm: *JSC.VirtualMachine, opts: JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!SocketConfig {
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
@@ -317,6 +319,8 @@ pub const SocketConfig = struct {
         var port: ?u16 = null;
         var exclusive = false;
         var allowHalfOpen = false;
+        var reusePort = false;
+        var ipv6Only = false;
 
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
@@ -370,6 +374,14 @@ pub const SocketConfig = struct {
             }
             if (try opts.getBooleanLoose(globalObject, "allowHalfOpen")) |allow_half_open| {
                 allowHalfOpen = allow_half_open;
+            }
+
+            if (try opts.getBooleanLoose(globalObject, "reusePort")) |reuse_port| {
+                reusePort = reuse_port;
+            }
+
+            if (try opts.getBooleanLoose(globalObject, "ipv6Only")) |ipv6_only| {
+                ipv6Only = ipv6_only;
             }
 
             if (try opts.getStringish(globalObject, "hostname") orelse try opts.getStringish(globalObject, "host")) |hostname| {
@@ -437,6 +449,8 @@ pub const SocketConfig = struct {
             .default_data = default_data,
             .exclusive = exclusive,
             .allowHalfOpen = allowHalfOpen,
+            .reusePort = reusePort,
+            .ipv6Only = ipv6Only,
         };
     }
 };
@@ -603,9 +617,12 @@ pub const Listener = struct {
 
         const ssl_enabled = ssl != null;
 
-        var socket_flags: i32 = if (exclusive) uws.LIBUS_LISTEN_EXCLUSIVE_PORT else uws.LIBUS_LISTEN_DEFAULT;
+        var socket_flags: i32 = if (exclusive) uws.LIBUS_LISTEN_EXCLUSIVE_PORT else (if (socket_config.reusePort) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_DEFAULT);
         if (socket_config.allowHalfOpen) {
             socket_flags |= uws.LIBUS_SOCKET_ALLOW_HALF_OPEN;
+        }
+        if (socket_config.ipv6Only) {
+            socket_flags |= uws.LIBUS_SOCKET_IPV6_ONLY;
         }
         defer if (ssl != null) ssl.?.deinit();
 

@@ -1171,6 +1171,9 @@ class Server extends EventEmitter {
     let backlog;
     let path;
     let exclusive = false;
+    let allowHalfOpen = false;
+    let reusePort = false;
+    let ipv6Only = false;
     //port is actually path
     if (typeof port === "string") {
       if (Number.isSafeInteger(hostname)) {
@@ -1200,12 +1203,14 @@ class Server extends EventEmitter {
         options.signal?.addEventListener("abort", () => this.close());
 
         hostname = options.host;
-        exclusive = options.exclusive === true;
+        exclusive = options.exclusive;
         path = options.path;
         port = options.port;
+        ipv6Only = options.ipv6Only;
+        allowHalfOpen = options.allowHalfOpen;
+        reusePort = options.reusePort;
 
         const isLinux = process.platform === "linux";
-
 
         if (!Number.isSafeInteger(port) || port < 0) {
           if (path) {
@@ -1277,6 +1282,9 @@ class Server extends EventEmitter {
         backlog,
         undefined,
         exclusive,
+        ipv6Only,
+        allowHalfOpen,
+        reusePort,
         undefined,
         undefined,
         path,
@@ -1291,12 +1299,15 @@ class Server extends EventEmitter {
     return this;
   }
 
-  [kRealListen](path, port, hostname, exclusive, tls, contexts, onListen) {
+  [kRealListen](path, port, hostname, exclusive, ipv6Only, allowHalfOpen, reusePort, tls, contexts, onListen) {
     if (path) {
       this._handle = Bun.listen({
         unix: path,
         tls,
-        allowHalfOpen: this[bunSocketServerOptions]?.allowHalfOpen || false,
+        allowHalfOpen: allowHalfOpen || this[bunSocketServerOptions]?.allowHalfOpen || false,
+        reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
+        ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
+        exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
         socket: SocketClass[bunSocketServerHandlers],
       });
     } else {
@@ -1305,7 +1316,10 @@ class Server extends EventEmitter {
         port,
         hostname,
         tls,
-        allowHalfOpen: this[bunSocketServerOptions]?.allowHalfOpen || false,
+        allowHalfOpen: allowHalfOpen || this[bunSocketServerOptions]?.allowHalfOpen || false,
+        reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
+        ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
+        exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
         socket: SocketClass[bunSocketServerHandlers],
       });
     }
@@ -1364,6 +1378,9 @@ function listenInCluster(
   backlog,
   fd,
   exclusive,
+  ipv6Only,
+  allowHalfOpen,
+  reusePort,
   flags,
   options,
   path,
@@ -1377,7 +1394,7 @@ function listenInCluster(
   if (cluster === undefined) cluster = require("node:cluster");
 
   if (cluster.isPrimary || exclusive) {
-    server[kRealListen](path, port, hostname, exclusive, tls, contexts, onListen);
+    server[kRealListen](path, port, hostname, exclusive, ipv6Only, allowHalfOpen, reusePort, tls, contexts, onListen);
     return;
   }
 
@@ -1395,7 +1412,7 @@ function listenInCluster(
     if (err) {
       throw new ExceptionWithHostPort(err, "bind", address, port);
     }
-    server[kRealListen](path, port, hostname, exclusive, tls, contexts, onListen);
+    server[kRealListen](path, port, hostname, exclusive, ipv6Only, allowHalfOpen, reusePort, tls, contexts, onListen);
   });
 }
 

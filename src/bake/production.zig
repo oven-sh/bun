@@ -333,6 +333,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
 
     // Static site generator
     const server_render_funcs = JSValue.createEmptyArray(global, router.types.len);
+    const server_param_funcs = JSValue.createEmptyArray(global, router.types.len);
     const client_entry_urls = JSValue.createEmptyArray(global, router.types.len);
 
     for (router.types, 0..) |router_type, i| {
@@ -363,7 +364,23 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             });
             bun.Global.crash();
         };
+
+        const server_param_func = brk: {
+            const raw = BakeGetOnModuleNamespace(global, server_entry_point, "getParams") orelse
+                break :brk null;
+            if (!raw.isCallable(vm.jsc)) {
+                break :brk null;
+            }
+            break :brk raw;
+        } orelse {
+            Output.errGeneric("Framework does not support static site generation", .{});
+            Output.note("The file {s} is missing the \"getParams\" export, which defines how to generate static files.", .{
+                bun.fmt.quote(bun.path.relative(cwd, entry_points.files.keys()[router_type.server_file.get()].absPath())),
+            });
+            bun.Global.crash();
+        };
         server_render_funcs.putIndex(global, @intCast(i), server_render_func);
+        server_param_funcs.putIndex(global, @intCast(i), server_param_func);
     }
 
     var navigatable_routes = std.ArrayList(FrameworkRouter.Route.Index).init(allocator);
@@ -398,6 +415,15 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
 
         // Count how many JS+CSS files associated with this route and prepare `pattern`
         pattern.prependPart(route.part);
+        switch (route.part) {
+            .param => {
+                params_buf.append(ctx.allocator, route.part.param) catch unreachable;
+            },
+            .catch_all, .catch_all_optional => {
+                global.throw("catch-all routes are not supported in static site generation", .{});
+            },
+            else => {},
+        }
         var file_count: u32 = 1;
         var css_file_count: u32 = @intCast(main_file.referenced_css_files.len);
         if (route.file_layout.unwrap()) |file| {
@@ -408,6 +434,15 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         while (next) |parent_index| {
             const parent = router.routePtr(parent_index);
             pattern.prependPart(parent.part);
+            switch (parent.part) {
+                .param => {
+                    params_buf.append(ctx.allocator, parent.part.param) catch unreachable;
+                },
+                .catch_all, .catch_all_optional => {
+                    global.throw("catch-all routes are not supported in static site generation", .{});
+                },
+                else => {},
+            }
             if (parent.file_layout.unwrap()) |file| {
                 css_file_count += @intCast(paths.outputFile(file).referenced_css_files.len);
                 file_count += 1;
@@ -435,6 +470,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             }
             file_count += 1;
         }
+
         while (next) |parent_index| {
             const parent = router.routePtr(parent_index);
             if (parent.file_layout.unwrap()) |file| {
@@ -460,7 +496,16 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         route_type_and_flags.putIndex(global, @intCast(nav_index), JSValue.jsNumberFromInt32(@bitCast(TypeAndFlags{
             .type = route.type.get(),
         })));
-        route_param_info.putIndex(global, @intCast(nav_index), .null);
+
+        if (params_buf.items.len > 0) {
+            const param_info_array = JSValue.createEmptyArray(global, params_buf.items.len);
+            for (params_buf.items, 0..) |param, i| {
+                param_info_array.putIndex(global, @intCast(params_buf.items.len - i - 1), JSValue.toJSString(global, param));
+            }
+            route_param_info.putIndex(global, @intCast(nav_index), param_info_array);
+        } else {
+            route_param_info.putIndex(global, @intCast(nav_index), .null);
+        }
         route_style_references.putIndex(global, @intCast(nav_index), styles);
     }
 
@@ -469,6 +514,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         bun.String.init(root_dir_path),
         all_server_files,
         server_render_funcs,
+        server_param_funcs,
         client_entry_urls,
 
         route_patterns,
@@ -531,6 +577,7 @@ extern fn BakeRenderRoutesForProdStatic(
     out_base: bun.String,
     all_server_files: JSValue,
     render_static: JSValue,
+    get_params: JSValue,
     client_entry_urls: JSValue,
     patterns: JSValue,
     files: JSValue,

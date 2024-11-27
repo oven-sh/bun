@@ -69,6 +69,7 @@ export class Dev {
   fetch(url: string, init?: RequestInit) {
     return new DevFetchPromise((resolve, reject) =>
       fetch(new URL(url, this.baseUrl).toString(), init).then(resolve, reject),
+    this
     );
   }
 
@@ -129,14 +130,27 @@ export interface Step {
 }
 
 class DevFetchPromise extends Promise<Response> {
+  dev: Dev;
+  constructor(executor: (resolve: (value: Response | PromiseLike<Response>) => void, reject: (reason?: any) => void) => void, dev: Dev) {
+    super(executor);
+    this.dev = dev;
+  }
+
   expect(result: string) {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
-      const res = await this;
-      if (!res.ok) {
-        throw new Error(`Expected response to be ok, but got ${res.status} ${res.statusText}`);
+      try {
+        const res = await this;
+        if (!res.ok) {
+          throw new Error(`Expected response to be ok, but got ${res.status} ${res.statusText}`);
+        }
+        const text = (await res.text()).trim();
+        expect(text).toBe(result.trim());
+      } catch (err) {
+        if (this.dev.panicked) {
+          throw new Error("DevServer crashed");
+        }
+        throw err;
       }
-      const text = (await res.text()).trim();
-      expect(text).toBe(result.trim());
     });
   }
   expectNoSpaces(result: string) {

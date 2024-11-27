@@ -1,5 +1,5 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { devTest, minimalFramework, Step } from "../dev-server-harness";
+import { devTest, minimalFramework } from "../dev-server-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,

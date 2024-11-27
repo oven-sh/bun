@@ -31,6 +31,7 @@ import {
   getBuildMetadata,
   parseBoolean,
   getEmoji,
+  getBuildkiteEmoji,
 } from "../scripts/utils.mjs";
 
 /**

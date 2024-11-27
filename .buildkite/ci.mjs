@@ -382,6 +382,7 @@ function getTestAgent(platform) {
 function getBuildEnv(target) {
   const { profile, baseline, canary, abi } = target;
   const release = !profile;
+
   return {
     CMAKE_BUILD_TYPE: release ? "Release" : profile === "debug" ? "Debug" : "RelWithDebInfo",
     ENABLE_BASELINE: baseline ? "ON" : "OFF",
@@ -467,7 +468,7 @@ function getBuildZigStep(platform) {
  * @param {Platform} platform
  * @returns {Step}
  */
-function getBuildBunStep(platform) {
+function getLinkBunStep(platform) {
   return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
@@ -484,6 +485,22 @@ function getBuildBunStep(platform) {
       ...getBuildEnv(platform),
     },
     command: "bun run build:ci --target bun",
+  };
+}
+
+/**
+ * @param {Platform} platform
+ * @returns {Step}
+ */
+function getBuildBunStep(platform) {
+  return {
+    key: `${getTargetKey(platform)}-build-bun`,
+    label: `${getTargetLabel(platform)} - build-bun`,
+    agents: getCppAgent(platform),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    env: getBuildEnv(platform),
+    command: "bun run build:ci",
   };
 }
 
@@ -562,7 +579,7 @@ function getBuildImageStep(platform, dryRun) {
  * @returns {string}
  * @link https://github.com/buildkite/emojis#emoji-reference
  */
-function getBuildkiteEmoji(string, buildkite) {
+function getBuildkiteEmoji(string) {
   if (/darwin|mac|apple/i.test(string)) {
     return ":darwin:";
   }
@@ -992,17 +1009,19 @@ function getEmoji(string) {
 
 /**
  * @typedef {Object} PipelineOptions
- * @property {boolean} [skipEverything]
- * @property {boolean} [skipBuilds]
- * @property {boolean} [forceBuilds]
- * @property {boolean} [skipTests]
+ * @property {string | boolean} [skipEverything]
+ * @property {string | boolean} [skipBuilds]
+ * @property {string | boolean} [skipTests]
+ * @property {string | boolean} [forceBuilds]
+ * @property {string | boolean} [forceTests]
+ * @property {string | boolean} [buildImages]
+ * @property {string | boolean} [publishImages]
  * @property {boolean} [canary]
  * @property {Profile[]} [buildProfiles]
  * @property {Platform[]} [buildPlatforms]
  * @property {Platform[]} [testPlatforms]
  * @property {string[]} [testFiles]
- * @property {boolean} [buildImages]
- * @property {boolean} [publishImages]
+ * @property {boolean} [unifiedBuilds]
  */
 
 /**
@@ -1026,17 +1045,17 @@ function getOptionsStep() {
     blocked_state: "running",
     fields: [
       {
-        key: "skip-builds",
-        select: "Do you want to skip the build?",
-        hint: "If true, artifacts will be downloaded from the last successful build",
+        key: "canary",
+        select: "If building, is this a canary build?",
+        hint: "If you are building for a release, this should be false",
         required: false,
-        default: "false",
+        default: "true",
         options: booleanOptions,
       },
       {
-        key: "force-builds",
-        select: "Do you want to force the build?",
-        hint: "If true, the build will run even if no source files have changed",
+        key: "skip-builds",
+        select: "Do you want to skip the build?",
+        hint: "If true, artifacts will be downloaded from the last successful build",
         required: false,
         default: "false",
         options: booleanOptions,
@@ -1049,11 +1068,19 @@ function getOptionsStep() {
         options: booleanOptions,
       },
       {
-        key: "canary",
-        select: "If building, is this a canary build?",
-        hint: "If you are building for a named release, this should be false",
+        key: "force-builds",
+        select: "Do you want to force run the build?",
+        hint: "If true, the build will run even if no source files have changed",
         required: false,
-        default: "true",
+        default: "false",
+        options: booleanOptions,
+      },
+      {
+        key: "force-tests",
+        select: "Do you want to force run the tests?",
+        hint: "If true, the tests will run even if no test files have changed",
+        required: false,
+        default: "false",
         options: booleanOptions,
       },
       {
@@ -1148,6 +1175,14 @@ function getOptionsStep() {
         default: "false",
         options: booleanOptions,
       },
+      {
+        key: "unified-builds",
+        select: "Do you want to build each platform in a single step?",
+        hint: "If true, builds will not be split into seperate steps (this will likely slow down the build)",
+        required: false,
+        default: "false",
+        options: booleanOptions,
+      },
     ],
   };
 }
@@ -1202,17 +1237,32 @@ async function getPipelineOptions() {
       testFiles: parseArray(options["test-files"]),
       buildImages: parseBoolean(options["build-images"]),
       publishImages: parseBoolean(options["publish-images"]),
+      unifiedBuilds: parseBoolean(options["unified-builds"]),
     };
   }
 
   const commitMessage = getCommitMessage();
+
+  /**
+   * @param {RegExp} pattern
+   * @returns {string | boolean}
+   */
+  const parseOption = pattern => {
+    const match = pattern.test(commitMessage);
+    if (match) {
+      const [, value] = match;
+      return value;
+    }
+    return false;
+  };
+
   return {
-    skipEverything: /\[(skip ci|no ci)\]/i.test(commitMessage),
-    skipBuilds: /\[(skip builds?|no builds?|only tests?)\]/i.test(commitMessage),
-    forceBuilds: /\[(force builds?)\]/i.test(commitMessage),
-    skipTests: /\[(skip tests?|no tests?|only builds?)\]/i.test(commitMessage),
-    buildImages: /\[(build images?)\]/i.test(commitMessage),
-    publishImages: /\[(publish images?)\]/i.test(commitMessage),
+    skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
+    skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
+    forceBuilds: parseOption(/\[(force builds?)\]/i),
+    skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
+    buildImages: parseOption(/\[(build images?)\]/i),
+    publishImages: parseOption(/\[(publish images?)\]/i),
     canary:
       !parseBoolean(getEnv("RELEASE", false) || "false") &&
       !/\[(release|build release|release build)\]/i.test(commitMessage),
@@ -1233,21 +1283,42 @@ async function getPipeline() {
 
   const options = await getPipelineOptions();
   console.log("Pipeline options:", options);
-  options;
 
-  steps.push({
-    group: "uname",
-    key: "uname",
-    steps: [
-      {
-        key: "uname-a",
-        command: "uname -a",
-        agents: {
-          queue: "test-darwin",
-        },
-      },
-    ],
-  });
+  const { skipEverything } = options;
+  if (skipEverything) {
+    return { steps };
+  }
+
+  const { skipBuilds, forceBuilds, unifiedBuilds, buildProfiles, buildPlatforms } = options;
+  if (!skipBuilds || forceBuilds) {
+    for (const platform of buildPlatforms) {
+      for (const profile of buildProfiles) {
+        const target = {
+          ...platform,
+          profile: profile === "release" ? undefined : profile,
+        };
+
+        /** @type {Step[]} */
+        const buildSteps = [];
+        if (unifiedBuilds) {
+          buildSteps.push(getBuildBunStep(target));
+        } else {
+          buildSteps.push(
+            getBuildVendorStep(target),
+            getBuildCppStep(target),
+            getBuildZigStep(target),
+            getLinkBunStep(target),
+          );
+        }
+
+        steps.push({
+          key: getTargetKey(target),
+          group: getTargetLabel(target),
+          steps: buildSteps,
+        });
+      }
+    }
+  }
 
   return { steps };
 }

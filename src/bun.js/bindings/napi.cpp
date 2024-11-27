@@ -84,6 +84,26 @@ using namespace Zig;
 #define NAPI_PREMABLE
 #endif
 
+// Usage: `return napi_set_last_error(napi_ok);`
+//
+// Sets the global extended error info to indicate the passed-in status, and then returns it.
+// All NAPI functions should call this in all places where they return, even if there is no error,
+// because the extended error info should always reflect the most recent API call. The only
+// exception is napi_get_last_error_info, which should return napi_ok without overwriting the
+// extended error info.
+//
+// Usually, you should use the above macros instead of this function.
+//
+// This is not part of Node-API, it's a convenience function for Bun.
+extern "C" napi_status napi_set_last_error(napi_env env, napi_status status)
+{
+    if (env) {
+        // napi_get_last_error_info will fill in the other fields if they are requested
+        env->m_lastNapiErrorInfo.error_code = status;
+    }
+    return status;
+}
+
 namespace Napi {
 
 JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject)

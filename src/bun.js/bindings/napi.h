@@ -52,6 +52,17 @@ public:
         return m_instanceData;
     }
 
+    // Almost all NAPI functions should set error_code to the status they're returning right before
+    // they return it
+    napi_extended_error_info m_lastNapiErrorInfo = {
+        .error_message = "",
+        // Not currently used by Bun -- always nullptr
+        .engine_reserved = nullptr,
+        // Not currently used by Bun -- always zero
+        .engine_error_code = 0,
+        .error_code = napi_ok,
+    };
+
 private:
     Zig::GlobalObject* m_globalObject = nullptr;
     napi_module m_napiModule;

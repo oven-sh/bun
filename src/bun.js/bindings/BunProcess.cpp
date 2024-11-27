@@ -404,10 +404,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(napi_env, JSC::EncodedJSValue)>(
         dlsym(handle, "napi_register_module_v1"));
 
-#if OS(WINDOWS)
-#undef dlsym
-#endif
-
     if (!napi_register_module_v1) {
 #if OS(WINDOWS)
         FreeLibrary(handle);
@@ -419,6 +415,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     }
 
     auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
+
+#if OS(WINDOWS)
+#undef dlsym
+#endif
 
     NapiHandleScope handleScope(globalObject);
 

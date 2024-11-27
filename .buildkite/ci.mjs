@@ -1106,8 +1106,8 @@ function getOptionsStep() {
         required: false,
         multiple: true,
         default: [],
-        options: [...new Map(testPlatforms.map(platform => [getImageKey(platform), platform])).values()].map(
-          platform => {
+        options: [...new Map(testPlatforms.map(platform => [getImageKey(platform), platform])).entries()].map(
+          ([key, platform]) => {
             const { os, arch, abi, distro, release } = platform;
             let label = `${getEmoji(os)} ${arch}`;
             if (abi) {
@@ -1121,7 +1121,7 @@ function getOptionsStep() {
             }
             return {
               label,
-              value: getTargetKey(platform),
+              value: key,
             };
           },
         ),
@@ -1192,10 +1192,10 @@ async function getPipelineOptions() {
         ?.filter(Boolean);
 
     return {
+      canary: parseBoolean(options["canary"]),
       skipBuilds: parseBoolean(options["skip-builds"]),
       forceBuilds: parseBoolean(options["force-builds"]),
       skipTests: parseBoolean(options["skip-tests"]),
-      canary: parseBoolean(options["canary"]),
       buildProfiles: parseArray(options["build-profiles"]),
       buildPlatforms: parseArray(options["build-platforms"])?.map(platform => buildPlatformsMap.get(platform)),
       testPlatforms: parseArray(options["test-platforms"])?.map(platform => testPlatformsMap.get(platform)),

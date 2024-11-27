@@ -788,7 +788,9 @@ pub const FileSystem = struct {
 
         pub const Limit = struct {
             pub var handles: usize = 0;
+            pub var handles_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
             pub var stack: usize = 0;
+            pub var stack_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
         };
 
         // Always try to max out how many files we can keep open
@@ -797,26 +799,37 @@ pub const FileSystem = struct {
                 return std.math.maxInt(usize);
             }
 
-            const LIMITS = [_]std.posix.rlimit_resource{ std.posix.rlimit_resource.STACK, std.posix.rlimit_resource.NOFILE };
-            inline for (LIMITS, 0..) |limit_type, i| {
-                const limit = try std.posix.getrlimit(limit_type);
-
+            blk: {
+                const resource = std.posix.rlimit_resource.STACK;
+                const limit = try std.posix.getrlimit(resource);
+                Limit.stack_before = limit;
                 if (limit.cur < limit.max) {
                     var new_limit = std.mem.zeroes(std.posix.rlimit);
                     new_limit.cur = limit.max;
                     new_limit.max = limit.max;
 
-                    if (std.posix.setrlimit(limit_type, new_limit)) {
-                        if (i == 1) {
-                            Limit.handles = limit.max;
-                        } else {
-                            Limit.stack = limit.max;
-                        }
-                    } else |_| {}
+                    std.posix.setrlimit(resource, new_limit) catch break :blk;
+                    Limit.stack = limit.max;
                 }
-
-                if (i == LIMITS.len - 1) return limit.max;
             }
+            var file_limit: usize = 0;
+            blk: {
+                const resource = std.posix.rlimit_resource.NOFILE;
+                const limit = try std.posix.getrlimit(resource);
+                Limit.handles_before = limit;
+                file_limit = limit.max;
+                Limit.handles = file_limit;
+                if (limit.cur < limit.max or limit.max < 163840) {
+                    var new_limit = std.mem.zeroes(std.posix.rlimit);
+                    new_limit.cur = @max(limit.max, 163840);
+                    new_limit.max = @max(limit.max, 163840);
+
+                    std.posix.setrlimit(resource, new_limit) catch break :blk;
+                    file_limit = new_limit.max;
+                    Limit.handles = file_limit;
+                }
+            }
+            return file_limit;
         }
 
         var _entries_option_map: *EntriesOption.Map = undefined;

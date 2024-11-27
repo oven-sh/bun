@@ -1394,7 +1394,7 @@ async function getPipeline(options = {}) {
       const groupBuildSteps = buildSteps.get(groupKey) ?? [];
       const groupTestSteps = [...testSteps.entries()]
         .filter(([key]) => key.startsWith(groupKey))
-        .map(([, steps]) => steps);
+        .flatMap(([, steps]) => steps);
       return [
         groupKey,
         {

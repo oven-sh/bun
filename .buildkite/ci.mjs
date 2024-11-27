@@ -418,7 +418,7 @@ function getBuildCppStep(platform) {
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
-    depends_on: getDependsOn(platform),
+    // depends_on: getDependsOn(platform),
     agents: getCppAgent(platform),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
@@ -455,7 +455,7 @@ function getBuildZigStep(platform) {
   return {
     key: `${getTargetKey(platform)}-build-zig`,
     label: `${getTargetLabel(platform)} - build-zig`,
-    depends_on: getDependsOn(platform),
+    // depends_on: getDependsOn(platform),
     agents: getZigAgent(platform),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
@@ -524,7 +524,7 @@ function getTestBunStep(platform) {
   return {
     key: `${getPlatformKey(platform)}-test-bun`,
     label: `${getPlatformLabel(platform)} - test-bun`,
-    depends_on: [...depends, ...getDependsOn(platform)],
+    depends_on: [...depends /*...getDependsOn(platform)*/],
     agents: getTestAgent(platform),
     cancel_on_build_failing: isMergeQueue(),
     retry: getRetry(),

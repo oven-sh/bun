@@ -1240,10 +1240,11 @@ async function main() {
 
   if (isBuildkite) {
     startGroup("Uploading pipeline...");
-    await Promise.allSettled([
-      spawnSafe(["buildkite-agent", "pipeline", "upload", contentPath], { stdio: "inherit" }),
-      uploadArtifact(contentPath),
-    ]);
+    try {
+      await spawnSafe(["buildkite-agent", "pipeline", "upload", contentPath], { stdio: "inherit" });
+    } finally {
+      await uploadArtifact(contentPath);
+    }
   }
 }
 

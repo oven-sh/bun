@@ -1088,7 +1088,8 @@ export function isBuildManual() {
   if (isBuildkite) {
     const buildSource = getEnv("BUILDKITE_SOURCE", false);
     if (buildSource) {
-      return buildSource === "ui";
+      const buildId = getEnv("BUILDKITE_REBUILT_FROM_BUILD_ID", false);
+      return buildSource === "ui" && !buildId;
     }
   }
 }

@@ -3,6 +3,8 @@
 #include "BunClientData.h"
 #include "root.h"
 
+typedef struct napi_env__* napi_env;
+
 namespace Bun {
 
 // An array of write barriers (so that newly-added objects are not lost by GC) to JSValues. Unlike
@@ -80,14 +82,14 @@ private:
 };
 
 // Create a new handle scope in the given environment
-extern "C" NapiHandleScopeImpl* NapiHandleScope__open(Zig::GlobalObject* globalObject, bool escapable);
+extern "C" NapiHandleScopeImpl* NapiHandleScope__open(napi_env env, bool escapable);
 
 // Pop the most recently created handle scope in the given environment and restore the old one.
 // Asserts that `current` is the active handle scope.
-extern "C" void NapiHandleScope__close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current);
+extern "C" void NapiHandleScope__close(napi_env env, NapiHandleScopeImpl* current);
 
 // Store a value in the active handle scope in the given environment
-extern "C" void NapiHandleScope__append(Zig::GlobalObject* globalObject, JSC::EncodedJSValue value);
+extern "C" void NapiHandleScope__append(napi_env env, JSC::EncodedJSValue value);
 
 // Put a value from the current handle scope into its escape slot reserved in the outer handle
 // scope. Returns false if the current handle scope is not escapable or if escape has already been

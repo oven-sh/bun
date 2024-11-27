@@ -453,6 +453,7 @@ public:
     // This is not a correct implementation
     // Addon modules can override each other's data
     void* napiInstanceData = nullptr;
+    struct napi_env__* napiInstanceDataEnv = nullptr;
     void* napiInstanceDataFinalizer = nullptr;
     void* napiInstanceDataFinalizerHint = nullptr;
 

@@ -62,17 +62,12 @@ static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObjec
     return reinterpret_cast<napi_value>(JSC::JSValue::encode(val));
 }
 
-static inline napi_env toNapi(JSC::JSGlobalObject* val)
-{
-    return reinterpret_cast<napi_env>(val);
-}
-
 class NapiFinalizer {
 public:
     void* finalize_hint = nullptr;
     napi_finalize finalize_cb;
 
-    void call(JSC::JSGlobalObject* globalObject, void* data);
+    void call(napi_env env, void* data);
 };
 
 // This is essentially JSC::JSWeakValue, except with a JSCell* instead of a
@@ -163,12 +158,11 @@ public:
     void unref();
     void clear();
 
-    NapiRef(JSC::JSGlobalObject* global, uint32_t count)
+    NapiRef(napi_env env, uint32_t count)
+        : env(env)
+        , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
+        , refCount(count)
     {
-        globalObject = JSC::Weak<JSC::JSGlobalObject>(global);
-        strongRef = {};
-        weakValueRef.clear();
-        refCount = count;
     }
 
     JSC::JSValue value() const
@@ -188,6 +182,7 @@ public:
         weakValueRef.clear();
     }
 
+    napi_env env = nullptr;
     JSC::Weak<JSC::JSGlobalObject> globalObject;
     NapiWeakValue weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;
@@ -226,7 +221,7 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    JS_EXPORT_PRIVATE static NapiClass* create(VM&, Zig::GlobalObject*, const char* utf8name,
+    JS_EXPORT_PRIVATE static NapiClass* create(VM&, napi_env, const char* utf8name,
         size_t length,
         napi_callback constructor,
         void* data,
@@ -239,18 +234,22 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
-    CFFIFunction constructor()
+    napi_callback constructor()
     {
         return m_constructor;
     }
 
     void* dataPtr = nullptr;
-    CFFIFunction m_constructor = nullptr;
+    napi_callback m_constructor = nullptr;
     NapiRef* napiRef = nullptr;
+    napi_env m_env = nullptr;
+
+    inline napi_env env() const { return m_env; }
 
 private:
-    NapiClass(VM& vm, NativeExecutable* executable, JSC::JSGlobalObject* global, Structure* structure)
-        : Base(vm, executable, global, structure)
+    NapiClass(VM& vm, NativeExecutable* executable, napi_env env, Structure* structure)
+        : Base(vm, executable, env->globalObject(), structure)
+        , m_env(env)
     {
     }
     void finishCreation(VM&, NativeExecutable*, unsigned length, const String& name, napi_callback constructor,

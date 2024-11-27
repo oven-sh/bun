@@ -394,16 +394,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         return JSValue::encode(jsUndefined());
     }
 
-    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject* globalObject,
-        JSC::EncodedJSValue exports);
+    JSC::EncodedJSValue (*napi_register_module_v1)(napi_env env, JSC::EncodedJSValue exports);
 #if OS(WINDOWS)
 #define dlsym GetProcAddress
 #endif
 
     // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
     // (bun/src/env.zig:36) and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
-    napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(JSC::JSGlobalObject*,
-        JSC::EncodedJSValue)>(
+    napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(napi_env, JSC::EncodedJSValue)>(
         dlsym(handle, "napi_register_module_v1"));
 
 #if OS(WINDOWS)
@@ -420,10 +418,31 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         return {};
     }
 
+    auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
+
     NapiHandleScope handleScope(globalObject);
 
+    int module_version = 8;
+    if (node_api_module_get_api_version_v1) {
+        module_version = node_api_module_get_api_version_v1();
+    }
+
+    napi_module nmodule {
+        .nm_version = module_version,
+        .nm_flags = 0,
+        .nm_filename = "file://",
+        .nm_register_func = nullptr,
+        .nm_modname = "[no modname]",
+        .nm_priv = nullptr,
+        .reserved = {},
+    };
+
+    static_assert(sizeof(napi_value) == sizeof(EncodedJSValue), "EncodedJSValue must be reinterpretable as a pointer");
+
+    auto env = globalObject->makeNapiEnv(nmodule);
+
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
-    JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(globalObject, exportsValue));
+    JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(env, exportsValue));
 
     RETURN_IF_EXCEPTION(scope, {});
 

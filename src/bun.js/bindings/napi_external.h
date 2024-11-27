@@ -1,11 +1,10 @@
-
-
 #pragma once
 
 #include "root.h"
 
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
+#include "napi.h"
 
 namespace Bun {
 
@@ -47,11 +46,11 @@ public:
             JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static NapiExternal* create(JSC::VM& vm, JSC::Structure* structure, void* value, void* finalizer_hint, void* finalizer)
+    static NapiExternal* create(JSC::VM& vm, JSC::Structure* structure, void* value, void* finalizer_hint, napi_env env, void* finalizer)
     {
         NapiExternal* accessor = new (NotNull, JSC::allocateCell<NapiExternal>(vm)) NapiExternal(vm, structure);
 
-        accessor->finishCreation(vm, value, finalizer_hint, finalizer);
+        accessor->finishCreation(vm, value, finalizer_hint, env, finalizer);
 
 #if BUN_DEBUG
         if (auto* callFrame = vm.topCallFrame) {
@@ -75,23 +74,23 @@ public:
         return accessor;
     }
 
-    void finishCreation(JSC::VM& vm, void* value, void* finalizer_hint, void* finalizer)
+    void finishCreation(JSC::VM& vm, void* value, void* finalizer_hint, napi_env env, void* finalizer)
     {
         Base::finishCreation(vm);
         m_value = value;
         m_finalizerHint = finalizer_hint;
-        napi_env = this->globalObject();
-        this->finalizer = finalizer;
+        m_env = env;
+        m_finalizer = finalizer;
     }
 
     static void destroy(JSC::JSCell* cell);
 
     void* value() const { return m_value; }
 
-    void* m_value;
-    void* m_finalizerHint;
-    void* finalizer;
-    JSGlobalObject* napi_env;
+    void* m_value = nullptr;
+    void* m_finalizerHint = nullptr;
+    void* m_finalizer = nullptr;
+    napi_env m_env = nullptr;
 
 #if BUN_DEBUG
     String sourceOriginURL = String();

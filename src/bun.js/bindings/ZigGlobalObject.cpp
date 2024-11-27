@@ -1206,7 +1206,7 @@ GlobalObject::~GlobalObject()
 {
     if (napiInstanceDataFinalizer) {
         napi_finalize finalizer = reinterpret_cast<napi_finalize>(napiInstanceDataFinalizer);
-        finalizer(toNapi(this), napiInstanceData, napiInstanceDataFinalizerHint);
+        finalizer(napiInstanceDataEnv, napiInstanceData, napiInstanceDataFinalizerHint);
     }
 
     if (auto* ctx = scriptExecutionContext()) {

@@ -3353,14 +3353,14 @@ pub const H2FrameParser = struct {
                     if (this.isServer) {
                         if (!ValidPseudoHeaders.has(name)) {
                             if (!globalObject.hasException()) {
-                                globalObject.ERR_HTTP2_INVALID_PSEUDOHEADER("\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
+                                return globalObject.ERR_HTTP2_INVALID_PSEUDOHEADER("\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
                             }
                             return .zero;
                         }
                     } else {
                         if (!ValidRequestPseudoHeaders.has(name)) {
                             if (!globalObject.hasException()) {
-                                globalObject.ERR_HTTP2_INVALID_PSEUDOHEADER("\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
+                                return globalObject.ERR_HTTP2_INVALID_PSEUDOHEADER("\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
                             }
                             return .zero;
                         }
@@ -3371,7 +3371,7 @@ pub const H2FrameParser = struct {
 
                 const js_value: JSC.JSValue = try headers_arg.get(globalObject, name) orelse {
                     if (!globalObject.hasException()) {
-                        globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Invalid value for header \"{s}\"", .{name}).throw();
+                        return globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Invalid value for header \"{s}\"", .{name}).throw();
                     }
                     return .zero;
                 };
@@ -3383,7 +3383,7 @@ pub const H2FrameParser = struct {
 
                     if (SingleValueHeaders.has(name) and value_iter.len > 1) {
                         if (!globalObject.hasException()) {
-                            globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Header field \"{s}\" must only have a single value", .{name}).throw();
+                            return globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Header field \"{s}\" must only have a single value", .{name}).throw();
                         }
                         return .zero;
                     }
@@ -3391,14 +3391,14 @@ pub const H2FrameParser = struct {
                     while (value_iter.next()) |item| {
                         if (item.isEmptyOrUndefinedOrNull()) {
                             if (!globalObject.hasException()) {
-                                globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Invalid value for header \"{s}\"", .{name}).throw();
+                                return globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Invalid value for header \"{s}\"", .{name}).throw();
                             }
                             return .zero;
                         }
 
                         const value_str = item.toStringOrNull(globalObject) orelse {
                             if (!globalObject.hasException()) {
-                                globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Invalid value for header \"{s}\"", .{name}).throw();
+                                return globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Invalid value for header \"{s}\"", .{name}).throw();
                             }
                             return .zero;
                         };
@@ -3426,7 +3426,7 @@ pub const H2FrameParser = struct {
                     log("single header {s}", .{name});
                     const value_str = js_value.toStringOrNull(globalObject) orelse {
                         if (!globalObject.hasException()) {
-                            globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Invalid value for header \"{s}\"", .{name}).throw();
+                            return globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Invalid value for header \"{s}\"", .{name}).throw();
                         }
                         return .zero;
                     };

@@ -736,7 +736,7 @@ pub const ZigString = extern struct {
     pub fn toExternalU16(ptr: [*]const u16, len: usize, global: *JSGlobalObject) JSValue {
         if (len > String.max_length()) {
             bun.default_allocator.free(ptr[0..len]);
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw();
+            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
         return shim.cppFn("toExternalU16", .{ ptr, len, global });
@@ -922,7 +922,7 @@ pub const ZigString = extern struct {
         this.assertGlobal();
         if (this.len > String.max_length()) {
             bun.default_allocator.free(@constCast(this.byteSlice()));
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw();
+            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
         return shim.cppFn("toExternalValue", .{ this, global });
@@ -944,7 +944,7 @@ pub const ZigString = extern struct {
     ) JSValue {
         if (this.len > String.max_length()) {
             callback(ctx, @constCast(@ptrCast(this.byteSlice().ptr)), this.len);
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw();
+            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
 
@@ -2985,15 +2985,14 @@ pub const JSGlobalObject = opaque {
         return this.vm().throwError2(this, err);
     }
 
-    pub inline fn throwMissingArgumentsValue(this: *JSGlobalObject, comptime arg_names: []const []const u8) JSValue {
-        switch (arg_names.len) {
+    pub inline fn throwMissingArgumentsValue(this: *JSGlobalObject, comptime arg_names: []const []const u8) bun.JSError {
+        return switch (arg_names.len) {
             0 => @compileError("requires at least one argument"),
             1 => this.ERR_MISSING_ARGS("The \"{s}\" argument must be specified", .{arg_names[0]}).throw(),
             2 => this.ERR_MISSING_ARGS("The \"{s}\" and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1] }).throw(),
             3 => this.ERR_MISSING_ARGS("The \"{s}\", \"{s}\", and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1], arg_names[2] }).throw(),
             else => @compileError("implement this message"),
-        }
-        return .zero;
+        };
     }
 
     pub fn createInvalidArgumentType(
@@ -3025,8 +3024,7 @@ pub const JSGlobalObject = opaque {
         value: JSValue,
     ) bun.JSError {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = this };
-        this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, value.toFmt(&formatter) }).throw();
-        return error.JSError;
+        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, value.toFmt(&formatter) }).throw();
     }
 
     pub fn throwInvalidArgumentRangeValue(
@@ -3035,8 +3033,7 @@ pub const JSGlobalObject = opaque {
         typename: []const u8,
         value: i64,
     ) bun.JSError {
-        this.ERR_OUT_OF_RANGE("The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
-        return error.JSError;
+        return this.ERR_OUT_OF_RANGE("The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
     }
 
     pub fn throwInvalidPropertyTypeValue(
@@ -3047,8 +3044,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
         defer ty_str.deinit();
-        this.ERR_INVALID_ARG_TYPE("The \"{s}\" property must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }).throw();
-        return error.JSError;
+        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" property must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }).throw();
     }
 
     pub fn createNotEnoughArguments(

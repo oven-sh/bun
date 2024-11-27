@@ -737,9 +737,7 @@ pub const Request = struct {
             if (!globalThis.hasException()) {
                 // globalThis.throw can cause GC, which could cause the above string to be freed.
                 // so we must increment the reference count before calling it.
-                globalThis.ERR_INVALID_URL("Failed to construct 'Request': Invalid URL \"{}\"", .{
-                    req.url,
-                }).throw();
+                return globalThis.ERR_INVALID_URL("Failed to construct 'Request': Invalid URL \"{}\"", .{req.url}).throw();
             }
             return error.JSError;
         }

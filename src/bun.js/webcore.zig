@@ -533,16 +533,14 @@ pub const Crypto = struct {
         return JSC.ArrayBuffer.create(globalThis, buf, .ArrayBuffer);
     }
 
-    fn throwInvalidParameter(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        globalThis.ERR_CRYPTO_SCRYPT_INVALID_PARAMETER("Invalid scrypt parameters", .{}).throw();
-        return .zero;
+    fn throwInvalidParameter(globalThis: *JSC.JSGlobalObject) bun.JSError {
+        return globalThis.ERR_CRYPTO_SCRYPT_INVALID_PARAMETER("Invalid scrypt parameters", .{}).throw();
     }
 
-    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: [:0]const u8, fmt: anytype) JSC.JSValue {
+    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: [:0]const u8, fmt: anytype) bun.JSError {
         if (error_type != .RangeError) @compileError("Error type not added!");
-        globalThis.ERR_CRYPTO_INVALID_SCRYPT_PARAMS(message, fmt).throw();
         BoringSSL.ERR_clear_error();
-        return .zero;
+        return globalThis.ERR_CRYPTO_INVALID_SCRYPT_PARAMS(message, fmt).throw();
     }
 
     pub fn timingSafeEqual(_: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -666,8 +664,7 @@ pub const Crypto = struct {
                     if (arguments[0].isString()) {
                         encoding_value = arguments[0];
                         break :brk JSC.Node.Encoding.fromJS(encoding_value, globalThis) orelse {
-                            globalThis.ERR_UNKNOWN_ENCODING("Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
-                            return .zero;
+                            return globalThis.ERR_UNKNOWN_ENCODING("Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
                         };
                     }
                 }

@@ -699,13 +699,7 @@ pub const Encoding = enum(u8) {
     }
 
     pub fn throwEncodingError(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError {
-        globalObject.ERR_INVALID_ARG_VALUE(
-            "encoding '{}' is an invalid encoding",
-            .{
-                value.fmtString(globalObject),
-            },
-        ).throw();
-        return error.JSError;
+        return globalObject.ERR_INVALID_ARG_VALUE("encoding '{}' is an invalid encoding", .{value.fmtString(globalObject)}).throw();
     }
 
     pub fn encodeWithSize(encoding: Encoding, globalObject: *JSC.JSGlobalObject, comptime size: usize, input: *const [size]u8) JSC.JSValue {

@@ -313,8 +313,7 @@ pub const OS = struct {
         const arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
         if (arguments.len > 0 and !arguments[0].isNumber()) {
-            globalThis.ERR_INVALID_ARG_TYPE("getPriority() expects a number", .{}).throw();
-            return .zero;
+            return globalThis.ERR_INVALID_ARG_TYPE("getPriority() expects a number", .{}).throw();
         }
 
         const pid = if (arguments.len > 0) arguments[0].asInt32() else 0;

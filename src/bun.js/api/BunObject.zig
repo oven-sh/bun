@@ -1426,7 +1426,7 @@ pub const Crypto = struct {
                             const slice = arguments[4].toSlice(globalThis, bun.default_allocator);
                             defer slice.deinit();
                             const name = slice.slice();
-                            globalThis.ERR_CRYPTO_INVALID_DIGEST("Unsupported algorithm \"{s}\"", .{name}).throw();
+                            return globalThis.ERR_CRYPTO_INVALID_DIGEST("Unsupported algorithm \"{s}\"", .{name}).throw();
                         }
                         return error.JSError;
                     };
@@ -2450,8 +2450,7 @@ pub const Crypto = struct {
                     inline else => |*str| {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                            globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
-                            return error.JSError;
+                            return globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
                         };
 
                         return hashToEncoding(globalThis, &evp, input, encoding);
@@ -2621,8 +2620,7 @@ pub const Crypto = struct {
                     inline else => |*str| {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                            globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
-                            return error.JSError;
+                            return globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
                         };
 
                         return this.digestToEncoding(globalThis, encoding);
@@ -2746,8 +2744,7 @@ pub const Crypto = struct {
                     inline else => |*str| {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                            globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
-                            return error.JSError;
+                            return globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
                         };
 
                         if (encoding == .buffer) {
@@ -2955,8 +2952,7 @@ pub const Crypto = struct {
                         inline else => |*str| {
                             defer str.deinit();
                             const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                                globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
-                                return error.JSError;
+                                return globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
                             };
 
                             return hashToEncoding(globalThis, input, encoding);
@@ -2985,8 +2981,7 @@ pub const Crypto = struct {
 
             pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 if (this.digested) {
-                    globalThis.ERR_INVALID_STATE(name ++ " hasher already digested, create a new instance to update", .{}).throw();
-                    return .zero;
+                    return globalThis.ERR_INVALID_STATE(name ++ " hasher already digested, create a new instance to update", .{}).throw();
                 }
                 const thisValue = callframe.this();
                 const input = callframe.argument(0);
@@ -3009,16 +3004,14 @@ pub const Crypto = struct {
                 output: ?JSC.Node.StringOrBuffer,
             ) bun.JSError!JSC.JSValue {
                 if (this.digested) {
-                    globalThis.ERR_INVALID_STATE(name ++ " hasher already digested, create a new instance to digest again", .{}).throw();
-                    return .zero;
+                    return globalThis.ERR_INVALID_STATE(name ++ " hasher already digested, create a new instance to digest again", .{}).throw();
                 }
                 if (output) |*string_or_buffer| {
                     switch (string_or_buffer.*) {
                         inline else => |*str| {
                             defer str.deinit();
                             const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                                globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
-                                return error.JSError;
+                                return globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
                             };
 
                             return this.digestToEncoding(globalThis, encoding);

@@ -2559,8 +2559,7 @@ pub const Arguments = struct {
 
             if (defined_length and args.length > 0 and buffer.slice().len == 0) {
                 var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
-                ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
-                return error.JSError;
+                return ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
             }
 
             return args;

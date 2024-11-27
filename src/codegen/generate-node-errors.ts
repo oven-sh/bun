@@ -45,8 +45,9 @@ fn ErrorBuilder(comptime code: Error, comptime fmt: [:0]const u8, Args: type) ty
       args: Args,
 
       // Throw this error as a JS exception
-      pub inline fn throw(this: @This()) void {
+      pub inline fn throw(this: @This()) bun.JSError {
         code.throw(this.globalThis, fmt, this.args);
+        return error.JSError;
       }
 
       /// Turn this into a JSValue

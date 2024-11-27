@@ -492,12 +492,22 @@ declare module "bun" {
     app?: Bake.Options | undefined;
   }
 
-  declare interface Plug {
+  declare interface PluginBuilder {
     /**
      * Inject a module into the development server's runtime, to be loaded
      * before all other user code.
      */
     addPreload(module: string, side: 'client' | 'server'): void;
+  }
+
+  declare interface OnLoadArgs {
+    /**
+     * When using server-components, the same bundle has both client and server
+     * files; A single plugin can operate on files from both module graphs.
+     * Outside of server-components, this will be "client" when the target is
+     * set to "browser" and "server" otherwise.
+     */
+    side: 'server' | 'client';
   }
 }
 
@@ -557,6 +567,7 @@ declare module "bun:bake/server" {
       };
     };
   }
+
 }
 
 /** Available in client-side files. */

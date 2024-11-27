@@ -380,11 +380,14 @@ pub const Framework = struct {
                         return global.throwInvalidArguments("Missing 'framework.serverComponents.serverRuntimeImportSource'", .{});
                     },
                 ),
-                .server_register_client_reference = refs.track(
-                    try sc.getOptional(global, "serverRegisterClientReferenceExport", ZigString.Slice) orelse {
-                        return global.throwInvalidArguments("Missing 'framework.serverComponents.serverRegisterClientReferenceExport'", .{});
-                    },
-                ),
+                .server_register_client_reference = if (try sc.getOptional(
+                    global,
+                    "serverRegisterClientReferenceExport",
+                    ZigString.Slice,
+                )) |slice|
+                    refs.track(slice)
+                else
+                    "registerClientReference",
             };
         };
         const built_in_modules: bun.StringArrayHashMapUnmanaged(BuiltInModule) = built_in_modules: {
@@ -456,9 +459,9 @@ pub const Framework = struct {
                             break :exts &.{};
                         }
                     } else if (exts_js.isArray()) {
-                        var it_2 = array.arrayIterator(global);
+                        var it_2 = exts_js.arrayIterator(global);
                         var i_2: usize = 0;
-                        const extensions = try arena.alloc([]const u8, len);
+                        const extensions = try arena.alloc([]const u8, array.getLength(global));
                         while (it_2.next()) |array_item| : (i_2 += 1) {
                             const slice = refs.track(try array_item.toSlice2(global, arena));
                             if (bun.strings.eqlComptime(slice, "*"))

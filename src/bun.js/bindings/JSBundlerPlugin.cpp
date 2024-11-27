@@ -325,7 +325,7 @@ extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, 
     return pluginObject->plugin.anyMatchesCrossThread(pluginObject->vm(), namespaceString, path, isOnLoad);
 }
 
-extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, void* context, uint8_t defaultLoaderId)
+extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
 {
     JSC::JSGlobalObject *globalObject = plugin->globalObject();
     WTF::String namespaceStringStr = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : WTF::String();
@@ -346,6 +346,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
     arguments.append(JSC::jsString(plugin->vm(), pathStr));
     arguments.append(JSC::jsString(plugin->vm(), namespaceStringStr));
     arguments.append(JSC::jsNumber(defaultLoaderId));
+    arguments.append(JSC::jsBoolean(isServerSide));
 
     call(globalObject, function, callData, plugin, arguments);
 

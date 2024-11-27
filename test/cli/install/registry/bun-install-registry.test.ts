@@ -891,6 +891,33 @@ describe("whoami", async () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
+    test("two .npmrc", async () => {
+    const token = await generateRegistryUser("whoami-npmrc", "whoami-npmrc");
+    const packageNpmrc = `registry=http://localhost:${port}/`;
+    const homeNpmrc = `//localhost:${port}/:_authToken=${token}`;
+    const homeDir = `${packageDir}/home_dir`;
+    await Bun.$`mkdir -p ${homeDir}`;
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
+      write(join(packageDir, ".npmrc"), packageNpmrc),
+      write(join(homeNpmrc, ".npmrc"), homeDir),
+    ]);
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        XDG_CONFIG_HOME: `${homeDir}`,
+      },
+    });
+    const out = await Bun.readableStreamToText(stdout);
+    expect(out).toBe("whoami-npmrc\n");
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  });
   test("not logged in", async () => {
     await write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" }));
     const { stdout, stderr, exited } = spawn({

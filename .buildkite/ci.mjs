@@ -1181,15 +1181,25 @@ async function getPipelineOptions() {
     const values = await Promise.all(keys.map(getBuildMetadata));
     const options = Object.fromEntries(keys.map((key, index) => [key, values[index]]));
 
+    /**
+     * @param {string} value
+     * @returns {string[] | undefined}
+     */
+    const parseArray = value =>
+      value
+        ?.split("\n")
+        ?.map(item => item.trim())
+        ?.filter(Boolean);
+
     return {
       skipBuilds: parseBoolean(options["skip-builds"]),
       forceBuilds: parseBoolean(options["force-builds"]),
       skipTests: parseBoolean(options["skip-tests"]),
       canary: parseBoolean(options["canary"]),
-      buildProfiles: Array.from(options["build-profiles"] || []),
-      buildPlatforms: Array.from(options["build-platforms"] || []).map(platform => buildPlatformsMap.get(platform)),
-      testPlatforms: Array.from(options["test-platforms"] || []).map(platform => testPlatformsMap.get(platform)),
-      testFiles: Array.from(options["test-files"] || []),
+      buildProfiles: parseArray(options["build-profiles"]),
+      buildPlatforms: parseArray(options["build-platforms"])?.map(platform => buildPlatformsMap.get(platform)),
+      testPlatforms: parseArray(options["test-platforms"])?.map(platform => testPlatformsMap.get(platform)),
+      testFiles: parseArray(options["test-files"]),
       buildImages: parseBoolean(options["build-images"]),
       publishImages: parseBoolean(options["publish-images"]),
     };
@@ -1223,6 +1233,7 @@ async function getPipeline() {
 
   const options = await getPipelineOptions();
   console.log("Pipeline options:", options);
+  options;
 
   steps.push({
     group: "uname",

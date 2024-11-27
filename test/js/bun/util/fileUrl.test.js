@@ -4,7 +4,11 @@ import { isWindows } from "harness";
 
 describe("pathToFileURL", () => {
   it("should convert a path to a file url", () => {
-    expect(pathToFileURL("/path/to/file.js").href).toBe("file:///path/to/file.js");
+    if (isWindows) {
+      expect(pathToFileURL("/path/to/file.js").href).toBe("file:///C:/path/to/file.js");
+    } else {
+      expect(pathToFileURL("/path/to/file.js").href).toBe("file:///path/to/file.js");
+    }
   });
 });
 
@@ -12,6 +16,7 @@ describe("fileURLToPath", () => {
   it("should convert a file url to a path", () => {
     if (isWindows) {
       expect(() => fileURLToPath("file:///path/to/file.js")).toThrow("File URL path must be absolute");
+      expect(fileURLToPath("file:///C:/path/to/file.js")).toBe("C:\\path\\to\\file.js");
     } else {
       expect(fileURLToPath("file:///path/to/file.js")).toBe("/path/to/file.js");
     }

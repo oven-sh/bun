@@ -1010,7 +1010,7 @@ function getOptionsStep() {
 
   return {
     key: "options",
-    block: "Select options",
+    block: "Configure build",
     blocked_state: "running",
     fields: [
       {
@@ -1148,6 +1148,9 @@ function getOptionsApplyStep() {
     key: "options-apply",
     command: "node ./.buildkite/ci.mjs --apply",
     depends_on: ["options"],
+    agents: {
+      queue: "*",
+    },
   };
 }
 

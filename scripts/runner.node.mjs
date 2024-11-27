@@ -340,7 +340,12 @@ async function spawnSafe(options) {
         timeout,
         cwd,
         env,
+
+        // Minimize keeping extra zombies around on posix.
+        detached: isWindows ? false : true,
       });
+      subprocess.ref();
+      const group = -subprocess.pid;
       subprocess.on("spawn", () => {
         timestamp = Date.now();
         timer = setTimeout(() => done(resolve), timeout);
@@ -350,6 +355,14 @@ async function spawnSafe(options) {
         done(resolve);
       });
       subprocess.on("exit", (code, signal) => {
+        if (!isWindows) {
+          try {
+            // Avoid keeping extra zombies around on posix.
+            process.kill(group, "SIGTERM");
+          } catch (error) {
+            console.warn(error);
+          }
+        }
         duration = Date.now() - timestamp;
         exitCode = code;
         signalCode = signal;

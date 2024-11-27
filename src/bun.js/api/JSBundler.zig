@@ -782,7 +782,7 @@ pub const JSBundler = struct {
         }
 
         export fn JSBundlerPlugin__onDefer(load: *Load, global: *JSC.JSGlobalObject) JSValue {
-            return global.errorUnionToCPP(load.onDefer(global));
+            return JSC.toJSHostValue(global, load.onDefer(global));
         }
 
         fn onDefer(this: *Load, globalObject: *JSC.JSGlobalObject) bun.JSError!JSValue {

@@ -4,36 +4,44 @@
 "use strict";
 const net = require("net");
 
-test("net.Server should not allow binding to the same port twice", done => {
-  const server1 = net.createServer(() => {
-    throw new Error("Server1 should not receive connections");
-  });
+import { test } from "bun:test";
+import net from "node:net";
+import { isWindows } from "harness";
 
-  const options = {
-    reusePort: true,
-    port: 0,
-    host: "127.0.0.1",
-  };
-  server1.listen(options, () => {
-    const server2 = net.createServer(() => {
-      throw new Error("Server2 should not receive connections");
+test.skipIf(isWindows)(
+  "net.Server should not allow binding to the same port twice",
+  done => {
+    const server1 = net.createServer(() => {
+      throw new Error("Server1 should not receive connections");
     });
 
-    const port = server1.address().port;
-    server2.listen({ ...options, port }, () => {
-      server2.close(() => {
+    const options = {
+      reusePort: true,
+      port: 0,
+      host: "127.0.0.1",
+    };
+    server1.listen(options, () => {
+      const server2 = net.createServer(() => {
+        throw new Error("Server2 should not receive connections");
+      });
+
+      const port = server1.address().port;
+      server2.listen({ ...options, port }, () => {
+        server2.close(() => {
+          server1.close(() => {
+            done();
+          });
+        });
+      });
+
+      server2.on("error", e => {
         server1.close(() => {
-          done();
+          done(e);
         });
       });
     });
-
-    server2.on("error", e => {
-      server1.close(() => {
-        done(e);
-      });
-    });
-  });
-}, 100000);
+  },
+  100000,
+);
 
 //<#END_FILE: test-net-bind-twice.js

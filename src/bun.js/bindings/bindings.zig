@@ -6703,6 +6703,15 @@ pub const EncodedJSValue = extern union {
     asPtr: ?*anyopaque,
     asDouble: f64,
 };
+
+// this is called a lot, only triggers in the combo of safe release mode and CI/canary
+pub inline fn assertJSValue(globalThis: *JSGlobalObject, value: JSValue) JSValue {
+    if (bun.Environment.allow_assert and bun.Environment.is_canary) {
+        bun.assert((value == .zero) == globalThis.hasException());
+    }
+    return value;
+}
+
 pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(JSC.conv) JSValue;
 pub const JSHostFunctionTypeWithCCallConvForAssertions = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
 pub const JSHostFunctionPtr = *const JSHostFunctionType;
@@ -6714,35 +6723,19 @@ pub fn toJSHostFunction(comptime Function: JSHostZigFunction) JSC.JSHostFunction
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) callconv(JSC.conv) JSC.JSValue {
-            if (bun.Environment.allow_assert and bun.Environment.is_canary) {
-                const value = Function(globalThis, callframe) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-                };
-                bun.assert((value == .zero) == globalThis.hasException());
-                return value;
-            }
-            return @call(.always_inline, Function, .{ globalThis, callframe }) catch |err| switch (err) {
+            return assertJSValue(globalThis, @call(.always_inline, Function, .{ globalThis, callframe }) catch |err| switch (err) {
                 error.JSError => .zero,
                 error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-            };
+            });
         }
     }.function;
 }
 
 pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!JSValue) JSValue {
-    if (bun.Environment.allow_assert and bun.Environment.is_canary) {
-        const normal = value catch |err| switch (err) {
-            error.JSError => .zero,
-            error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-        };
-        bun.assert((normal == .zero) == globalThis.hasException());
-        return normal;
-    }
-    return value catch |err| switch (err) {
+    return assertJSValue(globalThis, value catch |err| switch (err) {
         error.JSError => .zero,
         error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-    };
+    });
 }
 
 const ParsedHostFunctionErrorSet = struct {

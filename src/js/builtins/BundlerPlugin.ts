@@ -2,26 +2,25 @@ import type {
   BuildConfig,
   BunPlugin,
   OnLoadCallback,
-  OnLoadResultObject,
-  OnLoadResultSourceCode,
   OnResolveCallback,
   PluginBuilder,
   PluginConstraints,
 } from "bun";
 type AnyFunction = (...args: any[]) => any;
 
-// This API expects 4 functions:
-// It should be generic enough to reuse for Bun.plugin() eventually, too.
 interface BundlerPlugin {
   onLoad: Map<string, [RegExp, OnLoadCallback][]>;
   onResolve: Map<string, [RegExp, OnResolveCallback][]>;
+  /** Binding to `JSBundlerPlugin__onLoadAsync` */
   onLoadAsync(
     internalID,
     sourceCode: string | Uint8Array | ArrayBuffer | DataView | null,
     loaderKey: number | null,
   ): void;
+  /** Binding to `JSBundlerPlugin__onResolveAsync` */
   onResolveAsync(internalID, a, b, c): void;
-  addError(internalID, error, number): void;
+  /** Binding to `JSBundlerPlugin__addError` */
+  addError(internalID: number, error: any, which: number): void;
   addFilter(filter, namespace, number): void;
   generateDeferPromise(): Promise<void>;
   promises: Array<Promise<any>> | undefined;

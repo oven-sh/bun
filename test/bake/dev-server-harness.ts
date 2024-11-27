@@ -107,7 +107,14 @@ export class Dev {
   }
 
   async waitForHotReload() {
-    await this.output.waitForLine(/bundled route|error|reloaded/i);
+    const err = this.output.waitForLine(/error/i);
+    const success = this.output.waitForLine(/bundled route|reloaded/i);
+    await Promise.race([
+      // On failure, give a little time in case a partial write caused a
+      // bundling error, and a success came in.
+      err.then(() => Bun.sleep(500), () => {}), 
+      success,
+    ]);
   }
 
   async [Symbol.asyncDispose]() {}

@@ -491,8 +491,17 @@ declare module "bun" {
     /** Add a fullstack web app to this server using Bun Bake */
     app?: Bake.Options | undefined;
   }
+
+  declare interface Plug {
+    /**
+     * Inject a module into the development server's runtime, to be loaded
+     * before all other user code.
+     */
+    addPreload(module: string, side: 'client' | 'server'): void;
+  }
 }
 
+/** Available in server-side files only. */
 declare module "bun:bake/server" {
   // NOTE: The format of these manifests will likely be customizable in the future.
 
@@ -550,6 +559,7 @@ declare module "bun:bake/server" {
   }
 }
 
+/** Available in client-side files. */
 declare module "bun:bake/client" {
   /**
    * Callback is invoked when server-side code is changed. This can be used to
@@ -560,3 +570,8 @@ declare module "bun:bake/client" {
    */
   export function onServerSideReload(cb: () => void | Promise<void>): Promise<void>;
 }
+
+/** Available during development */
+declare module "bun:bake/dev" {
+  
+};

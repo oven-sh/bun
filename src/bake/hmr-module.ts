@@ -147,7 +147,7 @@ export function replaceModule(key: Id, load: ModuleLoadFunction) {
     load(module);
     const { exports } = module;
     for (const updater of module._deps.values()) {
-      updater?.(exports);
+      updater?._callback?.(exports);
     }
   }
 }

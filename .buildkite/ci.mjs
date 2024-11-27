@@ -586,6 +586,9 @@ function getBuildkiteEmoji(string, buildkite) {
   if (/gear|settings|configure/i.test(string)) {
     return ":gear:";
   }
+  if (/clipboard/i.test(string)) {
+    return ":clipboard:";
+  }
   return "";
 }
 
@@ -620,6 +623,9 @@ function getEmoji(string) {
   }
   if (/gear|settings|configure/i.test(string)) {
     return "⚙️";
+  }
+  if (/clipboard/i.test(string)) {
+    return "📋";
   }
   return "";
 }
@@ -1016,8 +1022,7 @@ function getOptionsStep() {
 
   return {
     key: "options",
-    block: getBuildkiteEmoji("gear"),
-    prompt: "Customize the build options",
+    block: getBuildkiteEmoji("clipboard"),
     blocked_state: "running",
     fields: [
       {

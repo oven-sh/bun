@@ -2,7 +2,6 @@
 //#SHA1: 432eb9529d0affc39c8af9ebc1147528d96305c9
 //-----------------
 "use strict";
-const net = require("net");
 
 import { test } from "bun:test";
 import net from "node:net";

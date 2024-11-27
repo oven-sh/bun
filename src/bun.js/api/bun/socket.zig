@@ -2174,6 +2174,8 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             const args = callframe.argumentsUndef(2);
+            this.ref();
+            defer this.deref();
 
             return switch (this.writeOrEndBuffered(globalObject, args.ptr[0], args.ptr[1], false)) {
                 .fail => .zero,
@@ -2493,6 +2495,9 @@ fn NewSocket(comptime ssl: bool) type {
             if (this.socket.isDetached()) {
                 return JSValue.jsNumber(@as(i32, -1));
             }
+
+            this.ref();
+            defer this.deref();
 
             return switch (this.writeOrEnd(globalObject, args.mut(), false, true)) {
                 .fail => .zero,

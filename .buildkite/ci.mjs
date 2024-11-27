@@ -1392,7 +1392,9 @@ async function getPipeline(options = {}) {
     [...buildPlatforms, ...testPlatforms].map(platform => {
       const groupKey = getTargetKey(platform);
       const groupBuildSteps = buildSteps.get(groupKey) ?? [];
-      const groupTestSteps = testSteps.get(groupKey) ?? [];
+      const groupTestSteps = [...testSteps.entries()]
+        .filter(([key]) => key.startsWith(groupKey))
+        .map(([, steps]) => steps);
       return [
         groupKey,
         {

@@ -21821,8 +21821,9 @@ fn NewParser_(
                                 if (arg.is_typescript_ctor_field) {
                                     switch (arg.binding.data) {
                                         .b_identifier => |id| {
-                                            const name = p.symbols.items[id.ref.innerIndex()].original_name;
-                                            const ident = p.newExpr(E.Identifier{ .ref = id.ref }, arg.binding.loc);
+                                            const arg_symbol = p.symbols.items[id.ref.innerIndex()];
+                                            const name = arg_symbol.original_name;
+                                            const arg_ident = p.newExpr(E.Identifier{ .ref = id.ref }, arg.binding.loc);
 
                                             stmts.insert(if (super_index) |k| j + k + 1 else j, Stmt.assign(
                                                 p.newExpr(E.Dot{
@@ -21830,12 +21831,17 @@ fn NewParser_(
                                                     .name = name,
                                                     .name_loc = arg.binding.loc,
                                                 }, arg.binding.loc),
-                                                ident,
+                                                arg_ident,
                                             )) catch unreachable;
                                             // O(N)
                                             class_body.items.len += 1;
                                             bun.copy(G.Property, class_body.items[j + 1 ..], class_body.items[j .. class_body.items.len - 1]);
-                                            class_body.items[j] = G.Property{ .key = ident };
+                                            // Copy the argument name symbol to prevent the class field declaration from being renamed
+                                            // but not the constructor argument.
+                                            const field_symbol_ref = p.declareSymbol(.other, arg.binding.loc, name) catch id.ref;
+                                            field_symbol_ref.getSymbol(p.symbols.items).must_not_be_renamed = true;
+                                            const field_ident = p.newExpr(E.Identifier{ .ref = field_symbol_ref }, arg.binding.loc);
+                                            class_body.items[j] = G.Property{ .key = field_ident };
                                             j += 1;
                                         },
                                         else => {},

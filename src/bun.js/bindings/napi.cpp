@@ -1852,12 +1852,9 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     frame.newTarget = newTarget;
     Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 
-    JSValue ret = toJS(napi->constructor()(napi->env(), NAPICallFrame::toNapiCallbackInfo(frame)));
+    napi->constructor()(napi->env(), NAPICallFrame::toNapiCallbackInfo(frame));
     RETURN_IF_EXCEPTION(scope, {});
-    if (ret.isEmpty()) {
-        ret = jsUndefined();
-    }
-    RELEASE_AND_RETURN(scope, JSValue::encode(ret));
+    RELEASE_AND_RETURN(scope, JSValue::encode(frame.thisValue()));
 }
 
 NapiClass* NapiClass::create(VM& vm, napi_env env, const char* utf8name,

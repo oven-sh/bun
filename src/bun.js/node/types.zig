@@ -1267,8 +1267,7 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) bun.JSError!?Mode
         if (value.isUndefinedOrNull()) return null;
 
         if (!value.isString()) {
-            _ = ctx.throwInvalidArgumentTypeValue("mode", "number", value);
-            return error.JSError;
+            return ctx.throwInvalidArgumentTypeValue("mode", "number", value);
         }
 
         //        An easier method of constructing the mode is to use a sequence of

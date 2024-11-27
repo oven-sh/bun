@@ -946,8 +946,12 @@ const ServerPrototype = {
             resolveFunction && resolveFunction();
           }
           http_res.once("close", onClose);
-
-          server.emit("request", http_req, http_res);
+          const upgrade = http_req.headers.upgrade;
+          if (upgrade) {
+            server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
+          } else {
+            server.emit("request", http_req, http_res);
+          }
 
           socket.cork(drainMicrotasks);
 

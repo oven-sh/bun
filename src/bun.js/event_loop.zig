@@ -411,7 +411,7 @@ pub const Task = TaggedPointerUnion(.{
     AppendFile,
     AsyncGlobWalkTask,
     AsyncTransformTask,
-    bun.bake.DevServer.HotReloadTask,
+    bun.bake.DevServer.HotReloadEvent,
     bun.shell.Interpreter.Builtin.Yes.YesTask,
     Chmod,
     Chown,
@@ -484,10 +484,6 @@ pub const Task = TaggedPointerUnion(.{
     WriteFile,
     WriteFileTask,
     Writev,
-    ProcessWaiterThreadTask,
-    RuntimeTranspilerStore,
-    ServerAllConnectionsClosedTask,
-    bun.bake.DevServer.HotReloadEvent,
     bun.bundle_v2.DeferredBatchTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;

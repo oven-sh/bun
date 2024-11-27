@@ -3540,7 +3540,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tcp,
                 .protos = null,
-                .socket_context = null, // raw socket will dont own the context
+                .socket_context = null, // raw socket dont own the context
             });
             raw.ref();
 
@@ -3659,7 +3659,7 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             if (comptime tls) {
                 TLSSocket.onData(this.tls, socket, data);
             } else {
-                // tedius use this
+                // tedius use this (tedius is a pure-javascript implementation of TDS protocol used to interact with instances of Microsoft's SQL Server)
                 TLSSocket.onData(this.tcp, socket, data);
             }
         }

@@ -622,11 +622,13 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
         int optval2 = 1;
         setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (void *) &optval2, sizeof(optval2));
 #endif
-    } else if((options & LIBUS_LISTEN_REUSE_PORT)) {
-      #if defined(SO_REUSEPORT)
-        int optval2 = 1;
-        setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval2, sizeof(optval2));  
-        #endif
+    } else {
+#if defined(SO_REUSEPORT)
+        if((options & LIBUS_LISTEN_REUSE_PORT)) {
+            int optval2 = 1;
+            setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval2, sizeof(optval2));  
+        }
+#endif
     }
 
 #if defined(SO_REUSEADDR)
@@ -634,12 +636,12 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &optval3, sizeof(optval3));
 #endif
 
- if((options & LIBUS_SOCKET_IPV6_ONLY)) {
 #ifdef IPV6_V6ONLY
-    int disabled = 0;
-    setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
+  if (listenAddr->ai_family == AF_INET6) {
+        int disabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+        setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
+    }
 #endif
- }
 
     if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, 512, error)) {
         return LIBUS_SOCKET_ERROR;

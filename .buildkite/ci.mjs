@@ -30,6 +30,7 @@ import {
   startGroup,
   getBuildMetadata,
   parseBoolean,
+  getEmoji,
 } from "../scripts/utils.mjs";
 
 /**
@@ -586,86 +587,6 @@ function getReleaseStep(buildPlatforms) {
   };
 }
 
-/**
- * @param {string} string
- * @param {boolean} [buildkite]
- * @returns {string}
- * @link https://github.com/buildkite/emojis#emoji-reference
- */
-function getBuildkiteEmoji(string) {
-  if (/darwin|mac|apple/i.test(string)) {
-    return ":darwin:";
-  }
-  if (/amazon|aws/i.test(string)) {
-    return ":aws:";
-  }
-  const match = string.match(/(linux|debian|ubuntu|alpine)/i);
-  if (match) {
-    const [, distro] = match;
-    return `:${distro}:`;
-  }
-  if (/windows|win|microsoft/i.test(string)) {
-    return ":windows:";
-  }
-  if (/true|yes|ok|pass|success/i.test(string)) {
-    return ":white_check_mark:";
-  }
-  if (/false|no|fail|error|failure/i.test(string)) {
-    return ":x:";
-  }
-  if (/gear|settings|configure/i.test(string)) {
-    return ":gear:";
-  }
-  if (/clipboard/i.test(string)) {
-    return ":clipboard:";
-  }
-  if (/github/i.test(string)) {
-    return ":github:";
-  }
-  return "";
-}
-
-/**
- * @param {string} string
- * @returns {string}
- */
-function getEmoji(string) {
-  if (/darwin|mac|apple/i.test(string)) {
-    return "🍎";
-  }
-  if (/linux|debian|ubuntu|alpine/i.test(string)) {
-    return "🐧";
-  }
-  if (/windows|win|microsoft/i.test(string)) {
-    return "🪟";
-  }
-  if (/true|yes|ok|pass|success/i.test(string)) {
-    return "✅";
-  }
-  if (/false|no|fail|error|failure/i.test(string)) {
-    return "❌";
-  }
-  if (/bug|debug/i.test(string)) {
-    return "🐞";
-  }
-  if (/assert/i.test(string)) {
-    return "🔍";
-  }
-  if (/release/i.test(string)) {
-    return "🏆";
-  }
-  if (/gear|settings|configure/i.test(string)) {
-    return "⚙️";
-  }
-  if (/clipboard/i.test(string)) {
-    return "📋";
-  }
-  if (/release/i.test(string)) {
-    return ":rocket:";
-  }
-  return "";
-}
-
 // async function main() {
 //   printEnvironment();
 
@@ -802,11 +723,11 @@ function getEmoji(string) {
 function getOptionsStep() {
   const booleanOptions = [
     {
-      label: `${getEmoji("yes")} Yes`,
+      label: `${getEmoji("true")} Yes`,
       value: "true",
     },
     {
-      label: `${getEmoji("no")} No`,
+      label: `${getEmoji("false")} No`,
       value: "false",
     },
   ];

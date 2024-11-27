@@ -2651,3 +2651,42 @@ export function getLoggedInUserCount() {
     return stdout.split("\n").filter(line => /tty|pts/i.test(line)).length;
   }
 }
+
+/** @typedef {keyof typeof emojiMap} Emoji */
+
+const emojiMap = {
+  darwin: ["🍎", "darwin"],
+  linux: ["🐧", "linux"],
+  debian: ["🐧", "debian"],
+  ubuntu: ["🐧", "ubuntu"],
+  alpine: ["🐧", "alpine"],
+  amazonlinux: ["🐧", "aws"],
+  windows: ["🪟", "windows"],
+  true: ["✅", "white_check_mark"],
+  false: ["❌", "x"],
+  debug: ["🐞", "bug"],
+  assert: ["🔍", "mag"],
+  release: ["🏆", "trophy"],
+  gear: ["⚙️", "gear"],
+  clipboard: ["📋", "clipboard"],
+  rocket: ["🚀", "rocket"],
+};
+
+/**
+ * @param {Emoji} emoji
+ * @returns {string}
+ */
+export function getEmoji(emoji) {
+  const [unicode] = emojiMap[emoji] || [];
+  return unicode || "";
+}
+
+/**
+ * @param {Emoji} emoji
+ * @returns {string}
+ * @link https://github.com/buildkite/emojis#emoji-reference
+ */
+export function getBuildkiteEmoji(emoji) {
+  const [, name] = emojiMap[emoji] || [];
+  return name ? `:${name}:` : "";
+}

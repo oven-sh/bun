@@ -400,10 +400,12 @@ check_ulimit() {
 
 	print "Checking ulimits..."
 	systemd_conf="/etc/systemd/system.conf"
-	limits_conf="/etc/security/limits.d/99-unlimited.conf"
-	if [ -f "/etc/security/limits.conf" ] && ! [ -f "$limits_conf" ]; then
-		execute_sudo mkdir -p "$(dirname "$limits_conf")"
-		execute_sudo touch "$limits_conf"
+	if [ -f "$systemd_conf" ]; then
+		limits_conf="/etc/security/limits.d/99-unlimited.conf"
+		if ! [ -f "$limits_conf" ]; then
+			execute_sudo mkdir -p "$(dirname "$limits_conf")"
+			execute_sudo touch "$limits_conf"
+		fi
 	fi
 
 	limits="core data fsize memlock nofile rss stack cpu nproc as locks sigpending msgqueue"
@@ -429,6 +431,22 @@ check_ulimit() {
 			append_to_file "$systemd_conf" "DefaultLimit$limit_upper=$limit_value"
 		fi
 	done
+
+	rc_conf="/etc/rc.conf"
+	if [ -f "$rc_conf" ]; then
+		rc_ulimit=""
+		limit_flags="c d e f i l m n q r s t u v x"
+		for limit_flag in $limit_flags; do
+			limit_value="unlimited"
+			case "$limit_flag" in
+			n | u)
+				limit_value="1048576"
+				;;
+			esac
+			rc_ulimit="$rc_ulimit -$limit_flag $limit_value"
+		done
+		append_to_file "$rc_conf" "rc_ulimit=\"$rc_ulimit\""
+	fi
 
 	pam_confs="/etc/pam.d/common-session /etc/pam.d/common-session-noninteractive"
 	for pam_conf in $pam_confs; do

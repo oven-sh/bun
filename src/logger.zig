@@ -96,13 +96,24 @@ pub const Loc = struct {
 };
 
 pub const Location = struct {
-    file: string = "",
+    file: string,
     namespace: string = "file",
-    line: i32 = 1, // 1-based
-    column: i32 = 0, // 0-based, in bytes
-    length: usize = 0, // in bytes
+    /// 1-based line number.
+    /// Line <= 0 means there is no line and column information.
+    // TODO: move to `bun.Ordinal`
+    line: i32,
+    // TODO: figure out how this is interpreted, convert to `bun.Ordinal`
+    // original docs: 0-based, in bytes.
+    // but there is a place where this is emitted in output, implying one based character offset
+    column: i32,
+    /// Number of bytes this location should highlight.
+    /// 0 to just point at a single character
+    length: usize = 0,
+    /// Text on the line, avoiding the need to refetch the source code
     line_text: ?string = null,
+    // TODO: remove this unused field
     suggestion: ?string = null,
+    // TODO: document or remove
     offset: usize = 0,
 
     pub fn count(this: Location, builder: *StringBuilder) void {
@@ -340,7 +351,7 @@ pub const Data = struct {
                     location.file,
                 });
 
-                if (location.line > -1 and location.column > -1) {
+                if (location.line > 0 and location.column > -1) {
                     try to.print(comptime Output.prettyFmt("<d>:<r><yellow>{d}<r><d>:<r><yellow>{d}<r>", enable_ansi_colors), .{
                         location.line,
                         location.column,
@@ -401,6 +412,8 @@ pub const Msg = struct {
                 .text = try zig_exception_holder.zigException().message.toOwnedSlice(allocator),
                 .location = Location{
                     .file = file,
+                    .line = 0,
+                    .column = 0,
                 },
             },
         };
@@ -1227,7 +1240,7 @@ pub const Log = struct {
         );
     }
 
-    pub fn print(self: *Log, to: anytype) !void {
+    pub fn print(self: *const Log, to: anytype) !void {
         return switch (Output.enable_ansi_colors) {
             inline else => |enable_ansi_colors| self.printWithEnableAnsiColors(to, enable_ansi_colors),
         };

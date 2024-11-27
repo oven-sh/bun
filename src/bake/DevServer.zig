@@ -310,7 +310,8 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     }
 
     dev.framework = dev.framework.resolve(&dev.server_bundler.resolver, &dev.client_bundler.resolver, options.arena) catch {
-        try bake.Framework.addReactInstallCommandNote(&dev.log);
+        if (dev.framework.is_built_in_react)
+            try bake.Framework.addReactInstallCommandNote(&dev.log);
         return global.throwValue2(dev.log.toJSAggregateError(global, "Framework is missing required files!"));
     };
 
@@ -1592,12 +1593,13 @@ fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u
     return @intCast(gop.index);
 }
 
+/// Note: The log is not consumed here
 pub fn handleParseTaskFailure(
     dev: *DevServer,
     err: anyerror,
     graph: bake.Graph,
     abs_path: []const u8,
-    log: *Log,
+    log: *const Log,
 ) bun.OOM!void {
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();

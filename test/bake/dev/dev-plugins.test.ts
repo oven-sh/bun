@@ -41,8 +41,10 @@ devTest("onLoad", {
       {
         name: 'a',
         setup(build) {
+          let a = 0;
           build.onLoad({ filter: /trigger/ }, (args) => {
-            return { code: 'export const value = 2;' };
+            a += 1;
+            return { contents: 'export const value = ' + a + ';', loader: 'ts' };
           });
         },
       }
@@ -50,7 +52,7 @@ devTest("onLoad", {
   `,
   files: {
     "trigger.ts": `
-      export const value = 1;
+      throw new Error('should not be loaded');
     `,
     "routes/index.ts": `
       import { value } from '../trigger.ts';
@@ -62,5 +64,9 @@ devTest("onLoad", {
   },
   async test(dev) {
     await dev.fetch("/").expect('value: 1');
+    await dev.fetch("/").expect('value: 1');
+    await dev.write("trigger.ts", "throw new Error('should not be loaded 2');");
+    await dev.fetch("/").expect('value: 2');
+    await dev.fetch("/").expect('value: 2');
   },
 });

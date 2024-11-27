@@ -640,7 +640,7 @@ pub const JSBundler = struct {
 
         pub fn dispatch(this: *Resolve) void {
             this.js_task = AnyTask.init(this);
-            this.bv2.loop().js.enqueueTaskConcurrent(JSC.ConcurrentTask.create(this.js_task.task()));
+            this.bv2.jsLoopForPlugins().enqueueTaskConcurrent(JSC.ConcurrentTask.create(this.js_task.task()));
         }
 
         pub fn runOnJSThread(this: *Resolve) void {
@@ -690,8 +690,8 @@ pub const JSBundler = struct {
 
         source_index: Index,
         default_loader: options.Loader,
-        path: []const u8 = "",
-        namespace: []const u8 = "",
+        path: []const u8,
+        namespace: []const u8,
 
         value: Value,
         js_task: JSC.AnyTask,
@@ -718,6 +718,10 @@ pub const JSBundler = struct {
                 .task = undefined,
                 .js_task = undefined,
             };
+        }
+
+        pub fn bakeGraph(load: *const Load) bun.bake.Graph {
+            return load.parse_task.known_target.bakeGraph();
         }
 
         pub const Value = union(enum) {
@@ -773,7 +777,7 @@ pub const JSBundler = struct {
         pub fn dispatch(this: *Load) void {
             this.js_task = AnyTask.init(this);
             const concurrent_task = JSC.ConcurrentTask.createFrom(&this.js_task);
-            this.bv2.loop().js.enqueueTaskConcurrent(concurrent_task);
+            this.bv2.jsLoopForPlugins().enqueueTaskConcurrent(concurrent_task);
         }
 
         export fn JSBundlerPlugin__onDefer(load: *Load, global: *JSC.JSGlobalObject) JSValue {

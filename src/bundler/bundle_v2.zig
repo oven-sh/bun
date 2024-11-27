@@ -383,6 +383,21 @@ pub const BundleV2 = struct {
         return &this.linker.loop;
     }
 
+    /// Returns the JSC.EventLoop where plugin callbacks can be queued up on
+    pub fn jsLoopForPlugins(this: *BundleV2) *JSC.EventLoop {
+        bun.assert(this.plugins != null);
+        if (this.completion) |completion|
+            // From Bun.build
+            return completion.jsc_event_loop
+        else switch (this.loop().*) {
+            // From bake where the loop running the bundle is also the loop
+            // running the plugins.
+            .js => |jsc_event_loop| return jsc_event_loop,
+            // The CLI currently has no JSC event loop; for now, no plugin support
+            .mini => @panic("No JavaScript event loop for bundler plugins to run on"),
+        }
+    }
+
     /// Most of the time, accessing .bundler directly is OK. This is only
     /// needed when it is important to distinct between client and server
     ///
@@ -1797,6 +1812,8 @@ pub const BundleV2 = struct {
         }
         const log = this.bundler.log;
 
+        // TODO: watcher
+
         switch (load.value.consume()) {
             .no_match => {
                 // If it's a file namespace, we should run it through the parser like normal.
@@ -1836,10 +1853,28 @@ pub const BundleV2 = struct {
                 };
                 this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&parse_task.task));
             },
-            .err => |err| {
-                log.msgs.append(err) catch unreachable;
-                log.errors += @as(u32, @intFromBool(err.kind == .err));
-                log.warnings += @as(u32, @intFromBool(err.kind == .warn));
+            .err => |msg| {
+                if (this.bundler.options.dev_server) |dev| {
+                    // A stack-allocated Log object containing the singular message
+                    var msg_mut = msg;
+                    const temp_log: Logger.Log = .{
+                        .clone_line_text = false,
+                        .errors = @intFromBool(msg.kind == .err),
+                        .warnings = @intFromBool(msg.kind == .warn),
+                        .msgs = std.ArrayList(Logger.Msg).fromOwnedSlice(this.graph.allocator, (&msg_mut)[0..1]),
+                    };
+                    const source = this.graph.input_files.items(.source)[load.source_index.get()];
+                    dev.handleParseTaskFailure(
+                        error.Plugin,
+                        load.bakeGraph(),
+                        source.path.text,
+                        &temp_log,
+                    ) catch bun.outOfMemory();
+                } else {
+                    log.msgs.append(msg) catch bun.outOfMemory();
+                    log.errors += @intFromBool(msg.kind == .err);
+                    log.warnings += @intFromBool(msg.kind == .warn);
+                }
 
                 // An error occurred, prevent spinning the event loop forever
                 this.decrementScanCounter();

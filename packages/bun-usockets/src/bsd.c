@@ -637,10 +637,12 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 #endif
 
 #ifdef IPV6_V6ONLY
-  if (listenAddr->ai_family == AF_INET6) {
-        int disabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
-        setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
-    }
+    // if (listenAddr->ai_family == AF_INET6) {
+    //     int disabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+    //     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
+    // }
+    int disabled = 0;
+    setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
 #endif
 
     if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, 512, error)) {

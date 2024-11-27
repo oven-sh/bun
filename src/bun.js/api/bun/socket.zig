@@ -365,11 +365,11 @@ pub const SocketConfig = struct {
                 }
             }
 
-            if (try opts.getTruthy(globalObject, "exclusive")) |_| {
-                exclusive = true;
+            if (try opts.getBooleanLoose(globalObject, "exclusive")) |exclusive_| {
+                exclusive = exclusive_;
             }
-            if (try opts.getTruthy(globalObject, "allowHalfOpen")) |_| {
-                allowHalfOpen = true;
+            if (try opts.getBooleanLoose(globalObject, "allowHalfOpen")) |allow_half_open| {
+                allowHalfOpen = allow_half_open;
             }
 
             if (try opts.getStringish(globalObject, "hostname") orelse try opts.getStringish(globalObject, "host")) |hostname| {

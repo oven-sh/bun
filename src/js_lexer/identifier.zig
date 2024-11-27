@@ -1,11 +1,17 @@
 const std = @import("std");
 
 pub fn isIdentifierStart(codepoint: i32) bool {
-    return isIDStartESNext(@intCast(codepoint));
+    return switch (codepoint) {
+        'a'...'z', 'A'...'Z', '_', '$' => true,
+        else => isIDStartESNext(@intCast(codepoint)),
+    };
 }
 
 pub fn isIdentifierPart(codepoint: i32) bool {
-    return isIDContinueESNext(@intCast(codepoint));
+    return switch (codepoint) {
+        'a'...'z', 'A'...'Z', '0'...'9', '_', '$' => true,
+        else => isIDContinueESNext(@intCast(codepoint)),
+    };
 }
 
 /// isIDStartES5 checks if a codepoint is valid in the isIDStartES5 category
@@ -17,6 +23,7 @@ pub fn isIDStartES5(cp: u21) bool {
     const stage3_idx = idStartES5(bool).stage2[stage2_idx + low];
     return idStartES5(bool).stage3[stage3_idx];
 }
+
 /// Auto-generated. Do not edit.
 fn idStartES5(comptime Elem: type) type {
     return struct {

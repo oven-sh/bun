@@ -111,6 +111,8 @@ type HotEventHandler = (data: any) => void;
 class Hot {
   private _module: HotModule;
 
+  data = {};
+
   constructor(module: HotModule) {
     this._module = module;
   }
@@ -121,6 +123,8 @@ class Hot {
   ) {
     console.warn("TODO: implement ImportMetaHot.accept (called from " + JSON.stringify(this._module.id) + ")");
   }
+
+  decline() {} // Vite: "This is currently a noop and is there for backward compatibility"
 
   dispose(cb: HotDisposeFunction) {
     (this._module._onDispose ??= []).push(cb);
@@ -208,6 +212,7 @@ export const getModule = registry.get.bind(registry);
 export function replaceModule(key: Id, load: ModuleLoadFunction) {
   const module = registry.get(key);
   if (module) {
+    module._onDispose?.forEach((cb) => cb(null));
     module.exports = {};
     load(module);
     const { exports } = module;

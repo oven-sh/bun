@@ -7,24 +7,24 @@
 
 import { join } from "node:path";
 import {
-  isBuildkite,
+  getBootstrapVersion,
+  getBuildkiteEmoji,
+  getBuildMetadata,
+  getBuildNumber,
   getCommitMessage,
+  getEmoji,
+  getEnv,
+  isBuildkite,
+  isBuildManual,
   isFork,
   isMainBranch,
   isMergeQueue,
-  getBootstrapVersion,
-  getBuildNumber,
-  getEnv,
+  parseBoolean,
   spawnSafe,
-  writeFile,
+  startGroup,
   toYaml,
   uploadArtifact,
-  isBuildManual,
-  startGroup,
-  getBuildMetadata,
-  parseBoolean,
-  getEmoji,
-  getBuildkiteEmoji,
+  writeFile,
 } from "../scripts/utils.mjs";
 
 /**

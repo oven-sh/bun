@@ -4,8 +4,10 @@ import net from "net";
 import { join } from "path";
 import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls";
 import stream from "stream";
+import { once } from "events";
 
 import { Duplex } from "node:stream";
+import type { AddressInfo } from "net";
 
 const symbolConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
@@ -116,6 +118,26 @@ const tests = [
 it("should have checkServerIdentity", async () => {
   expect(checkServerIdentity).toBeFunction();
   expect(tls.checkServerIdentity).toBeFunction();
+});
+
+it("should thow ECONNRESET if FIN is received before handshake", async () => {
+  await using server = net.createServer(c => {
+    c.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { promise, resolve } = Promise.withResolvers();
+  let error: Error | undefined = undefined;
+  tls
+    .connect((server.address() as AddressInfo).port)
+    .on("error", err => {
+      error = err;
+    })
+    .on("close", resolve);
+
+  await promise;
+
+  expect(error).toBeDefined();
+  expect((error as Error).code as string).toBe("ECONNRESET");
 });
 it("should be able to grab the JSStreamSocket constructor", () => {
   // this keep http2-wrapper compatibility with node.js

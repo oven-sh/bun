@@ -244,10 +244,6 @@ const Socket = (function (InternalSocket) {
       const self = socket.data;
       if (!self) return;
 
-      if (self.secureConnecting) {
-        process.nextTick(emitConnectionResetNT, self);
-        return;
-      }
       // we just reuse the same code but we can push null or enqueue right away
       Socket.#EmitEndNT(self);
     }
@@ -816,6 +812,11 @@ const Socket = (function (InternalSocket) {
         this._writableState.destroyed = true;
       }
 
+      if (this.secureConnecting) {
+        this.secureConnecting = false;
+        err = new ConnResetException("Client network socket disconnected before secure TLS connection was established");
+      }
+
       detachSocket(self);
       callback(err);
       process.nextTick(emitCloseNT, this, !!err);
@@ -1379,11 +1380,6 @@ class ConnResetException extends Error {
   get ["constructor"]() {
     return Error;
   }
-}
-function emitConnectionResetNT(self) {
-  self.destroy(
-    new ConnResetException("Client network socket disconnected before secure TLS connection was established"),
-  );
 }
 
 function emitListeningNextTick(self, onListen) {

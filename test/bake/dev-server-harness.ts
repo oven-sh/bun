@@ -69,7 +69,7 @@ export class Dev {
   fetch(url: string, init?: RequestInit) {
     return new DevFetchPromise((resolve, reject) =>
       fetch(new URL(url, this.baseUrl).toString(), init).then(resolve, reject),
-    this
+      this
     );
   }
 
@@ -136,7 +136,10 @@ class DevFetchPromise extends Promise<Response> {
     this.dev = dev;
   }
 
-  expect(result: string) {
+  expect(result: any) {
+    if (typeof result !== "string") {
+      result = JSON.stringify(result);
+    }
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       try {
         const res = await this;

@@ -22,8 +22,8 @@ declare module "bun" {
       // Note: To contribute to 'bun-framework-react', it can be run from this file:
       // https://github.com/oven-sh/bun/blob/main/src/bake/bun-framework-react/index.ts
       /**
-       * A subset of the options from Bun.build can be configured. Keep in mind,
-       * your framework may set different defaults.
+       * A subset of the options from Bun.build can be configured. While the framework
+       * can also set these options, this property overrides and merges with them.
        *
        * @default {}
        */
@@ -37,16 +37,17 @@ declare module "bun" {
     /** Bake only allows a subset of options from `Bun.build` */
     type BuildConfigSubset = Pick<
       BuildConfig,
-      "conditions" | "plugins" | "define" | "loader" | "ignoreDCEAnnotations" | "drop"
+      "conditions" | "define" | "loader" | "ignoreDCEAnnotations" | "drop"
       // - format is not allowed because it is set to an internal "hmr" format
       // - entrypoints/outfile/outdir doesnt make sense to set
       // - disabling sourcemap is not allowed because it makes code impossible to debug
       // - enabling minifyIdentifiers in dev is not allowed because some generated code does not support it
-      // - publicPath is set elsewhere (TODO:)
+      // - publicPath is set by the user (TODO: add options.publicPath)
       // - emitDCEAnnotations is not useful
       // - banner and footer do not make sense in these multi-file builds
       // - experimentalCss cannot be disabled
       // - disabling external would make it exclude imported files.
+      // - plugins is specified in the framework object, and currently merge between client and server.
 
       // TODO: jsx customization
       // TODO: chunk naming
@@ -170,7 +171,7 @@ declare module "bun" {
        * where every export calls this export from `serverRuntimeImportSource`.
        * This is used to implement client components on the server.
        *
-       * The call is given three arguments:
+       * When separateSSRGraph is enabled, the call looks like:
        *
        *     export const ClientComp = registerClientReference(
        *         // A function which may be passed through, it throws an error
@@ -184,6 +185,24 @@ declare module "bun" {
        *         // name the user has given.
        *         "ClientComp",
        *     );
+       * 
+       * When separateSSRGraph is disabled, the call looks like:
+       *
+       *     export const ClientComp = registerClientReference(
+       *         function () { ... original user implementation here ... },
+       * 
+       *         // The file path of the client-side file to import in the browser.
+       *         "/_bun/d41d8cd0.js",
+       * 
+       *         // The export within the client-side file to load. This is
+       *         // not guaranteed to match the export name the user has given.
+       *        "ClientComp",
+       *     );
+       * 
+       * While subtle, the parameters in `separateSSRGraph` mode are opaque
+       * strings that have to be looked up in the server manifest. While when
+       * there isn't a separate SSR graph, the two parameters are the actual
+       * URLs to load on the client; The manifest is not required for anything.
        *
        * Additionally, the bundler will assemble a component manifest to be used
        * during rendering.
@@ -520,52 +539,56 @@ declare module "bun:bake/server" {
    * is a mapping of component IDs to the client-side file it is exported in.
    * The specifiers from here are to be imported in the client.
    *
-   * To perform SSR with client components, see `clientManifest`
+   * To perform SSR with client components, see `ssrManifest`
    */
-  declare const serverManifest: ReactServerManifest;
+  declare const serverManifest: ServerManifest;
   /**
    * Entries in this manifest map from client-side files to their respective SSR
    * bundles. They can be loaded by `await import()` or `require()`.
    */
-  declare const clientManifest: ReactClientManifest;
+  declare const ssrManifest: SSRManifest;
 
   /** (insert teaser trailer) */
   declare const actionManifest: never;
 
-  declare interface ReactServerManifest {
+  declare interface ServerManifest {
     /**
      * Concatenation of the component file ID and the instance id with '#'
      * Example: 'components/Navbar.tsx#default' (dev) or 'l2#a' (prod/minified)
      *
      * The component file ID and the instance id are both passed to `registerClientReference`
      */
-    [combinedComponentId: string]: {
-      /**
-       * The `id` in ReactClientManifest.
-       * Correlates but is not required to be the filename
-       */
-      id: string;
-      /**
-       * The `name` in ReactServerManifest
-       * Correlates but is not required to be the export name
-       */
-      name: string;
-      /** Currently not implemented; always an empty array */
-      chunks: [];
+    [combinedComponentId: string]: ServerManifestEntry;
+  }
+
+  declare interface ServerManifestEntry {
+    /**
+     * The `id` in ReactClientManifest.
+     * Correlates but is not required to be the filename
+     */
+    id: string;
+    /**
+     * The `name` in ReactServerManifest
+     * Correlates but is not required to be the export name
+     */
+    name: string;
+    /** Currently not implemented; always an empty array */
+    chunks: [];
+  }
+
+  declare interface SSRManifest {
+    /** ServerManifest[...].id */
+    [id: string]: {
+      /** ServerManifest[...].name */
+      [name: string]: SSRManifestEntry;
     };
   }
 
-  declare interface ReactClientManifest {
-    /** ReactServerManifest[...].id */
-    [id: string]: {
-      /** ReactServerManifest[...].name */
-      [name: string]: {
-        /** Valid specifier to import */
-        specifier: string;
-        /** Export name */
-        name: string;
-      };
-    };
+  declare interface SSRManifestEntry {
+    /** Valid specifier to import */
+    specifier: string;
+    /** Export name */
+    name: string;
   }
 
 }

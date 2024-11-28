@@ -41,7 +41,6 @@ devTest("onLoad", {
       {
         name: 'a',
         setup(build) {
-          let a = 0;
           build.onLoad({ filter: /trigger/ }, (args) => {
             return { contents: 'export const value = 1;', loader: 'ts' };
           });
@@ -65,6 +64,50 @@ devTest("onLoad", {
     await dev.fetch("/").expect('value: 1');
     await dev.fetch("/").expect('value: 1');
     await dev.fetch("/").expect('value: 1');
+  },
+});
+devTest("onResolve + onLoad virtual file", {
+  framework: minimalFramework,
+  pluginFile: `
+    import * as path from 'path';
+    export default [
+      {
+        name: 'a',
+        setup(build) {
+          build.onResolve({ filter: /^trigger$/ }, (args) => {
+            return { path: "hello.ts", namespace: "virtual" };
+          });
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, (args) => {
+            return { contents: 'export default ' + JSON.stringify(args) + ';', loader: 'ts' };
+          });
+        },
+      }
+    ];
+  `,
+  files: {
+    // this file must not collide with the virtual file
+    "hello.ts": `
+      export default "file-on-disk";
+    `,
+    "routes/index.ts": `
+      import disk from '../hello';
+      import virtual from 'trigger';
+
+      export default function (req, meta) {
+        return Response.json([virtual, disk]);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect([
+      {
+        path: "hello.ts",
+        namespace: "virtual",
+        loader: "ts",
+        side: "server",
+      },
+      "file-on-disk",
+    ]);
   },
 });
 // devTest("onLoad with watchFile", {

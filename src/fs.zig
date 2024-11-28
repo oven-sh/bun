@@ -1908,6 +1908,13 @@ pub const Path = struct {
     pub fn isJSXFile(this: *const Path) bool {
         return strings.hasSuffixComptime(this.name.filename, ".jsx") or strings.hasSuffixComptime(this.name.filename, ".tsx");
     }
+
+    pub fn keyForIncrementalGraph(path: *const Path) []const u8 {
+        return if (path.isFile())
+            path.text
+        else
+            path.pretty;
+    }
 };
 
 // pub fn customRealpath(allocator: std.mem.Allocator, path: string) !string {

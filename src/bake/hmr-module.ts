@@ -8,7 +8,7 @@ export type ExportsCallbackFunction = (new_exports: any) => void;
 
 export const enum State {
   Loading,
-  Boundary,
+  Ready,
   Error,
 }
 
@@ -56,14 +56,14 @@ export class HotModule<E = any> {
     mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: expectedImports } : undefined);
     const { exports, __esModule } = mod;
     const object = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
-    // TODO: restore this validation. not correct due to import cycles which are allowed usually
-    // if (expectedImports) {
-    //   for (const key of expectedImports) {
-    //     if (!(key in object)) {
-    //       throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
-    //     }
-    //   }
-    // }
+    
+    if (expectedImports && mod._state === State.Ready) {
+      for (const key of expectedImports) {
+        if (!(key in object)) {
+          throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
+        }
+      }
+    }
     return object;
   }
 
@@ -190,6 +190,10 @@ export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T>
   try {
     registry.set(key, mod);
     load(mod);
+    mod._state = State.Ready;
+    mod._deps.forEach((entry, dep) => {
+        entry._callback?.(mod.exports);
+    });
   } catch (err) {
     console.error(err);
     mod._cached_failure = err;
@@ -238,14 +242,14 @@ export function replaceModules(modules: any) {
 }
 
 export const serverManifest = {};
-export const clientManifest = {};
+export const ssrManifest = {};
 
 export let onServerSideReload: (() => Promise<void>) | null = null;
 
 if (side === "server") {
   const server_module = new HotModule("bun:bake/server");
   server_module.__esModule = true;
-  server_module.exports = { serverManifest, clientManifest };
+  server_module.exports = { serverManifest, ssrManifest, actionManifest: null };
   registry.set(server_module.id, server_module);
 }
 

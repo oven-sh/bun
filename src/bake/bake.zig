@@ -61,43 +61,7 @@ pub const UserOptions = struct {
             };
 
         if (try config.get(global, "plugins")) |plugin_array| {
-            const plugin = bundler_options.plugin orelse Plugin.create(global, .bun);
-            bundler_options.plugin = plugin;
-            const empty_object = JSValue.createEmptyObject(global, 0);
-
-            var iter = plugin_array.arrayIterator(global);
-            while (iter.next()) |plugin_config| {
-                if (!plugin_config.isObject()) {
-                    return global.throwInvalidArguments("Expected plugin to be an object", .{});
-                }
-
-                if (try plugin_config.getOptional(global, "name", ZigString.Slice)) |slice| {
-                    defer slice.deinit();
-                    if (slice.len == 0) {
-                        return global.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
-                    }
-                } else {
-                    return global.throwInvalidArguments("Expected plugin to have a name", .{});
-                }
-
-                const function = try plugin_config.getFunction(global, "setup") orelse {
-                    return global.throwInvalidArguments("Expected plugin to have a setup() function", .{});
-                };
-                const plugin_result = try plugin.addPlugin(function, empty_object, .null, false, true);
-                if (plugin_result.asAnyPromise()) |promise| {
-                    promise.setHandled(global.vm());
-                    global.bunVM().waitForPromise(promise);
-                    switch (promise.unwrap(global.vm(), .mark_handled)) {
-                        .pending => unreachable,
-                        .fulfilled => |val| {
-                            _ = val;
-                        },
-                        .rejected => |err| {
-                            return global.throwValue2(err);
-                        },
-                    }
-                }
-            }
+            try bundler_options.parsePluginArray(plugin_array, global);
         }
 
         return .{
@@ -141,6 +105,48 @@ pub const SplitBundlerOptions = struct {
         .server = .{},
         .ssr = .{},
     };
+
+    pub fn parsePluginArray(opts: *SplitBundlerOptions, plugin_array: JSValue, global: *JSC.JSGlobalObject) !void {
+        const plugin = opts.plugin orelse Plugin.create(global, .bun);
+        opts.plugin = plugin;
+        const empty_object = JSValue.createEmptyObject(global, 0);
+
+        var iter = plugin_array.arrayIterator(global);
+        while (iter.next()) |plugin_config| {
+            if (!plugin_config.isObject()) {
+                return global.throwInvalidArguments("Expected plugin to be an object", .{});
+            }
+
+            if (try plugin_config.getOptional(global, "name", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                if (slice.len == 0) {
+                    return global.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
+                }
+            } else {
+                return global.throwInvalidArguments("Expected plugin to have a name", .{});
+            }
+
+            const function = try plugin_config.getFunction(global, "setup") orelse {
+                return global.throwInvalidArguments("Expected plugin to have a setup() function", .{});
+            };
+            const plugin_result = try plugin.addPlugin(function, empty_object, .null, false, true);
+            if (plugin_result.asAnyPromise()) |promise| {
+                promise.setHandled(global.vm());
+                // TODO: remove this call, replace with a promise list that must
+                // be resolved before the first bundle task can begin.
+                global.bunVM().waitForPromise(promise);
+                switch (promise.unwrap(global.vm(), .mark_handled)) {
+                    .pending => unreachable,
+                    .fulfilled => |val| {
+                        _ = val;
+                    },
+                    .rejected => |err| {
+                        return global.throwValue2(err);
+                    },
+                }
+            }
+        }
+    }
 };
 
 const BuildConfigSubset = struct {
@@ -214,7 +220,7 @@ pub const Framework = struct {
         };
     }
 
-    const FileSystemRouterType = struct {
+    pub const FileSystemRouterType = struct {
         root: []const u8,
         prefix: []const u8,
         entry_server: []const u8,
@@ -226,12 +232,12 @@ pub const Framework = struct {
         allow_layouts: bool,
     };
 
-    const BuiltInModule = union(enum) {
+    pub const BuiltInModule = union(enum) {
         import: []const u8,
         code: []const u8,
     };
 
-    const ServerComponents = struct {
+    pub const ServerComponents = struct {
         separate_ssr_graph: bool = false,
         server_runtime_import: []const u8,
         // client_runtime_import: []const u8,
@@ -307,7 +313,6 @@ pub const Framework = struct {
         bundler_options: *SplitBundlerOptions,
         arena: Allocator,
     ) !Framework {
-        _ = bundler_options; // autofix
         if (opts.isString()) {
             const str = try opts.toBunString2(global);
             defer str.deref();
@@ -521,9 +526,13 @@ pub const Framework = struct {
             .built_in_modules = built_in_modules,
         };
 
+        if (try opts.getOptional(global, "plugins", JSValue)) |plugin_array| {
+            try bundler_options.parsePluginArray(plugin_array, global);
+        }
+
         if (try opts.getOptional(global, "bundlerOptions", JSValue)) |js_options| {
-            _ = js_options; // autofix
-            // try SplitBundlerOptions.parseInto(global, js_options, bundler_options, .root);
+            _ = js_options; // TODO:
+            // try bundler_options.parseInto(global, js_options, .root);
         }
 
         return framework;
@@ -574,6 +583,10 @@ pub const Framework = struct {
         if (renderer == .server and framework.server_components != null) {
             try out.options.conditions.appendSlice(&.{"react-server"});
         }
+        if (mode == .development) {
+            // Support `esm-env` package using this condition.
+            try out.options.conditions.appendSlice(&.{"development"});
+        }
 
         out.options.production = mode != .development;
 
@@ -586,6 +599,10 @@ pub const Framework = struct {
         out.options.css_chunking = true;
 
         out.options.framework = framework;
+
+        // In development mode, source maps must always be `linked`
+        // In production, TODO: follow user configuration
+        out.options.source_map = .linked;
 
         out.configureLinker();
         try out.configureDefines();

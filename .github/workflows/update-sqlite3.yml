@@ -2,7 +2,7 @@ name: Update SQLite3
 
 on:
   schedule:
-    - cron: "0 0 * * 0"  # Run weekly
+    - cron: "0 6 * * 0" # Run weekly
   workflow_dispatch:
 
 jobs:
@@ -26,13 +26,13 @@ jobs:
             echo "Error: Could not find SQLITE_VERSION_NUMBER in sqlite3_local.h"
             exit 1
           fi
-          
+
           # Convert numeric version to semantic version for display
           CURRENT_MAJOR=$((CURRENT_VERSION_NUM / 1000000))
           CURRENT_MINOR=$((($CURRENT_VERSION_NUM / 1000) % 1000))
           CURRENT_PATCH=$((CURRENT_VERSION_NUM % 1000))
           CURRENT_VERSION="$CURRENT_MAJOR.$CURRENT_MINOR.$CURRENT_PATCH"
-          
+
           echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
           echo "current_num=$CURRENT_VERSION_NUM" >> $GITHUB_OUTPUT
 
@@ -47,7 +47,7 @@ jobs:
           LATEST_INFO=$(echo "$DOWNLOAD_PAGE" | grep -o 'sqlite-amalgamation-[0-9]\{7\}.zip' | head -n1)
           LATEST_YEAR=$(echo "$DOWNLOAD_PAGE" | grep -o '[0-9]\{4\}/sqlite-amalgamation-[0-9]\{7\}.zip' | head -n1 | cut -d'/' -f1 | tr -d '\n\r')
           LATEST_VERSION_NUM=$(echo "$LATEST_INFO" | grep -o '[0-9]\{7\}' | tr -d '\n\r')
-          
+
           if [ -z "$LATEST_VERSION_NUM" ] || [ -z "$LATEST_YEAR" ]; then
             echo "Error: Could not extract latest version info"
             exit 1
@@ -71,21 +71,21 @@ jobs:
         if: success() && steps.check-version.outputs.current_num < steps.check-version.outputs.latest_num
         run: |
           set -euo pipefail
-          
+
           TEMP_DIR=$(mktemp -d)
           cd $TEMP_DIR
-          
+
           echo "Downloading from: https://sqlite.org/${{ steps.check-version.outputs.latest_year }}/sqlite-amalgamation-${{ steps.check-version.outputs.latest_num }}.zip"
-          
+
           # Download and extract latest version
           wget "https://sqlite.org/${{ steps.check-version.outputs.latest_year }}/sqlite-amalgamation-${{ steps.check-version.outputs.latest_num }}.zip"
           unzip "sqlite-amalgamation-${{ steps.check-version.outputs.latest_num }}.zip"
           cd "sqlite-amalgamation-${{ steps.check-version.outputs.latest_num }}"
-          
+
           # Add header comment and copy files
           echo "// clang-format off" > $GITHUB_WORKSPACE/src/bun.js/bindings/sqlite/sqlite3.c
           cat sqlite3.c >> $GITHUB_WORKSPACE/src/bun.js/bindings/sqlite/sqlite3.c
-          
+
           echo "// clang-format off" > $GITHUB_WORKSPACE/src/bun.js/bindings/sqlite/sqlite3_local.h
           cat sqlite3.h >> $GITHUB_WORKSPACE/src/bun.js/bindings/sqlite/sqlite3_local.h
 

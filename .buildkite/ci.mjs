@@ -678,15 +678,14 @@ function getReleaseStep(buildPlatforms) {
 
 /**
  * @param {Step} step
- * @param {(string | Step | undefined)[]} dependsOn
+ * @param {(string | undefined)[]} dependsOn
  * @returns {Step}
  */
 function getStepWithDependsOn(step, ...dependsOn) {
   const { depends_on: existingDependsOn = [] } = step;
-  const newDependsOn = dependsOn.filter(Boolean).map(item => (typeof item === "string" ? item : item.key));
   return {
     ...step,
-    depends_on: [...existingDependsOn, ...newDependsOn],
+    depends_on: [...existingDependsOn, ...dependsOn.filter(Boolean)],
   };
 }
 
@@ -971,10 +970,11 @@ async function getPipeline(options = {}) {
 
   const { skipEverything } = options;
   if (skipEverything) {
-    return;
+    // return;
   }
 
-  const { buildProfiles = [], buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
+  let { buildProfiles = [], buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
+  buildImages = true;
   const imagePlatforms = new Map(
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
@@ -1001,7 +1001,7 @@ async function getPipeline(options = {}) {
         .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
         .map(target => {
           const imageKey = getImageKey(target);
-          const imageStep = imagePlatforms.get(imageKey);
+          const imagePlatform = imagePlatforms.get(imageKey);
 
           return getStepWithDependsOn(
             {
@@ -1016,7 +1016,7 @@ async function getPipeline(options = {}) {
                     getLinkBunStep(target),
                   ],
             },
-            imageStep,
+            imagePlatform ? `${imageKey}-build-image` : undefined,
           );
         }),
     );

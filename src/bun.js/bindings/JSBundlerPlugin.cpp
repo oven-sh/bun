@@ -170,14 +170,13 @@ public:
 private:
     JSBundlerPlugin(
         JSC::VM& vm,
-        JSC::JSGlobalObject* global, 
+        JSC::JSGlobalObject* global,
         JSC::Structure* structure,
         void* config,
         BunPluginTarget target,
         JSBundlerPluginAddErrorCallback addError,
         JSBundlerPluginOnLoadAsyncCallback onLoadAsync,
-        JSBundlerPluginOnResolveAsyncCallback onResolveAsync
-    )
+        JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : JSC::JSNonFinalObject(vm, structure)
         , plugin(BundlerPlugin(config, target, addError, onLoadAsync, onResolveAsync))
         , m_globalObject(global)
@@ -327,7 +326,7 @@ extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, 
 
 extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
 {
-    JSC::JSGlobalObject *globalObject = plugin->globalObject();
+    JSC::JSGlobalObject* globalObject = plugin->globalObject();
     WTF::String namespaceStringStr = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : WTF::String();
     WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
 
@@ -365,7 +364,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
 
 extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, const BunString* importer, void* context, uint8_t kindId)
 {
-    JSC::JSGlobalObject *globalObject = plugin->globalObject();
+    JSC::JSGlobalObject* globalObject = plugin->globalObject();
     WTF::String namespaceStringStr = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : WTF::String("file"_s);
     if (namespaceStringStr.length() == 0) {
         namespaceStringStr = WTF::String("file"_s);
@@ -474,7 +473,8 @@ extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
     plugin->plugin.tombstone();
 }
 
-extern "C" JSC::JSGlobalObject* JSBundlerPlugin__globalObject(Bun::JSBundlerPlugin* plugin) {
+extern "C" JSC::JSGlobalObject* JSBundlerPlugin__globalObject(Bun::JSBundlerPlugin* plugin)
+{
     return plugin->m_globalObject;
 }
 

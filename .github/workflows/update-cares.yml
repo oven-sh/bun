@@ -19,15 +19,15 @@ jobs:
         id: check-version
         run: |
           set -euo pipefail
-          
+
           # Extract the commit hash from the line after COMMIT
           CURRENT_VERSION=$(awk '/[[:space:]]*COMMIT[[:space:]]*$/{getline; gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0); print}' cmake/targets/BuildCares.cmake)
-          
+
           if [ -z "$CURRENT_VERSION" ]; then
             echo "Error: Could not find COMMIT line in BuildCares.cmake"
             exit 1
           fi
-          
+
           # Validate that it looks like a git hash
           if ! [[ $CURRENT_VERSION =~ ^[0-9a-f]{40}$ ]]; then
             echo "Error: Invalid git hash format in BuildCares.cmake"
@@ -35,7 +35,7 @@ jobs:
             echo "Expected: 40 character hexadecimal string"
             exit 1
           fi
-          
+
           echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
 
           LATEST_RELEASE=$(curl -sL https://api.github.com/repos/c-ares/c-ares/releases/latest)
@@ -80,10 +80,10 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           add-paths: |
             cmake/targets/BuildCares.cmake
-          commit-message: "deps: update c-ares to ${{ steps.check-version.outputs.latest }}"
-          title: "deps: update c-ares to ${{ steps.check-version.outputs.latest }}"
+          commit-message: "deps: update c-ares to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
+          title: "deps: update c-ares to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true
-          branch: deps/update-cares-${{ steps.check-version.outputs.latest }}
+          branch: deps/update-cares-${{ github.run_number }}
           body: |
             ## What does this PR do?
 

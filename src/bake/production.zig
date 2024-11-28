@@ -85,7 +85,8 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     buildWithVm(ctx, cwd, vm) catch |err| switch (err) {
         error.JSError => |e| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
-            vm.printErrorLikeObjectToConsole(vm.global.takeException(e));
+            const err_value = vm.global.takeException(e);
+            vm.printErrorLikeObjectToConsole(err_value.toError() orelse err_value);
             if (vm.exit_handler.exit_code == 0) {
                 vm.exit_handler.exit_code = 1;
             }
@@ -103,7 +104,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
 
     Output.prettyErrorln("Loading configuration", .{});
     Output.flush();
-    const unresolved_config_entry_point = if (ctx.args.entry_points.len > 0) ctx.args.entry_points[0] else "./bun.app";
+    var unresolved_config_entry_point = if (ctx.args.entry_points.len > 0) ctx.args.entry_points[0] else "./bun.app";
+    if (bun.resolver.isPackagePath(unresolved_config_entry_point)) {
+        unresolved_config_entry_point = try std.fmt.allocPrint(ctx.allocator, "./{s}", .{unresolved_config_entry_point});
+    }
 
     const config_entry_point = b.resolver.resolve(cwd, unresolved_config_entry_point, .entry_point) catch |err| {
         if (err == error.ModuleNotFound) {
@@ -132,6 +136,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         return error.JSError;
     };
 
+    config_promise.setHandled(vm.jsc);
     vm.waitForPromise(.{ .internal = config_promise });
     var options = switch (config_promise.unwrap(vm.jsc, .mark_handled)) {
         .pending => unreachable,
@@ -150,12 +155,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             break :config try bake.UserOptions.fromJS(app, vm.global);
         },
         .rejected => |err| {
-            // dont run on rejected since we fail the build here
-            vm.printErrorLikeObjectToConsole(err);
-            if (vm.exit_handler.exit_code == 0) {
-                vm.exit_handler.exit_code = 1;
-            }
-            vm.globalExit();
+            return global.throwValue2(err.toError() orelse err);
         },
     };
 
@@ -178,6 +178,14 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     try framework.initBundler(allocator, vm.log, .production_static, .client, &client_bundler);
     if (separate_ssr_graph) {
         try framework.initBundler(allocator, vm.log, .production_static, .ssr, &ssr_bundler);
+    }
+
+    if (ctx.bundler_options.bake_debug_disable_minify) {
+        for ([_]*bun.bundler.Bundler{ &client_bundler, &server_bundler, &ssr_bundler }) |bundler| {
+            bundler.options.minify_syntax = false;
+            bundler.options.minify_identifiers = false;
+            bundler.options.minify_whitespace = false;
+        }
     }
 
     // these share pointers right now, so setting NODE_ENV == production on one should affect all
@@ -365,20 +373,23 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             bun.Global.crash();
         };
 
-        const server_param_func = brk: {
-            const raw = BakeGetOnModuleNamespace(global, server_entry_point, "getParams") orelse
-                break :brk null;
-            if (!raw.isCallable(vm.jsc)) {
-                break :brk null;
+        const server_param_func = if (router.dynamic_routes.count() > 0)
+            brk: {
+                const raw = BakeGetOnModuleNamespace(global, server_entry_point, "getParams") orelse
+                    break :brk null;
+                if (!raw.isCallable(vm.jsc)) {
+                    break :brk null;
+                }
+                break :brk raw;
+            } orelse {
+                Output.errGeneric("Framework does not support static site generation", .{});
+                Output.note("The file {s} is missing the \"getParams\" export, which defines how to generate static files.", .{
+                    bun.fmt.quote(bun.path.relative(cwd, entry_points.files.keys()[router_type.server_file.get()].absPath())),
+                });
+                bun.Global.crash();
             }
-            break :brk raw;
-        } orelse {
-            Output.errGeneric("Framework does not support static site generation", .{});
-            Output.note("The file {s} is missing the \"getParams\" export, which defines how to generate static files.", .{
-                bun.fmt.quote(bun.path.relative(cwd, entry_points.files.keys()[router_type.server_file.get()].absPath())),
-            });
-            bun.Global.crash();
-        };
+        else
+            JSValue.null;
         server_render_funcs.putIndex(global, @intCast(i), server_render_func);
         server_param_funcs.putIndex(global, @intCast(i), server_param_func);
     }
@@ -524,6 +535,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         route_param_info,
         route_style_references,
     );
+    render_promise.setHandled(vm.jsc);
     vm.waitForPromise(.{ .normal = render_promise });
     switch (render_promise.unwrap(vm.jsc, .mark_handled)) {
         .pending => unreachable,
@@ -532,8 +544,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             Output.flush();
         },
         .rejected => |err| {
-            vm.global.throwValue(err);
-            return error.JSError;
+            return global.throwValue2(err.toError() orelse err);
         },
     }
 }
@@ -542,6 +553,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
 /// quits the process on exception
 fn loadModule(vm: *VirtualMachine, global: *JSC.JSGlobalObject, key: JSValue) !JSValue {
     const promise = BakeLoadModuleByKey(global, key).asAnyPromise().?.internal;
+    promise.setHandled(vm.jsc);
     vm.waitForPromise(.{ .internal = promise });
     switch (promise.unwrap(vm.jsc, .mark_handled)) {
         .pending => unreachable,
@@ -550,8 +562,7 @@ fn loadModule(vm: *VirtualMachine, global: *JSC.JSGlobalObject, key: JSValue) !J
             return BakeGetModuleNamespace(global, key);
         },
         .rejected => |err| {
-            vm.global.throwValue(err);
-            return error.JSError;
+            return vm.global.throwValue2(err.toError() orelse err);
         },
     }
 }

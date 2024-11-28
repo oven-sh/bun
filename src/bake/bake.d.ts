@@ -421,7 +421,7 @@ declare module "bun" {
     type GetParamIterator =
       | AsyncIterable<Record<string, string>, GetParamsFinalOpts>
       | Iterable<Record<string, string>, GetParamsFinalOpts>
-      | ({ pages: Array<Record<String, String>> } & GetParamsFinalOpts);
+      | ({ pages: Array<Record<string, string>> } & GetParamsFinalOpts);
 
     type GetParamsFinalOpts = void | null | {
       /**

@@ -600,9 +600,13 @@ pub const Framework = struct {
 
         out.options.framework = framework;
 
-        // In development mode, source maps must always be `linked`
-        // In production, TODO: follow user configuration
-        out.options.source_map = .linked;
+        out.options.source_map = switch (mode) {
+            // Source maps must always be linked, as DevServer special cases the
+            // linking and part of the generation of these.
+            .development => .external,
+            // TODO: follow user configuration
+            else => .none,
+        };
 
         out.configureLinker();
         try out.configureDefines();

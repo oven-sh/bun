@@ -2,10 +2,11 @@ import net from "node:net";
 import { tempDirWithFiles, nodeExe } from "harness";
 import { expect, test } from "bun:test";
 
-const cwd = tempDirWithFiles("server", {
-  "index.mjs": `
+async function nodeRun(callback, clients = 1) {
+  const cwd = tempDirWithFiles("server", {
+    "index.mjs": `
   import net from "node:net";
-
+  let clients = ${clients};
   const server = net.createServer({ allowHalfOpen: true }, socket => {
     // Listen for data from the client
     socket.on("data", data => {
@@ -14,7 +15,9 @@ const cwd = tempDirWithFiles("server", {
 
     socket.on("end", () => {
       console.log("Received FIN");
-      server.close();
+      if(--clients == 0) {
+        server.close();
+      }
     });
     socket.on("error", console.error);
 
@@ -25,9 +28,8 @@ const cwd = tempDirWithFiles("server", {
     console.log(server.address().port?.toString());
   })
   `,
-});
-async function nodeRun(cwd, script, callback) {
-  const process = Bun.spawn([nodeExe(), script], {
+  });
+  const process = Bun.spawn([nodeExe(), "index.mjs"], {
     cwd,
     stdin: "ignore",
     stdout: "pipe",
@@ -80,7 +82,7 @@ async function doHalfOpenRequest(port, allowHalfOpen) {
 
 test("allowHalfOpen: true should work on client-side", async () => {
   const { promise: portPromise, resolve } = Promise.withResolvers();
-  const process = nodeRun(cwd, "index.mjs", resolve);
+  const process = nodeRun(resolve, 1);
 
   const port = await portPromise;
   await doHalfOpenRequest(port, true);
@@ -97,7 +99,7 @@ test("allowHalfOpen: true should work on client-side", async () => {
 
 test("allowHalfOpen: false should work on client-side", async () => {
   const { promise: portPromise, resolve } = Promise.withResolvers();
-  const process = nodeRun(cwd, "index.mjs", resolve);
+  const process = nodeRun(resolve, 1);
 
   const port = await portPromise;
   await doHalfOpenRequest(port, false);
@@ -110,4 +112,30 @@ test("allowHalfOpen: false should work on client-side", async () => {
       .map(s => s.trim())
       .filter(s => s),
   ).toEqual(["Hello, World", "Received FIN"]);
+});
+
+test("allowHalfOpen: true should be able to receive a lot of connections and writes", async () => {
+  const { promise: portPromise, resolve } = Promise.withResolvers();
+  const CLIENTS = 1_000;
+  const process = nodeRun(resolve, CLIENTS);
+
+  const port = await portPromise;
+  const batch = [];
+  for (let i = 0; i < CLIENTS; i++) {
+    batch.push(doHalfOpenRequest(port, true));
+    if (batch % 50 === 0) {
+      await Promise.all(batch);
+      batch.length = 0;
+    }
+  }
+  if (batch.length > 0) await Promise.all(batch);
+  const result = await process;
+  expect(result.code).toBe(0);
+  expect(result.stderr).toBe("");
+
+  const output = result.stdout
+    .split("\n")
+    .map(s => s.trim())
+    .filter(s => s);
+  expect(output.reduce((count, str) => count + (str === "Write after end" ? 1 : 0), 0)).toEqual(CLIENTS);
 });

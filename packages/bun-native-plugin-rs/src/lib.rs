@@ -290,7 +290,7 @@ impl<'a> OnBeforeParse<'a> {
     }
 
     /// Get the output loader for the current file.
-    pub fn output_loader(&self) -> BunLogLevel {
+    pub fn output_loader(&self) -> BunLoader {
         unsafe { std::mem::transmute(self.result_raw.loader as u32) }
     }
 

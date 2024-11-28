@@ -52,9 +52,14 @@ public:
     /// Therefore, we need a mutex to synchronize access.
     typedef std::pair<Yarr::RegularExpression, std::shared_ptr<std::mutex>> NativeFilterRegexp;
 
+    struct NativePluginCallback {
+        JSBundlerPluginNativeOnBeforeParseCallback callback;
+        Bun::NapiExternal* external;
+    };
+
     class NativePluginList {
     public:
-        using PerNamespaceCallbackList = Vector<std::pair<JSBundlerPluginNativeOnBeforeParseCallback, Bun::NapiExternal*>>;
+        using PerNamespaceCallbackList = Vector<NativePluginCallback>;
 
         Vector<NativeFilterRegexp> fileNamespace = {};
         Vector<String> namespaces = {};

@@ -1005,8 +1005,10 @@ extern "C" void napi_module_register(napi_module* mod)
         return;
     }
 
+    auto *meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+
     // TODO: think about the finalizer here
-    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), globalObject->m_pendingNapiModuleDlopenHandle, nullptr, nullptr);
+    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr);
 
     bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     ASSERT(success);

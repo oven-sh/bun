@@ -252,14 +252,17 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
     }
     
     if (index == std::numeric_limits<unsigned>::max()) {
-        this->fileCallbacks.append(std::make_pair(callback, external));
+        this->fileCallbacks.append(NativePluginCallback{callback, external});
     } else {
         if (this->namespaceCallbacks.size() <= index) {
             this->namespaceCallbacks.grow(index + 1);
         }
-        this->namespaceCallbacks[index].append(std::make_pair(callback, external));
+        this->namespaceCallbacks[index].append(NativePluginCallback{callback, external});
     }
 }
+
+extern "C" void CrashHandler__setInsideNativePlugin(bool value);
+
 
 int BundlerPlugin::NativePluginList::call(JSC::VM& vm, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, void* onBeforeParseArgs, void* onBeforeParseResult)
 {
@@ -284,11 +287,16 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, int* shouldContinue, void
         {
             std::lock_guard<std::mutex> lock(*group->at(i).second);
             if (group->at(i).first.match(path) > -1) {
-                Bun::NapiExternal* external = callbacks[i].second;
+                Bun::NapiExternal* external = callbacks[i].external;
                 if (external) {
                     ((OnBeforeParseArguments*) (onBeforeParseArgs))->external = external->value();
                 }
-                callbacks[i].first(onBeforeParseArgs, onBeforeParseResult);
+
+                JSBundlerPluginNativeOnBeforeParseCallback callback = callbacks[i].callback;
+                CrashHandler__setInsideNativePlugin(true);
+                callback(onBeforeParseArgs, onBeforeParseResult);
+                CrashHandler__setInsideNativePlugin(false);
+
                 count++;
             }
         }
@@ -335,12 +343,14 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     }
     WTF::String on_before_parse_symbol = on_before_parse_symbol_js.toWTFString(globalObject);
 
+    // The dlopen *void handle is attached to the node_addon as a NapiExternal
     Bun::NapiExternal* napi_external = jsDynamicCast<Bun::NapiExternal*>(node_addon.getObject()->get(globalObject, WebCore::builtinNames(vm).napiDlopenHandlePrivateName()));
     if (UNLIKELY(!napi_external)) {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected node_addon (2nd argument) to have a napiDlopenHandle property"_s);
         return {};
     }
-    void* dlopen_handle = napi_external->value();
+    Bun::NapiModuleMeta* meta = (Bun::NapiModuleMeta*)napi_external->value();
+    void* dlopen_handle = meta->dlopenHandle;
 
     #if OS(WINDOWS)
     BunString onbefore_parse_symbol_str = Bun::toString(on_before_parse_symbol);

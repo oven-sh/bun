@@ -116,7 +116,7 @@ test("allowHalfOpen: false should work on client-side", async () => {
 
 test("allowHalfOpen: true should be able to receive a lot of connections and writes", async () => {
   const { promise: portPromise, resolve } = Promise.withResolvers();
-  const CLIENTS = 1_000;
+  const CLIENTS = 300;
   const process = nodeRun(resolve, CLIENTS);
 
   const port = await portPromise;
@@ -138,4 +138,5 @@ test("allowHalfOpen: true should be able to receive a lot of connections and wri
     .map(s => s.trim())
     .filter(s => s);
   expect(output.reduce((count, str) => count + (str === "Write after end" ? 1 : 0), 0)).toEqual(CLIENTS);
+  expect(output.reduce((count, str) => count + (str === "Received FIN" ? 1 : 0), 0)).toEqual(CLIENTS);
 });

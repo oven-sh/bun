@@ -18,31 +18,60 @@ jobs:
       - name: Check lolhtml version
         id: check-version
         run: |
-          CURRENT_VERSION=$(grep -oP 'LOLHTML_VERSION\s+\K\S+' cmake/targets/BuildLolHtml.cmake)
+          set -euo pipefail
+          
+          # Extract the commit hash from the line after COMMIT
+          CURRENT_VERSION=$(awk '/[[:space:]]*COMMIT[[:space:]]*$/{getline; gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0); print}' cmake/targets/BuildLolHtml.cmake)
+          
           if [ -z "$CURRENT_VERSION" ]; then
-            echo "Error: Could not find current version in BuildLolHtml.cmake"
+            echo "Error: Could not find COMMIT line in BuildLolHtml.cmake"
             exit 1
           fi
+          
+          # Validate that it looks like a git hash
+          if ! [[ $CURRENT_VERSION =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Error: Invalid git hash format in BuildLolHtml.cmake"
+            echo "Found: $CURRENT_VERSION"
+            echo "Expected: 40 character hexadecimal string"
+            exit 1
+          fi
+          
           echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
 
           LATEST_RELEASE=$(curl -sL https://api.github.com/repos/cloudflare/lol-html/releases/latest)
+          if [ -z "$LATEST_RELEASE" ]; then
+            echo "Error: Failed to fetch latest release from GitHub API"
+            exit 1
+          fi
+
           LATEST_TAG=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
+            echo "Error: Could not extract tag name from GitHub API response"
+            exit 1
+          fi
+
           LATEST_SHA=$(curl -sL "https://api.github.com/repos/cloudflare/lol-html/git/ref/tags/$LATEST_TAG" | jq -r '.object.sha')
-          if [ -z "$LATEST_SHA" ]; then
-            echo "Error: Could not fetch latest version from GitHub API"
+          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+            echo "Error: Could not fetch SHA for tag $LATEST_TAG"
             exit 1
           fi
-          if [ ${#LATEST_SHA} -ne 40 ]; then
-            echo "Error: Invalid SHA length"
+
+          if ! [[ $LATEST_SHA =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Error: Invalid SHA format received from GitHub"
+            echo "Found: $LATEST_SHA"
+            echo "Expected: 40 character hexadecimal string"
             exit 1
           fi
+
           echo "latest=$LATEST_SHA" >> $GITHUB_OUTPUT
           echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
 
       - name: Update version if needed
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
         run: |
-          sed -i "s/LOLHTML_VERSION\s\+[0-9a-f]\+/LOLHTML_VERSION ${{ steps.check-version.outputs.latest }}/" cmake/targets/BuildLolHtml.cmake
+          set -euo pipefail
+          # Handle multi-line format where COMMIT and its value are on separate lines
+          sed -i -E '/[[:space:]]*COMMIT[[:space:]]*$/{n;s/[[:space:]]*([0-9a-f]+)[[:space:]]*$/    ${{ steps.check-version.outputs.latest }}/}' cmake/targets/BuildLolHtml.cmake
 
       - name: Create Pull Request
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest

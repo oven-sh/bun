@@ -3,7 +3,7 @@
 // An agent that starts buildkite-agent and runs others services.
 
 import { join } from "node:path";
-import { mkdirSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import {
   isWindows,
   getOs,
@@ -21,6 +21,7 @@ import {
   writeFile,
   spawnSafe,
   spawn,
+  mkdir,
 } from "./utils.mjs";
 import { parseArgs } from "node:util";
 
@@ -56,7 +57,7 @@ async function doBuildkiteAgent(action) {
     const args = [realpathSync(process.argv[1]), "start"];
 
     if (isWindows) {
-      mkdirSync(logsPath, { recursive: true });
+      mkdir(logsPath);
 
       const nssm = which("nssm", { required: true });
       const nssmCommands = [
@@ -136,11 +137,13 @@ async function doBuildkiteAgent(action) {
 
     let shell;
     if (isWindows) {
-      const pwsh = which(["pwsh", "powershell"], { required: true });
-      shell = `"${pwsh}" -Command`;
+      // Command Prompt has a faster startup time than PowerShell.
+      // Also, it propogates the exit code of the command, which PowerShell does not.
+      const cmd = which("cmd", { required: true });
+      shell = `"${cmd}" /S /C`;
     } else {
-      const sh = which(["bash", "sh"], { required: true });
-      shell = `${sh} -c`;
+      const sh = which("sh", { required: true });
+      shell = `${sh} -e -c`;
     }
 
     const flags = ["enable-job-log-tmpfile", "no-feature-reporting"];

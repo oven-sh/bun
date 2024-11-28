@@ -239,6 +239,7 @@ class Debugger {
         fetch: this.#fetch.bind(this),
         websocket: this.#websocket,
       });
+
       this.#url!.hostname = server.hostname;
       this.#url!.port = `${server.port}`;
       return;
@@ -257,11 +258,11 @@ class Debugger {
   }
 
   #connectOverSocket(networkOptions) {
+    let backend;
     return Bun.connect<{ framer: SocketFramer; backend: Backend }>({
       ...networkOptions,
       socket: {
         open: socket => {
-          let backend: Backend;
           let framer: SocketFramer;
           const callback = (...messages: string[]) => {
             for (const message of messages) {
@@ -296,6 +297,12 @@ class Debugger {
         },
       },
     }).catch(err => {
+      // Force us to send a disconnect message
+      if (!backend) {
+        backend = this.#createBackend(false, () => {});
+        backend.close();
+      }
+
       $debug("error:", err);
     });
   }
@@ -450,6 +457,10 @@ async function connectToUnixServer(
       },
     },
   }).catch(error => {
+    // Force it to close
+    const backendRaw = createBackend(executionContextId, true, (...messages: string[]) => {});
+    close.$call(backendRaw);
+
     $debug("error:", error);
   });
 

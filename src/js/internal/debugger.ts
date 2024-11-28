@@ -104,6 +104,7 @@ export default function (
   isAutomatic: boolean,
   urlIsServer: boolean,
 ): void {
+  $debug("Connect: " + url + (urlIsServer ? " (server)" : "") + (isAutomatic ? " (automatic)" : ""));
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
     return;
@@ -145,7 +146,7 @@ export default function (
       const path = require("node:path");
       notify({
         // This is actually a filesystem path, not a URL.
-        unix: path.resolve(notifyUrl.substring("unix://".length)),
+        unix: path.resolve(unescapeUnixSocketUrl(notifyUrl)),
       });
     } else {
       const { hostname, port } = new URL(notifyUrl);
@@ -159,7 +160,16 @@ export default function (
 
 function unescapeUnixSocketUrl(href: string) {
   if (href.startsWith("unix://%2F")) {
-    return decodeURIComponent(href.substring("unix://".length));
+    return unescapeUnixSocketUrl(decodeURIComponent(href.substring("unix://".length)));
+  }
+
+  const questionMarkIndex = href.lastIndexOf("?");
+  if (questionMarkIndex !== -1) {
+    return unescapeUnixSocketUrl(href.substring(0, questionMarkIndex));
+  }
+
+  if (href.startsWith("unix://")) {
+    return href.substring("unix://".length);
   }
 
   return href;
@@ -278,6 +288,10 @@ class Debugger {
             backend,
           };
           socket.ref();
+        },
+        connectError: (socket, error) => {
+          this.#createBackend(true, () => {}).close();
+          $debug("connectError:" + error);
         },
         data: (socket, bytes) => {
           if (!socket.data) {

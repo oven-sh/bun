@@ -960,7 +960,7 @@ async function getPipelineOptions() {
 
 /**
  * @param {PipelineOptions} [options]
- * @returns {Promise<Pipeline>}
+ * @returns {Promise<Pipeline | undefined>}
  */
 async function getPipeline(options = {}) {
   if (isBuildManual() && !Object.keys(options).length) {
@@ -971,7 +971,7 @@ async function getPipeline(options = {}) {
 
   const { skipEverything } = options;
   if (skipEverything) {
-    return {};
+    return;
   }
 
   const { buildProfiles = [], buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
@@ -1068,6 +1068,11 @@ async function main() {
 
   startGroup("Generating pipeline...");
   const pipeline = await getPipeline(options);
+  if (!pipeline) {
+    console.log("Generated pipeline is empty, skipping...");
+    return;
+  }
+
   const content = toYaml(pipeline);
   const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
   writeFile(contentPath, content);

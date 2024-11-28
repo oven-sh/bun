@@ -18,6 +18,7 @@ jobs:
       - name: Check libarchive version
         id: check-version
         run: |
+          set -euxo pipefail
           CURRENT_VERSION=$(grep -oP 'LIBARCHIVE_VERSION\s+\K\S+' cmake/targets/BuildLibArchive.cmake)
           if [ -z "$CURRENT_VERSION" ]; then
             echo "Error: Could not find current version in BuildLibArchive.cmake"

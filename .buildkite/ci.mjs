@@ -644,6 +644,7 @@ function getReleaseStep(buildPlatforms) {
  * @property {string} key
  * @property {string} group
  * @property {Step[]} steps
+ * @property {string[]} [depends_on]
  */
 
 /**
@@ -717,6 +718,20 @@ function getReleaseStep(buildPlatforms) {
  * @property {boolean} [unifiedBuilds]
  * @property {boolean} [unifiedTests]
  */
+
+/**
+ * @param {Step} step
+ * @param {(string | Step | undefined)[]} dependsOn
+ * @returns {Step}
+ */
+function getStepWithDependsOn(step, ...dependsOn) {
+  const { depends_on: existingDependsOn = [] } = step;
+  const newDependsOn = dependsOn.filter(Boolean).map(item => (typeof item === "string" ? item : item.key));
+  return {
+    ...step,
+    depends_on: [...existingDependsOn, ...newDependsOn],
+  };
+}
 
 /**
  * @returns {BlockStep}
@@ -1003,89 +1018,89 @@ async function getPipeline(options = {}) {
     return {};
   }
 
-  /** @type {Map<string, Step[]>} */
-  const buildSteps = new Map();
-
-  const { buildPlatforms = [], buildProfiles = [], skipBuilds, forceBuilds, unifiedBuilds } = options;
-  for (const platform of buildPlatforms) {
-    if (skipBuilds && !forceBuilds) {
-      continue;
-    }
-
-    for (const profile of buildProfiles) {
-      const target = {
-        ...platform,
-        profile: profile === "release" ? undefined : profile,
-      };
-
-      const key = getTargetKey(target);
-      const steps = buildSteps.get(key) ?? [];
-
-      if (unifiedBuilds) {
-        steps.push(getBuildBunStep(target));
-      } else {
-        steps.push(
-          getBuildVendorStep(target),
-          getBuildCppStep(target),
-          getBuildZigStep(target),
-          getLinkBunStep(target),
-        );
-      }
-
-      buildSteps.set(key, steps);
-    }
-  }
-
-  /** @type {Map<string, Step[]>} */
-  const testSteps = new Map();
-
-  const { testPlatforms = [], skipTests, forceTests, unifiedTests, testFiles } = options;
-  for (const platform of testPlatforms) {
-    if (skipTests && !forceTests) {
-      continue;
-    }
-
-    const key = getTargetKey(platform);
-    const steps = testSteps.get(key) ?? [];
-
-    if (buildSteps.has(key)) {
-      steps.push(getTestBunStep(platform, { unifiedTests, testFiles }));
-    } else {
-      const lastBuild = await getLastSuccessfulBuild();
-      if (lastBuild) {
-        const { id: buildId } = lastBuild;
-        steps.push(getTestBunStep(platform, { unifiedTests, testFiles, buildId }));
-      }
-    }
-
-    testSteps.set(key, steps);
-  }
-
-  /** @type {Map<string, GroupStep>} */
-  const groupSteps = new Map(
-    [...buildPlatforms, ...testPlatforms].map(platform => {
-      const groupKey = getTargetKey(platform);
-      const groupBuildSteps = buildSteps.get(groupKey) ?? [];
-      const groupTestSteps = testSteps.get(groupKey) ?? [];
-      return [
-        groupKey,
-        {
-          key: getTargetKey(platform),
-          group: getTargetLabel(platform),
-          steps: [...groupBuildSteps, ...groupTestSteps],
-        },
-      ];
-    }),
+  const { buildProfiles = [], buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
+  const imagePlatforms = new Map(
+    buildImages || publishImages ? buildPlatforms.map(platform => [getImageKey(platform), platform]) : [],
   );
 
   /** @type {Step[]} */
-  const steps = [...groupSteps.values()];
+  const steps = [];
+
+  if (imagePlatforms.size) {
+    steps.push({
+      key: "build-images",
+      group: getBuildkiteEmoji("aws"),
+      steps: [...imagePlatforms.values()].map(platform => getBuildImageStep(platform, !publishImages)),
+    });
+  }
+
+  const { skipBuilds, forceBuilds, unifiedBuilds } = options;
+  if (!skipBuilds || forceBuilds) {
+    steps.push(
+      ...buildPlatforms
+        .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
+        .map(target => {
+          const imageKey = getImageKey(target);
+          const imageStep = imagePlatforms.get(imageKey);
+
+          return getStepWithDependsOn(
+            {
+              key: getTargetKey(target),
+              group: getTargetLabel(target),
+              steps: unifiedBuilds
+                ? [getBuildBunStep(target)]
+                : [
+                    getBuildVendorStep(target),
+                    getBuildCppStep(target),
+                    getBuildZigStep(target),
+                    getLinkBunStep(target),
+                  ],
+            },
+            imageStep,
+          );
+        }),
+    );
+  }
+
+  const { skipTests, forceTests, unifiedTests, testFiles } = options;
+  if (!skipTests || forceTests) {
+    steps.push(
+      ...testPlatforms
+        .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
+        .map(target => ({
+          key: getTargetKey(target),
+          group: getTargetLabel(target),
+          steps: [getTestBunStep(target, { unifiedTests, testFiles })],
+        })),
+    );
+  }
 
   if (isMainBranch()) {
     steps.push(getReleaseStep(buildPlatforms));
   }
 
-  return { steps };
+  /** @type {Map<string, GroupStep>} */
+  const stepsByGroup = new Map();
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    if (!("group" in step)) {
+      continue;
+    }
+
+    const { group, steps: groupSteps } = step;
+    if (stepsByGroup.has(group)) {
+      stepsByGroup.get(group).steps.push(...groupSteps);
+    } else {
+      stepsByGroup.set(group, step);
+    }
+
+    steps[i] = undefined;
+  }
+
+  return {
+    steps: [...steps.filter(step => typeof step !== "undefined"), ...Array.from(stepsByGroup.values())],
+  };
 }
 
 async function main() {

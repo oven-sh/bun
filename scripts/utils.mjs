@@ -2660,6 +2660,7 @@ const emojiMap = {
   debian: ["🐧", "debian"],
   ubuntu: ["🐧", "ubuntu"],
   alpine: ["🐧", "alpine"],
+  aws: ["☁️", "aws"],
   amazonlinux: ["🐧", "aws"],
   windows: ["🪟", "windows"],
   true: ["✅", "white_check_mark"],

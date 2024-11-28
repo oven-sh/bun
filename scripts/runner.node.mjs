@@ -1473,6 +1473,17 @@ export async function main() {
   }
 
   printEnvironment();
+
+  // FIXME: Some DNS tests hang unless we set the DNS server to 8.8.8.8
+  // It also appears to hang on 1.1.1.1, which could explain this issue:
+  // https://github.com/oven-sh/bun/issues/11136
+  if (isWindows && isCI) {
+    await spawn("pwsh", [
+      "-Command",
+      "Set-DnsClientServerAddress -InterfaceAlias 'Ethernet 4' -ServerAddresses ('8.8.8.8','8.8.4.4')",
+    ]);
+  }
+
   const results = await runTests();
   const ok = results.every(({ ok }) => ok);
 
@@ -1487,6 +1498,7 @@ export async function main() {
     }
 
     if (!waitForUser) {
+      startGroup("Summary");
       console.warn(`Found ${userCount} users logged in, keeping the runner alive until logout...`);
       waitForUser = true;
     }

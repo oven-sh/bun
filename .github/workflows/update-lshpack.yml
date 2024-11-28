@@ -37,25 +37,27 @@ jobs:
             exit 1
           fi
           echo "latest=$LATEST_SHA" >> $GITHUB_OUTPUT
+          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
 
-      - name: Create PR if update needed
+      - name: Update version if needed
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BRANCH="update-lshpack-${GITHUB_SHA::8}"
-          git checkout -b "$BRANCH"
-
           sed -i "s/LSHPACK_VERSION\s\+[0-9a-f]\+/LSHPACK_VERSION ${{ steps.check-version.outputs.latest }}/" cmake/targets/BuildLshpack.cmake
-          
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add cmake/targets/BuildLshpack.cmake
-          git commit -m "deps: update lshpack to ${{ steps.check-version.outputs.latest }}"
-          git push origin "$BRANCH"
 
-          gh pr create \
-            --title "deps: update lshpack to ${LATEST_SHA::8}" \
-            --body "Updates lshpack from ${CURRENT_VERSION::8} to ${LATEST_SHA::8}" \
-            --base main \
-            --head "$BRANCH"
+      - name: Create Pull Request
+        if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        uses: peter-evans/create-pull-request@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          add-paths: |
+            cmake/targets/BuildLshpack.cmake
+          commit-message: "deps: update lshpack to ${{ steps.check-version.outputs.latest }}"
+          title: "deps: update lshpack to ${{ steps.check-version.outputs.latest }}"
+          delete-branch: true
+          branch: deps/update-lshpack-${{ steps.check-version.outputs.latest }}
+          body: |
+            ## What does this PR do?
+
+            Updates lshpack to version ${{ steps.check-version.outputs.tag }}
+
+            Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-lshpack.yml)

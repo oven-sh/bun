@@ -126,17 +126,13 @@ it("should thow ECONNRESET if FIN is received before handshake", async () => {
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
   const { promise, resolve } = Promise.withResolvers();
-  let error: Error | undefined = undefined;
   tls
     .connect((server.address() as AddressInfo).port, {
       rejectUnauthorized: false,
     })
-    .on("error", err => {
-      error = err;
-    })
-    .on("close", resolve);
+    .on("error", resolve);
 
-  await promise;
+  const error = await promise;
 
   expect(error).toBeDefined();
   expect((error as Error).code as string).toBe("ECONNRESET");

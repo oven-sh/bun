@@ -2359,6 +2359,11 @@ pub const SocketContext = opaque {
         us_socket_context_free(@as(i32, 0), this);
     }
 
+    pub fn ref(this: *SocketContext, comptime ssl: bool) *SocketContext {
+        us_socket_context_ref(@intFromBool(ssl), this);
+        return this;
+    }
+
     pub fn cleanCallbacks(ctx: *SocketContext, is_ssl: bool) void {
         const ssl_int: i32 = @intFromBool(is_ssl);
         // replace callbacks with dummy ones

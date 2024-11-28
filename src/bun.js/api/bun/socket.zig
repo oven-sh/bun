@@ -3509,7 +3509,8 @@ fn NewSocket(comptime ssl: bool) type {
             TLSSocket.dataSetCached(tls_js_value, globalObject, default_data);
 
             tls.socket = new_socket;
-            tls.socket_context = new_socket.context(); // owns the new tls context that have a ref from the old one
+            const new_context = new_socket.context().?;
+            tls.socket_context = new_context; // owns the new tls context that have a ref from the old one
             tls.ref();
             const vm = handlers.vm;
 
@@ -3539,7 +3540,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tcp,
                 .protos = null,
-                .socket_context = null, // raw socket dont own the context
+                .socket_context = new_context.ref(true),
             });
             raw.ref();
 

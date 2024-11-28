@@ -799,10 +799,20 @@ const Socket = (function (InternalSocket) {
       return this;
     }
 
+    end(...args) {
+      if (!this._readableState.endEmitted) {
+        this.secureConnecting = false;
+      }
+      return super.end(...args);
+    }
+
     _destroy(err, callback) {
       this.connecting = false;
-
       const { ending } = this._writableState;
+      if (!err && this.secureConnecting && !this.isServer) {
+        this.secureConnecting = false;
+        err = new ConnResetException("Client network socket disconnected before secure TLS connection was established");
+      }
       // lets make sure that the writable side is closed
       if (!ending) {
         // at this state destroyed will be true but we need to close the writable side
@@ -810,11 +820,6 @@ const Socket = (function (InternalSocket) {
         this.end();
         // we now restore the destroyed flag
         this._writableState.destroyed = true;
-      }
-
-      if (!err && this.secureConnecting) {
-        this.secureConnecting = false;
-        err = new ConnResetException("Client network socket disconnected before secure TLS connection was established");
       }
 
       detachSocket(self);

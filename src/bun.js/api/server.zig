@@ -3652,13 +3652,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             status: u16,
         ) void {
             JSC.markBinding(@src());
+
             if (this.server) |server| {
                 if (server.config.onError != .zero and !this.flags.has_called_error_handler) {
                     this.flags.has_called_error_handler = true;
+
+                    const preparedRequest = server.prepareJsRequestContext(this.req.?, this.resp.?) orelse return;
+
                     const result = server.config.onError.call(
                         server.globalThis,
                         server.thisObject,
-                        &.{value},
+                        &.{ value, preparedRequest.js_request },
                     ) catch |err| server.globalThis.takeException(err);
                     defer result.ensureStillAlive();
                     if (!result.isEmptyOrUndefinedOrNull()) {

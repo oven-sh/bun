@@ -17,6 +17,7 @@ jobs:
 
       - name: Check libarchive version
         id: check-version
+        shell: bash
         run: |
           set -euxo pipefail
           CURRENT_VERSION=$(grep -oP 'LIBARCHIVE_VERSION\s+\K\S+' cmake/targets/BuildLibArchive.cmake)
@@ -42,7 +43,9 @@ jobs:
 
       - name: Update version if needed
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        shell: bash
         run: |
+          set -euxo pipefail
           sed -i "s/LIBARCHIVE_VERSION\s\+[0-9a-f]\+/LIBARCHIVE_VERSION ${{ steps.check-version.outputs.latest }}/" cmake/targets/BuildLibArchive.cmake
 
       - name: Create Pull Request

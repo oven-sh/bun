@@ -113,20 +113,20 @@ static const HashTableValue JSBundlerPluginHashTable[] = {
     { "generateDeferPromise"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_generateDeferPromise, 0 } },
 };
 
-
 class JSBundlerPlugin final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
     static JSBundlerPlugin* create(JSC::VM& vm,
         JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure,
+        WTF::StringImpl* name,
         void* config,
         BunPluginTarget target,
         JSBundlerPluginAddErrorCallback addError = JSBundlerPlugin__addError,
         JSBundlerPluginOnLoadAsyncCallback onLoadAsync = JSBundlerPlugin__onLoadAsync,
         JSBundlerPluginOnResolveAsyncCallback onResolveAsync = JSBundlerPlugin__onResolveAsync)
     {
-        JSBundlerPlugin* ptr = new (NotNull, JSC::allocateCell<JSBundlerPlugin>(vm)) JSBundlerPlugin(vm, globalObject, structure, config, target,
+        JSBundlerPlugin* ptr = new (NotNull, JSC::allocateCell<JSBundlerPlugin>(vm)) JSBundlerPlugin(vm, globalObject, structure, name, config, target,
             addError,
             onLoadAsync,
             onResolveAsync);
@@ -161,10 +161,10 @@ public:
     WTF::HashMap<WTF::String, void*> onBeforeParseHandles;
 
 private:
-    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure, void* config, BunPluginTarget target,
+    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure, WTF::StringImpl* name, void* config, BunPluginTarget target,
         JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : JSC::JSNonFinalObject(vm, structure)
-        , plugin(BundlerPlugin(config, target, addError, onLoadAsync, onResolveAsync))
+        , plugin(BundlerPlugin(config, name, target, addError, onLoadAsync, onResolveAsync))
     {
     }
 
@@ -250,21 +250,20 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
 
         nsGroup->append(nativeFilterRegexp);
     }
-    
+
     if (index == std::numeric_limits<unsigned>::max()) {
-        this->fileCallbacks.append(NativePluginCallback{callback, external});
+        this->fileCallbacks.append(NativePluginCallback { callback, external });
     } else {
         if (this->namespaceCallbacks.size() <= index) {
             this->namespaceCallbacks.grow(index + 1);
         }
-        this->namespaceCallbacks[index].append(NativePluginCallback{callback, external});
+        this->namespaceCallbacks[index].append(NativePluginCallback { callback, external });
     }
 }
 
-extern "C" void CrashHandler__setInsideNativePlugin(bool value);
+extern "C" void CrashHandler__setInsideNativePlugin(bool value, const char* plugin_name);
 
-
-int BundlerPlugin::NativePluginList::call(JSC::VM& vm, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, void* onBeforeParseArgs, void* onBeforeParseResult)
+int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, void* onBeforeParseArgs, void* onBeforeParseResult)
 {
     unsigned index = 0;
     const auto* group = this->group(namespaceStr->toWTFString(BunString::ZeroCopy), index);
@@ -281,6 +280,11 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, int* shouldContinue, void
     int count = 0;
     constexpr bool usesPatternContextBuffer = false;
     const WTF::String& path = pathString->toWTFString(BunString::ZeroCopy);
+    if (!plugin->name_c.has_value()) {
+        auto plugin_name_c = plugin->name->utf8();
+        plugin->name_c = std::make_optional(plugin_name_c);
+    }
+    CString& plugin_name = plugin->name_c.value();
     for (size_t i = 0, total = callbacks.size(); i < total && *shouldContinue; ++i) {
         Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
 
@@ -289,13 +293,13 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, int* shouldContinue, void
             if (group->at(i).first.match(path) > -1) {
                 Bun::NapiExternal* external = callbacks[i].external;
                 if (external) {
-                    ((OnBeforeParseArguments*) (onBeforeParseArgs))->external = external->value();
+                    ((OnBeforeParseArguments*)(onBeforeParseArgs))->external = external->value();
                 }
 
                 JSBundlerPluginNativeOnBeforeParseCallback callback = callbacks[i].callback;
-                CrashHandler__setInsideNativePlugin(true);
+                CrashHandler__setInsideNativePlugin(true, plugin_name.data());
                 callback(onBeforeParseArgs, onBeforeParseResult);
-                CrashHandler__setInsideNativePlugin(false);
+                CrashHandler__setInsideNativePlugin(false, nullptr);
 
                 count++;
             }
@@ -352,7 +356,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     Bun::NapiModuleMeta* meta = (Bun::NapiModuleMeta*)napi_external->value();
     void* dlopen_handle = meta->dlopenHandle;
 
-    #if OS(WINDOWS)
+#if OS(WINDOWS)
     BunString onbefore_parse_symbol_str = Bun::toString(on_before_parse_symbol);
     void* on_before_parse_symbol_ptr = GetProcAddress(&onbefore_parse_symbol_str);
 #else
@@ -560,7 +564,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObjec
     }
 }
 
-extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* globalObject, BunPluginTarget target)
+extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* globalObject, WTF::StringImpl* name, BunPluginTarget target)
 {
     return JSBundlerPlugin::create(
         globalObject->vm(),
@@ -570,6 +574,7 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
             globalObject->vm(),
             globalObject,
             globalObject->objectPrototype()),
+        name,
         nullptr,
         target);
 }
@@ -634,7 +639,7 @@ extern "C" int JSBundlerPlugin__callOnBeforeParsePlugins(
     void* onBeforeParseResult,
     int* shouldContinue)
 {
-    return plugin->plugin.onBeforeParse.call(plugin->vm(), shouldContinue, bunContextPtr, namespaceStr, pathString, onBeforeParseArgs, onBeforeParseResult);
+    return plugin->plugin.onBeforeParse.call(plugin->vm(), &plugin->plugin, shouldContinue, bunContextPtr, namespaceStr, pathString, onBeforeParseArgs, onBeforeParseResult);
 }
 
 extern "C" int JSBundlerPlugin__hasOnBeforeParsePlugins(Bun::JSBundlerPlugin* plugin)

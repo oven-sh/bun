@@ -10,7 +10,7 @@
 typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginOnResolveAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
-typedef void (*JSBundlerPluginNativeOnBeforeParseCallback)( void*, void*);
+typedef void (*JSBundlerPluginNativeOnBeforeParseCallback)(void*, void*);
 
 namespace Bun {
 
@@ -46,7 +46,7 @@ public:
         void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, unsigned& index);
     };
 
-    #include "../../../packages/bun-native-bundler-plugin-api/bundler_plugin.h"
+#include "../../../packages/bun-native-bundler-plugin-api/bundler_plugin.h"
 
     /// In native plugins, the regular expression could be called concurrently on multiple threads.
     /// Therefore, we need a mutex to synchronize access.
@@ -69,7 +69,7 @@ public:
         PerNamespaceCallbackList fileCallbacks = {};
         Vector<PerNamespaceCallbackList> namespaceCallbacks = {};
 
-        int call(JSC::VM& vm, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, void* onBeforeParseArgs, void* onBeforeParseResult);
+        int call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, void* onBeforeParseArgs, void* onBeforeParseResult);
         void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, NapiExternal* external);
 
         Vector<NativeFilterRegexp>* group(const String& namespaceStr, unsigned& index)
@@ -95,15 +95,18 @@ public:
     bool anyMatchesCrossThread(JSC::VM&, const BunString* namespaceStr, const BunString* path, bool isOnLoad);
     void tombstone() { tombstoned = true; }
 
-    BundlerPlugin(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
+    BundlerPlugin(void* config, WTF::StringImpl* name, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : addError(addError)
         , onLoadAsync(onLoadAsync)
         , onResolveAsync(onResolveAsync)
     {
+        this->name = name;
         this->target = target;
         this->config = config;
     }
 
+    WTF::StringImpl* name;
+    std::optional<CString> name_c = {};
     NamespaceList onLoad = {};
     NamespaceList onResolve = {};
     NativePluginList onBeforeParse = {};

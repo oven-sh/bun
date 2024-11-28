@@ -243,6 +243,11 @@ const Socket = (function (InternalSocket) {
     static #End(socket) {
       const self = socket.data;
       if (!self) return;
+
+      if (self.secureConnecting) {
+        process.nextTick(emitConnectionResetNT, self);
+        return;
+      }
       // we just reuse the same code but we can push null or enqueue right away
       Socket.#EmitEndNT(self);
     }
@@ -1364,6 +1369,21 @@ function emitErrorNextTick(self, error) {
 function emitErrorAndCloseNextTick(self, error) {
   self.emit("error", error);
   self.emit("close");
+}
+class ConnResetException extends Error {
+  constructor(msg) {
+    super(msg);
+    this.code = "ECONNRESET";
+  }
+
+  get ["constructor"]() {
+    return Error;
+  }
+}
+function emitConnectionResetNT(self) {
+  self.destroy(
+    new ConnResetException("Client network socket disconnected before secure TLS connection was established"),
+  );
 }
 
 function emitListeningNextTick(self, onListen) {

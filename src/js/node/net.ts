@@ -812,7 +812,7 @@ const Socket = (function (InternalSocket) {
         this._writableState.destroyed = true;
       }
 
-      if (this.secureConnecting) {
+      if (!err && this.secureConnecting) {
         this.secureConnecting = false;
         err = new ConnResetException("Client network socket disconnected before secure TLS connection was established");
       }

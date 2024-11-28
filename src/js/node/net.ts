@@ -900,7 +900,15 @@ const Socket = (function (InternalSocket) {
     }
 
     resetAndDestroy() {
-      this._handle?.end();
+      if (this._handle) {
+        if (this.connecting) {
+          this.once("connect", () => this._handle?.terminate());
+        } else {
+          this._handle.terminate();
+        }
+      } else {
+        this.destroy($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
+      }
     }
 
     setKeepAlive(enable = false, initialDelayMsecs = 0) {

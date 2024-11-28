@@ -388,7 +388,7 @@ declare module "bun" {
        *         return { exhaustive: false };
        *     }
        */
-      getParams?: (paramsMetadata: ParamsMetadata) => Awaitable<ParamsResult>;
+      getParams?: (paramsMetadata: ParamsMetadata) => Awaitable<GetParamIterator>;
       /**
        * When a dynamic build uses static assets, Bun can map content types in the
        * user's `Accept` header to the different static files.
@@ -544,7 +544,7 @@ declare module "bun:bake/client" {
    * Callback is invoked when server-side code is changed. This can be used to
    * fetch a non-html version of the updated page to perform a faster reload. If
    * not provided, the client will perform a hard reload.
-   * 
+   *
    * Only one callback can be set. This function overwrites the previous one.
    */
   export function onServerSideReload(cb: () => void | Promise<void>): Promise<void>;

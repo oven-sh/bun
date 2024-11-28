@@ -467,8 +467,7 @@ pub const TextEncoderStreamEncoder = struct {
         //
         //
         var buffer = std.ArrayList(u8).initCapacity(bun.default_allocator, input.len + prepend_replacement_len) catch {
-            globalObject.throwOutOfMemory();
-            return .zero;
+            return globalObject.throwOutOfMemoryValue();
         };
         if (prepend_replacement_len > 0) {
             buffer.appendSliceAssumeCapacity(&[3]u8{ 0xef, 0xbf, 0xbd });
@@ -484,14 +483,12 @@ pub const TextEncoderStreamEncoder = struct {
             if (result.written == 0 and result.read == 0) {
                 buffer.ensureUnusedCapacity(2) catch {
                     buffer.deinit();
-                    globalObject.throwOutOfMemory();
-                    return .zero;
+                    return globalObject.throwOutOfMemoryValue();
                 };
             } else if (buffer.items.len == buffer.capacity and remain.len > 0) {
                 buffer.ensureTotalCapacity(buffer.items.len + remain.len + 1) catch {
                     buffer.deinit();
-                    globalObject.throwOutOfMemory();
-                    return .zero;
+                    return globalObject.throwOutOfMemoryValue();
                 };
             }
         }
@@ -556,8 +553,7 @@ pub const TextEncoderStreamEncoder = struct {
             bun.default_allocator,
             length + @as(usize, if (prepend) |pre| pre.len else 0),
         ) catch {
-            globalObject.throwOutOfMemory();
-            return .zero;
+            return globalObject.throwOutOfMemoryValue();
         };
 
         if (prepend) |*pre| {
@@ -571,8 +567,7 @@ pub const TextEncoderStreamEncoder = struct {
                 // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
                 const lead_surrogate = strings.toUTF8ListWithTypeBun(&buf, []const u16, remain, true) catch {
                     buf.deinit();
-                    globalObject.throwOutOfMemory();
-                    return .zero;
+                    return globalObject.throwOutOfMemoryValue();
                 };
 
                 if (lead_surrogate) |pending_lead| {
@@ -843,8 +838,7 @@ pub const TextDecoder = struct {
                         }
 
                         bun.assert(err == error.OutOfMemory);
-                        globalThis.throwOutOfMemory();
-                        return error.JSError;
+                        return globalThis.throwOutOfMemory();
                     },
                 };
 

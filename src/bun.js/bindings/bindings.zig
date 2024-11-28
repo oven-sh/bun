@@ -2395,8 +2395,8 @@ pub const JSPromise = extern struct {
         const Wrapper = struct {
             args: Args,
 
-            pub fn call(this: *@This(), _: *JSC.JSGlobalObject) JSC.JSValue {
-                return @call(.auto, Fn, this.args);
+            pub fn call(this: *@This(), g: *JSC.JSGlobalObject) JSC.JSValue {
+                return toJSHostValue(g, @call(.auto, Fn, this.args));
             }
         };
 
@@ -2851,8 +2851,8 @@ pub const AnyPromise = union(enum) {
         const Wrapper = struct {
             args: Args,
 
-            pub fn call(wrap_: *@This(), _: *JSC.JSGlobalObject) JSC.JSValue {
-                return @call(.auto, Fn, wrap_.args);
+            pub fn call(wrap_: *@This(), global: *JSC.JSGlobalObject) JSC.JSValue {
+                return toJSHostValue(global, @call(.auto, Fn, wrap_.args));
             }
         };
 
@@ -2953,8 +2953,9 @@ pub const JSGlobalObject = opaque {
     }
 
     extern fn JSGlobalObject__throwOutOfMemoryError(this: *JSGlobalObject) void;
-    pub fn throwOutOfMemory(this: *JSGlobalObject) void {
+    pub fn throwOutOfMemory(this: *JSGlobalObject) bun.JSError {
         JSGlobalObject__throwOutOfMemoryError(this);
+        return error.JSError;
     }
 
     pub fn throwOutOfMemoryValue(this: *JSGlobalObject) JSValue {
@@ -2995,116 +2996,6 @@ pub const JSGlobalObject = opaque {
         return .zero;
     }
 
-    /// Pass a JSOrMemoryError!JSValue and variants through the C ABI boundary
-    ///
-    /// In C++, WebKit represents a thrown JavaScript expression as
-    /// JSValue.zero/nullptr, and stores the actual exception on the global. In
-    /// Zig, we represent this zero as a distinct Zig error type
-    /// 'error.JSError'. Instead of using JSValue.zero directly, we pass the
-    /// Zig error to this function as "proof" there is an error. In debug, this
-    /// will also assert that an error is actually present.
-    ///
-    /// If .zero is exposed to JS, it will be considered a JSCell but with a
-    /// null pointer and will segfault via null-pointer dereference.
-    ///
-    /// Ideally, we can use this function as little as possible, and instead
-    /// have auto-generated wrappers that do this conversion. It is ugly to use
-    /// on purpose.
-    pub inline fn errorUnionToCPP(global: *JSGlobalObject, result: anytype) RemoveError(@TypeOf(result)) {
-        const T = @TypeOf(result);
-
-        const unwrapped = switch (@typeInfo(T)) {
-            .ErrorUnion => result catch |err| {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                return global.errorSetToCPP(err, T);
-            },
-            .ErrorSet => return global.errorSetToCPP(result, T),
-            else => result,
-        };
-
-        // Validate exception state aligns with return value.
-        // Currently only enabled for JSValue.
-        const Return = RemoveError(T);
-        if (bun.Environment.isDebug and Return == JSValue) {
-            const null_value: Return = comptime if (Return == JSC.JSValue)
-                .zero
-            else
-                null;
-
-            if (unwrapped == null_value) {
-                std.debug.assert(global.hasException()); // Exception was cleared, yet returned.
-            } else if (Return == JSC.JSValue and unwrapped == .undefined) {
-                // TODO: a lot of our code returns undefined when it throws an error.
-            } else {
-                if (global.tryTakeException()) |exception| {
-                    bun.Output.err("assertion failure", "Pending exception while returning non-empty JSValue", .{});
-                    bun.Output.printErrorln("Exception thrown:", .{});
-                    bun.Output.flush();
-                    global.bunVM().printErrorLikeObjectToConsole(exception);
-                    bun.Output.printErrorln("Value returned:", .{});
-                    bun.Output.flush();
-                    if (Return == JSValue) {
-                        unwrapped.print(global, .Log, .Error);
-                    } else {
-                        bun.Output.printErrorln("  {any}", .{unwrapped});
-                    }
-                    bun.Output.flush();
-                    @panic("Pending exception while returning non-empty JSValue");
-                }
-            }
-        }
-
-        return unwrapped;
-    }
-
-    pub fn RemoveError(T: type) type {
-        return switch (@typeInfo(T)) {
-            .ErrorSet => bun.JSC.JSValue,
-            .ErrorUnion => |eu| if (@typeInfo(eu.payload) == .Pointer)
-                ?eu.payload
-            else
-                eu.payload,
-            else => T,
-        };
-    }
-
-    inline fn errorSetToCPP(global: *JSGlobalObject, err: anytype, T: type) RemoveError(T) {
-        const info = @typeInfo(@TypeOf(err));
-        comptime bun.assert(info == .ErrorSet);
-        const Return = RemoveError(T);
-        const null_value: Return = comptime if (Return == JSC.JSValue)
-            .zero
-        else
-            null;
-
-        const possible_errors = comptime parseErrorSet(
-            T,
-            info.ErrorSet orelse
-                @compileError("host function cannot return 'anyerror!JSValue'"),
-        );
-
-        if (possible_errors.OutOfMemory and err == error.OutOfMemory) {
-            if (global.hasException()) {
-                if (comptime bun.Environment.isDebug) bun.Output.panic("attempted to throw OutOfMemory without an exception", .{});
-            } else {
-                global.throwOutOfMemory();
-            }
-            return null_value;
-        }
-
-        if (possible_errors.JSError and err == error.JSError) {
-            if (!global.hasException()) {
-                if (comptime bun.Environment.isDebug) bun.Output.panic("attempted to throw JSError without an exception", .{});
-                global.throwOutOfMemory();
-            }
-            return null_value;
-        }
-
-        // all errors have now been handled. parseErrorSet will report
-        // a compile error if there is another possible error
-        unreachable;
-    }
-
     pub fn createInvalidArgumentType(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -3132,10 +3023,10 @@ pub const JSGlobalObject = opaque {
         argname: []const u8,
         typename: []const u8,
         value: JSValue,
-    ) JSValue {
+    ) bun.JSError {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = this };
         this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, value.toFmt(&formatter) }).throw();
-        return .zero;
+        return error.JSError;
     }
 
     pub fn throwInvalidArgumentRangeValue(
@@ -3143,9 +3034,9 @@ pub const JSGlobalObject = opaque {
         argname: []const u8,
         typename: []const u8,
         value: i64,
-    ) JSValue {
+    ) bun.JSError {
         this.ERR_OUT_OF_RANGE("The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
-        return .zero;
+        return error.JSError;
     }
 
     pub fn throwInvalidPropertyTypeValue(
@@ -3153,11 +3044,11 @@ pub const JSGlobalObject = opaque {
         field: []const u8,
         typename: []const u8,
         value: JSValue,
-    ) JSValue {
+    ) bun.JSError {
         const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
         defer ty_str.deinit();
         this.ERR_INVALID_ARG_TYPE("The \"{s}\" property must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }).throw();
-        return .zero;
+        return error.JSError;
     }
 
     pub fn createNotEnoughArguments(
@@ -3378,13 +3269,20 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwError(this: *JSGlobalObject, err: anyerror, comptime fmt: [:0]const u8) bun.JSError {
         if (err == error.OutOfMemory) {
-            this.throwOutOfMemory();
-            return error.JSError;
+            return this.throwOutOfMemory();
         }
 
-        var str = ZigString.init(try std.fmt.allocPrint(this.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}));
-        defer this.bunVM().allocator.free(ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
-        str.markUTF8();
+        // If we're throwing JSError, that means either:
+        // - We're throwing an exception while another exception is already active
+        // - We're incorrectly returning JSError from a function that did not throw.
+        bun.debugAssert(err != error.JSError);
+
+        // Avoid tiny extra allocation
+        var stack = std.heap.stackFallback(128, bun.default_allocator);
+        const allocator_ = stack.get();
+        const buffer = try std.fmt.allocPrint(allocator_, comptime "{s} " ++ fmt, .{@errorName(err)});
+        defer allocator_.free(buffer);
+        const str = ZigString.initUTF8(buffer);
         const err_value = str.toErrorInstance(this);
         return this.vm().throwError2(this, err_value);
     }
@@ -3428,7 +3326,7 @@ pub const JSGlobalObject = opaque {
     pub fn takeException(this: *JSGlobalObject, proof: bun.JSError) JSValue {
         switch (proof) {
             error.JSError => {},
-            error.OutOfMemory => this.throwOutOfMemory(),
+            error.OutOfMemory => this.throwOutOfMemory() catch {},
         }
 
         return this.tryTakeException() orelse {
@@ -3533,15 +3431,13 @@ pub const JSGlobalObject = opaque {
             allowFunction: bool = false,
             nullable: bool = false,
         },
-    ) bool {
+    ) bun.JSError!void {
         if ((!opts.nullable and value.isNull()) or
             (!opts.allowArray and value.isArray()) or
             (!value.isObject() and (!opts.allowFunction or !value.isFunction())))
         {
-            _ = this.throwInvalidArgumentTypeValue(arg_name, "object", value);
-            return false;
+            return this.throwInvalidArgumentTypeValue(arg_name, "object", value);
         }
-        return true;
     }
 
     pub fn throwRangeError(this: *JSGlobalObject, value: anytype, options: bun.fmt.OutOfRangeOptions) void {
@@ -3557,7 +3453,7 @@ pub const JSGlobalObject = opaque {
         always_allow_zero: bool = false,
     };
 
-    pub fn validateIntegerRange(this: *JSGlobalObject, value: JSValue, comptime T: type, default: T, comptime range: IntegerRange) ?T {
+    pub fn validateIntegerRange(this: *JSGlobalObject, value: JSValue, comptime T: type, default: T, comptime range: IntegerRange) bun.JSError!T {
         if (value == .undefined or value == .zero) {
             return default;
         }
@@ -3586,14 +3482,13 @@ pub const JSGlobalObject = opaque {
             }
             if (int < min_t or int > max_t) {
                 this.throwRangeError(int, .{ .field_name = field_name, .min = min, .max = max });
-                return null;
+                return error.JSError;
             }
             return @intCast(int);
         }
 
         if (!value.isNumber()) {
-            _ = this.throwInvalidPropertyTypeValue(field_name, "number", value);
-            return null;
+            return this.throwInvalidPropertyTypeValue(field_name, "number", value);
         }
         const f64_val = value.asNumber();
         if (always_allow_zero and f64_val == 0) {
@@ -3605,12 +3500,11 @@ pub const JSGlobalObject = opaque {
             return default;
         }
         if (@floor(f64_val) != f64_val) {
-            _ = this.throwInvalidPropertyTypeValue(field_name, "integer", value);
-            return null;
+            return this.throwInvalidPropertyTypeValue(field_name, "integer", value);
         }
         if (f64_val < min_t or f64_val > max_t) {
             this.throwRangeError(f64_val, .{ .field_name = comptime field_name, .min = min, .max = max });
-            return null;
+            return error.JSError;
         }
 
         return @intFromFloat(f64_val);
@@ -4106,6 +4000,13 @@ pub const JSValue = enum(i64) {
                 .Uint8Array,
                 .Uint8ClampedArray,
                 => true,
+                else => false,
+            };
+        }
+
+        pub inline fn isArguments(this: JSType) bool {
+            return switch (this) {
+                .DirectArguments, .ClonedArguments, .ScopedArguments => true,
                 else => false,
             };
         }
@@ -5225,7 +5126,7 @@ pub const JSValue = enum(i64) {
     ) ?ZigString.Slice {
         var str = this.toStringOrNull(globalThis) orelse return null;
         return str.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch {
-            globalThis.throwOutOfMemory();
+            globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
             return null;
         };
     }
@@ -5509,10 +5410,8 @@ pub const JSValue = enum(i64) {
         if (prop.isNull() or prop == .false) {
             return null;
         }
-
         if (prop.isSymbol()) {
-            _ = global.throwInvalidPropertyTypeValue(property, "string", prop);
-            return error.JSError;
+            return global.throwInvalidPropertyTypeValue(property, "string", prop);
         }
 
         const str = prop.toBunString(global);
@@ -5520,11 +5419,9 @@ pub const JSValue = enum(i64) {
             str.deref();
             return error.JSError;
         }
-
         if (str.isEmpty()) {
             return null;
         }
-
         return str;
     }
 

@@ -1651,10 +1651,7 @@ pub const InternalDNS = struct {
             return globalThis.throwInvalidArguments("hostname must be a string", .{});
         }
 
-        const hostname_z = bun.default_allocator.dupeZ(u8, hostname_slice.slice()) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const hostname_z = try bun.default_allocator.dupeZ(u8, hostname_slice.slice());
         defer bun.default_allocator.free(hostname_z);
 
         prefetch(JSC.VirtualMachine.get().uwsLoop(), hostname_z);

@@ -83,6 +83,7 @@ async function doBuildkiteAgent(action) {
         }
       `;
       writeFile(servicePath, service, { mode: 0o755 });
+      writeFile(`/etc/conf.d/buildkite-agent`, `rc_ulimit="-n 262144"`);
       await spawnSafe(["rc-update", "add", "buildkite-agent", "default"], { stdio: "inherit", privileged: true });
     }
 
@@ -93,7 +94,7 @@ async function doBuildkiteAgent(action) {
         Description=Buildkite Agent
         After=syslog.target
         After=network-online.target
-      
+
         [Service]
         Type=simple
         User=${username}
@@ -105,7 +106,7 @@ async function doBuildkiteAgent(action) {
         [Journal]
         Storage=persistent
         StateDirectory=${escape(agentLogPath)}
-      
+
         [Install]
         WantedBy=multi-user.target
       `;

@@ -370,8 +370,7 @@ pub const Expect = struct {
 
         var expect = globalThis.bunVM().allocator.create(Expect) catch {
             custom_label.deref();
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemory();
         };
 
         expect.* = .{
@@ -4423,7 +4422,7 @@ pub const Expect = struct {
     pub fn executeCustomMatcher(globalThis: *JSGlobalObject, matcher_name: bun.String, matcher_fn: JSValue, args: []const JSValue, flags: Expect.Flags, silent: bool) bool {
         // prepare the this object
         const matcher_context = globalThis.bunVM().allocator.create(ExpectMatcherContext) catch {
-            globalThis.throwOutOfMemory();
+            globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
             return false;
         };
         matcher_context.flags = flags;
@@ -4570,10 +4569,7 @@ pub const Expect = struct {
         const args_ptr = callFrame.argumentsPtr();
         const args_count = callFrame.argumentsCount();
         var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
-        var matcher_args = std.ArrayList(JSValue).initCapacity(allocator.get(), args_count + 1) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        var matcher_args = try std.ArrayList(JSValue).initCapacity(allocator.get(), args_count + 1);
         matcher_args.appendAssumeCapacity(value);
         for (0..args_count) |i| matcher_args.appendAssumeCapacity(args_ptr[i]);
 
@@ -4691,8 +4687,7 @@ pub const ExpectStatic = struct {
 
     pub fn create(globalThis: *JSGlobalObject, flags: Expect.Flags) JSValue {
         var expect = globalThis.bunVM().allocator.create(ExpectStatic) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
         expect.flags = flags;
 
@@ -4737,8 +4732,7 @@ pub const ExpectStatic = struct {
         const instance_jsvalue = try T.call(globalThis, callFrame);
         if (instance_jsvalue != .zero and !instance_jsvalue.isAnyError()) {
             var instance = T.fromJS(instance_jsvalue) orelse {
-                globalThis.throwOutOfMemory();
-                return .zero;
+                return globalThis.throwOutOfMemory();
             };
             instance.flags = this.flags;
         }
@@ -4786,10 +4780,7 @@ pub const ExpectAnything = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, _: *CallFrame) bun.JSError!JSValue {
-        const anything = globalThis.bunVM().allocator.create(ExpectAnything) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const anything = try globalThis.bunVM().allocator.create(ExpectAnything);
         anything.* = .{};
 
         const anything_js_value = anything.toJS(globalThis);
@@ -4823,10 +4814,7 @@ pub const ExpectStringMatching = struct {
 
         const test_value = args[0];
 
-        const string_matching = globalThis.bunVM().allocator.create(ExpectStringMatching) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const string_matching = try globalThis.bunVM().allocator.create(ExpectStringMatching);
         string_matching.* = .{};
 
         const string_matching_js_value = string_matching.toJS(globalThis);
@@ -4865,10 +4853,7 @@ pub const ExpectCloseTo = struct {
             return globalThis.throwPretty("<d>expect.<r>closeTo<d>(number, <r>precision?<d>)<r>\n\nPrecision must be a number or undefined", .{});
         }
 
-        const instance = globalThis.bunVM().allocator.create(ExpectCloseTo) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const instance = try globalThis.bunVM().allocator.create(ExpectCloseTo);
         instance.* = .{};
 
         const instance_jsvalue = instance.toJS(globalThis);
@@ -4904,10 +4889,7 @@ pub const ExpectObjectContaining = struct {
 
         const object_value = args[0];
 
-        const instance = globalThis.bunVM().allocator.create(ExpectObjectContaining) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const instance = try globalThis.bunVM().allocator.create(ExpectObjectContaining);
         instance.* = .{};
 
         const instance_jsvalue = instance.toJS(globalThis);
@@ -4940,10 +4922,7 @@ pub const ExpectStringContaining = struct {
 
         const string_value = args[0];
 
-        const string_containing = globalThis.bunVM().allocator.create(ExpectStringContaining) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const string_containing = try globalThis.bunVM().allocator.create(ExpectStringContaining);
         string_containing.* = .{};
 
         const string_containing_js_value = string_containing.toJS(globalThis);
@@ -4986,10 +4965,7 @@ pub const ExpectAny = struct {
             return error.JSError;
         }
 
-        var any = globalThis.bunVM().allocator.create(ExpectAny) catch {
-            globalThis.throwOutOfMemory();
-            return error.JSError;
-        };
+        var any = try globalThis.bunVM().allocator.create(ExpectAny);
         any.* = .{
             .flags = .{
                 .asymmetric_matcher_constructor_type = asymmetric_matcher_constructor_type,
@@ -5029,10 +5005,7 @@ pub const ExpectArrayContaining = struct {
 
         const array_value = args[0];
 
-        const array_containing = globalThis.bunVM().allocator.create(ExpectArrayContaining) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const array_containing = try globalThis.bunVM().allocator.create(ExpectArrayContaining);
         array_containing.* = .{};
 
         const array_containing_js_value = array_containing.toJS(globalThis);
@@ -5062,7 +5035,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
     /// Implements the static call of the custom matcher (`expect.myCustomMatcher(<args>)`),
     /// which creates an asymmetric matcher instance (`ExpectCustomAsymmetricMatcher`).
     /// This will not run the matcher, but just capture the args etc.
-    pub fn create(globalThis: *JSGlobalObject, callFrame: *CallFrame, matcher_fn: JSValue) JSValue {
+    pub fn create(globalThis: *JSGlobalObject, callFrame: *CallFrame, matcher_fn: JSValue) bun.JSError!JSValue {
         var flags: Expect.Flags = undefined;
 
         // try to retrieve the ExpectStatic instance (to get the flags)
@@ -5074,10 +5047,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         }
 
         // create the matcher instance
-        const instance = globalThis.bunVM().allocator.create(ExpectCustomAsymmetricMatcher) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const instance = try globalThis.bunVM().allocator.create(ExpectCustomAsymmetricMatcher);
         instance.* = .{};
 
         const instance_jsvalue = instance.toJS(globalThis);
@@ -5131,7 +5101,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         const args_count = captured_args.getLength(globalThis);
         var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
         var matcher_args = std.ArrayList(JSValue).initCapacity(allocator.get(), args_count + 1) catch {
-            globalThis.throwOutOfMemory();
+            globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
             return false;
         };
         matcher_args.appendAssumeCapacity(received);
@@ -5178,16 +5148,10 @@ pub const ExpectCustomAsymmetricMatcher = struct {
 
     pub fn toAsymmetricMatcher(this: *ExpectCustomAsymmetricMatcher, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         var stack_fallback = std.heap.stackFallback(512, globalThis.allocator());
-        var mutable_string = bun.MutableString.init2048(stack_fallback.get()) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        var mutable_string = try bun.MutableString.init2048(stack_fallback.get());
         defer mutable_string.deinit();
 
-        const printed = customPrint(this, callframe.this(), globalThis, mutable_string.writer()) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const printed = try customPrint(this, callframe.this(), globalThis, mutable_string.writer());
         if (printed) {
             return bun.String.init(mutable_string.slice()).toJS();
         }
@@ -5246,8 +5210,7 @@ pub const ExpectMatcherUtils = struct {
 
     fn createSingleton(globalThis: *JSGlobalObject) callconv(.C) JSValue {
         var instance = globalThis.bunVM().allocator.create(ExpectMatcherUtils) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
         return instance.toJS(globalThis);
     }
@@ -5293,8 +5256,7 @@ pub const ExpectMatcherUtils = struct {
 
     inline fn printValueCatched(globalThis: *JSGlobalObject, value: JSValue, comptime color_or_null: ?[]const u8) JSValue {
         return printValue(globalThis, value, color_or_null) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
     }
 
@@ -5368,17 +5330,11 @@ pub const ExpectMatcherUtils = struct {
         if (is_not) {
             const signature = comptime Expect.getSignature("{s}", "<green>expected<r>", true);
             const fmt = signature ++ "\n\n{any}\n";
-            return JSValue.printStringPretty(globalThis, 2048, fmt, .{ matcher_name, diff_formatter }) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
-            };
+            return try JSValue.printStringPretty(globalThis, 2048, fmt, .{ matcher_name, diff_formatter });
         } else {
             const signature = comptime Expect.getSignature("{s}", "<green>expected<r>", false);
             const fmt = signature ++ "\n\n{any}\n";
-            return JSValue.printStringPretty(globalThis, 2048, fmt, .{ matcher_name, diff_formatter }) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
-            };
+            return try JSValue.printStringPretty(globalThis, 2048, fmt, .{ matcher_name, diff_formatter });
         }
     }
 };

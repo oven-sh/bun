@@ -542,17 +542,7 @@ pub const JSBundler = struct {
         }
 
         var plugins: ?*Plugin = null;
-        const config = Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator()) catch |err| {
-            switch (err) {
-                error.JSError => {
-                    return .zero;
-                },
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                },
-            }
-        };
+        const config = try Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator());
 
         return bun.BundleV2.generateFromJavaScript(
             config,
@@ -560,14 +550,7 @@ pub const JSBundler = struct {
             globalThis,
             globalThis.bunVM().eventLoop(),
             bun.default_allocator,
-        ) catch |err| {
-            switch (err) {
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                },
-            }
-        };
+        );
     }
 
     pub fn buildFn(

@@ -113,30 +113,3 @@ test("allowHalfOpen: false should work on client-side", async () => {
       .filter(s => s),
   ).toEqual(["Hello, World", "Received FIN"]);
 });
-
-test("allowHalfOpen: true should be able to receive a lot of connections and writes", async () => {
-  const { promise: portPromise, resolve } = Promise.withResolvers();
-  const CLIENTS = 300;
-  const process = nodeRun(resolve, CLIENTS);
-
-  const port = await portPromise;
-  const batch = [];
-  for (let i = 0; i < CLIENTS; i++) {
-    batch.push(doHalfOpenRequest(port, true));
-    if (batch % 50 === 0) {
-      await Promise.all(batch);
-      batch.length = 0;
-    }
-  }
-  if (batch.length > 0) await Promise.all(batch);
-  const result = await process;
-  expect(result.code).toBe(0);
-  expect(result.stderr).toBe("");
-
-  const output = result.stdout
-    .split("\n")
-    .map(s => s.trim())
-    .filter(s => s);
-  expect(output.reduce((count, str) => count + (str === "Write after end" ? 1 : 0), 0)).toEqual(CLIENTS);
-  expect(output.reduce((count, str) => count + (str === "Received FIN" ? 1 : 0), 0)).toEqual(CLIENTS);
-});

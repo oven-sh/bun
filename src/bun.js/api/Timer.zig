@@ -722,7 +722,7 @@ pub const EventLoopTimer = struct {
 
     state: State = .PENDING,
 
-    tag: Tag = .TimerCallback,
+    tag: Tag,
 
     pub const Tag = if (Environment.isWindows) enum {
         TimerCallback,
@@ -731,6 +731,7 @@ pub const EventLoopTimer = struct {
         StatWatcherScheduler,
         UpgradedDuplex,
         WindowsNamedPipe,
+        WTFTimer,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -740,6 +741,7 @@ pub const EventLoopTimer = struct {
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
                 .WindowsNamedPipe => uws.WindowsNamedPipe,
+                .WTFTimer => WTFTimer,
             };
         }
     } else enum {
@@ -748,6 +750,7 @@ pub const EventLoopTimer = struct {
         TestRunner,
         StatWatcherScheduler,
         UpgradedDuplex,
+        WTFTimer,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -756,6 +759,7 @@ pub const EventLoopTimer = struct {
                 .TestRunner => JSC.Jest.TestRunner,
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
+                .WTFTimer => WTFTimer,
             };
         }
     };
@@ -810,6 +814,10 @@ pub const EventLoopTimer = struct {
         switch (this.tag) {
             inline else => |t| {
                 var container: *t.Type() = @alignCast(@fieldParentPtr("event_loop_timer", this));
+                if (comptime t.Type() == WTFTimer) {
+                    return container.fire(now, vm);
+                }
+
                 if (comptime t.Type() == TimerObject) {
                     return container.fire(now, vm);
                 }
@@ -839,3 +847,93 @@ pub const EventLoopTimer = struct {
 };
 
 const timespec = bun.timespec;
+
+/// A timer created by WTF code and invoked by Bun's event loop
+pub const WTFTimer = struct {
+    /// This is WTF::RunLoop::TimerBase from WebKit
+    const RunLoopTimer = opaque {};
+
+    vm: *VirtualMachine,
+    run_loop_timer: *RunLoopTimer,
+    event_loop_timer: EventLoopTimer,
+    repeat: bool,
+
+    pub usingnamespace bun.New(@This());
+
+    pub fn init(run_loop_timer: *RunLoopTimer, js_vm: *VirtualMachine) *WTFTimer {
+        const this = WTFTimer.new(.{
+            .vm = js_vm,
+            .event_loop_timer = .{
+                .next = timespec.msFromNow(std.math.maxInt(i64)),
+                .tag = .WTFTimer,
+                .state = .CANCELLED,
+            },
+            .run_loop_timer = run_loop_timer,
+            .repeat = false,
+        });
+
+        return this;
+    }
+
+    pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
+        this.cancel();
+
+        // TODO increase precision
+        const interval = bun.timespec.msFromNow(@intFromFloat(seconds / std.time.ms_per_s));
+        this.event_loop_timer.next = interval;
+        this.vm.timer.insert(&this.event_loop_timer);
+        this.repeat = repeat;
+    }
+
+    pub fn cancel(this: *WTFTimer) void {
+        if (this.event_loop_timer.state == .ACTIVE) {
+            this.vm.timer.remove(&this.event_loop_timer);
+        }
+    }
+
+    pub fn fire(this: *WTFTimer, now: *const bun.timespec, js_vm: *VirtualMachine) EventLoopTimer.Arm {
+        _ = now;
+        _ = js_vm;
+        this.event_loop_timer.state = .FIRED;
+        WTFTimer__fire(this.run_loop_timer);
+        return if (this.repeat)
+            .{ .rearm = this.event_loop_timer.next }
+        else
+            .disarm;
+    }
+
+    pub fn deinit(this: *WTFTimer) void {
+        this.cancel();
+        this.destroy();
+    }
+
+    export fn WTFTimer__create(run_loop_timer: *RunLoopTimer) *WTFTimer {
+        return init(run_loop_timer, VirtualMachine.get());
+    }
+
+    export fn WTFTimer__update(this: *WTFTimer, seconds: f64, repeat: bool) void {
+        this.update(seconds, repeat);
+    }
+
+    export fn WTFTimer__deinit(this: *WTFTimer) void {
+        this.deinit();
+    }
+
+    export fn WTFTimer__isActive(this: *const WTFTimer) bool {
+        return this.event_loop_timer.state == .ACTIVE;
+    }
+
+    export fn WTFTimer__cancel(this: *WTFTimer) void {
+        this.cancel();
+    }
+
+    export fn WTFTimer__secondsUntilTimer(this: *const WTFTimer) f64 {
+        if (this.event_loop_timer.state == .ACTIVE) {
+            // TODO increase precision
+            return @as(f64, @floatFromInt(this.event_loop_timer.next.duration(&bun.timespec.now()).ms())) / std.time.ms_per_s;
+        }
+        @panic("TODO");
+    }
+
+    extern fn WTFTimer__fire(this: *RunLoopTimer) void;
+};

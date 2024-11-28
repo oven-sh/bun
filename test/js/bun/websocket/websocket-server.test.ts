@@ -827,7 +827,7 @@ async function connect(server: Server): Promise<void> {
 }
 
 it("you can call server.subscriberCount() when its not a websocket server", async () => {
-  const server = serve({
+  using server = serve({
     port: 0,
     fetch(request, server) {
       return new Response();

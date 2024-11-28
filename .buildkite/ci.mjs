@@ -934,7 +934,7 @@ async function getPipelineOptions() {
    * @returns {string | boolean}
    */
   const parseOption = pattern => {
-    const match = pattern.test(commitMessage);
+    const match = pattern.exec(commitMessage);
     if (match) {
       const [, value] = match;
       return value;

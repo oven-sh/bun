@@ -713,14 +713,14 @@ install_cmake() {
 		cmake_version="3.30.5"
 		case "$arch" in
 		x64)
-			url="https://github.com/Kitware/CMake/releases/download/v$cmake_version/cmake-$cmake_version-linux-x86_64.sh"
+			cmake_url="https://github.com/Kitware/CMake/releases/download/v$cmake_version/cmake-$cmake_version-linux-x86_64.sh"
 			;;
 		aarch64)
-			url="https://github.com/Kitware/CMake/releases/download/v$cmake_version/cmake-$cmake_version-linux-aarch64.sh"
+			cmake_url="https://github.com/Kitware/CMake/releases/download/v$cmake_version/cmake-$cmake_version-linux-aarch64.sh"
 			;;
 		esac
-		script=$(download_file "$url")
-		execute_sudo "$sh" "$script" \
+		cmake_script=$(download_file "$cmake_url")
+		execute_sudo "$sh" "$cmake_script" \
 			--skip-license \
 			--prefix=/usr
 		;;
@@ -817,13 +817,13 @@ install_llvm() {
 	case "$pm" in
 	apt)
 		bash="$(require bash)"
-		script="$(download_file "https://apt.llvm.org/llvm.sh")"
+		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
 		case "$distro-$release" in
 		ubuntu-24*)
-			execute_sudo "$bash" "$script" "$(llvm_version)" all -njammy
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all -njammy
 			;;
 		*)
-			execute_sudo "$bash" "$script" "$(llvm_version)" all
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
 			;;
 		esac
 		;;
@@ -917,8 +917,8 @@ install_tailscale() {
 	case "$os" in
 	linux)
 		sh="$(require sh)"
-		script=$(download_file "https://tailscale.com/install.sh")
-		execute "$sh" "$script"
+		tailscale_script=$(download_file "https://tailscale.com/install.sh")
+		execute "$sh" "$tailscale_script"
 		;;
 	darwin)
 		install_packages go
@@ -958,14 +958,14 @@ create_buildkite_user() {
 		execute_sudo usermod -aG docker "$user"
 	fi
 
-	paths="$home /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /var/run/buildkite-agent/buildkite-agent.sock"
-	for path in $paths; do
+	buildkite_paths="$home /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /var/run/buildkite-agent/buildkite-agent.sock"
+	for path in $buildkite_paths; do
 		execute_sudo mkdir -p "$path"
 		execute_sudo chown -R "$user:$group" "$path"
 	done
-
-	files="/var/run/buildkite-agent/buildkite-agent.pid"
-	for file in $files; do
+	
+	buildkite_files="/var/run/buildkite-agent/buildkite-agent.pid"
+	for file in $buildkite_files; do
 		execute_sudo touch "$file"
 		execute_sudo chown "$user:$group" "$file"
 	done

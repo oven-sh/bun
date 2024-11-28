@@ -1070,8 +1070,8 @@ async function getPipeline(options = {}) {
       return [
         groupKey,
         {
-          group: getTargetKey(platform),
-          label: getTargetLabel(platform),
+          key: getTargetKey(platform),
+          group: getTargetLabel(platform),
           steps: [...groupBuildSteps, ...groupTestSteps],
         },
       ];

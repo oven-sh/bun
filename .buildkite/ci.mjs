@@ -8,24 +8,17 @@
 import { join } from "node:path";
 import {
   isBuildkite,
-  getMainBranch,
-  getTargetBranch,
-  getChangedFiles,
-  getCommit,
   getCommitMessage,
   isFork,
   isMainBranch,
   isMergeQueue,
   getBootstrapVersion,
   getBuildNumber,
-  getCanaryRevision,
   getEnv,
-  getLastSuccessfulBuild,
   spawnSafe,
   writeFile,
   toYaml,
   uploadArtifact,
-  printEnvironment,
   isBuildManual,
   startGroup,
   getBuildMetadata,
@@ -589,43 +582,6 @@ function getReleaseStep(buildPlatforms) {
   };
 }
 
-// async function main() {
-//   printEnvironment();
-
-//   console.log("Checking last successful build...");
-//   const lastBuild = await getLastSuccessfulBuild();
-//   if (lastBuild) {
-//     const { id, path, commit_id: commit } = lastBuild;
-//     console.log(" - Build ID:", id);
-//     console.log(" - Build URL:", new URL(path, "https://buildkite.com/").toString());
-//     console.log(" - Commit:", commit);
-//   } else {
-//     console.log(" - No build found");
-//   }
-
-//   let changedFiles;
-//   // FIXME: Fix various bugs when calculating changed files
-//   // false -> !isFork() && !isMainBranch()
-//   if (false) {
-//     console.log("Checking changed files...");
-//     const baseRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
-//     console.log(" - Base Ref:", baseRef);
-//     const headRef = getCommit();
-//     console.log(" - Head Ref:", headRef);
-
-//     changedFiles = await getChangedFiles(undefined, baseRef, headRef);
-//     if (changedFiles) {
-//       if (changedFiles.length) {
-//         changedFiles.forEach(filename => console.log(` - ${filename}`));
-//       } else {
-//         console.log(" - No changed files");
-//       }
-//     }
-//   }
-
-//   const isDocumentationFile = filename => /^(\.vscode|\.github|bench|docs|examples)|\.(md)$/i.test(filename);
-//   const isTestFile = filename => /^test/i.test(filename) || /runner\.node\.mjs$/i.test(filename);
-
 /**
  * @typedef {Object} Pipeline
  * @property {Step[]} [steps]
@@ -925,8 +881,7 @@ function getOptionsApplyStep() {
  * @returns {Promise<PipelineOptions | undefined>}
  */
 async function getPipelineOptions() {
-  const isManual = false;
-  isBuildManual();
+  const isManual = isBuildManual();
   if (isManual && !process.argv.includes("--apply")) {
     return;
   }

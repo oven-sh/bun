@@ -976,7 +976,11 @@ async function getPipeline(options = {}) {
 
   const { buildProfiles = [], buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
   const imagePlatforms = new Map(
-    buildImages || publishImages ? buildPlatforms.map(platform => [getImageKey(platform), platform]) : [],
+    buildImages || publishImages
+      ? [...buildPlatforms, ...testPlatforms]
+          .filter(({ os }) => os === "linux" || os === "windows")
+          .map(platform => [getImageKey(platform), platform])
+      : [],
   );
 
   /** @type {Step[]} */

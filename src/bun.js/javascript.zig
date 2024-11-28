@@ -1593,22 +1593,69 @@ pub const VirtualMachine = struct {
                 }});
 
             Bun__ensureDebugger(debugger.script_execution_context_id, debugger.wait_for_connection != .off);
-            var deadline: bun.timespec = if (debugger.wait_for_connection == .shortly) bun.timespec.now().addMs(30) else undefined;
+
+            // Sleep up to 30ms for automatic inspection.
+            const wait_for_connection_delay_ms = 30;
+
+            var deadline: bun.timespec = if (debugger.wait_for_connection == .shortly) bun.timespec.now().addMs(wait_for_connection_delay_ms) else undefined;
+
+            if (comptime Environment.isWindows) {
+                // TODO: remove this when tickWithTimeout actually works properly on Windows.
+                if (debugger.wait_for_connection == .shortly) {
+                    uv.uv_update_time(this.uvLoop());
+                    var timer = bun.default_allocator.create(uv.Timer) catch bun.outOfMemory();
+                    timer.* = std.mem.zeroes(uv.Timer);
+                    timer.init(this.uvLoop());
+                    const onDebuggerTimer = struct {
+                        fn call(handle: *uv.Timer) callconv(.C) void {
+                            const vm = JSC.VirtualMachine.get();
+                            vm.debugger.?.poll_ref.unref(vm);
+                            uv.uv_close(@ptrCast(handle), deinitTimer);
+                        }
+
+                        fn deinitTimer(handle: *anyopaque) callconv(.C) void {
+                            bun.default_allocator.destroy(@as(*uv.Timer, @alignCast(@ptrCast(handle))));
+                        }
+                    }.call;
+                    timer.start(wait_for_connection_delay_ms, 0, &onDebuggerTimer);
+                    timer.ref();
+                }
+            }
 
             while (debugger.wait_for_connection != .off) {
                 this.eventLoop().tick();
                 switch (debugger.wait_for_connection) {
                     .forever => {
                         this.eventLoop().autoTickActive();
+
+                        if (comptime Environment.enable_logs)
+                            log("waited: {}", .{bun.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
                     },
                     .shortly => {
+                        // Handle .incrementRefConcurrently
+                        if (comptime Environment.isPosix) {
+                            const pending_unref = this.pending_unref_counter;
+                            if (pending_unref > 0) {
+                                this.pending_unref_counter = 0;
+                                this.uwsLoop().unrefCount(pending_unref);
+                            }
+                        }
+
                         this.uwsLoop().tickWithTimeout(&deadline);
-                        if (bun.timespec.now().order(&deadline) != .lt) {
+
+                        if (comptime Environment.enable_logs)
+                            log("waited: {}", .{bun.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
+
+                        const elapsed = bun.timespec.now();
+                        if (elapsed.order(&deadline) != .lt) {
+                            debugger.poll_ref.unref(this);
                             log("Timed out waiting for the debugger", .{});
                             break;
                         }
                     },
-                    .off => {},
+                    .off => {
+                        break;
+                    },
                 }
             }
         }
@@ -1673,14 +1720,21 @@ pub const VirtualMachine = struct {
 
             var this = VirtualMachine.get();
             const debugger = other_vm.debugger.?;
+            const loop = this.eventLoop();
 
             if (debugger.from_environment_variable.len > 0) {
                 var url = bun.String.createUTF8(debugger.from_environment_variable);
+
+                loop.enter();
+                defer loop.exit();
                 Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 1, debugger.mode == .connect);
             }
 
             if (debugger.path_or_port) |path_or_port| {
                 var url = bun.String.createUTF8(path_or_port);
+
+                loop.enter();
+                defer loop.exit();
                 Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 0, debugger.mode == .connect);
             }
 
@@ -1696,7 +1750,11 @@ pub const VirtualMachine = struct {
             futex_atomic.store(0, .monotonic);
             std.Thread.Futex.wake(&futex_atomic, 1);
 
+            other_vm.eventLoop().wakeup();
+
             this.eventLoop().tick();
+
+            other_vm.eventLoop().wakeup();
 
             while (true) {
                 while (this.isEventLoopAlive()) {

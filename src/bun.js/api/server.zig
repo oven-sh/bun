@@ -5766,6 +5766,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSValue.jsNumber(0);
             }
 
+            if (this.config.websocket == null or this.app == null) {
+                return JSValue.jsNumber(0);
+            }
+
             return JSValue.jsNumber((this.app.?.numSubscribers(topic.slice())));
         }
 

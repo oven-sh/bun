@@ -19168,6 +19168,10 @@ fn NewParser_(
                                 data.default_name = createDefaultName(p, data.value.expr.loc) catch unreachable;
                             }
 
+                            if (p.options.features.server_components.wrapsExports()) {
+                                data.value.expr = p.wrapValueForServerComponentReference(data.value.expr, "default");
+                            }
+
                             // If there are lowered "using" declarations, change this into a "var"
                             if (p.current_scope.parent == null and p.will_wrap_module_in_try_catch_for_using) {
                                 try stmts.ensureUnusedCapacity(2);
@@ -19249,6 +19253,10 @@ fn NewParser_(
                                         data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
                                     }
 
+                                    if (p.options.features.server_components.wrapsExports()) {
+                                        data.value = .{ .expr = p.wrapValueForServerComponentReference(p.newExpr(E.Function{ .func = func.func }, stmt.loc), "default") };
+                                    }
+
                                     stmts.append(stmt.*) catch unreachable;
 
                                     // if (func.func.name != null and func.func.name.?.ref != null) {
@@ -19297,6 +19305,10 @@ fn NewParser_(
                                     } else {
                                         data.value.stmt = class_stmts[0];
                                         stmts.append(stmt.*) catch {};
+                                    }
+
+                                    if (p.options.features.server_components.wrapsExports()) {
+                                        data.value = .{ .expr = p.wrapValueForServerComponentReference(p.newExpr(class.class, stmt.loc), "default") };
                                     }
 
                                     return;
@@ -24076,18 +24088,6 @@ pub const ConvertESMExportsForHmr = struct {
 
     pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.Part) ![]js_ast.Part {
         if (ctx.export_props.items.len > 0) {
-            // add a marker for the client runtime to tell that this is an ES module
-            try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
-                .value = Expr.assign(
-                    Expr.init(E.Dot, .{
-                        .target = Expr.initIdentifier(p.module_ref, logger.Loc.Empty),
-                        .name = "__esModule",
-                        .name_loc = logger.Loc.Empty,
-                    }, logger.Loc.Empty),
-                    Expr.init(E.Boolean, .{ .value = true }, logger.Loc.Empty),
-                ),
-            }, logger.Loc.Empty));
-
             try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
                 .value = Expr.assign(
                     Expr.init(E.Dot, .{

@@ -132,7 +132,7 @@ it.only("should thow ECONNRESET if FIN is received before handshake", async () =
 
   expect(error).toBeDefined();
   // TODO: today we are a little incompatible with node.js we need to change `UNABLE_TO_GET_ISSUER_CERT` when closed before handshake complete on the openssl.c to emit error `ECONNRESET` instead of SSL fail,
-  // current behavior is not wrong because is the right error but is incompatible with node.jks
+  // current behavior is not wrong because is the right error but is incompatible with node.js
   expect((error as Error).code as string).toBeOneOf(["ECONNRESET", "UNABLE_TO_GET_ISSUER_CERT"]);
 });
 it("should be able to grab the JSStreamSocket constructor", () => {

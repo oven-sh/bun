@@ -120,7 +120,7 @@ it("should have checkServerIdentity", async () => {
   expect(tls.checkServerIdentity).toBeFunction();
 });
 
-it.only("should thow ECONNRESET if FIN is received before handshake", async () => {
+it("should thow ECONNRESET if FIN is received before handshake", async () => {
   await using server = net.createServer(c => {
     c.end();
   });

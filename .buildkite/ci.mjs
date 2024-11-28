@@ -66,7 +66,7 @@ function getTargetKey(target) {
   if (baseline) {
     key += "-baseline";
   }
-  if (profile) {
+  if (profile && profile !== "release") {
     key += `-${profile}`;
   }
   return key;
@@ -85,7 +85,7 @@ function getTargetLabel(target) {
   if (baseline) {
     label += "-baseline";
   }
-  if (profile) {
+  if (profile && profile !== "release") {
     label += `-${profile}`;
   }
   return label;
@@ -178,7 +178,7 @@ function getPlatformLabel(platform) {
   if (baseline) {
     label += "-baseline";
   }
-  if (profile) {
+  if (profile && profile !== "release") {
     label += `-${profile}`;
   }
   return label;
@@ -373,7 +373,7 @@ function getTestAgent(platform) {
  */
 function getBuildEnv(target) {
   const { profile, baseline, canary, abi } = target;
-  const release = !profile;
+  const release = !profile || profile === "release";
 
   return {
     CMAKE_BUILD_TYPE: release ? "Release" : profile === "debug" ? "Debug" : "RelWithDebInfo",

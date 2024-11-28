@@ -1,4 +1,4 @@
-# Version: 6
+# Version: 7
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on Windows 10 or newer with PowerShell.
 

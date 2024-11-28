@@ -315,22 +315,22 @@ function getCppAgent(platform) {
 function getZigAgent(platform) {
   const { arch } = platform;
 
-  // return {
-  //   queue: "build-zig",
-  // };
+  return {
+    queue: "build-zig",
+  };
 
-  return getEc2Agent(
-    {
-      os: "linux",
-      arch,
-      distro: "debian",
-      release: "11",
-    },
-    {
-      instanceType: arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge",
-      cpuCount: 8,
-    },
-  );
+  // return getEc2Agent(
+  //   {
+  //     os: "linux",
+  //     arch,
+  //     distro: "debian",
+  //     release: "11",
+  //   },
+  //   {
+  //     instanceType: arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge",
+  //     cpuCount: 8,
+  //   },
+  // );
 }
 
 /**
@@ -580,10 +580,11 @@ function getBuildImageStep(platform, dryRun) {
 function getReleaseStep(buildPlatforms) {
   return {
     key: "release",
-    label: getBuildkiteEmoji("release"),
+    label: getBuildkiteEmoji("rocket"),
     agents: {
       queue: "test-darwin",
     },
+    depends_on: buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
     command: ".buildkite/scripts/upload-release.sh",
   };
 }

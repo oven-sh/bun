@@ -104,32 +104,7 @@ const { values: options, positionals: filters } = parseArgs({
 async function runTests() {
   let execPath;
   if (options["step"]) {
-    downloadLoop: for (let i = 0; i < 10; i++) {
-      execPath = await getExecPathFromBuildKite(options["step"], options["build-id"]);
-      for (let j = 0; j < 10; j++) {
-        const { error } = spawnSync(execPath, ["--version"], {
-          encoding: "utf-8",
-          timeout: spawnTimeout,
-          env: {
-            PATH: process.env.PATH,
-            BUN_DEBUG_QUIET_LOGS: 1,
-          },
-        });
-        if (!error) {
-          break downloadLoop;
-        }
-        const { code } = error;
-        if (code === "EBUSY") {
-          console.log("Bun appears to be busy, retrying...");
-          continue;
-        }
-        if (code === "UNKNOWN") {
-          console.log("Bun appears to be corrupted, downloading again...");
-          rmSync(execPath, { force: true });
-          continue downloadLoop;
-        }
-      }
-    }
+    execPath = await getExecPathFromBuildKite(options["step"], options["build-id"]);
   } else {
     execPath = getExecPath(options["exec-path"]);
   }
@@ -1096,22 +1071,27 @@ async function getExecPathFromBuildKite(target, buildId) {
   const releasePath = join(cwd, "release");
   mkdirSync(releasePath, { recursive: true });
 
-  const args = ["artifact", "download", "**", releasePath, "--step", target];
-  if (buildId) {
-    args.push("--build", buildId);
-  }
-
-  await spawnSafe({
-    command: "buildkite-agent",
-    args,
-  });
-
   let zipPath;
-  for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
-    if (/^bun.*\.zip$/i.test(entry) && !entry.includes("-profile.zip")) {
-      zipPath = join(releasePath, entry);
-      break;
+  for (let i = 0; i < 10; i++) {
+    const args = ["artifact", "download", "**", releasePath, "--step", target];
+    if (buildId) {
+      args.push("--build", buildId);
     }
+
+    await spawnSafe({
+      command: "buildkite-agent",
+      args,
+    });
+
+    for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
+      if (/^bun.*\.zip$/i.test(entry) && !entry.includes("-profile.zip")) {
+        zipPath = join(releasePath, entry);
+        break;
+      }
+    }
+
+    console.warn(`Waiting for ${target}.zip to be available...`);
+    await new Promise(resolve => setTimeout(resolve, i * 1000));
   }
 
   if (!zipPath) {

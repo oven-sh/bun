@@ -330,7 +330,7 @@ pub const Tag = enum(short) {
         return toJSWithType(tag, globalObject, @TypeOf(value), value);
     }
 
-    pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) anyerror!Tag {
+    pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) bun.JSError!Tag {
         if (value.isEmptyOrUndefinedOrNull()) {
             return Tag.numeric;
         }
@@ -359,6 +359,7 @@ pub const Tag = enum(short) {
             if (tag.isArrayLike() and value.getLength(globalObject) > 0) {
                 return Tag.fromJS(globalObject, value.getIndex(globalObject, 0));
             }
+            if (globalObject.hasException()) return error.JSError;
 
             // Ban these types:
             if (tag == .NumberObject) {

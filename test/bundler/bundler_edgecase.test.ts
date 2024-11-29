@@ -2253,4 +2253,25 @@ describe("bundler", () => {
       stdout: "windows",
     },
   });
+
+  itBundled("edgecase/TSPublicFieldMinification", {
+    files: {
+      "/entry.ts": /* ts */ `
+        export class Foo {
+          constructor(public name: string) {}
+        }
+
+        const keys = Object.keys(new Foo('test'))
+        if (keys.length !== 1) throw new Error('Keys length is not 1')
+        if (keys[0] !== 'name') throw new Error('keys[0] is not "name"')
+        console.log('success')
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    target: "bun",
+    run: {
+      stdout: "success",
+    },
+  });
 });

@@ -512,7 +512,7 @@ pub const StreamStart = union(Tag) {
             },
             .err => |err| {
                 globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
-                return .undefined;
+                return .zero;
             },
             .owned_and_done => |list| {
                 return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
@@ -526,7 +526,7 @@ pub const StreamStart = union(Tag) {
         }
     }
 
-    pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) StreamStart {
+    pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) bun.JSError!StreamStart {
         if (value.isEmptyOrUndefinedOrNull() or !value.isObject()) {
             return .{ .empty = {} };
         }
@@ -543,7 +543,7 @@ pub const StreamStart = union(Tag) {
         globalThis: *JSGlobalObject,
         value: JSValue,
         comptime tag: Tag,
-    ) StreamStart {
+    ) bun.JSError!StreamStart {
         if (value.isEmptyOrUndefinedOrNull() or !value.isObject()) {
             return .{ .empty = {} };
         }
@@ -612,7 +612,7 @@ pub const StreamStart = union(Tag) {
                             },
                         },
                     };
-                } else if (value.getTruthy(globalThis, "fd")) |fd_value| {
+                } else if (try value.getTruthy(globalThis, "fd")) |fd_value| {
                     if (!fd_value.isAnyInt()) {
                         return .{
                             .err = Syscall.Error{
@@ -1685,15 +1685,13 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                     .code = bun.String.static(@tagName(.ERR_ILLEGAL_CONSTRUCTOR)),
                 };
                 globalThis.throwValue(err.toErrorInstance(globalThis));
-                return .undefined;
+                return .zero;
             }
 
             var allocator = globalThis.bunVM().allocator;
             var this = allocator.create(ThisSink) catch {
-                globalThis.vm().throwError(globalThis, Syscall.Error.oom.toJSC(
-                    globalThis,
-                ));
-                return .undefined;
+                globalThis.vm().throwError(globalThis, Syscall.Error.oom.toJSC(globalThis));
+                return .zero;
             };
             this.sink.construct(allocator);
             return createObject(globalThis, this, 0);
@@ -1737,7 +1735,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         fn invalidThis(globalThis: *JSGlobalObject) JSValue {
             const err = JSC.toTypeError(.ERR_INVALID_THIS, "Expected Sink", .{}, globalThis);
             globalThis.vm().throwError(globalThis, err);
-            return .undefined;
+            return .zero;
         }
 
         pub fn unprotect(this: *@This()) void {
@@ -1752,21 +1750,16 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
                     globalThis.vm().throwError(globalThis, err);
-                    return .undefined;
+                    return .zero;
                 }
             }
 
-            const args_list = callframe.arguments(4);
+            const args_list = callframe.arguments_old(4);
             const args = args_list.ptr[0..args_list.len];
 
             if (args.len == 0) {
-                globalThis.vm().throwError(globalThis, JSC.toTypeError(
-                    .ERR_MISSING_ARGS,
-                    "write() expects a string, ArrayBufferView, or ArrayBuffer",
-                    .{},
-                    globalThis,
-                ));
-                return .undefined;
+                globalThis.vm().throwError(globalThis, JSC.toTypeError(.ERR_MISSING_ARGS, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
+                return .zero;
             }
 
             const arg = args[0];
@@ -1774,13 +1767,8 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             defer arg.ensureStillAlive();
 
             if (arg.isEmptyOrUndefinedOrNull()) {
-                globalThis.vm().throwError(globalThis, JSC.toTypeError(
-                    .ERR_STREAM_NULL_VALUES,
-                    "write() expects a string, ArrayBufferView, or ArrayBuffer",
-                    .{},
-                    globalThis,
-                ));
-                return .undefined;
+                globalThis.vm().throwError(globalThis, JSC.toTypeError(.ERR_STREAM_NULL_VALUES, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
+                return .zero;
             }
 
             if (arg.asArrayBuffer(globalThis)) |buffer| {
@@ -1793,13 +1781,8 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             }
 
             if (!arg.isString()) {
-                globalThis.vm().throwError(globalThis, JSC.toTypeError(
-                    .ERR_INVALID_ARG_TYPE,
-                    "write() expects a string, ArrayBufferView, or ArrayBuffer",
-                    .{},
-                    globalThis,
-                ));
-                return .undefined;
+                globalThis.vm().throwError(globalThis, JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}, globalThis));
+                return .zero;
             }
 
             const str = arg.getZigString(globalThis);
@@ -1822,11 +1805,11 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
                     globalThis.vm().throwError(globalThis, err);
-                    return .undefined;
+                    return .zero;
                 }
             }
 
-            const args_list = callframe.arguments(4);
+            const args_list = callframe.arguments_old(4);
             const args = args_list.ptr[0..args_list.len];
             if (args.len == 0 or !args[0].isString()) {
                 const err = JSC.toTypeError(
@@ -1836,7 +1819,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                     globalThis,
                 );
                 globalThis.vm().throwError(globalThis, err);
-                return .undefined;
+                return .zero;
             }
 
             const arg = args[0];
@@ -1860,7 +1843,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
                     globalThis.vm().throwError(globalThis, err);
-                    return .undefined;
+                    return .zero;
                 }
             }
 
@@ -1875,7 +1858,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
                     globalThis.vm().throwError(globalThis, err);
-                    return .undefined;
+                    return .zero;
                 }
             }
 
@@ -1894,7 +1877,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                     .result => |value| value,
                     .err => |err| blk: {
                         globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
-                        break :blk .undefined;
+                        break :blk .zero;
                     },
                 };
             }
@@ -1910,18 +1893,14 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
                     globalThis.vm().throwError(globalThis, err);
-                    return .undefined;
+                    return .zero;
                 }
             }
 
             if (comptime @hasField(StreamStart, name_)) {
                 return this.sink.start(
                     if (callframe.argumentsCount() > 0)
-                        StreamStart.fromJSWithTag(
-                            globalThis,
-                            callframe.argument(0),
-                            comptime @field(StreamStart, name_),
-                        )
+                        try StreamStart.fromJSWithTag(globalThis, callframe.argument(0), comptime @field(StreamStart, name_))
                     else
                         StreamStart{ .empty = {} },
                 ).toJS(globalThis);
@@ -1929,7 +1908,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             return this.sink.start(
                 if (callframe.argumentsCount() > 0)
-                    StreamStart.fromJS(globalThis, callframe.argument(0))
+                    try StreamStart.fromJS(globalThis, callframe.argument(0))
                 else
                     StreamStart{ .empty = {} },
             ).toJS(globalThis);
@@ -1943,7 +1922,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
                     globalThis.vm().throwError(globalThis, err);
-                    return .undefined;
+                    return .zero;
                 }
             }
 
@@ -1966,7 +1945,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
                     globalThis.vm().throwError(globalThis, err);
-                    return .undefined;
+                    return .zero;
                 }
             }
 
@@ -2027,7 +2006,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 //             var this = @ptrCast(*ThisSocket, @alignCast( fromJS(globalThis, callframe.this()) orelse {
 //                 const err = JSC.toTypeError(.ERR_INVALID_THIS, "Expected Socket", .{}, globalThis);
 //                 globalThis.vm().throwError(globalThis, err);
-//                 return .undefined;
+//                 return .zero;
 //             }));
 //         }
 //     };
@@ -2257,21 +2236,26 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         fn flushFromJSNoWait(this: *@This()) JSC.Maybe(JSValue) {
             log("flushFromJSNoWait", .{});
+
+            return .{ .result = JSValue.jsNumber(this.flushNoWait()) };
+        }
+
+        pub fn flushNoWait(this: *@This()) usize {
             if (this.hasBackpressureAndIsTryEnd() or this.done) {
-                return .{ .result = JSValue.jsNumberFromInt32(0) };
+                return 0;
             }
 
             const slice = this.readableSlice();
             if (slice.len == 0) {
-                return .{ .result = JSValue.jsNumberFromInt32(0) };
+                return 0;
             }
 
             const success = this.send(slice);
             if (success) {
-                return .{ .result = JSValue.jsNumber(slice.len) };
+                return slice.len;
             }
 
-            return .{ .result = JSValue.jsNumberFromInt32(0) };
+            return 0;
         }
 
         pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) JSC.Maybe(JSValue) {
@@ -2596,11 +2580,15 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         // so it must zero out state instead of make it
         pub fn finalize(this: *@This()) void {
             log("finalize()", .{});
-
             if (!this.done) {
-                this.done = true;
                 this.unregisterAutoFlusher();
+                // make sure we detached the handlers before flushing inside the finalize function
                 this.res.clearOnWritable();
+                this.res.clearAborted();
+                this.res.clearOnData();
+                _ = this.flushNoWait();
+                this.done = true;
+                // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
                 this.res.endStream(false);
             }
 
@@ -2834,7 +2822,7 @@ pub fn ReadableStreamSource(
             pub fn pull(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 JSC.markBinding(@src());
                 const this_jsvalue = callFrame.this();
-                const arguments = callFrame.arguments(2);
+                const arguments = callFrame.arguments_old(2);
                 const view = arguments.ptr[0];
                 view.ensureStillAlive();
                 this.this_jsvalue = this_jsvalue;
@@ -2857,7 +2845,7 @@ pub fn ReadableStreamSource(
                     .chunk_size => |size| return JSValue.jsNumber(size),
                     .err => |err| {
                         globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
-                        return .undefined;
+                        return .zero;
                     },
                     else => |rc| {
                         return rc.toJS(globalThis);
@@ -2881,7 +2869,7 @@ pub fn ReadableStreamSource(
                             js_err.unprotect();
                             globalThis.vm().throwError(globalThis, js_err);
                         }
-                        return JSValue.jsUndefined();
+                        return .zero;
                     },
                     .pending => {
                         const out = result.toJS(globalThis);

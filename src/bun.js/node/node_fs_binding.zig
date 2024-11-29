@@ -10,11 +10,7 @@ const FeatureFlags = bun.FeatureFlags;
 const Args = JSC.Node.NodeFS.Arguments;
 const d = JSC.d;
 
-const NodeFSFunction = fn (
-    this: *JSC.Node.NodeJSFS,
-    globalObject: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue;
+const NodeFSFunction = fn (this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue;
 
 const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
 
@@ -30,12 +26,8 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     _ = Result;
 
     const NodeBindingClosure = struct {
-        pub fn bind(
-            this: *JSC.Node.NodeJSFS,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSC.JSValue {
-            var arguments = callframe.arguments(8);
+        pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            var arguments = callframe.arguments_old(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
             defer slice.deinit();
@@ -80,7 +72,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     const Arguments = comptime function.params[1].type.?;
     const NodeBindingClosure = struct {
         pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            var arguments = callframe.arguments(8);
+            var arguments = callframe.arguments_old(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
             slice.will_be_async = true;
@@ -119,11 +111,6 @@ pub const NodeJSFS = struct {
 
     pub usingnamespace JSC.Codegen.JSNodeJSFS;
     pub usingnamespace bun.New(@This());
-
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*@This() {
-        globalObject.throw("Not a constructor", .{});
-        return null;
-    }
 
     pub fn finalize(this: *JSC.Node.NodeJSFS) void {
         if (this.node_fs.vm) |vm| {
@@ -245,7 +232,7 @@ pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
 }
 
 pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callFrame.arguments(1);
+    const arguments = callFrame.arguments_old(1);
 
     if (arguments.len < 1) {
         return .undefined;

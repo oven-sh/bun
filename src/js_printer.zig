@@ -352,7 +352,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
             else => {
                 i += @as(usize, width);
 
-                if (c < 0xFF and !json) {
+                if (c <= 0xFF and !json) {
                     const k = @as(usize, @intCast(c));
 
                     try writer.writeAll(&[_]u8{
@@ -361,7 +361,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                         hex_chars[(k >> 4) & 0xF],
                         hex_chars[k & 0xF],
                     });
-                } else if (c < 0xFFFF) {
+                } else if (c <= 0xFFFF) {
                     const k = @as(usize, @intCast(c));
 
                     try writer.writeAll(&[_]u8{
@@ -576,7 +576,7 @@ pub const PrintResult = union(enum) {
 // do not make this a packed struct
 // stage1 compiler bug:
 // > /optional-chain-with-function.js: Evaluation failed: TypeError: (intermediate value) is not a function
-// this test failure was caused by the packed structi mplementation
+// this test failure was caused by the packed struct implementation
 const ExprFlag = enum {
     forbid_call,
     forbid_in,
@@ -5994,7 +5994,26 @@ pub fn printWithWriterAndPlatform(
         printer.indent();
         printer.printIndent();
         printer.printStringLiteralUTF8(source.path.pretty, false);
-        printer.printFunc(parts[0].stmts[0].data.s_expr.value.data.e_function.func);
+        const func = parts[0].stmts[0].data.s_expr.value.data.e_function.func;
+        if (!(func.body.stmts.len == 1 and func.body.stmts[0].data == .s_lazy_export)) {
+            printer.printFunc(func);
+        } else {
+            // Special-case lazy-export AST
+            // @branchHint(.unlikely)
+            printer.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
+            printer.printSpace();
+            printer.print("{\n");
+            printer.indent();
+            printer.printSymbol(printer.options.commonjs_module_ref);
+            printer.print(".exports = ");
+            printer.printExpr(.{
+                .data = func.body.stmts[0].data.s_lazy_export,
+                .loc = func.body.stmts[0].loc,
+            }, .comma, .{});
+            printer.print("; // bun .s_lazy_export\n");
+            printer.indent();
+            printer.print("}");
+        }
         printer.print(",\n");
     } else {
         // The IIFE wrapper is done in `postProcessJSChunk`, so we just manually

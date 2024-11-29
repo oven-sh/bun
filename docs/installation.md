@@ -73,8 +73,7 @@ There are also image variants for different operating systems.
 $ docker pull oven/bun:debian
 $ docker pull oven/bun:slim
 $ docker pull oven/bun:distroless
-# alpine not recommended until #918 is fixed
-# $ docker pull oven/bun:alpine
+$ docker pull oven/bun:alpine
 ```
 
 ## Checking installation

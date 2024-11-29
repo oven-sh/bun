@@ -1,0 +1,22 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`junit reporter 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="<dir>/a.test.js" tests="2" failures="1" errors="0" skipped="0" timestamp="2024-12-17T15:37:38.935Z">
+    <testcase classname="<dir>/a.test.js" name="fail"       <failure message="Test failed" type="AssertionError">
+        Error: expect(received).toBe(expected)
+
+Expected: 2
+Received: 1
+
+
+  at <dir>/a.test.js:4:19
+
+
+      </failure>
+    </testcase>
+    <testcase classname="<dir>/a.test.js" name="success"     </testcase>
+  </testsuite>
+</testsuites>"
+`;

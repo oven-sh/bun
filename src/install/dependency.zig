@@ -78,11 +78,11 @@ pub fn count(this: *const Dependency, buf: []const u8, comptime StringBuilder: t
     this.countWithDifferentBuffers(buf, buf, StringBuilder, builder);
 }
 
-pub fn clone(this: *const Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
-    return this.cloneWithDifferentBuffers(buf, buf, StringBuilder, builder);
+pub fn clone(this: *const Dependency, package_manager: *PackageManager, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
+    return this.cloneWithDifferentBuffers(package_manager, buf, buf, StringBuilder, builder);
 }
 
-pub fn cloneWithDifferentBuffers(this: *const Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
+pub fn cloneWithDifferentBuffers(this: *const Dependency, package_manager: *PackageManager, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
     const out_slice = builder.lockfile.buffers.string_bytes.items;
     const new_literal = builder.append(String, this.version.literal.slice(version_buf));
     const sliced = new_literal.sliced(out_slice);
@@ -99,6 +99,7 @@ pub fn cloneWithDifferentBuffers(this: *const Dependency, name_buf: []const u8, 
             this.version.tag,
             &sliced,
             null,
+            package_manager,
         ) orelse Dependency.Version{},
         .behavior = this.behavior,
     };
@@ -115,6 +116,7 @@ pub const Context = struct {
     allocator: std.mem.Allocator,
     log: *logger.Log,
     buffer: []const u8,
+    package_manager: ?*PackageManager,
 };
 
 /// Get the name of the package as it should appear in a remote registry.
@@ -308,7 +310,7 @@ pub const Version = struct {
     literal: String = .{},
     value: Value = .{ .uninitialized = {} },
 
-    pub fn toJS(dep: *const Version, buf: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(dep: *const Version, buf: []const u8, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         const object = JSC.JSValue.createEmptyObject(globalThis, 2);
         object.put(globalThis, "type", bun.String.static(@tagName(dep.tag)).toJS(globalThis));
 
@@ -332,15 +334,8 @@ pub const Version = struct {
             },
             .npm => {
                 object.put(globalThis, "name", dep.value.npm.name.toJS(buf, globalThis));
-                var version_str = bun.String.createFormat("{}", .{dep.value.npm.version.fmt(buf)}) catch {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                };
-                object.put(
-                    globalThis,
-                    "version",
-                    version_str.transferToJS(globalThis),
-                );
+                var version_str = try bun.String.createFormat("{}", .{dep.value.npm.version.fmt(buf)});
+                object.put(globalThis, "version", version_str.transferToJS(globalThis));
                 object.put(globalThis, "alias", JSC.JSValue.jsBoolean(dep.value.npm.is_alias));
             },
             .symlink => {
@@ -361,8 +356,7 @@ pub const Version = struct {
                 }
             },
             else => {
-                globalThis.throwTODO("Unsupported dependency type");
-                return .zero;
+                return globalThis.throwTODO("Unsupported dependency type");
             },
         }
 
@@ -428,6 +422,7 @@ pub const Version = struct {
             tag,
             sliced,
             ctx.log,
+            ctx.package_manager,
         ) orelse Dependency.Version.zeroed;
     }
 
@@ -764,7 +759,7 @@ pub const Version = struct {
         }
 
         pub fn inferFromJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments = callframe.arguments(1).slice();
+            const arguments = callframe.arguments_old(1).slice();
             if (arguments.len == 0 or !arguments[0].isString()) {
                 return .undefined;
             }
@@ -853,9 +848,10 @@ pub inline fn parse(
     dependency: string,
     sliced: *const SlicedString,
     log: ?*logger.Log,
+    manager: ?*PackageManager,
 ) ?Version {
     const dep = std.mem.trimLeft(u8, dependency, " \t\n\r");
-    return parseWithTag(allocator, alias, alias_hash, dep, Version.Tag.infer(dep), sliced, log);
+    return parseWithTag(allocator, alias, alias_hash, dep, Version.Tag.infer(dep), sliced, log, manager);
 }
 
 pub fn parseWithOptionalTag(
@@ -866,6 +862,7 @@ pub fn parseWithOptionalTag(
     tag: ?Dependency.Version.Tag,
     sliced: *const SlicedString,
     log: ?*logger.Log,
+    package_manager: ?*PackageManager,
 ) ?Version {
     const dep = std.mem.trimLeft(u8, dependency, " \t\n\r");
     return parseWithTag(
@@ -876,6 +873,7 @@ pub fn parseWithOptionalTag(
         tag orelse Version.Tag.infer(dep),
         sliced,
         log,
+        package_manager,
     );
 }
 
@@ -887,6 +885,7 @@ pub fn parseWithTag(
     tag: Dependency.Version.Tag,
     sliced: *const SlicedString,
     log_: ?*logger.Log,
+    package_manager: ?*PackageManager,
 ) ?Version {
     switch (tag) {
         .npm => {
@@ -946,11 +945,13 @@ pub fn parseWithTag(
             };
 
             if (is_alias) {
-                PackageManager.get().known_npm_aliases.put(
-                    allocator,
-                    alias_hash.?,
-                    result,
-                ) catch unreachable;
+                if (package_manager) |pm| {
+                    pm.known_npm_aliases.put(
+                        allocator,
+                        alias_hash.?,
+                        result,
+                    ) catch unreachable;
+                }
             }
 
             return result;
@@ -1235,9 +1236,9 @@ pub fn parseWithTag(
 }
 
 pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(2).slice();
+    const arguments = callframe.arguments_old(2).slice();
     if (arguments.len == 1) {
-        return bun.install.PackageManager.UpdateRequest.fromJS(globalThis, arguments[0]);
+        return try bun.install.PackageManager.UpdateRequest.fromJS(globalThis, arguments[0]);
     }
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
@@ -1275,18 +1276,16 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     var log = logger.Log.init(allocator);
     const sliced = SlicedString.init(buf, name);
 
-    const dep: Version = Dependency.parse(allocator, SlicedString.init(buf, alias).value(), null, buf, &sliced, &log) orelse {
+    const dep: Version = Dependency.parse(allocator, SlicedString.init(buf, alias).value(), null, buf, &sliced, &log, null) orelse {
         if (log.msgs.items.len > 0) {
-            globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
-            return .zero;
+            return globalThis.throwValue2(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
         }
 
         return .undefined;
     };
 
     if (log.msgs.items.len > 0) {
-        globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
-        return .zero;
+        return globalThis.throwValue2(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
     }
     log.deinit();
 

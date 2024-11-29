@@ -255,6 +255,7 @@ declare module "bun" {
        * Do not traverse into directories and files that start with an `_`.  Do
        * not index pages that start with an `_`. Does not prevent stuff like
        * `_layout.tsx` from being recognized.
+       * @default false
        */
       ignoreUnderscores?: boolean;
       /**
@@ -264,8 +265,9 @@ declare module "bun" {
       /**
        * Extensions to match on.
        * '*' - any extension
+       * @default (set of all valid JavaScript/TypeScript extensions)
        */
-      extensions: string[] | "*";
+      extensions?: string[] | "*";
       /**
        * 'nextjs-app' builds routes out of directories with `page.tsx` and `layout.tsx`
        * 'nextjs-pages' builds routes out of any `.tsx` file and layouts with `_layout.tsx`.
@@ -386,7 +388,7 @@ declare module "bun" {
        *         return { exhaustive: false };
        *     }
        */
-      getParams?: (paramsMetadata: ParamsMetadata) => Awaitable<ParamsResult>;
+      getParams?: (paramsMetadata: ParamsMetadata) => Awaitable<GetParamIterator>;
       /**
        * When a dynamic build uses static assets, Bun can map content types in the
        * user's `Accept` header to the different static files.
@@ -421,15 +423,7 @@ declare module "bun" {
     }
 
     interface ClientEntryPoint {
-      /**
-       * Called when server-side code is changed. This can be used to fetch a
-       * non-html version of the updated page to perform a faster reload. If
-       * this function does not exist or throws, the client will perform a
-       * hard reload.
-       *
-       * Tree-shaken away in production builds.
-       */
-      onServerSideReload?: () => Promise<void> | void;
+      // No exports
     }
 
     /**
@@ -459,7 +453,7 @@ declare module "bun" {
       /**
        * A list of js files that the route will need to be interactive.
        */
-      readonly scripts: ReadonlyArray<string>;
+      readonly modules: ReadonlyArray<string>;
       /**
        * A list of js files that should be preloaded.
        *
@@ -547,9 +541,11 @@ declare module "bun:bake/server" {
 
 declare module "bun:bake/client" {
   /**
-   * Due to the current implementation of the Dev Server, it must be informed of
-   * client-side routing so it can load client components. This is not necessary
-   * in production, and calling this in that situation will fail to compile.
+   * Callback is invoked when server-side code is changed. This can be used to
+   * fetch a non-html version of the updated page to perform a faster reload. If
+   * not provided, the client will perform a hard reload.
+   *
+   * Only one callback can be set. This function overwrites the previous one.
    */
-  declare function bundleRouteForDevelopment(href: string, options?: { signal?: AbortSignal }): Promise<void>;
+  export function onServerSideReload(cb: () => void | Promise<void>): Promise<void>;
 }

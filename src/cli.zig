@@ -2546,7 +2546,7 @@ pub const Command = struct {
                     const args = comptime switch (Environment.is_canary) {
                         true => .{ "canary", "Switch from the canary version back to the latest stable release", "stable" },
                         false => .{ "stable", "Install the most recent canary version of Bun", "canary" },
-                    };                    
+                    };
 
                     Output.pretty(intro_text, .{});
                     Output.pretty("\n\n", .{});

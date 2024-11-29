@@ -422,8 +422,8 @@ async function connectToUnixServer(
   let connectionOptions;
   if (unix.startsWith("unix:")) {
     unix = unescapeUnixSocketUrl(unix);
-    if (unix.startsWith("unix:")) {
-      unix = unix.substring("unix:".length);
+    if (unix.startsWith("unix://")) {
+      unix = unix.substring("unix://".length);
     }
     connectionOptions = { unix };
   } else if (unix.startsWith("tcp:")) {

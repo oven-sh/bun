@@ -429,7 +429,7 @@ install_bun() {
 		return
 	fi
   bash="$(require bash)"
-  script=$(download_file "https://bun.sh/install")
+  script=$(download_file "bun.sh/install")
 
   version="${1:-"latest"}"
 	case "$version" in

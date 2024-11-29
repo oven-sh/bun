@@ -42,7 +42,7 @@ Before starting, you will need to already have a release build of Bun installed,
 {% codetabs %}
 
 ```bash#Native
-$ curl -fsSL https://bun.sh/install | bash
+$ curl -fsSL bun.sh/install | bash
 ```
 
 ```bash#npm

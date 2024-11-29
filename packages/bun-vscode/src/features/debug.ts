@@ -120,6 +120,7 @@ async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
       ...env,
       "BUN_INSPECT": `${adapter.url}?${query}`,
       "BUN_INSPECT_NOTIFY": signal.url,
+      BUN_INSPECT_CONNECT_TO: "",
     },
   });
 
@@ -351,6 +352,7 @@ class TerminalDebugSession extends FileDebugSession {
       env: {
         "BUN_INSPECT": `${this.adapter.url}?wait=1`,
         "BUN_INSPECT_NOTIFY": this.signal.url,
+        BUN_INSPECT_CONNECT_TO: "",
       },
       isTransient: true,
       iconPath: new vscode.ThemeIcon("debug-console"),

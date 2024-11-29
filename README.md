@@ -49,7 +49,7 @@ Bun supports Linux (x64 & arm64), macOS (x64 & Apple Silicon) and Windows (x64).
 
 ```sh
 # with install script (recommended)
-curl -fsSL https://bun.sh/install | bash
+curl -fsSL bun.sh/install | bash
 
 # on windows
 powershell -c "irm bun.sh/install.ps1 | iex"

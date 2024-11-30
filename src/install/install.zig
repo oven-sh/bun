@@ -6216,6 +6216,24 @@ pub const PackageManager = struct {
 
         var timestamp_this_tick: ?u32 = null;
 
+        defer {
+            manager.drainDependencyList();
+
+            if (comptime log_level.showProgress()) {
+                manager.startProgressBarIfNone();
+
+                if (@hasField(@TypeOf(callbacks), "progress_bar") and callbacks.progress_bar == true) {
+                    const completed_items = manager.total_tasks - manager.pendingTaskCount();
+                    if (completed_items != manager.downloads_node.?.unprotected_completed_items or has_updated_this_run) {
+                        manager.downloads_node.?.setCompletedItems(completed_items);
+                        manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks);
+                    }
+                }
+                manager.downloads_node.?.activate();
+                manager.progress.maybeRefresh();
+            }
+        }
+
         var patch_tasks_batch = manager.patch_task_queue.popBatch();
         var patch_tasks_iter = patch_tasks_batch.iterator();
         while (patch_tasks_iter.next()) |ptask| {
@@ -6944,21 +6962,6 @@ pub const PackageManager = struct {
                     }
                 },
             }
-        }
-
-        manager.drainDependencyList();
-
-        if (comptime log_level.showProgress()) {
-            if (@hasField(@TypeOf(callbacks), "progress_bar") and callbacks.progress_bar == true) {
-                const completed_items = manager.total_tasks - manager.pendingTaskCount();
-                manager.startProgressBarIfNone();
-                if (completed_items != manager.downloads_node.?.unprotected_completed_items or has_updated_this_run) {
-                    manager.downloads_node.?.setCompletedItems(completed_items);
-                    manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks);
-                }
-            }
-            manager.downloads_node.?.activate();
-            manager.progress.maybeRefresh();
         }
     }
 

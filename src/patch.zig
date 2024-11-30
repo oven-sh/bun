@@ -1238,7 +1238,7 @@ pub fn spawnOpts(
     new_folder: []const u8,
     cwd: [:0]const u8,
     git: [:0]const u8,
-    loop: *JSC.AnyEventLoop,
+    loop: JSC.EventLoopHandle,
 ) bun.spawn.sync.Options {
     const argv: []const []const u8 = brk: {
         const ARGV = &[_][:0]const u8{
@@ -1287,10 +1287,7 @@ pub fn spawnOpts(
         .cwd = cwd,
         .envp = envp,
         .argv = argv,
-        .windows = if (bun.Environment.isWindows) .{ .loop = switch (loop.*) {
-            .js => |x| .{ .js = x },
-            .mini => |*x| .{ .mini = x },
-        } } else {},
+        .windows = if (bun.Environment.isWindows) .{ .loop = loop } else {},
     };
 }
 

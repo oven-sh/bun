@@ -105,8 +105,6 @@ pub const BuildCommand = struct {
         this_bundler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
         this_bundler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
-        this_bundler.configureAutoInstall(ctx.install, &ctx.debug);
-
         this_bundler.options.banner = ctx.bundler_options.banner;
         this_bundler.options.footer = ctx.bundler_options.footer;
         this_bundler.options.drop = ctx.args.drop;
@@ -272,6 +270,8 @@ pub const BuildCommand = struct {
         var reachable_file_count: usize = 0;
         var minify_duration: u64 = 0;
         var input_code_length: u64 = 0;
+
+        this_bundler.configureAutoInstall(ctx.install, &ctx.debug);
 
         const output_files: []options.OutputFile = brk: {
             if (ctx.bundler_options.transform_only) {

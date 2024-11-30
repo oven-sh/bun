@@ -2126,6 +2126,24 @@ pub const EventLoopHandle = union(enum) {
     js: *JSC.EventLoop,
     mini: *MiniEventLoop,
 
+    pub fn tick(
+        this: EventLoopHandle,
+        context: anytype,
+        comptime isDone: *const fn (@TypeOf(context)) bool,
+    ) void {
+        switch (this) {
+            .js => |js_loop| {
+                while (!isDone(context)) {
+                    js_loop.tick();
+                    js_loop.autoTick();
+                }
+            },
+            .mini => |mini| {
+                mini.tick(context, @ptrCast(isDone));
+            },
+        }
+    }
+
     pub fn globalObject(this: EventLoopHandle) ?*JSC.JSGlobalObject {
         return switch (this) {
             .js => this.js.global,
@@ -2265,6 +2283,28 @@ pub const EventLoopHandle = union(enum) {
             .js => this.js.virtual_machine.bundler.env,
             .mini => this.mini.env.?,
         };
+    }
+
+    pub fn wakeup(this: EventLoopHandle) void {
+        switch (this) {
+            .js => this.js.wakeup(),
+            .mini => this.mini.loop.wakeup(),
+        }
+    }
+
+    pub fn tickOnce(
+        this: EventLoopHandle,
+        context: anytype,
+    ) void {
+        switch (this) {
+            .js => |js_loop| {
+                js_loop.tick();
+                js_loop.autoTickActive();
+            },
+            .mini => |mini| {
+                mini.tickWithoutIdle(context);
+            },
+        }
     }
 };
 

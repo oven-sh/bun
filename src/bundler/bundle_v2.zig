@@ -604,12 +604,18 @@ pub const BundleV2 = struct {
     fn isDone(this: *BundleV2) bool {
         this.thread_lock.assertLocked();
 
+        var has_any_pending_auto_installs = false;
+
+        if (this.bundler.options.global_cache.isEnabled()) {
+            has_any_pending_auto_installs = AutoInstall.hasAnyPendingAutoInstallsAfterPoll(this);
+        }
+
         if (this.graph.pending_items == 0) {
             if (this.graph.drainDeferredTasks(this)) {
                 return false;
             }
 
-            return true;
+            return !has_any_pending_auto_installs;
         }
 
         return false;
@@ -952,10 +958,20 @@ pub const BundleV2 = struct {
         this.linker.options.target = bundler.options.target;
         this.linker.options.output_format = bundler.options.output_format;
         this.linker.options.generate_bytecode_cache = bundler.options.bytecode;
+        this.bundler.resolver.env_loader = this.bundler.env;
 
         this.linker.dev_server = bundler.options.dev_server;
 
         if (this.bundler.options.global_cache.isEnabled()) {
+            bun.http.HTTPThread.init(&.{});
+            this.bundler.resolver.package_manager = bun.PackageManager.initWithEventLoop(
+                JSC.EventLoopHandle.init(&this.linker.loop),
+                this.bundler.log,
+                this.bundler.options.install,
+                bun.default_allocator,
+                .{},
+                this.bundler.env,
+            );
             this.bundler.resolver.onWakePackageManager = .{
                 .context = this,
                 .handler = &AutoInstall.onWakeHandler,
@@ -2563,7 +2579,7 @@ pub const BundleV2 = struct {
         pending_auto_install_index: u32,
 
         pub fn source(this: *const AutoInstall) *const Logger.Source {
-            return &this.parse_task_result.value.success.source;
+            return &this.parse_task_result.?.value.success.source;
         }
 
         pub usingnamespace bun.New(@This());
@@ -2654,13 +2670,13 @@ pub const BundleV2 = struct {
             debug("onDependencyError: {s} {s}", .{ this.packageManager().lockfile.str(&dependency.name), @errorName(err) });
         }
 
-        pub fn onPoll(this: *BundleV2) void {
+        pub fn hasAnyPendingAutoInstallsAfterPoll(this: *BundleV2) bool {
             debug("onPoll", .{});
             runTasks(this);
-            pollPendingAutoInstalls(this);
+            return pollPendingAutoInstalls(this);
         }
 
-        fn pollPendingAutoInstalls(this: *BundleV2) void {
+        fn pollPendingAutoInstalls(this: *BundleV2) bool {
             var pm = this.packageManager();
 
             var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
@@ -2767,9 +2783,12 @@ pub const BundleV2 = struct {
                 pm.endProgressBar();
             }
 
-            for (auto_installs_run_queue.items) |auto_install| {
-                this.onParseTaskCompleteWithAutoInstall(auto_install.parse_task_result, this, &auto_install);
+            for (auto_installs_run_queue.items) |auto_install_const| {
+                var auto_install: ?*AutoInstall = auto_install_const;
+                onParseTaskCompleteWithAutoInstall(auto_install.*.parse_task_result.?, this, &auto_install);
             }
+
+            return any_pending;
         }
     };
 
@@ -3664,7 +3683,7 @@ pub const ParseTask = struct {
         };
     };
 
-    const debug = Output.scoped(.ParseTask, false);
+    const debug = Output.scoped(.ParseTask, true);
 
     pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *BundleV2) ParseTask {
         return .{

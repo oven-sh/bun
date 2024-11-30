@@ -626,16 +626,11 @@ const BufferedReaderVTable = struct {
                 }
             }.loop_fn;
 
-            const eventLoop_fn = &struct {
-                pub fn eventLoop_fn(this: *anyopaque) JSC.EventLoopHandle {
-                    return JSC.EventLoopHandle.init(Type.eventLoop(@alignCast(@ptrCast(this))));
-                }
-            }.eventLoop_fn;
             return comptime &BufferedReaderVTable.Fn{
                 .onReadChunk = if (@hasDecl(Type, "onReadChunk")) @ptrCast(&Type.onReadChunk) else null,
                 .onReaderDone = @ptrCast(&Type.onReaderDone),
                 .onReaderError = @ptrCast(&Type.onReaderError),
-                .eventLoop = eventLoop_fn,
+                .eventLoop = @ptrCast(&Type.eventLoop),
                 .loop = loop_fn,
             };
         }

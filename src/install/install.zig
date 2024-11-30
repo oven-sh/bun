@@ -2730,7 +2730,7 @@ pub const PackageManager = struct {
     // name hash from alias package name -> aliased package dependency version info
     known_npm_aliases: NpmAliasMap = .{},
 
-    event_loop: JSC.AnyEventLoop,
+    event_loop: JSC.EventLoopHandle,
 
     // During `installPackages` we learn exactly what dependencies from --trust
     // actually have scripts to run, and we add them to this list
@@ -3139,12 +3139,12 @@ pub const PackageManager = struct {
         version_buf: []const u8,
         behavior: Dependency.Behavior,
     ) DependencyToEnqueue {
-        const dep_id = @as(DependencyID, @truncate(brk: {
+        const dep_id: u32, const is_newly_added = brk: {
             const str_buf = this.lockfile.buffers.string_bytes.items;
             for (this.lockfile.buffers.dependencies.items, 0..) |dep, id| {
                 if (!strings.eqlLong(dep.name.slice(str_buf), name, true)) continue;
                 if (!dep.version.eql(version, str_buf, version_buf)) continue;
-                break :brk id;
+                break :brk .{ @truncate(id), true };
             }
 
             var builder = this.lockfile.stringBuilder();
@@ -3164,8 +3164,10 @@ pub const PackageManager = struct {
             this.lockfile.buffers.dependencies.append(this.allocator, dep) catch unreachable;
             this.lockfile.buffers.resolutions.append(this.allocator, invalid_package_id) catch unreachable;
             if (comptime Environment.allow_assert) bun.assert(this.lockfile.buffers.dependencies.items.len == this.lockfile.buffers.resolutions.items.len);
-            break :brk index;
-        }));
+            break :brk .{ @truncate(index), false };
+        };
+
+        const initial_pending_task_count = this.pendingTaskCount();
 
         if (this.lockfile.buffers.resolutions.items[dep_id] == invalid_package_id) {
             this.enqueueDependencyWithMainAndSuccessFn(
@@ -3184,67 +3186,16 @@ pub const PackageManager = struct {
             invalid_package_id => brk: {
                 this.drainDependencyList();
 
-                switch (this.options.log_level) {
-                    inline else => |log_levela| {
-                        const Closure = struct {
-                            // https://github.com/ziglang/zig/issues/19586
-                            pub fn issue_19586_workaround(comptime log_level: Options.LogLevel) type {
-                                return struct {
-                                    err: ?anyerror = null,
-                                    manager: *PackageManager,
-                                    pub fn isDone(closure: *@This()) bool {
-                                        const manager = closure.manager;
-                                        if (manager.pendingTaskCount() > 0) {
-                                            manager.runTasks(
-                                                void,
-                                                {},
-                                                .{
-                                                    .onExtract = {},
-                                                    .onResolve = {},
-                                                    .onPackageManifestError = {},
-                                                    .onPackageDownloadError = {},
-                                                },
-                                                false,
-                                                log_level,
-                                            ) catch |err| {
-                                                closure.err = err;
-                                                return true;
-                                            };
-
-                                            if (PackageManager.verbose_install and manager.pendingTaskCount() > 0) {
-                                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{closure.manager.pendingTaskCount()});
-                                            }
-                                        }
-
-                                        return manager.pendingTaskCount() == 0;
-                                    }
-                                };
-                            }
-                        }.issue_19586_workaround(log_levela);
-
-                        if (comptime log_levela.showProgress()) {
-                            this.startProgressBarIfNone();
-                        }
-
-                        var closure = Closure{ .manager = this };
-                        this.sleepUntil(&closure, &Closure.isDone);
-
-                        if (comptime log_levela.showProgress()) {
-                            this.endProgressBar();
-                            Output.flush();
-                        }
-
-                        if (closure.err) |err| {
-                            return .{ .failure = err };
-                        }
-                    },
-                }
-
                 break :brk this.lockfile.buffers.resolutions.items[dep_id];
             },
             // we managed to synchronously resolve the dependency
             else => |pkg_id| pkg_id,
         };
+
+        if (resolution_id == invalid_package_id and (!is_newly_added or this.pendingTaskCount() > initial_pending_task_count)) {
+            bun.assert(this.pendingTaskCount() > 0);
+            return .{ .pending = dep_id };
+        }
 
         if (resolution_id == invalid_package_id) {
             return .{
@@ -8736,16 +8687,16 @@ pub const PackageManager = struct {
             .root_package_json_file = root_package_json_file,
             // .progress
             .event_loop = .{
-                .mini = JSC.MiniEventLoop.init(bun.default_allocator),
+                .mini = bun.create(bun.default_allocator, JSC.MiniEventLoop, JSC.MiniEventLoop.init(bun.default_allocator)),
             },
             .original_package_json_path = original_package_json_path,
             .workspace_package_json_cache = workspace_package_json_cache,
             .workspace_name_hash = workspace_name_hash,
             .subcommand = subcommand,
         };
-        manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(&manager.event_loop));
+        manager.event_loop.loop().internal_loop_data.setParentEventLoop(manager.event_loop);
         manager.lockfile = try ctx.allocator.create(Lockfile);
-        JSC.MiniEventLoop.global = &manager.event_loop.mini;
+        JSC.MiniEventLoop.global = manager.event_loop.mini;
         if (!manager.options.enable.cache) {
             manager.options.enable.manifest_cache = false;
             manager.options.enable.manifest_cache_control = false;
@@ -8840,7 +8791,10 @@ pub const PackageManager = struct {
         cli: CommandLineArguments,
         env: *DotEnv.Loader,
     ) *PackageManager {
-        init_with_runtime_once.call(.{
+        init_with_event_loop_once.call(.{
+            .{
+                .js = JSC.VirtualMachine.get().eventLoop(),
+            },
             log,
             bun_install,
             allocator,
@@ -8850,9 +8804,22 @@ pub const PackageManager = struct {
         return PackageManager.get();
     }
 
-    var init_with_runtime_once = bun.once(initWithRuntimeOnce);
+    var init_with_event_loop_once = bun.once(initWithEventLoopOnce);
 
-    pub fn initWithRuntimeOnce(
+    pub fn initWithEventLoop(
+        loop: JSC.EventLoopHandle,
+        log: *logger.Log,
+        bun_install: ?*Api.BunInstall,
+        allocator: std.mem.Allocator,
+        cli: CommandLineArguments,
+        env: *DotEnv.Loader,
+    ) *PackageManager {
+        init_with_event_loop_once.call(.{ loop, log, bun_install, allocator, cli, env });
+        return PackageManager.get();
+    }
+
+    fn initWithEventLoopOnce(
+        loop: JSC.EventLoopHandle,
         log: *logger.Log,
         bun_install: ?*Api.BunInstall,
         allocator: std.mem.Allocator,
@@ -8898,9 +8865,7 @@ pub const PackageManager = struct {
             }),
             .lockfile = undefined,
             .root_package_json_file = undefined,
-            .event_loop = .{
-                .js = JSC.VirtualMachine.get().eventLoop(),
-            },
+            .event_loop = loop,
             .original_package_json_path = original_package_json_path[0..original_package_json_path.len :0],
             .subcommand = .install,
         };
@@ -11770,7 +11735,7 @@ pub const PackageManager = struct {
                 Global.crash();
             };
             const paths = bun.patch.gitDiffPreprocessPaths(bun.default_allocator, old_folder, new_folder, false);
-            const opts = bun.patch.spawnOpts(paths[0], paths[1], cwd, git, &manager.event_loop);
+            const opts = bun.patch.spawnOpts(paths[0], paths[1], cwd, git, manager.event_loop);
 
             var spawn_result = switch (bun.spawnSync(&opts) catch |e| {
                 Output.prettyError(

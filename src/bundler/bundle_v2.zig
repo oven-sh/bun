@@ -2723,7 +2723,7 @@ pub const BundleV2 = struct {
                 const auto_install: *AutoInstall = bun.cast(*AutoInstall, user_data_ptr);
                 const root_id = root_dependency_ids[tag_i];
                 const resolution_ids = pm.lockfile.buffers.resolutions.items;
-                if (root_id >= resolution_ids.len or auto_install.pending_import_count == 0) continue;
+                if (root_id >= resolution_ids.len or auto_install.pending_import_count == 0 or auto_install.parse_task_result == null) continue;
                 const package_id = resolution_ids[root_id];
 
                 if (prev_auto_install == null or (prev_auto_install.? != auto_install)) {

@@ -17,10 +17,11 @@ pub const Options = struct {
     vm: *VirtualMachine,
     framework: bake.Framework,
     bundler_options: bake.SplitBundlerOptions,
+    bundler_options: bake.SplitBundlerOptions,
 
     // Debugging features
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
-    dump_state_on_crash: ?bool = null,
+    dump_state_on_crash: ?bool = false,
     verbose_watcher: bool = false,
 };
 
@@ -243,8 +244,8 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .bundler_options = options.bundler_options,
         .emit_visualizer_events = 0,
         .has_pre_crash_handler = bun.FeatureFlags.bake_debugging_features and
-            (options.dump_state_on_crash orelse
-            bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH")),
+            options.dump_state_on_crash orelse
+            bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH"),
         .css_files = .{},
         .route_js_payloads = .{},
         // .assets = .{},

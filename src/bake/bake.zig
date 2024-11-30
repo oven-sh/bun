@@ -23,8 +23,10 @@ pub const UserOptions = struct {
         options.arena.deinit();
         options.allocations.free();
         if (options.bundler_options.plugin) |p| p.deinit();
+        if (options.bundler_options.plugin) |p| p.deinit();
     }
 
+    /// Currently, this function must run at the top of the event loop.
     /// Currently, this function must run at the top of the event loop.
     pub fn fromJS(config: JSValue, global: *JSC.JSGlobalObject) !UserOptions {
         if (!config.isObject()) {
@@ -599,14 +601,9 @@ pub const Framework = struct {
         out.options.css_chunking = true;
 
         out.options.framework = framework;
-
-        out.options.source_map = switch (mode) {
-            // Source maps must always be linked, as DevServer special cases the
-            // linking and part of the generation of these.
-            .development => .external,
-            // TODO: follow user configuration
-            else => .none,
-        };
+        // In development mode, source maps must always be `linked`
+        // In production, TODO: follow user configuration
+        out.options.source_map = .linked;
 
         out.configureLinker();
         try out.configureDefines();

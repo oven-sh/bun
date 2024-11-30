@@ -1073,6 +1073,45 @@ pub fn cleanWithLogger(
     return new;
 }
 
+pub fn resolveWorkspaceFromNpmVersion(this: *const Lockfile, name_hash: PackageNameHash, version: *const Dependency.Version) ?PackageID {
+    const workspace_path = if (this.workspace_paths.count() > 0) this.workspace_paths.get(name_hash) else null;
+    const workspace_version = this.workspace_versions.get(name_hash);
+    const buf = this.buffers.string_bytes.items;
+    if ((workspace_version != null and version.value.npm.version.satisfies(workspace_version.?, buf, buf)) or
+        // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
+        // if the workspace doesn't have a version, it can still be used if
+        // dependency version is wildcard
+        (workspace_path != null and version.value.npm.version.@"is *"()))
+    {
+        const root_package = this.rootPackage() orelse return null;
+        const root_dependencies = root_package.dependencies.get(this.buffers.dependencies.items);
+        const root_resolutions = root_package.resolutions.get(this.buffers.resolutions.items);
+
+        for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
+            if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
+                return workspace_package_id;
+            }
+        }
+    }
+    return null;
+}
+
+pub fn resolveWorkspaceFromNpmDistTag(this: *const Lockfile, name_hash: PackageNameHash) ?PackageID {
+    const workspace_path = if (this.workspace_paths.count() > 0) this.workspace_paths.get(name_hash) else null;
+    if (workspace_path != null) {
+        const root_package = this.rootPackage() orelse return null;
+        const root_dependencies = root_package.dependencies.get(this.buffers.dependencies.items);
+        const root_resolutions = root_package.resolutions.get(this.buffers.resolutions.items);
+
+        for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
+            if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
+                return workspace_package_id;
+            }
+        }
+    }
+    return null;
+}
+
 pub const MetaHashFormatter = struct {
     meta_hash: *const MetaHash,
 

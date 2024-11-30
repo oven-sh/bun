@@ -4013,6 +4013,7 @@ pub const PackageManager = struct {
 
                 return this.pathForCachedNPMPath(buf, package_name, npm.version);
             },
+
             else => return "",
         }
     }
@@ -4609,33 +4610,14 @@ pub const PackageManager = struct {
 
         switch (version.tag) {
             .npm, .dist_tag => {
-                resolve_from_workspace: {
-                    if (version.tag == .npm) {
-                        const workspace_path = if (this.lockfile.workspace_paths.count() > 0) this.lockfile.workspace_paths.get(name_hash) else null;
-                        const workspace_version = this.lockfile.workspace_versions.get(name_hash);
-                        const buf = this.lockfile.buffers.string_bytes.items;
-                        if ((workspace_version != null and version.value.npm.version.satisfies(workspace_version.?, buf, buf)) or
-
-                            // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
-                            // if the workspace doesn't have a version, it can still be used if
-                            // dependency version is wildcard
-                            (workspace_path != null and version.value.npm.version.@"is *"()))
-                        {
-                            const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
-                            const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
-                            const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
-
-                            for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
-                                if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
-                                    // make sure verifyResolutions sees this resolution as a valid package id
-                                    successFn(this, dependency_id, workspace_package_id);
-                                    return .{
-                                        .package = this.lockfile.packages.get(workspace_package_id),
-                                        .is_first_time = false,
-                                    };
-                                }
-                            }
-                        }
+                if (version.tag == .npm) {
+                    if (this.lockfile.resolveWorkspaceFromNpmVersion(name_hash, &version)) |workspace_package_id| {
+                        // make sure verifyResolutions sees this resolution as a valid package id
+                        successFn(this, dependency_id, workspace_package_id);
+                        return .{
+                            .package = this.lockfile.packages.get(workspace_package_id),
+                            .is_first_time = false,
+                        };
                     }
                 }
 
@@ -4652,26 +4634,14 @@ pub const PackageManager = struct {
                     .npm => manifest.findBestVersion(version.value.npm.version, this.lockfile.buffers.string_bytes.items),
                     else => unreachable,
                 } orelse {
-                    resolve_workspace_from_dist_tag: {
-                        // choose a workspace for a dist_tag only if a version was not found
-                        if (version.tag == .dist_tag) {
-                            const workspace_path = if (this.lockfile.workspace_paths.count() > 0) this.lockfile.workspace_paths.get(name_hash) else null;
-                            if (workspace_path != null) {
-                                const root_package = this.lockfile.rootPackage() orelse break :resolve_workspace_from_dist_tag;
-                                const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
-                                const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
 
-                                for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
-                                    if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
-                                        // make sure verifyResolutions sees this resolution as a valid package id
-                                        successFn(this, dependency_id, workspace_package_id);
-                                        return .{
-                                            .package = this.lockfile.packages.get(workspace_package_id),
-                                            .is_first_time = false,
-                                        };
-                                    }
-                                }
-                            }
+                    // choose a workspace for a dist_tag only if a version was not found
+                    if (version.tag == .dist_tag) {
+                        if (this.lockfile.resolveWorkspaceFromNpmDistTag(name_hash)) |workspace_package_id| {
+                            return .{
+                                .package = this.lockfile.packages.get(workspace_package_id),
+                                .is_first_time = false,
+                            };
                         }
                     }
 

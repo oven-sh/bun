@@ -395,6 +395,17 @@ pub const Bundler = struct {
         this.resolver.allocator = allocator;
     }
 
+    pub fn configureAutoInstall(this: *Bundler, install: ?*Api.BunInstall, debug: *const DebugOptions) void {
+        this.options.install = install;
+        this.resolver.opts.install = install;
+        this.resolver.opts.global_cache = debug.global_cache;
+        this.resolver.opts.prefer_offline_install = (debug.offline_mode_setting orelse .online) == .offline;
+        this.resolver.opts.prefer_latest_install = (debug.offline_mode_setting orelse .online) == .latest;
+        this.options.global_cache = this.resolver.opts.global_cache;
+        this.options.prefer_offline_install = this.resolver.opts.prefer_offline_install;
+        this.options.prefer_latest_install = this.resolver.opts.prefer_latest_install;
+    }
+
     fn _resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
         return bundler.resolver.resolveWithFramework(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
             // Relative entry points that were not resolved to a node_modules package are

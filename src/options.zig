@@ -1714,6 +1714,11 @@ pub const BundleOptions = struct {
 
         opts.conditions = try ESMConditions.init(allocator, opts.target.defaultConditions());
 
+        if (bun.FeatureFlags.breaking_changes_1_2) {
+            // This is currently done in DevServer by default, but not in Bun.build
+            @compileError("if (!production) { add \"development\" condition }");
+        }
+
         if (transform.conditions.len > 0) {
             opts.conditions.appendSlice(transform.conditions) catch bun.outOfMemory();
         }

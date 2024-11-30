@@ -3023,10 +3023,10 @@ pub const JSGlobalObject = opaque {
         argname: []const u8,
         typename: []const u8,
         value: JSValue,
-    ) JSValue {
+    ) bun.JSError {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = this };
         this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, value.toFmt(&formatter) }).throw();
-        return .zero;
+        return error.JSError;
     }
 
     pub fn throwInvalidArgumentRangeValue(
@@ -3034,9 +3034,9 @@ pub const JSGlobalObject = opaque {
         argname: []const u8,
         typename: []const u8,
         value: i64,
-    ) JSValue {
+    ) bun.JSError {
         this.ERR_OUT_OF_RANGE("The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
-        return .zero;
+        return error.JSError;
     }
 
     pub fn throwInvalidPropertyTypeValue(
@@ -3044,11 +3044,11 @@ pub const JSGlobalObject = opaque {
         field: []const u8,
         typename: []const u8,
         value: JSValue,
-    ) JSValue {
+    ) bun.JSError {
         const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
         defer ty_str.deinit();
         this.ERR_INVALID_ARG_TYPE("The \"{s}\" property must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }).throw();
-        return .zero;
+        return error.JSError;
     }
 
     pub fn createNotEnoughArguments(
@@ -3272,9 +3272,17 @@ pub const JSGlobalObject = opaque {
             return this.throwOutOfMemory();
         }
 
-        var str = ZigString.init(try std.fmt.allocPrint(this.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}));
-        defer this.bunVM().allocator.free(ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
-        str.markUTF8();
+        // If we're throwing JSError, that means either:
+        // - We're throwing an exception while another exception is already active
+        // - We're incorrectly returning JSError from a function that did not throw.
+        bun.debugAssert(err != error.JSError);
+
+        // Avoid tiny extra allocation
+        var stack = std.heap.stackFallback(128, bun.default_allocator);
+        const allocator_ = stack.get();
+        const buffer = try std.fmt.allocPrint(allocator_, comptime "{s} " ++ fmt, .{@errorName(err)});
+        defer allocator_.free(buffer);
+        const str = ZigString.initUTF8(buffer);
         const err_value = str.toErrorInstance(this);
         return this.vm().throwError2(this, err_value);
     }
@@ -3423,15 +3431,13 @@ pub const JSGlobalObject = opaque {
             allowFunction: bool = false,
             nullable: bool = false,
         },
-    ) bool {
+    ) bun.JSError!void {
         if ((!opts.nullable and value.isNull()) or
             (!opts.allowArray and value.isArray()) or
             (!value.isObject() and (!opts.allowFunction or !value.isFunction())))
         {
-            _ = this.throwInvalidArgumentTypeValue(arg_name, "object", value);
-            return false;
+            return this.throwInvalidArgumentTypeValue(arg_name, "object", value);
         }
-        return true;
     }
 
     pub fn throwRangeError(this: *JSGlobalObject, value: anytype, options: bun.fmt.OutOfRangeOptions) void {
@@ -3447,7 +3453,7 @@ pub const JSGlobalObject = opaque {
         always_allow_zero: bool = false,
     };
 
-    pub fn validateIntegerRange(this: *JSGlobalObject, value: JSValue, comptime T: type, default: T, comptime range: IntegerRange) ?T {
+    pub fn validateIntegerRange(this: *JSGlobalObject, value: JSValue, comptime T: type, default: T, comptime range: IntegerRange) bun.JSError!T {
         if (value == .undefined or value == .zero) {
             return default;
         }
@@ -3476,14 +3482,13 @@ pub const JSGlobalObject = opaque {
             }
             if (int < min_t or int > max_t) {
                 this.throwRangeError(int, .{ .field_name = field_name, .min = min, .max = max });
-                return null;
+                return error.JSError;
             }
             return @intCast(int);
         }
 
         if (!value.isNumber()) {
-            _ = this.throwInvalidPropertyTypeValue(field_name, "number", value);
-            return null;
+            return this.throwInvalidPropertyTypeValue(field_name, "number", value);
         }
         const f64_val = value.asNumber();
         if (always_allow_zero and f64_val == 0) {
@@ -3495,12 +3500,11 @@ pub const JSGlobalObject = opaque {
             return default;
         }
         if (@floor(f64_val) != f64_val) {
-            _ = this.throwInvalidPropertyTypeValue(field_name, "integer", value);
-            return null;
+            return this.throwInvalidPropertyTypeValue(field_name, "integer", value);
         }
         if (f64_val < min_t or f64_val > max_t) {
             this.throwRangeError(f64_val, .{ .field_name = comptime field_name, .min = min, .max = max });
-            return null;
+            return error.JSError;
         }
 
         return @intFromFloat(f64_val);
@@ -5406,10 +5410,8 @@ pub const JSValue = enum(i64) {
         if (prop.isNull() or prop == .false) {
             return null;
         }
-
         if (prop.isSymbol()) {
-            _ = global.throwInvalidPropertyTypeValue(property, "string", prop);
-            return error.JSError;
+            return global.throwInvalidPropertyTypeValue(property, "string", prop);
         }
 
         const str = prop.toBunString(global);
@@ -5417,11 +5419,9 @@ pub const JSValue = enum(i64) {
             str.deref();
             return error.JSError;
         }
-
         if (str.isEmpty()) {
             return null;
         }
-
         return str;
     }
 

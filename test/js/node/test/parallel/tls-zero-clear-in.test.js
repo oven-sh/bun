@@ -68,7 +68,7 @@ test("SSL_write() call with 0 bytes should not be treated as error", done => {
     // treated as error.
     conn.end("");
 
-    conn.on("error", () => {
+    conn.on("error", err => {
       done(new Error("Unexpected error event"));
     });
 

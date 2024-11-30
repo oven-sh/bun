@@ -275,7 +275,7 @@ fn NewLexer_(
 
         /// Look ahead at the next n codepoints without advancing the iterator.
         /// If fewer than n codepoints are available, then return the remainder of the string.
-        fn peek(it: *LexerType, n: usize) string {
+        pub fn peek(it: *LexerType, n: usize) string {
             const original_i = it.current;
             defer it.current = original_i;
 

@@ -3893,6 +3893,7 @@ pub const ParseTask = struct {
         opts.warn_about_unbundled_modules = false;
         opts.macro_context = &this.data.macro_context;
         opts.package_version = task.package_version;
+        opts.rewrite_process_env = target.isBun();
 
         opts.features.auto_polyfill_require = output_format == .esm and !target.isBun();
         opts.features.allow_runtime = !source.index.isRuntime();

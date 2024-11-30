@@ -2870,6 +2870,7 @@ pub const Parser = struct {
         use_define_for_class_fields: bool = false,
         suppress_warnings_about_weird_code: bool = true,
         filepath_hash_for_hmr: u32 = 0,
+        rewrite_process_env: bool = false,
         features: RuntimeFeatures = .{},
 
         tree_shaking: bool = false,
@@ -14780,6 +14781,15 @@ fn NewParser_(
                     return p.newExpr(E.PrivateIdentifier{ .ref = try p.storeNameInRef(name) }, loc);
                 },
                 .t_identifier => {
+                    // hacky but works
+                    if (p.options.bundle and p.options.rewrite_process_env) {
+                        if (strings.eqlComptime(p.lexer.identifier, "process")) {
+                            if (strings.eqlComptime(p.lexer.peek(3), "env")) {
+                                debug("Rewriting process.env to Bun.env for Bun bundle target", .{});
+                                p.lexer.identifier = "Bun";
+                            }
+                        }
+                    }
                     const name = p.lexer.identifier;
                     const name_range = p.lexer.range();
                     const raw = p.lexer.raw();

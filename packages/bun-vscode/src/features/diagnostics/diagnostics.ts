@@ -1,16 +1,16 @@
 import * as fs from "node:fs/promises";
+import { Socket } from "node:net";
 import * as os from "node:os";
 import { inspect } from "node:util";
 import * as vscode from "vscode";
 import {
   getAvailablePort,
-  getRandomId,
+  NodeSocketDebugAdapter,
   TCPSocketSignal,
   UnixSignal,
-  WebSocketDebugAdapter,
 } from "../../../../bun-debug-adapter-protocol";
 import type { JSC } from "../../../../bun-inspector-protocol";
-import { createGlobalStateGenerationFn, typedGlobalState } from "../../global-state";
+import { typedGlobalState } from "../../global-state";
 
 const output = vscode.window.createOutputChannel("Bun - Diagnostics");
 
@@ -70,15 +70,14 @@ class BunDiagnosticsManager {
   private readonly editorState: EditorStateManager;
   private readonly signal: UnixSignal | TCPSocketSignal;
   private readonly context: vscode.ExtensionContext;
-  public readonly inspectUrl: string;
 
-  public get notifyUrl() {
+  public get signalUrl() {
     return this.signal.url;
   }
 
   private static async getOrRecreateSignal(context: vscode.ExtensionContext) {
     const globalState = typedGlobalState(context.globalState);
-    const existing = globalState.get("BUN_INSPECT_NOTIFY");
+    const existing = globalState.get("BUN_INSPECT_CONNECT_TO");
 
     const isWin = os.platform() === "win32";
 
@@ -102,7 +101,7 @@ class BunDiagnosticsManager {
     if (isWin) {
       const port = await getAvailablePort();
 
-      await globalState.update("BUN_INSPECT_NOTIFY", {
+      await globalState.update("BUN_INSPECT_CONNECT_TO", {
         type: "tcp",
         port,
       });
@@ -113,7 +112,7 @@ class BunDiagnosticsManager {
     } else {
       const signal = new UnixSignal();
 
-      await globalState.update("BUN_INSPECT_NOTIFY", {
+      await globalState.update("BUN_INSPECT_CONNECT_TO", {
         type: "unix",
         url: signal.url,
       });
@@ -124,30 +123,29 @@ class BunDiagnosticsManager {
     }
   }
 
-  private static getOrCreateOldVersionInspectURL = createGlobalStateGenerationFn(
-    "DIAGNOSTICS_BUN_INSPECT",
-    async () => {
-      const url =
-        process.platform === "win32"
-          ? `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`
-          : `ws+unix://${os.tmpdir()}/${getRandomId()}.sock`;
+  // private static getOrCreateOldVersionInspectURL = createGlobalStateGenerationFn(
+  //   "DIAGNOSTICS_BUN_INSPECT",
+  //   async () => {
+  //     const url =
+  //       process.platform === "win32"
+  //         ? `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`
+  //         : `ws+unix://${os.tmpdir()}/${getRandomId()}.sock`;
 
-      return url;
-    },
-  );
+  //     return url;
+  //   },
+  // );
 
   public static async initialize(context: vscode.ExtensionContext) {
     const signal = await BunDiagnosticsManager.getOrRecreateSignal(context);
-    const oldVersionInspectURL = await BunDiagnosticsManager.getOrCreateOldVersionInspectURL(context.globalState);
 
-    return new BunDiagnosticsManager(context, signal, oldVersionInspectURL);
+    return new BunDiagnosticsManager(context, signal);
   }
 
   /**
    * Called when Bun pings BUN_INSPECT_NOTIFY (indicating a program has started).
    */
-  private async handleSocketConnection() {
-    const debugAdapter = new WebSocketDebugAdapter(this.inspectUrl);
+  private async handleSocketConnection(socket: Socket) {
+    const debugAdapter = new NodeSocketDebugAdapter(socket);
 
     this.editorState.clearAll("A new socket connected");
 
@@ -246,15 +244,10 @@ class BunDiagnosticsManager {
     });
   }
 
-  private constructor(
-    context: vscode.ExtensionContext,
-    signal: UnixSignal | TCPSocketSignal,
-    oldVersionInspectURL: string,
-  ) {
+  private constructor(context: vscode.ExtensionContext, signal: UnixSignal | TCPSocketSignal) {
     this.editorState = new EditorStateManager();
     this.signal = signal;
     this.context = context;
-    this.inspectUrl = oldVersionInspectURL;
 
     this.context.subscriptions.push(
       // on did type
@@ -263,9 +256,7 @@ class BunDiagnosticsManager {
       }),
     );
 
-    this.signal.on("Signal.received", () => {
-      this.handleSocketConnection();
-    });
+    this.signal.on("Signal.Socket.connect", this.handleSocketConnection.bind(this));
   }
 }
 
@@ -274,12 +265,12 @@ const description = new vscode.MarkdownString(
 );
 
 export async function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
+  context.environmentVariableCollection.clear();
   context.environmentVariableCollection.description = description;
 
   const manager = await BunDiagnosticsManager.initialize(context);
 
-  context.environmentVariableCollection.replace("BUN_INSPECT_NOTIFY", manager.notifyUrl);
-  context.environmentVariableCollection.replace("BUN_INSPECT", `${manager.inspectUrl}?report=1?wait=1`); // Intentionally invalid query params
+  context.environmentVariableCollection.replace("BUN_INSPECT_CONNECT_TO", manager.signalUrl);
 
   context.subscriptions.push(manager);
 }

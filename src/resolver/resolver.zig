@@ -399,7 +399,10 @@ pub const PendingResolution = struct {
     string_buf: []u8 = "",
     tag: Tag,
 
-    pub const List = std.MultiArrayList(PendingResolution);
+    /// Only used for auto-install in bun.bundle_v2
+    user_data: *anyopaque = undefined,
+
+    pub const List = bun.MultiArrayList(PendingResolution);
 
     pub fn deinitListItems(list_: List, allocator: std.mem.Allocator) void {
         var list = list_;
@@ -416,6 +419,7 @@ pub const PendingResolution = struct {
 
     pub fn deinit(this: *PendingResolution, allocator: std.mem.Allocator) void {
         this.dependency.deinit();
+        this.parse_tasks.deinit(allocator);
         allocator.free(this.string_buf);
     }
 
@@ -932,6 +936,30 @@ pub const Resolver = struct {
             }
         }
         return r.resolve(source_dir, import_path, kind);
+    }
+
+    pub fn resolveWithFrameworkAndAutoInstall(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) Result.Union {
+        if (r.opts.framework) |f| {
+            if (f.built_in_modules.get(import_path)) |mod| {
+                switch (mod) {
+                    .code => {
+                        return .{
+                            .success = .{
+                                .import_kind = kind,
+                                .path_pair = .{ .primary = Fs.Path.initWithNamespace(import_path, "node") },
+                                .is_external = false,
+                                .module_type = .esm,
+                                .primary_side_effects_data = .no_side_effects__pure_data,
+                            },
+                        };
+                    },
+                    .import => |path| return r.resolveAndAutoInstall(r.fs.top_level_dir, path, .entry_point, r.opts.global_cache),
+                }
+                return .{};
+            }
+        }
+
+        return r.resolveAndAutoInstall(source_dir, import_path, kind, r.opts.global_cache);
     }
 
     const ModuleTypeMap = bun.ComptimeStringMap(options.ModuleType, .{

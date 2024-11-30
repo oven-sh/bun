@@ -128,7 +128,7 @@ const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
 const Loc = Logger.Loc;
 const bake = bun.bake;
-
+const Install = bun.install;
 const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
@@ -395,6 +395,9 @@ pub const BundleV2 = struct {
     /// true, a callback is executed after all work is complete.
     asynchronous: bool = false,
     thread_lock: bun.DebugThreadLock,
+
+    /// Used for auto-install
+    pending_auto_installs: _resolver.PendingResolution.List = .{},
 
     const BakeOptions = struct {
         framework: bake.Framework,
@@ -951,6 +954,14 @@ pub const BundleV2 = struct {
         this.linker.options.generate_bytecode_cache = bundler.options.bytecode;
 
         this.linker.dev_server = bundler.options.dev_server;
+
+        if (this.bundler.options.global_cache.isEnabled()) {
+            this.bundler.resolver.onWakePackageManager = .{
+                .context = this,
+                .handler = &AutoInstall.onWakeHandler,
+                .onDependencyError = &AutoInstall.onDependencyError,
+            };
+        }
 
         var pool = try this.graph.allocator.create(ThreadPool);
         if (cli_watch_flag) {
@@ -2400,7 +2411,7 @@ pub const BundleV2 = struct {
     //
     // The problem is that module resolution has many mutexes.
     // The downside is cached resolutions are faster to do in threads since they only lock very briefly.
-    fn runResolutionForParseTask(parse_result: *ParseTask.Result, this: *BundleV2) ResolveQueue {
+    fn runResolutionForParseTask(parse_result: *ParseTask.Result, this: *BundleV2, resolve_queue: *ResolveQueue, comptime only_for_pending_auto_install: bool, pending_auto_install: *?*AutoInstall) void {
         var ast = &parse_result.value.success.ast;
         const source = &parse_result.value.success.source;
         const source_dir = source.path.sourceDir();
@@ -2417,310 +2428,114 @@ pub const BundleV2 = struct {
 
             estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.is_internal or import_record.is_unused or import_record.source_index.isValid())));
         }
-        var resolve_queue = ResolveQueue.init(this.graph.allocator);
         resolve_queue.ensureTotalCapacity(estimated_resolve_queue_count) catch bun.outOfMemory();
 
         var last_error: ?anyerror = null;
 
-        outer: for (ast.import_records.slice(), 0..) |*import_record, i| {
-            if (
-            // Don't resolve TypeScript types
-            import_record.is_unused or
+        switch (comptime only_for_pending_auto_install) {
+            false => {
+                for (ast.import_records.slice(), 0..) |*import_record, i| {
+                    if (
+                    // Don't resolve TypeScript types
+                    import_record.is_unused or
 
-                // Don't resolve the runtime
-                import_record.is_internal or
+                        // Don't resolve the runtime
+                        import_record.is_internal or
 
-                // Don't resolve pre-resolved imports
-                import_record.source_index.isValid())
-            {
-                continue;
-            }
+                        // Don't resolve pre-resolved imports
+                        import_record.source_index.isValid())
+                    {
+                        continue;
+                    }
 
-            if (this.framework) |fw| if (fw.server_components != null) {
-                switch (ast.target.isServerSide()) {
-                    inline else => |is_server| {
-                        const src = if (is_server) bake.server_virtual_source else bake.client_virtual_source;
-                        if (strings.eqlComptime(import_record.path.text, src.path.pretty)) {
-                            if (this.bundler.options.dev_server != null) {
-                                import_record.is_external_without_side_effects = true;
-                                import_record.source_index = Index.invalid;
-                            } else {
-                                if (is_server) {
-                                    this.graph.kit_referenced_server_data = true;
-                                } else {
-                                    this.graph.kit_referenced_client_data = true;
+                    if (this.framework) |fw| if (fw.server_components != null) {
+                        switch (ast.target.isServerSide()) {
+                            inline else => |is_server| {
+                                const src = if (is_server) bake.server_virtual_source else bake.client_virtual_source;
+                                if (strings.eqlComptime(import_record.path.text, src.path.pretty)) {
+                                    if (this.bundler.options.dev_server != null) {
+                                        import_record.is_external_without_side_effects = true;
+                                        import_record.source_index = Index.invalid;
+                                    } else {
+                                        if (is_server) {
+                                            this.graph.kit_referenced_server_data = true;
+                                        } else {
+                                            this.graph.kit_referenced_client_data = true;
+                                        }
+                                        import_record.path.namespace = "bun";
+                                        import_record.source_index = src.index;
+                                    }
+                                    continue;
                                 }
-                                import_record.path.namespace = "bun";
-                                import_record.source_index = src.index;
-                            }
+                            },
+                        }
+                    };
+
+                    if (ast.target.isBun()) {
+                        if (JSC.HardcodedModule.Aliases.get(import_record.path.text, options.Target.bun)) |replacement| {
+                            import_record.path.text = replacement.path;
+                            import_record.tag = replacement.tag;
+                            import_record.source_index = Index.invalid;
+                            import_record.is_external_without_side_effects = true;
                             continue;
                         }
-                    },
-                }
-            };
 
-            if (ast.target.isBun()) {
-                if (JSC.HardcodedModule.Aliases.get(import_record.path.text, options.Target.bun)) |replacement| {
-                    import_record.path.text = replacement.path;
-                    import_record.tag = replacement.tag;
-                    import_record.source_index = Index.invalid;
-                    import_record.is_external_without_side_effects = true;
-                    continue;
-                }
+                        if (this.bundler.options.rewrite_jest_for_tests) {
+                            if (strings.eqlComptime(
+                                import_record.path.text,
+                                "@jest/globals",
+                            ) or strings.eqlComptime(
+                                import_record.path.text,
+                                "vitest",
+                            )) {
+                                import_record.path.namespace = "bun";
+                                import_record.tag = .bun_test;
+                                import_record.path.text = "test";
+                                import_record.is_external_without_side_effects = true;
+                                continue;
+                            }
+                        }
 
-                if (this.bundler.options.rewrite_jest_for_tests) {
-                    if (strings.eqlComptime(
-                        import_record.path.text,
-                        "@jest/globals",
-                    ) or strings.eqlComptime(
-                        import_record.path.text,
-                        "vitest",
-                    )) {
-                        import_record.path.namespace = "bun";
-                        import_record.tag = .bun_test;
-                        import_record.path.text = "test";
+                        if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
+                            import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
+                            import_record.path.namespace = "bun";
+                            import_record.source_index = Index.invalid;
+                            import_record.is_external_without_side_effects = true;
+
+                            if (strings.eqlComptime(import_record.path.text, "test")) {
+                                import_record.tag = .bun_test;
+                            }
+
+                            // don't link bun
+                            continue;
+                        }
+                    }
+
+                    // By default, we treat .sqlite files as external.
+                    if (import_record.tag == .with_type_sqlite) {
                         import_record.is_external_without_side_effects = true;
                         continue;
                     }
-                }
 
-                if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
-                    import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
-                    import_record.path.namespace = "bun";
-                    import_record.source_index = Index.invalid;
-                    import_record.is_external_without_side_effects = true;
-
-                    if (strings.eqlComptime(import_record.path.text, "test")) {
-                        import_record.tag = .bun_test;
+                    if (import_record.tag == .with_type_sqlite_embedded) {
+                        import_record.is_external_without_side_effects = true;
                     }
 
-                    // don't link bun
-                    continue;
-                }
-            }
-
-            // By default, we treat .sqlite files as external.
-            if (import_record.tag == .with_type_sqlite) {
-                import_record.is_external_without_side_effects = true;
-                continue;
-            }
-
-            if (import_record.tag == .with_type_sqlite_embedded) {
-                import_record.is_external_without_side_effects = true;
-            }
-
-            if (this.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @as(u32, @truncate(i)), ast.target)) {
-                continue;
-            }
-
-            const bundler, const renderer: bake.Graph, const target =
-                if (import_record.tag == .bake_resolve_to_ssr_graph)
-            brk: {
-                // TODO: consider moving this error into js_parser so it is caught more reliably
-                // Then we can assert(this.framework != null)
-                if (this.framework == null) {
-                    this.bundler.log.addErrorFmt(
-                        source,
-                        import_record.range.loc,
-                        this.graph.allocator,
-                        "The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle",
-                        .{},
-                    ) catch @panic("unexpected log error");
-                    continue;
-                }
-
-                const is_supported = this.framework.?.server_components != null and
-                    this.framework.?.server_components.?.separate_ssr_graph;
-                if (!is_supported) {
-                    this.bundler.log.addErrorFmt(
-                        source,
-                        import_record.range.loc,
-                        this.graph.allocator,
-                        "Framework does not have a separate SSR graph to put this import into",
-                        .{},
-                    ) catch @panic("unexpected log error");
-                    continue;
-                }
-
-                break :brk .{
-                    this.ssr_bundler,
-                    .ssr,
-                    .bake_server_components_ssr,
-                };
-            } else .{
-                this.bundlerForTarget(ast.target),
-                ast.target.bakeGraph(),
-                ast.target,
-            };
-
-            var had_busted_dir_cache = false;
-            var resolve_result = inner: while (true) break bundler.resolver.resolveWithFramework(
-                source_dir,
-                import_record.path.text,
-                import_record.kind,
-            ) catch |err| {
-                // Only perform directory busting when hot-reloading is enabled
-                if (err == error.ModuleNotFound) {
-                    if (this.bundler.options.dev_server) |dev| {
-                        if (!had_busted_dir_cache) {
-                            // Only re-query if we previously had something cached.
-                            if (bundler.resolver.bustDirCacheFromSpecifier(
-                                source.path.text,
-                                import_record.path.text,
-                            )) {
-                                had_busted_dir_cache = true;
-                                continue :inner;
-                            }
-                        }
-
-                        // Tell Bake's Dev Server to wait for the file to be imported.
-                        dev.directory_watchers.trackResolutionFailure(
-                            source.path.text,
-                            import_record.path.text,
-                            ast.target.bakeGraph(), // use the source file target not the altered one
-                        ) catch bun.outOfMemory();
+                    if (this.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @as(u32, @truncate(i)), ast.target)) {
+                        continue;
                     }
+
+                    resolveImportRecordForParseTask(this, pending_auto_install, parse_result, ast, source_dir, source, resolve_queue, &last_error, import_record);
                 }
-
-                // Disable failing packages from being printed.
-                // This may cause broken code to write.
-                // However, doing this means we tell them all the resolve errors
-                // Rather than just the first one.
-                import_record.path.is_disabled = true;
-
-                switch (err) {
-                    error.ModuleNotFound => {
-                        const addError = Logger.Log.addResolveErrorWithTextDupe;
-
-                        if (!import_record.handles_import_errors) {
-                            last_error = err;
-                            if (isPackagePath(import_record.path.text)) {
-                                if (ast.target == .browser and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                    addError(
-                                        this.bundler.log,
-                                        source,
-                                        import_record.range,
-                                        this.graph.allocator,
-                                        "Browser build cannot {s} Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
-                                        .{ import_record.kind.errorLabel(), import_record.path.text },
-                                        import_record.kind,
-                                    ) catch @panic("unexpected log error");
-                                } else {
-                                    addError(
-                                        this.bundler.log,
-                                        source,
-                                        import_record.range,
-                                        this.graph.allocator,
-                                        "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
-                                        .{import_record.path.text},
-                                        import_record.kind,
-                                    ) catch @panic("unexpected log error");
-                                }
-                            } else {
-                                addError(
-                                    this.bundler.log,
-                                    source,
-                                    import_record.range,
-                                    this.graph.allocator,
-                                    "Could not resolve: \"{s}\"",
-                                    .{
-                                        import_record.path.text,
-                                    },
-                                    import_record.kind,
-                                ) catch @panic("unexpected log error");
-                            }
-                        }
-                    },
-                    // assume other errors are already in the log
-                    else => {
-                        last_error = err;
-                    },
+            },
+            true => {
+                const import_records = ast.import_records.slice();
+                // only resolve for pending auto installs
+                for (this.pending_auto_installs.items(.import_record_id)[pending_auto_install.*.?.pending_auto_install_index..][0..pending_auto_install.*.?.pending_import_total]) |import_record_id| {
+                    const import_record = &import_records[import_record_id];
+                    resolveImportRecordForParseTask(this, pending_auto_install, parse_result, ast, source_dir, source, resolve_queue, &last_error, import_record);
                 }
-                continue :outer;
-            };
-            // if there were errors, lets go ahead and collect them all
-            if (last_error != null) continue;
-
-            const path: *Fs.Path = resolve_result.path() orelse {
-                import_record.path.is_disabled = true;
-                import_record.source_index = Index.invalid;
-
-                continue;
-            };
-
-            if (resolve_result.is_external) {
-                if (resolve_result.is_external_and_rewrite_import_path and !strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
-                    import_record.path = resolve_result.path_pair.primary;
-                }
-                import_record.is_external_without_side_effects = resolve_result.primary_side_effects_data != .has_side_effects;
-                continue;
-            }
-
-            if (this.bundler.options.dev_server) |dev_server| {
-                import_record.source_index = Index.invalid;
-                import_record.is_external_without_side_effects = true;
-
-                if (dev_server.isFileCached(path.text, renderer)) |entry| {
-                    const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-                    import_record.path.text = rel;
-                    import_record.path.pretty = rel;
-                    import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
-                    if (entry.kind == .css) {
-                        import_record.path.is_disabled = true;
-                    }
-                    continue;
-                }
-            }
-
-            const hash_key = path.hashKey();
-
-            if (this.pathToSourceIndexMap(target).get(hash_key)) |id| {
-                if (this.bundler.options.dev_server != null) {
-                    import_record.path = this.graph.input_files.items(.source)[id].path;
-                } else {
-                    import_record.source_index = Index.init(id);
-                }
-                continue;
-            }
-
-            const resolve_entry = resolve_queue.getOrPut(hash_key) catch bun.outOfMemory();
-            if (resolve_entry.found_existing) {
-                import_record.path = resolve_entry.value_ptr.*.path;
-                continue;
-            }
-
-            path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
-
-            var secondary_path_to_copy: ?Fs.Path = null;
-            if (resolve_result.path_pair.secondary) |*secondary| {
-                if (!secondary.is_disabled and
-                    secondary != path and
-                    !strings.eqlLong(secondary.text, path.text, true))
-                {
-                    secondary_path_to_copy = secondary.dupeAlloc(this.graph.allocator) catch bun.outOfMemory();
-                }
-            }
-
-            import_record.path = path.*;
-            debug("created ParseTask: {s}", .{path.text});
-
-            const resolve_task = bun.default_allocator.create(ParseTask) catch bun.outOfMemory();
-            resolve_task.* = ParseTask.init(&resolve_result, Index.invalid, this);
-            resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
-            resolve_task.known_target = target;
-            resolve_task.jsx = resolve_result.jsx;
-            resolve_task.jsx.development = this.bundlerForTarget(target).options.jsx.development;
-
-            if (import_record.tag.loader()) |loader| {
-                resolve_task.loader = loader;
-            }
-
-            if (resolve_task.loader == null) {
-                resolve_task.loader = path.loader(&this.bundler.options.loaders);
-                resolve_task.tree_shaking = this.bundler.options.tree_shaking;
-            }
-
-            resolve_entry.value_ptr.* = resolve_task;
+            },
         }
 
         if (last_error) |err| {
@@ -2736,8 +2551,482 @@ pub const BundleV2 = struct {
                 },
             };
         }
+    }
 
-        return resolve_queue;
+    const AutoInstall = struct {
+        /// null when the result had an error.
+        parse_task_result: ?*ParseTask.Result,
+
+        resolve_queue: ResolveQueue,
+        pending_import_count: u32,
+        pending_import_total: u32,
+        pending_auto_install_index: u32,
+
+        pub fn source(this: *const AutoInstall) *const Logger.Source {
+            return &this.parse_task_result.value.success.source;
+        }
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn deinit(this: *AutoInstall) void {
+            this.parse_task_result.deref();
+            this.resolve_queue.deinit();
+
+            this.destroy();
+        }
+
+        pub fn onPackageDownloadError(
+            this: *BundleV2,
+            package_id: Install.PackageID,
+            name: []const u8,
+            resolution: *const Install.Resolution,
+            err: anyerror,
+            url: []const u8,
+        ) void {
+            debug("onPackageDownloadError: {s}", .{@errorName(err)});
+            _ = this; // autofix
+            _ = package_id; // autofix
+            _ = name; // autofix
+            _ = resolution; // autofix
+            _ = url; // autofix
+        }
+
+        pub fn onPackageManifestError(
+            this: *BundleV2,
+            name: []const u8,
+            err: anyerror,
+            url: []const u8,
+        ) void {
+            debug("onPackageManifestError: {s}", .{@errorName(err)});
+            _ = this; // autofix
+            _ = name; // autofix
+            _ = url; // autofix
+        }
+
+        pub fn onResolve(_: *BundleV2) void {
+            debug("onResolve", .{});
+        }
+
+        pub fn runTasks(this: *BundleV2) void {
+            var pm = this.packageManager();
+
+            if (Output.enable_ansi_colors_stderr) {
+                pm.startProgressBarIfNone();
+                pm.runTasks(
+                    *BundleV2,
+                    this,
+                    .{
+                        .onExtract = {},
+                        .onResolve = AutoInstall.onResolve,
+                        .onPackageManifestError = AutoInstall.onPackageManifestError,
+                        .onPackageDownloadError = AutoInstall.onPackageDownloadError,
+                        .progress_bar = true,
+                    },
+                    true,
+                    Install.PackageManager.Options.LogLevel.default,
+                ) catch unreachable;
+            } else {
+                pm.runTasks(
+                    *BundleV2,
+                    this,
+                    .{
+                        .onExtract = {},
+                        .onResolve = AutoInstall.onResolve,
+                        .onPackageManifestError = AutoInstall.onPackageManifestError,
+                        .onPackageDownloadError = AutoInstall.onPackageDownloadError,
+                    },
+                    true,
+                    Install.PackageManager.Options.LogLevel.default_no_progress,
+                ) catch unreachable;
+            }
+        }
+
+        pub fn onWakeHandler(ctx: *anyopaque, _: *Install.PackageManager) void {
+            debug("onWake", .{});
+            var this = bun.cast(*BundleV2, ctx);
+            this.loop().wakeup();
+        }
+
+        pub fn onDependencyError(ctx: *anyopaque, dependency: *const Install.Dependency, root_dependency_id: Install.DependencyID, err: anyerror) void {
+            _ = root_dependency_id; // autofix
+
+            var this = bun.cast(*BundleV2, ctx);
+            debug("onDependencyError: {s} {s}", .{ this.packageManager().lockfile.str(&dependency.name), @errorName(err) });
+        }
+
+        pub fn onPoll(this: *BundleV2) void {
+            debug("onPoll", .{});
+            runTasks(this);
+            pollPendingAutoInstalls(this);
+        }
+
+        fn pollPendingAutoInstalls(this: *BundleV2) void {
+            var pm = this.packageManager();
+
+            var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+            const allocator = stack_fallback.get();
+
+            // We queue these so that we don't risk resizing the pending_installs list while we're iterating over it.
+            var auto_installs_run_queue: std.ArrayList(*AutoInstall) = std.ArrayList(*AutoInstall).init(allocator);
+            defer auto_installs_run_queue.deinit();
+
+            const pending_install_slice = this.pending_auto_installs.slice();
+            const tags = pending_install_slice.items(.tag);
+            const root_dependency_ids = pending_install_slice.items(.root_dependency_id);
+            const auto_installs = pending_install_slice.items(.user_data);
+
+            var prev_auto_install: ?*AutoInstall = null;
+            var prev_auto_install_index: usize = 0;
+            var prev_done_count: usize = 0;
+            var any_pending = false;
+
+            // This is a flat list.
+            // So the first time we see a new *AutoInstall, it's contiguous.
+            // Each import for an auto-install comes after another.
+            for (tags, auto_installs, 0..) |tag, user_data_ptr, tag_i| {
+                const auto_install: *AutoInstall = bun.cast(*AutoInstall, user_data_ptr);
+                const root_id = root_dependency_ids[tag_i];
+                const resolution_ids = pm.lockfile.buffers.resolutions.items;
+                if (root_id >= resolution_ids.len or auto_install.pending_import_count == 0) continue;
+                const package_id = resolution_ids[root_id];
+
+                if (prev_auto_install == null or (prev_auto_install.? != auto_install)) {
+                    prev_auto_install_index = tag_i;
+                    prev_auto_install = auto_install;
+                    prev_done_count = 0;
+                }
+
+                switch (tag) {
+                    .resolve => {
+                        if (package_id == Install.invalid_package_id) {
+                            continue;
+                        }
+                        any_pending = true;
+
+                        // if we get here, the package has already been resolved.
+                        tags[tag_i] = .download;
+                    },
+                    .download => {
+                        any_pending = true;
+                        if (package_id == Install.invalid_package_id) {
+                            unreachable;
+                        }
+                    },
+                    .done => {},
+                }
+
+                if (package_id == Install.invalid_package_id) {
+                    continue;
+                }
+
+                const package = pm.lockfile.packages.get(package_id);
+                bun.assert(package.resolution.tag != .root);
+
+                var name_and_version_hash: ?u64 = null;
+                var patchfile_hash: ?u64 = null;
+                switch (pm.determinePreinstallState(package, pm.lockfile, &name_and_version_hash, &patchfile_hash)) {
+                    .done => {
+                        // we are only truly done if all the dependencies are done.
+                        const current_tasks = pm.total_tasks;
+                        // so if enqueuing all the dependencies produces no new tasks, we are done.
+                        pm.enqueueDependencyList(package.dependencies);
+                        if (current_tasks == pm.total_tasks) {
+                            tags[tag_i] = .done;
+                            prev_done_count += 1;
+
+                            const remaining_auto_installs = auto_install.pending_import_count;
+                            const auto_installs_traversed = tag_i - prev_auto_install_index;
+                            const has_visited_all_import_records_for_this_auto_install = auto_installs_traversed == remaining_auto_installs;
+                            if (has_visited_all_import_records_for_this_auto_install and prev_done_count == remaining_auto_installs) {
+                                if (auto_install.parse_task_result != null) {
+                                    debug("Auto installs for {s} are done", .{auto_install.source().path.text});
+                                }
+
+                                // Mark as no longer pending
+                                auto_install.pending_import_count = 0;
+                                auto_installs_run_queue.append(auto_install) catch bun.outOfMemory();
+                            }
+                        } else {
+                            any_pending = true;
+                        }
+                    },
+                    .extracting => {
+                        any_pending = true;
+                        // we are extracting the package
+                        // we need to wait for the next poll
+                        continue;
+                    },
+                    .extract => {
+                        any_pending = true;
+                    },
+                    else => {},
+                }
+            }
+
+            if (!any_pending) {
+                pm.endProgressBar();
+            }
+
+            for (auto_installs_run_queue.items) |auto_install| {
+                this.onParseTaskCompleteWithAutoInstall(auto_install.parse_task_result, this, &auto_install);
+            }
+        }
+    };
+
+    pub fn packageManager(this: *BundleV2) *Install.PackageManager {
+        return this.bundler.resolver.getPackageManager();
+    }
+
+    fn resolveImportRecordForParseTask(
+        this: *BundleV2,
+        pending_auto_install: *?*AutoInstall,
+        parse_task: *ParseTask.Result,
+        ast: *js_ast.BundledAst,
+        source_dir: []const u8,
+        source: *const Logger.Source,
+        resolve_queue: *ResolveQueue,
+        last_error: *?anyerror,
+        import_record: *ImportRecord,
+    ) void {
+        const bundler, const renderer: bake.Graph, const target =
+            if (import_record.tag == .bake_resolve_to_ssr_graph)
+        brk: {
+            // TODO: consider moving this error into js_parser so it is caught more reliably
+            // Then we can assert(this.framework != null)
+            if (this.framework == null) {
+                this.bundler.log.addErrorFmt(
+                    source,
+                    import_record.range.loc,
+                    this.graph.allocator,
+                    "The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle",
+                    .{},
+                ) catch @panic("unexpected log error");
+                return;
+            }
+
+            const is_supported = this.framework.?.server_components != null and
+                this.framework.?.server_components.?.separate_ssr_graph;
+            if (!is_supported) {
+                this.bundler.log.addErrorFmt(
+                    source,
+                    import_record.range.loc,
+                    this.graph.allocator,
+                    "Framework does not have a separate SSR graph to put this import into",
+                    .{},
+                ) catch @panic("unexpected log error");
+                return;
+            }
+
+            break :brk .{
+                this.ssr_bundler,
+                .ssr,
+                .bake_server_components_ssr,
+            };
+        } else .{
+            this.bundlerForTarget(ast.target),
+            ast.target.bakeGraph(),
+            ast.target,
+        };
+
+        var had_busted_dir_cache = false;
+
+        var resolve_result = inner: while (true) break switch (bundler.resolver.resolveWithFrameworkAndAutoInstall(
+            source_dir,
+            import_record.path.text,
+            import_record.kind,
+        )) {
+            .success => |result| result,
+            .pending => |pending_| {
+                debug("pending import: {s} (via {s})", .{
+                    import_record.path.pretty,
+                    source.path.pretty,
+                });
+
+                if (pending_auto_install.* == null) {
+                    pending_auto_install.* = AutoInstall.new(.{
+                        .parse_task_result = parse_task,
+                        .resolve_queue = resolve_queue.*,
+                        .pending_import_count = 1,
+                        .pending_import_total = 1,
+                        .pending_auto_install_index = @truncate(this.pending_auto_installs.len),
+                    });
+                } else {
+                    pending_auto_install.*.?.pending_import_count += 1;
+                }
+
+                var pending = pending_;
+                pending.user_data = pending_auto_install.*.?;
+
+                this.pending_auto_installs.append(this.graph.allocator, pending) catch bun.outOfMemory();
+                return;
+            },
+            .not_found => {
+                // Disable failing packages from being printed.
+                // This may cause broken code to write.
+                // However, doing this means we tell them all the resolve errors
+                // Rather than just the first one.
+                import_record.path.is_disabled = true;
+
+                if (this.bundler.options.dev_server) |dev| {
+                    if (!had_busted_dir_cache) {
+                        // Only re-query if we previously had something cached.
+                        if (bundler.resolver.bustDirCacheFromSpecifier(
+                            source.path.text,
+                            import_record.path.text,
+                        )) {
+                            had_busted_dir_cache = true;
+                            continue :inner;
+                        }
+                    }
+
+                    // Tell Bake's Dev Server to wait for the file to be imported.
+                    dev.directory_watchers.trackResolutionFailure(
+                        source.path.text,
+                        import_record.path.text,
+                        ast.target.bakeGraph(), // use the source file target not the altered one
+                    ) catch bun.outOfMemory();
+                }
+
+                const addError = Logger.Log.addResolveErrorWithTextDupe;
+
+                if (!import_record.handles_import_errors) {
+                    last_error.* = error.ModuleNotFound;
+                    if (isPackagePath(import_record.path.text)) {
+                        if (ast.target == .browser and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                            addError(
+                                this.bundler.log,
+                                source,
+                                import_record.range,
+                                this.graph.allocator,
+                                "Browser build cannot {s} Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
+                                .{ import_record.kind.errorLabel(), import_record.path.text },
+                                import_record.kind,
+                            ) catch @panic("unexpected log error");
+                        } else {
+                            addError(
+                                this.bundler.log,
+                                source,
+                                import_record.range,
+                                this.graph.allocator,
+                                "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
+                                .{import_record.path.text},
+                                import_record.kind,
+                            ) catch @panic("unexpected log error");
+                        }
+                    } else {
+                        addError(
+                            this.bundler.log,
+                            source,
+                            import_record.range,
+                            this.graph.allocator,
+                            "Could not resolve: \"{s}\"",
+                            .{
+                                import_record.path.text,
+                            },
+                            import_record.kind,
+                        ) catch @panic("unexpected log error");
+                    }
+                }
+
+                return;
+            },
+            .failure => |err| {
+
+                // Disable failing packages from being printed.
+                // This may cause broken code to write.
+                // However, doing this means we tell them all the resolve errors
+                // Rather than just the first one.
+                import_record.path.is_disabled = true;
+
+                // assume other errors are already in the log
+                last_error.* = err;
+                return;
+            },
+        };
+
+        // if there were errors, lets go ahead and collect them all
+        if (last_error.* != null) return;
+
+        const path: *Fs.Path = resolve_result.path() orelse {
+            import_record.path.is_disabled = true;
+            import_record.source_index = Index.invalid;
+
+            return;
+        };
+
+        if (resolve_result.is_external) {
+            if (resolve_result.is_external_and_rewrite_import_path and !strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
+                import_record.path = resolve_result.path_pair.primary;
+            }
+            import_record.is_external_without_side_effects = resolve_result.primary_side_effects_data != .has_side_effects;
+            return;
+        }
+
+        if (this.bundler.options.dev_server) |dev_server| {
+            import_record.source_index = Index.invalid;
+            import_record.is_external_without_side_effects = true;
+
+            if (dev_server.isFileCached(path.text, renderer)) |entry| {
+                const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
+                import_record.path.text = rel;
+                import_record.path.pretty = rel;
+                import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
+                if (entry.kind == .css) {
+                    import_record.path.is_disabled = true;
+                }
+                return;
+            }
+        }
+
+        const hash_key = path.hashKey();
+
+        if (this.pathToSourceIndexMap(target).get(hash_key)) |id| {
+            if (this.bundler.options.dev_server != null) {
+                import_record.path = this.graph.input_files.items(.source)[id].path;
+            } else {
+                import_record.source_index = Index.init(id);
+            }
+            return;
+        }
+
+        const resolve_entry = resolve_queue.getOrPut(hash_key) catch bun.outOfMemory();
+        if (resolve_entry.found_existing) {
+            import_record.path = resolve_entry.value_ptr.*.path;
+            return;
+        }
+
+        path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
+
+        var secondary_path_to_copy: ?Fs.Path = null;
+        if (resolve_result.path_pair.secondary) |*secondary| {
+            if (!secondary.is_disabled and
+                secondary != path and
+                !strings.eqlLong(secondary.text, path.text, true))
+            {
+                secondary_path_to_copy = secondary.dupeAlloc(this.graph.allocator) catch bun.outOfMemory();
+            }
+        }
+
+        import_record.path = path.*;
+        debug("created ParseTask: {s}", .{path.text});
+
+        const resolve_task = bun.default_allocator.create(ParseTask) catch bun.outOfMemory();
+        resolve_task.* = ParseTask.init(&resolve_result, Index.invalid, this);
+        resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
+        resolve_task.known_target = target;
+        resolve_task.jsx = resolve_result.jsx;
+        resolve_task.jsx.development = this.bundlerForTarget(target).options.jsx.development;
+
+        if (import_record.tag.loader()) |loader| {
+            resolve_task.loader = loader;
+        }
+
+        if (resolve_task.loader == null) {
+            resolve_task.loader = path.loader(&this.bundler.options.loaders);
+            resolve_task.tree_shaking = this.bundler.options.tree_shaking;
+        }
+
+        resolve_entry.value_ptr.* = resolve_task;
     }
 
     const ResolveQueue = std.AutoArrayHashMap(u64, *ParseTask);
@@ -2753,11 +3042,54 @@ pub const BundleV2 = struct {
     }
 
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
+        var pending_auto_install: ?*AutoInstall = null;
+        onParseTaskCompleteWithAutoInstall(parse_result, this, &pending_auto_install);
+    }
+
+    pub fn onParseTaskCompleteWithAutoInstall(parse_result: *ParseTask.Result, this: *BundleV2, pending_auto_install: *?*AutoInstall) void {
         const trace = tracer(@src(), "onParseTaskComplete");
         defer trace.end();
-        defer bun.default_allocator.destroy(parse_result);
+        defer parse_result.deref();
 
         const graph = &this.graph;
+
+        var resolve_queue = ResolveQueue.init(this.graph.allocator);
+        defer resolve_queue.deinit();
+
+        if (pending_auto_install.*) |pending| {
+            resolve_queue = pending.resolve_queue;
+        }
+
+        var process_log = true;
+
+        if (parse_result.value == .success) {
+            switch (pending_auto_install.* != null) {
+                inline else => |only_resolve_pending_auto_installs| runResolutionForParseTask(parse_result, this, &resolve_queue, only_resolve_pending_auto_installs, pending_auto_install),
+            }
+
+            if (parse_result.value == .err) {
+                process_log = false;
+            }
+
+            if (pending_auto_install.*) |pending| {
+                if (pending.pending_import_count > 0) {
+                    pending.pending_import_total = pending.pending_import_count;
+                    if (parse_result.value == .success) {
+                        // To be resumed later.
+                        pending.parse_task_result = parse_result;
+                        pending.resolve_queue = resolve_queue;
+                        resolve_queue = ResolveQueue.init(this.graph.allocator);
+                        parse_result.ref();
+                        return;
+                    } else {
+                        // Parse task had an error. We will have to continue the
+                        // installation process for now, but we will just discard
+                        // the result once it's done. TODO: defer enqueuing installs.
+                        pending.parse_task_result = null;
+                    }
+                }
+            }
+        }
 
         var diff: i32 = -1;
         defer {
@@ -2765,17 +3097,6 @@ pub const BundleV2 = struct {
             graph.pending_items = @intCast(@as(i32, @intCast(graph.pending_items)) + diff);
             if (diff < 0)
                 this.onAfterDecrementScanCounter();
-        }
-
-        var resolve_queue = ResolveQueue.init(this.graph.allocator);
-        defer resolve_queue.deinit();
-        var process_log = true;
-
-        if (parse_result.value == .success) {
-            resolve_queue = runResolutionForParseTask(parse_result, this);
-            if (parse_result.value == .err) {
-                process_log = false;
-            }
         }
 
         // To minimize contention, watchers are appended by the bundler thread.
@@ -3291,6 +3612,9 @@ pub const ParseTask = struct {
         ctx: *BundleV2,
         value: Value,
         watcher_data: WatcherData,
+        ref_count: u32 = 1,
+
+        pub usingnamespace bun.NewRefCounted(@This(), null);
 
         pub const Value = union(enum) {
             success: Success,
@@ -3996,7 +4320,6 @@ pub const ParseTask = struct {
         var log = Logger.Log.init(worker.allocator);
         bun.assert(this.source_index.isValid()); // forgot to set source_index
 
-        const result = bun.default_allocator.create(Result) catch bun.outOfMemory();
         const value: ParseTask.Result.Value = if (run(this, worker, &step, &log)) |ast| value: {
             // When using HMR, always flag asts with errors as parse failures.
             // Not done outside of the dev server out of fear of breaking existing code.
@@ -4029,7 +4352,8 @@ pub const ParseTask = struct {
                 .target = this.known_target,
             } };
         };
-        result.* = .{
+
+        const result = Result.new(.{
             .ctx = this.ctx,
             .task = undefined,
             .value = value,
@@ -4037,7 +4361,7 @@ pub const ParseTask = struct {
                 .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else bun.invalid_fd,
                 .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else bun.invalid_fd,
             },
-        };
+        });
 
         switch (worker.ctx.loop().*) {
             .js => |jsc_event_loop| {
@@ -4506,6 +4830,8 @@ pub const Graph = struct {
 
     kit_referenced_server_data: bool,
     kit_referenced_client_data: bool,
+
+    auto_install_pending_imports: _resolver.PendingResolution.List = .{},
 
     pub const InputFile = struct {
         source: Logger.Source,

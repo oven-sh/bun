@@ -3082,8 +3082,8 @@ pub const PackageManager = struct {
             return bun.cast(*const fn (ctx: *anyopaque, pm: *PackageManager) void, t.handler);
         }
 
-        pub inline fn getonDependencyError(t: @This()) *const fn (ctx: *anyopaque, Dependency, DependencyID, anyerror) void {
-            return bun.cast(*const fn (ctx: *anyopaque, Dependency, DependencyID, anyerror) void, t.handler);
+        pub inline fn getonDependencyError(t: @This()) *const fn (ctx: *anyopaque, *const Dependency, DependencyID, anyerror) void {
+            return bun.cast(*const fn (ctx: *anyopaque, *const Dependency, DependencyID, anyerror) void, t.handler);
         }
     };
 
@@ -3091,7 +3091,7 @@ pub const PackageManager = struct {
         if (this.onWake.context) |ctx| {
             this.onWake.getonDependencyError()(
                 ctx,
-                dependency.*,
+                dependency,
                 dependency_id,
                 err,
             );

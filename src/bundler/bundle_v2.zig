@@ -961,8 +961,12 @@ pub const BundleV2 = struct {
         this.bundler.resolver.env_loader = this.bundler.env;
 
         this.linker.dev_server = bundler.options.dev_server;
+        this.linker.options.skip_file_path_comments = this.linker.options.minify_whitespace;
 
         if (this.bundler.options.global_cache.isEnabled()) {
+            // If we allow file path comments, then you get file paths to ~/.bun/install/cache/lodash@4.17.21@@1/...
+            // which is not a great developer experience, and bad in CI.
+            this.linker.options.skip_file_path_comments = true;
             bun.http.HTTPThread.init(&.{});
             this.bundler.resolver.package_manager = bun.PackageManager.initWithEventLoop(
                 JSC.EventLoopHandle.init(&this.linker.loop),
@@ -2541,15 +2545,17 @@ pub const BundleV2 = struct {
                         continue;
                     }
 
-                    resolveImportRecordForParseTask(this, pending_auto_install, parse_result, ast, source_dir, source, resolve_queue, &last_error, import_record);
+                    resolveImportRecordForParseTask(this, pending_auto_install, parse_result, ast, source_dir, source, resolve_queue, &last_error, import_record, @truncate(i));
                 }
             },
             true => {
                 const import_records = ast.import_records.slice();
+                pending_auto_install.*.?.pending_import_count = 0;
+
                 // only resolve for pending auto installs
                 for (this.pending_auto_installs.items(.import_record_id)[pending_auto_install.*.?.pending_auto_install_index..][0..pending_auto_install.*.?.pending_import_total]) |import_record_id| {
                     const import_record = &import_records[import_record_id];
-                    resolveImportRecordForParseTask(this, pending_auto_install, parse_result, ast, source_dir, source, resolve_queue, &last_error, import_record);
+                    resolveImportRecordForParseTask(this, pending_auto_install, parse_result, ast, source_dir, source, resolve_queue, &last_error, import_record, import_record_id);
                 }
             },
         }
@@ -2619,8 +2625,21 @@ pub const BundleV2 = struct {
             _ = url; // autofix
         }
 
-        pub fn onResolve(_: *BundleV2) void {
+        pub fn onResolve(this: *BundleV2) void {
             debug("onResolve", .{});
+            _ = pollPendingAutoInstalls(this);
+        }
+
+        pub fn onExtract(
+            this: *BundleV2,
+            dependency_id: Install.DependencyID,
+            data: *const Install.ExtractData,
+            comptime log_level: Install.PackageManager.Options.LogLevel,
+        ) void {
+            _ = dependency_id; // autofix
+            _ = data; // autofix
+            _ = log_level; // autofix
+            _ = pollPendingAutoInstalls(this);
         }
 
         pub fn runTasks(this: *BundleV2) void {
@@ -2632,8 +2651,8 @@ pub const BundleV2 = struct {
                     *BundleV2,
                     this,
                     .{
-                        .onExtract = {},
-                        .onResolve = AutoInstall.onResolve,
+                        .onExtract = AutoInstall.onExtract,
+                        .onResolve = {},
                         .onPackageManifestError = AutoInstall.onPackageManifestError,
                         .onPackageDownloadError = AutoInstall.onPackageDownloadError,
                         .progress_bar = true,
@@ -2646,8 +2665,8 @@ pub const BundleV2 = struct {
                     *BundleV2,
                     this,
                     .{
-                        .onExtract = {},
-                        .onResolve = AutoInstall.onResolve,
+                        .onExtract = AutoInstall.onExtract,
+                        .onResolve = {},
                         .onPackageManifestError = AutoInstall.onPackageManifestError,
                         .onPackageDownloadError = AutoInstall.onPackageDownloadError,
                     },
@@ -2672,6 +2691,7 @@ pub const BundleV2 = struct {
 
         pub fn hasAnyPendingAutoInstallsAfterPoll(this: *BundleV2) bool {
             debug("onPoll", .{});
+            _ = pollPendingAutoInstalls(this);
             runTasks(this);
             return pollPendingAutoInstalls(this);
         }
@@ -2714,10 +2734,10 @@ pub const BundleV2 = struct {
 
                 switch (tag) {
                     .resolve => {
+                        any_pending = true;
                         if (package_id == Install.invalid_package_id) {
                             continue;
                         }
-                        any_pending = true;
 
                         // if we get here, the package has already been resolved.
                         tags[tag_i] = .download;
@@ -2735,35 +2755,27 @@ pub const BundleV2 = struct {
                     continue;
                 }
 
-                const package = pm.lockfile.packages.get(package_id);
+                const package = &pm.lockfile.packages.get(package_id);
                 bun.assert(package.resolution.tag != .root);
 
                 var name_and_version_hash: ?u64 = null;
                 var patchfile_hash: ?u64 = null;
-                switch (pm.determinePreinstallState(package, pm.lockfile, &name_and_version_hash, &patchfile_hash)) {
+                switch (pm.determinePreinstallStateAndPossiblyDownloadPackageIntoCache(package, root_id, pm.lockfile, &name_and_version_hash, &patchfile_hash)) {
                     .done => {
-                        // we are only truly done if all the dependencies are done.
-                        const current_tasks = pm.total_tasks;
-                        // so if enqueuing all the dependencies produces no new tasks, we are done.
-                        pm.enqueueDependencyList(package.dependencies);
-                        if (current_tasks == pm.total_tasks) {
-                            tags[tag_i] = .done;
-                            prev_done_count += 1;
+                        tags[tag_i] = .done;
+                        prev_done_count += 1;
 
-                            const remaining_auto_installs = auto_install.pending_import_count;
-                            const auto_installs_traversed = tag_i - prev_auto_install_index;
-                            const has_visited_all_import_records_for_this_auto_install = auto_installs_traversed == remaining_auto_installs;
-                            if (has_visited_all_import_records_for_this_auto_install and prev_done_count == remaining_auto_installs) {
-                                if (auto_install.parse_task_result != null) {
-                                    debug("Auto installs for {s} are done", .{auto_install.source().path.text});
-                                }
-
-                                // Mark as no longer pending
-                                auto_install.pending_import_count = 0;
-                                auto_installs_run_queue.append(auto_install) catch bun.outOfMemory();
+                        const remaining_auto_installs = auto_install.pending_import_count;
+                        const auto_installs_traversed = (tag_i - prev_auto_install_index) + 1;
+                        const has_visited_all_import_records_for_this_auto_install = auto_installs_traversed == remaining_auto_installs;
+                        if (has_visited_all_import_records_for_this_auto_install and prev_done_count == remaining_auto_installs) {
+                            if (auto_install.parse_task_result != null) {
+                                debug("Auto installs for {s} are done", .{auto_install.source().path.text});
                             }
-                        } else {
-                            any_pending = true;
+
+                            // Mark as no longer pending
+                            auto_install.pending_import_count = 0;
+                            auto_installs_run_queue.append(auto_install) catch bun.outOfMemory();
                         }
                     },
                     .extracting => {
@@ -2781,11 +2793,13 @@ pub const BundleV2 = struct {
 
             if (!any_pending) {
                 pm.endProgressBar();
+            } else {
+                pm.flushDependencyQueue();
             }
 
             for (auto_installs_run_queue.items) |auto_install_const| {
                 var auto_install: ?*AutoInstall = auto_install_const;
-                onParseTaskCompleteWithAutoInstall(auto_install.*.parse_task_result.?, this, &auto_install);
+                onParseTaskCompleteWithAutoInstall(auto_install.?.*.parse_task_result.?, this, &auto_install);
             }
 
             return any_pending;
@@ -2806,6 +2820,7 @@ pub const BundleV2 = struct {
         resolve_queue: *ResolveQueue,
         last_error: *?anyerror,
         import_record: *ImportRecord,
+        import_record_id: u32,
     ) void {
         const bundler, const renderer: bake.Graph, const target =
             if (import_record.tag == .bake_resolve_to_ssr_graph)
@@ -2875,6 +2890,7 @@ pub const BundleV2 = struct {
 
                 var pending = pending_;
                 pending.user_data = pending_auto_install.*.?;
+                pending.import_record_id = import_record_id;
 
                 this.pending_auto_installs.append(this.graph.allocator, pending) catch bun.outOfMemory();
                 return;
@@ -5443,6 +5459,7 @@ pub const LinkerContext = struct {
         minify_whitespace: bool = false,
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
+        skip_file_path_comments: bool = false,
         banner: []const u8 = "",
         footer: []const u8 = "",
         experimental_css: bool = false,
@@ -9631,7 +9648,7 @@ pub const LinkerContext = struct {
         compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len) catch bun.outOfMemory();
 
         const show_comments = c.options.mode == .bundle and
-            !c.options.minify_whitespace;
+            !c.options.skip_file_path_comments;
 
         const emit_targets_in_commands = show_comments and (if (ctx.c.framework) |fw| fw.server_components != null else false);
 

@@ -285,7 +285,7 @@ pub const Arguments = struct {
         clap.parseParam("--experimental-css               Enabled experimental CSS bundling") catch unreachable,
         clap.parseParam("--experimental-css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an affect when multiple entrypoints import CSS") catch unreachable,
         clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
-        clap.parseParam("--auto-install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
+        clap.parseParam("--auto-install <STR>?             Configure auto-install behavior. One of \"auto\" (auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always), \"disable\" (default, no auto-installs).") catch unreachable,
         clap.parseParam("-i                                Auto-install dependencies during execution. Equivalent to --install=fallback.") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
@@ -846,6 +846,8 @@ pub const Arguments = struct {
                     Output.errGeneric("Invalid value for --auto-install: \"{s}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n", .{enum_value});
                     Global.exit(1);
                 }
+            } else {
+                ctx.debug.global_cache = .disable;
             }
 
             if (args.options("--external").len > 0) {

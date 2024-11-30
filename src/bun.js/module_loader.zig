@@ -1016,7 +1016,7 @@ pub const ModuleLoader = struct {
                             continue;
                         }
 
-                        const package = pm.lockfile.packages.get(package_id);
+                        const package = &pm.lockfile.packages.get(package_id);
                         bun.assert(package.resolution.tag != .root);
 
                         var name_and_version_hash: ?u64 = null;

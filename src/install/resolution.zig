@@ -342,7 +342,10 @@ pub const Resolution = extern struct {
         }
 
         pub fn canEnqueueInstallTask(this: Tag) bool {
-            return this == .npm or this == .local_tarball or this == .remote_tarball or this == .git or this == .github;
+            return switch (this) {
+                .npm, .local_tarball, .remote_tarball, .git, .github, .gitlab => true,
+                else => false,
+            };
         }
     };
 };

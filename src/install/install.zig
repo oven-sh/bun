@@ -3166,49 +3166,48 @@ pub const PackageManager = struct {
             if (comptime Environment.allow_assert) bun.assert(this.lockfile.buffers.dependencies.items.len == this.lockfile.buffers.resolutions.items.len);
             break :brk .{ @truncate(index), false };
         };
+        _ = is_newly_added; // autofix
 
         const initial_pending_task_count = this.pendingTaskCount();
+        _ = initial_pending_task_count; // autofix
 
-        if (this.lockfile.buffers.resolutions.items[dep_id] == invalid_package_id) {
+        var resolution_id = this.lockfile.buffers.resolutions.items[dep_id];
+        if (resolution_id == invalid_package_id) {
             this.enqueueDependencyWithMainAndSuccessFn(
                 dep_id,
                 &this.lockfile.buffers.dependencies.items[dep_id],
-                invalid_package_id,
+                resolution_id,
                 false,
                 assignRootResolution,
                 failRootResolution,
             ) catch |err| {
                 return .{ .failure = err };
             };
+            // We might immediately resolve it.
+            resolution_id = this.lockfile.buffers.resolutions.items[dep_id];
         }
 
-        const resolution_id = switch (this.lockfile.buffers.resolutions.items[dep_id]) {
-            invalid_package_id => brk: {
-                this.drainDependencyList();
+        this.drainDependencyList();
 
-                break :brk this.lockfile.buffers.resolutions.items[dep_id];
-            },
-            // we managed to synchronously resolve the dependency
-            else => |pkg_id| pkg_id,
-        };
-
-        if (resolution_id == invalid_package_id and (!is_newly_added or this.pendingTaskCount() > initial_pending_task_count)) {
-            bun.assert(this.pendingTaskCount() > 0);
-            return .{ .pending = dep_id };
+        var out_name_and_version_hash: ?u64 = null;
+        var out_patchfile_hash: ?u64 = null;
+        if (resolution_id != invalid_package_id) {
+            switch (this.determinePreinstallStateAndPossiblyDownloadPackageIntoCache(&this.lockfile.packages.get(resolution_id), dep_id, this.lockfile, &out_name_and_version_hash, &out_patchfile_hash)) {
+                .extract, .extracting => {
+                    return .{ .pending = dep_id };
+                },
+                else => {
+                    return .{
+                        .resolution = .{
+                            .resolution = this.lockfile.packages.items(.resolution)[resolution_id],
+                            .package_id = resolution_id,
+                        },
+                    };
+                },
+            }
         }
 
-        if (resolution_id == invalid_package_id) {
-            return .{
-                .not_found = {},
-            };
-        }
-
-        return .{
-            .resolution = .{
-                .resolution = this.lockfile.packages.items(.resolution)[resolution_id],
-                .package_id = resolution_id,
-            },
-        };
+        return .{ .pending = dep_id };
     }
 
     pub fn globalLinkDir(this: *PackageManager) !std.fs.Dir {
@@ -3287,7 +3286,7 @@ pub const PackageManager = struct {
 
     pub fn determinePreinstallState(
         manager: *PackageManager,
-        this: Package,
+        this: *const Package,
         lockfile: *Lockfile,
         out_name_and_version_hash: *?u64,
         out_patchfile_hash: *?u64,
@@ -3367,6 +3366,94 @@ pub const PackageManager = struct {
 
                 manager.setPreinstallState(this.meta.id, lockfile, .extract);
                 return .extract;
+            },
+            else => |val| return val,
+        }
+    }
+
+    pub fn determinePreinstallStateAndPossiblyDownloadPackageIntoCache(
+        manager: *PackageManager,
+        this: *const Package,
+        dependency_id: DependencyID,
+        lockfile: *Lockfile,
+        out_name_and_version_hash: *?u64,
+        out_patchfile_hash: *?u64,
+    ) PreinstallState {
+        switch (manager.getPreinstallState(this.meta.id)) {
+            .unknown => switch (manager.determinePreinstallState(this, lockfile, out_name_and_version_hash, out_patchfile_hash)) {
+                .extract => {
+                    if (this.resolution.tag.canEnqueueInstallTask()) {
+                        switch (this.resolution.tag) {
+                            .git => {
+                                manager.enqueueGitForCheckout(
+                                    dependency_id,
+                                    "",
+                                    &this.resolution,
+                                    .{ .root_dependency = dependency_id },
+                                    out_name_and_version_hash.*,
+                                );
+                            },
+                            .github => {
+                                const url = manager.allocGitHubURL(&this.resolution.value.github);
+                                defer manager.allocator.free(url);
+                                manager.enqueueTarballForDownload(
+                                    dependency_id,
+                                    this.meta.id,
+                                    url,
+                                    .{ .root_dependency = dependency_id },
+                                    out_name_and_version_hash.*,
+                                );
+                            },
+                            .local_tarball => {
+                                manager.enqueueTarballForReading(
+                                    dependency_id,
+                                    "",
+                                    &this.resolution,
+                                    .{ .root_dependency = dependency_id },
+                                );
+                            },
+                            .remote_tarball => {
+                                manager.enqueueTarballForDownload(
+                                    dependency_id,
+                                    this.meta.id,
+                                    manager.lockfile.str(&this.resolution.value.remote_tarball),
+                                    .{ .root_dependency = dependency_id },
+                                    out_name_and_version_hash.*,
+                                );
+                            },
+                            .npm => {
+                                if (comptime Environment.isDebug) {
+                                    // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
+                                    // This caused bugs. We can't assert on it because they could come from old lockfiles
+                                    if (this.resolution.value.npm.url.isEmpty()) {
+                                        Output.debugWarn("package {s}@{} missing tarball_url", .{ manager.lockfile.str(&this.name), this.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .posix) });
+                                    }
+                                }
+
+                                manager.enqueuePackageForDownload(
+                                    manager.lockfile.str(&this.name),
+                                    dependency_id,
+                                    this.meta.id,
+                                    this.resolution.value.npm.version,
+                                    manager.lockfile.str(&this.resolution.value.npm.url),
+                                    .{ .root_dependency = dependency_id },
+                                    out_name_and_version_hash.*,
+                                );
+                            },
+                            else => {
+                                if (comptime Environment.allow_assert) {
+                                    @panic("unreachable, handled above");
+                                }
+                            },
+                        }
+
+                        manager.setPreinstallState(this.meta.id, lockfile, .extracting);
+                        return .extracting;
+                    }
+
+                    return .extract;
+                },
+                else => |val| return val,
             },
             else => |val| return val,
         }
@@ -4213,7 +4300,7 @@ pub const PackageManager = struct {
         var patchfile_hash: ?u64 = null;
 
         return switch (this.determinePreinstallState(
-            package,
+            &package,
             this.lockfile,
             &name_and_version_hash,
             &patchfile_hash,
@@ -6210,6 +6297,7 @@ pub const PackageManager = struct {
                     const name = manifest_req.name;
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
+                            manager.startProgressBarIfNone();
                             manager.setNodeName(manager.downloads_node.?, name.slice(), ProgressStrings.download_emoji, true);
                             has_updated_this_run = true;
                         }
@@ -6557,6 +6645,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
+                            manager.startProgressBarIfNone();
                             manager.setNodeName(manager.downloads_node.?, extract.name.slice(), ProgressStrings.extract_emoji, true);
                             has_updated_this_run = true;
                         }
@@ -6624,6 +6713,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
+                            manager.startProgressBarIfNone();
                             manager.setNodeName(manager.downloads_node.?, manifest.name(), ProgressStrings.download_emoji, true);
                             has_updated_this_run = true;
                         }
@@ -6751,6 +6841,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
+                            manager.startProgressBarIfNone();
                             manager.setNodeName(manager.downloads_node.?, alias, ProgressStrings.extract_emoji, true);
                             has_updated_this_run = true;
                         }
@@ -6796,6 +6887,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
+                            manager.startProgressBarIfNone();
                             manager.setNodeName(manager.downloads_node.?, name, ProgressStrings.download_emoji, true);
                             has_updated_this_run = true;
                         }
@@ -6875,6 +6967,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
+                            manager.startProgressBarIfNone();
                             manager.setNodeName(manager.downloads_node.?, alias.slice(), ProgressStrings.download_emoji, true);
                             has_updated_this_run = true;
                         }
@@ -6888,6 +6981,7 @@ pub const PackageManager = struct {
         if (comptime log_level.showProgress()) {
             if (@hasField(@TypeOf(callbacks), "progress_bar") and callbacks.progress_bar == true) {
                 const completed_items = manager.total_tasks - manager.pendingTaskCount();
+                manager.startProgressBarIfNone();
                 if (completed_items != manager.downloads_node.?.unprotected_completed_items or has_updated_this_run) {
                     manager.downloads_node.?.setCompletedItems(completed_items);
                     manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks);

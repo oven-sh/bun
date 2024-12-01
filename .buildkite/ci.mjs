@@ -453,7 +453,10 @@ function getPipeline(options) {
       agents: getZigAgent(platform),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
-      env: getBuildEnv(platform),
+      env: {
+        ...getBuildEnv(platform),
+        ENABLE_LLVM: "OFF",
+      },
       command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
     };
   };
@@ -545,9 +548,9 @@ function getPipeline(options) {
   const buildPlatforms = [
     { os: "darwin", arch: "aarch64", release: "14" },
     { os: "darwin", arch: "x64", release: "14" },
-    { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
-    { os: "linux", arch: "x64", distro: "debian", release: "11" },
-    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
+    { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
+    { os: "linux", arch: "x64", distro: "debian", release: "12" },
+    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12" },
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
     { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },

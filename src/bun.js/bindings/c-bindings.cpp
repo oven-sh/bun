@@ -688,7 +688,11 @@ extern "C" int ffi_fscanf(FILE* stream, const char* fmt, ...)
 
 extern "C" int ffi_vsscanf(const char* str, const char* fmt, va_list ap)
 {
-    return vsscanf(str, fmt, ap);
+    va_list ap_copy;
+    va_copy(ap_copy, ap);
+    int result = vsscanf(str, fmt, ap_copy);
+    va_end(ap_copy);
+    return result;
 }
 
 extern "C" int ffi_sscanf(const char* str, const char* fmt, ...)

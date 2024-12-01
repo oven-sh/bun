@@ -978,7 +978,6 @@ raise_file_descriptor_limit() {
 		append_to_file_sudo /etc/security/limits.conf '*  hard  nofile  262144'
 	fi
 
-	# Always add to /etc/profile
 	append_to_file_sudo /etc/profile 'ulimit -n 262144'
 
 	if [ -d /etc/systemd ]; then

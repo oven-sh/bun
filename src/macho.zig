@@ -98,6 +98,7 @@ pub const MachoFile = struct {
         // Look for existing __BUN,__BUN section
         var existing_cmd_idx: ?usize = null;
         var existing_cmd_offset: ?usize = null;
+        var original_fileoff: u64 = 0;
 
         outer: for (self.commands.items, 0..) |cmd, i| {
             if (cmd.cmd == @intFromEnum(macho.LC.SEGMENT_64)) {
@@ -109,18 +110,27 @@ pub const MachoFile = struct {
                             if (mem.eql(u8, sect.sectName(), "__BUN")) {
                                 existing_cmd_idx = i;
                                 existing_cmd_offset = cmd.offset;
+                                original_fileoff = sect.offset;
                                 self.seg = command;
                                 self.sec = sect.*;
-                                self.seg.vmsize = alignVmsize(total_size, blob_alignment);
-                                self.seg.filesize = alignVmsize(total_size, blob_alignment);
+
+                                // Keep the original offset
+                                const new_size = alignVmsize(total_size, blob_alignment);
+                                self.seg.vmsize = new_size;
+                                self.seg.filesize = new_size;
                                 self.sec.size = @intCast(total_size);
-                                self.sec.offset = @intCast(self.linkedit_cmd.fileoff);
+                                // Don't change the offset
+                                self.sec.offset = @intCast(original_fileoff);
                                 break :outer;
                             }
                         }
                     }
                 }
             }
+        }
+
+        if (existing_cmd_idx == null or existing_cmd_offset == null) {
+            return error.InvalidObject;
         }
 
         var blob_data = try self.allocator.alloc(u8, aligned_size);
@@ -139,15 +149,12 @@ pub const MachoFile = struct {
             // Adjust linkedit offsets only if new size is different
             if (old_seg.filesize != self.seg.filesize) {
                 const size_diff = @as(i64, @intCast(self.seg.filesize)) - @as(i64, @intCast(old_seg.filesize));
-                self.linkedit_cmd.fileoff = @intCast(@as(i64, @intCast(self.linkedit_cmd.fileoff)) + size_diff);
-                try self.updateLoadCommandOffsets(old_seg.fileoff, size_diff);
+                // Only adjust linkedit if we're actually growing
+                if (size_diff > 0) {
+                    self.linkedit_cmd.fileoff = @intCast(@as(i64, @intCast(self.linkedit_cmd.fileoff)) + size_diff);
+                    try self.updateLoadCommandOffsets(original_fileoff + old_seg.filesize, size_diff);
+                }
             }
-        } else {
-            // Add new section
-            self.linkedit_cmd.vmaddr += self.seg.vmsize;
-            self.linkedit_cmd.fileoff += self.seg.filesize;
-            self.header.ncmds += 1;
-            self.header.sizeofcmds += self.seg.cmdsize;
         }
 
         self.sectdata = blob_data;
@@ -228,12 +235,17 @@ pub const MachoFile = struct {
     pub fn build(self: *MachoFile, writer: anytype) !void {
         try writer.writeAll(mem.asBytes(&self.header));
 
+        // Write all load commands
         for (self.commands.items) |cmd| {
             if (cmd.cmd == @intFromEnum(macho.LC.SEGMENT_64)) {
-                const segname = self.data.items[cmd.offset..][0..16];
-                if (mem.eql(u8, segname[0..SEG_LINKEDIT.len], SEG_LINKEDIT)) {
+                const command = @as(*const macho.segment_command_64, @ptrCast(@alignCast(&self.data.items[cmd.offset]))).*;
+                if (mem.eql(u8, command.segName(), "__BUN")) {
+                    // Write our modified BUN segment command
                     try writer.writeAll(mem.asBytes(&self.seg));
                     try writer.writeAll(mem.asBytes(&self.sec));
+                    continue;
+                } else if (mem.eql(u8, command.segName(), "__LINKEDIT")) {
+                    // Write our modified LINKEDIT segment
                     try writer.writeAll(mem.asBytes(&self.linkedit_cmd));
                     continue;
                 }
@@ -241,12 +253,16 @@ pub const MachoFile = struct {
             try writer.writeAll(self.data.items[cmd.offset..][0..cmd.cmdsize]);
         }
 
-        var off = self.header.sizeofcmds + @sizeOf(macho.mach_header_64);
-        const len: u32 = @truncate(self.rest_size - self.seg.cmdsize);
-        try writer.writeAll(self.data.items[off..][0..len]);
+        // Write segment data up to our BUN section
+        var off: usize = self.header.sizeofcmds + @sizeOf(macho.mach_header_64);
 
-        off += len;
+        while (off < self.sec.offset) {
+            const chunk_size = @min(4096, self.sec.offset - off);
+            try writer.writeAll(self.data.items[off..][0..chunk_size]);
+            off += chunk_size;
+        }
 
+        // Write our BUN section data
         if (self.sectdata) |sectdata| {
             try writer.writeAll(sectdata);
             if (self.seg.filesize > sectdata.len) {
@@ -257,7 +273,16 @@ pub const MachoFile = struct {
             }
         }
 
-        try writer.writeAll(self.data.items[off..][0..self.linkedit_cmd.filesize]);
+        // Write remaining data up to LINKEDIT
+        off = self.sec.offset + self.seg.filesize;
+        while (off < self.linkedit_cmd.fileoff) {
+            const chunk_size = @min(4096, self.linkedit_cmd.fileoff - off);
+            try writer.writeAll(self.data.items[off..][0..chunk_size]);
+            off += chunk_size;
+        }
+
+        // Write LINKEDIT data
+        try writer.writeAll(self.data.items[self.linkedit_cmd.fileoff..][0..self.linkedit_cmd.filesize]);
     }
 
     pub fn buildAndSign(self: *MachoFile, writer: anytype) !void {

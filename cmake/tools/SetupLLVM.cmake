@@ -1,4 +1,12 @@
-optionx(ENABLE_LLVM BOOL "If LLVM should be used for compilation" DEFAULT ON)
+
+set(DEFAULT_ENABLE_LLVM ON)
+
+# if target is bun-zig, set ENABLE_LLVM to OFF
+if(TARGET bun-zig)
+  set(DEFAULT_ENABLE_LLVM OFF)
+endif()
+
+optionx(ENABLE_LLVM BOOL "If LLVM should be used for compilation" DEFAULT ${DEFAULT_ENABLE_LLVM})
 
 if(NOT ENABLE_LLVM)
   return()

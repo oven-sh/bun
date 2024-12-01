@@ -973,8 +973,21 @@ install_chrome_dependencies() {
 }
 
 raise_file_descriptor_limit() {
-	append_to_file_sudo /etc/security/limits.conf '*  soft  nofile  262144'
-	append_to_file_sudo /etc/security/limits.conf '*  hard  nofile  262144'
+	if [ -d /etc/security ]; then
+		append_to_file_sudo /etc/security/limits.conf '*  soft  nofile  262144'
+		append_to_file_sudo /etc/security/limits.conf '*  hard  nofile  262144'
+	fi
+
+	# Always add to /etc/profile
+	append_to_file_sudo /etc/profile 'ulimit -n 262144'
+
+	if [ -d /etc/systemd ]; then
+		append_to_file_sudo /etc/systemd/user.conf 'DefaultLimitNOFILE=262144'
+	fi
+
+	if [ -d /etc/sysctl.d ]; then
+		append_to_file_sudo /etc/sysctl.d/99-file-max.conf 'fs.file-max=262144'
+	fi
 }
 
 main() {

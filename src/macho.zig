@@ -274,7 +274,6 @@ pub const MachoFile = struct {
         }
     }
 
-    // Add the MachoSigner implementation from the original file
     const MachoSigner = struct {
         data: std.ArrayList(u8),
         sig_off: usize,

@@ -1,4 +1,4 @@
-FROM debian:bullseye-slim AS build
+FROM debian:bookworm-slim AS build
 
 # https://github.com/oven-sh/bun/releases
 ARG BUN_VERSION=latest

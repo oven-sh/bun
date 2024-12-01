@@ -508,7 +508,7 @@ pub const Crypto = struct {
             // i don't think its a real scenario, but just in case
             buf = globalThis.allocator().alloc(u8, keylen) catch {
                 globalThis.throw("Failed to allocate memory", .{});
-                return .undefined;
+                return .zero;
             };
             needs_deinit = true;
         } else {
@@ -565,7 +565,7 @@ pub const Crypto = struct {
         const len = a.len;
         if (b.len != len) {
             globalThis.throw("Input buffers must have the same byte length", .{});
-            return .undefined;
+            return .zero;
         }
         return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
     }
@@ -667,7 +667,7 @@ pub const Crypto = struct {
                         encoding_value = arguments[0];
                         break :brk JSC.Node.Encoding.fromJS(encoding_value, globalThis) orelse {
                             globalThis.ERR_UNKNOWN_ENCODING("Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
-                            return .undefined;
+                            return .zero;
                         };
                     }
                 }
@@ -689,14 +689,7 @@ pub const Crypto = struct {
                     const date = timestamp_value.getUnixTimestamp();
                     break :brk @intFromFloat(@max(0, date));
                 }
-
-                if (globalThis.validateIntegerRange(timestamp_value, i64, 0, .{
-                    .min = 0,
-                    .field_name = "timestamp",
-                })) |timestamp_int| {
-                    break :brk @intCast(timestamp_int);
-                }
-                return .zero;
+                break :brk @intCast(try globalThis.validateIntegerRange(timestamp_value, i64, 0, .{ .min = 0, .field_name = "timestamp" }));
             }
 
             break :brk @intCast(@max(0, std.time.milliTimestamp()));
@@ -738,8 +731,7 @@ pub const Crypto = struct {
         JSC.markBinding(@src());
 
         var ptr = bun.default_allocator.create(Crypto) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
 
         return ptr.toJS(globalThis);

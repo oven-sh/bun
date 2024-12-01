@@ -304,15 +304,23 @@ function getPipeline(options) {
    * @param {Target} target
    * @returns {Agent}
    */
-  const getZigAgent = target => {
-    const { abi, arch } = target;
-    // if (abi === "musl") {
-    //   const instanceType = arch === "aarch64" ? "c8g.large" : "c7i.large";
-    //   return getEmphemeralAgent("v2", target, instanceType);
-    // }
+  const getZigAgent = platform => {
+    const { arch } = platform;
+    const instanceType = arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge";
     return {
-      queue: "build-zig",
+      robobun: true,
+      robobun2: true,
+      os: "linux",
+      arch,
+      distro: "debian",
+      release: "11",
+      "image-name": `linux-${arch}-debian-11-v5`, // v5 is not on main yet
+      "instance-type": instanceType,
     };
+    // TODO: Temporarily disable due to configuration
+    // return {
+    //   queue: "build-zig",
+    // };
   };
 
   /**
@@ -443,7 +451,7 @@ function getPipeline(options) {
       label: `${getTargetLabel(platform)} - build-zig`,
       depends_on: getDependsOn(platform),
       agents: getZigAgent(platform),
-      retry: getRetry(1), // FIXME: Sometimes zig build hangs, so we need to retry once
+      retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
       env: getBuildEnv(platform),
       command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
@@ -664,16 +672,18 @@ async function main() {
   }
 
   let changedFiles;
-  // FIXME: Fix various bugs when calculating changed files
-  // false -> !isFork() && !isMainBranch()
-  if (false) {
+  let changedFilesBranch;
+  if (!isFork() && !isMainBranch()) {
     console.log("Checking changed files...");
-    const baseRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
+    const targetRef = getTargetBranch();
+    console.log(" - Target Ref:", targetRef);
+    const baseRef = lastBuild?.commit_id || targetRef || getMainBranch();
     console.log(" - Base Ref:", baseRef);
     const headRef = getCommit();
     console.log(" - Head Ref:", headRef);
 
     changedFiles = await getChangedFiles(undefined, baseRef, headRef);
+    changedFilesBranch = await getChangedFiles(undefined, targetRef, headRef);
     if (changedFiles) {
       if (changedFiles.length) {
         changedFiles.forEach(filename => console.log(` - ${filename}`));
@@ -698,7 +708,7 @@ async function main() {
       forceBuild = true;
     }
     for (const coref of [".buildkite/ci.mjs", "scripts/utils.mjs", "scripts/bootstrap.sh", "scripts/machine.mjs"]) {
-      if (changedFiles && changedFiles.includes(coref)) {
+      if (changedFilesBranch && changedFilesBranch.includes(coref)) {
         console.log(" - Yes, because the list of changed files contains:", coref);
         forceBuild = true;
         ciFileChanged = true;

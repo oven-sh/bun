@@ -11,6 +11,7 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
     BunString outBase,
     JSC::JSValue allServerFiles,
     JSC::JSValue renderStatic,
+    JSC::JSValue getParams,
     JSC::JSValue clientEntryUrl,
     JSC::JSValue pattern,
     JSC::JSValue files,
@@ -27,6 +28,7 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
     args.append(JSC::jsString(vm, outBase.toWTFString()));
     args.append(allServerFiles);
     args.append(renderStatic);
+    args.append(getParams);
     args.append(clientEntryUrl);
     args.append(pattern);
     args.append(files);

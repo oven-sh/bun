@@ -263,7 +263,7 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     const arguments = callframe.arguments_old(1);
     if (arguments.len < 1) {
         globalThis.throw("shell escape expected at least 1 argument", .{});
-        return .undefined;
+        return .zero;
     }
 
     const jsval = arguments.ptr[0];
@@ -275,13 +275,10 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     defer outbuf.deinit();
 
     if (bun.shell.needsEscapeBunstr(bunstr)) {
-        const result = bun.shell.escapeBunStr(bunstr, &outbuf, true) catch {
-            globalThis.throwOutOfMemory();
-            return .undefined;
-        };
+        const result = try bun.shell.escapeBunStr(bunstr, &outbuf, true);
         if (!result) {
             globalThis.throw("String has invalid utf-16: {s}", .{bunstr.byteSlice()});
-            return .undefined;
+            return .zero;
         }
         var str = bun.String.createUTF8(outbuf.items[0..]);
         return str.transferToJS(globalThis);
@@ -297,7 +294,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 
     const brace_str_js = arguments.nextEat() orelse {
         globalThis.throw("braces: expected at least 1 argument, got 0", .{});
-        return .undefined;
+        return .zero;
     };
     const brace_str = brace_str_js.toBunString(globalThis);
     defer brace_str.deref();
@@ -335,10 +332,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     };
 
     if (tokenize) {
-        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, lexer_output.tokens.items[0..], .{}) catch {
-            globalThis.throwOutOfMemory();
-            return JSValue.undefined;
-        };
+        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, lexer_output.tokens.items[0..], .{});
         defer globalThis.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
         return bun_str.toJS(globalThis);
@@ -348,10 +342,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         const ast_node = parser.parse() catch |err| {
             return globalThis.throwError(err, "failed to parse braces");
         };
-        const str = std.json.stringifyAlloc(globalThis.bunVM().allocator, ast_node, .{}) catch {
-            globalThis.throwOutOfMemory();
-            return JSValue.undefined;
-        };
+        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, ast_node, .{});
         defer globalThis.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
         return bun_str.toJS(globalThis);
@@ -361,10 +352,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         return bun.String.toJSArray(globalThis, &.{brace_str});
     }
 
-    var expanded_strings = arena.allocator().alloc(std.ArrayList(u8), expansion_count) catch {
-        globalThis.throwOutOfMemory();
-        return .undefined;
-    };
+    var expanded_strings = try arena.allocator().alloc(std.ArrayList(u8), expansion_count);
 
     for (0..expansion_count) |i| {
         expanded_strings[i] = std.ArrayList(u8).init(arena.allocator());
@@ -376,14 +364,10 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         expanded_strings,
         lexer_output.contains_nested,
     ) catch {
-        globalThis.throwOutOfMemory();
-        return .undefined;
+        return globalThis.throwOutOfMemory();
     };
 
-    var out_strings = arena.allocator().alloc(bun.String, expansion_count) catch {
-        globalThis.throwOutOfMemory();
-        return .undefined;
-    };
+    var out_strings = try arena.allocator().alloc(bun.String, expansion_count);
     for (0..expansion_count) |i| {
         out_strings[i] = bun.String.fromBytes(expanded_strings[i].items[0..]);
     }
@@ -398,7 +382,7 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
         globalThis.throw("which: expected 1 argument, got 0", .{});
-        return .undefined;
+        return .zero;
     };
 
     var path_str: ZigString.Slice = ZigString.Slice.empty;
@@ -421,7 +405,7 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 
     if (bin_str.len >= bun.MAX_PATH_BYTES) {
         globalThis.throw("bin path is too long", .{});
-        return .undefined;
+        return .zero;
     }
 
     if (bin_str.len == 0) {
@@ -517,15 +501,12 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     switch (formatOptions.enable_colors) {
         inline else => |colors| table_printer.printTable(Writer, writer, colors) catch {
             if (!globalThis.hasException())
-                globalThis.throwOutOfMemory();
+                return globalThis.throwOutOfMemory();
             return .zero;
         },
     }
 
-    buffered_writer.flush() catch return {
-        globalThis.throwOutOfMemory();
-        return .zero;
-    };
+    try buffered_writer.flush();
 
     var out = bun.String.createUTF8(array.slice());
     return out.transferToJS(globalThis);
@@ -611,7 +592,7 @@ pub fn registerMacro(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     if (!arguments[1].isCell() or !arguments[1].isCallable(globalObject.vm())) {
         // TODO: add "toTypeOf" helper
         globalObject.throw("Macro must be a function", .{});
-        return .undefined;
+        return .zero;
     }
 
     const get_or_put_result = VirtualMachine.get().macros.getOrPut(id) catch unreachable;
@@ -755,7 +736,7 @@ pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.
                     if (editor_choice == null) {
                         edit.* = prev;
                         globalThis.throw("Could not find editor \"{s}\"", .{sliced.slice()});
-                        return .undefined;
+                        return .zero;
                     } else if (edit.name.ptr == edit.path.ptr) {
                         edit.name = arguments.arena.allocator().dupe(u8, edit.path) catch unreachable;
                         edit.path = edit.path;
@@ -858,7 +839,7 @@ pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     // The argument must be a number
     if (!arg.isNumber()) {
         globalObject.throwInvalidArgumentType("sleepSync", "milliseconds", "number");
-        return .undefined;
+        return .zero;
     }
 
     //NOTE: if argument is > max(i32) then it will be truncated
@@ -967,13 +948,10 @@ fn doResolveWithArgs(ctx: js.JSContextRef, specifier: bun.String, from: bun.Stri
         const allocator = stack.get();
         var arraylist = std.ArrayList(u8).initCapacity(allocator, 1024) catch unreachable;
         defer arraylist.deinit();
-        arraylist.writer().print("{any}{any}", .{
+        try arraylist.writer().print("{any}{any}", .{
             errorable.result.value,
             query_string,
-        }) catch {
-            ctx.throwOutOfMemory();
-            return error.JSError;
-        };
+        });
 
         return ZigString.initUTF8(arraylist.items).toJS(ctx);
     }
@@ -1411,8 +1389,7 @@ pub const Crypto = struct {
                 }
 
                 if (!arguments[3].isAnyInt()) {
-                    _ = globalThis.throwInvalidArgumentTypeValue("keylen", "integer", arguments[3]);
-                    return error.JSError;
+                    return globalThis.throwInvalidArgumentTypeValue("keylen", "integer", arguments[3]);
                 }
 
                 const length = arguments[3].coerce(i64, globalThis);
@@ -1426,8 +1403,7 @@ pub const Crypto = struct {
                 }
 
                 if (!arguments[2].isAnyInt()) {
-                    _ = globalThis.throwInvalidArgumentTypeValue("iteration count", "integer", arguments[2]);
-                    return error.JSError;
+                    return globalThis.throwInvalidArgumentTypeValue("iteration count", "integer", arguments[2]);
                 }
 
                 const iteration_count = arguments[2].coerce(i64, globalThis);
@@ -1442,8 +1418,7 @@ pub const Crypto = struct {
 
                 const algorithm = brk: {
                     if (!arguments[4].isString()) {
-                        _ = globalThis.throwInvalidArgumentTypeValue("algorithm", "string", arguments[4]);
-                        return error.JSError;
+                        return globalThis.throwInvalidArgumentTypeValue("algorithm", "string", arguments[4]);
                     }
 
                     break :brk EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arguments[4]) orelse {
@@ -1472,8 +1447,7 @@ pub const Crypto = struct {
                 }
 
                 out.salt = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[1], is_async) orelse {
-                    _ = globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arguments[1]);
-                    return error.JSError;
+                    return globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arguments[1]);
                 };
 
                 if (out.salt.slice().len > std.math.maxInt(i32)) {
@@ -1482,7 +1456,7 @@ pub const Crypto = struct {
 
                 out.password = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[0], is_async) orelse {
                     if (!globalThis.hasException()) {
-                        _ = globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arguments[0]);
+                        return globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arguments[0]);
                     }
                     return error.JSError;
                 };
@@ -2078,7 +2052,7 @@ pub const Crypto = struct {
                     .err => {
                         const error_instance = value.toErrorInstance(globalObject);
                         globalObject.throwValue(error_instance);
-                        return JSC.JSValue.undefined;
+                        return .zero;
                     },
                     .pass => |pass| {
                         return JSC.JSValue.jsBoolean(pass);
@@ -2316,7 +2290,7 @@ pub const Crypto = struct {
             if (arguments.len > 2 and !arguments[2].isEmptyOrUndefinedOrNull()) {
                 if (!arguments[2].isString()) {
                     globalObject.throwInvalidArgumentType("verify", "algorithm", "string");
-                    return JSC.JSValue.undefined;
+                    return .zero;
                 }
 
                 const algorithm_string = arguments[2].getZigString(globalObject);
@@ -2325,7 +2299,7 @@ pub const Crypto = struct {
                     if (!globalObject.hasException()) {
                         globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
                     }
-                    return JSC.JSValue.undefined;
+                    return .zero;
                 };
             }
 
@@ -2333,7 +2307,7 @@ pub const Crypto = struct {
                 if (!globalObject.hasException()) {
                     globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
                 }
-                return JSC.JSValue.undefined;
+                return .zero;
             };
 
             var hash_ = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[1]) orelse {
@@ -2341,7 +2315,7 @@ pub const Crypto = struct {
                 if (!globalObject.hasException()) {
                     globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
                 }
-                return JSC.JSValue.undefined;
+                return .zero;
             };
 
             defer password.deinit();
@@ -3195,7 +3169,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                         },
                     };
 
-                    var server = try ServerType.init(config, globalObject);
+                    var server = try ServerType.init(&config, globalObject);
                     if (globalObject.hasException()) {
                         return .zero;
                     }
@@ -3225,41 +3199,14 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
     const input_slice = ptr[0..len];
     const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
         globalObject.vm().throwError(globalObject, bun.String.static("Out of memory").toJS(globalObject));
-        return .undefined;
+        return .zero;
     };
 
-    switch (escaped) {
-        .static => |val| {
-            return ZigString.init(val).toJS(globalObject);
-        },
-        .original => return input_value,
-        .allocated => |escaped_html| {
-            if (comptime Environment.allow_assert) {
-                // assert that re-encoding the string produces the same result
-                assert(
-                    std.mem.eql(
-                        u16,
-                        (strings.toUTF16Alloc(bun.default_allocator, strings.toUTF8Alloc(bun.default_allocator, escaped_html) catch unreachable, false, false) catch unreachable).?,
-                        escaped_html,
-                    ),
-                );
-
-                // assert we do not allocate a new string unnecessarily
-                assert(
-                    !std.mem.eql(
-                        u16,
-                        input_slice,
-                        escaped_html,
-                    ),
-                );
-
-                // the output should always be longer than the input
-                assert(escaped_html.len > input_slice.len);
-            }
-
-            return ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject);
-        },
-    }
+    return switch (escaped) {
+        .static => |val| ZigString.init(val).toJS(globalObject),
+        .original => input_value,
+        .allocated => |escaped_html| ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject),
+    };
 }
 
 pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: JSValue, ptr: [*]const u8, len: usize) JSValue {
@@ -3271,7 +3218,7 @@ pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: J
 
     const escaped = strings.escapeHTMLForLatin1Input(allocator, input_slice) catch {
         globalObject.vm().throwError(globalObject, bun.String.static("Out of memory").toJS(globalObject));
-        return .undefined;
+        return .zero;
     };
 
     switch (escaped) {
@@ -4527,17 +4474,11 @@ pub const JSZlib = struct {
                 const estimated_size: u32 = @bitCast(compressed[compressed.len - 4 ..][0..4].*);
                 // If it's > 256 MB, let's rely on dynamic allocation to minimize the risk of OOM.
                 if (estimated_size > 0 and estimated_size < 256 * 1024 * 1024) {
-                    break :brk std.ArrayListUnmanaged(u8).initCapacity(allocator, @max(estimated_size, 64)) catch {
-                        globalThis.throwOutOfMemory();
-                        return .zero;
-                    };
+                    break :brk try std.ArrayListUnmanaged(u8).initCapacity(allocator, @max(estimated_size, 64));
                 }
             }
 
-            break :brk std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
-            };
+            break :brk try std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32);
         };
 
         switch (library) {
@@ -4570,8 +4511,7 @@ pub const JSZlib = struct {
             .libdeflate => {
                 var decompressor: *bun.libdeflate.Decompressor = bun.libdeflate.Decompressor.alloc() orelse {
                     list.deinit(allocator);
-                    globalThis.throwOutOfMemory();
-                    return .zero;
+                    return globalThis.throwOutOfMemory();
                 };
                 defer decompressor.deinit();
                 while (true) {
@@ -4582,14 +4522,12 @@ pub const JSZlib = struct {
                     if (result.status == .insufficient_space) {
                         if (list.capacity > 1024 * 1024 * 1024) {
                             list.deinit(allocator);
-                            globalThis.throwOutOfMemory();
-                            return .zero;
+                            return globalThis.throwOutOfMemory();
                         }
 
                         list.ensureTotalCapacity(allocator, list.capacity * 2) catch {
                             list.deinit(allocator);
-                            globalThis.throwOutOfMemory();
-                            return .zero;
+                            return globalThis.throwOutOfMemory();
                         };
                         continue;
                     }
@@ -4649,13 +4587,10 @@ pub const JSZlib = struct {
 
         switch (library) {
             .zlib => {
-                var list = std.ArrayListUnmanaged(u8).initCapacity(
+                var list = try std.ArrayListUnmanaged(u8).initCapacity(
                     allocator,
                     if (compressed.len > 512) compressed.len else 32,
-                ) catch {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                };
+                );
 
                 var reader = zlib.ZlibCompressorArrayList.init(compressed, &list, allocator, .{
                     .windowBits = 15,
@@ -4685,20 +4620,16 @@ pub const JSZlib = struct {
             },
             .libdeflate => {
                 var compressor: *bun.libdeflate.Compressor = bun.libdeflate.Compressor.alloc(level orelse 6) orelse {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
+                    return globalThis.throwOutOfMemory();
                 };
                 const encoding: bun.libdeflate.Encoding = if (is_gzip) .gzip else .deflate;
                 defer compressor.deinit();
 
-                var list = std.ArrayListUnmanaged(u8).initCapacity(
+                var list = try std.ArrayListUnmanaged(u8).initCapacity(
                     allocator,
                     // This allocation size is unfortunate, but it's not clear how to avoid it with libdeflate.
                     compressor.maxBytesNeeded(compressed, encoding),
-                ) catch {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                };
+                );
 
                 while (true) {
                     const result = compressor.compress(compressed, list.allocatedSlice(), encoding);

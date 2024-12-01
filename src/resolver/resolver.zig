@@ -1632,18 +1632,32 @@ pub const Resolver = struct {
             }
         }
 
+        var is_self_reference = false;
+
         // Find the parent directory with the "package.json" file
         var dir_info_package_json: ?*DirInfo = dir_info;
         while (dir_info_package_json != null and dir_info_package_json.?.package_json == null)
             dir_info_package_json = dir_info_package_json.?.getParent();
 
         // Check for subpath imports: https://nodejs.org/api/packages.html#subpath-imports
-        if (dir_info_package_json != null and
-            strings.hasPrefixComptime(import_path, "#") and
-            !forbid_imports and
-            dir_info_package_json.?.package_json.?.imports != null)
-        {
-            return r.loadPackageImports(import_path, dir_info_package_json.?, kind, global_cache);
+        if (dir_info_package_json) |_dir_info_package_json| {
+            const package_json = _dir_info_package_json.package_json.?;
+
+            if (strings.hasPrefixComptime(import_path, "#") and !forbid_imports and package_json.imports != null) {
+                return r.loadPackageImports(import_path, _dir_info_package_json, kind, global_cache);
+            }
+
+            // https://nodejs.org/api/packages.html#packages_self_referencing_a_package_using_its_name
+            const package_name = ESModule.Package.parseName(import_path);
+            if (package_name) |_package_name| {
+                if (strings.eql(_package_name, package_json.name) and package_json.exports != null) {
+                    if (r.debug_logs) |*debug| {
+                        debug.addNoteFmt("\"{s}\" is a self-reference", .{import_path});
+                    }
+                    dir_info = _dir_info_package_json;
+                    is_self_reference = true;
+                }
+            }
         }
 
         const esm_ = ESModule.Package.parse(import_path, bufs(.esm_subpath));
@@ -1653,21 +1667,28 @@ pub const Resolver = struct {
         const use_node_module_resolver = global_cache != .force;
 
         // Then check for the package in any enclosing "node_modules" directories
+        // or in the package root directory if it's a self-reference
         while (use_node_module_resolver) {
             // Skip directories that are themselves called "node_modules", since we
             // don't ever want to search for "node_modules/node_modules"
-            if (dir_info.hasNodeModules()) {
+            if (dir_info.hasNodeModules() or is_self_reference) {
                 any_node_modules_folder = true;
-                var _paths = [_]string{ dir_info.abs_path, "node_modules", import_path };
-                const abs_path = r.fs.absBuf(&_paths, bufs(.node_modules_check));
+                const abs_path = if (is_self_reference)
+                    dir_info.abs_path
+                else brk: {
+                    var _parts = [_]string{ dir_info.abs_path, "node_modules", import_path };
+                    break :brk r.fs.absBuf(&_parts, bufs(.node_modules_check));
+                };
                 if (r.debug_logs) |*debug| {
                     debug.addNoteFmt("Checking for a package in the directory \"{s}\"", .{abs_path});
                 }
+
                 const prev_extension_order = r.extension_order;
                 defer r.extension_order = prev_extension_order;
 
                 if (esm_) |esm| {
                     const abs_package_path = brk: {
+                        if (is_self_reference) break :brk dir_info.abs_path;
                         var parts = [_]string{ dir_info.abs_path, "node_modules", esm.name };
                         break :brk r.fs.absBuf(&parts, bufs(.esm_absolute_package_path));
                     };

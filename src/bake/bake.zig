@@ -12,7 +12,7 @@ pub const api_name = "app";
 
 /// Zig version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub const UserOptions = struct {
-    arena: std.heap.ArenaAllocator.State,
+    arena: std.heap.ArenaAllocator,
     allocations: StringRefList,
 
     root: []const u8,
@@ -20,10 +20,12 @@ pub const UserOptions = struct {
     bundler_options: SplitBundlerOptions,
 
     pub fn deinit(options: *UserOptions) void {
-        options.arena.promote(bun.default_allocator).deinit();
+        options.arena.deinit();
         options.allocations.free();
+        if (options.bundler_options.plugin) |p| p.deinit();
     }
 
+    /// Currently, this function must run at the top of the event loop.
     pub fn fromJS(config: JSValue, global: *JSC.JSGlobalObject) !UserOptions {
         if (!config.isObject()) {
             return global.throwInvalidArguments("'" ++ api_name ++ "' is not an object", .{});
@@ -34,7 +36,7 @@ pub const UserOptions = struct {
 
         var allocations = StringRefList.empty;
         errdefer allocations.free();
-        var bundler_options: SplitBundlerOptions = .{};
+        var bundler_options = SplitBundlerOptions.empty;
 
         const framework = try Framework.fromJS(
             try config.get(global, "framework") orelse {
@@ -51,16 +53,19 @@ pub const UserOptions = struct {
         else
             bun.getcwdAlloc(alloc) catch |err| switch (err) {
                 error.OutOfMemory => {
-                    global.throwOutOfMemory();
-                    return error.JSError;
+                    return global.throwOutOfMemory();
                 },
                 else => {
                     return global.throwError(err, "while querying current working directory");
                 },
             };
 
+        if (try config.get(global, "plugins")) |plugin_array| {
+            try bundler_options.parsePluginArray(plugin_array, global);
+        }
+
         return .{
-            .arena = arena.state,
+            .arena = arena,
             .allocations = allocations,
             .root = root,
             .framework = framework,
@@ -86,11 +91,62 @@ const StringRefList = struct {
     pub const empty: StringRefList = .{ .strings = .{} };
 };
 
-const SplitBundlerOptions = struct {
+pub const SplitBundlerOptions = struct {
+    plugin: ?*Plugin = null,
     all: BuildConfigSubset = .{},
     client: BuildConfigSubset = .{},
     server: BuildConfigSubset = .{},
     ssr: BuildConfigSubset = .{},
+
+    pub const empty: SplitBundlerOptions = .{
+        .plugin = null,
+        .all = .{},
+        .client = .{},
+        .server = .{},
+        .ssr = .{},
+    };
+
+    pub fn parsePluginArray(opts: *SplitBundlerOptions, plugin_array: JSValue, global: *JSC.JSGlobalObject) !void {
+        const plugin = opts.plugin orelse Plugin.create(global, .bun);
+        opts.plugin = plugin;
+        const empty_object = JSValue.createEmptyObject(global, 0);
+
+        var iter = plugin_array.arrayIterator(global);
+        while (iter.next()) |plugin_config| {
+            if (!plugin_config.isObject()) {
+                return global.throwInvalidArguments("Expected plugin to be an object", .{});
+            }
+
+            if (try plugin_config.getOptional(global, "name", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                if (slice.len == 0) {
+                    return global.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
+                }
+            } else {
+                return global.throwInvalidArguments("Expected plugin to have a name", .{});
+            }
+
+            const function = try plugin_config.getFunction(global, "setup") orelse {
+                return global.throwInvalidArguments("Expected plugin to have a setup() function", .{});
+            };
+            const plugin_result = try plugin.addPlugin(function, empty_object, .null, false, true);
+            if (plugin_result.asAnyPromise()) |promise| {
+                promise.setHandled(global.vm());
+                // TODO: remove this call, replace with a promise list that must
+                // be resolved before the first bundle task can begin.
+                global.bunVM().waitForPromise(promise);
+                switch (promise.unwrap(global.vm(), .mark_handled)) {
+                    .pending => unreachable,
+                    .fulfilled => |val| {
+                        _ = val;
+                    },
+                    .rejected => |err| {
+                        return global.throwValue2(err);
+                    },
+                }
+            }
+        }
+    }
 };
 
 const BuildConfigSubset = struct {
@@ -99,31 +155,13 @@ const BuildConfigSubset = struct {
     conditions: bun.StringArrayHashMapUnmanaged(void) = .{},
     drop: bun.StringArrayHashMapUnmanaged(void) = .{},
     // TODO: plugins
+
+    pub fn loadFromJs(config: *BuildConfigSubset, value: JSValue, arena: Allocator) !void {
+        _ = config; // autofix
+        _ = value; // autofix
+        _ = arena; // autofix
+    }
 };
-
-/// Temporary function to invoke dev server via JavaScript. Will be
-/// replaced with a user-facing API. Refs the event loop forever.
-pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-    _ = global;
-    _ = callframe;
-
-    if (!bun.FeatureFlags.bake) return .undefined;
-
-    bun.Output.errGeneric(
-        \\This api has moved to the `app` property of the default export.
-        \\
-        \\  export default {{
-        \\    port: 3000,
-        \\    app: {{
-        \\      framework: 'react'
-        \\    }},
-        \\  }};
-        \\
-    ,
-        .{},
-    );
-    return .undefined;
-}
 
 /// A "Framework" in our eyes is simply set of bundler options that a framework
 /// author would set in order to integrate the framework with the application.
@@ -132,6 +170,7 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bu
 ///
 /// Full documentation on these fields is located in the TypeScript definitions.
 pub const Framework = struct {
+    is_built_in_react: bool,
     file_system_router_types: []FileSystemRouterType,
     // static_routers: [][]const u8,
     server_components: ?ServerComponents = null,
@@ -141,9 +180,10 @@ pub const Framework = struct {
     /// Bun provides built-in support for using React as a framework.
     /// Depends on externally provided React
     ///
-    /// $ bun i react@experimental react-dom@experimental react-server-dom-webpack@experimental react-refresh@experimental
+    /// $ bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun
     pub fn react(arena: std.mem.Allocator) !Framework {
         return .{
+            .is_built_in_react = true,
             .server_components = .{
                 .separate_ssr_graph = true,
                 .server_runtime_import = "react-server-dom-bun/server",
@@ -158,7 +198,8 @@ pub const Framework = struct {
                     .ignore_underscores = true,
                     .ignore_dirs = &.{ "node_modules", ".git" },
                     .extensions = &.{ ".tsx", ".jsx" },
-                    .style = .@"nextjs-pages-ui",
+                    .style = .nextjs_pages,
+                    .allow_layouts = true,
                 },
             }),
             // .static_routers = try arena.dupe([]const u8, &.{"public"}),
@@ -179,7 +220,7 @@ pub const Framework = struct {
         };
     }
 
-    const FileSystemRouterType = struct {
+    pub const FileSystemRouterType = struct {
         root: []const u8,
         prefix: []const u8,
         entry_server: []const u8,
@@ -188,14 +229,15 @@ pub const Framework = struct {
         ignore_dirs: []const []const u8,
         extensions: []const []const u8,
         style: FrameworkRouter.Style,
+        allow_layouts: bool,
     };
 
-    const BuiltInModule = union(enum) {
+    pub const BuiltInModule = union(enum) {
         import: []const u8,
         code: []const u8,
     };
 
-    const ServerComponents = struct {
+    pub const ServerComponents = struct {
         separate_ssr_graph: bool = false,
         server_runtime_import: []const u8,
         // client_runtime_import: []const u8,
@@ -208,11 +250,22 @@ pub const Framework = struct {
         import_source: []const u8 = "react-refresh/runtime",
     };
 
-    /// Given a Framework configuration, this returns another one with all modules resolved.
+    pub const react_install_command = "bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun";
+
+    pub fn addReactInstallCommandNote(log: *bun.logger.Log) !void {
+        try log.addMsg(.{
+            .kind = .note,
+            .data = try bun.logger.rangeData(null, bun.logger.Range.none, "Install the built in react integration with \"" ++ react_install_command ++ "\"")
+                .cloneLineText(log.clone_line_text, log.msgs.allocator),
+        });
+    }
+
+    /// Given a Framework configuration, this returns another one with all paths resolved.
+    /// New memory allocated into provided arena.
     ///
     /// All resolution errors will happen before returning error.ModuleNotFound
-    /// Details written into `r.log`
-    pub fn resolve(f: Framework, server: *bun.resolver.Resolver, client: *bun.resolver.Resolver) !Framework {
+    /// Errors written into `r.log`
+    pub fn resolve(f: Framework, server: *bun.resolver.Resolver, client: *bun.resolver.Resolver, arena: Allocator) !Framework {
         var clone = f;
         var had_errors: bool = false;
 
@@ -226,8 +279,7 @@ pub const Framework = struct {
         }
 
         for (clone.file_system_router_types) |*fsr| {
-            // TODO: unonwned memory
-            fsr.root = bun.path.joinAbs(server.fs.top_level_dir, .auto, fsr.root);
+            fsr.root = try arena.dupe(u8, bun.path.joinAbs(server.fs.top_level_dir, .auto, fsr.root));
             if (fsr.entry_client) |*entry_client| f.resolveHelper(client, entry_client, &had_errors, "client side entrypoint");
             f.resolveHelper(client, &fsr.entry_server, &had_errors, "server side entrypoint");
         }
@@ -261,7 +313,6 @@ pub const Framework = struct {
         bundler_options: *SplitBundlerOptions,
         arena: Allocator,
     ) !Framework {
-        _ = bundler_options; // autofix
         if (opts.isString()) {
             const str = try opts.toBunString2(global);
             defer str.deref();
@@ -334,11 +385,14 @@ pub const Framework = struct {
                         return global.throwInvalidArguments("Missing 'framework.serverComponents.serverRuntimeImportSource'", .{});
                     },
                 ),
-                .server_register_client_reference = refs.track(
-                    try sc.getOptional(global, "serverRegisterClientReferenceExport", ZigString.Slice) orelse {
-                        return global.throwInvalidArguments("Missing 'framework.serverComponents.serverRegisterClientReferenceExport'", .{});
-                    },
-                ),
+                .server_register_client_reference = if (try sc.getOptional(
+                    global,
+                    "serverRegisterClientReferenceExport",
+                    ZigString.Slice,
+                )) |slice|
+                    refs.track(slice)
+                else
+                    "registerClientReference",
             };
         };
         const built_in_modules: bun.StringArrayHashMapUnmanaged(BuiltInModule) = built_in_modules: {
@@ -384,6 +438,7 @@ pub const Framework = struct {
 
             var it = array.arrayIterator(global);
             var i: usize = 0;
+            errdefer for (file_system_router_types[0..i]) |*fsr| fsr.style.deinit();
             while (it.next()) |fsr_opts| : (i += 1) {
                 const root = try getOptionalString(fsr_opts, global, "root", refs, arena) orelse {
                     return global.throwInvalidArguments("'fileSystemRouterTypes[{d}]' is missing 'root'", .{i});
@@ -394,14 +449,12 @@ pub const Framework = struct {
                 const client_entry_point = try getOptionalString(fsr_opts, global, "clientEntryPoint", refs, arena);
                 const prefix = try getOptionalString(fsr_opts, global, "prefix", refs, arena) orelse "/";
                 const ignore_underscores = try fsr_opts.getBooleanStrict(global, "ignoreUnderscores") orelse false;
+                const layouts = try fsr_opts.getBooleanStrict(global, "layouts") orelse false;
 
-                const style = try validators.validateStringEnum(
-                    FrameworkRouter.Style,
-                    global,
-                    try opts.getOptional(global, "style", JSValue) orelse .undefined,
-                    "style",
-                    .{},
-                );
+                var style = try FrameworkRouter.Style.fromJS(try fsr_opts.get(global, "style") orelse {
+                    return global.throwInvalidArguments("'fileSystemRouterTypes[{d}]' is missing 'style'", .{i});
+                }, global);
+                errdefer style.deinit();
 
                 const extensions: []const []const u8 = if (try fsr_opts.get(global, "extensions")) |exts_js| exts: {
                     if (exts_js.isString()) {
@@ -411,12 +464,22 @@ pub const Framework = struct {
                             break :exts &.{};
                         }
                     } else if (exts_js.isArray()) {
-                        var it_2 = array.arrayIterator(global);
+                        var it_2 = exts_js.arrayIterator(global);
                         var i_2: usize = 0;
-                        const extensions = try arena.alloc([]const u8, len);
+                        const extensions = try arena.alloc([]const u8, array.getLength(global));
                         while (it_2.next()) |array_item| : (i_2 += 1) {
-                            // TODO: remove/add the prefix `.`, throw error if specifying '*' as an array item instead of as root
-                            extensions[i_2] = refs.track(try array_item.toSlice2(global, arena));
+                            const slice = refs.track(try array_item.toSlice2(global, arena));
+                            if (bun.strings.eqlComptime(slice, "*"))
+                                return global.throwInvalidArguments("'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array.", .{});
+
+                            if (slice.len == 0) {
+                                return global.throwInvalidArguments("'extensions' cannot include \"\" as an extension.", .{});
+                            }
+
+                            extensions[i_2] = if (slice[0] == '.')
+                                slice
+                            else
+                                try std.mem.concat(arena, u8, &.{ ".", slice });
                         }
                         break :exts extensions;
                     }
@@ -447,22 +510,29 @@ pub const Framework = struct {
                     .ignore_underscores = ignore_underscores,
                     .extensions = extensions,
                     .ignore_dirs = ignore_dirs,
+                    .allow_layouts = layouts,
                 };
             }
 
             break :brk file_system_router_types;
         };
+        errdefer for (file_system_router_types) |*fsr| fsr.style.deinit();
 
         const framework: Framework = .{
+            .is_built_in_react = false,
             .file_system_router_types = file_system_router_types,
             .react_fast_refresh = react_fast_refresh,
             .server_components = server_components,
             .built_in_modules = built_in_modules,
         };
 
+        if (try opts.getOptional(global, "plugins", JSValue)) |plugin_array| {
+            try bundler_options.parsePluginArray(plugin_array, global);
+        }
+
         if (try opts.getOptional(global, "bundlerOptions", JSValue)) |js_options| {
-            _ = js_options; // autofix
-            // try SplitBundlerOptions.parseInto(global, js_options, bundler_options, .root);
+            _ = js_options; // TODO:
+            // try bundler_options.parseInto(global, js_options, .root);
         }
 
         return framework;
@@ -513,18 +583,26 @@ pub const Framework = struct {
         if (renderer == .server and framework.server_components != null) {
             try out.options.conditions.appendSlice(&.{"react-server"});
         }
+        if (mode == .development) {
+            // Support `esm-env` package using this condition.
+            try out.options.conditions.appendSlice(&.{"development"});
+        }
 
         out.options.production = mode != .development;
 
         out.options.tree_shaking = mode != .development;
-        out.options.minify_syntax = true; // required for DCE
-        // out.options.minify_identifiers = mode != .development;
-        // out.options.minify_whitespace = mode != .development;
+        out.options.minify_syntax = mode != .development;
+        out.options.minify_identifiers = mode != .development;
+        out.options.minify_whitespace = mode != .development;
 
         out.options.experimental_css = true;
         out.options.css_chunking = true;
 
         out.options.framework = framework;
+
+        // In development mode, source maps must always be `linked`
+        // In production, TODO: follow user configuration
+        out.options.source_map = .linked;
 
         out.configureLinker();
         try out.configureDefines();
@@ -560,11 +638,6 @@ fn getOptionalString(
     return allocations.track(str.toUTF8(arena));
 }
 
-export fn Bun__getTemporaryDevServer(global: *JSC.JSGlobalObject) JSValue {
-    if (!bun.FeatureFlags.bake) return .undefined;
-    return JSC.JSFunction.create(global, "wipDevServer", jsWipDevServer, 0, .{});
-}
-
 pub inline fn getHmrRuntime(side: Side) [:0]const u8 {
     return if (Environment.codegen_embed)
         switch (side) {
@@ -586,6 +659,13 @@ pub const Mode = enum {
 pub const Side = enum(u1) {
     client,
     server,
+
+    pub fn graph(s: Side) Graph {
+        return switch (s) {
+            .client => .client,
+            .server => .server,
+        };
+    }
 };
 pub const Graph = enum(u2) {
     client,
@@ -636,6 +716,14 @@ pub fn addImportMetaDefines(
         "import.meta.env.STATIC",
         Define.Data.initBoolean(mode == .production_static),
     );
+
+    if (mode != .development) {
+        try define.insert(
+            allocator,
+            "import.meta.hot",
+            Define.Data.initBoolean(false),
+        );
+    }
 }
 
 pub const server_virtual_source: bun.logger.Source = .{
@@ -670,6 +758,7 @@ pub const PatternBuffer = struct {
     pub fn prependPart(pb: *PatternBuffer, part: FrameworkRouter.Part) void {
         switch (part) {
             .text => |text| {
+                bun.assert(text.len == 0 or text[0] != '/');
                 pb.prepend(text);
                 pb.prepend("/");
             },
@@ -686,13 +775,28 @@ pub const PatternBuffer = struct {
     }
 };
 
+pub fn printWarning() void {
+    // Silence this for the test suite
+    if (bun.getenvZ("BUN_DEV_SERVER_TEST_RUNNER") == null) {
+        bun.Output.warn(
+            \\Be advised that Bun Bake is highly experimental, and its API
+            \\will have breaking changes. Join the <magenta>#bake<r> Discord
+            \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
+            \\
+            \\
+        , .{});
+        bun.Output.flush();
+    }
+}
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const bun = @import("root").bun;
 const Environment = bun.Environment;
-const ZigString = bun.JSC.ZigString;
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const validators = bun.JSC.Node.validators;
+const ZigString = JSC.ZigString;
+const Plugin = JSC.API.JSBundler.Plugin;

@@ -708,7 +708,7 @@ pub const ParsedShellScript = struct {
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const str_js = arguments.nextEat() orelse {
             globalThis.throw("$`...`.cwd(): expected a string argument", .{});
-            return .undefined;
+            return .zero;
         };
         const str = bun.String.fromJS(str_js, globalThis);
         this.cwd = str;
@@ -777,10 +777,7 @@ pub const ParsedShellScript = struct {
         var template_args = template_args_js.arrayIterator(globalThis);
 
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, shargs.arena_allocator());
-        var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
-            globalThis.throwOutOfMemory();
-            return .undefined;
-        };
+        var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
             for (jsstrings.items[0..]) |bunstr| {
                 bunstr.deref();
@@ -789,10 +786,7 @@ pub const ParsedShellScript = struct {
         }
         var jsobjs = std.ArrayList(JSValue).init(shargs.arena_allocator());
         var script = std.ArrayList(u8).init(shargs.arena_allocator());
-        if (!(bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
-            globalThis.throwOutOfMemory();
-            return .undefined;
-        })) {
+        if (!(try bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script))) {
             return .undefined;
         }
 
@@ -809,8 +803,7 @@ pub const ParsedShellScript = struct {
             if (err == shell.ParseError.Lex) {
                 assert(lex_result != null);
                 const str = lex_result.?.combineErrors(shargs.arena_allocator());
-                globalThis.throwPretty("{s}", .{str});
-                return .undefined;
+                return globalThis.throwPretty("{s}", .{str});
             }
 
             if (parser) |*p| {
@@ -818,8 +811,7 @@ pub const ParsedShellScript = struct {
                     assert(p.errors.items.len > 0);
                 }
                 const errstr = p.combineErrors();
-                globalThis.throwPretty("{s}", .{errstr});
-                return .undefined;
+                return globalThis.throwPretty("{s}", .{errstr});
             }
 
             return globalThis.throwError(err, "failed to lex/parse shell");
@@ -1628,6 +1620,7 @@ pub const Interpreter = struct {
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .seq_cst);
         root.start();
+        if (globalThis.hasException()) return error.JSError;
 
         return .undefined;
     }
@@ -1773,7 +1766,7 @@ pub const Interpreter = struct {
         switch (this.root_shell.changeCwd(this, slice.slice())) {
             .err => |e| {
                 globalThis.throwValue(e.toJSC(globalThis));
-                return .undefined;
+                return .zero;
             },
             .result => {},
         }

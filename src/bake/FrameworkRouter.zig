@@ -8,6 +8,8 @@ const FrameworkRouter = @This();
 /// where it is an entrypoint index.
 pub const OpaqueFileId = bun.GenericIndex(u32, opaque {});
 
+/// Absolute path to root directory of the router.
+root: []const u8,
 types: []Type,
 routes: std.ArrayListUnmanaged(Route),
 /// Keys are full URL, with leading /, no trailing /
@@ -83,6 +85,7 @@ pub const Type = struct {
     ignore_dirs: []const []const u8 = &.{ ".git", "node_modules" },
     extensions: []const []const u8,
     style: Style,
+    allow_layouts: bool,
     /// `FrameworkRouter` itself does not use this value.
     client_file: OpaqueFileId.Optional,
     /// `FrameworkRouter` itself does not use this value.
@@ -97,11 +100,16 @@ pub const Type = struct {
     pub const Index = bun.GenericIndex(u8, Type);
 };
 
-pub fn initEmpty(types: []Type, allocator: Allocator) !FrameworkRouter {
+pub fn initEmpty(root: []const u8, types: []Type, allocator: Allocator) !FrameworkRouter {
+    bun.assert(std.fs.path.isAbsolute(root));
+
     var routes = try std.ArrayListUnmanaged(Route).initCapacity(allocator, types.len);
     errdefer routes.deinit(allocator);
 
-    for (0..types.len) |type_index| {
+    for (types, 0..) |*ty, type_index| {
+        ty.abs_root = bun.strings.withoutTrailingSlashWindowsPath(ty.abs_root);
+        bun.assert(bun.strings.hasPrefix(ty.abs_root, root));
+
         routes.appendAssumeCapacity(.{
             .part = .{ .text = "" },
             .type = Type.Index.init(@intCast(type_index)),
@@ -115,6 +123,7 @@ pub fn initEmpty(types: []Type, allocator: Allocator) !FrameworkRouter {
         });
     }
     return .{
+        .root = bun.strings.withoutTrailingSlashWindowsPath(root),
         .types = types,
         .routes = routes,
         .dynamic_routes = .{},
@@ -389,36 +398,68 @@ pub const ParsedPattern = struct {
     };
 };
 
-pub const Style = enum {
-    @"nextjs-pages-ui",
-    @"nextjs-pages-routes",
-    @"nextjs-app-ui",
-    @"nextjs-app-routes",
-    javascript_defined,
+pub const Style = union(enum) {
+    nextjs_pages,
+    nextjs_app_ui,
+    nextjs_app_routes,
+    javascript_defined: JSC.Strong,
+
+    pub const map = bun.ComptimeStringMap(Style, .{
+        .{ "nextjs-pages", .nextjs_pages },
+        .{ "nextjs-app-ui", .nextjs_app_ui },
+        .{ "nextjs-app-routes", .nextjs_app_routes },
+    });
+    pub const error_message = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
+
+    pub fn fromJS(value: JSValue, global: *JSC.JSGlobalObject) !Style {
+        if (value.isString()) {
+            const bun_string = try value.toBunString2(global);
+            var sfa = std.heap.stackFallback(4096, bun.default_allocator);
+            const utf8 = bun_string.toUTF8(sfa.get());
+            defer utf8.deinit();
+            if (map.get(utf8.slice())) |style| {
+                return style;
+            }
+        } else if (value.isCallable(global.vm())) {
+            return .{ .javascript_defined = JSC.Strong.create(value, global) };
+        }
+
+        return global.throwInvalidArguments(error_message, .{});
+    }
+
+    pub fn deinit(style: *Style) void {
+        switch (style.*) {
+            .javascript_defined => |*strong| strong.deinit(),
+            else => {},
+        }
+    }
 
     pub const UiOrRoutes = enum { ui, routes };
     const NextRoutingConvention = enum { app, pages };
 
-    pub fn parse(style: Style, file_path: []const u8, ext: []const u8, log: *TinyLog, arena: Allocator) !?ParsedPattern {
+    pub fn parse(style: Style, file_path: []const u8, ext: []const u8, log: *TinyLog, allow_layouts: bool, arena: Allocator) !?ParsedPattern {
         bun.assert(file_path[0] == '/');
 
         return switch (style) {
-            .@"nextjs-pages-ui" => parseNextJsPages(file_path, ext, log, arena, .ui),
-            .@"nextjs-pages-routes" => parseNextJsPages(file_path, ext, log, arena, .routes),
-            .@"nextjs-app-ui" => parseNextJsApp(file_path, ext, log, arena, .ui),
-            .@"nextjs-app-routes" => parseNextJsApp(file_path, ext, log, arena, .routes),
+            .nextjs_pages => parseNextJsPages(file_path, ext, log, allow_layouts, arena),
+            .nextjs_app_ui => parseNextJsApp(file_path, ext, log, allow_layouts, arena, .ui),
+            .nextjs_app_routes => parseNextJsApp(file_path, ext, log, allow_layouts, arena, .routes),
+
+            // The strategy for this should be to collect a list of candidates,
+            // then batch-call the javascript handler and collect all results.
+            // This will avoid most of the back-and-forth native<->js overhead.
             .javascript_defined => @panic("TODO: customizable Style"),
         };
     }
 
     /// Implements the pages router parser from Next.js:
     /// https://nextjs.org/docs/getting-started/project-structure#pages-routing-conventions
-    pub fn parseNextJsPages(file_path_raw: []const u8, ext: []const u8, log: *TinyLog, arena: Allocator, extract: UiOrRoutes) !?ParsedPattern {
+    pub fn parseNextJsPages(file_path_raw: []const u8, ext: []const u8, log: *TinyLog, allow_layouts: bool, arena: Allocator) !?ParsedPattern {
         var file_path = file_path_raw[0 .. file_path_raw.len - ext.len];
         var kind: ParsedPattern.Kind = .page;
         if (strings.hasSuffixComptime(file_path, "/index")) {
             file_path.len -= "/index".len;
-        } else if (extract == .ui and strings.hasSuffixComptime(file_path, "/_layout")) {
+        } else if (allow_layouts and strings.hasSuffixComptime(file_path, "/_layout")) {
             file_path.len -= "/_layout".len;
             kind = .layout;
         }
@@ -439,6 +480,7 @@ pub const Style = enum {
         file_path_raw: []const u8,
         ext: []const u8,
         log: *TinyLog,
+        allow_layouts: bool,
         arena: Allocator,
         comptime extract: UiOrRoutes,
     ) !?ParsedPattern {
@@ -467,6 +509,8 @@ pub const Style = enum {
             },
         }).get(basename) orelse
             return null;
+
+        if (kind == .layout and !allow_layouts) return null;
 
         const dirname = bun.path.dirname(without_ext, .posix);
         if (dirname.len <= 1) return .{
@@ -769,6 +813,7 @@ fn newEdge(fr: *FrameworkRouter, alloc: Allocator, edge_data: Route.Edge) !Route
 const PatternParseError = error{InvalidRoutePattern};
 
 /// Non-allocating single message log, specialized for the messages from the route pattern parsers.
+/// DevServer uses this to special-case the printing of these messages to highlight the offending part of the filename
 pub const TinyLog = struct {
     msg: std.BoundedArray(u8, 512 + std.fs.max_path_bytes),
     cursor_at: u32,
@@ -777,14 +822,47 @@ pub const TinyLog = struct {
     pub const empty: TinyLog = .{ .cursor_at = std.math.maxInt(u32), .cursor_len = 0, .msg = .{} };
 
     pub fn fail(log: *TinyLog, comptime fmt: []const u8, args: anytype, cursor_at: usize, cursor_len: usize) PatternParseError {
+        log.write(fmt, args);
+        log.cursor_at = @intCast(cursor_at);
+        log.cursor_len = @intCast(cursor_len);
+        return PatternParseError.InvalidRoutePattern;
+    }
+
+    pub fn write(log: *TinyLog, comptime fmt: []const u8, args: anytype) void {
         log.msg.len = @intCast(if (std.fmt.bufPrint(&log.msg.buffer, fmt, args)) |slice| slice.len else |_| brk: {
             // truncation should never happen because the buffer is HUGE. handle it anyways
             @memcpy(log.msg.buffer[log.msg.buffer.len - 3 ..], "...");
             break :brk log.msg.buffer.len;
         });
-        log.cursor_at = @intCast(cursor_at);
-        log.cursor_len = @intCast(cursor_len);
-        return PatternParseError.InvalidRoutePattern;
+    }
+
+    pub fn print(log: *const TinyLog, rel_path: []const u8) void {
+        const after = rel_path[@max(0, log.cursor_at)..];
+        bun.Output.errGeneric("\"{s}<blue>{s}<r>{s}\" is not a valid route", .{
+            rel_path[0..@max(0, log.cursor_at)],
+            after[0..@min(log.cursor_len, after.len)],
+            after[@min(log.cursor_len, after.len)..],
+        });
+        const w = bun.Output.errorWriterBuffered();
+        w.writeByteNTimes(' ', "error: \"".len + log.cursor_at) catch return;
+        if (bun.Output.enable_ansi_colors_stderr) {
+            const symbols = bun.fmt.TableSymbols.unicode;
+            bun.Output.prettyError("<blue>" ++ symbols.topColumnSep(), .{});
+            if (log.cursor_len > 1) {
+                w.writeBytesNTimes(symbols.horizontalEdge(), log.cursor_len - 1) catch return;
+            }
+        } else {
+            if (log.cursor_len <= 1) {
+                w.writeAll("|") catch return;
+            } else {
+                w.writeByteNTimes('-', log.cursor_len - 1) catch return;
+            }
+        }
+        w.writeByte('\n') catch return;
+        w.writeByteNTimes(' ', "error: \"".len + log.cursor_at) catch return;
+        w.writeAll(log.msg.slice()) catch return;
+        bun.Output.prettyError("<r>\n", .{});
+        bun.Output.flush();
     }
 };
 
@@ -794,6 +872,8 @@ pub const InsertionContext = struct {
     vtable: *const VTable,
     const VTable = struct {
         getFileIdForRouter: *const fn (*anyopaque, abs_path: []const u8, associated_route: Route.Index, kind: Route.FileKind) bun.OOM!OpaqueFileId,
+        onRouterSyntaxError: *const fn (*anyopaque, rel_path: []const u8, fail: TinyLog) bun.OOM!void,
+        onRouterCollisionError: *const fn (*anyopaque, rel_path: []const u8, other_id: OpaqueFileId, file_kind: Route.FileKind) bun.OOM!void,
     };
     pub fn wrap(comptime T: type, ctx: *T) InsertionContext {
         const wrapper = struct {
@@ -801,11 +881,23 @@ pub const InsertionContext = struct {
                 const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
                 return try cast_ctx.getFileIdForRouter(abs_path, associated_route, kind);
             }
+            fn onRouterSyntaxError(opaque_ctx: *anyopaque, rel_path: []const u8, log: TinyLog) bun.OOM!void {
+                const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
+                if (!@hasDecl(T, "onRouterSyntaxError")) @panic("TODO: onRouterSyntaxError for " ++ @typeName(T));
+                return try cast_ctx.onRouterSyntaxError(rel_path, log);
+            }
+            fn onRouterCollisionError(opaque_ctx: *anyopaque, rel_path: []const u8, other_id: OpaqueFileId, file_kind: Route.FileKind) bun.OOM!void {
+                const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
+                if (!@hasDecl(T, "onRouterCollisionError")) @panic("TODO: onRouterCollisionError for " ++ @typeName(T));
+                return try cast_ctx.onRouterCollisionError(rel_path, other_id, file_kind);
+            }
         };
         return .{
             .opaque_ctx = ctx,
             .vtable = comptime &.{
                 .getFileIdForRouter = &wrapper.getFileIdForRouter,
+                .onRouterSyntaxError = &wrapper.onRouterSyntaxError,
+                .onRouterCollisionError = &wrapper.onRouterCollisionError,
             },
         };
     }
@@ -817,12 +909,12 @@ pub fn scan(
     ty: Type.Index,
     r: *Resolver,
     ctx: InsertionContext,
-) !void {
+) bun.OOM!void {
     const t = &fw.types[ty.get()];
     bun.assert(!strings.hasSuffixComptime(t.abs_root, "/"));
     bun.assert(std.fs.path.isAbsolute(t.abs_root));
-    const root_info = try r.readDirInfo(t.abs_root) orelse
-        return error.RootDirMissing;
+    const root_info = r.readDirInfoIgnoreError(t.abs_root) orelse
+        return;
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
     try fw.scanInner(alloc, t, ty, r, root_info, &arena_state, ctx);
@@ -837,7 +929,7 @@ fn scanInner(
     dir_info: *const DirInfo,
     arena_state: *std.heap.ArenaAllocator,
     ctx: InsertionContext,
-) !void {
+) bun.OOM!void {
     const fs = r.fs;
     const fs_impl = &fs.fs;
 
@@ -871,19 +963,29 @@ fn scanInner(
                     }
 
                     var rel_path_buf: bun.PathBuffer = undefined;
-                    var rel_path = bun.path.relativeNormalizedBuf(
+                    var full_rel_path = bun.path.relativeNormalizedBuf(
                         rel_path_buf[1..],
-                        t.abs_root,
+                        fr.root,
                         fs.abs(&.{ file.dir, file.base() }),
-                        .posix,
+                        .auto,
                         true,
                     );
                     rel_path_buf[0] = '/';
-                    rel_path = rel_path_buf[0 .. rel_path.len + 1];
+                    bun.path.platformToPosixInPlace(u8, rel_path_buf[0..full_rel_path.len]);
+                    const rel_path = if (t.abs_root.len == fr.root.len)
+                        rel_path_buf[0 .. full_rel_path.len + 1]
+                    else
+                        full_rel_path[t.abs_root.len - fr.root.len - 1 ..];
                     var log = TinyLog.empty;
                     defer _ = arena_state.reset(.retain_capacity);
-                    const parsed = (t.style.parse(rel_path, ext, &log, arena_state.allocator()) catch
-                        @panic("TODO: propagate error message")) orelse continue :outer;
+                    const parsed = (t.style.parse(rel_path, ext, &log, t.allow_layouts, arena_state.allocator()) catch {
+                        log.cursor_at += @intCast(t.abs_root.len - fr.root.len);
+                        try ctx.vtable.onRouterSyntaxError(ctx.opaque_ctx, full_rel_path, log);
+                        continue :outer;
+                    }) orelse continue :outer;
+
+                    if (parsed.kind == .page and t.ignore_underscores and bun.strings.hasPrefixComptime(base, "_"))
+                        continue :outer;
 
                     var static_total_len: usize = 0;
                     var param_count: usize = 0;
@@ -901,11 +1003,18 @@ fn scanInner(
                     }
 
                     if (param_count > 64) {
-                        @panic("TODO: propagate error for more than 64 params");
+                        log.write("Pattern cannot have more than 64 param", .{});
+                        try ctx.vtable.onRouterSyntaxError(ctx.opaque_ctx, full_rel_path, log);
+                        continue :outer;
                     }
 
-                    if (parsed.kind == .page and t.ignore_underscores and bun.strings.hasPrefixComptime(base, "_"))
-                        continue :outer;
+                    var out_colliding_file_id: OpaqueFileId = undefined;
+
+                    const file_kind: Route.FileKind = switch (parsed.kind) {
+                        .page => .page,
+                        .layout => .layout,
+                        .extra => @panic("TODO: associate extra files with route"),
+                    };
 
                     const result = switch (param_count > 0) {
                         inline else => |has_dynamic_comptime| result: {
@@ -926,18 +1035,13 @@ fn scanInner(
                                 bun.assert(s.getWritten().len == allocation.len);
                                 break :static_route StaticPattern{ .route_path = allocation };
                             };
-                            var out_colliding_file_id: OpaqueFileId = undefined;
 
                             break :result fr.insert(
                                 alloc,
                                 t_index,
                                 if (has_dynamic_comptime) .dynamic else .static,
                                 pattern,
-                                switch (parsed.kind) {
-                                    .page => .page,
-                                    .layout => .layout,
-                                    .extra => @panic("TODO: extra files"),
-                                },
+                                file_kind,
                                 fs.abs(&.{ file.dir, file.base() }),
                                 ctx,
                                 &out_colliding_file_id,
@@ -945,12 +1049,20 @@ fn scanInner(
                         },
                     };
 
-                    result catch @panic("TODO: propagate error message");
+                    result catch |err| switch (err) {
+                        error.OutOfMemory => |e| return e,
+                        error.RouteCollision => {
+                            try ctx.vtable.onRouterCollisionError(
+                                ctx.opaque_ctx,
+                                full_rel_path,
+                                out_colliding_file_id,
+                                file_kind,
+                            );
+                        },
+                    };
                 },
             }
         }
-
-        //
     }
 }
 
@@ -963,6 +1075,11 @@ pub const JSFrameworkRouter = struct {
 
     files: std.ArrayListUnmanaged(bun.String),
     router: FrameworkRouter,
+    stored_parse_errors: std.ArrayListUnmanaged(struct {
+        // Owned by bun.default_allocator
+        rel_path: []const u8,
+        log: TinyLog,
+    }),
 
     const validators = bun.JSC.Node.validators;
 
@@ -982,13 +1099,8 @@ pub const JSFrameworkRouter = struct {
             return global.throwInvalidArguments("Missing options.root", .{});
         defer root.deinit();
 
-        const style = try validators.validateStringEnum(
-            Style,
-            global,
-            try opts.getOptional(global, "style", JSValue) orelse .undefined,
-            "style",
-            .{},
-        );
+        var style = try Style.fromJS(try opts.getOptional(global, "style", JSValue) orelse .undefined, global);
+        errdefer style.deinit();
 
         const abs_root = try bun.default_allocator.dupe(u8, bun.strings.withoutTrailingSlash(
             bun.path.joinAbs(bun.fs.FileSystem.instance.top_level_dir, .auto, root.slice()),
@@ -1000,6 +1112,7 @@ pub const JSFrameworkRouter = struct {
             .ignore_underscores = false,
             .extensions = &.{ ".tsx", ".ts", ".jsx", ".js" },
             .style = style,
+            .allow_layouts = true,
             // Unused by JSFrameworkRouter
             .client_file = undefined,
             .server_file = undefined,
@@ -1008,18 +1121,34 @@ pub const JSFrameworkRouter = struct {
         errdefer bun.default_allocator.free(types);
 
         const jsfr = bun.new(JSFrameworkRouter, .{
-            .router = try FrameworkRouter.initEmpty(types, bun.default_allocator),
+            .router = try FrameworkRouter.initEmpty(abs_root, types, bun.default_allocator),
             .files = .{},
+            .stored_parse_errors = .{},
         });
 
-        jsfr.router.scan(
+        try jsfr.router.scan(
             bun.default_allocator,
             Type.Index.init(0),
             &global.bunVM().bundler.resolver,
             InsertionContext.wrap(JSFrameworkRouter, jsfr),
-        ) catch |err| {
-            return global.throwError(err, "while scanning route list");
-        };
+        );
+        if (jsfr.stored_parse_errors.items.len > 0) {
+            const arr = JSValue.createEmptyArray(global, jsfr.stored_parse_errors.items.len);
+            for (jsfr.stored_parse_errors.items, 0..) |*item, i| {
+                arr.putIndex(
+                    global,
+                    @intCast(i),
+                    global.createErrorInstance("Invalid route {}: {s}", .{
+                        bun.fmt.quote(item.rel_path),
+                        item.log.msg.slice(),
+                    }),
+                );
+            }
+            return global.throwValue2(global.createAggregateErrorWithArray(
+                bun.String.static("Errors scanning routes"),
+                arr,
+            ));
+        }
 
         return jsfr;
     }
@@ -1104,6 +1233,8 @@ pub const JSFrameworkRouter = struct {
         this.files.deinit(bun.default_allocator);
         this.router.deinit(bun.default_allocator);
         bun.default_allocator.free(this.router.types);
+        for (this.stored_parse_errors.items) |i| bun.default_allocator.free(i.rel_path);
+        this.stored_parse_errors.deinit(bun.default_allocator);
         bun.destroy(this);
     }
 
@@ -1118,14 +1249,11 @@ pub const JSFrameworkRouter = struct {
         const style_js, const filepath_js = frame.argumentsAsArray(2);
         const filepath = try filepath_js.toSlice2(global, alloc);
         defer filepath.deinit();
-        const style_string = try style_js.toSlice2(global, alloc);
-        defer style_string.deinit();
-
-        const style = std.meta.stringToEnum(Style, style_string.slice()) orelse
-            return global.throwInvalidArguments("unknown router style {}", .{bun.fmt.quote(style_string.slice())});
+        var style = try Style.fromJS(style_js, global);
+        errdefer style.deinit();
 
         var log = TinyLog.empty;
-        const parsed = style.parse(filepath.slice(), std.fs.path.extension(filepath.slice()), &log, alloc) catch |err| switch (err) {
+        const parsed = style.parse(filepath.slice(), std.fs.path.extension(filepath.slice()), &log, true, alloc) catch |err| switch (err) {
             error.InvalidRoutePattern => {
                 global.throw("{s} ({d}:{d})", .{ log.msg.slice(), log.cursor_at, log.cursor_len });
                 return error.JSError;
@@ -1164,6 +1292,15 @@ pub const JSFrameworkRouter = struct {
     pub fn getFileIdForRouter(jsfr: *JSFrameworkRouter, abs_path: []const u8, _: Route.Index, _: Route.FileKind) !OpaqueFileId {
         try jsfr.files.append(bun.default_allocator, bun.String.createUTF8(abs_path));
         return OpaqueFileId.init(@intCast(jsfr.files.items.len - 1));
+    }
+
+    pub fn onRouterSyntaxError(jsfr: *JSFrameworkRouter, rel_path: []const u8, log: TinyLog) !void {
+        const rel_path_dupe = try bun.default_allocator.dupe(u8, rel_path);
+        errdefer bun.default_allocator.free(rel_path_dupe);
+        try jsfr.stored_parse_errors.append(bun.default_allocator, .{
+            .rel_path = rel_path_dupe,
+            .log = log,
+        });
     }
 
     pub fn fileIdToJS(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, id: OpaqueFileId.Optional) JSValue {

@@ -369,10 +369,7 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
             option.default_value,
         });
 
-        option_definitions.append(option) catch {
-            globalThis.throwOutOfMemory();
-            return error.JSError;
-        };
+        try option_definitions.append(option);
     }
 }
 

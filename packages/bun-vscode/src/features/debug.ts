@@ -10,6 +10,7 @@ import {
   UnixSignal,
   WebSocketDebugAdapter,
 } from "../../../bun-debug-adapter-protocol";
+import { getConfig } from "../extension";
 
 export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
   type: "bun",
@@ -370,10 +371,6 @@ function getRuntime(scope?: vscode.ConfigurationScope): string {
     return value;
   }
   return "bun";
-}
-
-function getConfig<T>(path: string, scope?: vscode.ConfigurationScope) {
-  return vscode.workspace.getConfiguration("bun", scope).get<T>(path);
 }
 
 export async function runUnsavedCode() {

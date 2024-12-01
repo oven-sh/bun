@@ -74,6 +74,5 @@
     "prettier:check": "bun run analysis:no-llvm --target prettier-check",
     "prettier:extra": "bun run analysis:no-llvm --target prettier-extra",
     "prettier:diff": "bun run analysis:no-llvm --target prettier-diff"
-  },
-  "packageManager": "npm@10.2.3+sha1.f30ed73c400685ab52bf3f21cd3fcab1c5b007ce"
+  }
 }

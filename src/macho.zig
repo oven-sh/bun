@@ -6,12 +6,6 @@ const macho = std.macho;
 const Allocator = mem.Allocator;
 const bun = @import("root").bun;
 
-pub const Error = error{
-    InvalidObject,
-    InternalError,
-    IoError,
-};
-
 pub const SEGNAME_BUN = "__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
 pub const SECTNAME = "__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
 

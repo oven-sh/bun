@@ -4,11 +4,7 @@ if(NOT ENABLE_LLVM)
   return()
 endif()
 
-if(CMAKE_HOST_WIN32 OR CMAKE_HOST_APPLE OR EXISTS "/etc/alpine-release")
-  set(DEFAULT_LLVM_VERSION "18.1.8")
-else()
-  set(DEFAULT_LLVM_VERSION "16.0.6")
-endif()
+set(DEFAULT_LLVM_VERSION "18.1.8")
 
 optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT ${DEFAULT_LLVM_VERSION})
 

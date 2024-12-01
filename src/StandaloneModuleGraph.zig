@@ -12,6 +12,7 @@ const Syscall = bun.sys;
 const SourceMap = bun.sourcemap;
 const StringPointer = bun.StringPointer;
 
+const macho = bun.macho;
 const w = std.os.windows;
 
 pub const StandaloneModuleGraph = struct {
@@ -94,6 +95,23 @@ pub const StandaloneModuleGraph = struct {
         none = 0,
         esm = 1,
         cjs = 2,
+    };
+
+    const Macho = struct {
+        pub extern "C" fn Bun__getStandaloneModuleGraphMachoLength() ?*align(1) u32;
+
+        pub fn getData() ?[]const u8 {
+            if (Bun__getStandaloneModuleGraphMachoLength()) |length| {
+                if (length.* < 8) {
+                    return null;
+                }
+
+                const slice_ptr: [*]const u8 = @ptrCast(length);
+                return slice_ptr[4..][0..length.*];
+            }
+
+            return null;
+        }
     };
 
     pub const File = struct {
@@ -430,7 +448,7 @@ pub const StandaloneModuleGraph = struct {
     else
         std.mem.page_size;
 
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8) bun.FileDescriptor {
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, target: *const CompileTarget) bun.FileDescriptor {
         var buf: bun.PathBuffer = undefined;
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
@@ -565,6 +583,58 @@ pub const StandaloneModuleGraph = struct {
             break :brk fd;
         };
 
+        if (target.os == .mac) {
+            const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
+            if (input_result.err) |err| {
+                Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
+                cleanup(zname, cloned_executable_fd);
+                Global.exit(1);
+            }
+            var macho_file = bun.macho.MachoFile.init(bun.default_allocator, input_result.bytes.items) catch |err| {
+                Output.prettyErrorln("Error initializing standalone module graph: {}", .{err});
+                cleanup(zname, cloned_executable_fd);
+                Global.exit(1);
+            };
+            defer macho_file.deinit();
+            macho_file.writeSection(bytes) catch |err| {
+                Output.prettyErrorln("Error writing standalone module graph: {}", .{err});
+                cleanup(zname, cloned_executable_fd);
+                Global.exit(1);
+            };
+            input_result.bytes.deinit();
+
+            switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                .err => |err| {
+                    Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                },
+                else => {},
+            }
+
+            var file = bun.sys.File{ .handle = cloned_executable_fd };
+            const writer = file.writer();
+            const BufferedWriter = std.io.BufferedWriter(512 * 1024, @TypeOf(writer));
+            var buffered_writer = bun.default_allocator.create(BufferedWriter) catch bun.outOfMemory();
+            buffered_writer.* = .{
+                .unbuffered_writer = writer,
+            };
+            macho_file.buildAndSign(buffered_writer.writer()) catch |err| {
+                Output.prettyErrorln("Error writing standalone module graph: {}", .{err});
+                cleanup(zname, cloned_executable_fd);
+                Global.exit(1);
+            };
+            buffered_writer.flush() catch |err| {
+                Output.prettyErrorln("Error flushing standalone module graph: {}", .{err});
+                cleanup(zname, cloned_executable_fd);
+                Global.exit(1);
+            };
+            if (comptime !Environment.isWindows) {
+                _ = bun.C.fchmod(cloned_executable_fd.int(), 0o777);
+            }
+            return cloned_executable_fd;
+        }
+
         var total_byte_count: usize = undefined;
 
         if (Environment.isWindows) {
@@ -675,6 +745,7 @@ pub const StandaloneModuleGraph = struct {
                     Output.err(err, "failed to download cross-compiled bun executable", .{});
                     Global.exit(1);
                 },
+            target,
         );
         fd.assertKind(.system);
 
@@ -752,6 +823,16 @@ pub const StandaloneModuleGraph = struct {
     }
 
     pub fn fromExecutable(allocator: std.mem.Allocator) !?StandaloneModuleGraph {
+        if (comptime Environment.isMac) {
+            const macho_bytes = Macho.getData() orelse return null;
+            if (macho_bytes.len < @sizeOf(Offsets) + 8) {
+                Output.debugWarn("bun standalone module graph is too small to be valid", .{});
+                return null;
+            }
+            const offsets = std.mem.bytesAsValue(Offsets, macho_bytes[0..@sizeOf(Offsets)]).*;
+            return try StandaloneModuleGraph.fromBytes(allocator, @constCast(macho_bytes), offsets);
+        }
+
         // Do not invoke libuv here.
         const self_exe = openSelf() catch return null;
         defer _ = Syscall.close(self_exe);

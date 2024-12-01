@@ -860,3 +860,26 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 }
 
 #endif
+
+#if OS(DARWIN)
+
+#if CPU(ARM64)
+#define BLOB_HEADER_ALIGNMENT 16 * 1024
+#else
+#define BLOB_HEADER_ALIGNMENT 4 * 1024
+#endif
+
+extern "C" {
+struct BlobHeader {
+    uint32_t size;
+    uint8_t data[];
+} __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
+}
+
+extern "C" BlobHeader __attribute__((section("__BUN,__BUN"))) BUN_COMPILED = { 0, 0 };
+
+extern "C" uint32_t* Bun__getStandaloneModuleGraphMachoLength()
+{
+    return &BUN_COMPILED.size;
+}
+#endif

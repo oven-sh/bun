@@ -876,7 +876,7 @@ struct BlobHeader {
 } __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
 }
 
-extern "C" BlobHeader __attribute__((section("__BUN,__BUN"))) BUN_COMPILED = { 0, 0 };
+extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
 
 extern "C" uint32_t* Bun__getStandaloneModuleGraphMachoLength()
 {

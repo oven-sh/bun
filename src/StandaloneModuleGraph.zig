@@ -779,29 +779,6 @@ pub const StandaloneModuleGraph = struct {
             Global.exit(1);
         };
 
-        if (comptime Environment.isMac) {
-            if (target.os == .mac) {
-                var signer = std.process.Child.init(
-                    &.{
-                        "codesign",
-                        "--remove-signature",
-                        temp_location,
-                    },
-                    bun.default_allocator,
-                );
-                if (bun.logger.Log.default_log_level.atLeast(.verbose)) {
-                    signer.stdout_behavior = .Inherit;
-                    signer.stderr_behavior = .Inherit;
-                    signer.stdin_behavior = .Inherit;
-                } else {
-                    signer.stdout_behavior = .Ignore;
-                    signer.stderr_behavior = .Ignore;
-                    signer.stdin_behavior = .Ignore;
-                }
-                _ = signer.spawnAndWait() catch {};
-            }
-        }
-
         bun.C.moveFileZWithHandle(
             fd,
             bun.FD.cwd(),
@@ -825,11 +802,17 @@ pub const StandaloneModuleGraph = struct {
     pub fn fromExecutable(allocator: std.mem.Allocator) !?StandaloneModuleGraph {
         if (comptime Environment.isMac) {
             const macho_bytes = Macho.getData() orelse return null;
-            if (macho_bytes.len < @sizeOf(Offsets) + 8) {
+            if (macho_bytes.len < @sizeOf(Offsets) + trailer.len) {
                 Output.debugWarn("bun standalone module graph is too small to be valid", .{});
                 return null;
             }
-            const offsets = std.mem.bytesAsValue(Offsets, macho_bytes[0..@sizeOf(Offsets)]).*;
+            const macho_bytes_slice = macho_bytes[macho_bytes.len - @sizeOf(Offsets) - trailer.len ..];
+            const trailer_bytes = macho_bytes[macho_bytes.len - trailer.len ..][0..trailer.len];
+            if (!bun.strings.eqlComptime(trailer_bytes, trailer)) {
+                Output.debugWarn("bun standalone module graph has invalid trailer", .{});
+                return null;
+            }
+            const offsets = std.mem.bytesAsValue(Offsets, macho_bytes_slice).*;
             return try StandaloneModuleGraph.fromBytes(allocator, @constCast(macho_bytes), offsets);
         }
 

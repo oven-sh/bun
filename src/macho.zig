@@ -7,7 +7,7 @@ const Allocator = mem.Allocator;
 const bun = @import("root").bun;
 
 pub const SEGNAME_BUN = "__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
-pub const SECTNAME = "__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
+pub const SECTNAME = "__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
 
 pub const MachoFile = struct {
     header: macho.mach_header_64,
@@ -99,6 +99,7 @@ pub const MachoFile = struct {
         var existing_cmd_idx: ?usize = null;
         var existing_cmd_offset: ?usize = null;
         var original_fileoff: u64 = 0;
+        var original_vmaddr: u64 = 0;
 
         outer: for (self.commands.items, 0..) |cmd, i| {
             if (cmd.cmd == @intFromEnum(macho.LC.SEGMENT_64)) {
@@ -107,20 +108,36 @@ pub const MachoFile = struct {
                     if (command.nsects > 0) {
                         const sections = @as([*]const macho.section_64, @ptrCast(@alignCast(&self.data.items[cmd.offset + @sizeOf(macho.segment_command_64)])))[0..command.nsects];
                         for (sections) |*sect| {
-                            if (mem.eql(u8, sect.sectName(), "__BUN")) {
+                            if (mem.eql(u8, sect.sectName(), "__bun")) {
                                 existing_cmd_idx = i;
                                 existing_cmd_offset = cmd.offset;
                                 original_fileoff = sect.offset;
+                                original_vmaddr = sect.addr;
                                 self.seg = command;
                                 self.sec = sect.*;
 
-                                // Keep the original offset
+                                // Keep the original addresses and update sizes
                                 const new_size = alignVmsize(total_size, blob_alignment);
                                 self.seg.vmsize = new_size;
                                 self.seg.filesize = new_size;
-                                self.sec.size = @intCast(total_size);
-                                // Don't change the offset
-                                self.sec.offset = @intCast(original_fileoff);
+                                // Important: Set proper protection flags
+                                self.seg.maxprot = macho.PROT.READ | macho.PROT.WRITE;
+                                self.seg.initprot = macho.PROT.READ | macho.PROT.WRITE;
+
+                                self.sec = .{
+                                    .sectname = SECTNAME,
+                                    .segname = SEGNAME_BUN,
+                                    .addr = original_vmaddr,
+                                    .size = @intCast(total_size),
+                                    .offset = @intCast(original_fileoff),
+                                    .@"align" = @intFromFloat(@log2(@as(f64, @floatFromInt(blob_alignment)))),
+                                    .reloff = 0,
+                                    .nreloc = 0,
+                                    .flags = macho.S_REGULAR | macho.S_ATTR_NO_DEAD_STRIP,
+                                    .reserved1 = 0,
+                                    .reserved2 = 0,
+                                    .reserved3 = 0,
+                                };
                                 break :outer;
                             }
                         }

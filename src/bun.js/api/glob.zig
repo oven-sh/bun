@@ -46,10 +46,7 @@ const ScanOpts = struct {
         const cwd_str = cwd_str: {
             // If its absolute return as is
             if (ResolvePath.Platform.auto.isAbsolute(cwd_str_raw.slice())) {
-                const cwd_str = cwd_str_raw.clone(allocator) catch {
-                    globalThis.throwOutOfMemory();
-                    return error.JSError;
-                };
+                const cwd_str = try cwd_str_raw.clone(allocator);
                 break :cwd_str cwd_str.ptr[0..cwd_str.len];
             }
 
@@ -57,10 +54,7 @@ const ScanOpts = struct {
 
             if (!absolute) {
                 const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{cwd_str_raw.slice()}, .auto);
-                break :cwd_str allocator.dupe(u8, cwd_str) catch {
-                    globalThis.throwOutOfMemory();
-                    return error.JSError;
-                };
+                break :cwd_str try allocator.dupe(u8, cwd_str);
             }
 
             // Convert to an absolute path
@@ -78,10 +72,7 @@ const ScanOpts = struct {
                 cwd_str_raw.slice(),
             }, .auto);
 
-            break :cwd_str allocator.dupe(u8, cwd_str) catch {
-                globalThis.throwOutOfMemory();
-                return error.JSError;
-            };
+            break :cwd_str try allocator.dupe(u8, cwd_str);
         };
 
         if (cwd_str.len > bun.MAX_PATH_BYTES) {
@@ -113,29 +104,29 @@ const ScanOpts = struct {
                 return out;
             }
             globalThis.throw("{s}: expected first argument to be an object", .{fnName});
-            return null;
+            return error.JSError;
         }
 
-        if (optsObj.getTruthy(globalThis, "onlyFiles")) |only_files| {
+        if (try optsObj.getTruthy(globalThis, "onlyFiles")) |only_files| {
             out.only_files = if (only_files.isBoolean()) only_files.asBoolean() else false;
         }
 
-        if (optsObj.getTruthy(globalThis, "throwErrorOnBrokenSymlink")) |error_on_broken| {
+        if (try optsObj.getTruthy(globalThis, "throwErrorOnBrokenSymlink")) |error_on_broken| {
             out.error_on_broken_symlinks = if (error_on_broken.isBoolean()) error_on_broken.asBoolean() else false;
         }
 
-        if (optsObj.getTruthy(globalThis, "followSymlinks")) |followSymlinksVal| {
+        if (try optsObj.getTruthy(globalThis, "followSymlinks")) |followSymlinksVal| {
             out.follow_symlinks = if (followSymlinksVal.isBoolean()) followSymlinksVal.asBoolean() else false;
         }
 
-        if (optsObj.getTruthy(globalThis, "absolute")) |absoluteVal| {
+        if (try optsObj.getTruthy(globalThis, "absolute")) |absoluteVal| {
             out.absolute = if (absoluteVal.isBoolean()) absoluteVal.asBoolean() else false;
         }
 
-        if (optsObj.getTruthy(globalThis, "cwd")) |cwdVal| {
+        if (try optsObj.getTruthy(globalThis, "cwd")) |cwdVal| {
             if (!cwdVal.isString()) {
                 globalThis.throw("{s}: invalid `cwd`, not a string", .{fnName});
-                return null;
+                return error.JSError;
             }
 
             {
@@ -146,7 +137,7 @@ const ScanOpts = struct {
             }
         }
 
-        if (optsObj.getTruthy(globalThis, "dot")) |dot| {
+        if (try optsObj.getTruthy(globalThis, "dot")) |dot| {
             out.dot = if (dot.isBoolean()) dot.asBoolean() else false;
         }
 
@@ -251,15 +242,12 @@ fn makeGlobWalker(
     const error_on_broken_symlinks = matchOpts.error_on_broken_symlinks;
     const only_files = matchOpts.only_files;
 
+    var globWalker = try alloc.create(GlobWalker);
+    errdefer alloc.destroy(globWalker);
+    globWalker.* = .{};
+
     if (cwd != null) {
-        var globWalker = alloc.create(GlobWalker) catch {
-            globalThis.throwOutOfMemory();
-            return error.JSError;
-        };
-
-        globWalker.* = .{};
-
-        switch (globWalker.initWithCwd(
+        switch (try globWalker.initWithCwd(
             arena,
             this.pattern,
             cwd.?,
@@ -268,10 +256,7 @@ fn makeGlobWalker(
             follow_symlinks,
             error_on_broken_symlinks,
             only_files,
-        ) catch {
-            globalThis.throwOutOfMemory();
-            return error.JSError;
-        }) {
+        )) {
             .err => |err| {
                 return globalThis.throwValue2(err.toJSC(globalThis));
             },
@@ -279,13 +264,8 @@ fn makeGlobWalker(
         }
         return globWalker;
     }
-    var globWalker = alloc.create(GlobWalker) catch {
-        globalThis.throwOutOfMemory();
-        return error.JSError;
-    };
 
-    globWalker.* = .{};
-    switch (globWalker.init(
+    switch (try globWalker.init(
         arena,
         this.pattern,
         dot,
@@ -293,23 +273,19 @@ fn makeGlobWalker(
         follow_symlinks,
         error_on_broken_symlinks,
         only_files,
-    ) catch {
-        globalThis.throwOutOfMemory();
-        return error.JSError;
-    }) {
+    )) {
         .err => |err| {
             return globalThis.throwValue2(err.toJSC(globalThis));
         },
         else => {},
     }
-
     return globWalker;
 }
 
 pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Glob {
     const alloc = getAllocator(globalThis);
 
-    const arguments_ = callframe.arguments(1);
+    const arguments_ = callframe.arguments_old(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const pat_arg: JSValue = arguments.nextEat() orelse {
@@ -368,7 +344,7 @@ fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void 
 pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
-    const arguments_ = callframe.arguments(1);
+    const arguments_ = callframe.arguments_old(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
@@ -381,8 +357,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     incrPendingActivityFlag(&this.has_pending_activity);
     var task = WalkTask.create(globalThis, alloc, globWalker, &this.has_pending_activity) catch {
         decrPendingActivityFlag(&this.has_pending_activity);
-        globalThis.throwOutOfMemory();
-        return error.JSError;
+        return globalThis.throwOutOfMemory();
     };
     task.schedule();
 
@@ -392,7 +367,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
 pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
-    const arguments_ = callframe.arguments(1);
+    const arguments_ = callframe.arguments_old(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
@@ -403,10 +378,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
     };
     defer globWalker.deinit(true);
 
-    switch (globWalker.walk() catch {
-        globalThis.throwOutOfMemory();
-        return error.JSError;
-    }) {
+    switch (try globWalker.walk()) {
         .err => |err| {
             return globalThis.throwValue2(err.toJSC(globalThis));
         },
@@ -423,17 +395,17 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     var arena = Arena.init(alloc);
     defer arena.deinit();
 
-    const arguments_ = callframe.arguments(1);
+    const arguments_ = callframe.arguments_old(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const str_arg = arguments.nextEat() orelse {
         globalThis.throw("Glob.matchString: expected 1 arguments, got 0", .{});
-        return .undefined;
+        return .zero;
     };
 
     if (!str_arg.isString()) {
         globalThis.throw("Glob.matchString: first argument is not a string", .{});
-        return .undefined;
+        return .zero;
     }
 
     var str = str_arg.toSlice(globalThis, arena.allocator());
@@ -444,16 +416,10 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     const codepoints = codepoints: {
         if (this.pattern_codepoints) |cp| break :codepoints cp.items[0..];
 
-        var codepoints = std.ArrayList(u32).initCapacity(alloc, this.pattern.len * 2) catch {
-            globalThis.throwOutOfMemory();
-            return .undefined;
-        };
+        var codepoints = try std.ArrayList(u32).initCapacity(alloc, this.pattern.len * 2);
         errdefer codepoints.deinit();
 
-        convertUtf8(&codepoints, this.pattern) catch {
-            globalThis.throwOutOfMemory();
-            return .undefined;
-        };
+        try convertUtf8(&codepoints, this.pattern);
 
         this.pattern_codepoints = codepoints;
 

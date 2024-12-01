@@ -14,6 +14,7 @@ import {
   getChangedFiles,
   getCommit,
   getCommitMessage,
+  getEnv,
   getLastSuccessfulBuild,
   getMainBranch,
   getTargetBranch,
@@ -233,8 +234,8 @@ function getPipeline(options) {
    * @returns {boolean}
    */
   const isUsingNewAgent = platform => {
-    const { os, distro } = platform;
-    if (os === "linux" && distro === "alpine") {
+    const { os } = platform;
+    if (os === "linux") {
       return true;
     }
     return false;
@@ -303,15 +304,23 @@ function getPipeline(options) {
    * @param {Target} target
    * @returns {Agent}
    */
-  const getZigAgent = target => {
-    const { abi, arch } = target;
-    // if (abi === "musl") {
-    //   const instanceType = arch === "aarch64" ? "c8g.large" : "c7i.large";
-    //   return getEmphemeralAgent("v2", target, instanceType);
-    // }
+  const getZigAgent = platform => {
+    const { arch } = platform;
+    const instanceType = arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge";
     return {
-      queue: "build-zig",
+      robobun: true,
+      robobun2: true,
+      os: "linux",
+      arch,
+      distro: "debian",
+      release: "11",
+      "image-name": `linux-${arch}-debian-11-v5`, // v5 is not on main yet
+      "instance-type": instanceType,
     };
+    // TODO: Temporarily disable due to configuration
+    // return {
+    //   queue: "build-zig",
+    // };
   };
 
   /**
@@ -360,6 +369,21 @@ function getPipeline(options) {
 
   /**
    * @param {Platform} platform
+   * @param {string} [step]
+   * @returns {string[]}
+   */
+  const getDependsOn = (platform, step) => {
+    if (imagePlatforms.has(getImageKey(platform))) {
+      const key = `${getImageKey(platform)}-build-image`;
+      if (key !== step) {
+        return [key];
+      }
+    }
+    return [];
+  };
+
+  /**
+   * @param {Platform} platform
    * @returns {Step}
    */
   const getBuildImageStep = platform => {
@@ -374,81 +398,85 @@ function getPipeline(options) {
       env: {
         DEBUG: "1",
       },
+      retry: getRetry(),
       command: `node ./scripts/machine.mjs ${action} --ci --cloud=aws --os=${os} --arch=${arch} --distro=${distro} --distro-version=${release}`,
     };
   };
 
   /**
-   * @param {Target} target
+   * @param {Platform} platform
    * @returns {Step}
    */
-  const getBuildVendorStep = target => {
+  const getBuildVendorStep = platform => {
     return {
-      key: `${getTargetKey(target)}-build-vendor`,
-      label: `${getTargetLabel(target)} - build-vendor`,
-      agents: getBuildAgent(target),
+      key: `${getTargetKey(platform)}-build-vendor`,
+      label: `${getTargetLabel(platform)} - build-vendor`,
+      depends_on: getDependsOn(platform),
+      agents: getBuildAgent(platform),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
-      env: getBuildEnv(target),
+      env: getBuildEnv(platform),
       command: "bun run build:ci --target dependencies",
     };
   };
 
   /**
-   * @param {Target} target
+   * @param {Platform} platform
    * @returns {Step}
    */
-  const getBuildCppStep = target => {
+  const getBuildCppStep = platform => {
     return {
-      key: `${getTargetKey(target)}-build-cpp`,
-      label: `${getTargetLabel(target)} - build-cpp`,
-      agents: getBuildAgent(target),
+      key: `${getTargetKey(platform)}-build-cpp`,
+      label: `${getTargetLabel(platform)} - build-cpp`,
+      depends_on: getDependsOn(platform),
+      agents: getBuildAgent(platform),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
       env: {
         BUN_CPP_ONLY: "ON",
-        ...getBuildEnv(target),
+        ...getBuildEnv(platform),
       },
       command: "bun run build:ci --target bun",
     };
   };
 
   /**
-   * @param {Target} target
+   * @param {Platform} platform
    * @returns {Step}
    */
-  const getBuildZigStep = target => {
-    const toolchain = getBuildToolchain(target);
+  const getBuildZigStep = platform => {
+    const toolchain = getBuildToolchain(platform);
     return {
-      key: `${getTargetKey(target)}-build-zig`,
-      label: `${getTargetLabel(target)} - build-zig`,
-      agents: getZigAgent(target),
-      retry: getRetry(1), // FIXME: Sometimes zig build hangs, so we need to retry once
+      key: `${getTargetKey(platform)}-build-zig`,
+      label: `${getTargetLabel(platform)} - build-zig`,
+      depends_on: getDependsOn(platform),
+      agents: getZigAgent(platform),
+      retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
-      env: getBuildEnv(target),
+      env: getBuildEnv(platform),
       command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
     };
   };
 
   /**
-   * @param {Target} target
+   * @param {Platform} platform
    * @returns {Step}
    */
-  const getBuildBunStep = target => {
+  const getBuildBunStep = platform => {
     return {
-      key: `${getTargetKey(target)}-build-bun`,
-      label: `${getTargetLabel(target)} - build-bun`,
+      key: `${getTargetKey(platform)}-build-bun`,
+      label: `${getTargetLabel(platform)} - build-bun`,
       depends_on: [
-        `${getTargetKey(target)}-build-vendor`,
-        `${getTargetKey(target)}-build-cpp`,
-        `${getTargetKey(target)}-build-zig`,
+        `${getTargetKey(platform)}-build-vendor`,
+        `${getTargetKey(platform)}-build-cpp`,
+        `${getTargetKey(platform)}-build-zig`,
       ],
-      agents: getBuildAgent(target),
+      agents: getBuildAgent(platform),
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
       env: {
         BUN_LINK_ONLY: "ON",
-        ...getBuildEnv(target),
+        ...getBuildEnv(platform),
       },
       command: "bun run build:ci --target bun",
     };
@@ -472,8 +500,8 @@ function getPipeline(options) {
     } else {
       parallelism = 10;
     }
-    let depends;
     let env;
+    let depends = [];
     if (buildId) {
       env = {
         BUILDKITE_ARTIFACT_BUILD_ID: buildId,
@@ -487,14 +515,20 @@ function getPipeline(options) {
       // Because of this, we don't know if the run was fatal, or soft-failed.
       retry = getRetry(1);
     }
+    let soft_fail;
+    if (isMainBranch()) {
+      soft_fail = true;
+    } else {
+      soft_fail = [{ exit_status: 2 }];
+    }
     return {
       key: `${getPlatformKey(platform)}-test-bun`,
       label: `${getPlatformLabel(platform)} - test-bun`,
-      depends_on: depends,
+      depends_on: [...depends, ...getDependsOn(platform)],
       agents: getTestAgent(platform),
       retry,
       cancel_on_build_failing: isMergeQueue(),
-      soft_fail: isMainBranch(),
+      soft_fail,
       parallelism,
       command,
       env,
@@ -530,35 +564,20 @@ function getPipeline(options) {
     { os: "darwin", arch: "x64", release: "14" },
     { os: "darwin", arch: "x64", release: "13" },
     { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
-    // { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
-    // { os: "linux", arch: "aarch64", distro: "debian", release: "10" },
+    { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
     { os: "linux", arch: "x64", distro: "debian", release: "12" },
-    // { os: "linux", arch: "x64", distro: "debian", release: "11" },
-    // { os: "linux", arch: "x64", distro: "debian", release: "10" },
+    { os: "linux", arch: "x64", distro: "debian", release: "11" },
     { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12" },
-    // { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
-    // { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "10" },
-    // { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04" },
+    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
     { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
-    // { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04" },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
-    // { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04" },
     { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "20.04" },
-    // { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023" },
-    // { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2" },
-    // { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023" },
-    // { os: "linux", arch: "x64", distro: "amazonlinux", release: "2" },
-    // { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023" },
-    // { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2" },
     { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
-    // { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.17" },
     { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
-    // { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.17" },
     { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
-    // { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.17" },
     { os: "windows", arch: "x64", release: "2019" },
     { os: "windows", arch: "x64", baseline: true, release: "2019" },
   ];
@@ -614,15 +633,6 @@ function getPipeline(options) {
       continue;
     }
 
-    if (imagePlatforms.has(getImageKey(platform))) {
-      for (const step of platformSteps) {
-        if (step.agents?.["image-name"]) {
-          step.depends_on ??= [];
-          step.depends_on.push(`${getImageKey(platform)}-build-image`);
-        }
-      }
-    }
-
     steps.push({
       key: getTargetKey(platform),
       group: getTargetLabel(platform),
@@ -662,14 +672,18 @@ async function main() {
   }
 
   let changedFiles;
-  if (!isFork()) {
+  let changedFilesBranch;
+  if (!isFork() && !isMainBranch()) {
     console.log("Checking changed files...");
-    const baseRef = getCommit();
+    const targetRef = getTargetBranch();
+    console.log(" - Target Ref:", targetRef);
+    const baseRef = lastBuild?.commit_id || targetRef || getMainBranch();
     console.log(" - Base Ref:", baseRef);
-    const headRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
+    const headRef = getCommit();
     console.log(" - Head Ref:", headRef);
 
     changedFiles = await getChangedFiles(undefined, baseRef, headRef);
+    changedFilesBranch = await getChangedFiles(undefined, targetRef, headRef);
     if (changedFiles) {
       if (changedFiles.length) {
         changedFiles.forEach(filename => console.log(` - ${filename}`));
@@ -684,6 +698,7 @@ async function main() {
 
   console.log("Checking if CI should be forced...");
   let forceBuild;
+  let ciFileChanged;
   {
     const message = getCommitMessage();
     const match = /\[(force ci|ci force|ci force build)\]/i.exec(message);
@@ -691,6 +706,13 @@ async function main() {
       const [, reason] = match;
       console.log(" - Yes, because commit message contains:", reason);
       forceBuild = true;
+    }
+    for (const coref of [".buildkite/ci.mjs", "scripts/utils.mjs", "scripts/bootstrap.sh", "scripts/machine.mjs"]) {
+      if (changedFilesBranch && changedFilesBranch.includes(coref)) {
+        console.log(" - Yes, because the list of changed files contains:", coref);
+        forceBuild = true;
+        ciFileChanged = true;
+      }
     }
   }
 
@@ -719,6 +741,10 @@ async function main() {
       console.log(" - Yes, because commit message contains:", reason);
       buildImages = true;
     }
+    if (ciFileChanged) {
+      console.log(" - Yes, because a core CI file changed");
+      buildImages = true;
+    }
   }
 
   console.log("Checking if CI should publish images...");
@@ -729,6 +755,11 @@ async function main() {
     if (match) {
       const [, reason] = match;
       console.log(" - Yes, because commit message contains:", reason);
+      publishImages = true;
+      buildImages = true;
+    }
+    if (ciFileChanged && isMainBranch()) {
+      console.log(" - Yes, because a core CI file changed and this is main branch");
       publishImages = true;
       buildImages = true;
     }
@@ -767,7 +798,10 @@ async function main() {
 
   console.log("Checking if build is a named release...");
   let buildRelease;
-  {
+  if (/^(1|true|on|yes)$/i.test(getEnv("RELEASE", false))) {
+    console.log(" - Yes, because RELEASE environment variable is set");
+    buildRelease = true;
+  } else {
     const message = getCommitMessage();
     const match = /\[(release|release build|build release)\]/i.exec(message);
     if (match) {

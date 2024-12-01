@@ -3,8 +3,11 @@ import { tls as COMMON_CERT_ } from "harness";
 import net from "net";
 import { join } from "path";
 import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls";
+import stream from "stream";
+import { once } from "events";
 
 import { Duplex } from "node:stream";
+import type { AddressInfo } from "net";
 
 const symbolConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
@@ -117,6 +120,31 @@ it("should have checkServerIdentity", async () => {
   expect(tls.checkServerIdentity).toBeFunction();
 });
 
+it("should thow ECONNRESET if FIN is received before handshake", async () => {
+  await using server = net.createServer(c => {
+    c.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { promise, resolve } = Promise.withResolvers();
+  tls.connect((server.address() as AddressInfo).port).on("error", resolve);
+
+  const error = await promise;
+
+  expect(error).toBeDefined();
+  // TODO: today we are a little incompatible with node.js we need to change `UNABLE_TO_GET_ISSUER_CERT` when closed before handshake complete on the openssl.c to emit error `ECONNRESET` instead of SSL fail,
+  // current behavior is not wrong because is the right error but is incompatible with node.js
+  expect((error as Error).code as string).toBeOneOf(["ECONNRESET", "UNABLE_TO_GET_ISSUER_CERT"]);
+});
+it("should be able to grab the JSStreamSocket constructor", () => {
+  // this keep http2-wrapper compatibility with node.js
+  const socket = new tls.TLSSocket(new stream.PassThrough());
+  //@ts-ignore
+  expect(socket._handle).not.toBeNull();
+  //@ts-ignore
+  expect(socket._handle._parentWrap).not.toBeNull();
+  //@ts-ignore
+  expect(socket._handle._parentWrap.constructor).toBeFunction();
+});
 for (const { name, connect } of tests) {
   describe(name, () => {
     it("should work with alpnProtocols", done => {

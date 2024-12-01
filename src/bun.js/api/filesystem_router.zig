@@ -20,10 +20,9 @@ const JSError = Base.JSError;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
-
 const To = Base.To;
 const Request = WebCore.Request;
-
+const Environment = bun.Environment;
 const URLPath = @import("../../http/url_path.zig");
 const URL = @import("../../url.zig").URL;
 const Log = bun.logger;
@@ -50,14 +49,14 @@ pub const FileSystemRouter = struct {
     pub usingnamespace JSC.Codegen.JSFileSystemRouter;
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*FileSystemRouter {
-        const argument_ = callframe.arguments(1);
+        const argument_ = callframe.arguments_old(1);
         if (argument_.len == 0) {
-            return globalThis.throwInvalidArguments2("Expected object", .{});
+            return globalThis.throwInvalidArguments("Expected object", .{});
         }
 
         const argument = argument_.ptr[0];
         if (argument.isEmptyOrUndefinedOrNull() or !argument.isObject()) {
-            return globalThis.throwInvalidArguments2("Expected object", .{});
+            return globalThis.throwInvalidArguments("Expected object", .{});
         }
         var vm = globalThis.bunVM();
 
@@ -67,17 +66,17 @@ pub const FileSystemRouter = struct {
         var asset_prefix_slice: ZigString.Slice = .{};
 
         var out_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
-        if (argument.get(globalThis, "style")) |style_val| {
+        if (try argument.get(globalThis, "style")) |style_val| {
             if (!style_val.getZigString(globalThis).eqlComptime("nextjs")) {
-                return globalThis.throwInvalidArguments2("Only 'nextjs' style is currently implemented", .{});
+                return globalThis.throwInvalidArguments("Only 'nextjs' style is currently implemented", .{});
             }
         } else {
-            return globalThis.throwInvalidArguments2("Expected 'style' option (ex: \"style\": \"nextjs\")", .{});
+            return globalThis.throwInvalidArguments("Expected 'style' option (ex: \"style\": \"nextjs\")", .{});
         }
 
-        if (argument.get(globalThis, "dir")) |dir| {
+        if (try argument.get(globalThis, "dir")) |dir| {
             if (!dir.isString()) {
-                return globalThis.throwInvalidArguments2("Expected dir to be a string", .{});
+                return globalThis.throwInvalidArguments("Expected dir to be a string", .{});
             }
             const root_dir_path_ = dir.toSlice(globalThis, globalThis.allocator());
             if (!(root_dir_path_.len == 0 or strings.eqlComptime(root_dir_path_.slice(), "."))) {
@@ -92,18 +91,18 @@ pub const FileSystemRouter = struct {
             }
         } else {
             // dir is not optional
-            return globalThis.throwInvalidArguments2("Expected dir to be a string", .{});
+            return globalThis.throwInvalidArguments("Expected dir to be a string", .{});
         }
         var arena = globalThis.allocator().create(bun.ArenaAllocator) catch unreachable;
         arena.* = bun.ArenaAllocator.init(globalThis.allocator());
         const allocator = arena.allocator();
         var extensions = std.ArrayList(string).init(allocator);
-        if (argument.get(globalThis, "fileExtensions")) |file_extensions| {
+        if (try argument.get(globalThis, "fileExtensions")) |file_extensions| {
             if (!file_extensions.jsType().isArray()) {
                 origin_str.deinit();
                 arena.deinit();
                 globalThis.allocator().destroy(arena);
-                return globalThis.throwInvalidArguments2("Expected fileExtensions to be an Array", .{});
+                return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array", .{});
             }
 
             var iter = file_extensions.arrayIterator(globalThis);
@@ -113,19 +112,19 @@ pub const FileSystemRouter = struct {
                     origin_str.deinit();
                     arena.deinit();
                     globalThis.allocator().destroy(arena);
-                    return globalThis.throwInvalidArguments2("Expected fileExtensions to be an Array of strings", .{});
+                    return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array of strings", .{});
                 }
                 if (val.getLength(globalThis) == 0) continue;
                 extensions.appendAssumeCapacity((val.toSlice(globalThis, allocator).clone(allocator) catch unreachable).slice()[1..]);
             }
         }
 
-        if (argument.getTruthy(globalThis, "assetPrefix")) |asset_prefix| {
+        if (try argument.getTruthy(globalThis, "assetPrefix")) |asset_prefix| {
             if (!asset_prefix.isString()) {
                 origin_str.deinit();
                 arena.deinit();
                 globalThis.allocator().destroy(arena);
-                return globalThis.throwInvalidArguments2("Expected assetPrefix to be a string", .{});
+                return globalThis.throwInvalidArguments("Expected assetPrefix to be a string", .{});
             }
 
             asset_prefix_slice = asset_prefix.toSlice(globalThis, allocator).clone(allocator) catch unreachable;
@@ -162,11 +161,11 @@ pub const FileSystemRouter = struct {
             return globalThis.throwValue2(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         };
 
-        if (argument.get(globalThis, "origin")) |origin| {
+        if (try argument.get(globalThis, "origin")) |origin| {
             if (!origin.isString()) {
                 arena.deinit();
                 globalThis.allocator().destroy(arena);
-                return globalThis.throwInvalidArguments2("Expected origin to be a string", .{});
+                return globalThis.throwInvalidArguments("Expected origin to be a string", .{});
             }
             origin_str = origin.toSlice(globalThis, globalThis.allocator());
         }
@@ -197,6 +196,50 @@ pub const FileSystemRouter = struct {
         return fs_router;
     }
 
+    threadlocal var win32_normalized_dir_info_cache_buf: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined;
+    pub fn bustDirCacheRecursive(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, inputPath: []const u8) void {
+        var vm = globalThis.bunVM();
+        var path = inputPath;
+        if (comptime Environment.isWindows) {
+            path = vm.bundler.resolver.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, path);
+        }
+
+        const root_dir_info = vm.bundler.resolver.readDirInfo(path) catch {
+            return;
+        };
+
+        if (root_dir_info) |dir| {
+            if (dir.getEntriesConst()) |entries| {
+                var iter = entries.data.iterator();
+                outer: while (iter.next()) |entry_ptr| {
+                    const entry = entry_ptr.value_ptr.*;
+                    if (entry.base()[0] == '.') {
+                        continue :outer;
+                    }
+                    if (entry.kind(&vm.bundler.fs.fs, false) == .dir) {
+                        inline for (Router.banned_dirs) |banned_dir| {
+                            if (strings.eqlComptime(entry.base(), comptime banned_dir)) {
+                                continue :outer;
+                            }
+                        }
+
+                        var abs_parts_con = [_]string{ entry.dir, entry.base() };
+                        const full_path = vm.bundler.fs.abs(&abs_parts_con);
+
+                        _ = vm.bundler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(full_path));
+                        bustDirCacheRecursive(this, globalThis, full_path);
+                    }
+                }
+            }
+        }
+
+        _ = vm.bundler.resolver.bustDirCache(path);
+    }
+
+    pub fn bustDirCache(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) void {
+        bustDirCacheRecursive(this, globalThis, strings.withoutTrailingSlashWindowsPath(this.router.config.dir));
+    }
+
     pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
 
@@ -210,6 +253,8 @@ pub const FileSystemRouter = struct {
         var log = Log.Log.init(allocator);
         vm.bundler.resolver.log = &log;
         defer vm.bundler.resolver.log = orig_log;
+
+        bustDirCache(this, globalThis);
 
         const root_dir_info = vm.bundler.resolver.readDirInfo(this.router.config.dir) catch {
             globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
@@ -246,16 +291,14 @@ pub const FileSystemRouter = struct {
     }
 
     pub fn match(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const argument_ = callframe.arguments(2);
+        const argument_ = callframe.arguments_old(2);
         if (argument_.len == 0) {
-            globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
-            return JSValue.zero;
+            return globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
         }
 
         const argument = argument_.ptr[0];
         if (argument.isEmptyOrUndefinedOrNull() or !argument.isCell()) {
-            globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
-            return JSValue.zero;
+            return globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
         }
 
         var path: ZigString.Slice = brk: {
@@ -274,8 +317,7 @@ pub const FileSystemRouter = struct {
                 }
             }
 
-            globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
-            return JSValue.zero;
+            return globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
         };
 
         if (path.len == 0 or (path.len == 1 and path.ptr[0] == '/')) {
@@ -290,7 +332,7 @@ pub const FileSystemRouter = struct {
 
         const url_path = URLPath.parse(path.slice()) catch |err| {
             globalThis.throw("{s} parsing path: {s}", .{ @errorName(err), path.slice() });
-            return JSValue.zero;
+            return .zero;
         };
         var params = Router.Param.List{};
         defer params.deinit(globalThis.allocator());

@@ -1,7 +1,7 @@
 // This file is the entrypoint to the hot-module-reloading runtime.
 // On the server, communication is established with `server_exports`.
 import type { Bake } from "bun";
-import { loadModule, LoadModuleType, replaceModules, clientManifest, serverManifest } from "./hmr-module";
+import { loadModule, LoadModuleType, replaceModules, ssrManifest, serverManifest } from "./hmr-module";
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
@@ -26,7 +26,7 @@ interface Exports {
 declare let server_exports: Exports;
 server_exports = {
   async handleRequest(req, routerTypeMain, routeModules, clientEntryUrl, styles, params) {
-    if (IS_BUN_DEVELOPMENT) {
+    if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_BAKE_JS) {
       console.log("handleRequest", {
         routeModules,
         clientEntryUrl,
@@ -49,7 +49,7 @@ server_exports = {
 
     const response = await serverRenderer(req, {
       styles: styles,
-      scripts: [clientEntryUrl],
+      modules: [clientEntryUrl],
       layouts,
       pageModule,
       modulepreload: [],
@@ -74,7 +74,7 @@ server_exports = {
 
           const client = {};
           for (const exportName of Object.keys(exp)) {
-            serverManifest[uid] = {
+            serverManifest[uid + '#' + exportName] = {
               id: uid,
               name: exportName,
               chunks: [],
@@ -84,7 +84,7 @@ server_exports = {
               name: exportName,
             };
           }
-          clientManifest[uid] = client;
+          ssrManifest[uid] = client;
         } catch (err) {
           console.log("caught error");
           console.log(err);
@@ -94,11 +94,11 @@ server_exports = {
 
     if (componentManifestDelete) {
       for (const fileName of componentManifestDelete) {
-        const client = clientManifest[fileName];
+        const client = ssrManifest[fileName];
         for (const exportName in client) {
           delete serverManifest[`${fileName}#${exportName}`];
         }
-        delete clientManifest[fileName];
+        delete ssrManifest[fileName];
       }
     }
   },

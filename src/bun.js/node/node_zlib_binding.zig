@@ -8,7 +8,7 @@ const ZigString = JSC.ZigString;
 const validators = @import("./util/validators.zig");
 
 pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(2).ptr;
+    const arguments = callframe.arguments_old(2).ptr;
 
     const data: ZigString.Slice = blk: {
         const data: JSC.JSValue = arguments[0];
@@ -326,13 +326,11 @@ pub const SNativeZlib = struct {
 
         var mode = arguments[0];
         if (!mode.isNumber()) {
-            _ = globalThis.throwInvalidArgumentTypeValue("mode", "number", mode);
-            return error.JSError;
+            return globalThis.throwInvalidArgumentTypeValue("mode", "number", mode);
         }
         const mode_double = mode.asNumber();
         if (@mod(mode_double, 1.0) != 0.0) {
-            _ = globalThis.throwInvalidArgumentTypeValue("mode", "integer", mode);
-            return error.JSError;
+            return globalThis.throwInvalidArgumentTypeValue("mode", "integer", mode);
         }
         const mode_int: i64 = @intFromFloat(mode_double);
         if (mode_int < 1 or mode_int > 7) {
@@ -686,13 +684,11 @@ pub const SNativeBrotli = struct {
 
         var mode = arguments[0];
         if (!mode.isNumber()) {
-            _ = globalThis.throwInvalidArgumentTypeValue("mode", "number", mode);
-            return error.JSError;
+            return globalThis.throwInvalidArgumentTypeValue("mode", "number", mode);
         }
         const mode_double = mode.asNumber();
         if (@mod(mode_double, 1.0) != 0.0) {
-            _ = globalThis.throwInvalidArgumentTypeValue("mode", "integer", mode);
-            return error.JSError;
+            return globalThis.throwInvalidArgumentTypeValue("mode", "integer", mode);
         }
         const mode_int: i64 = @intFromFloat(mode_double);
         if (mode_int < 8 or mode_int > 9) {

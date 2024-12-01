@@ -7,6 +7,13 @@ const enum QueryStatus {
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
 const PublicArray = globalThis.Array;
+const enum SSLMode {
+  disable = 0,
+  prefer = 1,
+  require = 2,
+  verify_ca = 3,
+  verify_full = 4,
+}
 
 class SQLResultArray extends PublicArray {
   static [Symbol.toStringTag] = "SQLResults";
@@ -33,6 +40,33 @@ const {
   PostgresSQLConnection,
   init,
 } = $zig("postgres.zig", "createBinding");
+
+function normalizeSSLMode(value: string): SSLMode {
+  if (!value) {
+    return SSLMode.disable;
+  }
+
+  value = (value + "").toLowerCase();
+  switch (value) {
+    case "disable":
+      return SSLMode.disable;
+    case "prefer":
+      return SSLMode.prefer;
+    case "require":
+      return SSLMode.require;
+    case "verify-ca":
+    case "verify_ca":
+      return SSLMode.verify_ca;
+    case "verify-full":
+    case "verify_full":
+      return SSLMode.verify_full;
+    default: {
+      break;
+    }
+  }
+
+  throw $ERR_INVALID_ARG_VALUE(`Invalid SSL mode: ${value}`);
+}
 
 class Query extends PublicPromise {
   [_resolve];
@@ -162,26 +196,27 @@ init(
 
     try {
       query.resolve(result);
-    } catch (e) {
-      console.log(e);
-    }
+    } catch (e) {}
   },
   function (query, reject) {
     try {
       query.reject(reject);
-    } catch (e) {
-      console.log(e);
-    }
+    } catch (e) {}
   },
 );
 
-function createConnection({ hostname, port, username, password, tls, query, database }, onConnected, onClose) {
+function createConnection({ hostname, port, username, password, tls, query, database, sslMode }, onConnected, onClose) {
   return _createConnection(
     hostname,
     Number(port),
     username || "",
     password || "",
     database || "",
+    // > The default value for sslmode is prefer. As is shown in the table, this
+    // makes no sense from a security point of view, and it only promises
+    // performance overhead if possible. It is only provided as the default for
+    // backward compatibility, and is not recommended in secure deployments.
+    sslMode || SSLMode.disable,
     tls || null,
     query || "",
     onConnected,
@@ -279,9 +314,17 @@ class SQLArrayParameter {
 function loadOptions(o) {
   var hostname, port, username, password, database, tls, url, query, adapter;
   const env = Bun.env;
+  var sslMode: SSLMode = SSLMode.disable;
 
   if (o === undefined || (typeof o === "string" && o.length === 0)) {
-    const urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
+    let urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
+    if (!urlString) {
+      urlString = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL;
+      if (urlString) {
+        sslMode = SSLMode.require;
+      }
+    }
+
     if (urlString) {
       url = new URL(urlString);
       o = {};
@@ -297,6 +340,11 @@ function loadOptions(o) {
         url = _url;
       }
     }
+
+    if (o?.tls) {
+      sslMode = SSLMode.require;
+      tls = o.tls;
+    }
   } else if (typeof o === "string") {
     url = new URL(o);
   }
@@ -306,16 +354,17 @@ function loadOptions(o) {
     if (adapter[adapter.length - 1] === ":") {
       adapter = adapter.slice(0, -1);
     }
+
     const queryObject = url.searchParams.toJSON();
     query = "";
     for (const key in queryObject) {
-      query += `${encodeURIComponent(key)}=${encodeURIComponent(queryObject[key])} `;
+      if (key.toLowerCase() === "sslmode") {
+        sslMode = normalizeSSLMode(queryObject[key]);
+      } else {
+        query += `${encodeURIComponent(key)}=${encodeURIComponent(queryObject[key])} `;
+      }
     }
     query = query.trim();
-  }
-
-  if (!o) {
-    o = {};
   }
 
   hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
@@ -326,6 +375,19 @@ function loadOptions(o) {
   tls ||= o.tls || o.ssl;
   adapter ||= o.adapter || "postgres";
 
+  if (sslMode !== SSLMode.disable && !tls?.serverName) {
+    if (hostname) {
+      tls = {
+        serverName: hostname,
+      };
+    } else {
+      tls = true;
+    }
+  }
+
+  if (!!tls) {
+    sslMode = SSLMode.prefer;
+  }
   port = Number(port);
 
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
@@ -336,7 +398,7 @@ function loadOptions(o) {
     throw new Error(`Unsupported adapter: ${adapter}. Only \"postgres\" is supported for now`);
   }
 
-  return { hostname, port, username, password, database, tls, query };
+  return { hostname, port, username, password, database, tls, query, sslMode };
 }
 
 function SQL(o) {
@@ -507,6 +569,10 @@ function SQL(o) {
 
 var lazyDefaultSQL;
 var defaultSQLObject = function sql(strings, ...values) {
+  if (new.target) {
+    return SQL(strings);
+  }
+
   if (!lazyDefaultSQL) {
     lazyDefaultSQL = SQL(undefined);
     Object.assign(defaultSQLObject, lazyDefaultSQL);

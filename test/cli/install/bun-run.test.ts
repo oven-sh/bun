@@ -504,6 +504,74 @@ it("should preserve '--' in process.argv", async () => {
   expect(argv[2]).toBe("--");
   expect(argv[3]).toBe("rest");
   expect(argv[4]).toBe("--foo=bar");
+  
+it("$npm_command is accurate", async () => {
+  await writeFile(
+    join(run_dir, "package.json"),
+    `{
+      "scripts": {
+        "sample": "echo $npm_command",
+      },
+    }
+    `,
+  );
+  const p = spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: run_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p.exited).toBe(0);
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_command\n`);
+  expect(await new Response(p.stdout).text()).toBe(`run-script\n`);
+});
+
+it("$npm_lifecycle_event is accurate", async () => {
+  await writeFile(
+    join(run_dir, "package.json"),
+    `{
+      "scripts": {
+        "presample": "echo $npm_lifecycle_event",
+        "sample": "echo $npm_lifecycle_event",
+        "postsample": "echo $npm_lifecycle_event",
+      },
+    }
+    `,
+  );
+  const p = spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: run_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p.exited).toBe(0);
+  // prettier-ignore
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_lifecycle_event\n$ echo $npm_lifecycle_event\n$ echo $npm_lifecycle_event\n`,);
+  expect(await new Response(p.stdout).text()).toBe(`presample\nsample\npostsample\n`);
+});
+
+it("$npm_package_config_* works", async () => {
+  await writeFile(
+    join(run_dir, "package.json"),
+    `{
+      "config": {
+        "foo": "bar"
+      },
+      "scripts": {
+        "sample": "echo $npm_package_config_foo",
+      },
+    }
+    `,
+  );
+  const p = spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: run_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p.exited).toBe(0);
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_package_config_foo\n`);
+  expect(await new Response(p.stdout).text()).toBe(`bar\n`);
 });
 
 it("should pass arguments correctly in scripts", async () => {

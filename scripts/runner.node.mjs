@@ -1076,7 +1076,7 @@ async function getExecPathFromBuildKite(target) {
 
   let zipPath;
   for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
-    if (/^bun.*\.zip$/i.test(entry) && !entry.includes("-profile.zip")) {
+    if (/^bun.*\.zip$/i.test(entry) && entry.includes("-profile.zip")) {
       zipPath = join(releasePath, entry);
       break;
     }
@@ -1090,7 +1090,7 @@ async function getExecPathFromBuildKite(target) {
 
   for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
     const execPath = join(releasePath, entry);
-    if (/bun(?:\.exe)?$/i.test(entry) && isExecutable(execPath)) {
+    if (/bun-profile(?:\.exe)?$/i.test(entry) && isExecutable(execPath)) {
       return execPath;
     }
   }

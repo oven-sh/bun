@@ -4,12 +4,13 @@ import { join } from "node:path";
 import * as vscode from "vscode";
 import {
   type DAP,
-  DebugAdapter,
   getAvailablePort,
   getRandomId,
   TCPSocketSignal,
   UnixSignal,
+  WebSocketDebugAdapter,
 } from "../../../bun-debug-adapter-protocol";
+import { getConfig } from "../extension";
 
 export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
   type: "bun",
@@ -120,6 +121,7 @@ async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
       ...env,
       "BUN_INSPECT": `${adapter.url}?${query}`,
       "BUN_INSPECT_NOTIFY": signal.url,
+      BUN_INSPECT_CONNECT_TO: "",
     },
   });
 
@@ -239,7 +241,7 @@ class FileDebugSession extends DebugSession {
   // If these classes are moved/published, we should make sure
   // we remove these non-null assertions so consumers of
   // this lib are not running into these hard
-  adapter!: DebugAdapter;
+  adapter!: WebSocketDebugAdapter;
   sessionId?: string;
   untitledDocPath?: string;
   bunEvalPath?: string;
@@ -263,7 +265,7 @@ class FileDebugSession extends DebugSession {
         : `ws+unix://${tmpdir()}/${uniqueId}.sock`;
 
     const { untitledDocPath, bunEvalPath } = this;
-    this.adapter = new DebugAdapter(url, untitledDocPath, bunEvalPath);
+    this.adapter = new WebSocketDebugAdapter(url, untitledDocPath, bunEvalPath);
 
     if (untitledDocPath) {
       this.adapter.on("Adapter.response", (response: DebugProtocolResponse) => {
@@ -351,6 +353,7 @@ class TerminalDebugSession extends FileDebugSession {
       env: {
         "BUN_INSPECT": `${this.adapter.url}?wait=1`,
         "BUN_INSPECT_NOTIFY": this.signal.url,
+        BUN_INSPECT_CONNECT_TO: "",
       },
       isTransient: true,
       iconPath: new vscode.ThemeIcon("debug-console"),
@@ -368,10 +371,6 @@ function getRuntime(scope?: vscode.ConfigurationScope): string {
     return value;
   }
   return "bun";
-}
-
-function getConfig<T>(path: string, scope?: vscode.ConfigurationScope) {
-  return vscode.workspace.getConfiguration("bun", scope).get<T>(path);
 }
 
 export async function runUnsavedCode() {

@@ -834,6 +834,18 @@ pub const Fetch = struct {
             }
         }
 
+        pub fn derefFromThread(this: *FetchTasklet) void {
+            const count = this.ref_count.fetchSub(1, .monotonic);
+            bun.debugAssert(count > 0);
+
+            if (count == 1) {
+                // this is really unlikely to happen, but can happen
+                // lets make sure that we always call deinit from main thread
+
+                this.javascript_vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
+            }
+        }
+
         pub const HTTPRequestBody = union(enum) {
             AnyBlob: AnyBlob,
             Sendfile: http.Sendfile,
@@ -918,7 +930,7 @@ pub const Fetch = struct {
             this.clearAbortSignal();
         }
 
-        fn deinit(this: *FetchTasklet) void {
+        pub fn deinit(this: *FetchTasklet) void {
             log("deinit", .{});
 
             bun.assert(this.ref_count.load(.monotonic) == 0);
@@ -1255,7 +1267,7 @@ pub const Fetch = struct {
                         const js_cert = X509.toJS(x509, globalObject) catch |err| {
                             switch (err) {
                                 error.JSError => {},
-                                error.OutOfMemory => globalObject.throwOutOfMemory(),
+                                error.OutOfMemory => globalObject.throwOutOfMemory() catch {},
                             }
                             const check_result = globalObject.tryTakeException().?;
                             // mark to wait until deinit
@@ -1785,12 +1797,15 @@ pub const Fetch = struct {
         }
 
         pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
-            task.mutex.lock();
-            defer task.mutex.unlock();
+            // at this point only this thread is accessing result to is no race condition
             const is_done = !result.has_more;
             // we are done with the http client so we can deref our side
-            defer if (is_done) task.deref();
+            // this is a atomic operation and will enqueue a task to deinit on the main thread
+            defer if (is_done) task.derefFromThread();
 
+            task.mutex.lock();
+            // we need to unlock before task.deref();
+            defer task.mutex.unlock();
             task.http.?.* = async_http.*;
             task.http.?.response_buffer = async_http.response_buffer;
 
@@ -2465,10 +2480,7 @@ pub const Fetch = struct {
                                 return JSPromise.rejectedPromiseValue(globalThis, err);
                             }
                             defer href.deref();
-                            const buffer = std.fmt.allocPrint(allocator, "{s}{}", .{ url_proxy_buffer, href }) catch {
-                                globalThis.throwOutOfMemory();
-                                return .zero;
-                            };
+                            const buffer = try std.fmt.allocPrint(allocator, "{s}{}", .{ url_proxy_buffer, href });
                             url = ZigURL.parse(buffer[0..url.href.len]);
                             if (url.isFile()) {
                                 url_type = URLType.file;
@@ -2778,10 +2790,7 @@ pub const Fetch = struct {
 
                 var pathlike: JSC.Node.PathOrFileDescriptor = .{
                     .path = .{
-                        .encoded_slice = ZigString.Slice.init(bun.default_allocator, bun.default_allocator.dupe(u8, temp_file_path) catch {
-                            globalThis.throwOutOfMemory();
-                            return .zero;
-                        }),
+                        .encoded_slice = ZigString.Slice.init(bun.default_allocator, try bun.default_allocator.dupe(u8, temp_file_path)),
                     },
                 };
 

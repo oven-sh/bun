@@ -37,7 +37,7 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
                         blob.size = @min(@as(Blob.SizeType, @truncate(bytes.len)), blob.size);
                     const WrappedFn = struct {
                         pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) JSC.JSValue {
-                            return Function(b, g, by, .temporary);
+                            return JSC.toJSHostValue(g, Function(b, g, by, .temporary));
                         }
                     };
 

@@ -20,10 +20,9 @@ const JSError = Base.JSError;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
-
 const To = Base.To;
 const Request = WebCore.Request;
-
+const Environment = bun.Environment;
 const URLPath = @import("../../http/url_path.zig");
 const URL = @import("../../url.zig").URL;
 const Log = bun.logger;
@@ -197,6 +196,50 @@ pub const FileSystemRouter = struct {
         return fs_router;
     }
 
+    threadlocal var win32_normalized_dir_info_cache_buf: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined;
+    pub fn bustDirCacheRecursive(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, inputPath: []const u8) void {
+        var vm = globalThis.bunVM();
+        var path = inputPath;
+        if (comptime Environment.isWindows) {
+            path = vm.bundler.resolver.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, path);
+        }
+
+        const root_dir_info = vm.bundler.resolver.readDirInfo(path) catch {
+            return;
+        };
+
+        if (root_dir_info) |dir| {
+            if (dir.getEntriesConst()) |entries| {
+                var iter = entries.data.iterator();
+                outer: while (iter.next()) |entry_ptr| {
+                    const entry = entry_ptr.value_ptr.*;
+                    if (entry.base()[0] == '.') {
+                        continue :outer;
+                    }
+                    if (entry.kind(&vm.bundler.fs.fs, false) == .dir) {
+                        inline for (Router.banned_dirs) |banned_dir| {
+                            if (strings.eqlComptime(entry.base(), comptime banned_dir)) {
+                                continue :outer;
+                            }
+                        }
+
+                        var abs_parts_con = [_]string{ entry.dir, entry.base() };
+                        const full_path = vm.bundler.fs.abs(&abs_parts_con);
+
+                        _ = vm.bundler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(full_path));
+                        bustDirCacheRecursive(this, globalThis, full_path);
+                    }
+                }
+            }
+        }
+
+        _ = vm.bundler.resolver.bustDirCache(path);
+    }
+
+    pub fn bustDirCache(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) void {
+        bustDirCacheRecursive(this, globalThis, strings.withoutTrailingSlashWindowsPath(this.router.config.dir));
+    }
+
     pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
 
@@ -210,6 +253,8 @@ pub const FileSystemRouter = struct {
         var log = Log.Log.init(allocator);
         vm.bundler.resolver.log = &log;
         defer vm.bundler.resolver.log = orig_log;
+
+        bustDirCache(this, globalThis);
 
         const root_dir_info = vm.bundler.resolver.readDirInfo(this.router.config.dir) catch {
             globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
@@ -287,7 +332,7 @@ pub const FileSystemRouter = struct {
 
         const url_path = URLPath.parse(path.slice()) catch |err| {
             globalThis.throw("{s} parsing path: {s}", .{ @errorName(err), path.slice() });
-            return JSValue.zero;
+            return .zero;
         };
         var params = Router.Param.List{};
         defer params.deinit(globalThis.allocator());

@@ -596,6 +596,8 @@ pub const NewWatcher = if (true)
         evict_list: [WATCHER_MAX_LIST]WatchItemIndex = undefined,
         evict_list_i: WatchItemIndex = 0,
 
+        thread_lock: bun.DebugThreadLock = bun.DebugThreadLock.unlocked,
+
         const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 
         pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
@@ -663,6 +665,7 @@ pub const NewWatcher = if (true)
         // This must only be called from the watcher thread
         pub fn watchLoop(this: *Watcher) !void {
             this.watchloop_handle = std.Thread.getCurrentId();
+            this.thread_lock.lock();
             Output.Source.configureNamedThread("File Watcher");
 
             defer Output.flush();

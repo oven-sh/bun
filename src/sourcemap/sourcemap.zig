@@ -607,6 +607,9 @@ pub const ParseResult = union(enum) {
                 .location = Logger.Location{
                     .file = path,
                     .offset = this.loc.toUsize(),
+                    // TODO: populate correct line and column information
+                    .line = -1,
+                    .column = -1,
                 },
                 .text = this.msg,
             };

@@ -137,7 +137,7 @@ pub const Expect = struct {
         return received ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>";
     }
 
-    pub fn throwPrettyMatcherError(globalThis: *JSGlobalObject, custom_label: bun.String, matcher_name: anytype, matcher_params: anytype, flags: Flags, comptime message_fmt: string, message_args: anytype) void {
+    pub fn throwPrettyMatcherError(globalThis: *JSGlobalObject, custom_label: bun.String, matcher_name: anytype, matcher_params: anytype, flags: Flags, comptime message_fmt: string, message_args: anytype) bun.JSError {
         switch (Output.enable_ansi_colors) {
             inline else => |colors| {
                 const chain = switch (flags.promise) {
@@ -149,16 +149,10 @@ pub const Expect = struct {
                     inline else => |use_default_label| {
                         if (use_default_label) {
                             const fmt = comptime Output.prettyFmt("<d>expect(<r><red>received<r><d>).<r>{s}{s}<d>(<r>{s}<d>)<r>\n\n" ++ message_fmt, colors);
-                            globalThis.throwPretty(fmt, .{
-                                chain,
-                                matcher_name,
-                                matcher_params,
-                            } ++ message_args);
+                            return globalThis.throwPretty(fmt, .{ chain, matcher_name, matcher_params } ++ message_args);
                         } else {
                             const fmt = comptime Output.prettyFmt("{}\n\n" ++ message_fmt, colors);
-                            globalThis.throwPretty(fmt, .{
-                                custom_label,
-                            } ++ message_args);
+                            return globalThis.throwPretty(fmt, .{custom_label} ++ message_args);
                         }
                     },
                 }
@@ -227,7 +221,7 @@ pub const Expect = struct {
                                 if (!silent) {
                                     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                                     const message = "Expected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
-                                    throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
+                                    return throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
                                 }
                                 return error.JSError;
                             },
@@ -239,7 +233,7 @@ pub const Expect = struct {
                                 if (!silent) {
                                     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                                     const message = "Expected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
-                                    throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
+                                    return throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
                                 }
                                 return error.JSError;
                             },
@@ -254,7 +248,7 @@ pub const Expect = struct {
                     if (!silent) {
                         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                         const message = "Expected promise<r>\nReceived: <red>{any}<r>\n";
-                        throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
+                        return throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
                     }
                     return error.JSError;
                 }
@@ -376,8 +370,7 @@ pub const Expect = struct {
 
         var expect = globalThis.bunVM().allocator.create(Expect) catch {
             custom_label.deref();
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemory();
         };
 
         expect.* = .{
@@ -402,11 +395,11 @@ pub const Expect = struct {
         return expect_js_value;
     }
 
-    pub fn throw(this: *Expect, globalThis: *JSGlobalObject, comptime signature: [:0]const u8, comptime fmt: [:0]const u8, args: anytype) void {
+    pub fn throw(this: *Expect, globalThis: *JSGlobalObject, comptime signature: [:0]const u8, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
         if (this.custom_label.isEmpty()) {
-            globalThis.throwPretty(signature ++ fmt, args);
+            return globalThis.throwPretty(signature ++ fmt, args);
         } else {
-            globalThis.throwPretty("{}" ++ fmt, .{this.custom_label} ++ args);
+            return globalThis.throwPretty("{}" ++ fmt, .{this.custom_label} ++ args);
         }
     }
 
@@ -454,8 +447,7 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("pass", "", true);
-            this.throw(globalThis, signature, "\n\n{s}\n", .{msg.slice()});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n{s}\n", .{msg.slice()});
         }
 
         // should never reach here
@@ -500,8 +492,7 @@ pub const Expect = struct {
         defer msg.deinit();
 
         const signature = comptime getSignature("fail", "", true);
-        this.throw(globalThis, signature, "\n\n{s}\n", .{msg.slice()});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n{s}\n", .{msg.slice()});
     }
 
     /// Object.is()
@@ -537,8 +528,7 @@ pub const Expect = struct {
             inline else => |has_custom_label| {
                 if (not) {
                     const signature = comptime getSignature("toBe", "<green>expected<r>", true);
-                    this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{right.toFmt(&formatter)});
-                    return .zero;
+                    return this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{right.toFmt(&formatter)});
                 }
 
                 const signature = comptime getSignature("toBe", "<green>expected<r>", false);
@@ -547,8 +537,7 @@ pub const Expect = struct {
                         (if (!has_custom_label) "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>" else "") ++
                         "\n\nExpected: <green>{any}<r>\n" ++
                         "Received: serializes to the same string\n";
-                    this.throw(globalThis, signature, fmt, .{right.toFmt(&formatter)});
-                    return .zero;
+                    return this.throw(globalThis, signature, fmt, .{right.toFmt(&formatter)});
                 }
 
                 if (right.isString() and left.isString()) {
@@ -558,15 +547,13 @@ pub const Expect = struct {
                         .globalThis = globalThis,
                         .not = not,
                     };
-                    this.throw(globalThis, signature, "\n\n{any}\n", .{diff_format});
-                    return .zero;
+                    return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_format});
                 }
 
-                this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n", .{
+                return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n", .{
                     right.toFmt(&formatter),
                     left.toFmt(&formatter),
                 });
-                return .zero;
             },
         }
     }
@@ -634,15 +621,13 @@ pub const Expect = struct {
         if (not) {
             const expected_line = "Expected length: not <green>{d}<r>\n";
             const signature = comptime getSignature("toHaveLength", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line, .{expected_length});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line, .{expected_length});
         }
 
         const expected_line = "Expected length: <green>{d}<r>\n";
         const received_line = "Received length: <red>{d}<r>\n";
         const signature = comptime getSignature("toHaveLength", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_length, actual_length });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_length, actual_length });
     }
 
     pub fn toBeOneOf(
@@ -677,7 +662,7 @@ pub const Expect = struct {
             var itr = list_value.arrayIterator(globalThis);
             while (itr.next()) |item| {
                 // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
-                if (item.jestDeepEquals(expected, globalThis)) {
+                if (try item.jestDeepEquals(expected, globalThis)) {
                     pass = true;
                     break;
                 }
@@ -697,7 +682,7 @@ pub const Expect = struct {
                 ) callconv(.C) void {
                     const entry = bun.cast(*ExpectedEntry, entry_.?);
                     // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
-                    if (item.jestDeepEquals(entry.expected, entry.globalThis)) {
+                    if (item.jestDeepEquals(entry.expected, entry.globalThis) catch return) {
                         entry.pass.* = true;
                         // TODO(perf): break out of the `forEach` when a match is found
                     }
@@ -719,15 +704,13 @@ pub const Expect = struct {
             const received_fmt = list_value.toFmt(&formatter);
             const expected_line = "Expected to not be one of: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeOneOf", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ received_fmt, expected_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ received_fmt, expected_fmt });
         }
 
         const expected_line = "Expected to be one of: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeOneOf", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ value_fmt, expected_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ value_fmt, expected_fmt });
     }
 
     pub fn toContain(
@@ -816,15 +799,13 @@ pub const Expect = struct {
             const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const signature = comptime getSignature("toContain", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ expected_fmt, received_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ expected_fmt, received_fmt });
         }
 
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toContain", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
     pub fn toContainKey(
@@ -870,15 +851,13 @@ pub const Expect = struct {
             const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const signature = comptime getSignature("toContainKey", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ expected_fmt, received_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ expected_fmt, received_fmt });
         }
 
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toContainKey", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
     pub fn toContainKeys(
@@ -942,15 +921,13 @@ pub const Expect = struct {
             const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const signature = comptime getSignature("toContainKeys", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ expected_fmt, received_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ expected_fmt, received_fmt });
         }
 
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toContainKeys", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
     pub fn toContainAllKeys(
@@ -991,7 +968,7 @@ pub const Expect = struct {
                     var i: u32 = 0;
                     while (i < count) : (i += 1) {
                         const key = expected.getIndex(globalObject, i);
-                        if (item.jestDeepEquals(key, globalObject)) break;
+                        if (try item.jestDeepEquals(key, globalObject)) break;
                     } else break :outer;
                 }
                 pass = true;
@@ -1009,15 +986,13 @@ pub const Expect = struct {
             const received_fmt = keys.toFmt(&formatter);
             const expected_line = "Expected to not contain all keys: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = "\n\n" ++ expected_line;
-            this.throw(globalObject, comptime getSignature("toContainAllKeys", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
-            return .zero;
+            return this.throw(globalObject, comptime getSignature("toContainAllKeys", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
         }
 
         const expected_line = "Expected to contain all keys: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = "\n\n" ++ expected_line ++ received_line;
-        this.throw(globalObject, comptime getSignature("toContainAllKeys", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalObject, comptime getSignature("toContainAllKeys", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
     }
 
     pub fn toContainAnyKeys(
@@ -1076,15 +1051,13 @@ pub const Expect = struct {
             const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const signature = comptime getSignature("toContainAnyKeys", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ expected_fmt, received_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ expected_fmt, received_fmt });
         }
 
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toContainAnyKeys", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
     pub fn toContainValue(
@@ -1114,7 +1087,7 @@ pub const Expect = struct {
             const values = value.values(globalObject);
             var itr = values.arrayIterator(globalObject);
             while (itr.next()) |item| {
-                if (item.jestDeepEquals(expected, globalObject)) {
+                if (try item.jestDeepEquals(expected, globalObject)) {
                     pass = true;
                     break;
                 }
@@ -1132,15 +1105,13 @@ pub const Expect = struct {
             const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = "\n\n" ++ expected_line;
-            this.throw(globalObject, comptime getSignature("toContainValue", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
-            return .zero;
+            return this.throw(globalObject, comptime getSignature("toContainValue", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
         }
 
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = "\n\n" ++ expected_line ++ received_line;
-        this.throw(globalObject, comptime getSignature("toContainValue", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalObject, comptime getSignature("toContainValue", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
     }
 
     pub fn toContainValues(
@@ -1179,7 +1150,7 @@ pub const Expect = struct {
                 var i: u32 = 0;
                 while (i < count) : (i += 1) {
                     const key = values.getIndex(globalObject, i);
-                    if (key.jestDeepEquals(item, globalObject)) break;
+                    if (try key.jestDeepEquals(item, globalObject)) break;
                 } else {
                     pass = false;
                     break;
@@ -1198,15 +1169,13 @@ pub const Expect = struct {
             const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = "\n\n" ++ expected_line;
-            this.throw(globalObject, comptime getSignature("toContainValues", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
-            return .zero;
+            return this.throw(globalObject, comptime getSignature("toContainValues", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
         }
 
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = "\n\n" ++ expected_line ++ received_line;
-        this.throw(globalObject, comptime getSignature("toContainValues", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalObject, comptime getSignature("toContainValues", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
     }
 
     pub fn toContainAllValues(
@@ -1247,7 +1216,7 @@ pub const Expect = struct {
                     var i: u32 = 0;
                     while (i < count) : (i += 1) {
                         const key = values.getIndex(globalObject, i);
-                        if (key.jestDeepEquals(item, globalObject)) {
+                        if (try key.jestDeepEquals(item, globalObject)) {
                             pass = true;
                             break;
                         }
@@ -1270,15 +1239,13 @@ pub const Expect = struct {
             const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain all values: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = "\n\n" ++ expected_line;
-            this.throw(globalObject, comptime getSignature("toContainAllValues", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
-            return .zero;
+            return this.throw(globalObject, comptime getSignature("toContainAllValues", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
         }
 
         const expected_line = "Expected to contain all values: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = "\n\n" ++ expected_line ++ received_line;
-        this.throw(globalObject, comptime getSignature("toContainAllValues", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalObject, comptime getSignature("toContainAllValues", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
     }
 
     pub fn toContainAnyValues(
@@ -1317,7 +1284,7 @@ pub const Expect = struct {
                 var i: u32 = 0;
                 while (i < count) : (i += 1) {
                     const key = values.getIndex(globalObject, i);
-                    if (key.jestDeepEquals(item, globalObject)) {
+                    if (try key.jestDeepEquals(item, globalObject)) {
                         pass = true;
                         break :outer;
                     }
@@ -1336,15 +1303,13 @@ pub const Expect = struct {
             const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain any of the following values: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = "\n\n" ++ expected_line;
-            this.throw(globalObject, comptime getSignature("toContainAnyValues", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
-            return .zero;
+            return this.throw(globalObject, comptime getSignature("toContainAnyValues", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
         }
 
         const expected_line = "Expected to contain any of the following values: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = "\n\n" ++ expected_line ++ received_line;
-        this.throw(globalObject, comptime getSignature("toContainAnyValues", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalObject, comptime getSignature("toContainAnyValues", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
     }
 
     pub fn toContainEqual(
@@ -1382,7 +1347,7 @@ pub const Expect = struct {
         if (value_type.isArrayLike()) {
             var itr = value.arrayIterator(globalThis);
             while (itr.next()) |item| {
-                if (item.jestDeepEquals(expected, globalThis)) {
+                if (try item.jestDeepEquals(expected, globalThis)) {
                     pass = true;
                     break;
                 }
@@ -1420,7 +1385,7 @@ pub const Expect = struct {
                     item: JSValue,
                 ) callconv(.C) void {
                     const entry = bun.cast(*ExpectedEntry, entry_.?);
-                    if (item.jestDeepEquals(entry.expected, entry.globalThis)) {
+                    if (item.jestDeepEquals(entry.expected, entry.globalThis) catch return) {
                         entry.pass.* = true;
                         // TODO(perf): break out of the `forEach` when a match is found
                     }
@@ -1441,15 +1406,13 @@ pub const Expect = struct {
         if (not) {
             const expected_line = "Expected to not contain: <green>{any}<r>\n";
             const signature = comptime getSignature("toContainEqual", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line, .{expected_fmt});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line, .{expected_fmt});
         }
 
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toContainEqual", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
     pub fn toBeTruthy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -1474,14 +1437,12 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeTruthy", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeTruthy", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
     }
 
     pub fn toBeUndefined(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -1504,14 +1465,12 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeUndefined", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeUndefined", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
     }
 
     pub fn toBeNaN(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -1538,14 +1497,12 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeNaN", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeNaN", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
     }
 
     pub fn toBeNull(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -1567,14 +1524,12 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeNull", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeNull", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
     }
 
     pub fn toBeDefined(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -1596,14 +1551,12 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeDefined", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeDefined", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
     }
 
     pub fn toBeFalsy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -1630,14 +1583,12 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeFalsy", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeFalsy", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
     }
 
     pub fn toEqual(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -1657,7 +1608,7 @@ pub const Expect = struct {
         const value: JSValue = try this.getValue(globalThis, thisValue, "toEqual", "<green>expected<r>");
 
         const not = this.flags.not;
-        var pass = value.jestDeepEquals(expected, globalThis);
+        var pass = try value.jestDeepEquals(expected, globalThis);
 
         if (not) pass = !pass;
         if (pass) return .undefined;
@@ -1672,13 +1623,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toEqual", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
         }
 
         const signature = comptime getSignature("toEqual", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
     }
 
     pub fn toStrictEqual(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -1708,13 +1657,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toStrictEqual", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
         }
 
         const signature = comptime getSignature("toStrictEqual", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
     }
 
     pub fn toHaveProperty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -1755,7 +1702,7 @@ pub const Expect = struct {
         }
 
         if (pass and expected_property != null) {
-            pass = received_property.jestDeepEquals(expected_property.?, globalThis);
+            pass = try received_property.jestDeepEquals(expected_property.?, globalThis);
         }
 
         if (not) pass = !pass;
@@ -1767,20 +1714,18 @@ pub const Expect = struct {
             if (expected_property != null) {
                 const signature = comptime getSignature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", true);
                 if (received_property != .zero) {
-                    this.throw(globalThis, signature, "\n\nExpected path: <green>{any}<r>\n\nExpected value: not <green>{any}<r>\n", .{
+                    return this.throw(globalThis, signature, "\n\nExpected path: <green>{any}<r>\n\nExpected value: not <green>{any}<r>\n", .{
                         expected_property_path.toFmt(&formatter),
                         expected_property.?.toFmt(&formatter),
                     });
-                    return .zero;
                 }
             }
 
             const signature = comptime getSignature("toHaveProperty", "<green>path<r>", true);
-            this.throw(globalThis, signature, "\n\nExpected path: not <green>{any}<r>\n\nReceived value: <red>{any}<r>\n", .{
+            return this.throw(globalThis, signature, "\n\nExpected path: not <green>{any}<r>\n\nReceived value: <red>{any}<r>\n", .{
                 expected_property_path.toFmt(&formatter),
                 received_property.toFmt(&formatter),
             });
-            return .zero;
         }
 
         if (expected_property != null) {
@@ -1793,22 +1738,19 @@ pub const Expect = struct {
                     .globalThis = globalThis,
                 };
 
-                this.throw(globalThis, signature, "\n\n{any}\n", .{diff_format});
-                return .zero;
+                return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_format});
             }
 
             const fmt = "\n\nExpected path: <green>{any}<r>\n\nExpected value: <green>{any}<r>\n\n" ++
                 "Unable to find property\n";
-            this.throw(globalThis, signature, fmt, .{
+            return this.throw(globalThis, signature, fmt, .{
                 expected_property_path.toFmt(&formatter),
                 expected_property.?.toFmt(&formatter),
             });
-            return .zero;
         }
 
         const signature = comptime getSignature("toHaveProperty", "<green>path<r>", false);
-        this.throw(globalThis, signature, "\n\nExpected path: <green>{any}<r>\n\nUnable to find property\n", .{expected_property_path.toFmt(&formatter)});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\nExpected path: <green>{any}<r>\n\nUnable to find property\n", .{expected_property_path.toFmt(&formatter)});
     }
 
     pub fn toBeEven(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -1855,14 +1797,12 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeEven", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeEven", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
     }
 
     pub fn toBeGreaterThan(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -1916,15 +1856,13 @@ pub const Expect = struct {
             const expected_line = "Expected: not \\> <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeGreaterThan", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
         }
 
         const expected_line = "Expected: \\> <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeGreaterThan", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
     pub fn toBeGreaterThanOrEqual(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -1978,15 +1916,13 @@ pub const Expect = struct {
             const expected_line = "Expected: not \\>= <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeGreaterThanOrEqual", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
         }
 
         const expected_line = "Expected: \\>= <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeGreaterThanOrEqual", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
     pub fn toBeLessThan(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -2040,15 +1976,13 @@ pub const Expect = struct {
             const expected_line = "Expected: not \\< <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeLessThan", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
         }
 
         const expected_line = "Expected: \\< <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeLessThan", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
     pub fn toBeLessThanOrEqual(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -2102,15 +2036,13 @@ pub const Expect = struct {
             const expected_line = "Expected: not \\<= <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeLessThanOrEqual", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
         }
 
         const expected_line = "Expected: \\<= <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeLessThanOrEqual", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
     pub fn toBeCloseTo(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -2186,13 +2118,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeCloseTo", "<green>expected<r>, precision", true);
-            this.throw(globalThis, signature, suffix_fmt, .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
-            return .zero;
+            return this.throw(globalThis, signature, suffix_fmt, .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
         }
 
         const signature = comptime getSignature("toBeCloseTo", "<green>expected<r>, precision", false);
-        this.throw(globalThis, signature, suffix_fmt, .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
-        return .zero;
+        return this.throw(globalThis, signature, suffix_fmt, .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
     }
 
     pub fn toBeOdd(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -2237,32 +2167,34 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeOdd", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeOdd", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
     }
 
     pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
 
+        const vm = globalThis.bunVM();
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments_old(1);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        const arguments = callFrame.argumentsAsArray(1);
 
         incrementExpectCallCounter();
 
-        const expected_value: JSValue = if (arguments.len > 0) brk: {
+        const expected_value: JSValue = brk: {
+            if (callFrame.argumentsCount() == 0) {
+                break :brk .zero;
+            }
             const value = arguments[0];
-            if (value.isEmptyOrUndefinedOrNull() or !value.isObject() and !value.isString()) {
+            if (value.isUndefinedOrNull() or !value.isObject() and !value.isString()) {
                 var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                 globalThis.throw("Expected value must be string or Error: {any}", .{value.toFmt(&fmt)});
                 return .zero;
-            } else if (value.isObject()) {
+            }
+            if (value.isObject()) {
                 if (ExpectAny.fromJSDirect(value)) |_| {
                     if (ExpectAny.constructorValueGetCached(value)) |innerConstructorValue| {
                         break :brk innerConstructorValue;
@@ -2270,7 +2202,7 @@ pub const Expect = struct {
                 }
             }
             break :brk value;
-        } else .zero;
+        };
         expected_value.ensureStillAlive();
 
         const value: JSValue = try this.getValue(globalThis, thisValue, "toThrow", "<green>expected<r>");
@@ -2288,7 +2220,6 @@ pub const Expect = struct {
                 return .zero;
             }
 
-            var vm = globalThis.bunVM();
             var return_value: JSValue = .zero;
 
             // Drain existing unhandled rejections
@@ -2349,17 +2280,15 @@ pub const Expect = struct {
                     const name = try err.getTruthyComptime(globalThis, "name") orelse JSValue.undefined;
                     const message = try err.getTruthyComptime(globalThis, "message") orelse JSValue.undefined;
                     const fmt = signature_no_args ++ "\n\nError name: <red>{any}<r>\nError message: <red>{any}<r>\n";
-                    globalThis.throwPretty(fmt, .{
+                    return globalThis.throwPretty(fmt, .{
                         name.toFmt(&formatter),
                         message.toFmt(&formatter),
                     });
-                    return .zero;
                 }
 
                 // non error thrown
                 const fmt = signature_no_args ++ "\n\nThrown value: <red>{any}<r>\n";
-                globalThis.throwPretty(fmt, .{result.toFmt(&formatter)});
-                return .zero;
+                return globalThis.throwPretty(fmt, .{result.toFmt(&formatter)});
             }
 
             if (expected_value.isString()) {
@@ -2381,11 +2310,10 @@ pub const Expect = struct {
                     if (!strings.contains(received_slice.slice(), expected_slice.slice())) return .undefined;
                 }
 
-                this.throw(globalThis, signature, "\n\nExpected substring: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
+                return this.throw(globalThis, signature, "\n\nExpected substring: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
                     expected_value.toFmt(&formatter),
                     received_message.toFmt(&formatter),
                 });
-                return .zero;
             }
 
             if (expected_value.isRegExp()) {
@@ -2403,11 +2331,10 @@ pub const Expect = struct {
                     if (!matches.toBoolean()) return .undefined;
                 }
 
-                this.throw(globalThis, signature, "\n\nExpected pattern: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
+                return this.throw(globalThis, signature, "\n\nExpected pattern: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
                     expected_value.toFmt(&formatter),
                     received_message.toFmt(&formatter),
                 });
-                return .zero;
             }
 
             if (expected_value.fastGet(globalThis, .message)) |expected_message| {
@@ -2422,8 +2349,7 @@ pub const Expect = struct {
                 // no partial match for this case
                 if (!expected_message.isSameValue(received_message, globalThis)) return .undefined;
 
-                this.throw(globalThis, signature, "\n\nExpected message: not <green>{any}<r>\n", .{expected_message.toFmt(&formatter)});
-                return .zero;
+                return this.throw(globalThis, signature, "\n\nExpected message: not <green>{any}<r>\n", .{expected_message.toFmt(&formatter)});
             }
 
             if (!result.isInstanceOf(globalThis, expected_value)) return .undefined;
@@ -2431,8 +2357,7 @@ pub const Expect = struct {
             var expected_class = ZigString.Empty;
             expected_value.getClassName(globalThis, &expected_class);
             const received_message = result.fastGet(globalThis, .message) orelse .undefined;
-            this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{s}<r>\n\nReceived message: <red>{any}<r>\n", .{ expected_class, received_message.toFmt(&formatter) });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{s}<r>\n\nReceived message: <red>{any}<r>\n", .{ expected_class, received_message.toFmt(&formatter) });
         }
 
         if (did_throw) {
@@ -2469,15 +2394,12 @@ pub const Expect = struct {
                 if (_received_message) |received_message| {
                     const expected_value_fmt = expected_value.toFmt(&formatter);
                     const received_message_fmt = received_message.toFmt(&formatter);
-                    this.throw(globalThis, signature, "\n\n" ++ "Expected substring: <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{ expected_value_fmt, received_message_fmt });
-                    return .zero;
+                    return this.throw(globalThis, signature, "\n\n" ++ "Expected substring: <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{ expected_value_fmt, received_message_fmt });
                 }
 
                 const expected_fmt = expected_value.toFmt(&formatter);
                 const received_fmt = result.toFmt(&formatter);
-                this.throw(globalThis, signature, "\n\n" ++ "Expected substring: <green>{any}<r>\nReceived value: <red>{any}<r>", .{ expected_fmt, received_fmt });
-
-                return .zero;
+                return this.throw(globalThis, signature, "\n\n" ++ "Expected substring: <green>{any}<r>\nReceived value: <red>{any}<r>", .{ expected_fmt, received_fmt });
             }
 
             if (expected_value.isRegExp()) {
@@ -2497,16 +2419,13 @@ pub const Expect = struct {
                     const received_message_fmt = received_message.toFmt(&formatter);
                     const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
 
-                    this.throw(globalThis, signature, "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{ expected_value_fmt, received_message_fmt });
-
-                    return .zero;
+                    return this.throw(globalThis, signature, "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{ expected_value_fmt, received_message_fmt });
                 }
 
                 const expected_fmt = expected_value.toFmt(&formatter);
                 const received_fmt = result.toFmt(&formatter);
                 const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
-                this.throw(globalThis, signature, "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived value: <red>{any}<r>", .{ expected_fmt, received_fmt });
-                return .zero;
+                return this.throw(globalThis, signature, "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived value: <red>{any}<r>", .{ expected_fmt, received_fmt });
             }
 
             if (Expect.isAsymmetricMatcher(expected_value)) {
@@ -2524,8 +2443,7 @@ pub const Expect = struct {
                 var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                 const received_fmt = result.toFmt(&formatter);
                 const expected_fmt = expected_value.toFmt(&formatter);
-                this.throw(globalThis, signature, "\n\nExpected value: <green>{any}<r>\nReceived value: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
-                return .zero;
+                return this.throw(globalThis, signature, "\n\nExpected value: <green>{any}<r>\nReceived value: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
             }
 
             // If it's not an object, we are going to crash here.
@@ -2544,14 +2462,12 @@ pub const Expect = struct {
                 if (_received_message) |received_message| {
                     const expected_fmt = expected_message.toFmt(&formatter);
                     const received_fmt = received_message.toFmt(&formatter);
-                    this.throw(globalThis, signature, "\n\nExpected message: <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
-                    return .zero;
+                    return this.throw(globalThis, signature, "\n\nExpected message: <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
                 }
 
                 const expected_fmt = expected_message.toFmt(&formatter);
                 const received_fmt = result.toFmt(&formatter);
-                this.throw(globalThis, signature, "\n\nExpected message: <green>{any}<r>\nReceived value: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
-                return .zero;
+                return this.throw(globalThis, signature, "\n\nExpected message: <green>{any}<r>\nReceived value: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
             }
 
             if (result.isInstanceOf(globalThis, expected_value)) return .undefined;
@@ -2569,23 +2485,21 @@ pub const Expect = struct {
                 const message_fmt = fmt ++ "Received message: <red>{any}<r>\n";
                 const received_message_fmt = received_message.toFmt(&formatter);
 
-                globalThis.throwPretty(message_fmt, .{
+                return globalThis.throwPretty(message_fmt, .{
                     expected_class,
                     received_class,
                     received_message_fmt,
                 });
-                return .zero;
             }
 
             const received_fmt = result.toFmt(&formatter);
             const value_fmt = fmt ++ "Received value: <red>{any}<r>\n";
 
-            globalThis.throwPretty(value_fmt, .{
+            return globalThis.throwPretty(value_fmt, .{
                 expected_class,
                 received_class,
                 received_fmt,
             });
-            return .zero;
         }
 
         // did not throw
@@ -2595,35 +2509,30 @@ pub const Expect = struct {
 
         if (expected_value == .zero or expected_value.isUndefined()) {
             const signature = comptime getSignature("toThrow", "", false);
-            this.throw(globalThis, signature, "\n\n" ++ received_line, .{result.toFmt(&formatter)});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ received_line, .{result.toFmt(&formatter)});
         }
 
         const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
 
         if (expected_value.isString()) {
             const expected_fmt = "\n\nExpected substring: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{ expected_value.toFmt(&formatter), result.toFmt(&formatter) });
-            return .zero;
+            return this.throw(globalThis, signature, expected_fmt, .{ expected_value.toFmt(&formatter), result.toFmt(&formatter) });
         }
 
         if (expected_value.isRegExp()) {
             const expected_fmt = "\n\nExpected pattern: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{ expected_value.toFmt(&formatter), result.toFmt(&formatter) });
-            return .zero;
+            return this.throw(globalThis, signature, expected_fmt, .{ expected_value.toFmt(&formatter), result.toFmt(&formatter) });
         }
 
         if (expected_value.fastGet(globalThis, .message)) |expected_message| {
             const expected_fmt = "\n\nExpected message: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{ expected_message.toFmt(&formatter), result.toFmt(&formatter) });
-            return .zero;
+            return this.throw(globalThis, signature, expected_fmt, .{ expected_message.toFmt(&formatter), result.toFmt(&formatter) });
         }
 
         const expected_fmt = "\n\nExpected constructor: <green>{s}<r>\n\n" ++ received_line;
         var expected_class = ZigString.Empty;
         expected_value.getClassName(globalThis, &expected_class);
-        this.throw(globalThis, signature, expected_fmt, .{ expected_class, result.toFmt(&formatter) });
-        return .zero;
+        return this.throw(globalThis, signature, expected_fmt, .{ expected_class, result.toFmt(&formatter) });
     }
     pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
@@ -2636,13 +2545,12 @@ pub const Expect = struct {
         const not = this.flags.not;
         if (not) {
             const signature = comptime getSignature("toMatchSnapshot", "", true);
-            this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n", .{});
+            return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n", .{});
         }
 
         if (this.testScope() == null) {
             const signature = comptime getSignature("toMatchSnapshot", "", true);
-            this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
         }
 
         var hint_string: ZigString = ZigString.Empty;
@@ -2659,8 +2567,7 @@ pub const Expect = struct {
             else => {
                 if (!arguments[0].isObject()) {
                     const signature = comptime getSignature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
-                    this.throw(globalThis, signature, "\n\nMatcher error: Expected <green>properties<r> must be an object\n", .{});
-                    return .zero;
+                    return this.throw(globalThis, signature, "\n\nMatcher error: Expected <green>properties<r> must be an object\n", .{});
                 }
 
                 property_matchers = arguments[0];
@@ -2678,8 +2585,7 @@ pub const Expect = struct {
 
         if (!value.isObject() and property_matchers != null) {
             const signature = comptime getSignature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
-            this.throw(globalThis, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n", .{});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n", .{});
         }
 
         if (property_matchers) |_prop_matchers| {
@@ -2692,8 +2598,7 @@ pub const Expect = struct {
                     "\n\nReceived: {any}\n";
 
                 var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
-                globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
-                return .zero;
+                return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
             }
         }
 
@@ -2733,8 +2638,7 @@ pub const Expect = struct {
                 .globalThis = globalThis,
             };
 
-            globalThis.throwPretty(fmt, .{diff_format});
-            return .zero;
+            return globalThis.throwPretty(fmt, .{diff_format});
         }
 
         return .undefined;
@@ -2782,8 +2686,7 @@ pub const Expect = struct {
                 const signature = comptime getSignature("toBeEmpty", "", false);
                 const fmt = signature ++ "\n\nExpected value to be a string, object, or iterable" ++
                     "\n\nReceived: <red>{any}<r>\n";
-                globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
-                return .zero;
+                return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
             }
         } else if (std.math.isNan(actual_length)) {
             globalThis.throw("Received value has non-number length property: {}", .{actual_length});
@@ -2796,8 +2699,7 @@ pub const Expect = struct {
             const signature = comptime getSignature("toBeEmpty", "", true);
             const fmt = signature ++ "\n\nExpected value <b>not<r> to be a string, object, or iterable" ++
                 "\n\nReceived: <red>{any}<r>\n";
-            globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
-            return .zero;
+            return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
         }
 
         if (not) pass = !pass;
@@ -2807,15 +2709,13 @@ pub const Expect = struct {
             const signature = comptime getSignature("toBeEmpty", "", true);
             const fmt = signature ++ "\n\nExpected value <b>not<r> to be empty" ++
                 "\n\nReceived: <red>{any}<r>\n";
-            globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
-            return .zero;
+            return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
         }
 
         const signature = comptime getSignature("toBeEmpty", "", false);
         const fmt = signature ++ "\n\nExpected value to be empty" ++
             "\n\nReceived: <red>{any}<r>\n";
-        globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
-        return .zero;
+        return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
     }
 
     pub fn toBeEmptyObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -2837,13 +2737,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeEmptyObject", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeEmptyObject", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeNil(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -2864,13 +2762,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeNil", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeNil", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeArray(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -2891,13 +2787,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeArray", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeArray", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeArrayOfSize(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -2934,13 +2828,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeArrayOfSize", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeArrayOfSize", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeBoolean(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -2961,13 +2853,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeBoolean", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeBoolean", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeTypeOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3035,13 +2925,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeTypeOf", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Expected type: not <green>{any}<r>\n" ++ "Received type: <red>\"{s}\"<r>\nReceived value: <red>{any}<r>\n", .{ expected_str, whatIsTheType, received });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Expected type: not <green>{any}<r>\n" ++ "Received type: <red>\"{s}\"<r>\nReceived value: <red>{any}<r>\n", .{ expected_str, whatIsTheType, received });
         }
 
         const signature = comptime getSignature("toBeTypeOf", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Expected type: <green>{any}<r>\n" ++ "Received type: <red>\"{s}\"<r>\nReceived value: <red>{any}<r>\n", .{ expected_str, whatIsTheType, received });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected type: <green>{any}<r>\n" ++ "Received type: <red>\"{s}\"<r>\nReceived value: <red>{any}<r>\n", .{ expected_str, whatIsTheType, received });
     }
 
     pub fn toBeTrue(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3062,13 +2950,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeTrue", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeTrue", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeFalse(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3089,13 +2975,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeFalse", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeFalse", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeNumber(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3116,13 +3000,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeNumber", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeNumber", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeInteger(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3143,13 +3025,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeInteger", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeInteger", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3170,13 +3050,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeObject", "", true);
-            this.throw(globalThis, signature, "\n\nExpected value <b>not<r> to be an object" ++ "\n\nReceived: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\nExpected value <b>not<r> to be an object" ++ "\n\nReceived: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeObject", "", false);
-        this.throw(globalThis, signature, "\n\nExpected value to be an object" ++ "\n\nReceived: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\nExpected value to be an object" ++ "\n\nReceived: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeFinite(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3203,13 +3081,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeFinite", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeFinite", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBePositive(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3236,13 +3112,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBePositive", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBePositive", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeNegative(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3269,13 +3143,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeNegative", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeNegative", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeWithin(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3329,15 +3201,13 @@ pub const Expect = struct {
             const expected_line = "Expected: not between <green>{any}<r> <d>(inclusive)<r> and <green>{any}<r> <d>(exclusive)<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeWithin", "<green>start<r><d>, <r><green>end<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ start_fmt, end_fmt, received_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ start_fmt, end_fmt, received_fmt });
         }
 
         const expected_line = "Expected: between <green>{any}<r> <d>(inclusive)<r> and <green>{any}<r> <d>(exclusive)<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeWithin", "<green>start<r><d>, <r><green>end<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ start_fmt, end_fmt, received_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ start_fmt, end_fmt, received_fmt });
     }
 
     pub fn toEqualIgnoringWhitespace(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3412,13 +3282,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toEqualIgnoringWhitespace", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Expected: not <green>{any}<r>\n" ++ "Received: <red>{any}<r>\n", .{ expected_fmt, value_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Expected: not <green>{any}<r>\n" ++ "Received: <red>{any}<r>\n", .{ expected_fmt, value_fmt });
         }
 
         const signature = comptime getSignature("toEqualIgnoringWhitespace", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Expected: <green>{any}<r>\n" ++ "Received: <red>{any}<r>\n", .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected: <green>{any}<r>\n" ++ "Received: <red>{any}<r>\n", .{ expected_fmt, value_fmt });
     }
 
     pub fn toBeSymbol(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3439,13 +3307,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeSymbol", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeSymbol", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeFunction(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3466,13 +3332,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeFunction", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeFunction", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeDate(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3493,13 +3357,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeDate", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeDate", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeValidDate(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3521,13 +3383,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeValidDate", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeValidDate", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toBeString(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3548,13 +3408,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toBeString", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
         }
 
         const signature = comptime getSignature("toBeString", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
     }
 
     pub fn toInclude(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3602,15 +3460,13 @@ pub const Expect = struct {
             const expected_line = "Expected to not include: <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toInclude", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
         }
 
         const expected_line = "Expected to include: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toInclude", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
     pub fn toIncludeRepeated(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3692,35 +3548,31 @@ pub const Expect = struct {
             if (countAsNum == 0) {
                 const expected_line = "Expected to include: <green>{any}<r> \n";
                 const signature = comptime getSignature("toIncludeRepeated", "<green>expected<r>", true);
-                this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, expect_string_fmt });
+                return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, expect_string_fmt });
             } else if (countAsNum == 1) {
                 const expected_line = "Expected not to include: <green>{any}<r> \n";
                 const signature = comptime getSignature("toIncludeRepeated", "<green>expected<r>", true);
-                this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, expect_string_fmt });
+                return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, expect_string_fmt });
             } else {
                 const expected_line = "Expected not to include: <green>{any}<r> <green>{any}<r> times \n";
                 const signature = comptime getSignature("toIncludeRepeated", "<green>expected<r>", true);
-                this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, times_fmt, expect_string_fmt });
+                return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, times_fmt, expect_string_fmt });
             }
-
-            return .zero;
         }
 
         if (countAsNum == 0) {
             const expected_line = "Expected to not include: <green>{any}<r>\n";
             const signature = comptime getSignature("toIncludeRepeated", "<green>expected<r>", false);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, expect_string_fmt });
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, expect_string_fmt });
         } else if (countAsNum == 1) {
             const expected_line = "Expected to include: <green>{any}<r>\n";
             const signature = comptime getSignature("toIncludeRepeated", "<green>expected<r>", false);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, expect_string_fmt });
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, expect_string_fmt });
         } else {
             const expected_line = "Expected to include: <green>{any}<r> <green>{any}<r> times \n";
             const signature = comptime getSignature("toIncludeRepeated", "<green>expected<r>", false);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, times_fmt, expect_string_fmt });
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, times_fmt, expect_string_fmt });
         }
-
-        return .zero;
     }
 
     pub fn toSatisfy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3766,18 +3618,15 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toSatisfy", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{predicate.toFmt(&formatter)});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{predicate.toFmt(&formatter)});
         }
 
         const signature = comptime getSignature("toSatisfy", "<green>expected<r>", false);
 
-        this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n", .{
+        return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n", .{
             predicate.toFmt(&formatter),
             value.toFmt(&formatter),
         });
-
-        return .zero;
     }
 
     pub fn toStartWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3825,15 +3674,13 @@ pub const Expect = struct {
             const expected_line = "Expected to not start with: <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toStartWith", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
         }
 
         const expected_line = "Expected to start with: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toStartWith", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
     pub fn toEndWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3881,15 +3728,13 @@ pub const Expect = struct {
             const expected_line = "Expected to not end with: <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toEndWith", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
         }
 
         const expected_line = "Expected to end with: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toEndWith", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
     pub fn toBeInstanceOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3927,15 +3772,13 @@ pub const Expect = struct {
             const expected_line = "Expected constructor: not <green>{any}<r>\n";
             const received_line = "Received value: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeInstanceOf", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
         }
 
         const expected_line = "Expected constructor: <green>{any}<r>\n";
         const received_line = "Received value: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeInstanceOf", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
     pub fn toMatch(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3990,15 +3833,13 @@ pub const Expect = struct {
             const expected_line = "Expected substring or pattern: not <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toMatch", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
         }
 
         const expected_line = "Expected substring or pattern: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toMatch", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
     pub fn toHaveBeenCalled(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
@@ -4025,13 +3866,11 @@ pub const Expect = struct {
         // handle failure
         if (not) {
             const signature = comptime getSignature("toHaveBeenCalled", "", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>0<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>0<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
         }
 
         const signature = comptime getSignature("toHaveBeenCalled", "", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: \\>= <green>1<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: \\>= <green>1<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
     }
 
     pub fn toHaveBeenCalledTimes(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
@@ -4067,13 +3906,11 @@ pub const Expect = struct {
         // handle failure
         if (not) {
             const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: not <green>{any}<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{ times, calls.getLength(globalThis) });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: not <green>{any}<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{ times, calls.getLength(globalThis) });
         }
 
         const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>{any}<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{ times, calls.getLength(globalThis) });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>{any}<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{ times, calls.getLength(globalThis) });
     }
 
     pub fn toMatchObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -4093,25 +3930,21 @@ pub const Expect = struct {
             const matcher_error = "\n\n<b>Matcher error<r>: <red>received<r> value must be a non-null object\n";
             if (not) {
                 const signature = comptime getSignature("toMatchObject", "<green>expected<r>", true);
-                this.throw(globalThis, signature, matcher_error, .{});
-                return .zero;
+                return this.throw(globalThis, signature, matcher_error, .{});
             }
 
             const signature = comptime getSignature("toMatchObject", "<green>expected<r>", false);
-            this.throw(globalThis, signature, matcher_error, .{});
-            return .zero;
+            return this.throw(globalThis, signature, matcher_error, .{});
         }
 
         if (args.len < 1 or !args[0].isObject()) {
             const matcher_error = "\n\n<b>Matcher error<r>: <green>expected<r> value must be a non-null object\n";
             if (not) {
                 const signature = comptime getSignature("toMatchObject", "", true);
-                this.throw(globalThis, signature, matcher_error, .{});
-                return .zero;
+                return this.throw(globalThis, signature, matcher_error, .{});
             }
             const signature = comptime getSignature("toMatchObject", "", false);
-            this.throw(globalThis, signature, matcher_error, .{});
-            return .zero;
+            return this.throw(globalThis, signature, matcher_error, .{});
         }
 
         const property_matchers = args[0];
@@ -4131,13 +3964,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toMatchObject", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
         }
 
         const signature = comptime getSignature("toMatchObject", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
     }
 
     pub fn toHaveBeenCalledWith(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
@@ -4174,7 +4005,7 @@ pub const Expect = struct {
                 var callItr = callItem.arrayIterator(globalThis);
                 var match = true;
                 while (callItr.next()) |callArg| {
-                    if (!callArg.jestDeepEquals(arguments[callItr.i - 1], globalThis)) {
+                    if (!try callArg.jestDeepEquals(arguments[callItr.i - 1], globalThis)) {
                         match = false;
                         break;
                     }
@@ -4194,13 +4025,11 @@ pub const Expect = struct {
         // handle failure
         if (not) {
             const signature = comptime getSignature("toHaveBeenCalledWith", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
         }
 
         const signature = comptime getSignature("toHaveBeenCalledWith", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
     }
 
     pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
@@ -4238,7 +4067,7 @@ pub const Expect = struct {
             } else {
                 var itr = lastCallValue.arrayIterator(globalThis);
                 while (itr.next()) |callArg| {
-                    if (!callArg.jestDeepEquals(arguments[itr.i - 1], globalThis)) {
+                    if (!try callArg.jestDeepEquals(arguments[itr.i - 1], globalThis)) {
                         pass = false;
                         break;
                     }
@@ -4256,13 +4085,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toHaveBeenLastCalledWith", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{ received_fmt, totalCalls });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{ received_fmt, totalCalls });
         }
 
         const signature = comptime getSignature("toHaveBeenLastCalledWith", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{ received_fmt, totalCalls });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{ received_fmt, totalCalls });
     }
 
     pub fn toHaveBeenNthCalledWith(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
@@ -4305,7 +4132,7 @@ pub const Expect = struct {
             } else {
                 var itr = nthCallValue.arrayIterator(globalThis);
                 while (itr.next()) |callArg| {
-                    if (!callArg.jestDeepEquals(arguments[itr.i], globalThis)) {
+                    if (!try callArg.jestDeepEquals(arguments[itr.i], globalThis)) {
                         pass = false;
                         break;
                     }
@@ -4323,13 +4150,11 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\n" ++ "n: {any}\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{ nthCallNum, received_fmt, totalCalls });
-            return .zero;
+            return this.throw(globalThis, signature, "\n\n" ++ "n: {any}\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{ nthCallNum, received_fmt, totalCalls });
         }
 
         const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>expected<r>", false);
-        this.throw(globalThis, signature, "\n\n" ++ "n: {any}\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{ nthCallNum, received_fmt, totalCalls });
-        return .zero;
+        return this.throw(globalThis, signature, "\n\n" ++ "n: {any}\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n", .{ nthCallNum, received_fmt, totalCalls });
     }
 
     const ReturnStatus = enum {
@@ -4413,15 +4238,13 @@ pub const Expect = struct {
                 .globalThis = globalThis,
                 .quote_strings = true,
             };
-            globalThis.throwPretty(fmt, .{(try times_value.get(globalThis, "value")).?.toFmt(&formatter)});
-            return .zero;
+            return globalThis.throwPretty(fmt, .{(try times_value.get(globalThis, "value")).?.toFmt(&formatter)});
         }
 
         switch (not) {
             inline else => |is_not| {
                 const signature = comptime getSignature(name, "<green>expected<r>", is_not);
-                this.throw(globalThis, signature, "\n\n" ++ "Expected number of successful calls: <green>{d}<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{ return_count, total_count });
-                return .zero;
+                return this.throw(globalThis, signature, "\n\n" ++ "Expected number of successful calls: <green>{d}<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{ return_count, total_count });
             },
         }
     }
@@ -4486,8 +4309,7 @@ pub const Expect = struct {
         const args = callFrame.arguments_old(1).slice();
 
         if (args.len == 0 or !args[0].isObject()) {
-            globalThis.throwPretty("<d>expect.<r>extend<d>(<r>matchers<d>)<r>\n\nExpected an object containing matchers\n", .{});
-            return .zero;
+            return globalThis.throwPretty("<d>expect.<r>extend<d>(<r>matchers<d>)<r>\n\nExpected an object containing matchers\n", .{});
         }
 
         var expect_proto = Expect__getPrototype(globalThis);
@@ -4600,7 +4422,7 @@ pub const Expect = struct {
     pub fn executeCustomMatcher(globalThis: *JSGlobalObject, matcher_name: bun.String, matcher_fn: JSValue, args: []const JSValue, flags: Expect.Flags, silent: bool) bool {
         // prepare the this object
         const matcher_context = globalThis.bunVM().allocator.create(ExpectMatcherContext) catch {
-            globalThis.throwOutOfMemory();
+            globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
             return false;
         };
         matcher_context.flags = flags;
@@ -4696,7 +4518,7 @@ pub const Expect = struct {
             .globalThis = globalThis,
             .matcher_fn = matcher_fn,
         };
-        throwPrettyMatcherError(globalThis, bun.String.empty, matcher_name, matcher_params, .{}, "{s}", .{message_text});
+        throwPrettyMatcherError(globalThis, bun.String.empty, matcher_name, matcher_params, .{}, "{s}", .{message_text}) catch {};
         return false;
     }
 
@@ -4747,10 +4569,7 @@ pub const Expect = struct {
         const args_ptr = callFrame.argumentsPtr();
         const args_count = callFrame.argumentsCount();
         var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
-        var matcher_args = std.ArrayList(JSValue).initCapacity(allocator.get(), args_count + 1) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        var matcher_args = try std.ArrayList(JSValue).initCapacity(allocator.get(), args_count + 1);
         matcher_args.appendAssumeCapacity(value);
         for (0..args_count) |i| matcher_args.appendAssumeCapacity(args_ptr[i]);
 
@@ -4868,8 +4687,7 @@ pub const ExpectStatic = struct {
 
     pub fn create(globalThis: *JSGlobalObject, flags: Expect.Flags) JSValue {
         var expect = globalThis.bunVM().allocator.create(ExpectStatic) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
         expect.flags = flags;
 
@@ -4914,8 +4732,7 @@ pub const ExpectStatic = struct {
         const instance_jsvalue = try T.call(globalThis, callFrame);
         if (instance_jsvalue != .zero and !instance_jsvalue.isAnyError()) {
             var instance = T.fromJS(instance_jsvalue) orelse {
-                globalThis.throwOutOfMemory();
-                return .zero;
+                return globalThis.throwOutOfMemory();
             };
             instance.flags = this.flags;
         }
@@ -4963,10 +4780,7 @@ pub const ExpectAnything = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, _: *CallFrame) bun.JSError!JSValue {
-        const anything = globalThis.bunVM().allocator.create(ExpectAnything) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const anything = try globalThis.bunVM().allocator.create(ExpectAnything);
         anything.* = .{};
 
         const anything_js_value = anything.toJS(globalThis);
@@ -4995,16 +4809,12 @@ pub const ExpectStringMatching = struct {
 
         if (args.len == 0 or (!args[0].isString() and !args[0].isRegExp())) {
             const fmt = "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string or regular expression\n";
-            globalThis.throwPretty(fmt, .{});
-            return .zero;
+            return globalThis.throwPretty(fmt, .{});
         }
 
         const test_value = args[0];
 
-        const string_matching = globalThis.bunVM().allocator.create(ExpectStringMatching) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const string_matching = try globalThis.bunVM().allocator.create(ExpectStringMatching);
         string_matching.* = .{};
 
         const string_matching_js_value = string_matching.toJS(globalThis);
@@ -5031,8 +4841,7 @@ pub const ExpectCloseTo = struct {
         const args = callFrame.arguments_old(2).slice();
 
         if (args.len == 0 or !args[0].isNumber()) {
-            globalThis.throwPretty("<d>expect.<r>closeTo<d>(<r>number<d>, precision?)<r>\n\nExpected a number value", .{});
-            return .zero;
+            return globalThis.throwPretty("<d>expect.<r>closeTo<d>(<r>number<d>, precision?)<r>\n\nExpected a number value", .{});
         }
         const number_value = args[0];
 
@@ -5041,14 +4850,10 @@ pub const ExpectCloseTo = struct {
             precision_value = JSValue.jsNumberFromInt32(2); // default value from jest
         }
         if (!precision_value.isNumber()) {
-            globalThis.throwPretty("<d>expect.<r>closeTo<d>(number, <r>precision?<d>)<r>\n\nPrecision must be a number or undefined", .{});
-            return .zero;
+            return globalThis.throwPretty("<d>expect.<r>closeTo<d>(number, <r>precision?<d>)<r>\n\nPrecision must be a number or undefined", .{});
         }
 
-        const instance = globalThis.bunVM().allocator.create(ExpectCloseTo) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const instance = try globalThis.bunVM().allocator.create(ExpectCloseTo);
         instance.* = .{};
 
         const instance_jsvalue = instance.toJS(globalThis);
@@ -5079,16 +4884,12 @@ pub const ExpectObjectContaining = struct {
 
         if (args.len == 0 or !args[0].isObject()) {
             const fmt = "<d>expect.<r>objectContaining<d>(<r>object<d>)<r>\n\nExpected an object\n";
-            globalThis.throwPretty(fmt, .{});
-            return .zero;
+            return globalThis.throwPretty(fmt, .{});
         }
 
         const object_value = args[0];
 
-        const instance = globalThis.bunVM().allocator.create(ExpectObjectContaining) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const instance = try globalThis.bunVM().allocator.create(ExpectObjectContaining);
         instance.* = .{};
 
         const instance_jsvalue = instance.toJS(globalThis);
@@ -5116,16 +4917,12 @@ pub const ExpectStringContaining = struct {
 
         if (args.len == 0 or !args[0].isString()) {
             const fmt = "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n";
-            globalThis.throwPretty(fmt, .{});
-            return .zero;
+            return globalThis.throwPretty(fmt, .{});
         }
 
         const string_value = args[0];
 
-        const string_containing = globalThis.bunVM().allocator.create(ExpectStringContaining) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const string_containing = try globalThis.bunVM().allocator.create(ExpectStringContaining);
         string_containing.* = .{};
 
         const string_containing_js_value = string_containing.toJS(globalThis);
@@ -5158,8 +4955,7 @@ pub const ExpectAny = struct {
         constructor.ensureStillAlive();
         if (!constructor.isConstructor()) {
             const fmt = "<d>expect.<r>any<d>(<r>constructor<d>)<r>\n\nExpected a constructor\n";
-            globalThis.throwPretty(fmt, .{});
-            return error.JSError;
+            return globalThis.throwPretty(fmt, .{});
         }
 
         const asymmetric_matcher_constructor_type = try Expect.Flags.AsymmetricMatcherConstructorType.fromJS(globalThis, constructor);
@@ -5169,10 +4965,7 @@ pub const ExpectAny = struct {
             return error.JSError;
         }
 
-        var any = globalThis.bunVM().allocator.create(ExpectAny) catch {
-            globalThis.throwOutOfMemory();
-            return error.JSError;
-        };
+        var any = try globalThis.bunVM().allocator.create(ExpectAny);
         any.* = .{
             .flags = .{
                 .asymmetric_matcher_constructor_type = asymmetric_matcher_constructor_type,
@@ -5207,16 +5000,12 @@ pub const ExpectArrayContaining = struct {
 
         if (args.len == 0 or !args[0].jsType().isArray()) {
             const fmt = "<d>expect.<r>arrayContaining<d>(<r>array<d>)<r>\n\nExpected a array\n";
-            globalThis.throwPretty(fmt, .{});
-            return .zero;
+            return globalThis.throwPretty(fmt, .{});
         }
 
         const array_value = args[0];
 
-        const array_containing = globalThis.bunVM().allocator.create(ExpectArrayContaining) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const array_containing = try globalThis.bunVM().allocator.create(ExpectArrayContaining);
         array_containing.* = .{};
 
         const array_containing_js_value = array_containing.toJS(globalThis);
@@ -5246,7 +5035,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
     /// Implements the static call of the custom matcher (`expect.myCustomMatcher(<args>)`),
     /// which creates an asymmetric matcher instance (`ExpectCustomAsymmetricMatcher`).
     /// This will not run the matcher, but just capture the args etc.
-    pub fn create(globalThis: *JSGlobalObject, callFrame: *CallFrame, matcher_fn: JSValue) JSValue {
+    pub fn create(globalThis: *JSGlobalObject, callFrame: *CallFrame, matcher_fn: JSValue) bun.JSError!JSValue {
         var flags: Expect.Flags = undefined;
 
         // try to retrieve the ExpectStatic instance (to get the flags)
@@ -5258,10 +5047,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         }
 
         // create the matcher instance
-        const instance = globalThis.bunVM().allocator.create(ExpectCustomAsymmetricMatcher) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const instance = try globalThis.bunVM().allocator.create(ExpectCustomAsymmetricMatcher);
         instance.* = .{};
 
         const instance_jsvalue = instance.toJS(globalThis);
@@ -5315,7 +5101,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         const args_count = captured_args.getLength(globalThis);
         var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
         var matcher_args = std.ArrayList(JSValue).initCapacity(allocator.get(), args_count + 1) catch {
-            globalThis.throwOutOfMemory();
+            globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
             return false;
         };
         matcher_args.appendAssumeCapacity(received);
@@ -5362,16 +5148,10 @@ pub const ExpectCustomAsymmetricMatcher = struct {
 
     pub fn toAsymmetricMatcher(this: *ExpectCustomAsymmetricMatcher, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         var stack_fallback = std.heap.stackFallback(512, globalThis.allocator());
-        var mutable_string = bun.MutableString.init2048(stack_fallback.get()) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        var mutable_string = try bun.MutableString.init2048(stack_fallback.get());
         defer mutable_string.deinit();
 
-        const printed = customPrint(this, callframe.this(), globalThis, mutable_string.writer()) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        const printed = try customPrint(this, callframe.this(), globalThis, mutable_string.writer());
         if (printed) {
             return bun.String.init(mutable_string.slice()).toJS();
         }
@@ -5420,7 +5200,7 @@ pub const ExpectMatcherContext = struct {
             return .zero;
         }
         const args = arguments.slice();
-        return JSValue.jsBoolean(args[0].jestDeepEquals(args[1], globalThis));
+        return JSValue.jsBoolean(try args[0].jestDeepEquals(args[1], globalThis));
     }
 };
 
@@ -5430,8 +5210,7 @@ pub const ExpectMatcherUtils = struct {
 
     fn createSingleton(globalThis: *JSGlobalObject) callconv(.C) JSValue {
         var instance = globalThis.bunVM().allocator.create(ExpectMatcherUtils) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
         return instance.toJS(globalThis);
     }
@@ -5477,8 +5256,7 @@ pub const ExpectMatcherUtils = struct {
 
     inline fn printValueCatched(globalThis: *JSGlobalObject, value: JSValue, comptime color_or_null: ?[]const u8) JSValue {
         return printValue(globalThis, value, color_or_null) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
     }
 
@@ -5552,17 +5330,11 @@ pub const ExpectMatcherUtils = struct {
         if (is_not) {
             const signature = comptime Expect.getSignature("{s}", "<green>expected<r>", true);
             const fmt = signature ++ "\n\n{any}\n";
-            return JSValue.printStringPretty(globalThis, 2048, fmt, .{ matcher_name, diff_formatter }) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
-            };
+            return try JSValue.printStringPretty(globalThis, 2048, fmt, .{ matcher_name, diff_formatter });
         } else {
             const signature = comptime Expect.getSignature("{s}", "<green>expected<r>", false);
             const fmt = signature ++ "\n\n{any}\n";
-            return JSValue.printStringPretty(globalThis, 2048, fmt, .{ matcher_name, diff_formatter }) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
-            };
+            return try JSValue.printStringPretty(globalThis, 2048, fmt, .{ matcher_name, diff_formatter });
         }
     }
 };

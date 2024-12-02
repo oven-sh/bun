@@ -394,15 +394,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         return JSValue::encode(jsUndefined());
     }
 
-    JSC::EncodedJSValue (*napi_register_module_v1)(napi_env env, JSC::EncodedJSValue exports);
 #if OS(WINDOWS)
 #define dlsym GetProcAddress
 #endif
 
     // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
     // (bun/src/env.zig:36) and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
-    napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(napi_env, JSC::EncodedJSValue)>(
-        dlsym(handle, "napi_register_module_v1"));
+    auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(dlsym(handle, "napi_register_module_v1"));
+    auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
+
+#if OS(WINDOWS)
+#undef dlsym
+#endif
 
     if (!napi_register_module_v1) {
 #if OS(WINDOWS)
@@ -414,18 +417,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         return {};
     }
 
-    auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
-
-#if OS(WINDOWS)
-#undef dlsym
-#endif
-
-    NapiHandleScope handleScope(globalObject);
-
+    // TODO(@heimskr): get the API version without node_api_module_get_api_version_v1 a different way
     int module_version = 8;
     if (node_api_module_get_api_version_v1) {
         module_version = node_api_module_get_api_version_v1();
     }
+
+    NapiHandleScope handleScope(globalObject);
+
+    EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
 
     napi_module nmodule {
         .nm_version = module_version,
@@ -441,8 +441,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     auto env = globalObject->makeNapiEnv(nmodule);
 
-    EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
-    JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(env, exportsValue));
+    JSC::JSValue resultValue = JSValue::decode(reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env, reinterpret_cast<napi_value>(exportsValue))));
 
     RETURN_IF_EXCEPTION(scope, {});
 

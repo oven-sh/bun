@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { hideFromStackTrace } from "harness";
+import { hideFromStackTrace, bunExe, bunEnv } from "harness";
+import { join } from "path";
 
 describe("Bun.Transpiler", () => {
   const transpiler = new Bun.Transpiler({
@@ -3425,4 +3426,18 @@ describe("await can only be used inside an async function message", () => {
   it("in arrow function with expression body", () => {
     assertError(`const foo = () => await bar();`, false);
   });
+});
+
+it("does not crash with 9 comments and typescript type skipping", () => {
+  const cmd = [bunExe(), "build", "--minify-identifiers", join(import.meta.dir, "fixtures", "9-comments.ts")];
+  const { stdout, stderr, exitCode } = Bun.spawnSync({
+    cmd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stderr.toString()).toBe("");
+  expect(stdout.toString()).toContain("success!");
+  expect(exitCode).toBe(0);
 });

@@ -24,7 +24,15 @@ jobs:
           CURRENT_VERSION=$(awk '/[[:space:]]*TAG[[:space:]]*$/{getline; gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0); print}' cmake/targets/BuildLibDeflate.cmake)
 
           if [ -z "$CURRENT_VERSION" ]; then
-            echo "Error: Could not find TAG line in BuildLibDeflate.cmake"
+            echo "Error: Could not find COMMIT line in BuildLibDeflate.cmake"
+            exit 1
+          fi
+
+          # Validate that it looks like a git hash
+          if ! [[ $CURRENT_VERSION =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Error: Invalid git hash format in BuildLibDeflate.cmake"
+            echo "Found: $CURRENT_VERSION"
+            echo "Expected: 40 character hexadecimal string"
             exit 1
           fi
 
@@ -42,6 +50,20 @@ jobs:
             exit 1
           fi
 
+          LATEST_SHA=$(curl -sL "https://api.github.com/repos/ebiggers/libdeflate/git/ref/tags/$LATEST_TAG" | jq -r '.object.sha')
+          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+            echo "Error: Could not fetch SHA for tag $LATEST_TAG"
+            exit 1
+          fi
+
+          if ! [[ $LATEST_SHA =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Error: Invalid SHA format received from GitHub"
+            echo "Found: $LATEST_SHA"
+            echo "Expected: 40 character hexadecimal string"
+            exit 1
+          fi
+
+          echo "latest=$LATEST_SHA" >> $GITHUB_OUTPUT
           echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
 
       - name: Update version if needed
@@ -58,7 +80,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           add-paths: |
             cmake/targets/BuildLibDeflate.cmake
-          commit-message: "deps: update libdeflate to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.tag }})"
+          commit-message: "deps: update libdeflate to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update libdeflate to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true
           branch: deps/update-libdeflate-${{ github.run_number }}

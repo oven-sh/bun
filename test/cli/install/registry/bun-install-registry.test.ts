@@ -900,7 +900,7 @@ describe("whoami", async () => {
     await Promise.all([
       write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
       write(join(packageDir, ".npmrc"), packageNpmrc),
-      write(join(homeNpmrc, ".npmrc"), homeDir),
+      write(join(homeDir, ".npmrc"), homeNpmrc),
     ]);
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "pm", "whoami"],

@@ -10,6 +10,9 @@ pub const u_int64_t = c_ulonglong;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
 pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: i32 = 2;
+pub const LIBUS_SOCKET_REUSE_PORT: i32 = 4;
+pub const LIBUS_SOCKET_IPV6_ONLY: i32 = 8;
+
 pub const Socket = opaque {
     pub fn write2(this: *Socket, first: []const u8, second: []const u8) i32 {
         const rc = us_socket_write2(0, this, first.ptr, first.len, second.ptr, second.len);
@@ -2354,6 +2357,11 @@ pub const SocketContext = opaque {
 
     fn _deinit(this: *SocketContext) void {
         us_socket_context_free(@as(i32, 0), this);
+    }
+
+    pub fn ref(this: *SocketContext, comptime ssl: bool) *SocketContext {
+        us_socket_context_ref(@intFromBool(ssl), this);
+        return this;
     }
 
     pub fn cleanCallbacks(ctx: *SocketContext, is_ssl: bool) void {

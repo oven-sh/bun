@@ -1,6 +1,6 @@
 {
   "name": "bun-vscode",
-  "version": "0.0.19",
+  "version": "0.0.22",
   "author": "oven",
   "repository": {
     "type": "git",
@@ -21,7 +21,6 @@
   "activationEvents": [
     "onStartupFinished"
   ],
-  "browser": "dist/web-extension.js",
   "bugs": {
     "url": "https://github.com/oven-sh/bun/issues"
   },
@@ -45,6 +44,18 @@
           "description": "A path to the `bun` executable. By default, the extension looks for `bun` in the `PATH`, but if set, it will use the specified path instead.",
           "scope": "window",
           "default": null
+        },
+        "bun.diagnosticsSocket.enabled": {
+          "type": "boolean",
+          "description": "If Bun extension should communicate with Bun over a socket to show errors in editor.",
+          "scope": "window",
+          "default": true
+        },
+        "bun.bunlockb.enabled": {
+          "type": "boolean",
+          "description": "If visual lockfile viewer (`bun.lockb`) should be enabled ",
+          "scope": "window",
+          "default": true
         },
         "bun.debugTerminal.enabled": {
           "type": "boolean",
@@ -321,7 +332,7 @@
     ]
   },
   "description": "The Visual Studio Code extension for Bun.",
-  "displayName": "Bun for Visual Studio Code",
+  "displayName": "Bun",
   "engines": {
     "vscode": "^1.60.0"
   },

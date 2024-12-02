@@ -310,6 +310,8 @@ pub const SocketConfig = struct {
     default_data: JSC.JSValue = .zero,
     exclusive: bool = false,
     allowHalfOpen: bool = false,
+    reusePort: bool = false,
+    ipv6Only: bool = false,
 
     pub fn fromJS(vm: *JSC.VirtualMachine, opts: JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!SocketConfig {
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
@@ -317,6 +319,8 @@ pub const SocketConfig = struct {
         var port: ?u16 = null;
         var exclusive = false;
         var allowHalfOpen = false;
+        var reusePort = false;
+        var ipv6Only = false;
 
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
@@ -365,11 +369,19 @@ pub const SocketConfig = struct {
                 }
             }
 
-            if (try opts.getTruthy(globalObject, "exclusive")) |_| {
-                exclusive = true;
+            if (try opts.getBooleanLoose(globalObject, "exclusive")) |exclusive_| {
+                exclusive = exclusive_;
             }
-            if (try opts.getTruthy(globalObject, "allowHalfOpen")) |_| {
-                allowHalfOpen = true;
+            if (try opts.getBooleanLoose(globalObject, "allowHalfOpen")) |allow_half_open| {
+                allowHalfOpen = allow_half_open;
+            }
+
+            if (try opts.getBooleanLoose(globalObject, "reusePort")) |reuse_port| {
+                reusePort = reuse_port;
+            }
+
+            if (try opts.getBooleanLoose(globalObject, "ipv6Only")) |ipv6_only| {
+                ipv6Only = ipv6_only;
             }
 
             if (try opts.getStringish(globalObject, "hostname") orelse try opts.getStringish(globalObject, "host")) |hostname| {
@@ -437,6 +449,8 @@ pub const SocketConfig = struct {
             .default_data = default_data,
             .exclusive = exclusive,
             .allowHalfOpen = allowHalfOpen,
+            .reusePort = reusePort,
+            .ipv6Only = ipv6Only,
         };
     }
 };
@@ -600,9 +614,12 @@ pub const Listener = struct {
 
         const ssl_enabled = ssl != null;
 
-        var socket_flags: i32 = if (exclusive) uws.LIBUS_LISTEN_EXCLUSIVE_PORT else uws.LIBUS_LISTEN_DEFAULT;
+        var socket_flags: i32 = if (exclusive) uws.LIBUS_LISTEN_EXCLUSIVE_PORT else (if (socket_config.reusePort) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_DEFAULT);
         if (socket_config.allowHalfOpen) {
             socket_flags |= uws.LIBUS_SOCKET_ALLOW_HALF_OPEN;
+        }
+        if (socket_config.ipv6Only) {
+            socket_flags |= uws.LIBUS_SOCKET_IPV6_ONLY;
         }
         defer if (ssl != null) ssl.?.deinit();
 
@@ -2166,6 +2183,8 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             const args = callframe.argumentsUndef(2);
+            this.ref();
+            defer this.deref();
 
             return switch (this.writeOrEndBuffered(globalObject, args.ptr[0], args.ptr[1], false)) {
                 .fail => .zero,
@@ -2436,7 +2455,6 @@ fn NewSocket(comptime ssl: bool) type {
         ) bun.JSError!JSValue {
             JSC.markBinding(@src());
             const args = callframe.arguments_old(1);
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
             if (args.len > 0 and args.ptr[0].toBoolean()) {
                 this.socket.shutdownRead();
             } else {
@@ -2460,6 +2478,9 @@ fn NewSocket(comptime ssl: bool) type {
             if (this.socket.isDetached()) {
                 return JSValue.jsNumber(@as(i32, -1));
             }
+
+            this.ref();
+            defer this.deref();
 
             return switch (this.writeOrEnd(globalObject, args.mut(), false, true)) {
                 .fail => .zero,
@@ -3424,7 +3445,8 @@ fn NewSocket(comptime ssl: bool) type {
             TLSSocket.dataSetCached(tls_js_value, globalObject, default_data);
 
             tls.socket = new_socket;
-            tls.socket_context = new_socket.context(); // owns the new tls context that have a ref from the old one
+            const new_context = new_socket.context().?;
+            tls.socket_context = new_context; // owns the new tls context that have a ref from the old one
             tls.ref();
             const vm = handlers.vm;
 
@@ -3454,7 +3476,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tcp,
                 .protos = null,
-                .socket_context = null, // raw socket will dont own the context
+                .socket_context = new_context.ref(true),
             });
             raw.ref();
 
@@ -3573,7 +3595,7 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             if (comptime tls) {
                 TLSSocket.onData(this.tls, socket, data);
             } else {
-                // tedius use this
+                // tedius use this (tedius is a pure-javascript implementation of TDS protocol used to interact with instances of Microsoft's SQL Server)
                 TLSSocket.onData(this.tcp, socket, data);
             }
         }

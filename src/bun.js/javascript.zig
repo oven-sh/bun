@@ -1357,11 +1357,10 @@ pub const VirtualMachine = struct {
 
     pub fn specifierIsEvalEntryPoint(this: *VirtualMachine, specifier: JSValue) callconv(.C) bool {
         if (this.module_loader.eval_source) |eval_source| {
-            var specifier_str = specifier.toBunString(this.global);
+            var specifier_str = specifier.toBunString(this.global) catch return false;
             defer specifier_str.deref();
             return specifier_str.eqlUTF8(eval_source.path.text);
         }
-
         return false;
     }
 

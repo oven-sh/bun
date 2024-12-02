@@ -508,13 +508,13 @@ pub const date = struct {
         return (double_microseconds / std.time.us_per_ms) + POSTGRES_EPOCH_DATE;
     }
 
-    pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) i64 {
+    pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) bun.JSError!i64 {
         const double_value = if (value.isDate())
             value.getUnixTimestamp()
         else if (value.isNumber())
             value.asNumber()
         else if (value.isString()) brk: {
-            var str = value.toBunString(globalObject);
+            var str = try value.toBunString(globalObject);
             defer str.deref();
             break :brk str.parseDate(globalObject);
         } else return 0;

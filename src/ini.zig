@@ -514,7 +514,7 @@ pub const IniTestingAPIs = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         const arg = callframe.argument(0);
-        const npmrc_contents = arg.toBunString(globalThis);
+        const npmrc_contents = try arg.toBunString(globalThis);
         defer npmrc_contents.deref();
         const npmrc_utf8 = npmrc_contents.toUTF8(bun.default_allocator);
         defer npmrc_utf8.deinit();
@@ -604,7 +604,7 @@ pub const IniTestingAPIs = struct {
         const arguments = arguments_.slice();
 
         const jsstr = arguments[0];
-        const bunstr = jsstr.toBunString(globalThis);
+        const bunstr = try jsstr.toBunString(globalThis);
         defer bunstr.deref();
         const utf8str = bunstr.toUTF8(bun.default_allocator);
         defer utf8str.deinit();

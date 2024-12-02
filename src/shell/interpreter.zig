@@ -710,7 +710,7 @@ pub const ParsedShellScript = struct {
             globalThis.throw("$`...`.cwd(): expected a string argument", .{});
             return .zero;
         };
-        const str = bun.String.fromJS(str_js, globalThis);
+        const str = try bun.String.fromJS(str_js, globalThis);
         this.cwd = str;
         return .undefined;
     }

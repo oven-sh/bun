@@ -442,7 +442,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value_: napi_value, bu
     defer value.ensureStillAlive();
     const buf_ptr = @as(?[*:0]u8, @ptrCast(buf_ptr_));
 
-    const str = value.toBunString(env);
+    const str = value.toBunString(env) catch return .pending_exception;
     defer str.deref();
 
     var buf = buf_ptr orelse {
@@ -498,7 +498,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value_: napi_value, buf
     log("napi_get_value_string_utf16", .{});
     const value = value_.get();
     defer value.ensureStillAlive();
-    const str = value.toBunString(env);
+    const str = value.toBunString(env) catch return .pending_exception;
     defer str.deref();
 
     var buf = buf_ptr orelse {
@@ -1606,12 +1606,10 @@ pub const ThreadSafeFunction = struct {
                     return;
                 }
 
-                _ = js.call(globalObject, .undefined, &.{}) catch |err|
-                    globalObject.reportActiveExceptionAsUnhandled(err);
+                _ = js.call(globalObject, .undefined, &.{}) catch |err| globalObject.reportActiveExceptionAsUnhandled(err);
             },
             .c => |cb| {
                 const js = cb.js.get() orelse .undefined;
-
                 const handle_scope = NapiHandleScope.open(globalObject, false);
                 defer if (handle_scope) |scope| scope.close(globalObject);
                 cb.napi_threadsafe_function_call_js(globalObject, napi_value.create(globalObject, js), this.ctx, task);

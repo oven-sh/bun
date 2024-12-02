@@ -174,7 +174,7 @@ pub const PluginRunner = struct {
             return null;
         }
 
-        const file_path = path_value.toBunString(global);
+        const file_path = try path_value.toBunString(global);
         defer file_path.deref();
 
         if (file_path.length() == 0) {
@@ -206,7 +206,7 @@ pub const PluginRunner = struct {
                     return null;
                 }
 
-                const namespace_str = namespace_value.toBunString(global);
+                const namespace_str = try namespace_value.toBunString(global);
                 if (namespace_str.length() == 0) {
                     namespace_str.deref();
                     break :brk bun.String.init("file");
@@ -269,7 +269,7 @@ pub const PluginRunner = struct {
             );
         }
 
-        const file_path = path_value.toBunString(global);
+        const file_path = try path_value.toBunString(global);
 
         if (file_path.length() == 0) {
             return JSC.ErrorableString.err(
@@ -298,7 +298,7 @@ pub const PluginRunner = struct {
                     );
                 }
 
-                const namespace_str = namespace_value.toBunString(global);
+                const namespace_str = try namespace_value.toBunString(global);
                 if (namespace_str.length() == 0) {
                     break :brk bun.String.static("file");
                 }
@@ -334,7 +334,7 @@ pub const PluginRunner = struct {
             .{ user_namespace, file_path },
         ) catch unreachable;
         var out_ = bun.String.init(combined_string);
-        const out = out_.toJS(this.global_object).toBunString(this.global_object);
+        const out = try out_.toJS(this.global_object).toBunString(this.global_object);
         this.allocator.free(combined_string);
         return JSC.ErrorableString.ok(out);
     }

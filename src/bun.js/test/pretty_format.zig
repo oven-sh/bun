@@ -1106,7 +1106,7 @@ pub const JestPrettyFormat = struct {
                     defer message_string.deref();
 
                     if (value.fastGet(this.globalThis, .message)) |message_prop| {
-                        message_string = message_prop.toBunString(this.globalThis);
+                        message_string = message_prop.toBunString(this.globalThis) catch bun.String.static("(threw exception creating message)");
                     }
 
                     if (message_string.isEmpty()) {

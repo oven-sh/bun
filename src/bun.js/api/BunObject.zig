@@ -267,7 +267,7 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     }
 
     const jsval = arguments.ptr[0];
-    const bunstr = jsval.toBunString(globalThis);
+    const bunstr = try jsval.toBunString(globalThis);
     if (globalThis.hasException()) return .zero;
     defer bunstr.deref();
 
@@ -296,7 +296,7 @@ pub fn braces(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         globalThis.throw("braces: expected at least 1 argument, got 0", .{});
         return .zero;
     };
-    const brace_str = brace_str_js.toBunString(globalThis);
+    const brace_str = try brace_str_js.toBunString(globalThis);
     defer brace_str.deref();
     if (globalThis.hasException()) return .zero;
 
@@ -895,9 +895,9 @@ fn doResolve(globalThis: *JSC.JSGlobalObject, arguments: []const JSValue) bun.JS
         }
     }
 
-    const specifier_str = specifier.toBunString(globalThis);
+    const specifier_str = try specifier.toBunString(globalThis);
     defer specifier_str.deref();
-    const from_str = from.toBunString(globalThis);
+    const from_str = try from.toBunString(globalThis);
     defer from_str.deref();
     return doResolveWithArgs(
         globalThis,
@@ -974,10 +974,10 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
 }
 
 export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString(global);
+    const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
 
-    const source_str = source.toBunString(global);
+    const source_str = source.toBunString(global) catch return .zero;
     defer source_str.deref();
 
     const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true) catch {
@@ -989,10 +989,10 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
 }
 
 export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString(global);
+    const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
 
-    const source_str = source.toBunString(global);
+    const source_str = source.toBunString(global) catch return .zero;
     defer source_str.deref();
 
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true));
@@ -1004,7 +1004,7 @@ export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.S
 }
 
 export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue, source: *bun.String, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString(global);
+    const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true));
 }
@@ -4276,7 +4276,7 @@ fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
         return JSC.jsNumber(0);
     }
 
-    const str = value.toBunString(globalObject);
+    const str = try value.toBunString(globalObject);
     defer str.deref();
 
     var count_ansi_escapes = false;

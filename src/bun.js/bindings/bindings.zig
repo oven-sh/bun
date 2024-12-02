@@ -4969,14 +4969,8 @@ pub const JSValue = enum(i64) {
     }
 
     /// Increments the reference count, you must call `.deref()` or it will leak memory.
-    /// Returns String.Dead on error. Deprecated in favor of `toBunString2`
-    pub fn toBunString(this: JSValue, globalObject: *JSC.JSGlobalObject) bun.String {
+    pub fn toBunString(this: JSValue, globalObject: *JSC.JSGlobalObject) JSError!bun.String {
         return bun.String.fromJS(this, globalObject);
-    }
-
-    /// Increments the reference count, you must call `.deref()` or it will leak memory.
-    pub fn toBunString2(this: JSValue, globalObject: *JSC.JSGlobalObject) JSError!bun.String {
-        return bun.String.fromJS2(this, globalObject);
     }
 
     /// this: RegExp value
@@ -5031,7 +5025,7 @@ pub const JSValue = enum(i64) {
         });
     }
 
-    /// Deprecated: replace with 'toBunString2'
+    /// Deprecated: replace with 'toBunString'
     pub inline fn getZigString(this: JSValue, global: *JSGlobalObject) ZigString {
         var str = ZigString.init("");
         this.toZigString(&str, global);
@@ -5046,7 +5040,7 @@ pub const JSValue = enum(i64) {
     ///
     /// To handle exceptions, use `JSValue.toSliceOrNull`.
     pub inline fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
-        const str = bun.String.fromJS(this, global);
+        const str = bun.String.fromJS_unsafe(this, global);
         defer str.deref();
 
         // This keeps the WTF::StringImpl alive if it was originally a latin1
@@ -5059,7 +5053,7 @@ pub const JSValue = enum(i64) {
     /// Convert a JSValue to a string, potentially calling `toString` on the
     /// JSValue in JavaScript. Can throw an error.
     pub fn toSlice2(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError!ZigString.Slice {
-        const str = try bun.String.fromJS2(this, global);
+        const str = try bun.String.fromJS(this, global);
         defer str.deref();
 
         // This keeps the WTF::StringImpl alive if it was originally a latin1
@@ -5089,14 +5083,14 @@ pub const JSValue = enum(i64) {
 
     /// Call `toString()` on the JSValue and clone the result.
     pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
-        const str = try bun.String.fromJS2(this, globalThis);
+        const str = try bun.String.fromJS(this, globalThis);
         defer str.deref();
         return str.toUTF8(bun.default_allocator);
     }
 
     /// Call `toString()` on the JSValue and clone the result.
     pub fn toSliceOrNullWithAllocator(this: JSValue, globalThis: *JSGlobalObject, allocator: std.mem.Allocator) bun.JSError!ZigString.Slice {
-        const str = try bun.String.fromJS2(this, globalThis);
+        const str = try bun.String.fromJS(this, globalThis);
         defer str.deref();
         return str.toUTF8(allocator);
     }
@@ -5414,7 +5408,7 @@ pub const JSValue = enum(i64) {
             return global.throwInvalidPropertyTypeValue(property, "string", prop);
         }
 
-        const str = prop.toBunString(global);
+        const str = try prop.toBunString(global);
         if (global.hasException()) {
             str.deref();
             return error.JSError;
@@ -5729,7 +5723,7 @@ pub const JSValue = enum(i64) {
         globalObject: *JSC.JSGlobalObject,
 
         pub fn format(this: StringFormatter, comptime text: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            const str = this.value.toBunString(this.globalObject);
+            const str = try this.value.toBunString(this.globalObject);
             defer str.deref();
             try str.format(text, opts, writer);
         }
@@ -6654,6 +6648,7 @@ pub const CallFrame = opaque {
     pub fn arguments_old(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const len = self.argumentsCount();
         const ptr = self.argumentsPtr();
+        if (max > 10) @compileError(std.fmt.comptimePrint("arguments({d})", .{max}));
         return switch (@as(u4, @min(len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
             inline 1...10 => |count| Arguments(max).init(comptime @min(count, max), ptr),
@@ -6664,6 +6659,7 @@ pub const CallFrame = opaque {
     pub fn argumentsUndef(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const len = self.argumentsCount();
         const ptr = self.argumentsPtr();
+        if (max > 9) @compileError(std.fmt.comptimePrint("arguments({d})", .{max}));
         return switch (@as(u4, @min(len, max))) {
             0 => .{ .ptr = .{.undefined} ** max, .len = 0 },
             inline 1...9 => |count| Arguments(max).initUndef(@min(count, max), ptr),

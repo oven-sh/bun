@@ -2523,7 +2523,12 @@ export function toYaml(obj, indent = 0) {
     }
     if (
       typeof value === "string" &&
-      (value.includes(":") || value.includes("#") || value.includes("'") || value.includes('"') || value.includes("\n"))
+      (value.includes(":") ||
+        value.includes("#") ||
+        value.includes("'") ||
+        value.includes('"') ||
+        value.includes("\n") ||
+        value.includes("*"))
     ) {
       result += `${spaces}${key}: "${value.replace(/"/g, '\\"')}"\n`;
       continue;

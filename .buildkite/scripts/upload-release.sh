@@ -164,7 +164,9 @@ function upload_s3_file() {
 
 function send_bench_webhook() {
   if [ -z "$BENCHMARK_URL" ]; then
-    return 1
+    echo "error: \$BENCHMARK_URL is not set"
+    # exit 1 # TODO: this isn't live yet
+    return
   fi
 
   local tag="$1"
@@ -200,6 +202,12 @@ function create_release() {
     bun-linux-x64-profile.zip
     bun-linux-x64-baseline.zip
     bun-linux-x64-baseline-profile.zip
+    bun-linux-aarch64-musl.zip
+    bun-linux-aarch64-musl-profile.zip
+    bun-linux-x64-musl.zip
+    bun-linux-x64-musl-profile.zip
+    bun-linux-x64-musl-baseline.zip
+    bun-linux-x64-musl-baseline-profile.zip
     bun-windows-x64.zip
     bun-windows-x64-profile.zip
     bun-windows-x64-baseline.zip

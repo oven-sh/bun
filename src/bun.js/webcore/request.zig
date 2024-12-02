@@ -524,15 +524,10 @@ pub const Request = struct {
         url,
     };
 
-    pub fn constructInto(
-        globalThis: *JSC.JSGlobalObject,
-        arguments: []const JSC.JSValue,
-    ) ?Request {
+    pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue) bun.JSError!Request {
         var success = false;
         const vm = globalThis.bunVM();
-        const body = vm.initRequestBodyValue(.{ .Null = {} }) catch {
-            return null;
-        };
+        const body = try vm.initRequestBodyValue(.{ .Null = {} });
         var req = Request{
             .body = body,
         };
@@ -547,11 +542,9 @@ pub const Request = struct {
         }
 
         if (arguments.len == 0) {
-            globalThis.throw("Failed to construct 'Request': 1 argument required, but only 0 present.", .{});
-            return null;
+            return globalThis.throw2("Failed to construct 'Request': 1 argument required, but only 0 present.", .{});
         } else if (arguments[0].isEmptyOrUndefinedOrNull() or !arguments[0].isCell()) {
-            globalThis.throw("Failed to construct 'Request': expected non-empty string or object, got undefined", .{});
-            return null;
+            return globalThis.throw2("Failed to construct 'Request': expected non-empty string or object, got undefined", .{});
         }
 
         const url_or_object = arguments[0];
@@ -565,16 +558,13 @@ pub const Request = struct {
             url_or_object.as(JSC.DOMURL) != null;
 
         if (is_first_argument_a_url) {
-            const str = bun.String.tryFromJS(arguments[0], globalThis) orelse {
-                return null;
-            };
+            const str = try bun.String.fromJS2(arguments[0], globalThis);
             req.url = str;
 
             if (!req.url.isEmpty())
                 fields.insert(.url);
         } else if (!url_or_object_type.isObject()) {
-            globalThis.throw("Failed to construct 'Request': expected non-empty string or object", .{});
-            return null;
+            return globalThis.throw2("Failed to construct 'Request': expected non-empty string or object", .{});
         }
 
         const values_to_try_ = [_]JSValue{
@@ -610,7 +600,7 @@ pub const Request = struct {
                             fields.insert(.headers);
                         }
 
-                        if (globalThis.hasException()) return null;
+                        if (globalThis.hasException()) return error.JSError;
                     }
 
                     if (!fields.contains(.body)) {
@@ -618,7 +608,7 @@ pub const Request = struct {
                             .Null, .Empty, .Used => {},
                             else => {
                                 req.body.value = request.body.value.clone(globalThis);
-                                if (globalThis.hasException()) return null;
+                                if (globalThis.hasException()) return error.JSError;
                                 fields.insert(.body);
                             },
                         }
@@ -655,19 +645,17 @@ pub const Request = struct {
                         }
                     }
 
-                    if (globalThis.hasException()) return null;
+                    if (globalThis.hasException()) return error.JSError;
                 }
             }
 
             if (!fields.contains(.body)) {
                 if (value.fastGet(globalThis, .body)) |body_| {
                     fields.insert(.body);
-                    req.body.value = Body.Value.fromJS(globalThis, body_) orelse {
-                        return null;
-                    };
+                    req.body.value = try Body.Value.fromJS(globalThis, body_);
                 }
 
-                if (globalThis.hasException()) return null;
+                if (globalThis.hasException()) return error.JSError;
             }
 
             if (!fields.contains(.url)) {
@@ -680,17 +668,17 @@ pub const Request = struct {
                 } else if (@intFromEnum(value) == @intFromEnum(values_to_try[values_to_try.len - 1]) and !is_first_argument_a_url and
                     value.implementsToString(globalThis))
                 {
-                    const str = bun.String.tryFromJS(value, globalThis) orelse return null;
+                    const str = bun.String.tryFromJS(value, globalThis) orelse return error.JSError;
                     req.url = str;
                     if (!req.url.isEmpty())
                         fields.insert(.url);
                 }
 
-                if (globalThis.hasException()) return null;
+                if (globalThis.hasException()) return error.JSError;
             }
 
             if (!fields.contains(.signal)) {
-                if (value.getTruthy(globalThis, "signal")) |signal_| {
+                if (try value.getTruthy(globalThis, "signal")) |signal_| {
                     fields.insert(.signal);
                     if (AbortSignal.fromJS(signal_)) |signal| {
                         //Keep it alive
@@ -700,16 +688,16 @@ pub const Request = struct {
                         if (!globalThis.hasException()) {
                             globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
                         }
-                        return null;
+                        return error.JSError;
                     }
                 }
 
-                if (globalThis.hasException()) return null;
+                if (globalThis.hasException()) return error.JSError;
             }
 
             if (!fields.contains(.method) or !fields.contains(.headers)) {
-                if (globalThis.hasException()) return null;
-                if (Response.Init.init(globalThis, value) catch null) |response_init| {
+                if (globalThis.hasException()) return error.JSError;
+                if (try Response.Init.init(globalThis, value)) |response_init| {
                     if (!explicit_check or (explicit_check and value.fastGet(globalThis, .headers) != null)) {
                         if (response_init.headers) |headers| {
                             if (!fields.contains(.headers)) {
@@ -721,7 +709,7 @@ pub const Request = struct {
                         }
                     }
 
-                    if (globalThis.hasException()) return null;
+                    if (globalThis.hasException()) return error.JSError;
 
                     if (!explicit_check or (explicit_check and value.fastGet(globalThis, .method) != null)) {
                         if (!fields.contains(.method)) {
@@ -729,20 +717,19 @@ pub const Request = struct {
                             fields.insert(.method);
                         }
                     }
-                    if (globalThis.hasException()) return null;
+                    if (globalThis.hasException()) return error.JSError;
                 }
 
-                if (globalThis.hasException()) return null;
+                if (globalThis.hasException()) return error.JSError;
             }
         }
 
         if (globalThis.hasException()) {
-            return null;
+            return error.JSError;
         }
 
         if (req.url.isEmpty()) {
-            globalThis.throw("Failed to construct 'Request': url is required.", .{});
-            return null;
+            return globalThis.throw2("Failed to construct 'Request': url is required.", .{});
         }
 
         const href = JSC.URL.hrefFromString(req.url);
@@ -754,7 +741,7 @@ pub const Request = struct {
                     req.url,
                 }).throw();
             }
-            return null;
+            return error.JSError;
         }
 
         // hrefFromString increments the reference count if they end up being
@@ -779,16 +766,12 @@ pub const Request = struct {
 
         return req;
     }
-    pub fn constructor(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) ?*Request {
-        const arguments_ = callframe.arguments(2);
+
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Request {
+        const arguments_ = callframe.arguments_old(2);
         const arguments = arguments_.ptr[0..arguments_.len];
 
-        const request = constructInto(globalThis, arguments) orelse {
-            return null;
-        };
+        const request = try constructInto(globalThis, arguments);
         return Request.new(request);
     }
 
@@ -802,7 +785,7 @@ pub const Request = struct {
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const this_value = callframe.this();
         var cloned = this.clone(getAllocator(globalThis), globalThis);
 

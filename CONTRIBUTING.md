@@ -1,6 +1,6 @@
 Configuring a development environment for Bun can take 10-30 minutes depending on your internet connection and computer speed. You will need ~10GB of free disk space for the repository and build artifacts.
 
-If you are using Windows, please refer to [this guide](/docs/project/building-windows)
+If you are using Windows, please refer to [this guide](/docs/project/building-windows.md)
 
 {% details summary="For Ubuntu users" %}
 TL;DR: Ubuntu 22.04 is suggested.
@@ -11,7 +11,7 @@ Bun currently requires `glibc >=2.32` in development which means if you're on Ub
 
 Using your system's package manager, install Bun's dependencies:
 
-{% codetabs %}
+{% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
 $ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rust ruby
@@ -60,7 +60,7 @@ $ brew install bun
 
 Bun requires LLVM 16 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
-{% codetabs %}
+{% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
 $ brew install llvm@18
@@ -97,7 +97,7 @@ $ which clang-16
 
 If not, run this to manually add it:
 
-{% codetabs %}
+{% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish

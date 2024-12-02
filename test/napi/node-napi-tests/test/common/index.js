@@ -356,29 +356,23 @@ let knownGlobals = [
   onerror,
 ];
 
-if (global.gc) {
-  knownGlobals.push(global.gc);
-}
+const globalKeys = [
+  "gc",
+  "navigator",
+  "Navigator",
+  "Performance",
+  "performance",
+  "PerformanceMark",
+  "PerformanceMeasure",
+  "PerformanceResourceTiming",
+  "PerformanceServerTiming",
+  "PerformanceTiming",
+];
 
-if (global.navigator) {
-  knownGlobals.push(global.navigator);
-}
-
-if (global.Navigator) {
-  knownGlobals.push(global.Navigator);
-}
-
-if (global.Performance) {
-  knownGlobals.push(global.Performance);
-}
-if (global.performance) {
-  knownGlobals.push(global.performance);
-}
-if (global.PerformanceMark) {
-  knownGlobals.push(global.PerformanceMark);
-}
-if (global.PerformanceMeasure) {
-  knownGlobals.push(global.PerformanceMeasure);
+for (const key of globalKeys) {
+  if (global[key]) {
+    knownGlobals.push(global[key]);
+  }
 }
 
 // TODO(@ethan-arrowood): Similar to previous checks, this can be temporary

@@ -39,12 +39,13 @@ import {
 } from "./utils.mjs";
 import { userInfo } from "node:os";
 
-const cwd = dirname(import.meta.dirname);
+const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
 const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
+const napiTimeout = 10 * 60_000;
 
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
@@ -232,7 +233,7 @@ async function runTests() {
         if (testRunner === "bun") {
           await runTest(title, () => spawnBunTest(execPath, testPath, { cwd: vendorPath }));
         } else {
-          const testRunnerPath = join(import.meta.dirname, "..", "test", "runners", `${testRunner}.ts`);
+          const testRunnerPath = join(cwd, "test", "runners", `${testRunner}.ts`);
           if (!existsSync(testRunnerPath)) {
             throw new Error(`Unsupported test runner: ${testRunner}`);
           }
@@ -495,11 +496,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       stderr,
     });
   } finally {
-    try {
-      rmSync(tmpdirPath, { recursive: true, force: true });
-    } catch (error) {
-      console.warn(error);
-    }
+    // try {
+    //   rmSync(tmpdirPath, { recursive: true, force: true });
+    // } catch (error) {
+    //   console.warn(error);
+    // }
   }
 }
 
@@ -580,6 +581,9 @@ function getTestTimeout(testPath) {
   if (/integration|3rd_party|docker/i.test(testPath)) {
     return integrationTimeout;
   }
+  if (/napi/i.test(testPath)) {
+    return napiTimeout;
+  }
   return testTimeout;
 }
 
@@ -632,7 +636,7 @@ function parseTestStdout(stdout, testPath) {
           const removeStart = lines.length - skipCount;
           const removeCount = skipCount - 2;
           const omitLine = `${getAnsi("gray")}... omitted ${removeCount} tests ...${getAnsi("reset")}`;
-          lines = lines.toSpliced(removeStart, removeCount, omitLine);
+          lines.splice(removeStart, removeCount, omitLine);
         }
         skipCount = 0;
       }
@@ -1134,13 +1138,20 @@ function addPath(...paths) {
 }
 
 /**
+ * @returns {string | undefined}
+ */
+function getTestLabel() {
+  return getBuildLabel()?.replace(" - test-bun", "");
+}
+
+/**
  * @param  {TestResult | TestResult[]} result
  * @param  {boolean} concise
  * @returns {string}
  */
 function formatTestToMarkdown(result, concise) {
   const results = Array.isArray(result) ? result : [result];
-  const buildLabel = getBuildLabel();
+  const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
   const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
 
@@ -1273,7 +1284,7 @@ function reportAnnotationToBuildKite({ label, content, style = "error", priority
     const cause = error ?? signal ?? `code ${status}`;
     throw new Error(`Failed to create annotation: ${label}`, { cause });
   }
-  const buildLabel = getBuildLabel();
+  const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
   const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
   let errorMessage = `<details><summary><a><code>${label}</code></a> - annotation error on ${platform}</summary>`;

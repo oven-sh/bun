@@ -14,12 +14,14 @@
 #include "napi_handle_scope.h"
 #include "napi_finalizer.h"
 #include "wtf/Assertions.h"
+#include "napi_macros.h"
 
 #include <list>
 #include <unordered_set>
 
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
 extern "C" void napi_internal_crash_in_gc(napi_env);
+extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
 namespace Napi {
 struct AsyncCleanupHook {
@@ -40,11 +42,13 @@ struct napi_async_cleanup_hook_handle__ {
     }
 };
 
+#define NAPI_ABORT(message) Bun__crashHandler(message "", sizeof(message "") - 1)
+
 #define NAPI_PERISH(...)                                                      \
     do {                                                                      \
         WTFReportError(__FILE__, __LINE__, __PRETTY_FUNCTION__, __VA_ARGS__); \
         WTFReportBacktrace();                                                 \
-        WTFCrash();                                                           \
+        NAPI_ABORT("Aborted");                                                \
     } while (0)
 
 #define NAPI_RELEASE_ASSERT(assertion, ...)                                                                         \
@@ -52,7 +56,7 @@ struct napi_async_cleanup_hook_handle__ {
         if (UNLIKELY(!(assertion))) {                                                                               \
             WTFReportAssertionFailureWithMessage(__FILE__, __LINE__, __PRETTY_FUNCTION__, #assertion, __VA_ARGS__); \
             WTFReportBacktrace();                                                                                   \
-            WTFCrash();                                                                                             \
+            NAPI_ABORT("Aborted");                                                                                  \
         }                                                                                                           \
     } while (0)
 
@@ -69,12 +73,6 @@ public:
     ~napi_env__()
     {
         delete[] filename;
-    }
-
-    void finishFinalizers()
-    {
-        m_isFinishingFinalizers = true;
-        m_isFinishingFinalizers = false;
     }
 
     void cleanup()
@@ -176,7 +174,8 @@ public:
 
     bool inGC() const
     {
-        return m_globalObject->vm().heap.mutatorState() == JSC::MutatorState::Sweeping;
+        JSC::VM& vm = m_globalObject->vm();
+        return vm.isCollectorBusyOnCurrentThread();
     }
 
     void checkGC() const
@@ -188,13 +187,18 @@ public:
             m_napiModule.nm_version);
     }
 
+    bool isVMTerminating() const
+    {
+        return m_globalObject->vm().hasTerminationRequest();
+    }
+
     void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)
     {
         if (!finalize_cb) {
             return;
         }
 
-        if (mustDeferFinalizers()) {
+        if (mustDeferFinalizers() && inGC()) {
             napi_internal_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
         } else {
             finalize_cb(this, data, finalize_hint);
@@ -209,7 +213,7 @@ public:
     {
         // Even when we'd normally have to defer the finalizer, if this is happening during the VM's last chance to finalize,
         // we can't defer the finalizer and have to call it now.
-        return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL && !m_globalObject->vm().hasTerminationRequest();
+        return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL && !isVMTerminating();
     }
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
@@ -448,7 +452,6 @@ public:
         , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
         , finalizer(WTFMove(finalizer))
         , refCount(count)
-        , defer(env->mustDeferFinalizers())
     {
     }
 
@@ -491,12 +494,13 @@ public:
 
     void callFinalizer()
     {
-        finalizer.call(env, nativeObject, !defer || !env->inGC());
+        finalizer.call(env, nativeObject, !env->mustDeferFinalizers() || !env->inGC());
         finalizer.clear();
     }
 
     ~NapiRef()
     {
+        NAPI_LOG("destruct napi ref %p", this);
         if (boundCleanup) {
             boundCleanup->deactivate(env);
             boundCleanup = nullptr;
@@ -516,7 +520,6 @@ public:
     const napi_env__::BoundFinalizer* boundCleanup = nullptr;
     void* nativeObject = nullptr;
     uint32_t refCount = 0;
-    bool defer = false;
     bool releaseOnWeaken = false;
 
 private:

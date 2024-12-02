@@ -512,7 +512,7 @@ pub const IniTestingAPIs = struct {
     pub fn loadNpmrcFromJS(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arg = callframe.argument(0);
         const npmrc_contents = arg.toBunString(globalThis);
         defer npmrc_contents.deref();
@@ -536,15 +536,15 @@ pub const IniTestingAPIs = struct {
             }).init(globalThis, envjs);
             defer object_iter.deinit();
 
-            envmap.ensureTotalCapacity(object_iter.len) catch return globalThis.throwOutOfMemoryValue();
+            try envmap.ensureTotalCapacity(object_iter.len);
 
             while (object_iter.next()) |key| {
-                const keyslice = key.toOwnedSlice(allocator) catch return globalThis.throwOutOfMemoryValue();
+                const keyslice = try key.toOwnedSlice(allocator);
                 var value = object_iter.value;
                 if (value == .undefined) continue;
 
                 const value_str = value.getZigString(globalThis);
-                const slice = value_str.toOwnedSlice(allocator) catch return globalThis.throwOutOfMemoryValue();
+                const slice = try value_str.toOwnedSlice(allocator);
 
                 envmap.put(keyslice, .{
                     .value = slice,
@@ -552,29 +552,30 @@ pub const IniTestingAPIs = struct {
                 }) catch return globalThis.throwOutOfMemoryValue();
             }
 
-            const map = allocator.create(bun.DotEnv.Map) catch return globalThis.throwOutOfMemoryValue();
+            const map = try allocator.create(bun.DotEnv.Map);
             map.* = .{
                 .map = envmap,
             };
 
             const env = bun.DotEnv.Loader.init(map, allocator);
-            const envstable = allocator.create(bun.DotEnv.Loader) catch return globalThis.throwOutOfMemoryValue();
+            const envstable = try allocator.create(bun.DotEnv.Loader);
             envstable.* = env;
             break :brk envstable;
         };
 
-        const install = allocator.create(bun.Schema.Api.BunInstall) catch return globalThis.throwOutOfMemoryValue();
+        const install = try allocator.create(bun.Schema.Api.BunInstall);
         install.* = std.mem.zeroes(bun.Schema.Api.BunInstall);
         loadNpmrc(allocator, install, env, ".npmrc", &log, &source) catch {
             return log.toJS(globalThis, allocator, "error");
         };
 
-        var obj = JSC.JSValue.createEmptyObject(globalThis, 3);
-        obj.protect();
-        defer obj.unprotect();
-
         const default_registry_url, const default_registry_token, const default_registry_username, const default_registry_password = brk: {
-            const default_registry = install.default_registry orelse break :brk .{ bun.String.static(Registry.default_url[0..]), bun.String.empty, bun.String.empty, bun.String.empty };
+            const default_registry = install.default_registry orelse break :brk .{
+                bun.String.static(Registry.default_url[0..]),
+                bun.String.empty,
+                bun.String.empty,
+                bun.String.empty,
+            };
 
             break :brk .{
                 bun.String.fromBytes(default_registry.url),
@@ -590,35 +591,16 @@ pub const IniTestingAPIs = struct {
             default_registry_password.deref();
         }
 
-        obj.put(
-            globalThis,
-            bun.String.static("default_registry_url"),
-            default_registry_url.toJS(globalThis),
-        );
-        obj.put(
-            globalThis,
-            bun.String.static("default_registry_token"),
-            default_registry_token.toJS(globalThis),
-        );
-        obj.put(
-            globalThis,
-            bun.String.static("default_registry_username"),
-            default_registry_username.toJS(globalThis),
-        );
-        obj.put(
-            globalThis,
-            bun.String.static("default_registry_password"),
-            default_registry_password.toJS(globalThis),
-        );
-
-        return obj;
+        return globalThis.createObjectFromStruct(.{
+            .default_registry_url = default_registry_url.toJS(globalThis),
+            .default_registry_token = default_registry_token.toJS(globalThis),
+            .default_registry_username = default_registry_username.toJS(globalThis),
+            .default_registry_password = default_registry_password.toJS(globalThis),
+        }).toJS();
     }
 
-    pub fn parse(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const arguments_ = callframe.arguments(1);
+    pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const arguments_ = callframe.arguments_old(1);
         const arguments = arguments_.slice();
 
         const jsstr = arguments[0];
@@ -630,15 +612,10 @@ pub const IniTestingAPIs = struct {
         var parser = Parser.init(bun.default_allocator, "<src>", utf8str.slice(), globalThis.bunVM().bundler.env);
         defer parser.deinit();
 
-        parser.parse(parser.arena.allocator()) catch |err| {
-            switch (err) {
-                error.OutOfMemory => return globalThis.throwOutOfMemoryValue(),
-            }
-        };
+        try parser.parse(parser.arena.allocator());
 
         return parser.out.toJS(bun.default_allocator, globalThis) catch |e| {
-            globalThis.throwError(e, "failed to turn AST into JS");
-            return .undefined;
+            return globalThis.throwError(e, "failed to turn AST into JS");
         };
     }
 };

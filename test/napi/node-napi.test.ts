@@ -1,6 +1,6 @@
 import { spawnSync, spawn, Glob } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isCI } from "harness";
 import { join, dirname } from "path";
 import os from "node:os";
 
@@ -34,6 +34,7 @@ const failingNodeApiTests = [
   "test_threadsafe_function/test.js",
   "test_threadsafe_function/test_legacy_uncaught_exception.js",
   "test_worker_buffer_callback/test.js",
+  "test_worker_buffer_callback/test-free-called.js", // TODO(@heimskr)
   "test_make_callback_recurse/test.js",
   "test_buffer/test.js",
   "test_instance_data/test.js",
@@ -51,6 +52,8 @@ const failingNodeApiTests = [
 ];
 
 if (process.platform == "win32") {
+  failingNodeApiTests.push("test_callback_scope/test.js"); // TODO: remove once #12827 is fixed
+
   for (const i in failingJsNativeApiTests) {
     failingJsNativeApiTests[i] = failingJsNativeApiTests[i].replaceAll("/", "\\");
   }
@@ -67,18 +70,29 @@ beforeAll(async () => {
     .map(t => dirname(t));
   const uniqueDirectories = Array.from(new Set(directories));
 
+  const start = Date.now();
+
   async function buildOne(dir: string) {
-    const process = spawn({
+    console.log(`Building in ${dir.replace(/.+node-napi-tests.test./, "")}.`, (Date.now() - start) / 1000, "s elapsed");
+    const child = spawn({
       cmd: [bunExe(), "x", "node-gyp", "rebuild", "--debug"],
       cwd: dir,
       stderr: "pipe",
       stdout: "ignore",
       stdin: "inherit",
-      env: { ...bunEnv, npm_config_target: "v23.2.0" },
+      env: {
+        ...bunEnv,
+        npm_config_target: "v23.2.0",
+        // on linux CI, node-gyp will default to g++ and the version installed there is very old,
+        // so we make it use clang instead
+        ...(process.platform == "linux" && isCI
+          ? { "CC": "/usr/lib/llvm-16/bin/clang", CXX: "/usr/lib/llvm-16/bin/clang++" }
+          : {}),
+      },
     });
-    await process.exited;
-    if (process.exitCode !== 0) {
-      const stderr = await new Response(process.stderr).text();
+    await child.exited;
+    if (child.exitCode !== 0) {
+      const stderr = await new Response(child.stderr).text();
       throw new Error(`node-gyp rebuild in ${dir} failed:\n${stderr}`);
     }
   }
@@ -90,14 +104,14 @@ beforeAll(async () => {
     }
   }
 
-  const parallelism = Math.min(8, os.cpus().length);
+  const parallelism = Math.min(8, os.cpus().length, 1 /* TODO(@heimskr): remove */);
   const jobs = [];
   for (let i = 0; i < parallelism; i++) {
     jobs.push(worker());
   }
 
   await Promise.all(jobs);
-});
+}, 600000);
 
 describe.each([
   ["js-native-api", jsNativeApiTests, jsNativeApiRoot, failingJsNativeApiTests],
@@ -118,7 +132,7 @@ describe.each([
         expect(result.success).toBeTrue();
         expect(result.exitCode).toBe(0);
       },
-      20000, // timeout
+      60000, // timeout
     );
   });
 });

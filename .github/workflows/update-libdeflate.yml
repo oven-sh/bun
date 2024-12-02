@@ -1,0 +1,92 @@
+name: Update libdeflate
+
+on:
+  schedule:
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+
+jobs:
+  check-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check libdeflate version
+        id: check-version
+        run: |
+          set -euo pipefail
+
+          # Extract the commit hash from the line after COMMIT
+          CURRENT_VERSION=$(awk '/[[:space:]]*COMMIT[[:space:]]*$/{getline; gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0); print}' cmake/targets/BuildLibDeflate.cmake)
+
+          if [ -z "$CURRENT_VERSION" ]; then
+            echo "Error: Could not find COMMIT line in BuildLibDeflate.cmake"
+            exit 1
+          fi
+
+          # Validate that it looks like a git hash
+          if ! [[ $CURRENT_VERSION =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Error: Invalid git hash format in BuildLibDeflate.cmake"
+            echo "Found: $CURRENT_VERSION"
+            echo "Expected: 40 character hexadecimal string"
+            exit 1
+          fi
+
+          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+          LATEST_RELEASE=$(curl -sL https://api.github.com/repos/ebiggers/libdeflate/releases/latest)
+          if [ -z "$LATEST_RELEASE" ]; then
+            echo "Error: Failed to fetch latest release from GitHub API"
+            exit 1
+          fi
+
+          LATEST_TAG=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
+            echo "Error: Could not extract tag name from GitHub API response"
+            exit 1
+          fi
+
+          LATEST_SHA=$(curl -sL "https://api.github.com/repos/ebiggers/libdeflate/git/ref/tags/$LATEST_TAG" | jq -r '.object.sha')
+          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+            echo "Error: Could not fetch SHA for tag $LATEST_TAG"
+            exit 1
+          fi
+
+          if ! [[ $LATEST_SHA =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Error: Invalid SHA format received from GitHub"
+            echo "Found: $LATEST_SHA"
+            echo "Expected: 40 character hexadecimal string"
+            exit 1
+          fi
+
+          echo "latest=$LATEST_SHA" >> $GITHUB_OUTPUT
+          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+      - name: Update version if needed
+        if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        run: |
+          set -euo pipefail
+          # Handle multi-line format where COMMIT and its value are on separate lines
+          sed -i -E '/[[:space:]]*COMMIT[[:space:]]*$/{n;s/[[:space:]]*([0-9a-f]+)[[:space:]]*$/    ${{ steps.check-version.outputs.latest }}/}' cmake/targets/BuildLibDeflate.cmake
+
+      - name: Create Pull Request
+        if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        uses: peter-evans/create-pull-request@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          add-paths: |
+            cmake/targets/BuildLibDeflate.cmake
+          commit-message: "deps: update libdeflate to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
+          title: "deps: update libdeflate to ${{ steps.check-version.outputs.tag }}"
+          delete-branch: true
+          branch: deps/update-libdeflate-${{ github.run_number }}
+          body: |
+            ## What does this PR do?
+
+            Updates libdeflate to version ${{ steps.check-version.outputs.tag }}
+
+            Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-libdeflate.yml)

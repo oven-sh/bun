@@ -159,7 +159,7 @@ pub fn expand(
     tokens: []Token,
     out: []std.ArrayList(u8),
     contains_nested: bool,
-) !void {
+) (error{ StackFull, StackEmpty } || ParserError)!void {
     var out_key_counter: u16 = 1;
     if (!contains_nested) {
         var expansions_table = try buildExpansionTableAlloc(allocator, tokens);
@@ -325,7 +325,7 @@ pub fn calculateVariantsAmount(tokens: []const Token) u32 {
     return count;
 }
 
-const ParserError = error{
+const ParserError = bun.OOM || error{
     UnexpectedToken,
 };
 
@@ -361,7 +361,7 @@ pub const Parser = struct {
         }
     }
 
-    fn parseAtom(self: *Parser) anyerror!?AST.Atom {
+    fn parseAtom(self: *Parser) ParserError!?AST.Atom {
         switch (self.advance()) {
             .open => {
                 const expansion_ptr = try self.parseExpansion();

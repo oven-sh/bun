@@ -81,6 +81,7 @@ NapiHandleScopeImpl::Slot* NapiHandleScopeImpl::reserveSlot()
 
 NapiHandleScopeImpl* NapiHandleScope::open(Zig::GlobalObject* globalObject, bool escapable)
 {
+    NAPI_LOG_CURRENT_FUNCTION;
     auto& vm = globalObject->vm();
     // Do not create a new handle scope while a finalizer is in progress
     // This state is possible because we call napi finalizers immediately
@@ -104,6 +105,7 @@ NapiHandleScopeImpl* NapiHandleScope::open(Zig::GlobalObject* globalObject, bool
 
 void NapiHandleScope::close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
 {
+    NAPI_LOG_CURRENT_FUNCTION;
     // napi handle scopes may be null pointers if created inside a finalizer
     if (!current) {
         return;

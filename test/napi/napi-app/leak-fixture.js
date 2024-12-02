@@ -100,10 +100,38 @@ function batchExternals(n) {
   }
 }
 
+function batchThreadsafeFunctions(n, maxQueueSize) {
+  if (typeof n != "number") throw new TypeError();
+  const callback = () => {};
+  for (let i = 0; i < n; i++) {
+    nativeTests.create_and_delete_threadsafe_function(callback, maxQueueSize);
+  }
+  gc();
+}
+
 (async () => {
-  await test(() => batchWeakRefs(100), 10, 50, 8);
-  await test(() => batchStrongRefs(100), 10, 50, 8);
-  await test(() => batchWrappedObjects(1000), 20, 50, 20);
-  // TODO(@190n) get this test working
+  // TODO(@190n) get the rest of these tests working
+  // await test(() => batchWeakRefs(100), 10, 50, 8);
+  // await test(() => batchStrongRefs(100), 10, 50, 8);
+  // await test(() => batchWrappedObjects(1000), 20, 50, 20);
   // await test(() => batchExternals(1000), 10, 400, 15);
+
+  // a queue size of 10,000 would leak 80 kB (each queue item is a void*), so 400 iterations
+  // would be a 32MB leak
+  // call with a preallocated queue
+  const threadsafeFunctionJsCallback = () => {};
+  await test(
+    () => nativeTests.create_and_delete_threadsafe_function(threadsafeFunctionJsCallback, 10_000, 10_000),
+    100,
+    400,
+    10,
+  );
+
+  // call with a dynamic queue
+  await test(
+    () => nativeTests.create_and_delete_threadsafe_function(threadsafeFunctionJsCallback, 0, 10_000),
+    100,
+    400,
+    10,
+  );
 })();

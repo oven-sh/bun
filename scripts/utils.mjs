@@ -430,8 +430,8 @@ export function getWindowsExitReason(exitCode) {
 }
 
 /**
- * @param {string} url
- * @returns {URL}
+ * @param {string | URL} url
+ * @returns {URL | undefined}
  */
 export function parseGitUrl(url) {
   const string = typeof url === "string" ? url : url.toString();
@@ -443,8 +443,20 @@ export function parseGitUrl(url) {
   if (/^https:\/\/github\.com\//.test(string)) {
     return new URL(string.slice(19).replace(/\.git$/, ""), githubUrl);
   }
+}
 
-  throw new Error(`Unsupported git url: ${string}`);
+/**
+ * @param {string | URL} url
+ * @returns {string | undefined}
+ */
+export function parseGitRepository(url) {
+  const parsed = parseGitUrl(url);
+  if (parsed) {
+    const { hostname, pathname } = parsed;
+    if (hostname == "github.com") {
+      return pathname.slice(1);
+    }
+  }
 }
 
 /**
@@ -491,10 +503,7 @@ export function getRepository(cwd) {
 
   const url = getRepositoryUrl(cwd);
   if (url) {
-    const { hostname, pathname } = new URL(url);
-    if (hostname == "github.com") {
-      return pathname.slice(1);
-    }
+    return parseGitRepository(url);
   }
 }
 
@@ -505,10 +514,7 @@ export function getPullRequestRepository() {
   if (isBuildkite) {
     const repository = getEnv("BUILDKITE_PULL_REQUEST_REPO", false);
     if (repository) {
-      const { hostname, pathname } = parseGitUrl(repository);
-      if (hostname == "github.com") {
-        return pathname.slice(1);
-      }
+      return parseGitRepository(repository);
     }
   }
 }
@@ -1013,9 +1019,15 @@ export function which(command, options = {}) {
 }
 
 /**
+ * @typedef {object} GitRef
+ * @property {string} [repository]
+ * @property {string} [commit]
+ */
+
+/**
  * @param {string} [cwd]
- * @param {string} [base]
- * @param {string} [head]
+ * @param {string | GitRef} [base]
+ * @param {string | GitRef} [head]
  * @returns {Promise<string[] | undefined>}
  */
 export async function getChangedFiles(cwd, base, head) {

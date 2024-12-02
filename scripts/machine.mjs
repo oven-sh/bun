@@ -35,39 +35,441 @@ import { basename, extname, join, relative, resolve } from "node:path";
 import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+/**
+ * @link https://docs.orbstack.dev/
+ */
+const orbstack = {
+  get name() {
+    return "orbstack";
+  },
+
+  /**
+   * @typedef {Object} OrbstackImage
+   * @property {string} distro
+   * @property {string} version
+   * @property {string} arch
+   */
+
+  /**
+   * @param {Platform} platform
+   * @returns {OrbstackImage}
+   */
+  getImage(platform) {
+    const { os, arch, distro, release } = platform;
+    if (os !== "linux" || !/^debian|ubuntu|alpine|fedora|centos$/.test(distro)) {
+      throw new Error(`Unsupported platform: ${inspect(platform)}`);
+    }
+
+    return {
+      distro,
+      version: release,
+      arch: arch === "aarch64" ? "arm64" : "amd64",
+    };
+  },
+
+  /**
+   * @typedef {Object} OrbstackVm
+   * @property {string} id
+   * @property {string} name
+   * @property {"running"} state
+   * @property {OrbstackImage} image
+   * @property {OrbstackConfig} config
+   */
+
+  /**
+   * @typedef {Object} OrbstackConfig
+   * @property {string} default_username
+   * @property {boolean} isolated
+   */
+
+  /**
+   * @typedef {Object} OrbstackVmOptions
+   * @property {string} [name]
+   * @property {OrbstackImage} image
+   * @property {string} [username]
+   * @property {string} [password]
+   * @property {string} [userData]
+   */
+
+  /**
+   * @param {OrbstackVmOptions} options
+   * @returns {Promise<OrbstackVm>}
+   */
+  async createVm(options) {
+    const { name, image, username, password, userData } = options;
+    const { distro, version, arch } = image;
+    const uniqueId = name || `linux-${distro}-${version}-${arch}-${Math.random().toString(36).slice(2, 11)}`;
+
+    const args = [`--arch=${arch}`, `${distro}:${version}`, uniqueId];
+    if (username) {
+      args.push(`--user=${username}`);
+    }
+    if (password) {
+      args.push(`--set-password=${password}`);
+    }
+
+    let userDataPath;
+    if (userData) {
+      userDataPath = mkdtemp("orbstack-user-data-", "user-data.txt");
+      writeFile(userDataPath, userData);
+      args.push(`--user-data=${userDataPath}`);
+    }
+
+    try {
+      await spawnSafe($`orbctl create ${args}`);
+    } finally {
+      if (userDataPath) {
+        rm(userDataPath);
+      }
+    }
+
+    return this.inspectVm(uniqueId);
+  },
+
+  /**
+   * @param {string} name
+   */
+  async deleteVm(name) {
+    await spawnSafe($`orbctl delete ${name}`, {
+      throwOnError: error => !/machine not found/i.test(inspect(error)),
+    });
+  },
+
+  /**
+   * @param {string} name
+   * @returns {Promise<OrbstackVm | undefined>}
+   */
+  async inspectVm(name) {
+    const { exitCode, stdout } = await spawnSafe($`orbctl info ${name} --format=json`, {
+      throwOnError: error => !/machine not found/i.test(inspect(error)),
+    });
+    if (exitCode === 0) {
+      return JSON.parse(stdout);
+    }
+  },
+
+  /**
+   * @returns {Promise<OrbstackVm[]>}
+   */
+  async listVms() {
+    const { stdout } = await spawnSafe($`orbctl list --format=json`);
+    return JSON.parse(stdout);
+  },
+
+  /**
+   * @param {MachineOptions} options
+   * @returns {Promise<Machine>}
+   */
+  async createMachine(options) {
+    const { distro } = options;
+    const username = getUsername(distro);
+    const userData = getUserData({ ...options, username });
+
+    const image = this.getImage(options);
+    const vm = await this.createVm({
+      image,
+      username,
+      userData,
+    });
+
+    return this.toMachine(vm, options);
+  },
+
+  /**
+   * @param {OrbstackVm} vm
+   * @returns {Machine}
+   */
+  toMachine(vm) {
+    const { id, name, config } = vm;
+
+    const { default_username: username } = config;
+    const connectOptions = {
+      username,
+      hostname: `${name}@orb`,
+    };
+
+    const exec = async (command, options) => {
+      return spawnSsh({ ...connectOptions, command }, options);
+    };
+
+    const execSafe = async (command, options) => {
+      return spawnSshSafe({ ...connectOptions, command }, options);
+    };
+
+    const attach = async () => {
+      await spawnSshSafe({ ...connectOptions });
+    };
+
+    const upload = async (source, destination) => {
+      await spawnSafe(["orbctl", "push", `--machine=${name}`, source, destination]);
+    };
+
+    const close = async () => {
+      await this.deleteVm(name);
+    };
+
+    return {
+      cloud: "orbstack",
+      id,
+      name,
+      spawn: exec,
+      spawnSafe: execSafe,
+      upload,
+      attach,
+      close,
+      [Symbol.asyncDispose]: close,
+    };
+  },
+};
+
 const docker = {
+  get name() {
+    return "docker";
+  },
+
+  /**
+   * @typedef {"linux" | "darwin" | "windows"} DockerOs
+   * @typedef {"amd64" | "arm64"} DockerArch
+   * @typedef {`${DockerOs}/${DockerArch}`} DockerPlatform
+   */
+
+  /**
+   * @param {Platform} platform
+   * @returns {DockerPlatform}
+   */
   getPlatform(platform) {
     const { os, arch } = platform;
+    if (arch === "aarch64") {
+      return `${os}/arm64`;
+    } else if (arch === "x64") {
+      return `${os}/amd64`;
+    }
+    throw new Error(`Unsupported platform: ${inspect(platform)}`);
+  },
 
-    if (os === "linux" || os === "windows") {
-      if (arch === "aarch64") {
-        return `${os}/arm64`;
-      } else if (arch === "x64") {
-        return `${os}/amd64`;
+  /**
+   * @typedef DockerSpawnOptions
+   * @property {DockerPlatform} [platform]
+   * @property {boolean} [json]
+   */
+
+  /**
+   * @param {string[]} args
+   * @param {DockerSpawnOptions & import("./utils.mjs").SpawnOptions} [options]
+   * @returns {Promise<unknown>}
+   */
+  async spawn(args, options = {}) {
+    const docker = which("docker", { required: true });
+
+    let env = { ...process.env };
+    if (isCI) {
+      env["BUILDKIT_PROGRESS"] = "plain";
+    }
+
+    const { json, platform } = options;
+    if (json) {
+      args.push("--format=json");
+    }
+    if (platform) {
+      args.push(`--platform=${platform}`);
+    }
+
+    const { error, stdout } = await spawnSafe($`${docker} ${args}`, { env, ...options });
+    if (error) {
+      return;
+    }
+    if (!json) {
+      return stdout;
+    }
+
+    try {
+      return JSON.parse(stdout);
+    } catch {
+      return;
+    }
+  },
+
+  /**
+   * @typedef {Object} DockerImage
+   * @property {string} Id
+   * @property {string[]} RepoTags
+   * @property {string[]} RepoDigests
+   * @property {string} Created
+   * @property {DockerOs} Os
+   * @property {DockerArch} Architecture
+   * @property {number} Size
+   */
+
+  /**
+   * @param {string} url
+   * @param {DockerPlatform} [platform]
+   * @returns {Promise<boolean>}
+   */
+  async pullImage(url, platform) {
+    const done = await this.spawn($`pull ${url}`, {
+      platform,
+      throwOnError: error => !/No such image|manifest unknown/i.test(inspect(error)),
+    });
+    return !!done;
+  },
+
+  /**
+   * @param {string} url
+   * @param {DockerPlatform} [platform]
+   * @returns {Promise<DockerImage | undefined>}
+   */
+  async inspectImage(url, platform) {
+    /** @type {DockerImage[]} */
+    const images = await this.spawn($`image inspect ${url}`, {
+      json: true,
+      throwOnError: error => !/No such image/i.test(inspect(error)),
+    });
+
+    if (!images) {
+      const pulled = await this.pullImage(url, platform);
+      if (pulled) {
+        return this.inspectImage(url, platform);
+      }
+    }
+
+    const { os, arch } = platform || {};
+    return images
+      ?.filter(({ Os, Architecture }) => !os || !arch || (Os === os && Architecture === arch))
+      ?.find((a, b) => (a.Created < b.Created ? 1 : -1));
+  },
+
+  /**
+   * @typedef {Object} DockerContainer
+   * @property {string} Id
+   * @property {string} Name
+   * @property {string} Image
+   * @property {string} Created
+   * @property {DockerContainerState} State
+   * @property {DockerContainerNetworkSettings} NetworkSettings
+   */
+
+  /**
+   * @typedef {Object} DockerContainerState
+   * @property {"exited" | "running"} Status
+   * @property {number} [Pid]
+   * @property {number} ExitCode
+   * @property {string} [Error]
+   * @property {string} StartedAt
+   * @property {string} FinishedAt
+   */
+
+  /**
+   * @typedef {Object} DockerContainerNetworkSettings
+   * @property {string} [IPAddress]
+   */
+
+  /**
+   * @param {string} containerId
+   * @returns {Promise<DockerContainer | undefined>}
+   */
+  async inspectContainer(containerId) {
+    const containers = await this.spawn($`container inspect ${containerId}`, { json: true });
+    return containers?.find(a => a.Id === containerId);
+  },
+
+  /**
+   * @returns {Promise<DockerContainer[]>}
+   */
+  async listContainers() {
+    const containers = await this.spawn($`container ls --all`, { json: true });
+    return containers || [];
+  },
+
+  /**
+   * @typedef {Object} DockerRunOptions
+   * @property {string[]} [command]
+   * @property {DockerPlatform} [platform]
+   * @property {string} [name]
+   * @property {boolean} [detach]
+   * @property {"always" | "never"} [pull]
+   * @property {boolean} [rm]
+   * @property {"no" | "on-failure" | "always"} [restart]
+   */
+
+  /**
+   * @param {string} url
+   * @param {DockerRunOptions} [options]
+   * @returns {Promise<DockerContainer>}
+   */
+  async runContainer(url, options = {}) {
+    const { detach, command = [], ...containerOptions } = options;
+    const args = Object.entries(containerOptions)
+      .filter(([_, value]) => typeof value !== "undefined")
+      .map(([key, value]) => (typeof value === "boolean" ? `--${key}` : `--${key}=${value}`));
+    if (detach) {
+      args.push("--detach");
+    } else {
+      args.push("--tty", "--interactive");
+    }
+
+    const stdio = detach ? "pipe" : "inherit";
+    const result = await this.spawn($`run ${args} ${url} ${command}`, { stdio });
+    if (!detach) {
+      return;
+    }
+
+    const containerId = result.trim();
+    const container = await this.inspectContainer(containerId);
+    if (!container) {
+      throw new Error(`Failed to run container: ${inspect(result)}`);
+    }
+    return container;
+  },
+
+  /**
+   * @param {Platform} platform
+   * @returns {Promise<DockerImage>}
+   */
+  async getBaseImage(platform) {
+    const { os, distro, release } = platform;
+    const dockerPlatform = this.getPlatform(platform);
+
+    let url;
+    if (os === "linux") {
+      if (distro === "debian" || distro === "ubuntu" || distro === "alpine") {
+        url = `docker.io/library/${distro}:${release}`;
+      } else if (distro === "amazonlinux") {
+        url = `public.ecr.aws/amazonlinux/amazonlinux:${release}`;
+      }
+    }
+
+    if (url) {
+      const image = await this.inspectImage(url, dockerPlatform);
+      if (image) {
+        return image;
       }
     }
 
     throw new Error(`Unsupported platform: ${inspect(platform)}`);
   },
 
-  async createMachine(platform) {
-    const { id } = await docker.getImage(platform);
-    const platformString = docker.getPlatform(platform);
+  /**
+   * @param {DockerContainer} container
+   * @param {MachineOptions} [options]
+   * @returns {Machine}
+   */
+  toMachine(container, options = {}) {
+    const { Id: containerId } = container;
 
-    const command = ["sleep", "1d"];
-    const { stdout } = await spawnSafe(["docker", "run", "--rm", "--platform", platformString, "-d", id, ...command]);
-    const containerId = stdout.trim();
-
-    const spawn = async command => {
-      return spawn(["docker", "exec", containerId, ...command]);
+    const exec = (command, options) => {
+      return spawn(["docker", "exec", containerId, ...command], options);
     };
 
-    const spawnSafe = async command => {
-      return spawnSafe(["docker", "exec", containerId, ...command]);
+    const execSafe = (command, options) => {
+      return spawnSafe(["docker", "exec", containerId, ...command], options);
+    };
+
+    const upload = async (source, destination) => {
+      await spawn(["docker", "cp", source, `${containerId}:${destination}`]);
     };
 
     const attach = async () => {
-      const { exitCode, spawnError } = await spawn(["docker", "exec", "-it", containerId, "bash"], {
+      const { exitCode, error } = await spawn(["docker", "exec", "-it", containerId, "sh"], {
         stdio: "inherit",
       });
 
@@ -75,56 +477,49 @@ const docker = {
         return;
       }
 
-      throw spawnError;
+      throw error;
+    };
+
+    const snapshot = async name => {
+      await spawn(["docker", "commit", containerId]);
     };
 
     const kill = async () => {
-      await spawnSafe(["docker", "kill", containerId]);
+      await spawn(["docker", "kill", containerId]);
     };
 
     return {
-      spawn,
-      spawnSafe,
+      cloud: "docker",
+      id: containerId,
+      spawn: exec,
+      spawnSafe: execSafe,
+      upload,
       attach,
       close: kill,
       [Symbol.asyncDispose]: kill,
     };
   },
 
-  async getImage(platform) {
-    const os = platform["os"];
-    const distro = platform["distro"];
-    const release = platform["release"] || "latest";
+  /**
+   * @param {MachineOptions} options
+   * @returns {Promise<Machine>}
+   */
+  async createMachine(options) {
+    const { Id: imageId, Os, Architecture } = await docker.getBaseImage(options);
 
-    let url;
-    if (os === "linux") {
-      if (distro === "debian") {
-        url = `docker.io/library/debian:${release}`;
-      } else if (distro === "ubuntu") {
-        url = `docker.io/library/ubuntu:${release}`;
-      } else if (distro === "amazonlinux") {
-        url = `public.ecr.aws/amazonlinux/amazonlinux:${release}`;
-      } else if (distro === "alpine") {
-        url = `docker.io/library/alpine:${release}`;
-      }
-    }
+    const container = await docker.runContainer(imageId, {
+      platform: `${Os}/${Architecture}`,
+      command: ["sleep", "1d"],
+      detach: true,
+      rm: true,
+      restart: "no",
+    });
 
-    if (url) {
-      await spawnSafe(["docker", "pull", "--platform", docker.getPlatform(platform), url]);
-      const { stdout } = await spawnSafe(["docker", "image", "inspect", url, "--format", "json"]);
-      const [{ Id }] = JSON.parse(stdout);
-      return {
-        id: Id,
-        name: url,
-        username: "root",
-      };
-    }
-
-    throw new Error(`Unsupported platform: ${inspect(platform)}`);
+    return this.toMachine(container, options);
   },
 };
 
-export const aws = {
+const aws = {
   get name() {
     return "aws";
   },
@@ -439,36 +834,36 @@ export const aws = {
    * @returns {Promise<AwsImage>}
    */
   async getBaseImage(options) {
-    const { os, arch, distro, distroVersion } = options;
+    const { os, arch, distro, release } = options;
 
     let name, owner;
     if (os === "linux") {
       if (!distro || distro === "debian") {
         owner = "amazon";
-        name = `debian-${distroVersion || "*"}-${arch === "aarch64" ? "arm64" : "amd64"}-*`;
+        name = `debian-${release || "*"}-${arch === "aarch64" ? "arm64" : "amd64"}-*`;
       } else if (distro === "ubuntu") {
         owner = "099720109477";
-        name = `ubuntu/images/hvm-ssd*/ubuntu-*-${distroVersion || "*"}-${arch === "aarch64" ? "arm64" : "amd64"}-server-*`;
+        name = `ubuntu/images/hvm-ssd*/ubuntu-*-${release || "*"}-${arch === "aarch64" ? "arm64" : "amd64"}-server-*`;
       } else if (distro === "amazonlinux") {
         owner = "amazon";
-        if (distroVersion === "1" && arch === "x64") {
+        if (release === "1" && arch === "x64") {
           name = `amzn-ami-2018.03.*`;
-        } else if (distroVersion === "2") {
+        } else if (release === "2") {
           name = `amzn2-ami-hvm-*-${arch === "aarch64" ? "arm64" : "x86_64"}-gp2`;
         } else {
-          name = `al${distroVersion || "*"}-ami-*-${arch === "aarch64" ? "arm64" : "x86_64"}`;
+          name = `al${release || "*"}-ami-*-${arch === "aarch64" ? "arm64" : "x86_64"}`;
         }
       } else if (distro === "alpine") {
         owner = "538276064493";
-        name = `alpine-${distroVersion || "*"}.*-${arch === "aarch64" ? "aarch64" : "x86_64"}-uefi-cloudinit-*`;
+        name = `alpine-${release || "*"}.*-${arch === "aarch64" ? "aarch64" : "x86_64"}-uefi-cloudinit-*`;
       } else if (distro === "centos") {
         owner = "aws-marketplace";
-        name = `CentOS-Stream-ec2-${distroVersion || "*"}-*.${arch === "aarch64" ? "aarch64" : "x86_64"}-*`;
+        name = `CentOS-Stream-ec2-${release || "*"}-*.${arch === "aarch64" ? "aarch64" : "x86_64"}-*`;
       }
     } else if (os === "windows") {
       if (!distro || distro === "server") {
         owner = "amazon";
-        name = `Windows_Server-${distroVersion || "*"}-English-Full-Base-*`;
+        name = `Windows_Server-${release || "*"}-English-Full-Base-*`;
       }
     }
 
@@ -666,7 +1061,7 @@ export const aws = {
   },
 };
 
-export const google = {
+const google = {
   get cloud() {
     return "google";
   },
@@ -679,12 +1074,17 @@ export const google = {
   async spawn(args, options = {}) {
     const gcloud = which("gcloud", { required: true });
 
-    let env;
-    if (isCI) {
-      env = {}; // TODO: Add Google Cloud credentials
-    }
+    let env = { ...process.env };
+    // if (isCI) {
+    //   env; // TODO: Add Google Cloud credentials
+    // } else {
+    //   env["TERM"] = "dumb";
+    // }
 
-    const { stdout } = await spawnSafe($`${gcloud} ${args} --format json`, { env, ...options });
+    const { stdout } = await spawnSafe($`${gcloud} ${args} --format json`, {
+      env,
+      ...options,
+    });
     try {
       return JSON.parse(stdout);
     } catch {
@@ -782,20 +1182,41 @@ export const google = {
    * @property {"RUNNING"} status
    * @property {string} machineType
    * @property {string} zone
-   * @property {{}[]} networkInterfaces
+   * @property {GoogleDisk[]} disks
+   * @property {GoogleNetworkInterface[]} networkInterfaces
+   * @property {object} [scheduling]
+   * @property {"STANDARD" | "SPOT"} [scheduling.provisioningModel]
+   * @property {boolean} [scheduling.preemptible]
+   * @property {Record<string, string | undefined>} [labels]
    * @property {string} selfLink
    * @property {string} creationTimestamp
    */
 
   /**
-   * @param {Partial<GoogleInstance>} options
-   * @returns {Promise<GoogleInstance[]>}
+   * @typedef {Object} GoogleDisk
+   * @property {string} deviceName
+   * @property {boolean} boot
+   * @property {"X86_64" | "ARM64"} architecture
+   * @property {string[]} [licenses]
+   * @property {number} diskSizeGb
    */
-  async listInstances(options) {
-    const filters = this.getFilters(options);
-    const instances = await this.spawn($`compute instances list ${filters}`);
-    return instances.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
-  },
+
+  /**
+   * @typedef {Object} GoogleNetworkInterface
+   * @property {"IPV4_ONLY" | "IPV4_IPV6" | "IPV6_ONLY"} stackType
+   * @property {string} name
+   * @property {string} network
+   * @property {string} networkIP
+   * @property {string} subnetwork
+   * @property {GoogleAccessConfig[]} accessConfigs
+   */
+
+  /**
+   * @typedef {Object} GoogleAccessConfig
+   * @property {string} name
+   * @property {"ONE_TO_ONE_NAT" | "INTERNAL_NAT"} type
+   * @property {string} [natIP]
+   */
 
   /**
    * @param {Record<string, string | boolean | undefined>} options
@@ -833,28 +1254,66 @@ export const google = {
   },
 
   /**
+   * @param {string} instanceId
+   * @param {string} username
+   * @param {string} zoneId
+   * @param {object} [options]
+   * @param {boolean} [options.wait]
+   * @returns {Promise<string | undefined>}
+   * @link https://cloud.google.com/sdk/gcloud/reference/compute/reset-windows-password
+   */
+  async resetWindowsPassword(instanceId, username, zoneId, options = {}) {
+    const attempts = options.wait ? 15 : 1;
+    for (let i = 0; i < attempts; i++) {
+      const result = await this.spawn(
+        $`compute reset-windows-password ${instanceId} --user=${username} --zone=${zoneId}`,
+        {
+          throwOnError: error => !/instance may not be ready for use/i.test(inspect(error)),
+        },
+      );
+      if (result) {
+        const { password } = result;
+        if (password) {
+          return password;
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 60000 * i));
+    }
+  },
+
+  /**
+   * @param {Partial<GoogleInstance>} options
+   * @returns {Promise<GoogleInstance[]>}
+   */
+  async listInstances(options) {
+    const filters = this.getFilters(options);
+    const instances = await this.spawn($`compute instances list ${filters}`);
+    return instances.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
+  },
+
+  /**
    * @param {MachineOptions} options
    * @returns {Promise<GoogleImage>}
    */
   async getMachineImage(options) {
-    const { os, arch, distro, distroVersion } = options;
+    const { os, arch, distro, release } = options;
     const architecture = arch === "aarch64" ? "ARM64" : "X86_64";
 
     /** @type {string | undefined} */
     let family;
     if (os === "linux") {
       if (!distro || distro === "debian") {
-        family = `debian-${distroVersion || "*"}`;
+        family = `debian-${release || "*"}`;
       } else if (distro === "ubuntu") {
-        family = `ubuntu-${distroVersion?.replace(/\./g, "") || "*"}`;
+        family = `ubuntu-${release?.replace(/\./g, "") || "*"}`;
       } else if (distro === "fedora") {
-        family = `fedora-coreos-${distroVersion || "*"}`;
+        family = `fedora-coreos-${release || "*"}`;
       } else if (distro === "rhel") {
-        family = `rhel-${distroVersion || "*"}`;
+        family = `rhel-${release || "*"}`;
       }
     } else if (os === "windows" && arch === "x64") {
       if (!distro || distro === "server") {
-        family = `windows-${distroVersion || "*"}`;
+        family = `windows-${release || "*"}`;
       }
     }
 
@@ -874,8 +1333,9 @@ export const google = {
    * @returns {Promise<Machine>}
    */
   async createMachine(options) {
-    const { os, arch, distro, instanceType, tags, preemptible, detached } = options;
+    const { name, os, arch, distro, instanceType, tags, preemptible, detached } = options;
     const image = await google.getMachineImage(options);
+    const { selfLink: imageUrl } = image;
 
     const username = getUsername(distro || os);
     const userData = getUserData({ ...options, username });
@@ -884,9 +1344,8 @@ export const google = {
     let metadata;
     if (os === "windows") {
       metadata = {
-        "sysprep-specialize-script-cmd":
-          "googet -noconfirm=true install google-compute-engine-ssh,enable-windows-ssh=TRUE",
-        "windows-startup-script-ps1": userData,
+        "enable-windows-ssh": "TRUE",
+        "sysprep-specialize-script-ps1": userData,
       };
     } else {
       metadata = {
@@ -895,8 +1354,9 @@ export const google = {
     }
 
     const instance = await google.createInstance({
+      "name": name,
       "zone": "us-central1-a",
-      "image": image.selfLink,
+      "image": imageUrl,
       "machine-type": instanceType || (arch === "aarch64" ? "t2a-standard-2" : "t2d-standard-2"),
       "boot-disk-auto-delete": true,
       "boot-disk-size": `${getDiskSize(options)}GB`,
@@ -912,19 +1372,82 @@ export const google = {
       "max-run-duration": detached ? undefined : "6h",
     });
 
-    const { id: instanceId, zone: zoneId, machineType, name } = instance;
+    return this.toMachine(instance, options);
+  },
 
-    const connect = () => {
-      const { networkInterfaces } = instance;
-      for (const { accessConfigs } of networkInterfaces) {
-        for (const { natIP } of accessConfigs) {
-          return {
-            hostname: natIP,
-            username,
-          };
+  /**
+   * @param {GoogleInstance} instance
+   * @param {MachineOptions} [options]
+   * @returns {Machine}
+   */
+  toMachine(instance, options = {}) {
+    const { id: instanceId, name, zone: zoneUrl, machineType: machineTypeUrl, labels } = instance;
+    const machineType = machineTypeUrl.split("/").pop();
+    const zoneId = zoneUrl.split("/").pop();
+
+    let os, arch, distro, release;
+    const { disks = [] } = instance;
+    for (const { boot, architecture, licenses = [] } of disks) {
+      if (!boot) {
+        continue;
+      }
+
+      if (architecture === "X86_64") {
+        arch = "x64";
+      } else if (architecture === "ARM64") {
+        arch = "aarch64";
+      }
+
+      for (const license of licenses) {
+        const linuxMatch = /(debian|ubuntu|fedora|rhel)-(\d+)/i.exec(license);
+        if (linuxMatch) {
+          os = "linux";
+          [, distro, release] = linuxMatch;
+        } else {
+          const windowsMatch = /windows-server-(\d+)-dc-core/i.exec(license);
+          if (windowsMatch) {
+            os = "windows";
+            distro = "windowsserver";
+            [, release] = windowsMatch;
+          }
         }
       }
-      throw new Error(`Failed to find public IP for instance: ${name}`);
+    }
+
+    let publicIp;
+    const { networkInterfaces = [] } = instance;
+    for (const { accessConfigs = [] } of networkInterfaces) {
+      for (const { type, natIP } of accessConfigs) {
+        if (type === "ONE_TO_ONE_NAT" && natIP) {
+          publicIp = natIP;
+        }
+      }
+    }
+
+    let preemptible;
+    const { scheduling } = instance;
+    if (scheduling) {
+      const { provisioningModel, preemptible: isPreemptible } = scheduling;
+      preemptible = provisioningModel === "SPOT" || isPreemptible;
+    }
+
+    /**
+     * @returns {SshOptions}
+     */
+    const connect = () => {
+      if (!publicIp) {
+        throw new Error(`Failed to find public IP for instance: ${name}`);
+      }
+
+      /** @type {string | undefined} */
+      let username;
+
+      const { os, distro } = options;
+      if (os || distro) {
+        username = getUsername(distro || os);
+      }
+
+      return { hostname: publicIp, username };
     };
 
     const spawn = async (command, options) => {
@@ -935,6 +1458,13 @@ export const google = {
     const spawnSafe = async (command, options) => {
       const connectOptions = connect();
       return spawnSshSafe({ ...connectOptions, command }, options);
+    };
+
+    const rdp = async () => {
+      const { hostname, username } = connect();
+      const rdpUsername = `${username}-rdp`;
+      const password = await google.resetWindowsPassword(instanceId, rdpUsername, zoneId, { wait: true });
+      return { hostname, username: rdpUsername, password };
     };
 
     const attach = async () => {
@@ -959,29 +1489,43 @@ export const google = {
       return;
     };
 
-    let terminated = false;
-
     const terminate = async () => {
-      if (!terminated) {
-        terminated = true;
-        await google.deleteInstance(instanceId, zoneId);
-      }
+      await google.deleteInstance(instanceId, zoneId);
     };
 
     return {
       cloud: "google",
+      os,
+      arch,
+      distro,
+      release,
       id: instanceId,
+      imageId: undefined,
       name,
-      instanceType: machineType.split("/").pop(),
-      region: zoneId.split("/").pop(),
+      instanceType: machineType,
+      region: zoneId,
+      publicIp,
+      preemptible,
+      labels,
       spawn,
       spawnSafe,
+      rdp,
       attach,
       upload,
       snapshot,
       close: terminate,
       [Symbol.asyncDispose]: terminate,
     };
+  },
+
+  /**
+   * @param {Record<string, string>} [labels]
+   * @returns {Promise<Machine[]>}
+   */
+  async getMachines(labels) {
+    const filters = labels ? this.getFilters({ labels }) : {};
+    const instances = await google.listInstances(filters);
+    return instances.map(instance => this.toMachine(instance));
   },
 
   /**
@@ -1347,10 +1891,12 @@ async function getGithubOrgSshKeys(organization) {
 async function spawnSsh(options, spawnOptions = {}) {
   const { hostname, port, username, identityPaths, retries = 10, command: spawnCommand } = options;
 
-  await waitForPort({
-    hostname,
-    port: port || 22,
-  });
+  if (!hostname.includes("@")) {
+    await waitForPort({
+      hostname,
+      port: port || 22,
+    });
+  }
 
   const logPath = mkdtemp("ssh-", "ssh.log");
   const command = ["ssh", hostname, "-v", "-C", "-E", logPath, "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"];
@@ -1508,6 +2054,10 @@ function getRdpFile(hostname, username) {
  */
 function getCloud(name) {
   switch (name) {
+    case "docker":
+      return docker;
+    case "orbstack":
+      return orbstack;
     case "aws":
       return aws;
     case "google":
@@ -1517,14 +2067,35 @@ function getCloud(name) {
 }
 
 /**
- * @typedef Machine
+ * @typedef {"linux" | "darwin" | "windows"} Os
+ * @typedef {"aarch64" | "x64"} Arch
+ * @typedef {"macos" | "windowsserver" | "debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
+ */
+
+/**
+ * @typedef {Object} Platform
+ * @property {Os} os
+ * @property {Arch} arch
+ * @property {Distro} distro
+ * @property {string} release
+ * @property {string} [eol]
+ */
+
+/**
+ * @typedef {Object} Machine
  * @property {string} cloud
+ * @property {Os} [os]
+ * @property {Arch} [arch]
+ * @property {Distro} [distro]
+ * @property {string} [release]
  * @property {string} [name]
  * @property {string} id
  * @property {string} imageId
  * @property {string} instanceType
  * @property {string} region
  * @property {string} [publicIp]
+ * @property {boolean} [preemptible]
+ * @property {Record<string, string>} tags
  * @property {(command: string[], options?: import("./utils.mjs").SpawnOptions) => Promise<import("./utils.mjs").SpawnResult>} spawn
  * @property {(command: string[], options?: import("./utils.mjs").SpawnOptions) => Promise<import("./utils.mjs").SpawnResult>} spawnSafe
  * @property {(source: string, destination: string) => Promise<void>} upload
@@ -1535,17 +2106,13 @@ function getCloud(name) {
  */
 
 /**
- * @typedef {"linux" | "darwin" | "windows"} Os
- * @typedef {"aarch64" | "x64"} Arch
- */
-
-/**
  * @typedef MachineOptions
  * @property {Cloud} cloud
  * @property {Os} os
  * @property {Arch} arch
- * @property {string} distro
- * @property {string} [distroVersion]
+ * @property {Distro} distro
+ * @property {string} [release]
+ * @property {string} [name]
  * @property {string} [instanceType]
  * @property {string} [imageId]
  * @property {string} [imageName]
@@ -1580,7 +2147,8 @@ async function main() {
       "os": { type: "string", default: "linux" },
       "arch": { type: "string", default: "x64" },
       "distro": { type: "string" },
-      "distro-version": { type: "string" },
+      "release": { type: "string" },
+      "name": { type: "string" },
       "instance-type": { type: "string" },
       "image-id": { type: "string" },
       "image-name": { type: "string" },
@@ -1619,13 +2187,16 @@ async function main() {
     ...Object.fromEntries(args["tag"]?.map(tag => tag.split("=")) ?? []),
   };
 
+  const cloud = getCloud(args["cloud"]);
+
   /** @type {MachineOptions} */
   const options = {
-    cloud: getCloud(args["cloud"]),
+    cloud: args["cloud"],
     os: parseOs(args["os"]),
     arch: parseArch(args["arch"]),
     distro: args["distro"],
-    distroVersion: args["distro-version"],
+    release: args["release"],
+    name: args["name"],
     instanceType: args["instance-type"],
     imageId: args["image-id"],
     imageName: args["image-name"],
@@ -1641,8 +2212,8 @@ async function main() {
     sshKeys,
   };
 
-  const { cloud, detached, bootstrap, ci, os, arch, distro, distroVersion } = options;
-  const name = distro ? `${os}-${arch}-${distro}-${distroVersion}` : `${os}-${arch}-${distroVersion}`;
+  const { detached, bootstrap, ci, os, arch, distro, release } = options;
+  const name = distro ? `${os}-${arch}-${distro}-${release}` : `${os}-${arch}-${release}`;
 
   let bootstrapPath, agentPath;
   if (bootstrap) {
@@ -1668,7 +2239,7 @@ async function main() {
     console.table({
       "Operating System": os,
       "Architecture": arch,
-      "Distribution": distro ? `${distro} ${distroVersion}` : distroVersion,
+      "Distribution": distro ? `${distro} ${release}` : release,
       "CI": ci ? "Yes" : "No",
     });
 
@@ -1763,6 +2334,9 @@ async function main() {
         const remotePath = "C:\\buildkite-agent\\agent.mjs";
         await startGroup("Installing agent...", async () => {
           await machine.upload(agentPath, remotePath);
+          if (cloud.name === "docker") {
+            return;
+          }
           await machine.spawnSafe(["node", remotePath, "install"], { stdio: "inherit" });
         });
       } else {
@@ -1778,6 +2352,9 @@ async function main() {
             }
           }
           await machine.spawnSafe([...command, "cp", tmpPath, remotePath]);
+          if (cloud.name === "docker") {
+            return;
+          }
           {
             const { stdout } = await machine.spawn(["node", "-v"]);
             const version = parseInt(stdout.trim().replace(/^v/, ""));

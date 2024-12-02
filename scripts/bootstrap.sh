@@ -92,7 +92,7 @@ download_file() {
 	execute chmod 755 "$tmp"
 
 	path="$tmp/$filename"
-	fetch "$url" > "$path"
+	fetch "$url" >"$path"
 	execute chmod 644 "$path"
 
 	print "$path"
@@ -127,7 +127,7 @@ append_to_file() {
 			if [ "$file_needs_sudo" = "1" ]; then
 				execute_sudo sh -c "echo '$line' >> '$file'"
 			else
-				echo "$line" >> "$file"
+				echo "$line" >>"$file"
 			fi
 		fi
 	done
@@ -144,7 +144,7 @@ append_to_file_sudo() {
 
 	echo "$content" | while read -r line; do
 		if ! grep -q "$line" "$file"; then
-			echo "$line" | execute_sudo tee "$file" > /dev/null
+			echo "$line" | execute_sudo tee "$file" >/dev/null
 		fi
 	done
 }
@@ -947,11 +947,22 @@ create_buildkite_user() {
 	esac
 
 	if [ -z "$(getent passwd "$user")" ]; then
-		execute_sudo useradd "$user" \
-			--system \
-			--shell "$(require sh)" \
-			--no-create-home \
-			--home-dir "$home"
+		if [ "$(which useradd)" ]; then
+			execute_sudo useradd "$user" \
+				--system \
+				--shell "$(require sh)" \
+				--no-create-home \
+				--home-dir "$home"
+		elif [ "$(which adduser)" ]; then
+			execute_sudo addgroup \
+				--system "$group"
+			execute_sudo adduser "$user" \
+				--system \
+				--ingroup "$group" \
+				--shell "$(require sh)" \
+				--home "$home" \
+				--disabled-password
+		fi
 	fi
 
 	if [ -n "$(getent group docker)" ]; then
@@ -963,7 +974,7 @@ create_buildkite_user() {
 		execute_sudo mkdir -p "$path"
 		execute_sudo chown -R "$user:$group" "$path"
 	done
-	
+
 	buildkite_files="/var/run/buildkite-agent/buildkite-agent.pid"
 	for file in $buildkite_files; do
 		execute_sudo touch "$file"
@@ -1092,7 +1103,7 @@ main() {
 	check_user
 	check_ulimit
 	check_package_manager
-	create_buildkite_user	
+	create_buildkite_user
 	install_common_software
 	install_build_essentials
 	install_chrome_dependencies

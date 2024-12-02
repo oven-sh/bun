@@ -219,6 +219,9 @@ function getImageName(platform, dryRun) {
  */
 function getRetry(limit = 0) {
   return {
+    manual: {
+      permit_on_passed: true,
+    },
     automatic: [
       { exit_status: 1, limit },
       { exit_status: -1, limit: 3 },
@@ -546,7 +549,7 @@ function getBuildImageStep(platform, dryRun) {
     `--os=${os}`,
     `--arch=${arch}`,
     distro && `--distro=${distro}`,
-    `--distro-version=${release}`,
+    `--release=${release}`,
     "--cloud=aws",
     "--ci",
     "--authorized-org=oven-sh",
@@ -949,8 +952,6 @@ async function getPipelineOptions() {
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
-    buildImages: parseOption(/\[(build images?)\]/i),
-    publishImages: parseOption(/\[(publish images?)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
     buildProfiles: ["release"],
@@ -962,19 +963,21 @@ async function getPipelineOptions() {
  * @returns {Promise<Pipeline | undefined>}
  */
 async function getPipeline(options = {}) {
+  const priority = getPriority();
+
   if (isBuildManual() && !Object.keys(options).length) {
     return {
+      priority,
       steps: [getOptionsStep(), getOptionsApplyStep()],
     };
   }
 
   const { skipEverything } = options;
   if (skipEverything) {
-    // return;
+    return;
   }
 
-  let { buildProfiles = [], buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
-  buildImages = true;
+  const { buildProfiles = [], buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
   const imagePlatforms = new Map(
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
@@ -1059,6 +1062,7 @@ async function getPipeline(options = {}) {
   }
 
   return {
+    priority,
     steps: [...steps.filter(step => typeof step !== "undefined"), ...Array.from(stepsByGroup.values())],
   };
 }

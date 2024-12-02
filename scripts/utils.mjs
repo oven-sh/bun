@@ -2593,11 +2593,6 @@ export function printEnvironment() {
       console.log("Node Version:", process.version);
     }
   });
-  if (isPosix) {
-    startGroup("ulimit -a", () => {
-      spawnSync(["ulimit", "-a"], { stdio: ["ignore", "inherit", "inherit"] });
-    });
-  }
 
   if (isCI) {
     startGroup("Environment", () => {

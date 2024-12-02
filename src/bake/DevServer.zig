@@ -243,8 +243,13 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .bundler_options = options.bundler_options,
         .emit_visualizer_events = 0,
         .has_pre_crash_handler = bun.FeatureFlags.bake_debugging_features and
+<<<<<<< HEAD
             (options.dump_state_on_crash orelse
             bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH")),
+=======
+            options.dump_state_on_crash orelse
+            bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH"),
+>>>>>>> origin/main
         .css_files = .{},
         .route_js_payloads = .{},
         // .assets = .{},

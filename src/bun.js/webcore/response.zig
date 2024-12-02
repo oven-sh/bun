@@ -633,7 +633,7 @@ pub const Response = struct {
                 } else {
                     if (!globalThis.hasException()) {
                         const err = globalThis.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
-                        globalThis.throwValue(err);
+                        return globalThis.throwValue(err);
                     }
                     return error.JSError;
                 }
@@ -1933,13 +1933,11 @@ pub const Fetch = struct {
         }
 
         if (url_str.tag == .Dead) {
-            globalObject.ERR_INVALID_ARG_TYPE("Invalid URL", .{}).throw();
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE("Invalid URL", .{}).throw();
         }
 
         if (url_str.isEmpty()) {
-            globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
         }
 
         const url = ZigURL.parse(url_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory());
@@ -1949,9 +1947,8 @@ pub const Fetch = struct {
         }
 
         if (url.hostname.len == 0) {
-            globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
             bun.default_allocator.free(url.href);
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
         }
 
         if (!url.hasValidPort()) {
@@ -2575,9 +2572,7 @@ pub const Fetch = struct {
 
             if (request) |req| {
                 if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(Request, globalThis, first_arg)))) {
-                    globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
-                    is_error = true;
-                    return .zero;
+                    return globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
                 }
 
                 break :extract_body req.body.value.useAsAnyBlob();

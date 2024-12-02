@@ -284,14 +284,12 @@ fn NewLexer_(
             this.comments_to_preserve_before = comments_to_preserve_before;
             this.temp_buffer_u16 = temp_buffer_u16;
 
+            bun.debugAssert(all_comments.items.len >= original.all_comments.items.len);
+            bun.debugAssert(comments_to_preserve_before.items.len >= original.comments_to_preserve_before.items.len);
+            bun.debugAssert(temp_buffer_u16.items.len == 0 and original.temp_buffer_u16.items.len == 0);
+
             this.all_comments.items.len = original.all_comments.items.len;
             this.comments_to_preserve_before.items.len = original.comments_to_preserve_before.items.len;
-
-            // TODO: maybe clone the buffer instead of copy len. `all_comments` and
-            // `comments_to_preserve_before` will only grow so it's safe to reset
-            // the length, but `temp_buffer_u16` will grow and shrink which could
-            // lead to weird bugs
-            this.temp_buffer_u16.items.len = original.temp_buffer_u16.items.len;
         }
 
         /// Look ahead at the next n codepoints without advancing the iterator.

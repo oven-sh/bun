@@ -15428,7 +15428,10 @@ fn NewParser_(
 
             p.lexer.preserve_all_comments_before = true;
             try p.lexer.expect(.t_open_paren);
-            const comments = try p.lexer.comments_to_preserve_before.toOwnedSlice();
+
+            // const comments = try p.lexer.comments_to_preserve_before.toOwnedSlice();
+            p.lexer.comments_to_preserve_before.clearRetainingCapacity();
+
             p.lexer.preserve_all_comments_before = false;
 
             const value = try p.parseExpr(.comma);
@@ -15466,7 +15469,7 @@ fn NewParser_(
                 }
             }
 
-            _ = comments; // TODO: leading_interior comments
+            // _ = comments; // TODO: leading_interior comments
 
             return p.newExpr(E.Import{
                 .expr = value,

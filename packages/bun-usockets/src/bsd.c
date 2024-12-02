@@ -623,18 +623,34 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
         setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (void *) &optval2, sizeof(optval2));
 #endif
     } else {
-      #if defined(SO_REUSEPORT)
-        int optval2 = 1;
-        setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval2, sizeof(optval2));  
-        #endif
+#if defined(SO_REUSEPORT)
+        if((options & LIBUS_LISTEN_REUSE_PORT)) {
+            int optval2 = 1;
+            setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval2, sizeof(optval2));  
+        }
+#endif
     }
 
 #if defined(SO_REUSEADDR)
+    #ifndef _WIN32
+
+    //  Unlike on Unix, here we don't set SO_REUSEADDR, because it doesn't just
+    //  allow binding to addresses that are in use by sockets in TIME_WAIT, it
+    //  effectively allows 'stealing' a port which is in use by another application.
+    //  See libuv issue #1360.
+    
+    
     int optval3 = 1;
     setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &optval3, sizeof(optval3));
+    #endif
 #endif
 
 #ifdef IPV6_V6ONLY
+    // TODO: revise support to match node.js
+    // if (listenAddr->ai_family == AF_INET6) {
+    //     int disabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+    //     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
+    // }
     int disabled = 0;
     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
 #endif

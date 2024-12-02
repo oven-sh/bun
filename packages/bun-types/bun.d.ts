@@ -3873,7 +3873,6 @@ declare module "bun" {
      * The default loader for this file extension
      */
     loader: Loader;
-
     /**
      * Defer the execution of this callback until all other modules have been parsed.
      *
@@ -3899,6 +3898,10 @@ declare module "bun" {
      * The namespace of the importer.
      */
     namespace: string;
+    /** 
+     * The directory to perform file-based resolutions in.
+     */
+    resolveDir: string;
     /**
      * The kind of import this resolve is for.
      */

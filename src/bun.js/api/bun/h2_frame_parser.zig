@@ -3105,8 +3105,7 @@ pub const H2FrameParser = struct {
             }
 
             if (!encoding_arg.isString()) {
-                _ = globalObject.throwInvalidArgumentTypeValue("write", "encoding", encoding_arg);
-                return error.JSError;
+                return globalObject.throwInvalidArgumentTypeValue("write", "encoding", encoding_arg);
             }
 
             break :brk JSC.Node.Encoding.fromJS(encoding_arg, globalObject) orelse {

@@ -205,8 +205,7 @@ fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) bun.JSE
                 globalThis,
             );
         }
-        globalThis.vm().throwError(globalThis, err);
-        return error.JSError;
+        return globalThis.throwValue(err);
     }
 }
 
@@ -227,8 +226,7 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
                     },
                     globalThis,
                 );
-                globalThis.vm().throwError(globalThis, err);
-                return error.JSError;
+                return globalThis.throwValue(err);
             },
             .boolean => if (token.value != .jsvalue or !token.value.jsvalue.isUndefined()) {
                 const err = JSC.toTypeError(
@@ -242,8 +240,7 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
                     },
                     globalThis,
                 );
-                globalThis.vm().throwError(globalThis, err);
-                return error.JSError;
+                return globalThis.throwValue(err);
             },
         }
     } else {
@@ -260,8 +257,7 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
             .{raw_name},
             globalThis,
         ));
-        globalThis.vm().throwError(globalThis, err);
-        return error.JSError;
+        return globalThis.throwValue(err);
     }
 }
 
@@ -327,8 +323,7 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
             var short_option_str = short_option.toBunString(globalThis);
             if (short_option_str.length() != 1) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "options.{s}.short must be a single character", .{option.long_name}, globalThis);
-                globalThis.vm().throwError(globalThis, err);
-                return error.JSError;
+                return globalThis.throwValue(err);
             }
             option.short_name = short_option_str;
         }
@@ -595,8 +590,7 @@ const ParseArgsState = struct {
                         .{token.value.asBunString(globalThis)},
                         globalThis,
                     );
-                    globalThis.vm().throwError(globalThis, err);
-                    return error.JSError;
+                    return globalThis.throwValue(err);
                 }
                 const value = token.value.asJSValue(globalThis);
                 this.positionals.push(globalThis, value);

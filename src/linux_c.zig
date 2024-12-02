@@ -785,3 +785,61 @@ export fn sys_epoll_pwait2(epfd: i32, events: ?[*]std.os.linux.epoll_event, maxe
         ),
     );
 }
+
+// *********************************************************************************
+// libc overrides
+// *********************************************************************************
+
+fn simulateLibcErrno(rc: usize) c_int {
+    const signed: isize = @bitCast(rc);
+    const int: c_int = @intCast(if (signed > -4096 and signed < 0) -signed else 0);
+    std.c._errno().* = int;
+    return int;
+}
+
+pub export fn stat(path: [*:0]const u8, buf: *std.os.linux.Stat) c_int {
+    const rc = std.os.linux.stat(path, buf);
+    return simulateLibcErrno(rc);
+}
+
+pub const stat64 = stat;
+pub const lstat64 = lstat;
+pub const fstat64 = fstat;
+pub const fstatat64 = fstatat;
+
+pub export fn lstat(path: [*:0]const u8, buf: *std.os.linux.Stat) c_int {
+    const rc = std.os.linux.lstat(path, buf);
+    return simulateLibcErrno(rc);
+}
+
+pub export fn fstat(fd: c_int, buf: *std.os.linux.Stat) c_int {
+    const rc = std.os.linux.fstat(fd, buf);
+    return simulateLibcErrno(rc);
+}
+
+pub export fn fstatat(dirfd: i32, path: [*:0]const u8, buf: *std.os.linux.Stat, flags: u32) c_int {
+    const rc = std.os.linux.fstatat(dirfd, path, buf, flags);
+    return simulateLibcErrno(rc);
+}
+
+pub export fn statx(dirfd: i32, path: [*:0]const u8, flags: u32, mask: u32, buf: *std.os.linux.Statx) c_int {
+    const rc = std.os.linux.statx(dirfd, path, flags, mask, buf);
+    return simulateLibcErrno(rc);
+}
+
+comptime {
+    _ = stat;
+    _ = stat64;
+    _ = lstat;
+    _ = lstat64;
+    _ = fstat;
+    _ = fstat64;
+    _ = fstatat;
+    _ = statx;
+    @export(stat, .{ .name = "stat64" });
+    @export(lstat, .{ .name = "lstat64" });
+    @export(fstat, .{ .name = "fstat64" });
+    @export(fstatat, .{ .name = "fstatat64" });
+}
+
+// *********************************************************************************

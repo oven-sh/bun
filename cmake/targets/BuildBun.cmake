@@ -854,7 +854,6 @@ if(LINUX)
     if(ARCH STREQUAL "aarch64")
       target_link_options(${bun} PUBLIC
         -Wl,--wrap=fcntl64
-        -Wl,--wrap=statx
       )
     endif()
     
@@ -879,13 +878,7 @@ if(LINUX)
         -Wl,--wrap=dlvsym
         -Wl,--wrap=fcntl
         -Wl,--wrap=fcntl64
-        -Wl,--wrap=fstat
-        -Wl,--wrap=fstat64
-        -Wl,--wrap=fstatat
-        -Wl,--wrap=fstatat64
         -Wl,--wrap=getrandom
-        -Wl,--wrap=lstat
-        -Wl,--wrap=lstat64
         -Wl,--wrap=mknod
         -Wl,--wrap=mknodat
         -Wl,--wrap=pthread_attr_getstack
@@ -915,9 +908,6 @@ if(LINUX)
         -Wl,--wrap=sem_init
         -Wl,--wrap=sem_post
         -Wl,--wrap=sem_wait
-        -Wl,--wrap=stat
-        -Wl,--wrap=stat64
-        -Wl,--wrap=statx
       )
     endif()
 
@@ -966,7 +956,7 @@ if(LINUX)
     -Wl,-z,combreloc
     -Wl,--no-eh-frame-hdr
     -Wl,--sort-section=name
-    -Wl,--hash-style=gnu
+    -Wl,--hash-style=both
     -Wl,--build-id=sha1  # Better for debugging than default
     -Wl,-Map=${bun}.linker-map
   )

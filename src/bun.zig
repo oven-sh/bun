@@ -4118,3 +4118,8 @@ pub inline fn isComptimeKnown(x: anytype) bool {
 pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
     return if (index < slice.len) slice[index] else null;
 }
+
+/// Code used by the classes generator
+pub const gen_classes_lib = @import("gen_classes_lib.zig");
+
+pub const sql = @import("./sql/shared_sql.zig");

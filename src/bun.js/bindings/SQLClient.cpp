@@ -246,6 +246,45 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, unsigned co
     return object;
 }
 
+extern "C" EncodedJSValue MySQL__ValueToJS(JSC::JSGlobalObject* globalObject, void* value);
+
+static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, void** values, JSC::Structure* structure, unsigned count)
+{
+    auto* object = JSC::constructEmptyObject(vm, structure);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    for (unsigned i = 0; i < count; i++) {
+        auto* value = values[i];
+        EncodedJSValue result = MySQL__ValueToJS(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, {});
+        object->putDirectOffset(vm, i, JSValue::decode(result));
+    }
+
+    return object;
+}
+
+extern "C" EncodedJSValue MySQL__toJSFromRow(JSC::JSGlobalObject* globalObject, EncodedJSValue encodedStructureValue, EncodedJSValue arrayValue, void** rows, size_t cellCount)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* array = arrayValue ? jsDynamicCast<JSC::JSArray*>(JSValue::decode(arrayValue)) : nullptr;
+    auto* structure = jsDynamicCast<JSC::Structure*>(JSValue::decode(encodedStructureValue));
+    JSValue result = toJS(vm, globalObject, rows, structure, cellCount);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (array) {
+        array->push(globalObject, result);
+        return JSValue::encode(array);
+    }
+
+    auto* newArray = JSC::constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), cellCount);
+    if (!newArray)
+        return {};
+
+    newArray->putDirectIndex(globalObject, 0, result);
+    return JSValue::encode(newArray);
+}
+
 static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject)
 {
     JSValue value = toJS(structure, cells, count, globalObject);

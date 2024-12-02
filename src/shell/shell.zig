@@ -88,13 +88,13 @@ pub const ShellErr = union(enum) {
         switch (this.*) {
             .sys => {
                 const err = this.sys.toErrorInstance(globalThis);
-                return globalThis.throwValue2(err);
+                return globalThis.throwValue(err);
             },
             .custom => {
                 var str = JSC.ZigString.init(this.custom);
                 str.markUTF8();
                 const err_value = str.toErrorInstance(globalThis);
-                return globalThis.throwValue2(err_value);
+                return globalThis.throwValue(err_value);
                 // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
             .invalid_arguments => {
@@ -3747,7 +3747,7 @@ pub fn shellCmdFromJS(
     out_jsobjs: *std.ArrayList(JSValue),
     jsstrings: *std.ArrayList(bun.String),
     out_script: *std.ArrayList(u8),
-) bun.JSError!bool {
+) bun.JSError!void {
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
     var jsobjref_buf: [128]u8 = [_]u8{0} ** 128;
 
@@ -3757,20 +3757,18 @@ pub fn shellCmdFromJS(
     while (string_iter.next()) |js_value| {
         defer i += 1;
         if (!try builder.appendJSValueStr(js_value, false)) {
-            globalThis.throw("Shell script string contains invalid UTF-16", .{});
-            return false;
+            return globalThis.throw("Shell script string contains invalid UTF-16", .{});
         }
         // const str = js_value.getZigString(globalThis);
         // try script.appendSlice(str.full());
         if (i < last) {
             const template_value = template_args.next() orelse {
-                globalThis.throw("Shell script is missing JSValue arg", .{});
-                return false;
+                return globalThis.throw("Shell script is missing JSValue arg", .{});
             };
-            if (!(try handleTemplateValue(globalThis, template_value, out_jsobjs, out_script, jsstrings, jsobjref_buf[0..]))) return false;
+            try handleTemplateValue(globalThis, template_value, out_jsobjs, out_script, jsstrings, jsobjref_buf[0..]);
         }
     }
-    return true;
+    return;
 }
 
 pub fn handleTemplateValue(
@@ -3780,7 +3778,7 @@ pub fn handleTemplateValue(
     out_script: *std.ArrayList(u8),
     jsstrings: *std.ArrayList(bun.String),
     jsobjref_buf: []u8,
-) bun.JSError!bool {
+) bun.JSError!void {
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
     if (template_value != .zero) {
         if (template_value.asArrayBuffer(globalThis)) |array_buffer| {
@@ -3790,7 +3788,7 @@ pub fn handleTemplateValue(
             try out_jsobjs.append(template_value);
             const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
-            return true;
+            return;
         }
 
         if (template_value.as(JSC.WebCore.Blob)) |blob| {
@@ -3799,10 +3797,9 @@ pub fn handleTemplateValue(
                     if (store.data.file.pathlike == .path) {
                         const path = store.data.file.pathlike.path.slice();
                         if (!try builder.appendUTF8(path, true)) {
-                            globalThis.throw("Shell script string contains invalid UTF-16", .{});
-                            return false;
+                            return globalThis.throw("Shell script string contains invalid UTF-16", .{});
                         }
-                        return true;
+                        return;
                     }
                 }
             }
@@ -3812,7 +3809,7 @@ pub fn handleTemplateValue(
             try out_jsobjs.append(template_value);
             const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
-            return true;
+            return;
         }
 
         if (JSC.WebCore.ReadableStream.fromJS(template_value, globalThis)) |rstream| {
@@ -3823,7 +3820,7 @@ pub fn handleTemplateValue(
             try out_jsobjs.append(template_value);
             const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
-            return true;
+            return;
         }
 
         if (template_value.as(JSC.WebCore.Response)) |req| {
@@ -3834,15 +3831,14 @@ pub fn handleTemplateValue(
             try out_jsobjs.append(template_value);
             const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
-            return true;
+            return;
         }
 
         if (template_value.isString()) {
             if (!try builder.appendJSValueStr(template_value, true)) {
-                globalThis.throw("Shell script string contains invalid UTF-16", .{});
-                return false;
+                return globalThis.throw("Shell script string contains invalid UTF-16", .{});
             }
-            return true;
+            return;
         }
 
         if (template_value.jsType().isArray()) {
@@ -3850,13 +3846,15 @@ pub fn handleTemplateValue(
             const last = array.len -| 1;
             var i: u32 = 0;
             while (array.next()) |arr| : (i += 1) {
-                if (!(try handleTemplateValue(globalThis, arr, out_jsobjs, out_script, jsstrings, jsobjref_buf))) return false;
+                try handleTemplateValue(globalThis, arr, out_jsobjs, out_script, jsstrings, jsobjref_buf);
                 if (i < last) {
                     const str = bun.String.static(" ");
-                    if (!try builder.appendBunStr(str, false)) return false;
+                    if (!try builder.appendBunStr(str, false)) {
+                        return globalThis.throw("Shell script string contains invalid UTF-16", .{});
+                    }
                 }
             }
-            return true;
+            return;
         }
 
         if (template_value.isObject()) {
@@ -3864,34 +3862,30 @@ pub fn handleTemplateValue(
                 const bunstr = maybe_str.toBunString(globalThis);
                 defer bunstr.deref();
                 if (!try builder.appendBunStr(bunstr, false)) {
-                    globalThis.throw("Shell script string contains invalid UTF-16", .{});
-                    return false;
+                    return globalThis.throw("Shell script string contains invalid UTF-16", .{});
                 }
-                return true;
+                return;
             }
         }
 
         if (template_value.isPrimitive()) {
             if (!try builder.appendJSValueStr(template_value, true)) {
-                globalThis.throw("Shell script string contains invalid UTF-16", .{});
-                return false;
+                return globalThis.throw("Shell script string contains invalid UTF-16", .{});
             }
-            return true;
+            return;
         }
 
         if (template_value.implementsToString(globalThis)) {
             if (!try builder.appendJSValueStr(template_value, true)) {
-                globalThis.throw("Shell script string contains invalid UTF-16", .{});
-                return false;
+                return globalThis.throw("Shell script string contains invalid UTF-16", .{});
             }
-            return true;
+            return;
         }
 
-        globalThis.throw("Invalid JS object used in shell: {}, you might need to call `.toString()` on it", .{template_value.fmtString(globalThis)});
-        return false;
+        return globalThis.throw("Invalid JS object used in shell: {}, you might need to call `.toString()` on it", .{template_value.fmtString(globalThis)});
     }
 
-    return true;
+    return;
 }
 
 pub const ShellSrcBuilder = struct {
@@ -3912,7 +3906,7 @@ pub const ShellSrcBuilder = struct {
         };
     }
 
-    pub fn appendJSValueStr(this: *ShellSrcBuilder, jsval: JSValue, comptime allow_escape: bool) !bool {
+    pub fn appendJSValueStr(this: *ShellSrcBuilder, jsval: JSValue, comptime allow_escape: bool) bun.OOM!bool {
         const bunstr = jsval.toBunString(this.globalThis);
         defer bunstr.deref();
 
@@ -3923,7 +3917,7 @@ pub const ShellSrcBuilder = struct {
         this: *ShellSrcBuilder,
         bunstr: bun.String,
         comptime allow_escape: bool,
-    ) !bool {
+    ) bun.OOM!bool {
         const invalid = (bunstr.isUTF16() and !bun.simdutf.validate.utf16le(bunstr.utf16())) or (bunstr.isUTF8() and !bun.simdutf.validate.utf8(bunstr.byteSlice()));
         if (invalid) return false;
         if (allow_escape) {
@@ -3980,7 +3974,7 @@ pub const ShellSrcBuilder = struct {
         this.outbuf.* = try bun.strings.allocateLatin1IntoUTF8WithList(this.outbuf.*, this.outbuf.items.len, []const u8, latin1);
     }
 
-    pub fn appendJSStrRef(this: *ShellSrcBuilder, bunstr: bun.String) !void {
+    pub fn appendJSStrRef(this: *ShellSrcBuilder, bunstr: bun.String) bun.OOM!void {
         const idx = this.jsstrs_to_escape.items.len;
         const str = std.fmt.bufPrint(this.jsstr_ref_buf[0..], "{s}{d}", .{ LEX_JS_STRING_PREFIX, idx }) catch {
             @panic("Impossible");
@@ -4319,8 +4313,7 @@ pub const TestingAPIs = struct {
         const arguments_ = callframe.arguments_old(1);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string = arguments.nextEat() orelse {
-            globalThis.throw("shellInternals.disabledOnPosix: expected 1 arguments, got 0", .{});
-            return .zero;
+            return globalThis.throw("shellInternals.disabledOnPosix: expected 1 arguments, got 0", .{});
         };
 
         const bunstr = string.toBunString(globalThis);
@@ -4343,16 +4336,14 @@ pub const TestingAPIs = struct {
         const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
-            globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
-            return .zero;
+            return globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
         };
 
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
 
         const template_args_js = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 2 arguments, got 0", .{});
-            return .zero;
+            return globalThis.throw("shell: expected 2 arguments, got 0", .{});
         };
         var template_args = template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
@@ -4371,9 +4362,7 @@ pub const TestingAPIs = struct {
         }
 
         var script = std.ArrayList(u8).init(arena.allocator());
-        if (!(try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script))) {
-            return .undefined;
-        }
+        try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script);
 
         const lex_result = brk: {
             if (bun.strings.isAllASCII(script.items[0..])) {
@@ -4415,16 +4404,14 @@ pub const TestingAPIs = struct {
         const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
-            globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
-            return .zero;
+            return globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
         };
 
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
 
         const template_args_js = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 2 arguments, got 0", .{});
-            return .zero;
+            return globalThis.throw("shell: expected 2 arguments, got 0", .{});
         };
         var template_args = template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
@@ -4442,9 +4429,7 @@ pub const TestingAPIs = struct {
             }
         }
         var script = std.ArrayList(u8).init(arena.allocator());
-        if (!(try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script))) {
-            return .undefined;
-        }
+        try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script);
 
         var out_parser: ?Parser = null;
         var out_lex_result: ?LexResult = null;

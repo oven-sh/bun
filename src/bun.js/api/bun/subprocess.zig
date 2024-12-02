@@ -383,7 +383,7 @@ pub const Subprocess = struct {
     }
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Subprocess {
-        return globalObject.throw2("Cannot construct Subprocess", .{});
+        return globalObject.throw("Cannot construct Subprocess", .{});
     }
 
     const Readable = union(enum) {
@@ -495,7 +495,7 @@ pub const Subprocess = struct {
             _ = exited; // autofix
             switch (this.*) {
                 // should only be reachable when the entire output is buffered.
-                .memfd => return this.toBufferedValue(globalThis),
+                .memfd => return this.toBufferedValue(globalThis) catch .zero,
 
                 .fd => |fd| {
                     return fd.toJS(globalThis);
@@ -521,7 +521,7 @@ pub const Subprocess = struct {
             }
         }
 
-        pub fn toBufferedValue(this: *Readable, globalThis: *JSC.JSGlobalObject) JSValue {
+        pub fn toBufferedValue(this: *Readable, globalThis: *JSC.JSGlobalObject) bun.JSError!JSValue {
             switch (this.*) {
                 .fd => |fd| {
                     return fd.toJS(globalThis);
@@ -594,8 +594,7 @@ pub const Subprocess = struct {
             .result => {},
             .err => |err| {
                 // Signal 9 should always be fine, but just in case that somehow fails.
-                global.throwValue(err.toJSC(global));
-                return .zero;
+                return global.throwValue(err.toJSC(global));
             },
         }
 
@@ -652,8 +651,7 @@ pub const Subprocess = struct {
             .result => {},
             .err => |err| {
                 // EINVAL or ENOSYS means the signal is not supported in the current platform (most likely unsupported on windows)
-                globalThis.throwValue(err.toJSC(globalThis));
-                return .zero;
+                return globalThis.throwValue(err.toJSC(globalThis));
             },
         }
 
@@ -710,11 +708,10 @@ pub const Subprocess = struct {
         IPClog("Subprocess#doSend", .{});
         const ipc_data = &(this.ipc_data orelse {
             if (this.hasExited()) {
-                global.throw("Subprocess.send() cannot be used after the process has exited.", .{});
+                return global.throw("Subprocess.send() cannot be used after the process has exited.", .{});
             } else {
-                global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
+                return global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
             }
-            return .zero;
         });
 
         if (callFrame.argumentsCount() == 0) {
@@ -1814,7 +1811,7 @@ pub const Subprocess = struct {
                                         };
                                     } else {
                                         if (!globalThis.hasException()) {
-                                            globalThis.throwInvalidArgumentType("spawn", "serialization", "string");
+                                            return globalThis.throwInvalidArgumentType("spawn", "serialization", "string");
                                         }
                                         return .zero;
                                     }
@@ -2058,8 +2055,7 @@ pub const Subprocess = struct {
         }) {
             .err => |err| {
                 spawn_options.deinit();
-                globalThis.throwValue(err.toJSC(globalThis));
-                return .zero;
+                return globalThis.throwValue(err.toJSC(globalThis));
             },
             .result => |result| result,
         };
@@ -2174,8 +2170,7 @@ pub const Subprocess = struct {
                     subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,
                 ).asErr()) |err| {
                     subprocess.deref();
-                    globalThis.throwValue(err.toJSC(globalThis));
-                    return .zero;
+                    return globalThis.throwValue(err.toJSC(globalThis));
                 }
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
             }
@@ -2296,8 +2291,8 @@ pub const Subprocess = struct {
 
         const signalCode = subprocess.getSignalCode(globalThis);
         const exitCode = subprocess.getExitCode(globalThis);
-        const stdout = subprocess.stdout.toBufferedValue(globalThis);
-        const stderr = subprocess.stderr.toBufferedValue(globalThis);
+        const stdout = try subprocess.stdout.toBufferedValue(globalThis);
+        const stderr = try subprocess.stderr.toBufferedValue(globalThis);
         const resource_usage: JSValue = if (!globalThis.hasException()) subprocess.createResourceUsageObject(globalThis) else .zero;
         subprocess.finalize();
 

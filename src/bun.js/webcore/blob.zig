@@ -279,7 +279,7 @@ pub const Blob = struct {
 
                                 switch (res) {
                                     .err => |err| {
-                                        globalThis.throwValue(err.toJSC(globalThis));
+                                        globalThis.throwValue(err.toJSC(globalThis)) catch {};
                                         this.failed = true;
                                     },
                                     .result => |result| {
@@ -511,22 +511,17 @@ pub const Blob = struct {
         return blob.toJS(globalThis);
     }
 
-    pub fn onStructuredCloneDeserialize(
-        globalThis: *JSC.JSGlobalObject,
-        ptr: [*]u8,
-        end: [*]u8,
-    ) JSValue {
+    pub fn onStructuredCloneDeserialize(globalThis: *JSC.JSGlobalObject, ptr: [*]u8, end: [*]u8) bun.JSError!JSValue {
         const total_length: usize = @intFromPtr(end) - @intFromPtr(ptr);
         var buffer_stream = std.io.fixedBufferStream(ptr[0..total_length]);
         const reader = buffer_stream.reader();
 
         return _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch |err| switch (err) {
             error.EndOfStream, error.TooSmall, error.InvalidValue => {
-                globalThis.throw("Blob.onStructuredCloneDeserialize failed", .{});
-                return .zero;
+                return globalThis.throw("Blob.onStructuredCloneDeserialize failed", .{});
             },
             error.OutOfMemory => {
-                return globalThis.throwOutOfMemoryValue();
+                return globalThis.throwOutOfMemory();
             },
         };
     }
@@ -1011,14 +1006,12 @@ pub const Blob = struct {
             if (options_object.isObject()) {
                 if (try options_object.getTruthy(globalThis, "createPath")) |create_directory| {
                     if (!create_directory.isBoolean()) {
-                        globalThis.throwInvalidArgumentType("write", "options.createPath", "boolean");
-                        return .zero;
+                        return globalThis.throwInvalidArgumentType("write", "options.createPath", "boolean");
                     }
                     mkdirp_if_not_exists = create_directory.toBoolean();
                 }
             } else if (!options_object.isEmptyOrUndefinedOrNull()) {
-                globalThis.throwInvalidArgumentType("write", "options", "object");
-                return .zero;
+                return globalThis.throwInvalidArgumentType("write", "options", "object");
             }
         }
 
@@ -3474,7 +3467,7 @@ pub const Blob = struct {
                         break :brk result;
                     },
                     .err => |err| {
-                        return globalThis.throwValue2(err.withPath(path).toJSC(globalThis));
+                        return globalThis.throwValue(err.withPath(path).toJSC(globalThis));
                     },
                 }
                 unreachable;
@@ -3507,7 +3500,7 @@ pub const Blob = struct {
                 switch (sink.writer.startSync(fd, false)) {
                     .err => |err| {
                         sink.deref();
-                        return globalThis.throwValue2(err.toJSC(globalThis));
+                        return globalThis.throwValue(err.toJSC(globalThis));
                     },
                     else => {},
                 }
@@ -3515,7 +3508,7 @@ pub const Blob = struct {
                 switch (sink.writer.start(fd, true)) {
                     .err => |err| {
                         sink.deref();
-                        return globalThis.throwValue2(err.toJSC(globalThis));
+                        return globalThis.throwValue(err.toJSC(globalThis));
                     },
                     else => {},
                 }
@@ -3555,7 +3548,7 @@ pub const Blob = struct {
         switch (sink.start(stream_start)) {
             .err => |err| {
                 sink.deref();
-                return globalThis.vm().throwError2(globalThis, err.toJSC(globalThis));
+                return globalThis.throwValue(err.toJSC(globalThis));
             },
             else => {},
         }

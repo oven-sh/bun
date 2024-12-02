@@ -24,15 +24,7 @@ jobs:
           CURRENT_VERSION=$(awk '/[[:space:]]*TAG[[:space:]]*$/{getline; gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0); print}' cmake/targets/BuildLibDeflate.cmake)
 
           if [ -z "$CURRENT_VERSION" ]; then
-            echo "Error: Could not find COMMIT line in BuildLibDeflate.cmake"
-            exit 1
-          fi
-
-          # Validate that it looks like a git hash
-          if ! [[ $CURRENT_VERSION =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Error: Invalid git hash format in BuildLibDeflate.cmake"
-            echo "Found: $CURRENT_VERSION"
-            echo "Expected: 40 character hexadecimal string"
+            echo "Error: Could not find TAG line in BuildLibDeflate.cmake"
             exit 1
           fi
 

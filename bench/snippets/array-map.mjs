@@ -1,5 +1,5 @@
 // https://github.com/oven-sh/bun/issues/1096
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 const identity = x => x;
 

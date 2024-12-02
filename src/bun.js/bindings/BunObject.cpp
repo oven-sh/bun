@@ -51,7 +51,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
-
+BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
 namespace Bun {
 
 using namespace JSC;
@@ -278,6 +278,15 @@ static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
     return pluginFunction;
 }
 
+static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(bunObject->globalObject());
+    JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
+    RETURN_IF_EXCEPTION(scope, {});
+    return sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword);
+}
+
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
 
 static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
@@ -320,13 +329,6 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     return bunShell;
-}
-
-// This value currently depends on a zig feature flag
-extern "C" JSC::EncodedJSValue Bun__getTemporaryDevServer(JSC::JSGlobalObject* bunObject);
-static JSValue constructBunKit(VM& vm, JSObject* bunObject)
-{
-    return JSC::JSValue::decode(Bun__getTemporaryDevServer(bunObject->globalObject()));
 }
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
@@ -617,6 +619,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
+    randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
     readableStreamToBytes                          JSBuiltin                                                           Builtin|Function 1
@@ -629,6 +632,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     semver                                         BunObject_getter_wrap_semver                                        ReadOnly|DontDelete|PropertyCallback
+    sql                                            constructBunSQLObject                                               DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1
@@ -644,7 +648,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     write                                          BunObject_callback_write                                            DontDelete|Function 1
-    wipDevServerExpectHugeBreakingChanges          constructBunKit                                                     DontEnum|ReadOnly|DontDelete|PropertyCallback
 @end
 */
 

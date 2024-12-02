@@ -485,34 +485,32 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_bundler, null, dirpath, ctx.debug.run_in_bun);
 
         for (&[3][]const u8{ pre_script_name, script_name, post_script_name }) |name| {
-            const content = pkgscripts.get(name) orelse continue;
+            const original_content = pkgscripts.get(name) orelse continue;
 
+            var copy_script_capacity: usize = original_content.len;
+            for (ctx.passthrough) |part| copy_script_capacity += 1 + part.len;
             // we leak this
-            var copy_script = try std.ArrayList(u8).initCapacity(ctx.allocator, content.len);
-            try RunCommand.replacePackageManagerRun(&copy_script, content);
+            var copy_script = try std.ArrayList(u8).initCapacity(ctx.allocator, copy_script_capacity);
 
-            // and this, too
-            var combined_len = content.len;
-            for (ctx.passthrough) |p| {
-                combined_len += p.len + 1;
-            }
-            var combined = try ctx.allocator.allocSentinel(u8, combined_len, 0);
-            bun.copy(u8, combined, content);
-            var remaining_script_buf = combined[content.len..];
+            try RunCommand.replacePackageManagerRun(&copy_script, original_content);
+            const len_command_only = copy_script.items.len;
 
             for (ctx.passthrough) |part| {
-                const p = part;
-                remaining_script_buf[0] = ' ';
-                bun.copy(u8, remaining_script_buf[1..], p);
-                remaining_script_buf = remaining_script_buf[p.len + 1 ..];
+                try copy_script.append(' ');
+                if (bun.shell.needsEscapeUtf8AsciiLatin1(part)) {
+                    try bun.shell.escape8Bit(part, &copy_script, true);
+                } else {
+                    try copy_script.appendSlice(part);
+                }
             }
+            try copy_script.append(0);
 
             try scripts.append(.{
                 .package_json_path = try ctx.allocator.dupe(u8, package_json_path),
                 .package_name = pkgjson.name,
                 .script_name = name,
-                .script_content = copy_script.items,
-                .combined = combined,
+                .script_content = copy_script.items[0..len_command_only],
+                .combined = copy_script.items[0 .. copy_script.items.len - 1 :0],
                 .deps = pkgjson.dependencies,
                 .PATH = PATH,
             });

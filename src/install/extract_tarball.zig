@@ -475,7 +475,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     };
     defer final_dir.close();
     // and get the fd path
-    const final_path = bun.getFdPath(
+    const final_path = bun.getFdPathZ(
         final_dir.fd,
         &final_path_buf,
     ) catch |err| {
@@ -538,18 +538,36 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     // create an index storing each version of a package installed
     if (strings.indexOfChar(basename, '/') == null) create_index: {
-        var index_dir = bun.MakePath.makeOpenPath(cache_dir, name, .{}) catch break :create_index;
-        defer index_dir.close();
-        index_dir.symLink(
-            final_path,
-            switch (this.resolution.tag) {
-                .github => folder_name["@GH@".len..],
-                // trim "name@" from the prefix
-                .npm => folder_name[name.len + 1 ..],
-                else => folder_name,
-            },
-            .{ .is_directory = true },
-        ) catch break :create_index;
+        const dest_name = switch (this.resolution.tag) {
+            .github => folder_name["@GH@".len..],
+            // trim "name@" from the prefix
+            .npm => folder_name[name.len + 1 ..],
+            else => folder_name,
+        };
+
+        if (comptime Environment.isWindows) {
+            bun.MakePath.makePath(u8, cache_dir, name) catch {
+                break :create_index;
+            };
+
+            var dest_buf: bun.PathBuffer = undefined;
+            const dest_path = bun.path.joinAbsStringBufZ(
+                // only set once, should be fine to read not on main thread
+                this.package_manager.cache_directory_path,
+                &dest_buf,
+                &[_]string{ name, dest_name },
+                .windows,
+            );
+
+            bun.sys.sys_uv.symlinkUV(final_path, dest_path, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION).unwrap() catch {
+                break :create_index;
+            };
+        } else {
+            var index_dir = bun.MakePath.makeOpenPath(cache_dir, name, .{}) catch break :create_index;
+            defer index_dir.close();
+
+            bun.sys.symlinkat(final_path, bun.toFD(index_dir), dest_name).unwrap() catch break :create_index;
+        }
     }
 
     const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);

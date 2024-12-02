@@ -482,6 +482,7 @@ endif()
 
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
 
+
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
     set(ZIG_CPU "apple_m1")
@@ -496,6 +497,11 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64")
   endif()
 else()
   unsupported(CMAKE_SYSTEM_PROCESSOR)
+endif()
+
+set(ZIG_FLAGS_BUN)
+if(NOT "${REVISION}" STREQUAL "")
+  set(ZIG_FLAGS_BUN ${ZIG_FLAGS_BUN} -Dsha=${REVISION})
 endif()
 
 register_command(
@@ -516,11 +522,12 @@ register_command(
       -Dcpu=${ZIG_CPU}
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
       -Dversion=${VERSION}
-      -Dsha=${REVISION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
       -Dcodegen_path=${CODEGEN_PATH}
       -Dcodegen_embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
+      --prominent-compile-errors
+      ${ZIG_FLAGS_BUN}
   ARTIFACTS
     ${BUN_ZIG_OUTPUT}
   TARGETS
@@ -683,6 +690,14 @@ target_include_directories(${bun} PRIVATE
   ${NODEJS_HEADERS_PATH}/include
 )
 
+if(LINUX)
+  include(CheckIncludeFiles)
+  check_include_files("sys/queue.h" HAVE_SYS_QUEUE_H)
+  if(NOT HAVE_SYS_QUEUE_H)
+    target_include_directories(${bun} PRIVATE vendor/lshpack/compat/queue)
+  endif()
+endif()
+
 # --- C/C++ Definitions ---
 
 if(ENABLE_ASSERTIONS)
@@ -743,6 +758,24 @@ if(NOT WIN32)
     -faddrsig
   )
   if(DEBUG)
+    # TODO: this shouldn't be necessary long term
+    if (NOT ABI STREQUAL "musl")
+      target_compile_options(${bun} PUBLIC
+        -fsanitize=null
+        -fsanitize-recover=all
+        -fsanitize=bounds
+        -fsanitize=return
+        -fsanitize=nullability-arg
+        -fsanitize=nullability-assign
+        -fsanitize=nullability-return
+        -fsanitize=returns-nonnull-attribute
+        -fsanitize=unreachable
+      )
+      target_link_libraries(${bun} PRIVATE
+        -fsanitize=null
+      )
+    endif()
+
     target_compile_options(${bun} PUBLIC
       -Werror=return-type
       -Werror=return-stack-address
@@ -758,17 +791,7 @@ if(NOT WIN32)
       -Wno-unused-function
       -Wno-nullability-completeness
       -Werror
-      -fsanitize=null
-      -fsanitize-recover=all
-      -fsanitize=bounds
-      -fsanitize=return
-      -fsanitize=nullability-arg
-      -fsanitize=nullability-assign
-      -fsanitize=nullability-return
-      -fsanitize=returns-nonnull-attribute
-      -fsanitize=unreachable
     )
-    target_link_libraries(${bun} PRIVATE -fsanitize=null)
   else()
     # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
     target_compile_options(${bun} PUBLIC ${LTO_FLAG}
@@ -812,80 +835,95 @@ if(WIN32)
       /delayload:IPHLPAPI.dll
     )
   endif()
-elseif(APPLE)
-  target_link_options(${bun} PUBLIC 
+endif()
+
+if(APPLE)
+  target_link_options(${bun} PUBLIC
     -dead_strip
     -dead_strip_dylibs
+    -Wl,-ld_new
+    -Wl,-no_compact_unwind
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
+    -Wl,-map,${bun}.linker-map
   )
-else()
-  # Try to use lld-16 if available, otherwise fallback to lld
-  # Cache it so we don't have to re-run CMake to pick it up
-  if((NOT DEFINED LLD_NAME) AND (NOT CI OR BUN_LINK_ONLY))
-    find_program(LLD_EXECUTABLE_NAME lld-${LLVM_VERSION_MAJOR})
+endif()
 
-    if(NOT LLD_EXECUTABLE_NAME)
-      if(CI)
-        # Ensure we don't use a differing version of lld in CI vs clang
-        message(FATAL_ERROR "lld-${LLVM_VERSION_MAJOR} not found. Please make sure you have LLVM ${LLVM_VERSION_MAJOR}.x installed and set to lld-${LLVM_VERSION_MAJOR}")
-      endif()
-
-      # To make it easier for contributors, allow differing versions of lld vs clang/cmake
-      find_program(LLD_EXECUTABLE_NAME lld)
+if(LINUX)
+  if(NOT ABI STREQUAL "musl")
+    if(ARCH STREQUAL "aarch64")
+      target_link_options(${bun} PUBLIC
+        -Wl,--wrap=fcntl64
+        -Wl,--wrap=statx
+      )
+    endif()
+    
+    if(ARCH STREQUAL "x64")
+      target_link_options(${bun} PUBLIC
+        -Wl,--wrap=fcntl
+        -Wl,--wrap=fcntl64
+        -Wl,--wrap=fstat
+        -Wl,--wrap=fstat64
+        -Wl,--wrap=fstatat
+        -Wl,--wrap=fstatat64
+        -Wl,--wrap=lstat
+        -Wl,--wrap=lstat64
+        -Wl,--wrap=mknod
+        -Wl,--wrap=mknodat
+        -Wl,--wrap=stat
+        -Wl,--wrap=stat64
+        -Wl,--wrap=statx
+      )
     endif()
 
-    if(NOT LLD_EXECUTABLE_NAME)
-      message(FATAL_ERROR "LLD not found. Please make sure you have LLVM ${LLVM_VERSION_MAJOR}.x installed and lld is available in your PATH as lld-${LLVM_VERSION_MAJOR}")
-    endif()
+    target_link_options(${bun} PUBLIC
+      -Wl,--wrap=cosf
+      -Wl,--wrap=exp
+      -Wl,--wrap=expf
+      -Wl,--wrap=fmod
+      -Wl,--wrap=fmodf
+      -Wl,--wrap=log
+      -Wl,--wrap=log10f
+      -Wl,--wrap=log2
+      -Wl,--wrap=log2f
+      -Wl,--wrap=logf
+      -Wl,--wrap=pow
+      -Wl,--wrap=powf
+      -Wl,--wrap=sincosf
+      -Wl,--wrap=sinf
+      -Wl,--wrap=tanf
+    )
+  endif()
 
-    # normalize to basename so it can be used with -fuse-ld
-    get_filename_component(LLD_NAME ${LLD_EXECUTABLE_NAME} NAME CACHE)
-    message(STATUS "Using linker: ${LLD_NAME} (${LLD_EXECUTABLE_NAME})")
-  elseif(NOT DEFINED LLD_NAME)
-    set(LLD_NAME lld-${LLVM_VERSION_MAJOR})
+  if(NOT ABI STREQUAL "musl")
+    target_link_options(${bun} PUBLIC
+      -static-libstdc++
+      -static-libgcc
+    )
+  else()
+    target_link_options(${bun} PUBLIC
+      -lstdc++
+      -lgcc
+    )
   endif()
 
   target_link_options(${bun} PUBLIC
-    -fuse-ld=${LLD_NAME}
+    --ld-path=${LLD_PROGRAM}
     -fno-pic
-    -static-libstdc++
-    -static-libgcc
     -Wl,-no-pie
     -Wl,-icf=safe
     -Wl,--as-needed
     -Wl,--gc-sections
     -Wl,-z,stack-size=12800000
-    -Wl,--wrap=cosf
-    -Wl,--wrap=exp
-    -Wl,--wrap=expf
-    -Wl,--wrap=fcntl
-    -Wl,--wrap=fcntl64
-    -Wl,--wrap=fmod
-    -Wl,--wrap=fmodf
-    -Wl,--wrap=fstat
-    -Wl,--wrap=fstat64
-    -Wl,--wrap=fstatat
-    -Wl,--wrap=fstatat64
-    -Wl,--wrap=log
-    -Wl,--wrap=log10f
-    -Wl,--wrap=log2
-    -Wl,--wrap=log2f
-    -Wl,--wrap=logf
-    -Wl,--wrap=lstat
-    -Wl,--wrap=lstat64
-    -Wl,--wrap=mknod
-    -Wl,--wrap=mknodat
-    -Wl,--wrap=pow
-    -Wl,--wrap=sincosf
-    -Wl,--wrap=sinf
-    -Wl,--wrap=stat
-    -Wl,--wrap=stat64
-    -Wl,--wrap=statx
-    -Wl,--wrap=tanf
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro
+    -Wl,-z,combreloc
+    -Wl,--no-eh-frame-hdr
+    -Wl,--sort-section=name
+    -Wl,--hash-style=gnu
+    -Wl,--build-id=sha1  # Better for debugging than default
+    -Wl,-Map=${bun}.linker-map
   )
 endif()
 
@@ -1025,6 +1063,18 @@ endif()
 # --- Packaging ---
 
 if(NOT BUN_CPP_ONLY)
+  set(CMAKE_STRIP_FLAGS "")
+  if(APPLE)
+    # We do not build with exceptions enabled. These are generated by lolhtml
+    # and other dependencies. We build lolhtml with abort on panic, so it
+    # shouldn't be including these in the first place.
+    set(CMAKE_STRIP_FLAGS --remove-section=__TEXT,__eh_frame --remove-section=__TEXT,__unwind_info --remove-section=__TEXT,__gcc_except_tab)
+  elseif(LINUX AND NOT ABI STREQUAL "musl")
+    # When you use llvm-strip to do this, it doesn't delete it from the binary and instead keeps it as [LOAD #2 [R]]
+    # So, we must use GNU strip to do this.
+    set(CMAKE_STRIP_FLAGS -R .eh_frame -R .gcc_except_table)
+  endif()
+
   if(bunStrip)
     register_command(
       TARGET
@@ -1036,6 +1086,7 @@ if(NOT BUN_CPP_ONLY)
       COMMAND
         ${CMAKE_STRIP}
           ${bunExe}
+          ${CMAKE_STRIP_FLAGS}
           --strip-all
           --strip-debug
           --discard-all
@@ -1111,10 +1162,12 @@ if(NOT BUN_CPP_ONLY)
   endif()
 
   if(CI)
+    set(bunTriplet bun-${OS}-${ARCH})
+    if(LINUX AND ABI STREQUAL "musl")
+      set(bunTriplet ${bunTriplet}-musl)
+    endif()
     if(ENABLE_BASELINE)
-      set(bunTriplet bun-${OS}-${ARCH}-baseline)
-    else()
-      set(bunTriplet bun-${OS}-${ARCH})
+      set(bunTriplet ${bunTriplet}-baseline)
     endif()
     string(REPLACE bun ${bunTriplet} bunPath ${bun})
     set(bunFiles ${bunExe} features.json)
@@ -1123,6 +1176,12 @@ if(NOT BUN_CPP_ONLY)
     elseif(APPLE)
       list(APPEND bunFiles ${bun}.dSYM)
     endif()
+
+    if(APPLE OR LINUX)
+      list(APPEND bunFiles ${bun}.linker-map)
+    endif()
+
+
     register_command(
       TARGET
         ${bun}

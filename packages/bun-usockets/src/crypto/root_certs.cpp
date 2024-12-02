@@ -7,12 +7,6 @@
 #include <openssl/x509.h>
 #include <string.h>
 static const int root_certs_size = sizeof(root_certs) / sizeof(root_certs[0]);
-static X509 *root_cert_instances[sizeof(root_certs) / sizeof(root_certs[0])] = {
-    NULL};
-static X509 *root_extra_cert_instances = {NULL};
-
-static std::atomic_flag root_cert_instances_lock = ATOMIC_FLAG_INIT;
-static std::atomic_bool root_cert_instances_initialized = 0;
 
 // This callback is used to avoid the default passphrase callback in OpenSSL
 // which will typically prompt for the passphrase. The prompting is designed
@@ -78,7 +72,9 @@ end:
   return NULL;
 }
 
-static void us_internal_init_root_certs() {
+static void us_internal_init_root_certs(X509 *root_cert_instances[sizeof(root_certs) / sizeof(root_certs[0])], X509 *&root_extra_cert_instances) {
+  static std::atomic_flag root_cert_instances_lock = ATOMIC_FLAG_INIT;
+  static std::atomic_bool root_cert_instances_initialized = 0;
   if (std::atomic_load(&root_cert_instances_initialized) == 1)
     return;
 
@@ -123,7 +119,11 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     return NULL;
   }
 
-  us_internal_init_root_certs();
+  static X509 *root_cert_instances[sizeof(root_certs) / sizeof(root_certs[0])] = {
+    NULL};
+  static X509 *root_extra_cert_instances = NULL;
+
+  us_internal_init_root_certs(root_cert_instances, root_extra_cert_instances);
 
   // load all root_cert_instances on the default ca store
   for (size_t i = 0; i < root_certs_size; i++) {

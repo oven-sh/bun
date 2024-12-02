@@ -24,7 +24,6 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
-const { throwNotImplemented } = require("internal/shared");
 const {
   validateObject,
   validateInteger,
@@ -62,6 +61,7 @@ const EventEmitter = function EventEmitter(opts) {
     this.emit = emitWithRejectionCapture;
   }
 };
+Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
 const EventEmitterPrototype = (EventEmitter.prototype = {});
 
 EventEmitterPrototype._events = undefined;

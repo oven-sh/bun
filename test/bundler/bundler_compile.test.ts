@@ -14,6 +14,21 @@ describe.todoIf(isFlaky && isWindows)("bundler", () => {
     },
     run: { stdout: "Hello, world!" },
   });
+  itBundled("compile/HelloWorldWithProcessVersionsBun", {
+    compile: true,
+    files: {
+      [`/${process.platform}-${process.arch}.js`]: "module.exports = process.versions.bun;",
+      "/entry.ts": /* js */ `
+        process.exitCode = 1;
+        process.versions.bun = "bun!";
+        if (process.versions.bun === "bun!") throw new Error("fail");
+        if (require("./${process.platform}-${process.arch}.js") === "${Bun.version.replaceAll("-debug", "")}") {
+          process.exitCode = 0;
+        }
+      `,
+    },
+    run: { exitCode: 0 },
+  });
   itBundled("compile/HelloWorldBytecode", {
     compile: true,
     bytecode: true,

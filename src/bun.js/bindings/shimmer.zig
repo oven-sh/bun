@@ -122,7 +122,11 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                     const Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
                     if (Function == bun.JSC.JSHostFunctionTypeWithCCallConvForAssertions and bun.JSC.conv != .C) {
                         @compileError("Expected " ++ bun.meta.typeName(Function) ++ " to have a JSC.conv Calling Convention.");
-                    } else if (Function == bun.JSC.JSHostFunctionType) {} else if (Fn.calling_convention != .C) {
+                    } else if (Function == bun.JSC.JSHostFunctionType) {
+                        //
+                    } else if (Function == bun.JSC.JSHostZigFunction) {
+                        //
+                    } else if (Fn.calling_convention != .C) {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
                     }
 

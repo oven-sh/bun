@@ -9,12 +9,12 @@ const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 
 pub const lstat = blk: {
-    const T = *const fn (c_int, [*c]std.c.stat) callconv(.C) c_int;
+    const T = *const fn ([*c]const u8, [*c]std.c.stat) callconv(.C) c_int;
     break :blk @extern(T, .{ .name = "lstat64" });
 };
 
 pub const fstat = blk: {
-    const T = *const fn (c_int, [*c]std.c.stat) callconv(.C) c_int;
+    const T = *const fn ([*c]const u8, [*c]std.c.stat) callconv(.C) c_int;
     break :blk @extern(T, .{ .name = "fstat64" });
 };
 pub const stat = blk: {

@@ -11,7 +11,10 @@ expect.extend({ toMatchNodeModulesAt });
 const root = join(import.meta.dir, "../");
 
 async function tempDirToBuildIn() {
-  const dir = tmpdirSync();
+  const dir = tmpdirSync(
+    "next-" + Math.ceil(performance.now() * 1000).toString(36) + Math.random().toString(36).substring(2, 8),
+  );
+  console.log("Temp dir: " + dir);
   const copy = [
     ".eslintrc.json",
     "bun.lockb",
@@ -42,30 +45,37 @@ async function tempDirToBuildIn() {
   return dir;
 }
 
+async function hashFile(file: string, path: string, hashes: Record<string, string>) {
+  try {
+    const contents = await fs.readFile(path);
+    hashes[file] = Bun.CryptoHasher.hash("sha256", contents, "hex");
+  } catch (error) {
+    console.error("error", error, "in", path);
+    throw error;
+  }
+}
+
 async function hashAllFiles(dir: string) {
-  console.log("Hashing");
-  const files = (await fs.readdir(dir, { recursive: true, withFileTypes: true })).sort();
-  const hashes: Record<string, string> = {};
-  const promises = new Array(files.length);
-  for (let i = 0; i < promises.length; i++) {
-    if (!(files[i].isFile() || files[i].isSymbolicLink())) {
-      i--;
-      promises.length--;
-      continue;
+  console.time("Hashing");
+  try {
+    const files = (await fs.readdir(dir, { recursive: true, withFileTypes: true }))
+      .filter(x => x.isFile() || x.isSymbolicLink())
+      .sort((a, b) => {
+        return a.name.localeCompare(b.name);
+      });
+
+    const hashes: Record<string, string> = {};
+    const batchSize = 4;
+
+    while (files.length > 0) {
+      const batch = files.splice(0, batchSize);
+      await Promise.all(batch.map(file => hashFile(file.name, join(file.parentPath, file.name), hashes)));
     }
 
-    promises[i] = (async function (file, path) {
-      try {
-        const contents = await fs.readFile(path);
-        hashes[file] = Bun.CryptoHasher.hash("sha256", contents, "hex");
-      } catch (error) {
-        console.error("error", error, "in", path);
-        throw error;
-      }
-    })(files[i].name, join(dir, files[i].name));
+    return hashes;
+  } finally {
+    console.timeEnd("Hashing");
   }
-  await Promise.all(promises);
-  return hashes;
 }
 
 function normalizeOutput(stdout: string) {
@@ -103,21 +113,33 @@ test(
     console.log("Node Dir: " + nodeDir);
 
     const nextPath = "node_modules/next/dist/bin/next";
-
+    const tmp1 = tmpdirSync();
     console.time("[bun] next build");
     const bunBuild = Bun.spawn([bunExe(), "--bun", nextPath, "build"], {
       cwd: bunDir,
       stdio: ["ignore", "pipe", "inherit"],
       env: {
         ...bunEnv,
+        NODE_NO_WARNINGS: "1",
         NODE_ENV: "production",
+        TMPDIR: tmp1,
+        TEMP: tmp1,
+        TMP: tmp1,
       },
     });
 
+    const tmp2 = tmpdirSync();
     console.time("[node] next build");
     const nodeBuild = Bun.spawn(["node", nextPath, "build"], {
       cwd: nodeDir,
-      env: { ...bunEnv, NODE_NO_WARNINGS: "1", NODE_ENV: "production" },
+      env: {
+        ...bunEnv,
+        NODE_NO_WARNINGS: "1",
+        NODE_ENV: "production",
+        TMPDIR: tmp2,
+        TEMP: tmp2,
+        TMP: tmp2,
+      },
       stdio: ["ignore", "pipe", "inherit"],
     });
     await Promise.all([

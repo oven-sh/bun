@@ -96,6 +96,10 @@ enum {
     LIBUS_LISTEN_EXCLUSIVE_PORT = 1,
     /* Allow socket to keep writing after readable side closes */
     LIBUS_SOCKET_ALLOW_HALF_OPEN = 2,
+    /* Setting reusePort allows multiple sockets on the same host to bind to the same port. Incoming connections are distributed by the operating system to listening sockets. This option is available only on some platforms, such as Linux 3.9+, DragonFlyBSD 3.6+, FreeBSD 12.0+, Solaris 11.4, and AIX 7.2.5+*/
+    LIBUS_LISTEN_REUSE_PORT = 4,
+    /* etting ipv6Only will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound.*/
+    LIBUS_SOCKET_IPV6_ONLY = 8,
 };
 
 /* Library types publicly available */

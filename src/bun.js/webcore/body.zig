@@ -1159,7 +1159,7 @@ pub fn BodyMixin(comptime Type: type) type {
         fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: JSC.WebCore.Lifetime) fn (*AnyBlob, *JSC.JSGlobalObject) JSC.JSValue {
             return struct {
                 fn wrap(this: *AnyBlob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-                    return Fn(this, globalObject, lifetime);
+                    return JSC.toJSHostValue(globalObject, Fn(this, globalObject, lifetime));
                 }
             }.wrap;
         }

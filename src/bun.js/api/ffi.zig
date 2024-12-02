@@ -446,7 +446,7 @@ pub const FFI = struct {
                 return error.DeferredErrors;
             }
 
-            for (this.symbols.map.values()) |symbol| {
+            for (this.symbols.map.values()) |*symbol| {
                 if (symbol.needsNapiEnv()) {
                     _ = TCC.tcc_add_symbol(state, "Bun__thisFFIModuleNapiEnv", globalThis.makeNapiEnvForFFI());
                     break;
@@ -599,8 +599,7 @@ pub const FFI = struct {
                         bun.default_allocator.free(@constCast(item));
                     }
                     items.deinit();
-                    _ = globalThis.throwInvalidArgumentTypeValue(property, "array of strings", val);
-                    return error.JSError;
+                    return globalThis.throwInvalidArgumentTypeValue(property, "array of strings", val);
                 }
                 const str = val.getZigString(globalThis);
                 if (str.isEmpty()) continue;
@@ -613,8 +612,7 @@ pub const FFI = struct {
         pub fn fromJSString(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, comptime property: []const u8) bun.JSError!StringArray {
             if (value == .undefined) return .{};
             if (!value.isString()) {
-                _ = globalThis.throwInvalidArgumentTypeValue(property, "array of strings", value);
-                return error.JSError;
+                return globalThis.throwInvalidArgumentTypeValue(property, "array of strings", value);
             }
             const str = value.getZigString(globalThis);
             if (str.isEmpty()) return .{};
@@ -650,8 +648,7 @@ pub const FFI = struct {
 
         const symbols_object = object.getOwn(globalThis, "symbols") orelse .undefined;
         if (!globalThis.hasException() and (symbols_object == .zero or !symbols_object.isObject())) {
-            _ = globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
-            return error.JSError;
+            return globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
         }
 
         if (globalThis.hasException()) {
@@ -793,10 +790,7 @@ pub const FFI = struct {
                 error.JSException => {
                     return error.JSError;
                 },
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory();
-                    return error.JSError;
-                },
+                error.OutOfMemory => |e| return e,
             }
         };
         defer {

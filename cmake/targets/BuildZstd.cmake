@@ -3,8 +3,8 @@ register_repository(
     zstd
   REPOSITORY
     facebook/zstd
-  COMMIT
-    794ea1b0afca0f020f4e57b6732332231fb23c70
+  TAG
+    v1.5.6
 )
 
 register_cmake_command(

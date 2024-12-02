@@ -3,8 +3,8 @@ register_repository(
     libarchive
   REPOSITORY
     libarchive/libarchive
-  COMMIT
-    898dc8319355b7e985f68a9819f182aaed61b53a
+  TAG
+    v3.7.7
 )
 
 register_cmake_command(

@@ -3,8 +3,8 @@ register_repository(
     libuv
   REPOSITORY
     libuv/libuv
-  COMMIT
-    da527d8d2a908b824def74382761566371439003
+  TAG
+    v1.49.2
 )
 
 if(WIN32)

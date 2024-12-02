@@ -3,8 +3,8 @@ register_repository(
     lshpack
   REPOSITORY
     litespeedtech/ls-hpack
-  COMMIT
-    32e96f10593c7cb8553cd8c9c12721100ae9e924
+  TAG
+    v2.3.3
 )
 
 if(WIN32)

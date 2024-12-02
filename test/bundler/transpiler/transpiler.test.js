@@ -3430,7 +3430,6 @@ describe("await can only be used inside an async function message", () => {
 
 it("does not crash with 9 comments and typescript type skipping", () => {
   const cmd = [bunExe(), "build", "--minify-identifiers", join(import.meta.dir, "fixtures", "9-comments.ts")];
-  console.log({ cmd });
   const { stdout, stderr, exitCode } = Bun.spawnSync({
     cmd,
     stdout: "pipe",

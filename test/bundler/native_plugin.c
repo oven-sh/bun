@@ -101,12 +101,12 @@ void plugin_impl_with_needle(const OnBeforeParseArguments *args,
   const char *end = (const char *)result->source_ptr + result->source_len;
 
   char *cursor =
-      strnstr((const char *)result->source_ptr, needle, result->source_len);
+      strstr((const char *)result->source_ptr, needle);
   while (cursor != NULL) {
     needle_count++;
     cursor += needle_len;
     if (cursor + needle_len < end) {
-      cursor = strnstr((const char *)cursor, needle, (size_t)(end - cursor));
+      cursor = strstr((const char *)cursor, needle);
     } else
       break;
   }
@@ -118,12 +118,12 @@ void plugin_impl_with_needle(const OnBeforeParseArguments *args,
       exit(1);
     }
     memcpy(new_source, result->source_ptr, result->source_len);
-    cursor = strnstr(new_source, needle, result->source_len);
+    cursor = strstr(new_source, needle);
     while (cursor != NULL) {
       *cursor = 'q';
       cursor += 3;
       if (cursor + 3 < end) {
-        cursor = strnstr((const char *)cursor, needle, (size_t)(end - cursor));
+        cursor = strstr((const char *)cursor, needle);
       } else
         break;
     }

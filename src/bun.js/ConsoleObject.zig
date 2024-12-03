@@ -91,7 +91,7 @@ pub fn messageWithTypeAndLevel(
 ) callconv(JSC.conv) void {
     messageWithTypeAndLevel_(ctype, message_type, level, global, vals, len) catch |err| switch (err) {
         error.JSError => {},
-        error.OutOfMemory => global.throwOutOfMemory(),
+        error.OutOfMemory => global.throwOutOfMemory() catch {}, // TODO: properly propagate exception upwards
     };
 }
 fn messageWithTypeAndLevel_(
@@ -1228,7 +1228,7 @@ pub const Formatter = struct {
                 .tag = switch (js_type) {
                     .ErrorInstance => .Error,
                     .NumberObject => .Double,
-                    .DerivedArray, JSValue.JSType.Array => .Array,
+                    .DerivedArray, JSValue.JSType.Array, .DirectArguments, .ScopedArguments, .ClonedArguments => .Array,
                     .DerivedStringObject, JSValue.JSType.String, JSValue.JSType.StringObject => .String,
                     .RegExpObject => .String,
                     .Symbol => .Symbol,
@@ -1921,6 +1921,8 @@ pub const Formatter = struct {
         value.getClassName(globalThis, &name_str);
         if (!name_str.eqlComptime("Object")) {
             return name_str;
+        } else if (value.getPrototype(globalThis).eqlValue(JSValue.null)) {
+            return ZigString.static("[Object: null prototype]").*;
         }
         return null;
     }
@@ -2165,10 +2167,23 @@ pub const Formatter = struct {
                 value.getClassName(this.globalThis, &printable);
                 this.addForNewLine(printable.len);
 
+                const proto = value.getPrototype(this.globalThis);
+                var printable_proto = ZigString.init(&name_buf);
+                proto.getClassName(this.globalThis, &printable_proto);
+                this.addForNewLine(printable_proto.len);
+
                 if (printable.len == 0) {
-                    writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous)]<r>", enable_ansi_colors), .{});
+                    if (printable_proto.isEmpty()) {
+                        writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous)]<r>", enable_ansi_colors), .{});
+                    } else {
+                        writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous) extends {}]<r>", enable_ansi_colors), .{printable_proto});
+                    }
                 } else {
-                    writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
+                    if (printable_proto.isEmpty()) {
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
+                    } else {
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {} extends {}]<r>", enable_ansi_colors), .{ printable, printable_proto });
+                    }
                 }
             },
             .Function => {
@@ -2179,7 +2194,7 @@ pub const Formatter = struct {
                 const func_name = proto.getName(this.globalThis); // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
                 defer func_name.deref();
 
-                if (printable.isEmpty()) {
+                if (printable.isEmpty() or func_name.eql(printable)) {
                     if (func_name.isEmpty()) {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
                     } else {
@@ -2369,16 +2384,18 @@ pub const Formatter = struct {
                         }
                     }
 
-                    const Iterator = PropertyIterator(Writer, enable_ansi_colors);
-                    var iter = Iterator{
-                        .formatter = this,
-                        .writer = writer_,
-                        .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
-                        .single_line = this.single_line,
-                        .parent = value,
-                        .i = i,
-                    };
-                    value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
+                    if (!jsType.isArguments()) {
+                        const Iterator = PropertyIterator(Writer, enable_ansi_colors);
+                        var iter = Iterator{
+                            .formatter = this,
+                            .writer = writer_,
+                            .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
+                            .single_line = this.single_line,
+                            .parent = value,
+                            .i = i,
+                        };
+                        value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
+                    }
                 }
 
                 if (!this.single_line and (this.ordered_properties or was_good_time or this.goodTimeForANewLine())) {

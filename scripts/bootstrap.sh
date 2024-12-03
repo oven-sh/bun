@@ -124,6 +124,22 @@ append_to_file() {
 	done
 }
 
+append_to_file_sudo() {
+	file="$1"
+	content="$2"
+
+	if ! [ -f "$file" ]; then
+		execute_sudo mkdir -p "$(dirname "$file")"
+		execute_sudo touch "$file"
+	fi
+
+	echo "$content" | while read -r line; do
+		if ! grep -q "$line" "$file"; then
+			echo "$line" | execute_sudo tee "$file" > /dev/null
+		fi
+	done
+}
+
 append_to_profile() {
 	content="$1"
 	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
@@ -309,7 +325,7 @@ check_package_manager() {
 		pm="brew"
 		;;
 	linux)
-		if [ -f "$(which apt-get)" ]; then
+		if [ -f "$(which apt)" ]; then
 			pm="apt"
 		elif [ -f "$(which dnf)" ]; then
 			pm="dnf"
@@ -371,10 +387,7 @@ check_user() {
 package_manager() {
 	case "$pm" in
 	apt)
-		while ! sudo -n apt-get update -y; do
-			sleep 1
-		done
-		execute_sudo apt-get "$@"
+		execute_sudo apt "$@"
 		;;
 	dnf)
 		case "$distro" in
@@ -864,7 +877,7 @@ create_buildkite_user() {
 		execute_sudo mkdir -p "$path"
 		execute_sudo chown -R "$user:$group" "$path"
 	done
-	
+
 	files="/var/run/buildkite-agent/buildkite-agent.pid"
 	for file in $files; do
 		execute_sudo touch "$file"
@@ -966,6 +979,11 @@ install_chrome_dependencies() {
 	esac
 }
 
+raise_file_descriptor_limit() {
+	append_to_file_sudo /etc/security/limits.conf '*  soft  nofile  262144'
+	append_to_file_sudo /etc/security/limits.conf '*  hard  nofile  262144'
+}
+
 main() {
 	check_features "$@"
 	check_operating_system
@@ -976,6 +994,7 @@ main() {
 	install_common_software
 	install_build_essentials
 	install_chrome_dependencies
+	raise_file_descriptor_limit # XXX: temporary
 }
 
 main "$@"

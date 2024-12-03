@@ -12,6 +12,7 @@ const EVP = Crypto.EVP;
 const PBKDF2 = EVP.PBKDF2;
 const JSValue = JSC.JSValue;
 const validators = @import("./util/validators.zig");
+
 fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(2).slice();
 
@@ -38,10 +39,7 @@ fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     return JSC.JSValue.jsNumberFromInt64(std.crypto.random.intRangeLessThan(i64, min, max));
 }
 
-fn pbkdf2(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+fn pbkdf2(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(5);
 
     const data = try PBKDF2.fromJS(globalThis, arguments.slice(), true);
@@ -50,10 +48,7 @@ fn pbkdf2(
     return job.promise.value();
 }
 
-fn pbkdf2Sync(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+fn pbkdf2Sync(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(5);
 
     var data = try PBKDF2.fromJS(globalThis, arguments.slice(), false);
@@ -66,15 +61,13 @@ fn pbkdf2Sync(
 
     const output = out_arraybuffer.asArrayBuffer(globalThis) orelse {
         data.deinit();
-        globalThis.throwOutOfMemory();
-        return .zero;
+        return globalThis.throwOutOfMemory();
     };
 
     if (!data.run(output.slice())) {
         const err = Crypto.createCryptoError(globalThis, BoringSSL.ERR_get_error());
         BoringSSL.ERR_clear_error();
-        globalThis.throwValue(err);
-        return .zero;
+        return globalThis.throwValue(err);
     }
 
     return out_arraybuffer;

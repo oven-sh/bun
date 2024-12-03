@@ -11,52 +11,62 @@ const sha = bun.sha;
 
 pub usingnamespace std.fmt;
 
+pub const TableSymbols = struct {
+    enable_ansi_colors: bool,
+
+    pub const unicode = TableSymbols{ .enable_ansi_colors = true };
+    pub const ascii = TableSymbols{ .enable_ansi_colors = false };
+
+    pub fn topLeftSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "┌" else "|";
+    }
+    pub fn topRightSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "┐" else "|";
+    }
+    pub fn topColumnSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "┬" else "-";
+    }
+
+    pub fn bottomLeftSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "└" else "|";
+    }
+    pub fn bottomRightSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "┘" else "|";
+    }
+    pub fn bottomColumnSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "┴" else "-";
+    }
+
+    pub fn middleLeftSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "├" else "|";
+    }
+    pub fn middleRightSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "┤" else "|";
+    }
+    pub fn middleColumnSep(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "┼" else "|";
+    }
+
+    pub fn horizontalEdge(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "─" else "-";
+    }
+    pub fn verticalEdge(comptime s: TableSymbols) []const u8 {
+        return if (s.enable_ansi_colors) "│" else "|";
+    }
+};
+
 pub fn Table(
     comptime column_color: []const u8,
     comptime column_left_pad: usize,
     comptime column_right_pad: usize,
     comptime enable_ansi_colors: bool,
 ) type {
+    const symbols = TableSymbols{ .enable_ansi_colors = enable_ansi_colors };
     return struct {
         column_names: []const []const u8,
         column_inside_lengths: []const usize,
 
-        pub fn topLeftSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┌" else "|";
-        }
-        pub fn topRightSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┐" else "|";
-        }
-        pub fn topColumnSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┬" else "-";
-        }
-
-        pub fn bottomLeftSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "└" else "|";
-        }
-        pub fn bottomRightSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┘" else "|";
-        }
-        pub fn bottomColumnSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┴" else "-";
-        }
-
-        pub fn middleLeftSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "├" else "|";
-        }
-        pub fn middleRightSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┤" else "|";
-        }
-        pub fn middleColumnSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┼" else "|";
-        }
-
-        pub fn horizontalEdge(_: *const @This()) string {
-            return if (enable_ansi_colors) "─" else "-";
-        }
-        pub fn verticalEdge(_: *const @This()) string {
-            return if (enable_ansi_colors) "│" else "|";
-        }
+        comptime symbols: TableSymbols = symbols,
 
         pub fn init(column_names_: []const []const u8, column_inside_lengths_: []const usize) @This() {
             return .{
@@ -66,15 +76,15 @@ pub fn Table(
         }
 
         pub fn printTopLineSeparator(this: *const @This()) void {
-            this.printLine(this.topLeftSep(), this.topRightSep(), this.topColumnSep());
+            this.printLine(symbols.topLeftSep(), symbols.topRightSep(), symbols.topColumnSep());
         }
 
         pub fn printBottomLineSeparator(this: *const @This()) void {
-            this.printLine(this.bottomLeftSep(), this.bottomRightSep(), this.bottomColumnSep());
+            this.printLine(symbols.bottomLeftSep(), symbols.bottomRightSep(), symbols.bottomColumnSep());
         }
 
         pub fn printLineSeparator(this: *const @This()) void {
-            this.printLine(this.middleLeftSep(), this.middleRightSep(), this.middleColumnSep());
+            this.printLine(symbols.middleLeftSep(), symbols.middleRightSep(), symbols.middleColumnSep());
         }
 
         pub fn printLine(this: *const @This(), left_edge_separator: string, right_edge_separator: string, column_separator: string) void {
@@ -85,7 +95,7 @@ pub fn Table(
                     Output.pretty("{s}", .{column_separator});
                 }
 
-                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("{s}", .{this.horizontalEdge()});
+                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("{s}", .{symbols.horizontalEdge()});
 
                 if (i == this.column_inside_lengths.len - 1) {
                     Output.pretty("{s}\n", .{right_edge_separator});
@@ -95,12 +105,12 @@ pub fn Table(
 
         pub fn printColumnNames(this: *const @This()) void {
             for (this.column_inside_lengths, 0..) |column_inside_length, i| {
-                Output.pretty("{s}", .{this.verticalEdge()});
+                Output.pretty("{s}", .{symbols.verticalEdge()});
                 for (0..column_left_pad) |_| Output.pretty(" ", .{});
                 Output.pretty("<b><" ++ column_color ++ ">{s}<r>", .{this.column_names[i]});
                 for (this.column_names[i].len..column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                 if (i == this.column_inside_lengths.len - 1) {
-                    Output.pretty("{s}\n", .{this.verticalEdge()});
+                    Output.pretty("{s}\n", .{symbols.verticalEdge()});
                 }
             }
         }

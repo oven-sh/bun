@@ -9358,7 +9358,7 @@ pub const PackageManager = struct {
         "Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"";
 
     const shared_params = [_]ParamType{
-        clap.parseParam("-c, --config <STR>?                   Specify path to config file (bunfig.toml)") catch unreachable,
+        clap.parseParam("-c, --config <STR>                    Specify path to config file (bunfig.toml)") catch unreachable,
         clap.parseParam("-y, --yarn                            Write a yarn.lock file (yarn v1)") catch unreachable,
         clap.parseParam("-p, --production                      Don't install devDependencies") catch unreachable,
         clap.parseParam("--no-save                             Don't update package.json or save a lockfile") catch unreachable,

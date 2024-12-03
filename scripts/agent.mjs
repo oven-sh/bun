@@ -135,6 +135,12 @@ async function doBuildkiteAgent(action) {
       token = await getCloudMetadataTag("buildkite:token");
     }
 
+    if (!token) {
+      throw new Error(
+        "Buildkite token not found: either set BUILDKITE_AGENT_TOKEN or add a buildkite:token label to the instance",
+      );
+    }
+
     let shell;
     if (isWindows) {
       // Command Prompt has a faster startup time than PowerShell.

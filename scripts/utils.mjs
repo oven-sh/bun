@@ -1999,11 +1999,6 @@ export async function isAws() {
         return stdout.includes("Amazon");
       }
     }
-
-    const instanceId = await getCloudMetadata("instance-id", "google");
-    if (instanceId) {
-      return true;
-    }
   }
 
   if (await checkAws()) {
@@ -2036,11 +2031,6 @@ export async function isGoogleCloud() {
           }
         }
       }
-    }
-
-    const instanceId = await getCloudMetadata("id", "google");
-    if (instanceId) {
-      return true;
     }
   }
 
@@ -2093,7 +2083,7 @@ export async function getCloudMetadata(name, cloud) {
     throw new Error(`Unsupported cloud: ${inspect(cloud)}`);
   }
 
-  const { error, body } = await curl(url, { headers, retries: 0 });
+  const { error, body } = await curl(url, { headers, retries: Infinity });
   if (error) {
     return;
   }

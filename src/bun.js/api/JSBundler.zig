@@ -865,8 +865,8 @@ pub const JSBundler = struct {
     };
 
     pub const Plugin = opaque {
-        extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, bun.WTF.StringImpl, JSC.JSGlobalObject.BunPluginTarget) *Plugin;
-        pub fn create(global: *JSC.JSGlobalObject, name: bun.WTF.StringImpl, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
+        extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, ?bun.WTF.StringImpl, JSC.JSGlobalObject.BunPluginTarget) *Plugin;
+        pub fn create(global: *JSC.JSGlobalObject, name: ?bun.WTF.StringImpl, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
             JSC.markBinding(@src());
             const plugin = JSBundlerPlugin__create(global, name, target);
             JSC.JSValue.fromCell(plugin).protect();

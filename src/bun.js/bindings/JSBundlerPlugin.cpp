@@ -283,9 +283,13 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
     int count = 0;
     constexpr bool usesPatternContextBuffer = false;
     const WTF::String& path = pathString->toWTFString(BunString::ZeroCopy);
-    if (!plugin->name_c.has_value()) {
-        auto plugin_name_c = plugin->name->utf8();
-        plugin->name_c = std::make_optional(plugin_name_c);
+    if (plugin->name == nullptr) {
+        plugin->name_c = CString();
+    } else {
+        if (!plugin->name_c.has_value()) {
+            auto plugin_name_c = plugin->name->utf8();
+            plugin->name_c = std::make_optional(plugin_name_c);
+        }
     }
     CString& plugin_name = plugin->name_c.value();
     for (size_t i = 0, total = callbacks.size(); i < total && *shouldContinue; ++i) {

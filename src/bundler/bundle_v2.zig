@@ -4102,7 +4102,7 @@ pub const ParseTask = struct {
 
                 &bun.String.init(this.file_path.text),
                 &args,
-                result,
+                &result,
                 this.should_continue_running,
             );
             if (comptime Environment.enable_logs)

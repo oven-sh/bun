@@ -1116,6 +1116,14 @@ pub extern fn BIO_hexdump(bio: [*c]BIO, data: [*c]const u8, len: usize, indent: 
 pub extern fn ERR_print_errors(bio: [*c]BIO) void;
 pub extern fn BIO_read_asn1(bio: [*c]BIO, out: [*c][*c]u8, out_len: [*c]usize, max_len: usize) c_int;
 pub extern fn BIO_s_mem() ?*const BIO_METHOD;
+
+/// BIO_new_mem_buf creates read-only BIO that reads from |len| bytes at |buf|.
+/// It returns the BIO or NULL on error. This function does not copy or take
+/// ownership of |buf|. The caller must ensure the memory pointed to by |buf|
+/// outlives the |BIO|.
+///
+/// If |len| is negative, then |buf| is treated as a NUL-terminated string, but
+/// don't depend on this in new code.
 pub extern fn BIO_new_mem_buf(buf: ?*const anyopaque, len: ossl_ssize_t) [*c]BIO;
 // pub extern fn BIO_mem_contents(bio: [*c]const BIO, out_contents: [*c][*c]const u8, out_len: [*c]usize) c_int;
 pub extern fn BIO_get_mem_data(bio: [*c]BIO, contents: [*c][*c]u8) c_long;

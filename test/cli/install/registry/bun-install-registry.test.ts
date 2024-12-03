@@ -892,7 +892,7 @@ describe("whoami", async () => {
     expect(await exited).toBe(0);
   });
     test("two .npmrc", async () => {
-    const token = await generateRegistryUser("whoami-npmrc", "whoami-npmrc");
+    const token = await generateRegistryUser("whoami-two-npmrc", "whoami-two-npmrc");
     const packageNpmrc = `registry=http://localhost:${port}/`;
     const homeNpmrc = `//localhost:${port}/:_authToken=${token}`;
     const homeDir = `${packageDir}/home_dir`;

@@ -904,6 +904,7 @@ fn startAsyncBundle(
             .framework = dev.framework,
             .client_bundler = &dev.client_bundler,
             .ssr_bundler = &dev.ssr_bundler,
+            .plugins = dev.bundler_options.plugin,
         } else @panic("TODO: support non-server components"),
         allocator,
         .{ .js = dev.vm.eventLoop() },
@@ -912,7 +913,6 @@ fn startAsyncBundle(
         heap,
     );
     bv2.bun_watcher = dev.bun_watcher;
-    bv2.plugins = dev.bundler_options.plugin;
     bv2.asynchronous = true;
 
     {

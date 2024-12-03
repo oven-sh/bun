@@ -404,6 +404,7 @@ pub const BundleV2 = struct {
         framework: bake.Framework,
         client_bundler: *Bundler,
         ssr_bundler: *Bundler,
+        plugins: ?*JSC.API.JSBundler.Plugin,
     };
 
     const debug = Output.scoped(.Bundle, false);
@@ -911,6 +912,7 @@ pub const BundleV2 = struct {
             this.ssr_bundler = bo.ssr_bundler;
             this.framework = bo.framework;
             this.linker.framework = &this.framework.?;
+            this.plugins = bo.plugins;
             bun.assert(bundler.options.server_components);
             bun.assert(this.client_bundler.options.server_components);
             if (bo.framework.server_components.?.separate_ssr_graph)
@@ -12358,7 +12360,9 @@ pub const LinkerContext = struct {
                     .is_executable = chunk.is_executable,
                     .source_map_index = source_map_index,
                     .bytecode_index = bytecode_index,
-                    .side = switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
+                    .side = if (chunk.content == .css)
+                        .client
+                    else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
                         .browser => .client,
                         else => .server,
                     },
@@ -12767,7 +12771,9 @@ pub const LinkerContext = struct {
                 .data = .{
                     .saved = 0,
                 },
-                .side = switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
+                .side = if (chunk.content == .css)
+                    .client
+                else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
                     .browser => .client,
                     else => .server,
                 },

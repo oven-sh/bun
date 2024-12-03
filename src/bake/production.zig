@@ -185,9 +185,9 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             bundler.options.minify_syntax = false;
             bundler.options.minify_identifiers = false;
             bundler.options.minify_whitespace = false;
-            bundler.resolver.opts.entry_naming = "";
-            bundler.resolver.opts.chunk_naming = "";
-            bundler.resolver.opts.asset_naming = "";
+            bundler.resolver.opts.entry_naming = "_bun/[dir]/[name].[hash].[ext]";
+            bundler.resolver.opts.chunk_naming = "_bun/[dir]/[name].[hash].chunk.[ext]";
+            bundler.resolver.opts.asset_naming = "_bun/[dir]/[name].[hash].asset.[ext]";
         }
     }
 
@@ -255,6 +255,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             .framework = framework.*,
             .client_bundler = &client_bundler,
             .ssr_bundler = if (separate_ssr_graph) &ssr_bundler else &server_bundler,
+            .plugins = options.bundler_options.plugin,
         },
         allocator,
         .{ .js = vm.event_loop },

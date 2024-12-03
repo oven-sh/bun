@@ -52,8 +52,9 @@ export function renderRoutesForProdStatic(
     // Call the framework's rendering function
     const callback = renderStatic[type];
     $assert(callback != null && $isCallable(callback));
+    let client = clientEntryUrl[type];
     const results = await callback({
-      modules: [clientEntryUrl[type]],
+      modules: client ? [client] : [],
       modulepreload: [],
       styles: styles[i],
       layouts,

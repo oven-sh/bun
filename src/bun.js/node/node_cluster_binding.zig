@@ -29,8 +29,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         return globalThis.throwMissingArgumentsValue(&.{"message"});
     }
     if (!handle.isNull()) {
-        globalThis.throw("passing 'handle' not implemented yet", .{});
-        return .zero;
+        return globalThis.throw("passing 'handle' not implemented yet", .{});
     }
     if (!message.isObject()) {
         return globalThis.throwInvalidArgumentTypeValue("message", "object", message);

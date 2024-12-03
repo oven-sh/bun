@@ -831,12 +831,7 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
         MarkedArgumentBuffer args;
         args.append(jsString(globalObject->vm(), signalNameIdentifier.string()));
         args.append(jsNumber(signalNumber));
-        // TODO(@paperdave): add an ASSERT(isMainThread());
-        // This should be true on posix if I understand sigaction right
-        // On Windows it should be true if the uv_signal is created on the main thread's loop
-        //
-        // I would like to assert this because if that assumption is not true,
-        // this call will probably cause very confusing bugs.
+
         process->wrapped().emitForBindings(signalNameIdentifier, args);
     });
 };

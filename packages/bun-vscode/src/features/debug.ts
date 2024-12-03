@@ -10,6 +10,7 @@ import {
   UnixSignal,
   WebSocketDebugAdapter,
 } from "../../../bun-debug-adapter-protocol";
+import { getConfig } from "../extension";
 
 export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
   type: "bun",
@@ -120,6 +121,7 @@ async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
       ...env,
       "BUN_INSPECT": `${adapter.url}?${query}`,
       "BUN_INSPECT_NOTIFY": signal.url,
+      BUN_INSPECT_CONNECT_TO: "",
     },
   });
 
@@ -351,6 +353,7 @@ class TerminalDebugSession extends FileDebugSession {
       env: {
         "BUN_INSPECT": `${this.adapter.url}?wait=1`,
         "BUN_INSPECT_NOTIFY": this.signal.url,
+        BUN_INSPECT_CONNECT_TO: "",
       },
       isTransient: true,
       iconPath: new vscode.ThemeIcon("debug-console"),
@@ -368,10 +371,6 @@ function getRuntime(scope?: vscode.ConfigurationScope): string {
     return value;
   }
   return "bun";
-}
-
-function getConfig<T>(path: string, scope?: vscode.ConfigurationScope) {
-  return vscode.workspace.getConfiguration("bun", scope).get<T>(path);
 }
 
 export async function runUnsavedCode() {

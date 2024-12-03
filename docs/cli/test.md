@@ -75,8 +75,10 @@ jobs:
     name: build-app
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Install bun
-        uses: oven-sh/setup-bun
+        uses: oven-sh/setup-bun@v2
       - name: Install dependencies # (assuming your project has dependencies)
         run: bun install # You can use npm/yarn/pnpm instead if you prefer
       - name: Run tests

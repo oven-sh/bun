@@ -15208,8 +15208,7 @@ pub const bun_install_js_bindings = struct {
         const lockfile_path = Path.joinAbsStringZ(cwd.slice(), &[_]string{"bun.lockb"}, .auto);
 
         const lockfile_source = File.toSource(lockfile_path, allocator).unwrap() catch |err| {
-            globalObject.throw("failed to create lockfile: {s}, '{s}'", .{ @errorName(err), lockfile_path });
-            return .zero;
+            return globalObject.throw("failed to create lockfile: {s}, '{s}'", .{ @errorName(err), lockfile_path });
         };
 
         const load_result: BinaryLockfile.LoadResult = BinaryLockfile.load(&lockfile_source, null, allocator, &log, .binary) catch bun.outOfMemory();

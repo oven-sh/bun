@@ -155,7 +155,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             break :config try bake.UserOptions.fromJS(app, vm.global);
         },
         .rejected => |err| {
-            return global.throwValue2(err.toError() orelse err);
+            return global.throwValue(err.toError() orelse err);
         },
     };
 

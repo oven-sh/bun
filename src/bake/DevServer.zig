@@ -4353,7 +4353,7 @@ fn dumpStateDueToCrash(dev: *DevServer) !void {
     const filepath = std.fmt.bufPrintZ(&filepath_buf, "incremental-graph-crash-dump.{d}.html", .{std.time.timestamp()}) catch "incremental-graph-crash-dump.html";
     const file = std.fs.cwd().createFileZ(filepath, .{}) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
-        Output.warn("Could not open directory for dumping sources: {}", .{err});
+        Output.warn("Could not open file for dumping incremental graph: {}", .{err});
         return;
     };
     defer file.close();

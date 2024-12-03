@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     litespeedtech/ls-hpack
   COMMIT
-    3d0f1fc1d6e66a642e7a98c55deb38aa986eb4b0
+    32e96f10593c7cb8553cd8c9c12721100ae9e924
 )
 
 if(WIN32)

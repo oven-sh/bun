@@ -10151,16 +10151,16 @@ pub const PackageManager = struct {
             var array = Array{};
 
             const update_requests = parseWithError(allocator, null, &log, all_positionals.items, &array, .add, false) catch {
-                return globalThis.throwValue2(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
+                return globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
             };
             if (update_requests.len == 0) return .undefined;
 
             if (log.msgs.items.len > 0) {
-                return globalThis.throwValue2(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
+                return globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
             }
 
             if (update_requests[0].failed) {
-                return globalThis.throw2("Failed to parse dependencies", .{});
+                return globalThis.throw("Failed to parse dependencies", .{});
             }
 
             var object = JSC.JSValue.createEmptyObject(globalThis, 2);
@@ -15216,12 +15216,10 @@ pub const bun_install_js_bindings = struct {
 
         const lockfile = switch (load_result) {
             .err => |err| {
-                globalObject.throw("failed to load lockfile: {s}, \"{s}\"", .{ @errorName(err.err), load_result.err.lockfile_path });
-                return .zero;
+                return globalObject.throw("failed to load lockfile: {s}, \"{s}\"", .{ @errorName(err.err), load_result.err.lockfile_path });
             },
             .not_found => {
-                globalObject.throw("lockfile not found: \"{s}\"", .{lockfile_path});
-                return .zero;
+                return globalObject.throw("lockfile not found: \"{s}\"", .{lockfile_path});
             },
             .ok => |ok| lockfile: {
                 bun.assertWithLocation(ok.lockfile == .binary, @src());
@@ -15243,13 +15241,11 @@ pub const bun_install_js_bindings = struct {
             },
             buffered_writer.writer(),
         ) catch |err| {
-            globalObject.throw("failed to print lockfile as JSON: {s}", .{@errorName(err)});
-            return .zero;
+            return globalObject.throw("failed to print lockfile as JSON: {s}", .{@errorName(err)});
         };
 
         buffered_writer.flush() catch |err| {
-            globalObject.throw("failed to print lockfile as JSON: {s}", .{@errorName(err)});
-            return .zero;
+            return globalObject.throw("failed to print lockfile as JSON: {s}", .{@errorName(err)});
         };
 
         var str = bun.String.createUTF8(buffer.list.items);

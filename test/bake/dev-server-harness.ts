@@ -33,6 +33,11 @@ export interface DevServerTest {
    * Provide this object or `files['bun.app.ts']` for a dynamic one.
    */
   framework?: Bake.Framework | "react";
+  /**
+   * Source code for a TSX file that `export default`s an array of BunPlugin,
+   * combined with the `framework` option.
+   */
+  pluginFile?: string;
   /** Starting files */
   files: FileObject;
   test: (dev: Dev) => Promise<void>;
@@ -64,6 +69,7 @@ export class Dev {
   fetch(url: string, init?: RequestInit) {
     return new DevFetchPromise((resolve, reject) =>
       fetch(new URL(url, this.baseUrl).toString(), init).then(resolve, reject),
+      this
     );
   }
 
@@ -102,7 +108,14 @@ export class Dev {
   }
 
   async waitForHotReload() {
-    await this.output.waitForLine(/bundled route|error|reloaded/i);
+    const err = this.output.waitForLine(/error/i);
+    const success = this.output.waitForLine(/bundled route|reloaded/i);
+    await Promise.race([
+      // On failure, give a little time in case a partial write caused a
+      // bundling error, and a success came in.
+      err.then(() => Bun.sleep(500), () => {}), 
+      success,
+    ]);
   }
 
   async [Symbol.asyncDispose]() {}
@@ -117,14 +130,30 @@ export interface Step {
 }
 
 class DevFetchPromise extends Promise<Response> {
-  expect(result: string) {
+  dev: Dev;
+  constructor(executor: (resolve: (value: Response | PromiseLike<Response>) => void, reject: (reason?: any) => void) => void, dev: Dev) {
+    super(executor);
+    this.dev = dev;
+  }
+
+  expect(result: any) {
+    if (typeof result !== "string") {
+      result = JSON.stringify(result);
+    }
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
-      const res = await this;
-      if (!res.ok) {
-        throw new Error(`Expected response to be ok, but got ${res.status} ${res.statusText}`);
+      try {
+        const res = await this;
+        if (!res.ok) {
+          throw new Error(`Expected response to be ok, but got ${res.status} ${res.statusText}`);
+        }
+        const text = (await res.text()).trim();
+        expect(text).toBe(result.trim());
+      } catch (err) {
+        if (this.dev.panicked) {
+          throw new Error("DevServer crashed");
+        }
+        throw err;
       }
-      const text = (await res.text()).trim();
-      expect(text).toBe(result.trim());
     });
   }
   expectNoSpaces(result: string) {
@@ -281,7 +310,7 @@ class OutputLineStream extends EventEmitter {
   }
 }
 
-export function devTest(description: string, options: DevServerTest) {
+export function devTest<T extends DevServerTest>(description: string, options: T): T {
   // Capture the caller name as part of the test tempdir
   const callerLocation = snapshotCallerLocation();
   const caller = stackTraceFileName(callerLocation);
@@ -293,7 +322,7 @@ export function devTest(description: string, options: DevServerTest) {
   // TODO: Tests are too flaky on Windows. Cannot reproduce locally.
   if (isWindows) {
     jest.test.todo(`DevServer > ${basename}.${count}: ${description}`);
-    return;
+    return options;
   }
 
   jest.test(`DevServer > ${basename}.${count}: ${description}`, async () => {
@@ -303,16 +332,27 @@ export function devTest(description: string, options: DevServerTest) {
       if (!options.framework) {
         throw new Error("Must specify a options.framework or provide a bun.app.ts file");
       }
+      if (options.pluginFile) {
+        fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
+      }
       fs.writeFileSync(
         path.join(root, "bun.app.ts"),
         dedent`
+          ${options.pluginFile ? 
+            `import plugins from './pluginFile.ts';` : "let plugins = undefined;"
+          }
           export default {
             app: {
               framework: ${JSON.stringify(options.framework)},
+              plugins,
             },
           };
         `,
       );
+    } else {
+      if (options.pluginFile) {
+        throw new Error("Cannot provide both bun.app.ts and pluginFile");
+      }
     }
     fs.writeFileSync(
       path.join(root, "harness_start.ts"),
@@ -327,7 +367,7 @@ export function devTest(description: string, options: DevServerTest) {
 
     await using devProcess = Bun.spawn({
       cwd: root,
-      cmd: [process.execPath, "./bun.app.ts"],
+      cmd: [process.execPath, "./harness_start.ts"],
       env: mergeWindowEnvs([
         bunEnv,
         {
@@ -354,4 +394,5 @@ export function devTest(description: string, options: DevServerTest) {
       throw err;
     }
   });
+  return options;
 }

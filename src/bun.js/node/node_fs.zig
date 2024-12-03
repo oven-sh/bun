@@ -1513,8 +1513,7 @@ pub const Arguments = struct {
 
                 arguments.eat();
                 if (!uid_value.isNumber()) {
-                    _ = ctx.throwInvalidArgumentTypeValue("uid", "number", uid_value);
-                    return error.JSError;
+                    return ctx.throwInvalidArgumentTypeValue("uid", "number", uid_value);
                 }
                 break :brk @as(uid_t, @intCast(uid_value.toInt32()));
             };
@@ -1526,8 +1525,7 @@ pub const Arguments = struct {
 
                 arguments.eat();
                 if (!gid_value.isNumber()) {
-                    _ = ctx.throwInvalidArgumentTypeValue("gid", "number", gid_value);
-                    return error.JSError;
+                    return ctx.throwInvalidArgumentTypeValue("gid", "number", gid_value);
                 }
                 break :brk @as(gid_t, @intCast(gid_value.toInt32()));
             };
@@ -2411,12 +2409,10 @@ pub const Arguments = struct {
             const buffer = StringOrBuffer.fromJS(ctx, bun.default_allocator, buffer_value orelse {
                 return ctx.throwInvalidArguments("data is required", .{});
             }) orelse {
-                _ = ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
-                return error.JSError;
+                return ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
             };
             if (buffer_value.?.isString() and !buffer_value.?.isStringLiteral()) {
-                _ = ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
-                return error.JSError;
+                return ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
             }
 
             var args = Write{
@@ -2506,8 +2502,7 @@ pub const Arguments = struct {
             const buffer = Buffer.fromJS(ctx, buffer_value orelse {
                 return ctx.throwInvalidArguments("buffer is required", .{});
             }) orelse {
-                _ = ctx.throwInvalidArgumentTypeValue("buffer", "TypedArray", buffer_value.?);
-                return error.JSError;
+                return ctx.throwInvalidArgumentTypeValue("buffer", "TypedArray", buffer_value.?);
             };
             arguments.eat();
 
@@ -2564,8 +2559,7 @@ pub const Arguments = struct {
 
             if (defined_length and args.length > 0 and buffer.slice().len == 0) {
                 var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
-                ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
-                return error.JSError;
+                return ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
             }
 
             return args;
@@ -5557,7 +5551,7 @@ pub const NodeFS = struct {
                 .message = bun.String.init(buf),
                 .code = bun.String.init(@errorName(err)),
                 .path = bun.String.init(args.path.slice()),
-            }).toErrorInstance(args.global_this));
+            }).toErrorInstance(args.global_this)) catch {};
             return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
         };
         return Maybe(Return.Watch){ .result = watcher };

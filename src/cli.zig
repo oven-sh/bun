@@ -2533,19 +2533,25 @@ pub const Command = struct {
                     ;
                     const outro_text =
                         \\<b>Examples:<r>
-                        \\  <d>Install the latest stable version<r>
+                        \\  <d>Install the latest {s} version<r>
                         \\  <b><green>bun upgrade<r>
                         \\
-                        \\  <d>Install the most recent canary version of Bun<r>
-                        \\  <b><green>bun upgrade --canary<r>
+                        \\  <d>{s}<r>
+                        \\  <b><green>bun upgrade<r> <cyan>--{s}<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/installation#upgrading<r>
                         \\
                     ;
+
+                    const args = comptime switch (Environment.is_canary) {
+                        true => .{ "canary", "Switch from the canary version back to the latest stable release", "stable" },
+                        false => .{ "stable", "Install the most recent canary version of Bun", "canary" },
+                    };
+
                     Output.pretty(intro_text, .{});
                     Output.pretty("\n\n", .{});
                     Output.flush();
-                    Output.pretty(outro_text, .{});
+                    Output.pretty(outro_text, args);
                     Output.flush();
                 },
                 Command.Tag.ReplCommand => {

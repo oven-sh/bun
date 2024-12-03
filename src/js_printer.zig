@@ -580,7 +580,7 @@ pub const PrintResult = union(enum) {
 // do not make this a packed struct
 // stage1 compiler bug:
 // > /optional-chain-with-function.js: Evaluation failed: TypeError: (intermediate value) is not a function
-// this test failure was caused by the packed structi mplementation
+// this test failure was caused by the packed struct implementation
 const ExprFlag = enum {
     forbid_call,
     forbid_in,
@@ -6007,15 +6007,19 @@ pub fn printWithWriterAndPlatform(
             printer.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
             printer.printSpace();
             printer.print("{\n");
-            printer.indent();
-            printer.printSymbol(printer.options.commonjs_module_ref);
-            printer.print(".exports = ");
-            printer.printExpr(.{
-                .data = func.body.stmts[0].data.s_lazy_export,
-                .loc = func.body.stmts[0].loc,
-            }, .comma, .{});
-            printer.print("; // bun .s_lazy_export\n");
-            printer.indent();
+            if (func.body.stmts[0].data.s_lazy_export != .e_undefined) {
+                printer.indent();
+                printer.printIndent();
+                printer.printSymbol(printer.options.commonjs_module_ref);
+                printer.print(".exports = ");
+                printer.printExpr(.{
+                    .data = func.body.stmts[0].data.s_lazy_export,
+                    .loc = func.body.stmts[0].loc,
+                }, .comma, .{});
+                printer.print("; // bun .s_lazy_export\n");
+                printer.unindent();
+            }
+            printer.printIndent();
             printer.print("}");
         }
         printer.print(",\n");

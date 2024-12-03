@@ -16,10 +16,11 @@ pub const Options = struct {
     root: []const u8,
     vm: *VirtualMachine,
     framework: bake.Framework,
+    bundler_options: bake.SplitBundlerOptions,
 
     // Debugging features
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
-    dump_state_on_crash: bool = false,
+    dump_state_on_crash: ?bool = false,
     verbose_watcher: bool = false,
 };
 
@@ -93,6 +94,7 @@ generation: usize = 0,
 bundles_since_last_error: usize = 0,
 
 framework: bake.Framework,
+bundler_options: bake.SplitBundlerOptions,
 // Each logical graph gets its own bundler configuration
 server_bundler: Bundler,
 client_bundler: Bundler,
@@ -238,8 +240,11 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .graph_safety_lock = bun.DebugThreadLock.unlocked,
         .dump_dir = dump_dir,
         .framework = options.framework,
+        .bundler_options = options.bundler_options,
         .emit_visualizer_events = 0,
-        .has_pre_crash_handler = options.dump_state_on_crash,
+        .has_pre_crash_handler = bun.FeatureFlags.bake_debugging_features and
+            options.dump_state_on_crash orelse
+            bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH"),
         .css_files = .{},
         .route_js_payloads = .{},
         // .assets = .{},
@@ -307,8 +312,9 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     }
 
     dev.framework = dev.framework.resolve(&dev.server_bundler.resolver, &dev.client_bundler.resolver, options.arena) catch {
-        try bake.Framework.addReactInstallCommandNote(&dev.log);
-        return global.throwValue2(dev.log.toJSAggregateError(global, "Framework is missing required files!"));
+        if (dev.framework.is_built_in_react)
+            try bake.Framework.addReactInstallCommandNote(&dev.log);
+        return global.throwValue(dev.log.toJSAggregateError(global, "Framework is missing required files!"));
     };
 
     errdefer dev.route_lookup.clearAndFree(allocator);
@@ -438,7 +444,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     // after that line.
     try dev.scanInitialRoutes();
 
-    if (bun.FeatureFlags.bake_debugging_features and options.dump_state_on_crash)
+    if (bun.FeatureFlags.bake_debugging_features and dev.has_pre_crash_handler)
         try bun.crash_handler.appendPreCrashHandler(DevServer, dev, dumpStateDueToCrash);
 
     return dev;
@@ -906,6 +912,7 @@ fn startAsyncBundle(
         heap,
     );
     bv2.bun_watcher = dev.bun_watcher;
+    bv2.plugins = dev.bundler_options.plugin;
     bv2.asynchronous = true;
 
     {
@@ -1202,10 +1209,10 @@ pub fn finalizeBundle(
         );
 
         // Create an entry for this file.
-        const abs_path = ctx.sources[index.get()].path.text;
+        const key = ctx.sources[index.get()].path.keyForIncrementalGraph();
         // Later code needs to retrieve the CSS content
         // The hack is to use `entry_point_id`, which is otherwise unused, to store an index.
-        chunk.entry_point.entry_point_id = try dev.insertOrUpdateCssAsset(abs_path, code.buffer);
+        chunk.entry_point.entry_point_id = try dev.insertOrUpdateCssAsset(key, code.buffer);
 
         try dev.client_graph.receiveChunk(&ctx, index, "", .css, false);
 
@@ -1216,7 +1223,7 @@ pub fn finalizeBundle(
             try dev.server_graph.insertCssFileOnServer(
                 &ctx,
                 index,
-                abs_path,
+                key,
             );
         }
     }
@@ -1432,8 +1439,8 @@ pub fn finalizeBundle(
             try w.writeInt(u32, @intCast(css_chunks.len), .little);
             const sources = bv2.graph.input_files.items(.source);
             for (css_chunks) |chunk| {
-                const abs_path = sources[chunk.entry_point.source_index].path.text;
-                try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&bun.hash(abs_path)), .lower));
+                const key = sources[chunk.entry_point.source_index].path.keyForIncrementalGraph();
+                try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&bun.hash(key)), .lower));
                 const css_data = css_values[chunk.entry_point.entry_point_id];
                 try w.writeInt(u32, @intCast(css_data.len), .little);
                 try w.writeAll(css_data);
@@ -1588,12 +1595,13 @@ fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u
     return @intCast(gop.index);
 }
 
+/// Note: The log is not consumed here
 pub fn handleParseTaskFailure(
     dev: *DevServer,
     err: anyerror,
     graph: bake.Graph,
-    abs_path: []const u8,
-    log: *Log,
+    key: []const u8,
+    log: *const Log,
 ) bun.OOM!void {
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
@@ -1605,23 +1613,23 @@ pub fn handleParseTaskFailure(
         // TODO: this should walk up the graph one level, and queue all of these
         // files for re-bundling if they aren't already in the BundleV2 graph.
         switch (graph) {
-            .server, .ssr => try dev.server_graph.onFileDeleted(abs_path, log),
-            .client => try dev.client_graph.onFileDeleted(abs_path, log),
+            .server, .ssr => try dev.server_graph.onFileDeleted(key, log),
+            .client => try dev.client_graph.onFileDeleted(key, log),
         }
     } else {
         Output.prettyErrorln("<red><b>Error{s} while bundling \"{s}\":<r>", .{
             if (log.errors +| log.warnings != 1) "s" else "",
-            dev.relativePath(abs_path),
+            dev.relativePath(key),
         });
         log.print(Output.errorWriterBuffered()) catch {};
         Output.flush();
 
         // Do not index css errors
-        if (!bun.strings.hasSuffixComptime(abs_path, ".css")) {
+        if (!bun.strings.hasSuffixComptime(key, ".css")) {
             switch (graph) {
-                .server => try dev.server_graph.insertFailure(abs_path, log, false),
-                .ssr => try dev.server_graph.insertFailure(abs_path, log, true),
-                .client => try dev.client_graph.insertFailure(abs_path, log, false),
+                .server => try dev.server_graph.insertFailure(key, log, false),
+                .ssr => try dev.server_graph.insertFailure(key, log, true),
+                .client => try dev.client_graph.insertFailure(key, log, false),
             }
         }
     }
@@ -1851,7 +1859,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
     return struct {
         // Unless otherwise mentioned, all data structures use DevServer's allocator.
 
-        /// Key contents are owned by `default_allocator`
+        /// Keys are absolute paths for the "file" namespace, or the
+        /// pretty-formatted path value that appear in imports. Absolute paths
+        /// are stored so the watcher can quickly query and invalidate them.
+        /// Key slices are owned by `default_allocator`
         bundled_files: bun.StringArrayHashMapUnmanaged(File),
         /// Track bools for files which are "stale", meaning they should be
         /// re-bundled before being used. Resizing this is usually deferred
@@ -2034,7 +2045,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
             const dev = g.owner();
             dev.graph_safety_lock.assertLocked();
 
-            const abs_path = ctx.sources[index.get()].path.text;
+            const path = ctx.sources[index.get()].path;
+            const key = path.keyForIncrementalGraph();
 
             if (Environment.allow_assert) {
                 switch (kind) {
@@ -2042,7 +2054,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     .js => if (bun.strings.isAllWhitespace(code)) {
                         // Should at least contain the function wrapper
                         bun.Output.panic("Empty chunk is impossible: {s} {s}", .{
-                            abs_path,
+                            key,
                             switch (side) {
                                 .client => "client",
                                 .server => if (is_ssr_graph) "ssr" else "server",
@@ -2060,7 +2072,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 const cwd = dev.root;
                 var a: bun.PathBuffer = undefined;
                 var b: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
-                const rel_path = bun.path.relativeBufZ(&a, cwd, abs_path);
+                const rel_path = bun.path.relativeBufZ(&a, cwd, key);
                 const size = std.mem.replacementSize(u8, rel_path, "../", "_.._/");
                 _ = std.mem.replace(u8, rel_path, "../", "_.._/", &b);
                 const rel_path_escaped = b[0..size];
@@ -2073,11 +2085,11 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 };
             };
 
-            const gop = try g.bundled_files.getOrPut(dev.allocator, abs_path);
+            const gop = try g.bundled_files.getOrPut(dev.allocator, key);
             const file_index = FileIndex.init(@intCast(gop.index));
 
             if (!gop.found_existing) {
-                gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
+                gop.key_ptr.* = try bun.default_allocator.dupe(u8, key);
                 try g.first_dep.append(dev.allocator, .none);
                 try g.first_import.append(dev.allocator, .none);
             }
@@ -2117,7 +2129,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             gop.value_ptr.* = File.init(try std.fmt.allocPrint(
                                 dev.allocator,
                                 css_prefix ++ "/{}.css",
-                                .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&bun.hash(abs_path)))},
+                                .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&bun.hash(key)))},
                             ), flags);
                         } else {
                             // The key is just the file-path
@@ -2301,15 +2313,24 @@ pub fn IncrementalGraph(side: bake.Side) type {
             const log = bun.Output.scoped(.processChunkDependencies, false);
             for (ctx.import_records[index.get()].slice()) |import_record| {
                 if (!import_record.source_index.isRuntime()) try_index_record: {
+                    const key = import_record.path.keyForIncrementalGraph();
                     const imported_file_index = if (import_record.source_index.isInvalid())
-                        if (std.fs.path.isAbsolute(import_record.path.text))
-                            FileIndex.init(@intCast(
-                                g.bundled_files.getIndex(import_record.path.text) orelse break :try_index_record,
-                            ))
-                        else
-                            break :try_index_record
+                        FileIndex.init(@intCast(
+                            g.bundled_files.getIndex(key) orelse break :try_index_record,
+                        ))
                     else
                         ctx.getCachedIndex(side, import_record.source_index).*;
+
+                    if (Environment.isDebug) {
+                        if (imported_file_index.get() > g.bundled_files.count()) {
+                            Output.debugWarn("Invalid mapped source index {x}. {} was not inserted into IncrementalGraph", .{
+                                imported_file_index.get(),
+                                bun.fmt.quote(key),
+                            });
+                            Output.flush();
+                            continue;
+                        }
+                    }
 
                     if (quick_lookup.getPtr(imported_file_index)) |lookup| {
                         // If the edge has already been seen, it will be skipped

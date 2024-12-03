@@ -6,7 +6,9 @@
 /// Version 7: Several bundler changes that are likely to impact the runtime as well.
 /// Version 8: Fix for generated symbols
 /// Version 9: String printing changes
-const expected_version = 9;
+/// Version 10: Constant folding for ''.charCodeAt(n)
+/// Version 11: Fix \uFFFF printing regression
+const expected_version = 11;
 
 const bun = @import("root").bun;
 const std = @import("std");

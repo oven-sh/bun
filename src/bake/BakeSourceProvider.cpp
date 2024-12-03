@@ -8,33 +8,40 @@
 #include "JavaScriptCore/JSLock.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSModuleLoader.h"
+#include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
+#include "ImportMetaObject.h"
 
 namespace Bake {
 
-extern "C" LoadServerCodeResult BakeLoadInitialServerCode(GlobalObject* global, BunString source) {
+extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(GlobalObject* global, BunString source, bool separateSSRGraph) {
   JSC::VM& vm = global->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
-  String string = "bake://server.js"_s;
-  JSC::JSString* key = JSC::jsString(vm, string);
+  String string = "bake://server-runtime.js"_s;
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(DevSourceProvider::create(
     source.toWTFString(),
     origin,
     WTFMove(string),
     WTF::TextPosition(),
-    JSC::SourceProviderSourceType::Module
+    JSC::SourceProviderSourceType::Program
   ));
 
-  global->moduleLoader()->provideFetch(global, key, sourceCode);
-  RETURN_IF_EXCEPTION(scope, {});
- 
-  JSC::JSInternalPromise* internalPromise = global->moduleLoader()->loadAndEvaluateModule(global, key, JSC::jsUndefined(), JSC::jsUndefined());
-  RETURN_IF_EXCEPTION(scope, {});
+  JSC::JSValue fnValue = vm.interpreter.executeProgram(sourceCode, global, global);
+  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
 
-  return { internalPromise, key };
+  RELEASE_ASSERT(fnValue);
+
+  JSC::JSFunction* fn = jsCast<JSC::JSFunction*>(fnValue);
+  JSC::CallData callData = JSC::getCallData(fn);
+
+  JSC::MarkedArgumentBuffer args;
+  args.append(JSC::jsBoolean(separateSSRGraph)); // separateSSRGraph
+  args.append(Zig::ImportMetaObject::create(global, "bake://server-runtime.js"_s)); // importMeta
+
+  return JSC::JSValue::encode(JSC::call(global, fn, callData, JSC::jsUndefined(), args));
 }
 
 extern "C" JSC::JSInternalPromise* BakeLoadModuleByKey(GlobalObject* global, JSC::JSString* key) {

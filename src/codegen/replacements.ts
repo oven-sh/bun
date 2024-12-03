@@ -140,7 +140,11 @@ export interface ReplacementRule {
   global?: boolean;
 }
 
-export const function_replacements = ["$debug", "$assert", "$zig", "$newZigFunction", "$cpp", "$newCppFunction"];
+export const function_replacements = [
+  "$debug", "$assert", "$zig", "$newZigFunction", "$cpp", "$newCppFunction",
+  "$isPromiseResolved",
+];
+const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll('$', '')})`);
 
 /** Applies source code replacements as defined in `replacements` */
 export function applyReplacements(src: string, length: number) {
@@ -152,7 +156,7 @@ export function applyReplacements(src: string, length: number) {
   }
   let match;
   if (
-    (match = slice.match(/__intrinsic__(debug|assert|zig|cpp|newZigFunction|newCppFunction)$/)) &&
+    (match = slice.match(function_regexp)) &&
     rest.startsWith("(")
   ) {
     const name = match[1];
@@ -222,6 +226,18 @@ export function applyReplacements(src: string, length: number) {
       const id = registerNativeCall(kind, args[0], args[1], is_create_fn ? args[2] : undefined);
 
       return [slice.slice(0, match.index) + "__intrinsic__lazy(" + id + ")", inner.rest, true];
+    } else if (name === "isPromiseResolved") {
+      const inner = sliceSourceCode(rest, true);
+      let args;
+      if (debug) {
+        // use a property on @lazy as a temporary holder for the expression. only in debug!
+        args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),(__intrinsic__getPromiseInternalField(__intrinsic__lazy.temp, __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === (__intrinsic__lazy.temp = undefined, __intrinsic__promiseStateFulfilled))`;
+      } else {
+        args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0,-1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStateFulfilled)`;
+      }
+      return [slice.slice(0, match.index) + args, inner.rest, true];
+    } else {
+      throw new Error("Unknown preprocessor macro " + name);
     }
   }
   return [slice, rest, false];

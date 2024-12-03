@@ -51,7 +51,7 @@ pub const OS = struct {
         }
     };
 
-    pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
         return switch (Environment.os) {
@@ -65,8 +65,7 @@ pub const OS = struct {
                 .code = bun.String.static(@tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR)),
             };
 
-            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return .undefined;
+            return globalThis.throwValue(err.toErrorInstance(globalThis));
         };
     }
 
@@ -294,30 +293,26 @@ pub const OS = struct {
         return values;
     }
 
-    pub fn endianness(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn endianness(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
         return JSC.ZigString.init("LE").withEncoding().toJS(globalThis);
     }
 
-    pub fn freemem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn freemem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
         return JSC.JSValue.jsNumberFromUint64(C.getFreeMemory());
     }
 
-    pub fn getPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn getPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
-        var args_ = callframe.arguments(1);
+        var args_ = callframe.arguments_old(1);
         const arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
         if (arguments.len > 0 and !arguments[0].isNumber()) {
-            globalThis.ERR_INVALID_ARG_TYPE(
-                "getPriority() expects a number",
-                .{},
-            ).throw();
-            return .undefined;
+            return globalThis.ERR_INVALID_ARG_TYPE("getPriority() expects a number", .{}).throw();
         }
 
         const pid = if (arguments.len > 0) arguments[0].asInt32() else 0;
@@ -338,14 +333,13 @@ pub const OS = struct {
                 .syscall = bun.String.static("uv_os_getpriority"),
             };
 
-            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return .undefined;
+            return globalThis.throwValue(err.toErrorInstance(globalThis));
         }
 
         return JSC.JSValue.jsNumberFromInt32(priority);
     }
 
-    pub fn homedir(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn homedir(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
         const dir: []const u8 = brk: {
@@ -363,7 +357,7 @@ pub const OS = struct {
         return JSC.ZigString.init(dir).withEncoding().toJS(globalThis);
     }
 
-    pub fn hostname(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn hostname(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
         if (comptime Environment.isWindows) {
@@ -391,7 +385,7 @@ pub const OS = struct {
         return JSC.ZigString.init(std.posix.gethostname(&name_buffer) catch "unknown").withEncoding().toJS(globalThis);
     }
 
-    pub fn loadavg(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn loadavg(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
         const result = C.getSystemLoadavg();
@@ -402,14 +396,14 @@ pub const OS = struct {
         });
     }
 
-    pub fn networkInterfaces(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn networkInterfaces(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         return switch (Environment.os) {
             .windows => networkInterfacesWindows(globalThis),
             else => networkInterfacesPosix(globalThis),
         };
     }
 
-    fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         // getifaddrs sets a pointer to a linked list
         var interface_start: ?*C.ifaddrs = null;
         const rc = C.getifaddrs(&interface_start);
@@ -421,8 +415,7 @@ pub const OS = struct {
                 .syscall = bun.String.static("getifaddrs"),
             };
 
-            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return .undefined;
+            return globalThis.throwValue(err.toErrorInstance(globalThis));
         }
         defer C.freeifaddrs(interface_start);
 
@@ -576,7 +569,7 @@ pub const OS = struct {
             }
 
             // Does this entry already exist?
-            if (ret.get(globalThis, interface_name)) |array| {
+            if (ret.get_unsafe(globalThis, interface_name)) |array| {
                 // Add this interface entry to the existing array
                 const next_index = @as(u32, @intCast(array.getLength(globalThis)));
                 array.putIndex(globalThis, next_index, interface);
@@ -592,7 +585,7 @@ pub const OS = struct {
         return ret;
     }
 
-    fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         var ifaces: [*]libuv.uv_interface_address_t = undefined;
         var count: c_int = undefined;
         const err = libuv.uv_interface_addresses(&ifaces, &count);
@@ -604,8 +597,7 @@ pub const OS = struct {
                 .errno = err,
                 .syscall = bun.String.static("uv_interface_addresses"),
             };
-            globalThis.vm().throwError(globalThis, sys_err.toErrorInstance(globalThis));
-            return .zero;
+            return globalThis.throwValue(sys_err.toErrorInstance(globalThis));
         }
         defer libuv.uv_free_interface_addresses(ifaces, count);
 
@@ -691,7 +683,7 @@ pub const OS = struct {
 
             // Does this entry already exist?
             const interface_name = bun.span(iface.name);
-            if (ret.get(globalThis, interface_name)) |array| {
+            if (ret.get_unsafe(globalThis, interface_name)) |array| {
                 // Add this interface entry to the existing array
                 const next_index = @as(u32, @intCast(array.getLength(globalThis)));
                 array.putIndex(globalThis, next_index, interface);
@@ -707,22 +699,22 @@ pub const OS = struct {
         return ret;
     }
 
-    pub fn platform(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn platform(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
         return JSC.ZigString.init(Global.os_name).withEncoding().toJS(globalThis);
     }
 
-    pub fn release(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn release(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
         var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
         return JSC.ZigString.init(C.getRelease(&name_buffer)).withEncoding().toJS(globalThis);
     }
 
-    pub fn setPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn setPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
-        var args_ = callframe.arguments(2);
+        var args_ = callframe.arguments_old(2);
         var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
         if (arguments.len == 0) {
@@ -732,8 +724,7 @@ pub const OS = struct {
                 .{},
                 globalThis,
             );
-            globalThis.vm().throwError(globalThis, err);
-            return .undefined;
+            return globalThis.throwValue(err);
         }
 
         const pid = if (arguments.len == 2) arguments[0].coerce(i32, globalThis) else 0;
@@ -746,8 +737,7 @@ pub const OS = struct {
                 .{},
                 globalThis,
             );
-            globalThis.vm().throwError(globalThis, err);
-            return .undefined;
+            return globalThis.throwValue(err);
         }
 
         const errcode = C.setProcessPriority(pid, priority);
@@ -761,8 +751,7 @@ pub const OS = struct {
                     .syscall = bun.String.static("uv_os_setpriority"),
                 };
 
-                globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return .undefined;
+                return globalThis.throwValue(err.toErrorInstance(globalThis));
             },
             .ACCES => {
                 const err = JSC.SystemError{
@@ -773,8 +762,7 @@ pub const OS = struct {
                     .syscall = bun.String.static("uv_os_setpriority"),
                 };
 
-                globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return .undefined;
+                return globalThis.throwValue(err.toErrorInstance(globalThis));
             },
             else => {},
         }
@@ -782,13 +770,13 @@ pub const OS = struct {
         return .undefined;
     }
 
-    pub fn totalmem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn totalmem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
         return JSC.JSValue.jsNumberFromUint64(C.getTotalMemory());
     }
 
-    pub fn @"type"(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn @"type"(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
         if (comptime Environment.isWindows)
@@ -801,7 +789,7 @@ pub const OS = struct {
         return JSC.ZigString.init(Global.os_name).withEncoding().toJS(globalThis);
     }
 
-    pub fn uptime(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn uptime(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (Environment.isWindows) {
             var uptime_value: f64 = undefined;
             const err = libuv.uv_uptime(&uptime_value);
@@ -812,8 +800,7 @@ pub const OS = struct {
                     .errno = err,
                     .syscall = bun.String.static("uv_uptime"),
                 };
-                globalThis.vm().throwError(globalThis, sys_err.toErrorInstance(globalThis));
-                return .zero;
+                return globalThis.throwValue(sys_err.toErrorInstance(globalThis));
             }
             return JSC.JSValue.jsNumber(uptime_value);
         }
@@ -821,10 +808,10 @@ pub const OS = struct {
         return JSC.JSValue.jsNumberFromUint64(C.getSystemUptime());
     }
 
-    pub fn userInfo(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn userInfo(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const result = JSC.JSValue.createEmptyObject(globalThis, 5);
 
-        result.put(globalThis, JSC.ZigString.static("homedir"), homedir(globalThis, callframe));
+        result.put(globalThis, JSC.ZigString.static("homedir"), try homedir(globalThis, callframe));
 
         if (comptime Environment.isWindows) {
             result.put(globalThis, JSC.ZigString.static("username"), JSC.ZigString.init(bun.getenvZ("USERNAME") orelse "unknown").withEncoding().toJS(globalThis));
@@ -844,7 +831,7 @@ pub const OS = struct {
         return result;
     }
 
-    pub fn version(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn version(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
         var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
         return JSC.ZigString.init(C.getVersion(&name_buffer)).withEncoding().toJS(globalThis);
@@ -865,7 +852,7 @@ pub const OS = struct {
         };
     }
 
-    pub fn machine(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn machine(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
         return JSC.ZigString.static(comptime getMachineName()).toJS(globalThis);
     }

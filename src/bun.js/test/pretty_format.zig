@@ -294,7 +294,7 @@ pub const JestPrettyFormat = struct {
         // For detecting circular references
         pub const Visited = struct {
             const ObjectPool = @import("../../pool.zig").ObjectPool;
-            pub const Map = std.AutoHashMap(JSValue.Type, void);
+            pub const Map = std.AutoHashMap(JSValue, void);
             pub const Pool = ObjectPool(
                 Map,
                 struct {
@@ -915,7 +915,7 @@ pub const JestPrettyFormat = struct {
                     this.map = this.map_node.?.data;
                 }
 
-                const entry = this.map.getOrPut(@intFromEnum(value)) catch unreachable;
+                const entry = this.map.getOrPut(value) catch unreachable;
                 if (entry.found_existing) {
                     writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                     return;
@@ -924,7 +924,7 @@ pub const JestPrettyFormat = struct {
 
             defer {
                 if (comptime Format.canHaveCircularReferences()) {
-                    _ = this.map.remove(@intFromEnum(value));
+                    _ = this.map.remove(value);
                 }
             }
 
@@ -1235,7 +1235,7 @@ pub const JestPrettyFormat = struct {
                         blob.writeFormat(Formatter, this, writer_, enable_ansi_colors) catch {};
                         return;
                     } else if (value.as(JSC.DOMFormData) != null) {
-                        const toJSONFunction = value.get(this.globalThis, "toJSON").?;
+                        const toJSONFunction = value.get_unsafe(this.globalThis, "toJSON").?;
 
                         this.addForNewLine("FormData (entries) ".len);
                         writer.writeAll(comptime Output.prettyFmt("<r><blue>FormData<r> <d>(entries)<r> ", enable_ansi_colors));
@@ -1310,7 +1310,7 @@ pub const JestPrettyFormat = struct {
                     writer.writeAll(comptime Output.prettyFmt("<cyan>" ++ fmt ++ "<r>", enable_ansi_colors));
                 },
                 .Map => {
-                    const length_value = value.get(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
+                    const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
                     const length = length_value.toInt32();
 
                     const prev_quote_strings = this.quote_strings;
@@ -1338,7 +1338,7 @@ pub const JestPrettyFormat = struct {
                     writer.writeAll("\n");
                 },
                 .Set => {
-                    const length_value = value.get(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
+                    const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
                     const length = length_value.toInt32();
 
                     const prev_quote_strings = this.quote_strings;
@@ -1390,7 +1390,7 @@ pub const JestPrettyFormat = struct {
                 },
                 .Event => {
                     const event_type_value = brk: {
-                        const value_ = value.get(this.globalThis, "type") orelse break :brk JSValue.undefined;
+                        const value_ = value.get_unsafe(this.globalThis, "type") orelse break :brk JSValue.undefined;
                         if (value_.isString()) {
                             break :brk value_;
                         }
@@ -1490,7 +1490,7 @@ pub const JestPrettyFormat = struct {
 
                     defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit();
 
-                    if (value.get(this.globalThis, "type")) |type_value| {
+                    if (value.get_unsafe(this.globalThis, "type")) |type_value| {
                         const _tag = Tag.get(type_value, this.globalThis);
 
                         if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
@@ -1520,7 +1520,7 @@ pub const JestPrettyFormat = struct {
                     writer.writeAll(tag_name_slice.slice());
                     if (enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
 
-                    if (value.get(this.globalThis, "key")) |key_value| {
+                    if (value.get_unsafe(this.globalThis, "key")) |key_value| {
                         if (!key_value.isUndefinedOrNull()) {
                             if (needs_space)
                                 writer.writeAll(" key=")
@@ -1537,7 +1537,7 @@ pub const JestPrettyFormat = struct {
                         }
                     }
 
-                    if (value.get(this.globalThis, "props")) |props| {
+                    if (value.get_unsafe(this.globalThis, "props")) |props| {
                         const prev_quote_strings = this.quote_strings;
                         this.quote_strings = true;
                         defer this.quote_strings = prev_quote_strings;
@@ -1549,7 +1549,7 @@ pub const JestPrettyFormat = struct {
                         }).init(this.globalThis, props);
                         defer props_iter.deinit();
 
-                        const children_prop = props.get(this.globalThis, "children");
+                        const children_prop = props.get_unsafe(this.globalThis, "children");
                         if (props_iter.len > 0) {
                             {
                                 this.indent += 1;

@@ -1,6 +1,7 @@
 #include "JSBundlerPlugin.h"
 
 #include "BunProcess.h"
+#include "bun-native-bundler-plugin-api/bundler_plugin.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -31,7 +32,10 @@
 #include <JavaScriptCore/JSPromise.h>
 namespace Bun {
 
+#include "../../../packages/bun-native-bundler-plugin-api/bundler_plugin.h"
 extern "C" int OnBeforeParsePlugin__isDone(void* context);
+extern "C" int OnBeforeParseResult__reset(void* context);
+extern "C" int OnBeforeParseArguments__onFunctionPointerWithNoContext(void* args);
 
 #define WRAP_BUNDLER_PLUGIN(argName) jsNumber(bitwise_cast<double>(reinterpret_cast<uintptr_t>(argName)))
 #define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(bitwise_cast<uintptr_t>(callFrame->argument(0).asDouble()))
@@ -288,6 +292,7 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
     for (size_t i = 0, total = callbacks.size(); i < total && *shouldContinue; ++i) {
         Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
 
+        // Need to lock the mutex to access the regular expression
         {
             std::lock_guard<std::mutex> lock(*group->at(i).second);
             if (group->at(i).first.match(path) > -1) {

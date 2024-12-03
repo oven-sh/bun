@@ -1464,6 +1464,7 @@ pub const BundleV2 = struct {
 
     pub fn processFilesToCopy(this: *BundleV2, reachable_files: []const Index) !void {
         if (this.graph.estimated_file_loader_count > 0) {
+            const file_allocators = this.graph.input_files.items(.allocator);
             const unique_key_for_additional_files = this.graph.input_files.items(.unique_key_for_additional_file);
             const content_hashes_for_additional_files = this.graph.input_files.items(.content_hash_for_additional_file);
             const sources = this.graph.input_files.items(.source);
@@ -1500,7 +1501,7 @@ pub const BundleV2 = struct {
                     additional_output_files.append(options.OutputFile.init(.{
                         .data = .{ .buffer = .{
                             .data = source.contents,
-                            .allocator = bun.default_allocator,
+                            .allocator = file_allocators[index],
                         } },
                         .size = source.contents.len,
                         .output_path = std.fmt.allocPrint(bun.default_allocator, "{}", .{template}) catch bun.outOfMemory(),
@@ -2704,7 +2705,16 @@ pub const BundleV2 = struct {
         const trace = tracer(@src(), "onParseTaskComplete");
         defer trace.end();
         if (parse_result.external.function != null) {
-            this.finalizers.append(bun.default_allocator, parse_result.external) catch bun.outOfMemory();
+            const source = switch (parse_result.value) {
+                inline .empty, .err => |data| data.source_index.get(),
+                .success => |val| val.source.index.get(),
+            };
+            const loader: Loader = this.graph.input_files.items(.loader)[source];
+            if (!loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
+                this.finalizers.append(bun.default_allocator, parse_result.external) catch bun.outOfMemory();
+            } else {
+                this.graph.input_files.items(.allocator)[source] = ExternalFreeFunctionAllocator.create(@ptrCast(parse_result.external.function.?), parse_result.external.ctx.?);
+            }
         }
 
         defer bun.default_allocator.destroy(parse_result);
@@ -3246,6 +3256,9 @@ pub const ParseTask = struct {
         ctx: *BundleV2,
         value: Value,
         watcher_data: WatcherData,
+        /// This is used for native onBeforeParsePlugins to store
+        /// a function pointer and context pointer to free the
+        /// returned source code by the plugin.
         external: CacheEntry.External = .{},
 
         pub const Value = union(enum) {
@@ -3769,6 +3782,7 @@ pub const ParseTask = struct {
         file_path: *Fs.Path,
         loader: *Loader,
         experimental_css: bool,
+        from_plugin: *bool,
     ) !CacheEntry {
         const might_have_on_parse_plugins = brk: {
             if (task.source_index.isRuntime()) break :brk false;
@@ -3800,7 +3814,7 @@ pub const ParseTask = struct {
             .should_continue_running = &should_continue_running,
         };
 
-        return try ctx.run(task.ctx.plugins.?);
+        return try ctx.run(task.ctx.plugins.?, from_plugin);
     }
 
     const OnBeforeParsePlugin = struct {
@@ -3925,6 +3939,12 @@ pub const ParseTask = struct {
             }
         };
 
+        const OnBeforeParseResultWrapper = struct {
+            original_source: ?[]const u8 = null,
+            loader: Loader,
+            impl: OnBeforeParseResult,
+        };
+
         const OnBeforeParseResult = extern struct {
             struct_size: usize = @sizeOf(OnBeforeParseResult),
             source_ptr: ?[*]const u8 = null,
@@ -3977,6 +3997,19 @@ pub const ParseTask = struct {
             return 0;
         }
 
+        pub export fn OnBeforeParseResult__reset(result: *OnBeforeParseResult) void {
+            const wrapper: *OnBeforeParseResultWrapper = @fieldParentPtr("impl", result);
+
+            result.* = OnBeforeParseResult{
+                .loader = wrapper.loader,
+            };
+
+            if (wrapper.original_source) |original_source| {
+                result.source_ptr = original_source.ptr;
+                result.source_len = original_source.len;
+            }
+        }
+
         pub export fn OnBeforeParsePlugin__isDone(this: *OnBeforeParsePlugin) i32 {
             if (this.should_continue_running.* != 1) {
                 return 1;
@@ -3990,7 +4023,17 @@ pub const ParseTask = struct {
             return 0;
         }
 
-        pub fn run(this: *OnBeforeParsePlugin, plugin: *JSC.API.JSBundler.Plugin) !CacheEntry {
+        pub export fn OnBeforeParseArguments__onFunctionPointerWithNoContext(args: *OnBeforeParseArguments) void {
+            var msg = Logger.Msg{ .data = .{ .location = null, .text = bun.default_allocator.dupe(
+                u8,
+                "Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field.",
+            ) catch bun.outOfMemory() } };
+            msg.kind = .err;
+            args.context.log.errors += 1;
+            args.context.log.addMsg(msg) catch bun.outOfMemory();
+        }
+
+        pub fn run(this: *OnBeforeParsePlugin, plugin: *JSC.API.JSBundler.Plugin, from_plugin: *bool) !CacheEntry {
             var args = OnBeforeParseArguments{
                 .context = this,
                 .path_ptr = this.file_path.text.ptr,
@@ -4001,10 +4044,14 @@ pub const ParseTask = struct {
                 args.namespace_ptr = this.file_path.namespace.ptr;
                 args.namespace_len = this.file_path.namespace.len;
             }
-            var result = OnBeforeParseResult{
+            var wrapper = OnBeforeParseResultWrapper{
                 .loader = this.loader.*,
+                .impl = OnBeforeParseResult{
+                    .loader = this.loader.*,
+                },
             };
-            this.result = &result;
+            this.result = &wrapper.impl;
+            const result = &wrapper.impl;
             const count = plugin.callOnBeforeParsePlugins(
                 this,
                 if (bun.strings.eqlComptime(this.file_path.namespace, "file"))
@@ -4014,7 +4061,7 @@ pub const ParseTask = struct {
 
                 &bun.String.init(this.file_path.text),
                 &args,
-                this.result,
+                result,
                 this.should_continue_running,
             );
             if (comptime Environment.enable_logs)
@@ -4026,6 +4073,19 @@ pub const ParseTask = struct {
                     }
 
                     return err;
+                }
+
+                // If the plugin sets the `free_user_context` function pointer, it _must_ set the `user_context` pointer.
+                // Otherwise this is just invalid behavior.
+                if (result.user_context == null and result.free_user_context != null) {
+                    var msg = Logger.Msg{ .data = .{ .location = null, .text = bun.default_allocator.dupe(
+                        u8,
+                        "Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field.",
+                    ) catch bun.outOfMemory() } };
+                    msg.kind = .err;
+                    args.context.log.errors += 1;
+                    args.context.log.addMsg(msg) catch bun.outOfMemory();
+                    return error.InvalidNativePlugin;
                 }
 
                 if (this.log.errors > 0) {
@@ -4043,6 +4103,7 @@ pub const ParseTask = struct {
                             .function = result.free_user_context,
                         };
                     }
+                    from_plugin.* = true;
                     this.loader.* = result.loader;
                     return CacheEntry{
                         .contents = ptr[0..result.source_len],
@@ -4074,9 +4135,8 @@ pub const ParseTask = struct {
         step.* = .read_file;
         var loader = task.loader orelse file_path.loader(&bundler.options.loaders) orelse options.Loader.file;
 
-        const original_contents_or_fd = task.contents_or_fd;
-        _ = original_contents_or_fd; // autofix
-        var entry = try getCodeForParseTask(task, log, bundler, resolver, allocator, &file_path, &loader, this.ctx.bundler.options.experimental_css);
+        var contents_came_from_plugin: bool = false;
+        var entry = try getCodeForParseTask(task, log, bundler, resolver, allocator, &file_path, &loader, this.ctx.bundler.options.experimental_css, &contents_came_from_plugin);
 
         // WARNING: Do not change the variant of `task.contents_or_fd` from
         // `.fd` to `.contents` (or back) after this point!
@@ -4774,6 +4834,7 @@ pub const Graph = struct {
         source: Logger.Source,
         loader: options.Loader = options.Loader.file,
         side_effects: _resolver.SideEffects,
+        allocator: std.mem.Allocator = bun.default_allocator,
         additional_files: BabyList(AdditionalFile) = .{},
         unique_key_for_additional_file: string = "",
         content_hash_for_additional_file: u64 = 0,
@@ -15479,3 +15540,38 @@ pub fn generateUniqueKey() u64 {
     }
     return key;
 }
+
+const ExternalFreeFunctionAllocator = struct {
+    free_callback: *const fn (ctx: *anyopaque) void,
+    context: *anyopaque,
+
+    const vtable: std.mem.Allocator.VTable = .{
+        .alloc = &alloc,
+        .free = &free,
+        .resize = &resize,
+    };
+
+    pub fn create(free_callback: *const fn (ctx: *anyopaque) void, context: *anyopaque) std.mem.Allocator {
+        return .{
+            .ptr = bun.create(bun.default_allocator, ExternalFreeFunctionAllocator, .{
+                .free_callback = free_callback,
+                .context = context,
+            }),
+            .vtable = &vtable,
+        };
+    }
+
+    fn alloc(_: *anyopaque, _: usize, _: u8, _: usize) ?[*]u8 {
+        return null;
+    }
+
+    fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
+        return false;
+    }
+
+    fn free(ext_free_function: *anyopaque, _: []u8, _: u8, _: usize) void {
+        const info: *ExternalFreeFunctionAllocator = @alignCast(@ptrCast(ext_free_function));
+        info.free_callback(info.context);
+        bun.default_allocator.destroy(info);
+    }
+};

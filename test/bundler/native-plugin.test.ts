@@ -1,12 +1,12 @@
-import { plugin } from "bun";
+import { BunFile, Loader, plugin } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import path, { dirname, join, resolve } from "path";
 import source from "./native_plugin.c" with { type: "file" };
-import bundlerPluginHeader from "../../../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
+import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { itBundled } from "bundler/expectBundled";
 
-describe("native-plugins", () => {
+describe("native-plugins", async () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";
@@ -36,9 +36,11 @@ describe("native-plugins", () => {
       "index.ts": /* ts */ `import values from "./stuff.ts";
 import json from "./lmao.json";
 const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
+const many_bar = ["bar","bar","bar","bar","bar","bar","bar"]
+const many_baz = ["baz","baz","baz","baz","baz","baz","baz"]
 console.log(JSON.stringify(json));
 values;`,
-      "stuff.ts": `export default { foo: "bar" }`,
+      "stuff.ts": `export default { foo: "bar", baz: "baz" }`,
       "lmao.json": ``,
       "binding.gyp": /* gyp */ `{
         "targets": [
@@ -390,4 +392,235 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
     expect(compilationCtxFreedCount).toBe(0);
   });
+
+  // it("prints name when plugin crashes", async () => {
+  //   const prelude = /* ts */ `import values from "./stuff.ts"
+  // const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
+  //     `;
+  //   await Bun.$`echo ${prelude} > index.ts`;
+
+  //   const build_code = /* ts */ `
+  //   import * as path from "path";
+  //   const tempdir = process.env.BUN_TEST_TEMP_DIR;
+  //   const filter = /\.ts/;
+  //   console.log('Running this shit man', tempdir);
+  //   const resultPromise = await Bun.build({
+  //     outdir: "dist",
+  //     entrypoints: [path.join(tempdir, "index.ts")],
+  //     plugins: [
+  //       {
+  //         name: "xXx123_foo_counter_321xXx",
+  //         setup(build) {
+  //   const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+  //   const external = napiModule.createExternal();
+  //           napiModule.setWillCrash(external, true);
+
+  //           build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl", external });
+
+  //           build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
+  //             await defer();
+  //             let count = 0;
+  //             try {
+  //               count = napiModule.getFooCount(external);
+  //             } catch (e) {}
+  //             return {
+  //               contents: JSON.stringify({ fooCount: count }),
+  //               loader: "json",
+  //             };
+  //           });
+  //         },
+  //       },
+  //     ],
+  //   });
+  //   console.log(resultPromise);
+  //   `;
+
+  //   await Bun.$`echo ${build_code} > build.ts`;
+  //   const { stdout, stderr } = await Bun.$`BUN_TEST_TEMP_DIR=${tempdir} ${bunExe()} run build.ts`.throws(false);
+  //   console.log("stdout", stdout.toString());
+  //   console.log("stderr", stderr.toString().length, stderr.toString());
+  //   const errorString = stdout.toString();
+  //   expect(errorString).toContain('crash while running the "xXx123_foo_counter_321xXx" native plugin');
+  // });
+
+  it("detects when plugin sets function pointer but does not user context pointer", async () => {
+    const filter = /\.ts/;
+
+    const prelude = /* ts */ `import values from "./stuff.ts"
+  const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
+      `;
+    await Bun.$`echo ${prelude} > index.ts`;
+
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+
+    const resultPromise = Bun.build({
+      outdir,
+      entrypoints: [path.join(tempdir, "index.ts")],
+      plugins: [
+        {
+          name: "xXx123_foo_counter_321xXx",
+          setup(build) {
+            build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl_bad_free_function_pointer", external });
+
+            build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
+              await defer();
+              let count = 0;
+              try {
+                count = napiModule.getFooCount(external);
+              } catch (e) {}
+              return {
+                contents: JSON.stringify({ fooCount: count }),
+                loader: "json",
+              };
+            });
+          },
+        },
+      ],
+    });
+
+    const result = await resultPromise;
+
+    if (result.success) console.log(result);
+    expect(result.success).toBeFalse();
+    const log = result.logs[0];
+    expect(log.message).toContain(
+      "Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field.",
+    );
+    expect(log.level).toBe("error");
+
+    const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
+    expect(compilationCtxFreedCount).toBe(0);
+  });
+
+  it("should use result of the first plugin that runs and doesn't execute the others", async () => {
+    const filter = /\.ts/;
+
+    const prelude = /* ts */ `import values from "./stuff.ts"
+import json from "./lmao.json";
+  const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
+  const many_bar = ["bar","bar","bar","bar","bar","bar","bar"]
+  const many_baz = ["baz","baz","baz","baz","baz","baz","baz"]
+console.log(JSON.stringify(json))
+      `;
+    await Bun.$`echo ${prelude} > index.ts`;
+
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+
+    const resultPromise = Bun.build({
+      outdir,
+      entrypoints: [path.join(tempdir, "index.ts")],
+      plugins: [
+        {
+          name: "xXx123_foo_counter_321xXx",
+          setup(build) {
+            build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl", external });
+            build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl_bar", external });
+            build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl_baz", external });
+
+            build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
+              await defer();
+              let fooCount = 0;
+              let barCount = 0;
+              let bazCount = 0;
+              try {
+                fooCount = napiModule.getFooCount(external);
+                barCount = napiModule.getBarCount(external);
+                bazCount = napiModule.getBazCount(external);
+              } catch (e) {}
+              return {
+                contents: JSON.stringify({ fooCount, barCount, bazCount }),
+                loader: "json",
+              };
+            });
+          },
+        },
+      ],
+    });
+
+    const result = await resultPromise;
+
+    if (result.success) console.log(result);
+    expect(result.success).toBeTrue();
+
+    const output = await Bun.$`${bunExe()} run dist/index.js`.cwd(tempdir).json();
+
+    expect(output).toStrictEqual({ fooCount: 9, barCount: 0, bazCount: 0 });
+
+    const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
+    expect(compilationCtxFreedCount).toBe(2);
+  });
+
+  type AdditionalFile = {
+    name: string;
+    contents: BunFile | string;
+    loader: Loader;
+  };
+  const additional_files: AdditionalFile[] = [
+    {
+      name: "bun.png",
+      contents: await Bun.file(path.join(import.meta.dir, "../integration/sharp/bun.png")),
+      loader: "file",
+    },
+    {
+      name: "index.js",
+      contents: /* ts */ `console.log('HELLO FRIENDS')`,
+      loader: "js",
+    },
+    {
+      name: "index.ts",
+      contents: /* ts */ `console.log('HELLO FRIENDS')`,
+      loader: "ts",
+    },
+    {
+      name: "lmao.jsx",
+      contents: /* ts */ `console.log('HELLO FRIENDS')`,
+      loader: "jsx",
+    },
+    {
+      name: "lmao.tsx",
+      contents: /* ts */ `console.log('HELLO FRIENDS')`,
+      loader: "tsx",
+    },
+    {
+      name: "lmao.toml",
+      contents: /* toml */ `foo = "bar"`,
+      loader: "toml",
+    },
+    {
+      name: "lmao.text",
+      contents: "HELLO FRIENDS",
+      loader: "text",
+    },
+  ];
+
+  for (const { name, contents, loader } of additional_files) {
+    it(`works with ${loader} loader`, async () => {
+      await Bun.$`echo ${contents} > ${name}`;
+      const source = /* ts */ `import foo from "./${name}";
+      console.log(foo);`;
+      await Bun.$`echo ${source} > index.ts`;
+
+      const result = await Bun.build({
+        outdir,
+        entrypoints: [path.join(tempdir, "index.ts")],
+        plugins: [
+          {
+            name: "test",
+            setup(build) {
+              const ext = name.split(".").pop()!;
+              const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+
+              // Construct regexp to match the file extension
+              const filter = new RegExp(`\\.${ext}$`);
+              build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl" });
+            },
+          },
+        ],
+      });
+
+      expect(result.success).toBeTrue();
+    });
+  }
 });

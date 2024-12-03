@@ -428,9 +428,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
     JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(globalObject, exportsValue));
 
-
     // TODO: think about the finalizer here
-    auto *meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+    auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
     Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr);
     bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     ASSERT(success);

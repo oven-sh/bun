@@ -17,7 +17,7 @@ int getRSS(size_t* rss);
 
 using namespace JSC;
 
-void *bunDlopen(JSC::JSGlobalObject * globalObject, JSC::ThrowScope& scope, WTF::String& filename);
+void* bunDlopen(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, WTF::String& filename);
 
 class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;

@@ -12,7 +12,7 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
-typedef struct  {
+typedef struct {
     /// The result of call to dlopen to load the module
     void* dlopenHandle;
 } NapiModuleMeta;

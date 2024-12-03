@@ -1005,7 +1005,7 @@ extern "C" void napi_module_register(napi_module* mod)
         return;
     }
 
-    auto *meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+    auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
 
     // TODO: think about the finalizer here
     Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr);

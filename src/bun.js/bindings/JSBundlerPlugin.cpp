@@ -34,8 +34,6 @@ namespace Bun {
 
 #include "../../../packages/bun-native-bundler-plugin-api/bundler_plugin.h"
 extern "C" int OnBeforeParsePlugin__isDone(void* context);
-extern "C" int OnBeforeParseResult__reset(void* context);
-extern "C" int OnBeforeParseArguments__onFunctionPointerWithNoContext(void* args);
 
 #define WRAP_BUNDLER_PLUGIN(argName) jsNumber(bitwise_cast<double>(reinterpret_cast<uintptr_t>(argName)))
 #define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(bitwise_cast<uintptr_t>(callFrame->argument(0).asDouble()))

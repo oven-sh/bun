@@ -3997,19 +3997,6 @@ pub const ParseTask = struct {
             return 0;
         }
 
-        pub export fn OnBeforeParseResult__reset(result: *OnBeforeParseResult) void {
-            const wrapper: *OnBeforeParseResultWrapper = @fieldParentPtr("impl", result);
-
-            result.* = OnBeforeParseResult{
-                .loader = wrapper.loader,
-            };
-
-            if (wrapper.original_source) |original_source| {
-                result.source_ptr = original_source.ptr;
-                result.source_len = original_source.len;
-            }
-        }
-
         pub export fn OnBeforeParsePlugin__isDone(this: *OnBeforeParsePlugin) i32 {
             if (this.should_continue_running.* != 1) {
                 return 1;
@@ -4023,16 +4010,6 @@ pub const ParseTask = struct {
             return 0;
         }
 
-        pub export fn OnBeforeParseArguments__onFunctionPointerWithNoContext(args: *OnBeforeParseArguments) void {
-            var msg = Logger.Msg{ .data = .{ .location = null, .text = bun.default_allocator.dupe(
-                u8,
-                "Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field.",
-            ) catch bun.outOfMemory() } };
-            msg.kind = .err;
-            args.context.log.errors += 1;
-            args.context.log.addMsg(msg) catch bun.outOfMemory();
-        }
-
         pub fn run(this: *OnBeforeParsePlugin, plugin: *JSC.API.JSBundler.Plugin, from_plugin: *bool) !CacheEntry {
             var args = OnBeforeParseArguments{
                 .context = this,
@@ -4044,14 +4021,10 @@ pub const ParseTask = struct {
                 args.namespace_ptr = this.file_path.namespace.ptr;
                 args.namespace_len = this.file_path.namespace.len;
             }
-            var wrapper = OnBeforeParseResultWrapper{
+            var result = OnBeforeParseResult{
                 .loader = this.loader.*,
-                .impl = OnBeforeParseResult{
-                    .loader = this.loader.*,
-                },
             };
-            this.result = &wrapper.impl;
-            const result = &wrapper.impl;
+            this.result = &result;
             const count = plugin.callOnBeforeParsePlugins(
                 this,
                 if (bun.strings.eqlComptime(this.file_path.namespace, "file"))

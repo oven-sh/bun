@@ -116,7 +116,7 @@ export function renderRoutesForProdStatic(
         [pageModule, ...layouts] = anyPromise ? await Promise.all(loaded) : loaded;
       } else {
         const id = fileList[0];
-        pageModule = loadedModules[id] ?? (loadedModules[id] = await import(allServerFiles[fileList[0]]));
+        pageModule = loadedModules[id] ?? (loadedModules[id] = await import(allServerFiles[id]));
         layouts = [];
       }
 

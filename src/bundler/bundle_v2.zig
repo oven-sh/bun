@@ -325,7 +325,11 @@ const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, top_level_dir: string, allocator: std.mem.Allocator) !Fs.Path {
     // TODO: outbase
     var buf: bun.PathBuffer = undefined;
-    if (path.isFile()) {
+
+    // "file" namespace should use the relative file path for its display name.
+    // the "node" namespace is also put through this code path so that the
+    // "node:" prefix is not emitted.
+    if (path.isFile() or bun.strings.eqlComptime(path.namespace, "node")) {
         const rel = bun.path.relativePlatform(top_level_dir, path.text, .loose, false);
         var path_clone = path;
         // stack-allocated temporary is not leaked because dupeAlloc on the path will
@@ -2939,7 +2943,9 @@ pub const BundleV2 = struct {
                 graph.ast.set(result.source.index.get(), result.ast);
 
                 // For files with use directives, index and prepare the other side.
-                if (result.use_directive != .none and
+                if (result.use_directive != .none and if (this.framework.?.server_components.?.separate_ssr_graph)
+                    ((result.use_directive == .client) == (result.ast.target == .browser))
+                else
                     ((result.use_directive == .client) != (result.ast.target == .browser)))
                 {
                     if (result.use_directive == .server)

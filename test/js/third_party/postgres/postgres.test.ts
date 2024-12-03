@@ -11,7 +11,7 @@ describe.skipIf(!databaseUrl)("postgres", () => {
       const [{ version }] = await sql`SELECT version()`;
       expect(version).toMatch(/PostgreSQL/);
     } finally {
-      sql.end();
+      await sql.end();
     }
   });
 
@@ -34,7 +34,7 @@ describe.skipIf(!databaseUrl)("postgres", () => {
         await Promise.all(batch);
       }
     } finally {
-      sql.end();
+      await sql.end();
     }
   });
 

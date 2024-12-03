@@ -6483,7 +6483,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const base_url = try bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/"));
             errdefer bun.default_allocator.free(base_url);
 
-            const dev_server = if (config.bake) |*bake_options| dev_server: {
+            const dev_server: ?*bun.bake.DevServer = if (config.bake) |*bake_options| dev_server: {
                 bun.bake.printWarning();
 
                 break :dev_server try bun.bake.DevServer.init(.{

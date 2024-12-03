@@ -436,8 +436,7 @@ fn toUpper(slice: []u8) void {
 
 pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) bun.JSError!JSValue {
     const bio = BoringSSL.BIO_new(BoringSSL.BIO_s_mem()) orelse {
-        globalObject.throw("Failed to create BIO", .{});
-        return .zero;
+        return globalObject.throw("Failed to create BIO", .{});
     };
     defer _ = BoringSSL.BIO_free(bio);
     var result = JSValue.createEmptyObject(globalObject, 8);
@@ -485,8 +484,7 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) bun.JSError!JS
 
                 const size = BoringSSL.i2d_RSA_PUBKEY(rsa, null);
                 if (size <= 0) {
-                    globalObject.throw("Failed to get public key length", .{});
-                    return .zero;
+                    return globalObject.throw("Failed to get public key length", .{});
                 }
 
                 var buffer = JSValue.createBufferFromLength(globalObject, @as(usize, @intCast(size)));
@@ -515,8 +513,7 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) bun.JSError!JS
                     const form = BoringSSL.EC_KEY_get_conv_form(ec);
                     const size = BoringSSL.EC_POINT_point2oct(group, point, form, null, 0, null);
                     if (size <= 0) {
-                        globalObject.throw("Failed to get public key length", .{});
-                        return .zero;
+                        return globalObject.throw("Failed to get public key length", .{});
                     }
 
                     var buffer = JSValue.createBufferFromLength(globalObject, @as(usize, @intCast(size)));

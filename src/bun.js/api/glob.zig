@@ -63,7 +63,7 @@ const ScanOpts = struct {
                 .result => |cwd| cwd,
                 .err => |err| {
                     const errJs = err.toJSC(globalThis);
-                    return globalThis.throwValue2(errJs);
+                    return globalThis.throwValue(errJs);
                 },
             };
 
@@ -76,7 +76,7 @@ const ScanOpts = struct {
         };
 
         if (cwd_str.len > bun.MAX_PATH_BYTES) {
-            return globalThis.throw2("{s}: invalid `cwd`, longer than {d} bytes", .{ fnName, bun.MAX_PATH_BYTES });
+            return globalThis.throw("{s}: invalid `cwd`, longer than {d} bytes", .{ fnName, bun.MAX_PATH_BYTES });
         }
 
         return cwd_str;
@@ -103,8 +103,7 @@ const ScanOpts = struct {
                 }
                 return out;
             }
-            globalThis.throw("{s}: expected first argument to be an object", .{fnName});
-            return error.JSError;
+            return globalThis.throw("{s}: expected first argument to be an object", .{fnName});
         }
 
         if (try optsObj.getTruthy(globalThis, "onlyFiles")) |only_files| {
@@ -125,8 +124,7 @@ const ScanOpts = struct {
 
         if (try optsObj.getTruthy(globalThis, "cwd")) |cwdVal| {
             if (!cwdVal.isString()) {
-                globalThis.throw("{s}: invalid `cwd`, not a string", .{fnName});
-                return error.JSError;
+                return globalThis.throw("{s}: invalid `cwd`, not a string", .{fnName});
             }
 
             {
@@ -258,7 +256,7 @@ fn makeGlobWalker(
             only_files,
         )) {
             .err => |err| {
-                return globalThis.throwValue2(err.toJSC(globalThis));
+                return globalThis.throwValue(err.toJSC(globalThis));
             },
             else => {},
         }
@@ -275,7 +273,7 @@ fn makeGlobWalker(
         only_files,
     )) {
         .err => |err| {
-            return globalThis.throwValue2(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJSC(globalThis));
         },
         else => {},
     }
@@ -289,11 +287,11 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const pat_arg: JSValue = arguments.nextEat() orelse {
-        return globalThis.throw2("Glob.constructor: expected 1 arguments, got 0", .{});
+        return globalThis.throw("Glob.constructor: expected 1 arguments, got 0", .{});
     };
 
     if (!pat_arg.isString()) {
-        return globalThis.throw2("Glob.constructor: first argument is not a string", .{});
+        return globalThis.throw("Glob.constructor: first argument is not a string", .{});
     }
 
     const pat_str: []u8 = @constCast((pat_arg.toSliceClone(globalThis) orelse return error.JSError).slice());
@@ -380,7 +378,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
 
     switch (try globWalker.walk()) {
         .err => |err| {
-            return globalThis.throwValue2(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJSC(globalThis));
         },
         .result => {},
     }
@@ -399,13 +397,11 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const str_arg = arguments.nextEat() orelse {
-        globalThis.throw("Glob.matchString: expected 1 arguments, got 0", .{});
-        return .zero;
+        return globalThis.throw("Glob.matchString: expected 1 arguments, got 0", .{});
     };
 
     if (!str_arg.isString()) {
-        globalThis.throw("Glob.matchString: first argument is not a string", .{});
-        return .zero;
+        return globalThis.throw("Glob.matchString: first argument is not a string", .{});
     }
 
     var str = str_arg.toSlice(globalThis, arena.allocator());

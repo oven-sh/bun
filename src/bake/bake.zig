@@ -141,7 +141,7 @@ pub const SplitBundlerOptions = struct {
                         _ = val;
                     },
                     .rejected => |err| {
-                        return global.throwValue2(err);
+                        return global.throwValue(err);
                     },
                 }
             }

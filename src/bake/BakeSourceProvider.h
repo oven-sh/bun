@@ -6,11 +6,6 @@
 
 namespace Bake {
 
-struct LoadServerCodeResult {
-  JSC::JSInternalPromise* promise;
-  JSC::JSString* key;
-};
-
 class DevSourceProvider final : public JSC::StringSourceProvider {
 public:
     static Ref<DevSourceProvider> create(

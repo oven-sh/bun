@@ -117,7 +117,7 @@ for (let i = 0; i < moduleList.length; i++) {
 ${importStatements.join("\n")}
 
 ${processed.result.slice(1).trim()}
-$$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
+;$$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
 `;
 
     // Attempt to optimize "$exports = ..." to a variableless return

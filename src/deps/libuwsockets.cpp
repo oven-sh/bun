@@ -9,7 +9,14 @@
 extern "C" const char* ares_inet_ntop(int af, const char *src, char *dst, size_t size);
 
 #define uws_res_r uws_res_t* nonnull_arg 
+static inline std::string_view stringViewFromC(const char* message, size_t length) {
+  if(length) {
+    return std::string_view(message, length);
+  }
 
+  return std::string_view();
+  
+}
 extern "C"
 {
 
@@ -471,10 +478,10 @@ extern "C"
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      return uwsApp->numSubscribers(std::string_view(topic, topic_length));
+      return uwsApp->numSubscribers(stringViewFromC(topic, topic_length));
     }
     uWS::App *uwsApp = (uWS::App *)app;
-    return uwsApp->numSubscribers(std::string_view(topic, topic_length));
+    return uwsApp->numSubscribers(stringViewFromC(topic, topic_length));
   }
   bool uws_publish(int ssl, uws_app_t *app, const char *topic,
                    size_t topic_length, const char *message,
@@ -483,13 +490,13 @@ extern "C"
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      return uwsApp->publish(std::string_view(topic, topic_length),
-                             std::string_view(message, message_length),
+      return uwsApp->publish(stringViewFromC(topic, topic_length),
+                             stringViewFromC(message, message_length),
                              (uWS::OpCode)(unsigned char)opcode, compress);
     }
     uWS::App *uwsApp = (uWS::App *)app;
-    return uwsApp->publish(std::string_view(topic, topic_length),
-                           std::string_view(message, message_length),
+    return uwsApp->publish(stringViewFromC(topic, topic_length),
+                           stringViewFromC(message, message_length),
                            (uWS::OpCode)(unsigned char)opcode, compress);
   }
   void *uws_get_native_handle(int ssl, uws_app_t *app)
@@ -747,12 +754,12 @@ extern "C"
     {
       uWS::WebSocket<true, true, void *> *uws =
           (uWS::WebSocket<true, true, void *> *)ws;
-      return (uws_sendstatus_t)uws->send(std::string_view(message, length),
+      return (uws_sendstatus_t)uws->send(stringViewFromC(message, length),
                                          (uWS::OpCode)(unsigned char)opcode);
     }
     uWS::WebSocket<false, true, void *> *uws =
         (uWS::WebSocket<false, true, void *> *)ws;
-    return (uws_sendstatus_t)uws->send(std::string_view(message, length),
+    return (uws_sendstatus_t)uws->send(stringViewFromC(message, length),
                                        (uWS::OpCode)(unsigned char)opcode);
   }
 
@@ -765,7 +772,7 @@ extern "C"
     {
       uWS::WebSocket<true, true, void *> *uws =
           (uWS::WebSocket<true, true, void *> *)ws;
-      return (uws_sendstatus_t)uws->send(std::string_view(message, length),
+      return (uws_sendstatus_t)uws->send(stringViewFromC(message, length),
                                          (uWS::OpCode)(unsigned char)opcode,
                                          compress, fin);
     }
@@ -774,7 +781,7 @@ extern "C"
 
       uWS::WebSocket<false, true, void *> *uws =
           (uWS::WebSocket<false, true, void *> *)ws;
-      return (uws_sendstatus_t)uws->send(std::string_view(message, length),
+      return (uws_sendstatus_t)uws->send(stringViewFromC(message, length),
                                          (uWS::OpCode)(unsigned char)opcode,
                                          compress, fin);
     }
@@ -789,11 +796,11 @@ extern "C"
       uWS::WebSocket<true, true, void *> *uws =
           (uWS::WebSocket<true, true, void *> *)ws;
       return (uws_sendstatus_t)uws->sendFragment(
-          std::string_view(message, length), compress);
+          stringViewFromC(message, length), compress);
     }
     uWS::WebSocket<false, true, void *> *uws =
         (uWS::WebSocket<false, true, void *> *)ws;
-    return (uws_sendstatus_t)uws->sendFragment(std::string_view(message, length),
+    return (uws_sendstatus_t)uws->sendFragment(stringViewFromC(message, length),
                                                compress);
   }
   uws_sendstatus_t uws_ws_send_first_fragment(int ssl, uws_websocket_t *ws,
@@ -805,12 +812,12 @@ extern "C"
       uWS::WebSocket<true, true, void *> *uws =
           (uWS::WebSocket<true, true, void *> *)ws;
       return (uws_sendstatus_t)uws->sendFirstFragment(
-          std::string_view(message, length), uWS::OpCode::BINARY, compress);
+          stringViewFromC(message, length), uWS::OpCode::BINARY, compress);
     }
     uWS::WebSocket<false, true, void *> *uws =
         (uWS::WebSocket<false, true, void *> *)ws;
     return (uws_sendstatus_t)uws->sendFirstFragment(
-        std::string_view(message, length), uWS::OpCode::BINARY, compress);
+        stringViewFromC(message, length), uWS::OpCode::BINARY, compress);
   }
   uws_sendstatus_t
   uws_ws_send_first_fragment_with_opcode(int ssl, uws_websocket_t *ws,
@@ -822,13 +829,13 @@ extern "C"
       uWS::WebSocket<true, true, void *> *uws =
           (uWS::WebSocket<true, true, void *> *)ws;
       return (uws_sendstatus_t)uws->sendFirstFragment(
-          std::string_view(message, length), (uWS::OpCode)(unsigned char)opcode,
+          stringViewFromC(message, length), (uWS::OpCode)(unsigned char)opcode,
           compress);
     }
     uWS::WebSocket<false, true, void *> *uws =
         (uWS::WebSocket<false, true, void *> *)ws;
     return (uws_sendstatus_t)uws->sendFirstFragment(
-        std::string_view(message, length), (uWS::OpCode)(unsigned char)opcode,
+        stringViewFromC(message, length), (uWS::OpCode)(unsigned char)opcode,
         compress);
   }
   uws_sendstatus_t uws_ws_send_last_fragment(int ssl, uws_websocket_t *ws,
@@ -840,12 +847,12 @@ extern "C"
       uWS::WebSocket<true, true, void *> *uws =
           (uWS::WebSocket<true, true, void *> *)ws;
       return (uws_sendstatus_t)uws->sendLastFragment(
-          std::string_view(message, length), compress);
+          stringViewFromC(message, length), compress);
     }
     uWS::WebSocket<false, true, void *> *uws =
         (uWS::WebSocket<false, true, void *> *)ws;
     return (uws_sendstatus_t)uws->sendLastFragment(
-        std::string_view(message, length), compress);
+        stringViewFromC(message, length), compress);
   }
 
   void uws_ws_end(int ssl, uws_websocket_t *ws, int code, const char *message,
@@ -855,13 +862,13 @@ extern "C"
     {
       uWS::WebSocket<true, true, void *> *uws =
           (uWS::WebSocket<true, true, void *> *)ws;
-      uws->end(code, std::string_view(message, length));
+      uws->end(code, stringViewFromC(message, length));
     }
     else
     {
       uWS::WebSocket<false, true, void *> *uws =
           (uWS::WebSocket<false, true, void *> *)ws;
-      uws->end(code, std::string_view(message, length));
+      uws->end(code, stringViewFromC(message, length));
     }
   }
 
@@ -891,11 +898,11 @@ extern "C"
     {
       uWS::WebSocket<true, true, void *> *uws =
           (uWS::WebSocket<true, true, void *> *)ws;
-      return uws->subscribe(std::string_view(topic, length));
+      return uws->subscribe(stringViewFromC(topic, length));
     }
     uWS::WebSocket<false, true, void *> *uws =
         (uWS::WebSocket<false, true, void *> *)ws;
-    return uws->subscribe(std::string_view(topic, length));
+    return uws->subscribe(stringViewFromC(topic, length));
   }
   bool uws_ws_unsubscribe(int ssl, uws_websocket_t *ws, const char *topic,
                           size_t length)
@@ -904,11 +911,11 @@ extern "C"
     {
       uWS::WebSocket<true, true, void *> *uws =
           (uWS::WebSocket<true, true, void *> *)ws;
-      return uws->unsubscribe(std::string_view(topic, length));
+      return uws->unsubscribe(stringViewFromC(topic, length));
     }
     uWS::WebSocket<false, true, void *> *uws =
         (uWS::WebSocket<false, true, void *> *)ws;
-    return uws->unsubscribe(std::string_view(topic, length));
+    return uws->unsubscribe(stringViewFromC(topic, length));
   }
 
   bool uws_ws_is_subscribed(int ssl, uws_websocket_t *ws, const char *topic,
@@ -918,11 +925,11 @@ extern "C"
     {
       uWS::WebSocket<true, true, void *> *uws =
           (uWS::WebSocket<true, true, void *> *)ws;
-      return uws->isSubscribed(std::string_view(topic, length));
+      return uws->isSubscribed(stringViewFromC(topic, length));
     }
     uWS::WebSocket<false, true, void *> *uws =
         (uWS::WebSocket<false, true, void *> *)ws;
-    return uws->isSubscribed(std::string_view(topic, length));
+    return uws->isSubscribed(stringViewFromC(topic, length));
   }
   void uws_ws_iterate_topics(int ssl, uws_websocket_t *ws,
                              void (*callback)(const char *topic, size_t length,
@@ -954,13 +961,13 @@ extern "C"
     {
       uWS::WebSocket<true, true, void *> *uws =
           (uWS::WebSocket<true, true, void *> *)ws;
-      return uws->publish(std::string_view(topic, topic_length),
-                          std::string_view(message, message_length));
+      return uws->publish(stringViewFromC(topic, topic_length),
+                          stringViewFromC(message, message_length));
     }
     uWS::WebSocket<false, true, void *> *uws =
         (uWS::WebSocket<false, true, void *> *)ws;
-    return uws->publish(std::string_view(topic, topic_length),
-                        std::string_view(message, message_length));
+    return uws->publish(stringViewFromC(topic, topic_length),
+                        stringViewFromC(message, message_length));
   }
 
   bool uws_ws_publish_with_options(int ssl, uws_websocket_t *ws,
@@ -972,14 +979,14 @@ extern "C"
     {
       uWS::WebSocket<true, true, void *> *uws =
           (uWS::WebSocket<true, true, void *> *)ws;
-      return uws->publish(std::string_view(topic, topic_length),
-                          std::string_view(message, message_length),
+      return uws->publish(stringViewFromC(topic, topic_length),
+                          stringViewFromC(message, message_length),
                           (uWS::OpCode)(unsigned char)opcode, compress);
     }
     uWS::WebSocket<false, true, void *> *uws =
         (uWS::WebSocket<false, true, void *> *)ws;
-    return uws->publish(std::string_view(topic, topic_length),
-                        std::string_view(message, message_length),
+    return uws->publish(stringViewFromC(topic, topic_length),
+                        stringViewFromC(message, message_length),
                         (uWS::OpCode)(unsigned char)opcode, compress);
   }
 
@@ -1042,13 +1049,13 @@ extern "C"
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->clearOnWritableAndAborted();
-      uwsRes->end(std::string_view(data, length), close_connection);
+      uwsRes->end(stringViewFromC(data, length), close_connection);
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->clearOnWritableAndAborted();
-      uwsRes->end(std::string_view(data, length), close_connection);
+      uwsRes->end(stringViewFromC(data, length), close_connection);
     }
   }
 
@@ -1116,12 +1123,12 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->writeStatus(std::string_view(status, length));
+      uwsRes->writeStatus(stringViewFromC(status, length));
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->writeStatus(std::string_view(status, length));
+      uwsRes->writeStatus(stringViewFromC(status, length));
     }
   }
 
@@ -1132,14 +1139,14 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->writeHeader(std::string_view(key, key_length),
-                          std::string_view(value, value_length));
+      uwsRes->writeHeader(stringViewFromC(key, key_length),
+                          stringViewFromC(value, value_length));
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->writeHeader(std::string_view(key, key_length),
-                          std::string_view(value, value_length));
+      uwsRes->writeHeader(stringViewFromC(key, key_length),
+                          stringViewFromC(value, value_length));
     }
   }
   void uws_res_write_header_int(int ssl, uws_res_r res, const char *key,
@@ -1148,13 +1155,13 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->writeHeader(std::string_view(key, key_length), value);
+      uwsRes->writeHeader(stringViewFromC(key, key_length), value);
     }
     else
     {
 
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->writeHeader(std::string_view(key, key_length), value);
+      uwsRes->writeHeader(stringViewFromC(key, key_length), value);
     }
   }
   void uws_res_end_sendfile(int ssl, uws_res_r res, uint64_t offset, bool close_connection) 
@@ -1250,10 +1257,10 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      return uwsRes->write(std::string_view(data, length));
+      return uwsRes->write(stringViewFromC(data, length));
     }
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-    return uwsRes->write(std::string_view(data, length));
+    return uwsRes->write(stringViewFromC(data, length));
   }
   uint64_t uws_res_get_write_offset(int ssl, uws_res_r res) nonnull_fn_decl;
   uint64_t uws_res_get_write_offset(int ssl, uws_res_r res)
@@ -1443,7 +1450,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
 
     std::string_view value = uwsReq->getHeader(
-        std::string_view(lower_case_header, lower_case_header_length));
+        stringViewFromC(lower_case_header, lower_case_header_length));
     *dest = value.data();
     return value.length();
   }
@@ -1462,7 +1469,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
   {
     uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
 
-    std::string_view value = uwsReq->getQuery(std::string_view(key, key_length));
+    std::string_view value = uwsReq->getQuery(stringViewFromC(key, key_length));
     *dest = value.data();
     return value.length();
   }
@@ -1490,9 +1497,9 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
 
     uwsRes->template upgrade<void *>(
         data ? std::move(data) : NULL,
-        std::string_view(sec_web_socket_key, sec_web_socket_key_length),
-        std::string_view(sec_web_socket_protocol, sec_web_socket_protocol_length),
-        std::string_view(sec_web_socket_extensions,
+        stringViewFromC(sec_web_socket_key, sec_web_socket_key_length),
+        stringViewFromC(sec_web_socket_protocol, sec_web_socket_protocol_length),
+        stringViewFromC(sec_web_socket_extensions,
                          sec_web_socket_extensions_length),
         (struct us_socket_context_t *)ws);
     } else {
@@ -1500,9 +1507,9 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
 
     uwsRes->template upgrade<void *>(
         data ? std::move(data) : NULL,
-        std::string_view(sec_web_socket_key, sec_web_socket_key_length),
-        std::string_view(sec_web_socket_protocol, sec_web_socket_protocol_length),
-        std::string_view(sec_web_socket_extensions,
+        stringViewFromC(sec_web_socket_key, sec_web_socket_key_length),
+        stringViewFromC(sec_web_socket_protocol, sec_web_socket_protocol_length),
+        stringViewFromC(sec_web_socket_extensions,
                          sec_web_socket_extensions_length),
         (struct us_socket_context_t *)ws);
     }
@@ -1560,8 +1567,8 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       for (size_t i = 0; i < count; i++)
       {
-        uwsRes->writeHeader(std::string_view(&buf[names[i].off], names[i].len),
-                            std::string_view(&buf[values[i].off], values[i].len));
+        uwsRes->writeHeader(stringViewFromC(&buf[names[i].off], names[i].len),
+                            stringViewFromC(&buf[values[i].off], values[i].len));
       }
     }
     else
@@ -1569,8 +1576,8 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       for (size_t i = 0; i < count; i++)
       {
-        uwsRes->writeHeader(std::string_view(&buf[names[i].off], names[i].len),
-                            std::string_view(&buf[values[i].off], values[i].len));
+        uwsRes->writeHeader(stringViewFromC(&buf[names[i].off], names[i].len),
+                            stringViewFromC(&buf[values[i].off], values[i].len));
       }
     }
   }
@@ -1660,7 +1667,7 @@ __attribute__((callback (corker, ctx)))
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      auto pair = uwsRes->tryEnd(std::string_view(bytes, len), total_len, close);
+      auto pair = uwsRes->tryEnd(stringViewFromC(bytes, len), total_len, close);
       if (pair.first) {
         uwsRes->clearOnWritableAndAborted();
       }
@@ -1670,7 +1677,7 @@ __attribute__((callback (corker, ctx)))
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      auto pair = uwsRes->tryEnd(std::string_view(bytes, len), total_len, close);
+      auto pair = uwsRes->tryEnd(stringViewFromC(bytes, len), total_len, close);
       if (pair.first) {
           uwsRes->clearOnWritableAndAborted();
       }

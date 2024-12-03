@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
-import { describe, expect, it } from "bun:test";
-import { resolve } from "path";
+import { describe, expect, it, test } from "bun:test";
+import path, { dirname, join, resolve } from "path";
 
 declare global {
   var failingObject: any;
@@ -187,6 +187,8 @@ plugin({
 // This is to test that it works when imported from a separate file
 import "../../third_party/svelte";
 import "./module-plugins";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { filter } from "js/node/test/fixtures/aead-vectors";
 
 describe("require", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", () => {

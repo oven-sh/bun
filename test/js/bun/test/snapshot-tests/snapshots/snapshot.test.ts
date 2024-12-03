@@ -1,4 +1,6 @@
-import { expect, it, test } from "bun:test";
+import { $ } from "bun";
+import { describe, expect, it, test } from "bun:test";
+import { bunExe, tempDirWithFiles } from "harness";
 
 function test1000000(arg1: any, arg218718132: any) {}
 
@@ -163,4 +165,161 @@ test("most types", () => {
 
 it("should work with expect.anything()", () => {
   // expect({ a: 0 }).toMatchSnapshot({ a: expect.anything() });
+});
+
+function defaultWrap(a: string): string {
+  return `test("abc", () => { expect(${a}).toMatchSnapshot() });`;
+}
+
+class SnapshotTester {
+  dir: string;
+  targetSnapshotContents: string;
+  isFirst: boolean = true;
+  constructor() {
+    this.dir = tempDirWithFiles("snapshotTester", { "snapshot.test.ts": "" });
+    this.targetSnapshotContents = "";
+  }
+  test(
+    label: string,
+    contents: string,
+    opts: { shouldNotError?: boolean; shouldGrow?: boolean; skipSnapshot?: boolean } = {},
+  ) {
+    test(label, async () => await this.update(contents, opts));
+  }
+  async update(
+    contents: string,
+    opts: { shouldNotError?: boolean; shouldGrow?: boolean; skipSnapshot?: boolean; forceUpdate?: boolean } = {},
+  ) {
+    const isFirst = this.isFirst;
+    this.isFirst = false;
+    await Bun.write(this.dir + "/snapshot.test.ts", contents);
+
+    if (!opts.shouldNotError) {
+      if (!isFirst) {
+        // make sure it fails first:
+        expect((await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.nothrow().quiet()).exitCode).not.toBe(0);
+        // make sure the existing snapshot is unchanged:
+        expect(await Bun.file(this.dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(
+          this.targetSnapshotContents,
+        );
+      }
+      // update snapshots now, using -u flag unless this is the first run
+      await $`cd ${this.dir} && ${bunExe()} test ${isFirst && !opts.forceUpdate ? "" : "-u"} ./snapshot.test.ts`.quiet();
+      // make sure the snapshot changed & didn't grow
+      const newContents = await this.getSnapshotContents();
+      if (!isFirst) {
+        expect(newContents).not.toStartWith(this.targetSnapshotContents);
+      }
+      if (!opts.skipSnapshot) expect(newContents).toMatchSnapshot();
+      this.targetSnapshotContents = newContents;
+    }
+    // run, make sure snapshot does not change
+    await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.quiet();
+    if (!opts.shouldGrow) {
+      expect(await Bun.file(this.dir + "/__snapshots__/snapshot.test.ts.snap").text()).toBe(
+        this.targetSnapshotContents,
+      );
+    } else {
+      this.targetSnapshotContents = await this.getSnapshotContents();
+    }
+  }
+  async setSnapshotFile(contents: string) {
+    await Bun.write(this.dir + "/__snapshots__/snapshot.test.ts.snap", contents);
+    this.isFirst = true;
+  }
+  async getSnapshotContents(): Promise<string> {
+    return await Bun.file(this.dir + "/__snapshots__/snapshot.test.ts.snap").text();
+  }
+}
+
+describe("snapshots", async () => {
+  const t = new SnapshotTester();
+  await t.update(defaultWrap("''"), { skipSnapshot: true });
+
+  t.test("dollars", defaultWrap("`\\$`"));
+  t.test("backslash", defaultWrap("`\\\\`"));
+  t.test("dollars curly", defaultWrap("`\\${}`"));
+  t.test("dollars curly 2", defaultWrap("`\\${`"));
+  t.test("stuff", defaultWrap(`\`æ™\n\r!!!!*5897yhduN\\"\\'\\\`Il\``));
+  t.test("stuff 2", defaultWrap(`\`æ™\n\r!!!!*5897yh!uN\\"\\'\\\`Il\``));
+
+  t.test("regexp 1", defaultWrap("/${1..}/"));
+  t.test("regexp 2", defaultWrap("/${2..}/"));
+  t.test("string", defaultWrap('"abc"'));
+  t.test("string with newline", defaultWrap('"qwerty\\nioup"'));
+
+  t.test("null byte", defaultWrap('"1 \x00"'));
+  t.test("null byte 2", defaultWrap('"2 \\x00"'));
+
+  t.test("backticks", defaultWrap("`This is \\`wrong\\``"));
+  t.test("unicode", defaultWrap("'😊abc`${def} " + "😊".substring(0, 1) + ", " + "😊".substring(1, 2) + " '"));
+
+  test("jest newline oddity", async () => {
+    await t.update(defaultWrap("'\\n'"));
+    await t.update(defaultWrap("'\\r'"), { shouldNotError: true });
+    await t.update(defaultWrap("'\\r\\n'"), { shouldNotError: true });
+  });
+
+  test("don't grow file on error", async () => {
+    await t.setSnapshotFile("exports[`snap 1`] = `hello`goodbye`;");
+    try {
+      await t.update(/*js*/ `
+        test("t1", () => {expect("abc def ghi jkl").toMatchSnapshot();})
+        test("t2", () => {expect("abc\`def").toMatchSnapshot();})
+        test("t3", () => {expect("abc def ghi").toMatchSnapshot();})
+      `);
+    } catch (e) {}
+    expect(await t.getSnapshotContents()).toBe("exports[`snap 1`] = `hello`goodbye`;");
+  });
+
+  test("replaces file that fails to parse when update flag is used", async () => {
+    await t.setSnapshotFile("exports[`snap 1`] = `hello`goodbye`;");
+    await t.update(
+      /*js*/ `
+        test("t1", () => {expect("abc def ghi jkl").toMatchSnapshot();})
+        test("t2", () => {expect("abc\`def").toMatchSnapshot();})
+        test("t3", () => {expect("abc def ghi").toMatchSnapshot();})
+      `,
+      { forceUpdate: true },
+    );
+    expect(await t.getSnapshotContents()).toBe(
+      '// Bun Snapshot v1, https://goo.gl/fbAQLP\n\nexports[`t1 1`] = `"abc def ghi jkl"`;\n\nexports[`t2 1`] = `"abc\\`def"`;\n\nexports[`t3 1`] = `"abc def ghi"`;\n',
+    );
+  });
+
+  test("grow file for new snapshot", async () => {
+    const t4 = new SnapshotTester();
+    await t4.update(/*js*/ `
+      test("abc", () => { expect("hello").toMatchSnapshot() });
+    `);
+    await t4.update(
+      /*js*/ `
+        test("abc", () => { expect("hello").toMatchSnapshot() });
+        test("def", () => { expect("goodbye").toMatchSnapshot() });
+      `,
+      { shouldNotError: true, shouldGrow: true },
+    );
+    await t4.update(/*js*/ `
+      test("abc", () => { expect("hello").toMatchSnapshot() });
+      test("def", () => { expect("hello").toMatchSnapshot() });
+    `);
+    await t4.update(/*js*/ `
+      test("abc", () => { expect("goodbye").toMatchSnapshot() });
+      test("def", () => { expect("hello").toMatchSnapshot() });
+    `);
+  });
+
+  const t2 = new SnapshotTester();
+  t2.test("backtick in test name", `test("\`", () => {expect("abc").toMatchSnapshot();})`);
+  const t3 = new SnapshotTester();
+  t3.test("dollars curly in test name", `test("\${}", () => {expect("abc").toMatchSnapshot();})`);
+
+  const t15283 = new SnapshotTester();
+  t15283.test(
+    "#15283",
+    `it("Should work", () => {
+      expect(\`This is \\\`wrong\\\`\`).toMatchSnapshot();
+    });`,
+  );
+  t15283.test("#15283 unicode", `it("Should work", () => {expect(\`😊This is \\\`wrong\\\`\`).toMatchSnapshot()});`);
 });

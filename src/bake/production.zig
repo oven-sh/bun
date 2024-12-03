@@ -185,6 +185,9 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             bundler.options.minify_syntax = false;
             bundler.options.minify_identifiers = false;
             bundler.options.minify_whitespace = false;
+            bundler.resolver.opts.entry_naming = "";
+            bundler.resolver.opts.chunk_naming = "";
+            bundler.resolver.opts.asset_naming = "";
         }
     }
 
@@ -293,15 +296,22 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             }
         }
 
-        switch (file.side orelse .client) {
+        switch (file.side orelse continue) {
             .client => {
                 // Client-side resources will be written to disk for usage in on the client side
-                _ = try file.writeToDisk(root_dir, root_dir_path);
+                _ = file.writeToDisk(root_dir, ".") catch |err| {
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                    Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
+                };
             },
             .server => {
                 // For Debugging
-                if (ctx.bundler_options.bake_debug_dump_server)
-                    _ = try file.writeToDisk(root_dir, root_dir_path);
+                if (ctx.bundler_options.bake_debug_dump_server) {
+                    _ = file.writeToDisk(root_dir, ".") catch |err| {
+                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                        Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
+                    };
+                }
 
                 switch (file.output_kind) {
                     .@"entry-point", .chunk => {

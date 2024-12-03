@@ -299,6 +299,26 @@ pub const CppTask = opaque {
         JSC.markBinding(@src());
         Bun__performTask(global, this);
     }
+
+    pub const Concurrent = struct {
+        cpp_task: *CppTask,
+        workpool_task: JSC.WorkPoolTask = .{ .callback = &runFromWorkpool },
+
+        pub fn runFromWorkpool(task: *JSC.WorkPoolTask) void {
+            var this: *Concurrent = @fieldParentPtr("workpool_task", task);
+            const cpp_task = this.cpp_task;
+            this.destroy();
+            // TODO figure out what this should be
+            cpp_task.run(undefined);
+        }
+
+        pub usingnamespace bun.New(@This());
+    };
+
+    pub export fn ConcurrentCppTask__createAndRun(cpp_task: *CppTask) void {
+        const cpp = Concurrent.new(.{ .cpp_task = cpp_task });
+        JSC.WorkPool.schedule(&cpp.workpool_task);
+    }
 };
 pub const JSCScheduler = struct {
     pub const JSCDeferredWorkTask = opaque {

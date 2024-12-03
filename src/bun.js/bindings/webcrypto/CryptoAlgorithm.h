@@ -35,7 +35,7 @@
 #include <wtf/Function.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
-#include <wtf/WorkQueue.h>
+#include "SubtleCrypto.h"
 
 #if ENABLE(WEB_CRYPTO)
 

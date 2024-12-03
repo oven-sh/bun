@@ -34,7 +34,7 @@
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 #include <wtf/WeakPtr.h>
-#include <wtf/WorkQueue.h>
+#include "PhonyWorkQueue.h"
 
 namespace JSC {
 class ArrayBufferView;
@@ -43,6 +43,8 @@ class CallFrame;
 }
 
 namespace WebCore {
+
+using WorkQueue = Bun::PhonyWorkQueue;
 
 struct JsonWebKey;
 

@@ -174,43 +174,43 @@ export function readBigUInt64BE(this: BufferExt, offset) {
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigUint64(offset, false);
 }
 
-export function writeInt8(this: BufferExt, value, offset) {
+export function writeInt8(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt8(offset, value);
   return offset + 1;
 }
-export function writeUInt8(this: BufferExt, value, offset) {
+export function writeUInt8(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint8(offset, value);
   return offset + 1;
 }
-export function writeInt16LE(this: BufferExt, value, offset) {
+export function writeInt16LE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(offset, value, true);
   return offset + 2;
 }
-export function writeInt16BE(this: BufferExt, value, offset) {
+export function writeInt16BE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(offset, value, false);
   return offset + 2;
 }
-export function writeUInt16LE(this: BufferExt, value, offset) {
+export function writeUInt16LE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(offset, value, true);
   return offset + 2;
 }
-export function writeUInt16BE(this: BufferExt, value, offset) {
+export function writeUInt16BE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(offset, value, false);
   return offset + 2;
 }
-export function writeInt32LE(this: BufferExt, value, offset) {
+export function writeInt32LE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(offset, value, true);
   return offset + 4;
 }
-export function writeInt32BE(this: BufferExt, value, offset) {
+export function writeInt32BE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(offset, value, false);
   return offset + 4;
 }
-export function writeUInt32LE(this: BufferExt, value, offset) {
+export function writeUInt32LE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, true);
   return offset + 4;
 }
-export function writeUInt32BE(this: BufferExt, value, offset) {
+export function writeUInt32BE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, false);
   return offset + 4;
 }
@@ -360,42 +360,42 @@ export function writeUIntBE(this: BufferExt, value, offset, byteLength) {
   return offset + byteLength;
 }
 
-export function writeFloatLE(this: BufferExt, value, offset) {
+export function writeFloatLE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat32(offset, value, true);
   return offset + 4;
 }
 
-export function writeFloatBE(this: BufferExt, value, offset) {
+export function writeFloatBE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat32(offset, value, false);
   return offset + 4;
 }
 
-export function writeDoubleLE(this: BufferExt, value, offset) {
+export function writeDoubleLE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat64(offset, value, true);
   return offset + 8;
 }
 
-export function writeDoubleBE(this: BufferExt, value, offset) {
+export function writeDoubleBE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat64(offset, value, false);
   return offset + 8;
 }
 
-export function writeBigInt64LE(this: BufferExt, value, offset) {
+export function writeBigInt64LE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(offset, value, true);
   return offset + 8;
 }
 
-export function writeBigInt64BE(this: BufferExt, value, offset) {
+export function writeBigInt64BE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(offset, value, false);
   return offset + 8;
 }
 
-export function writeBigUInt64LE(this: BufferExt, value, offset) {
+export function writeBigUInt64LE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, true);
   return offset + 8;
 }
 
-export function writeBigUInt64BE(this: BufferExt, value, offset) {
+export function writeBigUInt64BE(this: BufferExt, value, offset = 0) {
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, false);
   return offset + 8;
 }

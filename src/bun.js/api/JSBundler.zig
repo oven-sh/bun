@@ -1049,6 +1049,7 @@ pub const BuildArtifact = struct {
     hash: u64 = std.math.maxInt(u64),
     output_kind: OutputKind,
     sourcemap: JSC.Strong = .{},
+    entrypoint: []const u8 = "",
 
     pub const OutputKind = enum {
         chunk,
@@ -1067,6 +1068,7 @@ pub const BuildArtifact = struct {
         this.sourcemap.deinit();
 
         bun.default_allocator.free(this.path);
+        bun.default_allocator.free(this.entrypoint);
     }
 
     pub fn getText(
@@ -1138,6 +1140,14 @@ pub const BuildArtifact = struct {
         var buf: [512]u8 = undefined;
         const out = std.fmt.bufPrint(&buf, "{any}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
         return ZigString.init(out).toJS(globalThis);
+    }
+
+    pub fn getEntryPoint(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+    ) JSValue {
+        if (this.entrypoint.len == 0) return JSC.JSValue.jsNull();
+        return ZigString.fromUTF8(this.entrypoint).toJS(globalThis);
     }
 
     pub fn getSize(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) JSValue {
@@ -1253,6 +1263,35 @@ pub const BuildArtifact = struct {
                             ),
                         );
                     }
+                } else {
+                    try writer.writeAll(
+                        comptime Output.prettyFmt(
+                            "<yellow>null<r>",
+                            enable_ansi_colors,
+                        ),
+                    );
+                }
+            }
+
+            if (this.output_kind == .@"entry-point") {
+                formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+                try writer.writeAll("\n");
+                try formatter.writeIndent(Writer, writer);
+                try writer.writeAll(
+                    comptime Output.prettyFmt(
+                        "<r>entrypoint<r>: ",
+                        enable_ansi_colors,
+                    ),
+                );
+
+                if (this.entrypoint.len != 0) {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<green>\"{s}\"<r>",
+                            enable_ansi_colors,
+                        ),
+                        .{this.entrypoint},
+                    );
                 } else {
                     try writer.writeAll(
                         comptime Output.prettyFmt(

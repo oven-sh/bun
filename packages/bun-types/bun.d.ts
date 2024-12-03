@@ -1839,6 +1839,7 @@ declare module "bun" {
     hash: string | null;
     kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
     sourcemap: BuildArtifact | null;
+    entrypoint: string | null;
   }
 
   interface BuildOutput {

@@ -31,7 +31,7 @@ const doesnt_exist = C.doesnt_exist;
 const struct_tm = C.struct_tm;
 const enum_ssl_verify_result_t = C.enum_ssl_verify_result_t;
 /// `isize` alias. Kept for clarity.
-/// 
+///
 /// Docs from OpenSSL:
 /// > ossl_ssize_t is a signed type which is large enough to fit the size of any
 /// > valid memory allocation. We prefer using |size_t|, but sometimes we need a

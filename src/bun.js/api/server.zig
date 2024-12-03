@@ -4828,7 +4828,7 @@ pub const ServerWebSocket = struct {
         var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
         if (topic_slice.len == 0) {
-            return globalThis.throw2("publish requires a non-empty topic", .{});
+            return globalThis.throw("publish requires a non-empty topic", .{});
         }
 
         if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
@@ -4965,7 +4965,7 @@ pub const ServerWebSocket = struct {
         var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
         if (topic_slice.len == 0) {
-            return globalThis.throw2("publishBinary requires a non-empty topic", .{});
+            return globalThis.throw("publishBinary requires a non-empty topic", .{});
         }
 
         if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
@@ -4975,7 +4975,7 @@ pub const ServerWebSocket = struct {
         const compress = args.len > 1 and compress_value.toBoolean();
 
         if (message_value.isEmptyOrUndefinedOrNull()) {
-            return globalThis.throw2("publishBinary requires a non-empty message", .{});
+            return globalThis.throw("publishBinary requires a non-empty message", .{});
         }
 
         const array_buffer = message_value.asArrayBuffer(globalThis) orelse {
@@ -6045,12 +6045,10 @@ pub const NodeHTTPResponse = struct {
         return .undefined;
     }
 
-    fn handleEndedIfNecessary(state: uws.State, globalObject: *JSC.JSGlobalObject) bool {
+    fn handleEndedIfNecessary(state: uws.State, globalObject: *JSC.JSGlobalObject) bun.JSError!void {
         if (!state.isResponsePending()) {
-            globalObject.ERR_HTTP_HEADERS_SENT("Stream is already ended", .{}).throw();
-            return true;
+            return globalObject.ERR_HTTP_HEADERS_SENT("Stream is already ended", .{}).throw();
         }
-        return false;
     }
 
     extern "C" fn NodeHTTPServer__writeHead_http(
@@ -6073,14 +6071,11 @@ pub const NodeHTTPResponse = struct {
         const arguments = callframe.argumentsUndef(3).slice();
 
         if (this.isDone()) {
-            globalObject.ERR_STREAM_ALREADY_FINISHED("Stream is already ended", .{}).throw();
-            return error.JSError;
+            return globalObject.ERR_STREAM_ALREADY_FINISHED("Stream is already ended", .{}).throw();
         }
 
         const state = this.response.state();
-        if (handleEndedIfNecessary(state, globalObject)) {
-            return error.JSError;
-        }
+        try handleEndedIfNecessary(state, globalObject);
 
         const status_code_value = if (arguments.len > 0) arguments[0] else .undefined;
         const status_message_value = if (arguments.len > 1 and arguments[1] != .null) arguments[1] else .undefined;
@@ -6148,9 +6143,7 @@ pub const NodeHTTPResponse = struct {
         }
 
         const state = this.response.state();
-        if (handleEndedIfNecessary(state, globalObject)) {
-            return error.JSError;
-        }
+        try handleEndedIfNecessary(state, globalObject);
 
         this.response.writeContinue();
         return .undefined;
@@ -6443,14 +6436,12 @@ pub const NodeHTTPResponse = struct {
         comptime is_end: bool,
     ) bun.JSError!JSC.JSValue {
         if (this.isDone()) {
-            globalObject.ERR_STREAM_WRITE_AFTER_END("Stream already ended", .{}).throw();
-            return error.JSError;
+            return globalObject.ERR_STREAM_WRITE_AFTER_END("Stream already ended", .{}).throw();
         }
 
         const state = this.response.state();
         if (!state.isResponsePending()) {
-            globalObject.ERR_STREAM_WRITE_AFTER_END("Stream already ended", .{}).throw();
-            return error.JSError;
+            return globalObject.ERR_STREAM_WRITE_AFTER_END("Stream already ended", .{}).throw();
         }
 
         const input_value = if (arguments.len > 0) arguments[0] else .undefined;
@@ -6679,7 +6670,7 @@ pub const NodeHTTPResponse = struct {
             if (result != .zero) {
                 return globalObject.throwValue2(result);
             } else {
-                return globalObject.throw2("unknown error", .{});
+                return globalObject.throw("unknown error", .{});
             }
         }
 
@@ -6839,7 +6830,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (!seconds.isNumber()) {
-                return this.globalThis.throw2("timeout() requires a number", .{});
+                return this.globalThis.throw("timeout() requires a number", .{});
             }
             const value = seconds.to(c_uint);
 
@@ -6868,13 +6859,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             if (topic.len == 0) {
                 httplog("publish() topic invalid", .{});
-                return globalThis.throw2("publish requires a topic string", .{});
+                return globalThis.throw("publish requires a topic string", .{});
             }
 
             var topic_slice = topic.toSlice(bun.default_allocator);
             defer topic_slice.deinit();
             if (topic_slice.len == 0) {
-                return globalThis.throw2("publish requires a non-empty topic", .{});
+                return globalThis.throw("publish requires a non-empty topic", .{});
             }
 
             const compress = (compress_value orelse JSValue.jsBoolean(true)).toBoolean();

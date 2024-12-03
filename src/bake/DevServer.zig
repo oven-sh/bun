@@ -624,7 +624,7 @@ fn ensureRouteIsBundled(
                     .data = switch (kind) {
                         .js_payload => .{ .js_payload = resp },
                         .server_handler => .{
-                            .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp, null) orelse return)
+                            .server_handler = (dev.server.?.ptr.as(DebugHTTPServer).prepareJsRequestContext(req, resp, null) orelse return)
                                 .save(dev.vm.global, req, resp),
                         },
                     },
@@ -677,7 +677,7 @@ fn ensureRouteIsBundled(
                     .data = switch (kind) {
                         .js_payload => .{ .js_payload = resp },
                         .server_handler => .{
-                            .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp, null) orelse return)
+                            .server_handler = (dev.server.?.ptr.as(DebugHTTPServer).prepareJsRequestContext(req, resp, null) orelse return)
                                 .save(dev.vm.global, req, resp),
                         },
                     },

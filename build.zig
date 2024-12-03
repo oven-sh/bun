@@ -413,6 +413,7 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         }
     }
     addInternalPackages(b, obj, opts);
+    obj.root_module.addIncludePath(.{ .cwd_relative = "./packages" });
     obj.root_module.addImport("build_options", opts.buildOptionsModule(b));
     return obj;
 }

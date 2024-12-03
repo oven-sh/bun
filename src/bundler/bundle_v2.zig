@@ -3900,7 +3900,7 @@ pub const ParseTask = struct {
         result: ?*OnBeforeParseResult = null,
 
         const headers = @cImport({
-            @cInclude("packages/bun-native-bundler-plugin-api/bundler_plugin.h");
+            @cInclude("bun-native-bundler-plugin-api/bundler_plugin.h");
         });
 
         comptime {

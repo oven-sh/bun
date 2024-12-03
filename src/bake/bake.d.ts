@@ -516,7 +516,7 @@ declare module "bun" {
      * Inject a module into the development server's runtime, to be loaded
      * before all other user code.
      */
-    addPreload(module: string, side: 'client' | 'server'): void;
+    addPreload(...args: any): void;
   }
 
   declare interface OnLoadArgs {

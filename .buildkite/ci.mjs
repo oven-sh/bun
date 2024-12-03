@@ -280,7 +280,7 @@ function getEc2Agent(platform, options) {
     "image-name": getImageName(platform),
     "instance-type": instanceType,
     "cpu-count": cpuCount,
-    "preemptible": true,
+    "preemptible": false,
   };
 }
 

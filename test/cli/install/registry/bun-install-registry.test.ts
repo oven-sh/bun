@@ -3200,7 +3200,7 @@ dev = false
 
   // should not install dev dependencies
   ({ exited } = spawn({
-    cmd: [bunExe(), "i", "--config", "bunfig2.toml"],
+    cmd: [bunExe(), "i", "--config=bunfig2.toml"],
     cwd: packageDir,
     stdout: "pipe",
     stderr: "pipe",

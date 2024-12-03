@@ -149,7 +149,7 @@ const Socket = (function (InternalSocket) {
 
         self.bytesRead += buffer.length;
         if (!self.push(buffer)) {
-          self.pause();
+          socket.pause();
         }
       },
       drain: Socket.#Drain,

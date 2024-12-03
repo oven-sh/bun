@@ -4831,7 +4831,6 @@ pub const ServerWebSocket = struct {
             return globalThis.throw2("publish requires a non-empty topic", .{});
         }
 
-    
         if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
             return globalThis.throw("publish expects compress to be a boolean", .{});
         }
@@ -4969,7 +4968,6 @@ pub const ServerWebSocket = struct {
             return globalThis.throw2("publishBinary requires a non-empty topic", .{});
         }
 
-
         if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
             return globalThis.throw("publishBinary expects compress to be a boolean", .{});
         }
@@ -4980,7 +4978,6 @@ pub const ServerWebSocket = struct {
             return globalThis.throw2("publishBinary requires a non-empty message", .{});
         }
 
-  
         const array_buffer = message_value.asArrayBuffer(globalThis) orelse {
             return globalThis.throw("publishBinary expects an ArrayBufferView", .{});
         };
@@ -5996,7 +5993,6 @@ pub const NodeHTTPResponse = struct {
     fn isDone(this: *const NodeHTTPResponse) bool {
         return this.finished or this.ended or this.aborted;
     }
-
 
     pub fn getEnded(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.ended);

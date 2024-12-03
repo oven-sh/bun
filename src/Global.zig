@@ -134,12 +134,14 @@ pub fn raiseIgnoringPanicHandler(sig: bun.SignalCode) noreturn {
     bun.crash_handler.resetSegfaultHandler();
 
     // clear signal handler
-    var sa: std.c.Sigaction = .{
-        .handler = .{ .handler = std.posix.SIG.DFL },
-        .mask = std.posix.empty_sigset,
-        .flags = std.posix.SA.RESETHAND,
-    };
-    _ = std.c.sigaction(@intFromEnum(sig), &sa, null);
+    if (bun.Environment.os != .windows) {
+        var sa: std.c.Sigaction = .{
+            .handler = .{ .handler = std.posix.SIG.DFL },
+            .mask = std.posix.empty_sigset,
+            .flags = std.posix.SA.RESETHAND,
+        };
+        _ = std.c.sigaction(@intFromEnum(sig), &sa, null);
+    }
 
     // kill self
     _ = std.c.raise(@intFromEnum(sig));

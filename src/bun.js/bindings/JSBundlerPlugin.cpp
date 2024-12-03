@@ -1,7 +1,7 @@
 #include "JSBundlerPlugin.h"
 
 #include "BunProcess.h"
-#include "bun-native-bundler-plugin-api/bundler_plugin.h"
+#include "../../../packages/bun-native-bundler-plugin-api/bundler_plugin.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -30,9 +30,13 @@
 #include "napi_external.h"
 #include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/JSPromise.h>
+
+#if OS(WINDOWS)
+#include <windows.h>
+#endif
+
 namespace Bun {
 
-#include "../../../packages/bun-native-bundler-plugin-api/bundler_plugin.h"
 extern "C" int OnBeforeParsePlugin__isDone(void* context);
 #define WRAP_BUNDLER_PLUGIN(argName) jsDoubleNumber(bitwise_cast<double>(reinterpret_cast<uintptr_t>(argName)))
 #define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(bitwise_cast<uintptr_t>(callFrame->argument(0).asDouble()))

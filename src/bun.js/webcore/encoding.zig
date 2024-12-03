@@ -877,8 +877,7 @@ pub const TextDecoder = struct {
                         if (deinit) bun.default_allocator.free(input);
                         if (comptime fail_if_invalid) {
                             if (err == error.InvalidByteSequence) {
-                                globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("Invalid byte sequence", .{}).throw();
-                                return error.JSError;
+                                return globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("Invalid byte sequence", .{}).throw();
                             }
                         }
 
@@ -917,8 +916,7 @@ pub const TextDecoder = struct {
 
                 if (saw_error and this.fatal) {
                     decoded.deinit(bun.default_allocator);
-                    globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
-                    return error.JSError;
+                    return globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
                 }
 
                 var output = bun.String.fromUTF16(decoded.items);

@@ -18797,6 +18797,22 @@ pub const struct_bio_st = extern struct {
         return BIO_new(BIO_s_mem()) orelse error.OutOfMemory;
     }
 
+    /// Create a read-only `BIO` using an existing buffer. `buffer` is not
+    /// copied, and ownership is not transfered.
+    ///
+    /// `buffer` must outlive the returned `BIO`.
+    ///
+    /// Returns an error if
+    /// - the buffer is empty
+    /// - BIO initialization fails (same as `.init()`).
+    pub fn initReadonlyView(buffer: []const u8) !*struct_bio_st {
+        // NOTE: not exposing len parameter. If we want to ignore their
+        // suggestion and pass a negative value to make it treat `buffer` as a
+        // null-terminated string, create a separate `initReadonlyViewZ`
+        // constructor.
+        return BIO_new_mem_buf(buffer.ptr, buffer.len);
+    }
+
     pub fn deinit(this: *struct_bio_st) void {
         _ = BIO_free(this);
     }

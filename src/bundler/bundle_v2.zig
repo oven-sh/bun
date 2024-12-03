@@ -11084,7 +11084,7 @@ pub const LinkerContext = struct {
 
                         const items = try allocator.alloc(Expr, st.items.len);
                         for (st.items, items) |item, *str| {
-                            str.* = Expr.init(E.String, .{ .data = item.original_name }, item.name.loc);
+                            str.* = Expr.init(E.String, .{ .data = item.alias }, item.name.loc);
                         }
 
                         break :call Expr.init(E.Call, .{

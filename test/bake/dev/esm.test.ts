@@ -155,6 +155,28 @@ devTest("import { x as y }", {
       find: "1",
       replace: "2",
     });
+    await dev.fetch("/").expect("Value: 2");
+  }
+});
+devTest("import { default as y }", {
+  framework: minimalFramework,
+  files: {
+    "module.ts": `
+      export default 1;
+    `,
+    "routes/index.ts": `
+      import { default as y } from '../module';
+      export default function(req, meta) {
+        return new Response('Value: ' + y);
+      }
+    `,
+  },
+  async test(dev) {
     await dev.fetch("/").expect("Value: 1");
+    await dev.patch("module.ts", {
+      find: "1",
+      replace: "2",
+    });
+    await dev.fetch("/").expect("Value: 2");
   }
 });

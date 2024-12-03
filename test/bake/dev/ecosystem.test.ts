@@ -13,6 +13,7 @@ devTest('svelte component islands example', {
   fixture: 'svelte-component-islands',
   async test(dev) {
     const html = await dev.fetch('/').text()
+    if (html.includes('Bun__renderFallbackError')) throw new Error('failed');
     expect(html).toContain('self.$islands={\"pages/_Counter.svelte\":[[0,\"default\",{initial:5}]]}');
     expect(html).toContain(`<p>This is my svelte server component (non-interactive)</p> <p>Bun v${Bun.version}</p>`);
     expect(html).toContain(`>This is a client component (interactive island)</p>`);

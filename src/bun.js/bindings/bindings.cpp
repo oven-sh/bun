@@ -4753,8 +4753,6 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
 bool JSC__JSValue__getClassInfoName(JSValue value, const uint8_t** outPtr, size_t* outLen)
 {
     if (auto info = value.classInfoOrNull()) {
-        // className is an ASCIILiteral, therefore having infinite lifetime
-        static_assert(std::is_same<typeof info->className, const ASCIILiteral>::value);
         *outPtr = info->className.span8().data();
         *outLen = info->className.span8().size();
         return true;

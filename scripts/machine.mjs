@@ -1889,7 +1889,7 @@ async function getGithubOrgSshKeys(organization) {
  * @returns {Promise<import("./utils.mjs").SpawnResult>}
  */
 async function spawnSsh(options, spawnOptions = {}) {
-  const { hostname, port, username, identityPaths, retries = 5, command: spawnCommand } = options;
+  const { hostname, port, username, identityPaths, retries = 10, command: spawnCommand } = options;
 
   if (!hostname.includes("@")) {
     await waitForPort({
@@ -1929,7 +1929,7 @@ async function spawnSsh(options, spawnOptions = {}) {
       break;
     }
 
-    await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+    await new Promise(resolve => setTimeout(resolve, (i + 1) * 15000));
   }
 
   if (spawnOptions?.throwOnError) {

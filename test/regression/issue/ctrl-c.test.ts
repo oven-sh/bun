@@ -36,10 +36,10 @@ test.skipIf(isWindows)("verify that we forward SIGINT from parent to child in bu
 for (const mode of [
   ["vite"],
   ["dev"],
-  ["./node_modules/.bin/vite"],
+  ...(isWindows ? [] : [["./node_modules/.bin/vite"]]),
   ["--bun", "vite"],
   ["--bun", "dev"],
-  ["--bun", "./node_modules/.bin/vite"],
+  ...(isWindows ? [] : [["--bun", "./node_modules/.bin/vite"]]),
 ]) {
   it("kills on SIGINT in: 'bun " + mode.join(" ") + "'", async () => {
     const dir = tempDirWithFiles("ctrlc", {

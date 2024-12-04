@@ -73,7 +73,8 @@ function getBody() {
       break;
     case "stream":
       body = new ReadableStream({
-        start(c) {
+        async pull(c) {
+          await Bun.sleep(10);
           c.enqueue((cachedBody ??= getBuffer()));
           c.close();
         },

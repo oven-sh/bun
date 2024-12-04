@@ -2490,14 +2490,15 @@ it("client should use chunked encoded if more than one write is called", async (
   req.write(" ");
   await sleep(100);
   req.write("World");
+  req.write(" ");
   await sleep(100);
-  req.write(" BUN!");
+  req.write("BUN!");
   // End the request and signal no more data will be sent
   req.end();
 
   const chunks = await promise;
   expect(chunks.length).toBeGreaterThan(1);
-  expect(chunks[chunks.length - 1]?.toString()).toBe(" BUN!");
+  expect(chunks[chunks.length - 1]?.toString()).toBe("BUN!");
   expect(Buffer.concat(chunks).toString()).toBe("Hello World BUN!");
 });
 
@@ -2547,7 +2548,6 @@ it("client should use content-length if only one write is called", async () => {
   });
   // Handle errors
   req.on("error", reject);
-
   // Write chunks to the request body
   req.write("Hello World BUN!");
   // End the request and signal no more data will be sent

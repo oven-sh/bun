@@ -743,7 +743,7 @@ pub const DeferredTaskQueue = struct {
             };
 
             if (!this.map.values()[i](key)) {
-                this.map.swapRemoveAt(i);
+                _ = this.map.swapRemove(key);
                 last = this.map.count();
             } else {
                 i += 1;

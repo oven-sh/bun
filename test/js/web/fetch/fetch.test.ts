@@ -6,7 +6,7 @@ import { mkfifo } from "mkfifo";
 import net from "net";
 import { join } from "path";
 import { gzipSync } from "zlib";
-
+import { Readable } from "stream";
 const tmp_dir = tmpdirSync();
 
 const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
@@ -2072,5 +2072,190 @@ describe("fetch Response life cycle", () => {
     } finally {
       server.stop(true);
     }
+  });
+});
+
+describe("fetch should allow duplex", () => {
+  it("should allow duplex streaming", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    const intervalStream = new ReadableStream({
+      start(c) {
+        let count = 0;
+        const timer = setInterval(() => {
+          c.enqueue("Hello\n");
+          if (count === 5) {
+            clearInterval(timer);
+            c.close();
+          }
+          count++;
+        }, 20);
+      },
+    }).pipeThrough(new TextEncoderStream());
+
+    const resp = await fetch(server.url, {
+      method: "POST",
+      body: intervalStream,
+      duplex: "half",
+    });
+
+    const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader();
+    var result = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      result += value;
+    }
+    expect(result).toBe("Hello\n".repeat(6));
+  });
+
+  it("should allow duplex extending Readable (sync)", async () => {
+    class HelloWorldStream extends Readable {
+      constructor(options) {
+        super(options);
+        this.chunks = ["Hello", " ", "World!"];
+        this.index = 0;
+      }
+
+      _read(size) {
+        if (this.index < this.chunks.length) {
+          this.push(this.chunks[this.index]);
+          this.index++;
+        } else {
+          this.push(null);
+        }
+      }
+    }
+
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    const response = await fetch(server.url, {
+      body: new HelloWorldStream(),
+      method: "POST",
+      duplex: "half",
+    });
+
+    expect(await response.text()).toBe("Hello World!");
+  });
+  it("should allow duplex extending Readable (async)", async () => {
+    class HelloWorldStream extends Readable {
+      constructor(options) {
+        super(options);
+        this.chunks = ["Hello", " ", "World!"];
+        this.index = 0;
+      }
+
+      _read(size) {
+        setTimeout(() => {
+          if (this.index < this.chunks.length) {
+            this.push(this.chunks[this.index]);
+            this.index++;
+          } else {
+            this.push(null);
+          }
+        }, 20);
+      }
+    }
+
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    const response = await fetch(server.url, {
+      body: new HelloWorldStream(),
+      method: "POST",
+      duplex: "half",
+    });
+
+    expect(await response.text()).toBe("Hello World!");
+  });
+
+  it("should allow duplex using async iterator (async)", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    const response = await fetch(server.url, {
+      body: async function* iter() {
+        yield "Hello";
+        await Bun.sleep(20);
+        yield " ";
+        await Bun.sleep(20);
+        yield "World!";
+      },
+      method: "POST",
+      duplex: "half",
+    });
+
+    expect(await response.text()).toBe("Hello World!");
+  });
+
+  it("should fail in redirects .follow when using duplex", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.url.indexOf("/redirect") === -1) {
+          return Response.redirect("/");
+        }
+        return new Response(req.body);
+      },
+    });
+
+    expect(async () => {
+      const response = await fetch(server.url, {
+        body: async function* iter() {
+          yield "Hello";
+          await Bun.sleep(20);
+          yield " ";
+          await Bun.sleep(20);
+          yield "World!";
+        },
+        method: "POST",
+        duplex: "half",
+      });
+
+      await response.text();
+    }).toThrow();
+  });
+
+  it("should work in redirects .manual when using duplex", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.url.indexOf("/redirect") === -1) {
+          return Response.redirect("/");
+        }
+        return new Response(req.body);
+      },
+    });
+
+    expect(async () => {
+      const response = await fetch(server.url, {
+        body: async function* iter() {
+          yield "Hello";
+          await Bun.sleep(20);
+          yield " ";
+          await Bun.sleep(20);
+          yield "World!";
+        },
+        method: "POST",
+        duplex: "half",
+        redirect: "manual",
+      });
+
+      await response.text();
+    }).not.toThrow();
   });
 });

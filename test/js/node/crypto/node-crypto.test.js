@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import crypto from "node:crypto";
-import { PassThrough } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import util from "node:util";
 
 it("crypto.randomBytes should return a Buffer", () => {
@@ -477,6 +477,27 @@ describe("createHash", () => {
     hash.update("world");
     copy.update("world");
     expect(copy.digest("hex")).toBe(hash.digest("hex"));
+  });
+
+  it("uses the Transform options object", () => {
+    const hasher = crypto.createHash("sha256", { defaultEncoding: "binary" });
+    hasher.on("readable", () => {
+      const data = hasher.read();
+      if (data) {
+        expect(data.toString("hex")).toBe("4d4d75d742863ab9656f3d5f76dff8589c3922e95a24ea6812157ffe4aaa3b6b");
+      }
+    });
+    const stream = Readable.from("ï");
+    stream.pipe(hasher);
+  });
+});
+
+describe("Hash", () => {
+  it("should have correct method names", () => {
+    const hash = crypto.createHash("sha256");
+    expect(hash.update.name).toBe("update");
+    expect(hash.digest.name).toBe("digest");
+    expect(hash.copy.name).toBe("copy");
   });
 });
 

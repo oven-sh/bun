@@ -28,11 +28,9 @@ import {
   getEnv,
   getFileUrl,
   getWindowsExitReason,
-  isArm64,
   isBuildkite,
   isCI,
   isGithubAction,
-  isMacOS,
   isWindows,
   printEnvironment,
   startGroup,
@@ -797,7 +795,7 @@ function isJavaScriptTest(path) {
  * @returns {boolean}
  */
 function isTest(path) {
-  if (path.startsWith("js/node/test/parallel/") && isMacOS && isArm64) return true;
+  if (path.startsWith("js/node/test/parallel/") && !(isMacOS && process.arch === "x64")) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
   return isTestStrict(path);
 }

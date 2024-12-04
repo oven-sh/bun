@@ -2631,7 +2631,11 @@ pub const FetchTaskletChunkedRequestSink = struct {
         }
 
         _ = this.internalFlush() catch 0;
-        return false;
+        if (this.buffer.isEmpty()) {
+            this.auto_flusher.registered = false;
+            return false;
+        }
+        return true;
     }
 
     pub fn start(this: *@This(), stream_start: StreamStart) JSC.Maybe(void) {
@@ -2661,6 +2665,8 @@ pub const FetchTaskletChunkedRequestSink = struct {
         return @ptrCast(this);
     }
     pub fn finalize(this: *@This()) void {
+        this.unregisterAutoFlusher();
+
         var buffer = this.buffer;
         this.buffer = .{};
         buffer.deinit();
@@ -2694,7 +2700,6 @@ pub const FetchTaskletChunkedRequestSink = struct {
     }
 
     pub fn internalFlush(this: *@This()) !usize {
-        this.unregisterAutoFlusher();
         if (this.done) return 0;
         var flushed: usize = 0;
         // we need to respect the max len for the chunk

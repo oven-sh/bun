@@ -121,6 +121,18 @@ export default [
     JSType: "0b11101110",
     proto: {
       // todo
+      ca: {
+        getter: "getCa",
+        cache: true,
+      },
+      issuer: {
+        getter: "getIssuer",
+        cache: true,
+      },
+      subject: {
+        getter: "getSubject",
+        cache: true,
+      },
     },
   }),
 ];

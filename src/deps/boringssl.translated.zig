@@ -156,8 +156,6 @@ pub const struct_X509_crl_st = opaque {};
 pub const X509_CRL = struct_X509_crl_st;
 pub const struct_X509_extension_st = opaque {};
 pub const X509_EXTENSION = struct_X509_extension_st;
-// pub const struct_x509_st = opaque {};
-// pub const X509 = struct_x509_st;
 pub const CRYPTO_refcount_t = u32;
 pub const struct_openssl_method_common_st = extern struct {
     references: c_int,
@@ -4359,7 +4357,24 @@ pub extern fn X509_CRL_match(a: ?*const X509_CRL, b: ?*const X509_CRL) c_int;
 // pub extern fn X509_CRL_print_fp(bp: [*c]FILE, x: ?*X509_CRL) c_int;
 // pub extern fn X509_REQ_print_fp(bp: [*c]FILE, req: ?*X509_REQ) c_int;
 // pub extern fn X509_NAME_print_ex_fp(fp: [*c]FILE, nm: ?*const X509_NAME, indent: c_int, flags: c_ulong) c_int;
+
+/// X509_NAME_print prints a human-readable representation of |name| to |bp|. It
+/// returns one on success and zero on error. |obase| is ignored.
+///
+/// This function outputs a legacy format that does not correctly handle string
+/// encodings and other cases. Prefer |X509_NAME_print_ex| if printing a name for
+/// debugging purposes.
 pub extern fn X509_NAME_print(bp: [*c]BIO, name: ?*const X509_NAME, obase: c_int) c_int;
+/// X509_NAME_print_ex writes a human-readable representation of |nm| to |out|.
+/// Each line of output is indented by |indent| spaces. It returns the number of
+/// bytes written on success, and -1 on error. If |out| is NULL, it returns the
+/// number of bytes it would have written but does not write anything. |flags|
+/// should be some combination of |XN_FLAG_*| and |ASN1_STRFLGS_*| values and
+/// determines the output. If unsure, use |XN_FLAG_RFC2253|.
+///
+/// If |flags| is |XN_FLAG_COMPAT|, or zero, this function calls
+/// |X509_NAME_print| instead. In that case, it returns one on success, rather
+/// than the output length.
 pub extern fn X509_NAME_print_ex(out: [*c]BIO, nm: ?*const X509_NAME, indent: c_int, flags: c_ulong) c_int;
 pub extern fn X509_print_ex(bp: [*c]BIO, x: ?*X509, nmflag: c_ulong, cflag: c_ulong) c_int;
 pub extern fn X509_print(bp: [*c]BIO, x: ?*X509) c_int;
@@ -6155,12 +6170,6 @@ pub const ERR_R_DIGEST_LIB = ERR_LIB_DIGEST;
 pub const ERR_R_CIPHER_LIB = ERR_LIB_CIPHER;
 pub const ERR_R_HKDF_LIB = ERR_LIB_HKDF;
 pub const ERR_R_TRUST_TOKEN_LIB = ERR_LIB_TRUST_TOKEN;
-pub const ERR_R_FATAL = @as(c_int, 64);
-pub const ERR_R_MALLOC_FAILURE = @as(c_int, 1) | ERR_R_FATAL;
-pub const ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED = @as(c_int, 2) | ERR_R_FATAL;
-pub const ERR_R_PASSED_NULL_PARAMETER = @as(c_int, 3) | ERR_R_FATAL;
-pub const ERR_R_INTERNAL_ERROR = @as(c_int, 4) | ERR_R_FATAL;
-pub const ERR_R_OVERFLOW = @as(c_int, 5) | ERR_R_FATAL;
 pub const ERR_ERROR_STRING_BUF_LEN = @as(c_int, 120);
 pub inline fn ERR_GET_FUNC(packed_error: anytype) @TypeOf(@as(c_int, 0)) {
     _ = @TypeOf(packed_error);
@@ -18800,6 +18809,9 @@ pub const struct_bio_st = extern struct {
         return BIO_eof(this) > 0;
     }
 
+    /// Create an empty BIO.
+    ///
+    /// Returns `error.OutOfMemory` if allocation fails.
     pub fn init() !*struct_bio_st {
         return BIO_new(BIO_s_mem()) orelse error.OutOfMemory;
     }
@@ -18815,7 +18827,8 @@ pub const struct_bio_st = extern struct {
         // suggestion and pass a negative value to make it treat `buffer` as a
         // null-terminated string, create a separate `initReadonlyViewZ`
         // constructor.
-        return BIO_new_mem_buf(buffer.ptr, buffer.len) orelse error.OutOfMemory;
+        bun.debugAssert(buffer.len < std.math.maxInt(ossl_ssize_t)); // check for overflow
+        return BIO_new_mem_buf(buffer.ptr, @intCast(buffer.len)) orelse error.OutOfMemory;
     }
 
     pub fn deinit(this: *struct_bio_st) void {
@@ -18865,54 +18878,59 @@ pub const struct_bio_st = extern struct {
 };
 
 /// An X.509 Certificate.
-/// 
+///
 /// > NOTE(@DonIsaac) I've started porting translated extern methods into this
 /// > struct, but not all have been moved. When you need an API not yet in here,
 /// > please move it.
-/// 
+///
 /// ## References
 /// - [RFC 5280](https://datatracker.ietf.org/doc/html/rfc5280)
 /// - [BoringSSL - `x509.h` docs](https://commondatastorage.googleapis.com/chromium-boringssl-docs/x509.h.html)
 pub const X509 = opaque {
     /// Parse an X.509 certificate from a PEM.
-    /// 
+    ///
     /// Returns `null` if allocation failed, or if `pem_buffer` does not contain
     /// a syntactically valid PEM.
-    /// 
+    ///
     /// TODO(@DonIsaac): use ERR_get_error to construct an error variant.
     pub fn initPEM(pem_buffer: *BIO) ?*X509 {
         return PEM_read_bio_X509_AUX(pem_buffer, null, noPasswordCallback, null);
     }
 
     /// Parse an X.509 certificate from an ASN.1 DER encoded buffer.
-    /// 
+    ///
     /// Returns `null` if allocation failed, or if `der_buffer` does not contain
     /// a syntactically valid DER.
-    /// 
+    ///
     /// TODO(@DonIsaac): use ERR_get_error to construct an error variant.
     pub fn initDER(der_buffer: *BIO) ?*X509 {
         return d2i_X509_bio(der_buffer, null);
     }
 
     /// Is this certificate for a Certificate Authority?
-    pub fn isCa(self: *X509) bool {
-        X509_check_ca(self) == 1;
+    pub fn isCA(self: *X509) bool {
+        return X509_check_ca(self) == 1;
     }
+
     /// Get who issued the certificate
-    /// 
+    ///
     /// [spec](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.4)
-    pub const issuer = X509_get_issuer_name;
+    pub fn issuer(self: *const X509) ?*const Name {
+        return X509_get_issuer_name(self);
+    }
 
     /// Get the certificate's subject.
-    /// 
+    ///
     /// [spec](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.6)
-    pub const subject = X509_get_subject_name;
+    pub fn subject(self: *const X509) ?*const Name {
+        return X509_get_subject_name(self);
+    }
 
     // pub fn issuer(self: *const struct_x509_st) *Name {
     //     X509_get_issuer_name()
     // }
     /// Returns the public key of this certificate.
-    /// 
+    ///
     /// NOTE: Due to C FFI reasons, we cannot guarantee the returned pointer is not `null`.
     pub fn publicKey(self: *const X509) ?*const PubKey {
         // NOTE: BoringSSL docs says this is not const-correct (for legacy reasons) and that the returned
@@ -18922,22 +18940,45 @@ pub const X509 = opaque {
     }
 
     /// Get this certificate's serial number.
-    /// 
+    ///
     /// > NOTE: ASN.1 integer types may be negative, but RFC 5280 requires X.509
     /// > serial numbers to be non-zero positive. Such cases must still be
     /// > checkd for and handled.
     /// >
     /// > NOTE: these are usually long. Max value is 20 octets.
-    /// 
+    ///
     /// [spec](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.2)
     pub const serialNumber = X509_get0_serialNumber;
 
-    pub fn deinit(self: *X509) void {
-        X509_free(self);
+    pub fn deinit(this: *X509) void {
+        X509_free(this);
     }
 
-    pub const Name = opaque {};
-    pub const PubKey = opaque{};
+    pub const Name = opaque {
+        /// Writes a human-readable representation of this name to a `BIO`.
+        /// Each line of output is indented by `indent` spaces.
+        ///
+        /// `flags` is some combination of `XN_FLAG_*` and `ASN1_STRFLGS_*`
+        /// values and determines the output.  If unsure, use `XN_FLAG_RFC2253`.
+        /// If `flags` is `XN_FLAG_COMPAT`, or `0, this function calls
+        /// 1X509_NAME_print` instead. This outputs a C-style
+        /// sentinel-terminated string.
+        pub fn printEx(this: *const Name, indent: u32, flags: c_ulong) Error!*BIO {
+            const bio = try BIO.init();
+            errdefer bio.deinit();
+
+            const bytes_printed = X509_NAME_print_ex(bio, this, @intCast(indent), flags);
+            if (bytes_printed <= 0) return Error.CheckQueue;
+            return bio;
+        }
+    };
+
+    pub const PubKey = opaque {};
+    pub const Error = error{
+        /// Error details may be obtained from BoringSSL's error queue using `Err.Packed.mostRecent()`.
+        CheckQueue,
+        OutOfMemory,
+    };
 
     /// Passing `null` to `password_cb` when reading a PEM uses a default
     /// password-prompting callback, so this must be used instead of `null`. Node

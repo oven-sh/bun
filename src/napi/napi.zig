@@ -1675,11 +1675,11 @@ pub const ThreadSafeFunction = struct {
     }
 
     pub fn ref(this: *ThreadSafeFunction) void {
-        this.poll_ref.refConcurrentlyFromEventLoop(this.event_loop);
+        this.poll_ref.ref(this.event_loop.virtual_machine);
     }
 
     pub fn unref(this: *ThreadSafeFunction) void {
-        this.poll_ref.unrefConcurrentlyFromEventLoop(this.event_loop);
+        this.poll_ref.unref(this.event_loop.virtual_machine);
     }
 
     pub fn acquire(this: *ThreadSafeFunction) napi_status {

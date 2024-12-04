@@ -842,7 +842,7 @@ IncomingMessage.prototype = {
     }
 
     const encoding = this.headers["transfer-encoding"];
-    if (encoding?.indexOf("chunked") === -1) {
+    if (encoding?.indexOf?.("chunked") === -1) {
       const contentLength = this.headers["content-length"];
       const length = contentLength ? parseInt(contentLength, 10) : 0;
       if (length === 0) {

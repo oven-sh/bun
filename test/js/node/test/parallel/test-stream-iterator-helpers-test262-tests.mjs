@@ -1,6 +1,6 @@
-import assert from "assert";
-import { Readable } from "stream";
-import { mustCall } from "../common/index.mjs";
+import { mustCall } from '../common/index.mjs';
+import { Readable } from 'stream';
+import assert from 'assert';
 
 // These tests are manually ported from the draft PR for the test262 test suite
 // Authored by Rick Waldron in https://github.com/tc39/test262/pull/2818/files
@@ -45,12 +45,16 @@ import { mustCall } from "../common/index.mjs";
 // * Ecma International Standards hereafter means Ecma International Standards
 // as well as Ecma Technical Reports
 
+
 // Note all the tests that check AsyncIterator's prototype itself and things
 // that happen before stream conversion were not ported.
 {
   // drop/length
   assert.strictEqual(Readable.prototype.drop.length, 1);
-  const descriptor = Object.getOwnPropertyDescriptor(Readable.prototype, "drop");
+  const descriptor = Object.getOwnPropertyDescriptor(
+    Readable.prototype,
+    'drop'
+  );
   assert.strictEqual(descriptor.enumerable, false);
   assert.strictEqual(descriptor.configurable, true);
   assert.strictEqual(descriptor.writable, true);
@@ -71,17 +75,15 @@ import { mustCall } from "../common/index.mjs";
   assert.throws(() => {
     Readable.from([1]).drop({
       valueOf() {
-        throw new Error("boom");
-      },
+        throw new Error('boom');
+      }
     });
   }, /boom/);
   // drop/limit-tointeger
-  const two = await Readable.from([1, 2])
-    .drop({ valueOf: () => 1 })
-    .toArray();
+  const two = await Readable.from([1, 2]).drop({ valueOf: () => 1 }).toArray();
   assert.deepStrictEqual(two, [2]);
   // drop/name
-  assert.strictEqual(Readable.prototype.drop.name, "drop");
+  assert.strictEqual(Readable.prototype.drop.name, 'drop');
   // drop/non-constructible
   assert.throws(() => new Readable.prototype.drop(1), TypeError);
   // drop/proto
@@ -92,14 +94,9 @@ import { mustCall } from "../common/index.mjs";
   // every/abrupt-iterator-close
   const stream = Readable.from([1, 2, 3]);
   const e = new Error();
-  await assert.rejects(
-    stream.every(
-      mustCall(() => {
-        throw e;
-      }, 1),
-    ),
-    e,
-  );
+  await assert.rejects(stream.every(mustCall(() => {
+    throw e;
+  }, 1)), e);
 }
 {
   // every/callable-fn
@@ -119,27 +116,30 @@ import { mustCall } from "../common/index.mjs";
 {
   // every/false
   const iterator = Readable.from([1, 2, 3]);
-  const result = await iterator.every(v => v === 1);
+  const result = await iterator.every((v) => v === 1);
   assert.strictEqual(result, false);
 }
 {
   // every/every
   const iterator = Readable.from([1, 2, 3]);
-  const result = await iterator.every(v => true);
+  const result = await iterator.every((v) => true);
   assert.strictEqual(result, true);
 }
 
 {
   // every/is-function
-  assert.strictEqual(typeof Readable.prototype.every, "function");
+  assert.strictEqual(typeof Readable.prototype.every, 'function');
 }
 {
   // every/length
   assert.strictEqual(Readable.prototype.every.length, 1);
   // every/name
-  assert.strictEqual(Readable.prototype.every.name, "every");
+  assert.strictEqual(Readable.prototype.every.name, 'every');
   // every/propdesc
-  const descriptor = Object.getOwnPropertyDescriptor(Readable.prototype, "every");
+  const descriptor = Object.getOwnPropertyDescriptor(
+    Readable.prototype,
+    'every'
+  );
   assert.strictEqual(descriptor.enumerable, false);
   assert.strictEqual(descriptor.configurable, true);
   assert.strictEqual(descriptor.writable, true);

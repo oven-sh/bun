@@ -30,6 +30,7 @@ import {
   homedir,
   isWindows,
   sha256,
+  isPrivileged,
 } from "./utils.mjs";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { existsSync, mkdtempSync, readdirSync } from "node:fs";
@@ -211,7 +212,7 @@ const tart = {
 
     const args = Object.entries(vmOptions)
       .filter(([, value]) => value !== undefined)
-      .map(([key, value]) => (typeof value === "boolean" ? `--${key}` : `--${key}=${value}`));
+      .flatMap(([key, value]) => (typeof value === "boolean" ? (value ? [`--${key}`] : []) : [`--${key}=${value}`]));
     if (dir?.length) {
       args.push(
         ...dir.map(({ source, destination, readOnly }) => `--dir=${source}:${destination}${readOnly ? ":ro" : ""}`),
@@ -249,7 +250,7 @@ const tart = {
       cpuCount,
       memoryGb,
       diskSizeGb,
-      // "net-softnet": true,
+      "net-softnet": isPrivileged(),
       "no-audio": true,
       "no-clipboard": true,
       "no-graphics": true,
@@ -2223,7 +2224,6 @@ async function spawnSsh(options, spawnOptions = {}) {
   if (spawnOptions?.throwOnError) {
     const { error } = result;
     if (error) {
-      console.warn("SSH logs:", readFile(logPath, { encoding: "utf-8" }));
       throw error;
     }
   }
@@ -2629,8 +2629,7 @@ async function main() {
         const args = ci ? ["--ci"] : [];
         await startGroup("Running bootstrap...", async () => {
           await machine.upload(bootstrapPath, remotePath);
-          console.log(await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" }));
-          console.log("HERE");
+          await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });
         });
       }
     }

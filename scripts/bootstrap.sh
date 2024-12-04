@@ -171,9 +171,9 @@ append_to_path() {
 }
 
 move_to_bin() {
-	bin_path="$1"
-	if ! [ -d "$bin_path" ]; then
-		error "Could not find directory: \"$bin_path\""
+	exe_path="$1"
+	if ! [ -f "$exe_path" ]; then
+		error "Could not find executable: \"$exe_path\""
 	fi
 
 	usr_paths="/usr/bin /usr/local/bin"
@@ -183,12 +183,8 @@ move_to_bin() {
 		fi
 	done
 
-	for file in "$bin_path"/*; do
-		if [ -f "$file" ]; then
-			grant_to_user "$file"
-			execute_sudo ln -sf "$file" "$usr_path/$(basename "$file")"
-		fi
-	done
+	grant_to_user "$exe_path"
+	execute_sudo mv -f "$exe_path" "$usr_path/$(basename "$exe_path")"
 }
 
 check_features() {
@@ -700,14 +696,17 @@ install_bun() {
 	version="${1:-"latest"}"
 	case "$version" in
 	latest)
-		HOME="$home" execute_as_user "$bash" "$script"
+		execute_as_user "$bash" "$script"
 		;;
 	*)
-		HOME="$home" execute_as_user "$bash" "$script" -s "$version"
+		execute_as_user "$bash" "$script" -s "$version"
 		;;
 	esac
 
-	move_to_bin "$home/.bun/bin"
+	move_to_bin "$home/.bun/bin/bun"
+	bun_path="$(which bun)"
+	bunx_path="$(dirname "$bun_path")/bunx"
+	execute_sudo ln -sf "$bun_path" "$bunx_path"
 }
 
 install_cmake() {
@@ -1012,7 +1011,7 @@ install_buildkite() {
 	buildkite_tmpdir="$(dirname "$buildkite_filepath")"
 
 	execute tar -xzf "$buildkite_filepath" -C "$buildkite_tmpdir"
-	move_to_bin "$buildkite_tmpdir"
+	move_to_bin "$buildkite_tmpdir/buildkite-agent"
 	execute rm -rf "$buildkite_tmpdir"
 }
 

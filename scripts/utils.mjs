@@ -206,6 +206,28 @@ function getPrivilegedCommand() {
   return (priviledgedCommand = []);
 }
 
+/** @type {boolean | undefined} */
+let privileged;
+
+/**
+ * @returns {boolean}
+ */
+export function isPrivileged() {
+  if (typeof privileged !== "undefined") {
+    return privileged;
+  }
+
+  const command = getPrivilegedCommand();
+  if (command.length) {
+    const { error } = spawnSync(command);
+    privileged = !error;
+  } else {
+    privileged = false;
+  }
+
+  return privileged;
+}
+
 /**
  * @param {string[]} command
  * @param {SpawnOptions} options

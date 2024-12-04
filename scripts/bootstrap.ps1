@@ -208,7 +208,8 @@ function Install-Common-Software {
   Install-Bun
   Install-Cygwin
   if ($CI) {
-    Install-Tailscale
+    # FIXME: Installing tailscale causes the AWS metadata server to become unreachable
+    # Install-Tailscale
     Install-Buildkite
   }
 }

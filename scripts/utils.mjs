@@ -2083,8 +2083,9 @@ export async function getCloudMetadata(name, cloud) {
     throw new Error(`Unsupported cloud: ${inspect(cloud)}`);
   }
 
-  const { error, body } = await curl(url, { headers, retries: Infinity });
+  const { error, body } = await curl(url, { headers, retries: 10 });
   if (error) {
+    console.warn("Failed to get cloud metadata:", error);
     return;
   }
 

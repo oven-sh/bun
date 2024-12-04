@@ -46,12 +46,6 @@ async function doBuildkiteAgent(action) {
     pidPath = join(logsPath, "buildkite-agent.pid");
   }
 
-  // On EC2 Windows, the metadata service needs to be manually added to the route table,
-  // otherwise it won't be able to resolve the metadata endpoint.
-  if (isWindows) {
-    await spawn(["route", "add", "169.254.169.254", "mask", "255.255.255.255", "0.0.0.0", "IF", "9", "metric", "1"]);
-  }
-
   async function install() {
     const command = process.execPath;
     const args = [realpathSync(process.argv[1]), "start"];

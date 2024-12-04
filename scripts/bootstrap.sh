@@ -170,16 +170,23 @@ append_to_path() {
 	export PATH="$path:$PATH"
 }
 
-link_to_bin() {
-	path="$1"
-	if ! [ -d "$path" ]; then
-		error "Could not find directory: \"$path\""
+move_to_bin() {
+	bin_path="$1"
+	if ! [ -d "$bin_path" ]; then
+		error "Could not find directory: \"$bin_path\""
 	fi
 
-	for file in "$path"/*; do
+	usr_paths="/usr/bin /usr/local/bin"
+	for usr_path in $usr_paths; do
+		if [ -d "$usr_path" ] && [ -w "$usr_path" ]; then
+			break
+		fi
+	done
+
+	for file in "$bin_path"/*; do
 		if [ -f "$file" ]; then
 			grant_to_user "$file"
-			execute_sudo ln -sf "$file" "/usr/bin/$(basename "$file")"
+			execute_sudo ln -sf "$file" "$usr_path/$(basename "$file")"
 		fi
 	done
 }
@@ -700,7 +707,7 @@ install_bun() {
 		;;
 	esac
 
-	link_to_bin "$home/.bun/bin"
+	move_to_bin "$home/.bun/bin"
 }
 
 install_cmake() {
@@ -864,11 +871,6 @@ install_rust() {
 		execute_as_user "$sh" "$script" -y
 		;;
 	esac
-
-	# FIXME: This causes cargo to fail to build:
-	# > error: rustup could not choose a version of cargo to run,
-	# > because one wasn't specified explicitly, and no default is configured.
-	# link_to_bin "$home/.cargo/bin"
 }
 
 install_docker() {
@@ -1010,7 +1012,7 @@ install_buildkite() {
 	buildkite_tmpdir="$(dirname "$buildkite_filepath")"
 
 	execute tar -xzf "$buildkite_filepath" -C "$buildkite_tmpdir"
-	execute_sudo mv -f "$buildkite_tmpdir/buildkite-agent" "/usr/bin/buildkite-agent"
+	move_to_bin "$buildkite_tmpdir"
 	execute rm -rf "$buildkite_tmpdir"
 }
 

@@ -66,6 +66,19 @@ function getBody() {
     case "urlsearchparams":
       body = getURLSearchParams();
       break;
+    case "iterator":
+      body = async function* iter() {
+        yield (cachedBody ??= getString());
+      };
+      break;
+    case "stream":
+      body = new ReadableStream({
+        start(c) {
+          c.enqueue((cachedBody ??= getBuffer()));
+          c.close();
+        },
+      });
+      break;
     default:
       throw new Error(`Invalid type: ${type}`);
   }

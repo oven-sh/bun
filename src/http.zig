@@ -2127,7 +2127,7 @@ header_buf: string,
 url: URL,
 connected_url: URL = URL{},
 allocator: std.mem.Allocator,
-verbose: HTTPVerboseLevel = .headers,
+verbose: HTTPVerboseLevel = .none,
 remaining_redirect_count: i8 = default_redirect_count,
 allow_retry: bool = false,
 redirect_type: FetchRedirect = FetchRedirect.follow,
@@ -2314,7 +2314,7 @@ pub const AsyncHTTP = struct {
     redirected: bool = false,
 
     response_encoding: Encoding = Encoding.identity,
-    verbose: HTTPVerboseLevel = .headers,
+    verbose: HTTPVerboseLevel = .none,
 
     client: HTTPClient = undefined,
     waitingDeffered: bool = false,

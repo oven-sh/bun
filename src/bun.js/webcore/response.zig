@@ -946,7 +946,7 @@ pub const Fetch = struct {
                 wrapper.sink.ended = true;
                 wrapper.sink.finalize();
                 wrapper.detach();
-                wrapper.sink.destroy();
+                wrapper.sink.finalizeAndDestroy();
             }
         }
 
@@ -1091,14 +1091,11 @@ pub const Fetch = struct {
                 this.ref(); // lets only unref when sink is done
 
                 const globalThis = this.global_this;
-                var response_stream = bun.default_allocator.create(FetchTaskletStream.JSSink) catch unreachable;
-                response_stream.* = FetchTaskletStream.JSSink{
-                    .sink = .{
-                        .task = this,
-                        .buffer = .{},
-                        .globalThis = globalThis,
-                    },
-                };
+                var response_stream = FetchTaskletStream.new(.{
+                    .task = this,
+                    .buffer = .{},
+                    .globalThis = globalThis,
+                }).toSink();
                 var signal = &response_stream.sink.signal;
                 this.sink = response_stream;
 
@@ -1125,7 +1122,7 @@ pub const Fetch = struct {
                 if (assignment_result.toError()) |err_value| {
                     response_stream.detach();
                     this.sink = null;
-                    response_stream.sink.destroy();
+                    response_stream.sink.finalizeAndDestroy();
                     return this.abortListener(err_value);
                 }
 
@@ -1171,7 +1168,7 @@ pub const Fetch = struct {
                         // if is not a promise we treat it as Error
                         response_stream.detach();
                         this.sink = null;
-                        response_stream.sink.destroy();
+                        response_stream.sink.finalizeAndDestroy();
                         return this.abortListener(assignment_result);
                     }
                 }

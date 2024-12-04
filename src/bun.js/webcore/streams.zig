@@ -2612,6 +2612,8 @@ pub const FetchTaskletChunkedRequestSink = struct {
     done: bool = false,
     auto_flusher: AutoFlusher = AutoFlusher{},
 
+    pub usingnamespace bun.New(FetchTaskletChunkedRequestSink);
+
     fn unregisterAutoFlusher(this: *@This()) void {
         if (this.auto_flusher.registered)
             AutoFlusher.unregisterDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
@@ -2654,6 +2656,9 @@ pub const FetchTaskletChunkedRequestSink = struct {
     }
     pub fn sink(this: *@This()) Sink {
         return Sink.init(this);
+    }
+    pub fn toSink(this: *@This()) *@This().JSSink {
+        return @ptrCast(this);
     }
     pub fn finalize(this: *@This()) void {
         var buffer = this.buffer;
@@ -2717,9 +2722,9 @@ pub const FetchTaskletChunkedRequestSink = struct {
     pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, _: bool) JSC.Maybe(JSValue) {
         return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(this.internalFlush() catch 0)) };
     }
-    pub fn destroy(this: *@This()) void {
+    pub fn finalizeAndDestroy(this: *@This()) void {
         this.finalize();
-        bun.default_allocator.destroy(this);
+        this.destroy();
     }
 
     pub fn abort(this: *@This()) void {

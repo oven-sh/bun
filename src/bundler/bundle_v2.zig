@@ -3527,7 +3527,7 @@ pub const ParseTask = struct {
 
         const parse_task = ParseTask{
             .ctx = undefined,
-            .path = Fs.Path.initWithNamespace(std.fmt.comptimePrint("runtime-{s}", .{@tagName(target)}), "bun:runtime"),
+            .path = Fs.Path.initWithNamespace("runtime", "bun:runtime"),
             .side_effects = .no_side_effects__pure_data,
             .jsx = .{
                 .parse = false,

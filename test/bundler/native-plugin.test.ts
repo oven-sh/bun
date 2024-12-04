@@ -1,7 +1,7 @@
 import { BunFile, Loader, plugin } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import path, { dirname, join, resolve } from "path";
-import source from "./native_plugin.c" with { type: "file" };
+import source from "./native_plugin.cc" with { type: "file" };
 import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { itBundled } from "bundler/expectBundled";
@@ -14,7 +14,7 @@ describe("native-plugins", async () => {
   beforeAll(async () => {
     const files = {
       "bun-native-bundler-plugin-api/bundler_plugin.h": await Bun.file(bundlerPluginHeader).text(),
-      "plugin.c": await Bun.file(source).text(),
+      "plugin.cc": await Bun.file(source).text(),
       "package.json": JSON.stringify({
         "name": "fake-plugin",
         "module": "index.ts",
@@ -46,7 +46,7 @@ values;`,
         "targets": [
           {
             "target_name": "xXx123_foo_counter_321xXx",
-            "sources": [ "plugin.c" ],
+            "sources": [ "plugin.cc" ],
             "include_dirs": [ "." ]
           }
         ]

@@ -12038,6 +12038,10 @@ crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
 
+crypto_exports.getFips = function getFips() {
+  return 0;
+};
+
 crypto_exports.getRandomValues = getRandomValues;
 crypto_exports.randomUUID = randomUUID;
 crypto_exports.randomInt = randomInt;

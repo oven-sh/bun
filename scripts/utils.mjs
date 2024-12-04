@@ -23,6 +23,8 @@ export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
 export const isPosix = isMacOS || isLinux;
 
+export const isArm64 = process.arch === "arm64";
+
 /**
  * @param {string} name
  * @param {boolean} [required]
@@ -1118,17 +1120,6 @@ export function getFileUrl(filename, line) {
   }
 
   const filePath = (cwd ? relative(cwd, filename) : filename).replace(/\\/g, "/");
-  const pullRequest = getPullRequest();
-
-  if (pullRequest) {
-    const fileMd5 = createHash("sha256").update(filePath).digest("hex");
-    const url = new URL(`pull/${pullRequest}/files#diff-${fileMd5}`, `${baseUrl}/`);
-    if (typeof line !== "undefined") {
-      return new URL(`R${line}`, url);
-    }
-    return url;
-  }
-
   const commit = getCommit(cwd);
   const url = new URL(`blob/${commit}/${filePath}`, `${baseUrl}/`).toString();
   if (typeof line !== "undefined") {

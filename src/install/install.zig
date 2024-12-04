@@ -8661,38 +8661,25 @@ pub const PackageManager = struct {
                 "./.npmrc",
             };
 
-            bun.ini.loadNpmrcFromFile(
-                ctx.allocator,
-                ctx.install orelse brk: {
-                    const install_ = ctx.allocator.create(Api.BunInstall) catch bun.outOfMemory();
-                    install_.* = std.mem.zeroes(Api.BunInstall);
-                    ctx.install = install_;
-                    break :brk install_;
-                },
-                env,
-                true,
-                Path.joinAbsStringBufZ(
-                    data_dir,
-                    &buf,
-                    &parts,
-                    .auto,
-                ),
-            );
-        }
-
-        bun.ini.loadNpmrcFromFile(
-            ctx.allocator,
-            ctx.install orelse brk: {
+            bun.ini.loadNpmrcConfig(ctx.allocator, ctx.install orelse brk: {
                 const install_ = ctx.allocator.create(Api.BunInstall) catch bun.outOfMemory();
                 install_.* = std.mem.zeroes(Api.BunInstall);
                 ctx.install = install_;
                 break :brk install_;
-            },
-            env,
-            true,
-            ".npmrc",
-        );
-
+            }, env, true, &[_][:0]const u8{ Path.joinAbsStringBufZ(
+                data_dir,
+                &buf,
+                &parts,
+                .auto,
+            ), ".npmrc" });
+        } else {
+            bun.ini.loadNpmrcConfig(ctx.allocator, ctx.install orelse brk: {
+                const install_ = ctx.allocator.create(Api.BunInstall) catch bun.outOfMemory();
+                install_.* = std.mem.zeroes(Api.BunInstall);
+                ctx.install = install_;
+                break :brk install_;
+            }, env, true, &[_][:0]const u8{".npmrc"});
+        }
         const cpu_count = bun.getThreadCount();
 
         const options = Options{

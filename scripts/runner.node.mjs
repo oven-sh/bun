@@ -206,6 +206,30 @@ async function runTests() {
   if (results.every(({ ok }) => ok)) {
     for (const testPath of tests) {
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
+      if (title.startsWith("test/js/node/test/parallel/")) {
+        const t = await runTest(title, async () => {
+          const { ok, error, stdout, exitCode } = await spawnBun(execPath, {
+            cwd: cwd,
+            args: [title],
+            timeout: spawnTimeout,
+            env: {
+              GITHUB_ACTIONS: "true", // always true so annotations are parsed
+            },
+            stdout: chunk => pipeTestStdout(process.stdout, chunk),
+            stderr: chunk => pipeTestStdout(process.stderr, chunk),
+          });
+          return {
+            testPath,
+            ok,
+            status: ok ? "pass" : "fail",
+            error,
+            errors: [],
+            stdout,
+            stdoutPreview: "",
+          };
+        });
+        continue;
+      }
       await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
     }
   }
@@ -770,6 +794,7 @@ function isJavaScriptTest(path) {
  * @returns {boolean}
  */
 function isTest(path) {
+  if (path.startsWith("js/node/test/parallel/")) return true;
   if (path.replaceAll(sep, "/").includes("/test-cluster-") && path.endsWith(".js")) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
   return isTestStrict(path);

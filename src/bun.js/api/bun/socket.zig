@@ -3180,7 +3180,7 @@ fn NewSocket(comptime ssl: bool) type {
                 const cert = BoringSSL.sk_X509_value(cert_chain, 0) orelse return JSValue.jsUndefined();
                 return X509.toJS(cert, globalObject);
             }
-            var cert: ?*BoringSSL.BunX509 = null;
+            var cert: ?*BoringSSL.X509 = null;
             if (this.handlers.is_server) {
                 cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
             }

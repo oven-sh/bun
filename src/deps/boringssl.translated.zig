@@ -52,6 +52,8 @@ pub const struct_asn1_object_st = opaque {};
 pub const ASN1_OBJECT = struct_asn1_object_st;
 pub const struct_asn1_pctx_st = opaque {};
 pub const ASN1_PCTX = struct_asn1_pctx_st;
+/// ## References
+/// - [ASN.1 INTEGER](https://www.oss.com/asn1/resources/asn1-made-simple/asn1-quick-reference/integer.html)
 pub const struct_asn1_string_st = extern struct {
     length: c_int,
     type: c_int,
@@ -128,10 +130,10 @@ pub const struct_ISSUING_DIST_POINT_st = opaque {};
 pub const ISSUING_DIST_POINT = struct_ISSUING_DIST_POINT_st;
 pub const struct_NAME_CONSTRAINTS_st = opaque {};
 pub const NAME_CONSTRAINTS = struct_NAME_CONSTRAINTS_st;
-pub const struct_X509_pubkey_st = opaque {};
-pub const X509_PUBKEY = struct_X509_pubkey_st;
+// pub const struct_X509_pubkey_st = opaque {};
+// pub const X509.PubKey = struct_X509_pubkey_st;
 pub const struct_Netscape_spkac_st = extern struct {
-    pubkey: ?*X509_PUBKEY,
+    pubkey: ?*X509.PubKey,
     challenge: [*c]ASN1_IA5STRING,
 };
 pub const NETSCAPE_SPKAC = struct_Netscape_spkac_st;
@@ -154,8 +156,8 @@ pub const struct_X509_crl_st = opaque {};
 pub const X509_CRL = struct_X509_crl_st;
 pub const struct_X509_extension_st = opaque {};
 pub const X509_EXTENSION = struct_X509_extension_st;
-pub const struct_x509_st = opaque {};
-pub const X509 = struct_x509_st;
+// pub const struct_x509_st = opaque {};
+// pub const X509 = struct_x509_st;
 pub const CRYPTO_refcount_t = u32;
 pub const struct_openssl_method_common_st = extern struct {
     references: c_int,
@@ -254,8 +256,8 @@ pub const struct_X509_info_st = extern struct {
 pub const X509_INFO = struct_X509_info_st;
 pub const struct_X509_name_entry_st = opaque {};
 pub const X509_NAME_ENTRY = struct_X509_name_entry_st;
-pub const struct_X509_name_st = opaque {};
-pub const X509_NAME = struct_X509_name_st;
+// pub const struct_X509_name_st = opaque {};
+pub const X509_NAME = X509.Name;
 pub const struct_X509_req_st = opaque {};
 pub const X509_REQ = struct_X509_req_st;
 pub const struct_X509_sig_st = opaque {};
@@ -1081,6 +1083,9 @@ pub extern fn BIO_flush(bio: [*c]BIO) c_int;
 pub extern fn BIO_ctrl(bio: [*c]BIO, cmd: c_int, larg: c_long, parg: ?*anyopaque) c_long;
 pub extern fn BIO_ptr_ctrl(bp: [*c]BIO, cmd: c_int, larg: c_long) [*c]u8;
 pub extern fn BIO_int_ctrl(bp: [*c]BIO, cmd: c_int, larg: c_long, iarg: c_int) c_long;
+/// BIO_reset resets |bio| to its initial state, the precise meaning of which
+/// depends on the concrete type of |bio|. It returns one on success and zero
+/// otherwise.
 pub extern fn BIO_reset(bio: [*c]BIO) c_int;
 pub extern fn BIO_eof(bio: [*c]BIO) c_int;
 pub extern fn BIO_set_flags(bio: [*c]BIO, flags: c_int) void;
@@ -1124,7 +1129,7 @@ pub extern fn BIO_s_mem() ?*const BIO_METHOD;
 ///
 /// If |len| is negative, then |buf| is treated as a NUL-terminated string, but
 /// don't depend on this in new code.
-pub extern fn BIO_new_mem_buf(buf: ?*const anyopaque, len: ossl_ssize_t) [*c]BIO;
+pub extern fn BIO_new_mem_buf(buf: ?*const anyopaque, len: ossl_ssize_t) ?*BIO;
 // pub extern fn BIO_mem_contents(bio: [*c]const BIO, out_contents: [*c][*c]const u8, out_len: [*c]usize) c_int;
 pub extern fn BIO_get_mem_data(bio: [*c]BIO, contents: [*c][*c]u8) c_long;
 pub extern fn BIO_get_mem_ptr(bio: [*c]BIO, out: [*c][*c]BUF_MEM) c_int;
@@ -2863,7 +2868,7 @@ pub extern fn X509_get0_notBefore(x509: ?*const X509) [*c]const ASN1_TIME;
 pub extern fn X509_get0_notAfter(x509: ?*const X509) [*c]const ASN1_TIME;
 pub extern fn X509_get_issuer_name(x509: ?*const X509) ?*X509_NAME;
 pub extern fn X509_get_subject_name(x509: ?*const X509) ?*X509_NAME;
-pub extern fn X509_get_X509_PUBKEY(x509: ?*const X509) ?*X509_PUBKEY;
+pub extern fn X509_get_X509_PUBKEY(x509: ?*const X509) ?*X509.PubKey;
 pub extern fn X509_get_pubkey(x509: ?*X509) [*c]EVP_PKEY;
 pub extern fn X509_get0_pubkey_bitstr(x509: ?*const X509) [*c]ASN1_BIT_STRING;
 pub extern fn X509_get0_uids(x509: ?*const X509, out_issuer_uid: [*c][*c]const ASN1_BIT_STRING, out_subject_uid: [*c][*c]const ASN1_BIT_STRING) void;
@@ -4264,13 +4269,13 @@ pub extern fn X509_get_default_cert_dir() [*c]const u8;
 pub extern fn X509_get_default_cert_dir_env() [*c]const u8;
 // pub extern fn X509_get_default_cert_file_env() [*c]const u8;
 pub extern fn X509_get_default_private_dir() [*c]const u8;
-pub extern fn X509_PUBKEY_new() ?*X509_PUBKEY;
-pub extern fn X509_PUBKEY_free(a: ?*X509_PUBKEY) void;
-pub extern fn d2i_X509_PUBKEY(a: [*c]?*X509_PUBKEY, in: [*c][*c]const u8, len: c_long) ?*X509_PUBKEY;
-pub extern fn i2d_X509_PUBKEY(a: ?*const X509_PUBKEY, out: [*c][*c]u8) c_int;
+pub extern fn X509_PUBKEY_new() ?*X509.PubKey;
+pub extern fn X509_PUBKEY_free(a: ?*X509.PubKey) void;
+pub extern fn d2i_X509_PUBKEY(a: [*c]?*X509.PubKey, in: [*c][*c]const u8, len: c_long) ?*X509.PubKey;
+pub extern fn i2d_X509_PUBKEY(a: ?*const X509.PubKey, out: [*c][*c]u8) c_int;
 pub extern const X509_PUBKEY_it: ASN1_ITEM;
-pub extern fn X509_PUBKEY_set(x: [*c]?*X509_PUBKEY, pkey: [*c]EVP_PKEY) c_int;
-pub extern fn X509_PUBKEY_get(key: ?*X509_PUBKEY) [*c]EVP_PKEY;
+pub extern fn X509_PUBKEY_set(x: [*c]?*X509.PubKey, pkey: [*c]EVP_PKEY) c_int;
+pub extern fn X509_PUBKEY_get(key: ?*X509.PubKey) [*c]EVP_PKEY;
 pub extern fn X509_SIG_new() ?*X509_SIG;
 pub extern fn X509_SIG_free(a: ?*X509_SIG) void;
 pub extern fn d2i_X509_SIG(a: [*c]?*X509_SIG, in: [*c][*c]const u8, len: c_long) ?*X509_SIG;
@@ -4400,9 +4405,9 @@ pub extern fn i2d_PKCS8_PRIV_KEY_INFO(a: ?*const PKCS8_PRIV_KEY_INFO, out: [*c][
 pub extern const PKCS8_PRIV_KEY_INFO_it: ASN1_ITEM;
 pub extern fn EVP_PKCS82PKEY(p8: ?*const PKCS8_PRIV_KEY_INFO) [*c]EVP_PKEY;
 pub extern fn EVP_PKEY2PKCS8(pkey: [*c]const EVP_PKEY) ?*PKCS8_PRIV_KEY_INFO;
-pub extern fn X509_PUBKEY_set0_param(@"pub": ?*X509_PUBKEY, obj: ?*ASN1_OBJECT, param_type: c_int, param_value: ?*anyopaque, key: [*c]u8, key_len: c_int) c_int;
-pub extern fn X509_PUBKEY_get0_param(out_obj: [*c]?*ASN1_OBJECT, out_key: [*c][*c]const u8, out_key_len: [*c]c_int, out_alg: [*c][*c]X509_ALGOR, @"pub": ?*X509_PUBKEY) c_int;
-pub extern fn X509_PUBKEY_get0_public_key(@"pub": ?*const X509_PUBKEY) [*c]const ASN1_BIT_STRING;
+pub extern fn X509_PUBKEY_set0_param(@"pub": ?*X509.PubKey, obj: ?*ASN1_OBJECT, param_type: c_int, param_value: ?*anyopaque, key: [*c]u8, key_len: c_int) c_int;
+pub extern fn X509_PUBKEY_get0_param(out_obj: [*c]?*ASN1_OBJECT, out_key: [*c][*c]const u8, out_key_len: [*c]c_int, out_alg: [*c][*c]X509_ALGOR, @"pub": ?*X509.PubKey) c_int;
+pub extern fn X509_PUBKEY_get0_public_key(@"pub": ?*const X509.PubKey) [*c]const ASN1_BIT_STRING;
 pub extern fn X509_check_trust(x: ?*X509, id: c_int, flags: c_int) c_int;
 pub extern fn X509_TRUST_get_count() c_int;
 pub extern fn X509_TRUST_get0(idx: c_int) [*c]X509_TRUST;
@@ -4762,6 +4767,7 @@ pub fn sk_X509_VERIFY_PARAM_deep_copy(arg_sk: ?*const struct_stack_st_X509_VERIF
     const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509_VERIFY_PARAM, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_VERIFY_PARAM_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_VERIFY_PARAM_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
+/// returns ` if |x| should be considered a CA certificate and 0 otherwise.
 pub extern fn X509_check_ca(x: ?*X509) c_int;
 pub const X509_STORE_CTX_verify_cb = ?*const fn (c_int, ?*X509_STORE_CTX) callconv(.C) c_int;
 pub const X509_STORE_CTX_verify_fn = ?*const fn (?*X509_STORE_CTX) callconv(.C) c_int;
@@ -4973,6 +4979,7 @@ pub extern fn PEM_read_bio_X509(bp: [*c]BIO, x: [*c]?*X509, cb: ?*const pem_pass
 // pub extern fn PEM_read_X509(fp: [*c]FILE, x: [*c]?*X509, cb: ?*const pem_password_cb, u: ?*anyopaque) ?*X509;
 pub extern fn PEM_write_bio_X509(bp: [*c]BIO, x: ?*X509) c_int;
 // pub extern fn PEM_write_X509(fp: [*c]FILE, x: ?*X509) c_int;
+/// NOTE: `u` is `userdata`.
 pub extern fn PEM_read_bio_X509_AUX(bp: [*c]BIO, x: [*c]?*X509, cb: ?*const pem_password_cb, u: ?*anyopaque) ?*X509;
 // pub extern fn PEM_read_X509_AUX(fp: [*c]FILE, x: [*c]?*X509, cb: ?*const pem_password_cb, u: ?*anyopaque) ?*X509;
 pub extern fn PEM_write_bio_X509_AUX(bp: [*c]BIO, x: ?*X509) c_int;
@@ -18593,7 +18600,7 @@ pub const bignum_st = struct_bignum_st;
 pub const DSA_SIG_st = struct_DSA_SIG_st;
 pub const ISSUING_DIST_POINT_st = struct_ISSUING_DIST_POINT_st;
 pub const NAME_CONSTRAINTS_st = struct_NAME_CONSTRAINTS_st;
-pub const X509_pubkey_st = struct_X509_pubkey_st;
+// pub const X509_pubkey_st = struct_X509_pubkey_st;
 pub const Netscape_spkac_st = struct_Netscape_spkac_st;
 pub const X509_algor_st = struct_X509_algor_st;
 pub const Netscape_spki_st = struct_Netscape_spki_st;
@@ -18601,7 +18608,7 @@ pub const RIPEMD160state_st = struct_RIPEMD160state_st;
 pub const X509_VERIFY_PARAM_st = struct_X509_VERIFY_PARAM_st;
 pub const X509_crl_st = struct_X509_crl_st;
 pub const X509_extension_st = struct_X509_extension_st;
-pub const x509_st = struct_x509_st;
+// pub const x509_st = struct_x509_st;
 pub const openssl_method_common_st = struct_openssl_method_common_st;
 pub const rsa_meth_st = struct_rsa_meth_st;
 pub const stack_st_void = struct_stack_st_void;
@@ -18619,7 +18626,7 @@ pub const evp_cipher_info_st = struct_evp_cipher_info_st;
 pub const private_key_st = struct_private_key_st;
 pub const X509_info_st = struct_X509_info_st;
 pub const X509_name_entry_st = struct_X509_name_entry_st;
-pub const X509_name_st = struct_X509_name_st;
+// pub const X509_name_st = struct_X509_name_st;
 pub const X509_req_st = struct_X509_req_st;
 pub const X509_sig_st = struct_X509_sig_st;
 pub const bignum_ctx = struct_bignum_ctx;
@@ -18802,19 +18809,25 @@ pub const struct_bio_st = extern struct {
     ///
     /// `buffer` must outlive the returned `BIO`.
     ///
-    /// Returns an error if
-    /// - the buffer is empty
-    /// - BIO initialization fails (same as `.init()`).
+    /// Returns an error if BIO initialization fails (same as `.init()`).
     pub fn initReadonlyView(buffer: []const u8) !*struct_bio_st {
         // NOTE: not exposing len parameter. If we want to ignore their
         // suggestion and pass a negative value to make it treat `buffer` as a
         // null-terminated string, create a separate `initReadonlyViewZ`
         // constructor.
-        return BIO_new_mem_buf(buffer.ptr, buffer.len);
+        return BIO_new_mem_buf(buffer.ptr, buffer.len) orelse error.OutOfMemory;
     }
 
     pub fn deinit(this: *struct_bio_st) void {
         _ = BIO_free(this);
+    }
+
+    /// Reset this `BIO` to its initial state. What this actually does depends
+    /// on what kind of basic io handle/thing this represents.
+    ///
+    /// NOTE: calls `BIO_ctrl` with `BIO_CTRL_RESET`.
+    pub fn reset(this: *struct_bio_st) void {
+        _ = BIO_reset(this);
     }
 
     pub fn slice(this: *struct_bio_st) []u8 {
@@ -18848,6 +18861,89 @@ pub const struct_bio_st = extern struct {
             return @as(usize, @intCast(rc))
         else
             return error.Fail;
+    }
+};
+
+/// An X.509 Certificate.
+/// 
+/// > NOTE(@DonIsaac) I've started porting translated extern methods into this
+/// > struct, but not all have been moved. When you need an API not yet in here,
+/// > please move it.
+/// 
+/// ## References
+/// - [RFC 5280](https://datatracker.ietf.org/doc/html/rfc5280)
+/// - [BoringSSL - `x509.h` docs](https://commondatastorage.googleapis.com/chromium-boringssl-docs/x509.h.html)
+pub const X509 = opaque {
+    /// Parse an X.509 certificate from a PEM.
+    /// 
+    /// Returns `null` if allocation failed, or if `pem_buffer` does not contain
+    /// a syntactically valid PEM.
+    /// 
+    /// TODO(@DonIsaac): use ERR_get_error to construct an error variant.
+    pub fn initPEM(pem_buffer: *BIO) ?*X509 {
+        return PEM_read_bio_X509_AUX(pem_buffer, null, noPasswordCallback, null);
+    }
+
+    /// Parse an X.509 certificate from an ASN.1 DER encoded buffer.
+    /// 
+    /// Returns `null` if allocation failed, or if `der_buffer` does not contain
+    /// a syntactically valid DER.
+    /// 
+    /// TODO(@DonIsaac): use ERR_get_error to construct an error variant.
+    pub fn initDER(der_buffer: *BIO) ?*X509 {
+        return d2i_X509_bio(der_buffer, null);
+    }
+
+    /// Is this certificate for a Certificate Authority?
+    pub fn isCa(self: *X509) bool {
+        X509_check_ca(self) == 1;
+    }
+    /// Get who issued the certificate
+    /// 
+    /// [spec](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.4)
+    pub const issuer = X509_get_issuer_name;
+
+    /// Get the certificate's subject.
+    /// 
+    /// [spec](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.6)
+    pub const subject = X509_get_subject_name;
+
+    // pub fn issuer(self: *const struct_x509_st) *Name {
+    //     X509_get_issuer_name()
+    // }
+    /// Returns the public key of this certificate.
+    /// 
+    /// NOTE: Due to C FFI reasons, we cannot guarantee the returned pointer is not `null`.
+    pub fn publicKey(self: *const X509) ?*const PubKey {
+        // NOTE: BoringSSL docs says this is not const-correct (for legacy reasons) and that the returned
+        // key should not be modified, so we're adjusting the function's API.
+        // see: https://commondatastorage.googleapis.com/chromium-boringssl-docs/x509.h.html#X509V3_extensions_print:~:text=X509_get_X509_PUBKEY%20returns%20the%20public%20key%20of%20x509.%20Note%20this%20function%20is%20not%20const%2Dcorrect%20for%20legacy%20reasons.%20Callers%20should%20not%20modify%20the%20returned%20object.
+        return X509_get_X509_PUBKEY(self);
+    }
+
+    /// Get this certificate's serial number.
+    /// 
+    /// > NOTE: ASN.1 integer types may be negative, but RFC 5280 requires X.509
+    /// > serial numbers to be non-zero positive. Such cases must still be
+    /// > checkd for and handled.
+    /// >
+    /// > NOTE: these are usually long. Max value is 20 octets.
+    /// 
+    /// [spec](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.2)
+    pub const serialNumber = X509_get0_serialNumber;
+
+    pub fn deinit(self: *X509) void {
+        X509_free(self);
+    }
+
+    pub const Name = opaque {};
+    pub const PubKey = opaque{};
+
+    /// Passing `null` to `password_cb` when reading a PEM uses a default
+    /// password-prompting callback, so this must be used instead of `null`. Node
+    /// does the same thing.
+    fn noPasswordCallback(_: ?[*]u8, _: c_int, _: c_int, _: ?*anyopaque) callconv(.C) c_int {
+        return 0;
     }
 };
 

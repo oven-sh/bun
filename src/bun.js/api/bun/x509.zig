@@ -198,6 +198,7 @@ fn x509PrintGeneralName(out: *BoringSSL.BIO, name: *BoringSSL.GENERAL_NAME) bool
         _ = BoringSSL.BIO_printf(out, "DirName:");
 
         const tmp = BoringSSL.BIO_new(BoringSSL.BIO_s_mem()) orelse return false;
+        defer tmp.deinit();
 
         if (BoringSSL.X509_NAME_print_ex(tmp, name.d.dirn, 0, kX509NameFlagsRFC2253WithinUtf8JSON) < 0) {
             return false;
@@ -341,7 +342,7 @@ fn x509SubjectAltNamePrint(out: *BoringSSL.BIO, ext: *BoringSSL.X509_EXTENSION) 
     return false;
 }
 
-fn x509GetSubjectAltNameString(globalObject: *JSGlobalObject, bio: *BoringSSL.BIO, cert: *BoringSSL.BunX509) JSValue {
+fn x509GetSubjectAltNameString(globalObject: *JSGlobalObject, bio: *BoringSSL.BIO, cert: *BoringSSL.X509) JSValue {
     const index = BoringSSL.X509_get_ext_by_NID(cert, BoringSSL.NID_subject_alt_name, -1);
     if (index < 0)
         return JSValue.jsUndefined();
@@ -357,7 +358,7 @@ fn x509GetSubjectAltNameString(globalObject: *JSGlobalObject, bio: *BoringSSL.BI
     return JSC.ZigString.fromUTF8(bio.slice()).toJS(globalObject);
 }
 
-fn x509GetInfoAccessString(globalObject: *JSGlobalObject, bio: *BoringSSL.BIO, cert: *BoringSSL.BunX509) JSValue {
+fn x509GetInfoAccessString(globalObject: *JSGlobalObject, bio: *BoringSSL.BIO, cert: *BoringSSL.X509) JSValue {
     const index = BoringSSL.X509_get_ext_by_NID(cert, BoringSSL.NID_info_access, -1);
     if (index < 0)
         return JSValue.jsUndefined();
@@ -387,7 +388,7 @@ fn addFingerprintDigest(md: []const u8, mdSize: c_uint, fingerprint: []u8) usize
     return length;
 }
 
-fn getFingerprintDigest(cert: *BoringSSL.BunX509, method: *const BoringSSL.EVP_MD, globalObject: *JSGlobalObject) JSValue {
+fn getFingerprintDigest(cert: *BoringSSL.X509, method: *const BoringSSL.EVP_MD, globalObject: *JSGlobalObject) JSValue {
     var md: [BoringSSL.EVP_MAX_MD_SIZE]u8 = undefined;
     var md_size: c_uint = 0;
     var fingerprint: [BoringSSL.EVP_MAX_MD_SIZE * 3]u8 = undefined;
@@ -399,7 +400,7 @@ fn getFingerprintDigest(cert: *BoringSSL.BunX509, method: *const BoringSSL.EVP_M
     return JSValue.jsUndefined();
 }
 
-fn getSerialNumber(cert: *BoringSSL.BunX509, globalObject: *JSGlobalObject) JSValue {
+fn getSerialNumber(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
     const serial_number = BoringSSL.X509_get_serialNumber(cert);
     if (serial_number != null) {
         const bignum = BoringSSL.ASN1_INTEGER_to_BN(serial_number, null);
@@ -416,7 +417,7 @@ fn getSerialNumber(cert: *BoringSSL.BunX509, globalObject: *JSGlobalObject) JSVa
     return JSValue.jsUndefined();
 }
 
-fn getRawDERCertificate(cert: *BoringSSL.BunX509, globalObject: *JSGlobalObject) JSValue {
+fn getRawDERCertificate(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
     const size = BoringSSL.i2d_X509(cert, null);
     var buffer = JSValue.createBufferFromLength(globalObject, @as(usize, @intCast(size)));
     var buffer_ptr = buffer.asArrayBuffer(globalObject).?.ptr;
@@ -434,7 +435,7 @@ fn toUpper(slice: []u8) void {
     }
 }
 
-pub fn toJS(cert: *BoringSSL.BunX509, globalObject: *JSGlobalObject) bun.JSError!JSValue {
+pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) bun.JSError!JSValue {
     const bio = BoringSSL.BIO_new(BoringSSL.BIO_s_mem()) orelse {
         return globalObject.throw("Failed to create BIO", .{});
     };

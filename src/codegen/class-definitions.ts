@@ -51,6 +51,10 @@ export interface ClassDefinition {
   name: string;
   construct?: boolean;
   call?: boolean;
+  /**
+   * When `true`, JSC's GC will call `finalize()` (with 0 arguments) on
+   * instances of this class when all references to it are removed.
+   */
   finalize?: boolean;
   overridesToJS?: boolean;
   klass: Record<string, Field>;

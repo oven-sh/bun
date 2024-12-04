@@ -113,4 +113,14 @@ export default [
       },
     },
   }),
+  define({
+    name: "X509Certificate",
+    construct: true,
+    finalize: true,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      // todo
+    },
+  }),
 ];

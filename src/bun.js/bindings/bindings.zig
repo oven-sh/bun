@@ -3010,6 +3010,7 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwInvalidArgumentType(
         this: *JSGlobalObject,
+        /// argument name
         comptime name_: []const u8,
         comptime field: []const u8,
         comptime typename: []const u8,
@@ -3058,6 +3059,7 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwNotEnoughArguments(
         this: *JSGlobalObject,
+        /// The name of the function that was called
         comptime name_: []const u8,
         comptime expected: usize,
         got: usize,

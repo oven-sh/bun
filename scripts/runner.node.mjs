@@ -219,7 +219,7 @@ async function runTests() {
             stderr: chunk => pipeTestStdout(process.stderr, chunk),
           });
           return {
-            testPath,
+            testPath: title,
             ok,
             status: ok ? "pass" : "fail",
             error,

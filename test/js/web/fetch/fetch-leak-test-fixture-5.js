@@ -99,7 +99,8 @@ try {
 
     {
       Bun.gc(true);
-      await Bun.sleep(10);
+      await Bun.sleep(100);
+      Bun.gc(true);
       const stats = getHeapStats();
       expect(stats.Response || 0).toBeLessThanOrEqual(threshold);
       expect(stats.Promise || 0).toBeLessThanOrEqual(threshold);

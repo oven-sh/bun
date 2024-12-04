@@ -121,6 +121,7 @@ pub const HTTPRequestBody = union(enum) {
     stream: struct {
         buffer: bun.io.StreamBuffer,
         ended: bool,
+        has_backpressure: bool = false,
 
         pub fn hasEnded(this: *@This()) bool {
             return this.ended and this.buffer.isEmpty();
@@ -1250,7 +1251,7 @@ pub const HTTPThread = struct {
             defer this.queued_writes_lock.unlock();
             for (this.queued_writes.items) |write| {
                 const ended = write.flags.ended;
-                defer if (!strings.eqlComptime(write.data, end_of_chunked_http1_1_encoding_response_body)) {
+                defer if (!strings.eqlComptime(write.data, end_of_chunked_http1_1_encoding_response_body) and write.data.len > 0) {
                     // "0\r\n\r\n" is always a static so no need to free
                     bun.default_allocator.free(write.data);
                 };
@@ -1264,14 +1265,18 @@ pub const HTTPThread = struct {
                         if (tagged.get(HTTPClient)) |client| {
                             if (client.state.original_request_body == .stream) {
                                 var stream = &client.state.original_request_body.stream;
-                                stream.buffer.write(write.data) catch {};
+                                if (write.data.len > 0) {
+                                    stream.buffer.write(write.data) catch {};
+                                }
                                 stream.ended = ended;
+                                if (!stream.has_backpressure) {
+                                    client.onWritable(
+                                        false,
+                                        true,
+                                        socket,
+                                    );
+                                }
                             }
-                            client.onWritable(
-                                false,
-                                true,
-                                socket,
-                            );
                         }
                     } else {
                         const socket = uws.SocketTCP.fromAny(socket_ptr);
@@ -1282,14 +1287,18 @@ pub const HTTPThread = struct {
                         if (tagged.get(HTTPClient)) |client| {
                             if (client.state.original_request_body == .stream) {
                                 var stream = &client.state.original_request_body.stream;
-                                stream.buffer.write(write.data) catch {};
+                                if (write.data.len > 0) {
+                                    stream.buffer.write(write.data) catch {};
+                                }
                                 stream.ended = ended;
+                                if (!stream.has_backpressure) {
+                                    client.onWritable(
+                                        false,
+                                        false,
+                                        socket,
+                                    );
+                                }
                             }
-                            client.onWritable(
-                                false,
-                                false,
-                                socket,
-                            );
                         }
                     }
                 }
@@ -2118,7 +2127,7 @@ header_buf: string,
 url: URL,
 connected_url: URL = URL{},
 allocator: std.mem.Allocator,
-verbose: HTTPVerboseLevel = .none,
+verbose: HTTPVerboseLevel = .headers,
 remaining_redirect_count: i8 = default_redirect_count,
 allow_retry: bool = false,
 redirect_type: FetchRedirect = FetchRedirect.follow,
@@ -2305,7 +2314,7 @@ pub const AsyncHTTP = struct {
     redirected: bool = false,
 
     response_encoding: Encoding = Encoding.identity,
-    verbose: HTTPVerboseLevel = .none,
+    verbose: HTTPVerboseLevel = .headers,
 
     client: HTTPClient = undefined,
     waitingDeffered: bool = false,
@@ -3207,16 +3216,20 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 },
                 .stream => {
                     var stream = &this.state.original_request_body.stream;
+                    stream.has_backpressure = false;
                     // to simplify things here the buffer contains the raw data we just need to flush to the socket it
                     if (stream.buffer.isNotEmpty()) {
                         const to_send = stream.buffer.slice();
                         const amount = socket.write(to_send, true);
                         if (amount < 0) {
-                            // this.closeAndFail(error.WriteFailed, is_ssl, socket);
+                            this.closeAndFail(error.WriteFailed, is_ssl, socket);
                             return;
                         }
                         this.state.request_sent_len += @as(usize, @intCast(amount));
-                        stream.buffer.cursor = @intCast(amount);
+                        stream.buffer.cursor += @intCast(amount);
+                        if (amount < to_send.len) {
+                            stream.has_backpressure = true;
+                        }
                         if (stream.buffer.isEmpty()) {
                             stream.buffer.reset();
                         }
@@ -3267,13 +3280,17 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     },
                     .stream => {
                         var stream = &this.state.original_request_body.stream;
+                        stream.has_backpressure = false;
 
                         // to simplify things here the buffer contains the raw data we just need to flush to the socket it
                         if (stream.buffer.isNotEmpty()) {
                             const to_send = stream.buffer.slice();
                             const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
                             this.state.request_sent_len += amount;
-                            stream.buffer.cursor = @truncate(amount);
+                            stream.buffer.cursor += @truncate(amount);
+                            if (amount < to_send.len) {
+                                stream.has_backpressure = true;
+                            }
                             if (stream.buffer.isEmpty()) {
                                 stream.buffer.reset();
                             }

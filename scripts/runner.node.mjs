@@ -227,7 +227,7 @@ async function runTests() {
             errors: [],
             tests: [],
             stdout: stdout,
-            stdoutPreview: "",
+            stdoutPreview: stdout,
           };
         });
         continue;

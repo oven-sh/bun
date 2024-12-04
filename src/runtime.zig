@@ -226,6 +226,8 @@ pub const Runtime = struct {
 
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
+        is_runtime: bool = false,
+
         // TODO: make this a bitset of all unsupported features
         lower_using: bool = true,
 

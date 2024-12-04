@@ -370,7 +370,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     CString utf8 = on_before_parse_symbol.utf8();
 
 #if OS(WINDOWS)
-    void* on_before_parse_symbol_ptr = dlsym((HMODULE)dlopen_handle, utf8.data());
+    void* on_before_parse_symbol_ptr = GetProcAddress((HMODULE)dlopen_handle, utf8.data());
 #else
     void* on_before_parse_symbol_ptr = dlsym(dlopen_handle, utf8.data());
 #endif

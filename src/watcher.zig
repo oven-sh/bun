@@ -510,6 +510,31 @@ pub const WatchEvent = struct {
         rename: bool = false,
         write: bool = false,
         move_to: bool = false,
+
+        pub fn merge(before: Op, after: Op) Op {
+            return .{
+                .delete = before.delete or after.delete,
+                .write = before.write or after.write,
+                .metadata = before.metadata or after.metadata,
+                .rename = before.rename or after.rename,
+                .move_to = before.move_to or after.move_to,
+            };
+        }
+
+        pub fn format(op: Op, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
+            try w.writeAll("{");
+            var first = true;
+            inline for (comptime std.meta.fieldNames(Op)) |name| {
+                if (@field(op, name)) {
+                    if (!first) {
+                        try w.writeAll(",");
+                    }
+                    first = false;
+                    try w.writeAll(name);
+                }
+            }
+            try w.writeAll("}");
+        }
     };
 };
 
@@ -535,9 +560,16 @@ pub fn getHash(filepath: string) HashType {
     return @as(HashType, @truncate(bun.hash(filepath)));
 }
 
-pub fn NewWatcher(comptime ContextType: type) type {
-    return struct {
+// TODO: Rename to `Watcher` and make a top-level struct.
+// `if(true)` is to reduce git diff from when it was changed
+// from a comptime function to a basic struct.
+pub const NewWatcher = if (true)
+    struct {
         const Watcher = @This();
+
+        pub const Event = WatchEvent;
+        pub const Item = WatchItem;
+        pub const ItemList = WatchList;
 
         watchlist: WatchList,
         watched_count: usize = 0,
@@ -549,7 +581,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
         watch_events: [128]WatchEvent = undefined,
         changed_filepaths: [128]?[:0]u8 = [_]?[:0]u8{null} ** 128,
 
-        ctx: ContextType,
+        ctx: *anyopaque,
+        onFileUpdate: *const fn (this: *anyopaque, events: []WatchEvent, changed_files: []?[:0]u8, watchlist: WatchList) void,
+        onError: *const fn (this: *anyopaque, err: bun.sys.Error) void,
+
         fs: *bun.fs.FileSystem,
         allocator: std.mem.Allocator,
         watchloop_handle: ?std.Thread.Id = null,
@@ -561,9 +596,24 @@ pub fn NewWatcher(comptime ContextType: type) type {
         evict_list: [WATCHER_MAX_LIST]WatchItemIndex = undefined,
         evict_list_i: WatchItemIndex = 0,
 
+        thread_lock: bun.DebugThreadLock = bun.DebugThreadLock.unlocked,
+
         const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 
-        pub fn init(ctx: ContextType, fs: *bun.fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
+        pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
+            const wrapped = struct {
+                fn onFileUpdateWrapped(ctx_opaque: *anyopaque, events: []WatchEvent, changed_files: []?[:0]u8, watchlist: WatchList) void {
+                    T.onFileUpdate(@alignCast(@ptrCast(ctx_opaque)), events, changed_files, watchlist);
+                }
+                fn onErrorWrapped(ctx_opaque: *anyopaque, err: bun.sys.Error) void {
+                    if (@hasDecl(T, "onWatchError")) {
+                        T.onWatchError(@alignCast(@ptrCast(ctx_opaque)), err);
+                    } else {
+                        T.onError(@alignCast(@ptrCast(ctx_opaque)), err);
+                    }
+                }
+            };
+
             const watcher = try allocator.create(Watcher);
             errdefer allocator.destroy(watcher);
 
@@ -571,10 +621,13 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .fs = fs,
                 .allocator = allocator,
                 .watched_count = 0,
-                .ctx = ctx,
                 .watchlist = WatchList{},
                 .mutex = .{},
                 .cwd = fs.top_level_dir,
+
+                .ctx = ctx,
+                .onFileUpdate = &wrapped.onFileUpdateWrapped,
+                .onError = &wrapped.onErrorWrapped,
             };
 
             try PlatformWatcher.init(&watcher.platform, fs.top_level_dir);
@@ -595,7 +648,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 this.running = false;
             } else {
                 // if the mutex is locked, then that's now a UAF.
-                this.mutex.releaseAssertUnlocked("Internal consistency error: watcher mutex is locked when it should not be.");
+                this.mutex.releaseAssertUnlocked("Watcher mutex is locked when it should not be.");
 
                 if (close_descriptors and this.running) {
                     const fds = this.watchlist.items(.fd);
@@ -612,6 +665,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         // This must only be called from the watcher thread
         pub fn watchLoop(this: *Watcher) !void {
             this.watchloop_handle = std.Thread.getCurrentId();
+            this.thread_lock.lock();
             Output.Source.configureNamedThread("File Watcher");
 
             defer Output.flush();
@@ -622,7 +676,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     this.watchloop_handle = null;
                     this.platform.stop();
                     if (this.running) {
-                        this.ctx.onError(err);
+                        this.onError(this.ctx, err);
                     }
                 },
                 .result => {},
@@ -700,7 +754,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         null,
                     );
 
-                    // Give the events more time to coallesce
+                    // Give the events more time to coalesce
                     if (count_ < 128 / 2) {
                         const remain = 128 - count_;
                         var timespec = std.posix.timespec{ .tv_sec = 0, .tv_nsec = 100_000 };
@@ -743,7 +797,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     this.mutex.lock();
                     defer this.mutex.unlock();
                     if (this.running) {
-                        this.ctx.onFileUpdate(watchevents, this.changed_filepaths[0..watchevents.len], this.watchlist);
+                        this.onFileUpdate(this.ctx, watchevents, this.changed_filepaths[0..watchevents.len], this.watchlist);
                     } else {
                         break;
                     }
@@ -819,7 +873,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         this.mutex.lock();
                         defer this.mutex.unlock();
                         if (this.running) {
-                            this.ctx.onFileUpdate(all_events[0 .. last_event_index + 1], this.changed_filepaths[0 .. name_off + 1], this.watchlist);
+                            this.onFileUpdate(this.ctx, all_events[0 .. last_event_index + 1], this.changed_filepaths[0 .. name_off + 1], this.watchlist);
                         } else {
                             break;
                         }
@@ -915,7 +969,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                     log("calling onFileUpdate (all_events.len = {d})", .{all_events.len});
 
-                    this.ctx.onFileUpdate(all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
+                    this.onFileUpdate(this.ctx, all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
                 }
             }
 
@@ -1200,20 +1254,17 @@ pub fn NewWatcher(comptime ContextType: type) type {
             file_path: string,
             hash: HashType,
             comptime copy_file_path: bool,
-        ) bun.JSC.Maybe(void) {
+        ) bun.JSC.Maybe(WatchItemIndex) {
             this.mutex.lock();
             defer this.mutex.unlock();
 
-            if (this.indexOf(hash) != null) {
-                return .{ .result = {} };
+            if (this.indexOf(hash)) |idx| {
+                return .{ .result = @truncate(idx) };
             }
 
             this.watchlist.ensureUnusedCapacity(this.allocator, 1) catch bun.outOfMemory();
 
-            return switch (this.appendDirectoryAssumeCapacity(fd, file_path, hash, copy_file_path)) {
-                .err => |err| .{ .err = err },
-                .result => .{ .result = {} },
-            };
+            return this.appendDirectoryAssumeCapacity(fd, file_path, hash, copy_file_path);
         }
 
         pub fn addFile(
@@ -1276,5 +1327,17 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 }
             }
         }
+
+        pub fn getResolveWatcher(watcher: *Watcher) bun.resolver.AnyResolveWatcher {
+            return bun.resolver.ResolveWatcher(*@This(), onMaybeWatchDirectory).init(watcher);
+        }
+
+        pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: bun.StoredFileDescriptorType) void {
+            // We don't want to watch:
+            // - Directories outside the root directory
+            // - Directories inside node_modules
+            if (std.mem.indexOf(u8, file_path, "node_modules") == null and std.mem.indexOf(u8, file_path, watch.fs.top_level_dir) != null) {
+                _ = watch.addDirectory(dir_fd, file_path, getHash(file_path), false);
+            }
+        }
     };
-}

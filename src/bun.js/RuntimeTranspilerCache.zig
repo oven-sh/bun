@@ -3,7 +3,12 @@
 /// Version 4: TypeScript enums are properly handled + more constant folding
 /// Version 5: `require.main === module` no longer marks a module as CJS
 /// Version 6: `use strict` is preserved in CommonJS modules when at the top of the file
-const expected_version = 6;
+/// Version 7: Several bundler changes that are likely to impact the runtime as well.
+/// Version 8: Fix for generated symbols
+/// Version 9: String printing changes
+/// Version 10: Constant folding for ''.charCodeAt(n)
+/// Version 11: Fix \uFFFF printing regression
+const expected_version = 11;
 
 const bun = @import("root").bun;
 const std = @import("std");

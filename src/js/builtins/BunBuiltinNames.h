@@ -21,7 +21,6 @@ namespace WebCore {
 using namespace JSC;
 
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
-    macro(__esModule) \
     macro(_events) \
     macro(abortAlgorithm) \
     macro(AbortSignal) \
@@ -134,6 +133,7 @@ using namespace JSC;
     macro(localStreams) \
     macro(main) \
     macro(makeDOMException) \
+    macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \
     macro(makeThisTypeError) \
     macro(method) \
@@ -152,8 +152,8 @@ using namespace JSC;
     macro(password) \
     macro(patch) \
     macro(path) \
-    macro(paths) \
     macro(pathname) \
+    macro(paths) \
     macro(pause) \
     macro(pendingAbortRequest) \
     macro(pendingPullIntos) \
@@ -227,6 +227,7 @@ using namespace JSC;
     macro(textEncoderStreamEncoder) \
     macro(TextEncoderStreamEncoder) \
     macro(textEncoderStreamTransform) \
+    macro(toClass) \
     macro(toNamespacedPath) \
     macro(trace) \
     macro(transformAlgorithm) \

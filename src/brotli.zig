@@ -9,7 +9,7 @@ const BrotliEncoder = c.BrotliEncoder;
 
 const mimalloc = bun.Mimalloc;
 
-const BrotliAllocator = struct {
+pub const BrotliAllocator = struct {
     pub fn alloc(_: ?*anyopaque, len: usize) callconv(.C) *anyopaque {
         if (bun.heap_breakdown.enabled) {
             const zone = bun.heap_breakdown.getZone("brotli");
@@ -55,14 +55,25 @@ pub const BrotliReaderArrayList = struct {
     state: State = State.Uninitialized,
     total_out: usize = 0,
     total_in: usize = 0,
+    flushOp: BrotliEncoder.Operation,
+    finishFlushOp: BrotliEncoder.Operation,
+    fullFlushOp: BrotliEncoder.Operation,
 
     pub usingnamespace bun.New(BrotliReaderArrayList);
 
     pub fn newWithOptions(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, options: DecoderOptions) !*BrotliReaderArrayList {
-        return BrotliReaderArrayList.new(try initWithOptions(input, list, allocator, options));
+        return BrotliReaderArrayList.new(try initWithOptions(input, list, allocator, options, .process, .finish, .flush));
     }
 
-    pub fn initWithOptions(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, options: DecoderOptions) !BrotliReaderArrayList {
+    pub fn initWithOptions(
+        input: []const u8,
+        list: *std.ArrayListUnmanaged(u8),
+        allocator: std.mem.Allocator,
+        options: DecoderOptions,
+        flushOp: BrotliEncoder.Operation,
+        finishFlushOp: BrotliEncoder.Operation,
+        fullFlushOp: BrotliEncoder.Operation,
+    ) !BrotliReaderArrayList {
         if (!BrotliDecoder.initializeBrotli()) {
             return error.BrotliFailedToLoad;
         }
@@ -81,6 +92,9 @@ pub const BrotliReaderArrayList = struct {
             .list = list.*,
             .list_allocator = allocator,
             .brotli = brotli,
+            .flushOp = flushOp,
+            .finishFlushOp = finishFlushOp,
+            .fullFlushOp = fullFlushOp,
         };
     }
 

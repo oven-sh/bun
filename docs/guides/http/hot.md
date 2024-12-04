@@ -2,7 +2,7 @@
 name: Hot reload an HTTP server
 ---
 
-Bun supports the [`--hot`](/docs/runtime/hot#hot-mode) flag to run a file with hot reloading enabled. When any module or file changes, Bun re-runs the file.
+Bun supports the [`--hot`](https://bun.sh/docs/runtime/hot#hot-mode) flag to run a file with hot reloading enabled. When any module or file changes, Bun re-runs the file.
 
 ```sh
 bun --hot run index.ts

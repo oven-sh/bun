@@ -18,12 +18,11 @@ bun dev
 Using `--filter`, you can run the `dev` script in both packages at once:
 
 ```bash
-bun --filter '*' dev 
+bun --filter '*' dev
 ```
 
 Both commands will be run in parallel, and you will see a nice terminal UI showing their respective outputs:
 ![Terminal Output](https://github.com/oven-sh/bun/assets/48869301/2a103e42-9921-4c33-948f-a1ad6e6bac71)
-
 
 ## Matching
 
@@ -39,7 +38,7 @@ Path patterns are specified by starting the pattern with `./`, and will select a
 
 ## Workspaces
 
-Filters respect your [workspace configuration](/docs/install/workspaces): If you have a `package.json` file that specifies which packages are part of the workspace,
+Filters respect your [workspace configuration](https://bun.sh/docs/install/workspaces): If you have a `package.json` file that specifies which packages are part of the workspace,
 `--filter` will be restricted to only these packages. Also, in a workspace you can use `--filter` to run scripts in packages that are located anywhere in the workspace:
 
 ```bash
@@ -52,7 +51,7 @@ bun run --filter foo myscript
 ```
 
 ## Dependency Order
+
 Bun will respect package dependency order when running scripts. Say you have a package `foo` that depends on another package `bar` in your workspace, and both packages have a `build` script. When you run `bun --filter '*' build`, you will notice that `foo` will only start running once `bar` is done.
 
 ### Cyclic Dependencies
-

@@ -30,38 +30,33 @@ const bundler = bun.bundler;
 const DotEnv = @import("../env_loader.zig");
 
 const fs = @import("../fs.zig");
-const Router = @import("../router.zig");
 const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
-var estimated_input_lines_of_code_: usize = undefined;
 
 pub const BuildCommand = struct {
     const compile_define_keys = &.{
         "process.platform",
         "process.arch",
+        "process.versions.bun",
     };
 
-    pub fn exec(
-        ctx: Command.Context,
-    ) !void {
+    pub fn exec(ctx: Command.Context) !void {
         Global.configureAllocator(.{ .long_running = true });
         const allocator = ctx.allocator;
         var log = ctx.log;
-        estimated_input_lines_of_code_ = 0;
-        if (ctx.bundler_options.compile) {
+        if (ctx.bundler_options.compile or ctx.bundler_options.bytecode) {
             // set this early so that externals are set up correctly and define is right
             ctx.args.target = .bun;
+        }
+
+        if (ctx.bundler_options.bake) {
+            return bun.bake.production.buildCommand(ctx);
         }
 
         const compile_target = &ctx.bundler_options.compile_target;
 
         if (ctx.bundler_options.compile) {
             const compile_define_values = compile_target.defineValues();
-            if (ctx.args.define == null) {
-                ctx.args.define = .{
-                    .keys = compile_define_keys,
-                    .values = compile_define_values,
-                };
-            } else if (ctx.args.define) |*define| {
+            if (ctx.args.define) |*define| {
                 var keys = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
                 keys.appendSliceAssumeCapacity(compile_define_keys);
                 keys.appendSliceAssumeCapacity(define.keys);
@@ -71,57 +66,60 @@ pub const BuildCommand = struct {
 
                 define.keys = keys.items;
                 define.values = values.items;
+            } else {
+                ctx.args.define = .{
+                    .keys = compile_define_keys,
+                    .values = compile_define_values,
+                };
             }
         }
 
         var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null);
 
         this_bundler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
-        this_bundler.resolver.opts.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
 
         this_bundler.options.compile = ctx.bundler_options.compile;
-        this_bundler.resolver.opts.compile = ctx.bundler_options.compile;
 
         if (this_bundler.options.source_map == .external and ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
             Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use an external source map without --outdir", .{});
             Global.exit(1);
             return;
         }
+
         var outfile = ctx.bundler_options.outfile;
+        const output_to_stdout = !ctx.bundler_options.compile and outfile.len == 0 and ctx.bundler_options.outdir.len == 0;
+
+        this_bundler.options.supports_multiple_outputs = !(output_to_stdout or outfile.len > 0);
 
         this_bundler.options.public_path = ctx.bundler_options.public_path;
-        this_bundler.resolver.opts.public_path = ctx.bundler_options.public_path;
-
         this_bundler.options.entry_naming = ctx.bundler_options.entry_naming;
         this_bundler.options.chunk_naming = ctx.bundler_options.chunk_naming;
         this_bundler.options.asset_naming = ctx.bundler_options.asset_naming;
-        this_bundler.resolver.opts.entry_naming = ctx.bundler_options.entry_naming;
-        this_bundler.resolver.opts.chunk_naming = ctx.bundler_options.chunk_naming;
-        this_bundler.resolver.opts.asset_naming = ctx.bundler_options.asset_naming;
-
-        this_bundler.options.react_server_components = ctx.bundler_options.react_server_components;
-        this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
-
+        this_bundler.options.server_components = ctx.bundler_options.server_components;
+        this_bundler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
         this_bundler.options.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
-        this_bundler.resolver.opts.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
-
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
-        this_bundler.resolver.opts.code_splitting = ctx.bundler_options.code_splitting;
-
         this_bundler.options.minify_syntax = ctx.bundler_options.minify_syntax;
-        this_bundler.resolver.opts.minify_syntax = ctx.bundler_options.minify_syntax;
-
         this_bundler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
-        this_bundler.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
-
         this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
-        this_bundler.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
-
         this_bundler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
-        this_bundler.resolver.opts.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
-
         this_bundler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
-        this_bundler.resolver.opts.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+
+        this_bundler.options.banner = ctx.bundler_options.banner;
+        this_bundler.options.footer = ctx.bundler_options.footer;
+        this_bundler.options.drop = ctx.args.drop;
+
+        this_bundler.options.experimental_css = ctx.bundler_options.experimental_css;
+        this_bundler.options.css_chunking = ctx.bundler_options.css_chunking;
+
+        this_bundler.options.output_dir = ctx.bundler_options.outdir;
+        this_bundler.options.output_format = ctx.bundler_options.output_format;
+
+        if (ctx.bundler_options.output_format == .internal_bake_dev) {
+            this_bundler.options.tree_shaking = false;
+        }
+
+        this_bundler.options.bytecode = ctx.bundler_options.bytecode;
 
         if (ctx.bundler_options.compile) {
             if (ctx.bundler_options.code_splitting) {
@@ -139,7 +137,6 @@ pub const BuildCommand = struct {
             const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_target.os, "root/");
 
             this_bundler.options.public_path = base_public_path;
-            this_bundler.resolver.opts.public_path = base_public_path;
 
             if (outfile.len == 0) {
                 outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
@@ -184,9 +181,6 @@ pub const BuildCommand = struct {
             }
         }
 
-        this_bundler.options.output_dir = ctx.bundler_options.outdir;
-        this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;
-
         var src_root_dir_buf: bun.PathBuffer = undefined;
         const src_root_dir: string = brk1: {
             const path = brk2: {
@@ -214,33 +208,13 @@ pub const BuildCommand = struct {
         };
 
         this_bundler.options.root_dir = src_root_dir;
-        this_bundler.resolver.opts.root_dir = src_root_dir;
-
-        this_bundler.options.react_server_components = ctx.bundler_options.react_server_components;
-        this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
-        this_bundler.resolver.opts.code_splitting = ctx.bundler_options.code_splitting;
         this_bundler.options.transform_only = ctx.bundler_options.transform_only;
-        if (this_bundler.options.transform_only) {
-            this_bundler.options.resolve_mode = .disable;
-        }
 
+        try this_bundler.configureDefines();
         this_bundler.configureLinker();
 
-        // This step is optional
-        // If it fails for any reason, ignore it and continue bundling
-        // This is partially a workaround for the 'error.MissingRoutesDir' error
-        this_bundler.configureRouter(true) catch {
-            this_bundler.options.routes.routes_enabled = false;
-            this_bundler.options.framework = null;
-            if (this_bundler.router) |*router| {
-                router.config.routes_enabled = false;
-                router.config.single_page_app_routing = false;
-                router.config.static_dir_enabled = false;
-                this_bundler.router = null;
-            }
-        };
-
+        this_bundler.resolver.opts = this_bundler.options;
         this_bundler.options.jsx.development = !this_bundler.options.production;
         this_bundler.resolver.opts.jsx.development = this_bundler.options.jsx.development;
 
@@ -252,6 +226,38 @@ pub const BuildCommand = struct {
                 this_bundler.options.macro_remap = macros;
             },
             .unspecified => {},
+        }
+
+        var client_bundler: bundler.Bundler = undefined;
+        if (this_bundler.options.server_components) {
+            client_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null);
+            client_bundler.options = this_bundler.options;
+            client_bundler.options.target = .browser;
+            client_bundler.options.server_components = true;
+            try this_bundler.options.conditions.appendSlice(&.{"react-server"});
+            this_bundler.options.react_fast_refresh = false;
+            this_bundler.options.minify_syntax = true;
+            client_bundler.options.minify_syntax = true;
+            client_bundler.options.define = try options.Define.init(
+                allocator,
+                if (ctx.args.define) |user_defines|
+                    try options.Define.Data.fromInput(try options.stringHashMapFromArrays(
+                        options.defines.RawDefines,
+                        allocator,
+                        user_defines.keys,
+                        user_defines.values,
+                    ), ctx.args.drop, log, allocator)
+                else
+                    null,
+                null,
+                this_bundler.options.define.drop_debugger,
+            );
+
+            try bun.bake.addImportMetaDefines(allocator, this_bundler.options.define, .development, .server);
+            try bun.bake.addImportMetaDefines(allocator, client_bundler.options.define, .development, .client);
+
+            this_bundler.resolver.opts = this_bundler.options;
+            client_bundler.resolver.opts = client_bundler.options;
         }
 
         // var env_loader = this_bundler.env;
@@ -279,7 +285,7 @@ pub const BuildCommand = struct {
                 );
 
                 if (log.hasErrors()) {
-                    try log.printForLogLevel(Output.errorWriter());
+                    try log.print(Output.errorWriter());
 
                     if (result.errors.len > 0 or result.output_files.len == 0) {
                         Output.flush();
@@ -295,21 +301,19 @@ pub const BuildCommand = struct {
                 &this_bundler,
                 allocator,
                 bun.JSC.AnyEventLoop.init(ctx.allocator),
-                std.crypto.random.int(u64),
                 ctx.debug.hot_reload == .watch,
                 &reachable_file_count,
                 &minify_duration,
                 &input_code_length,
             ) catch |err| {
                 if (log.msgs.items.len > 0) {
-                    try log.printForLogLevel(Output.errorWriter());
+                    try log.print(Output.errorWriter());
                 } else {
                     try Output.errorWriter().print("error: {s}", .{@errorName(err)});
                 }
 
                 Output.flush();
                 exitOrWatch(1, ctx.debug.hot_reload == .watch);
-                unreachable;
             }).items;
         };
         const bundled_end = std.time.nanoTimestamp();
@@ -352,7 +356,7 @@ pub const BuildCommand = struct {
                         std.fs.cwd()
                     else
                         std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
-                            Output.prettyErrorln("<r><red>{s}<r> while attemping to open output directory {}", .{ @errorName(err), bun.fmt.quote(root_path) });
+                            Output.prettyErrorln("<r><red>{s}<r> while attempting to open output directory {}", .{ @errorName(err), bun.fmt.quote(root_path) });
                             exitOrWatch(1, ctx.debug.hot_reload == .watch);
                             unreachable;
                         };
@@ -402,6 +406,7 @@ pub const BuildCommand = struct {
                             this_bundler.options.public_path,
                             outfile,
                             this_bundler.env,
+                            this_bundler.options.output_format,
                         );
                         const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                         const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
@@ -436,79 +441,11 @@ pub const BuildCommand = struct {
                     // So don't do that unless we actually need to.
                     // const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < output_files.len;
 
-                    var filepath_buf: bun.PathBuffer = undefined;
-                    filepath_buf[0] = '.';
-                    filepath_buf[1] = '/';
-
                     for (output_files) |f| {
-                        var rel_path: []const u8 = undefined;
-                        switch (f.value) {
-                            // Nothing to do in this case
-                            .saved => {
-                                rel_path = f.dest_path;
-                                if (f.dest_path.len > from_path.len) {
-                                    rel_path = resolve_path.relative(from_path, f.dest_path);
-                                }
-                            },
-
-                            // easy mode: write the buffer
-                            .buffer => |value| {
-                                rel_path = f.dest_path;
-                                if (f.dest_path.len > from_path.len) {
-                                    rel_path = resolve_path.relative(from_path, f.dest_path);
-                                    if (std.fs.path.dirname(rel_path)) |parent| {
-                                        if (parent.len > root_path.len) {
-                                            try root_dir.makePath(parent);
-                                        }
-                                    }
-                                }
-                                const JSC = bun.JSC;
-                                var path_buf: bun.PathBuffer = undefined;
-                                switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
-                                    &path_buf,
-                                    JSC.Node.Arguments.WriteFile{
-                                        .data = JSC.Node.StringOrBuffer{
-                                            .buffer = JSC.Buffer{
-                                                .buffer = .{
-                                                    .ptr = @constCast(value.bytes.ptr),
-                                                    // TODO: handle > 4 GB files
-                                                    .len = @as(u32, @truncate(value.bytes.len)),
-                                                    .byte_len = @as(u32, @truncate(value.bytes.len)),
-                                                },
-                                            },
-                                        },
-                                        .encoding = .buffer,
-                                        .mode = if (f.is_executable) 0o755 else 0o644,
-                                        .dirfd = bun.toFD(root_dir.fd),
-                                        .file = .{
-                                            .path = JSC.Node.PathLike{
-                                                .string = JSC.PathString.init(rel_path),
-                                            },
-                                        },
-                                    },
-                                )) {
-                                    .err => |err| {
-                                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write file <b>{}<r>\n{}", .{ bun.fmt.quote(rel_path), err });
-                                    },
-                                    .result => {},
-                                }
-                            },
-                            .move => |value| {
-                                const primary = f.dest_path[from_path.len..];
-                                bun.copy(u8, filepath_buf[2..], primary);
-                                rel_path = filepath_buf[0 .. primary.len + 2];
-                                rel_path = value.pathname;
-
-                                try f.moveTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
-                            },
-                            .copy => |value| {
-                                rel_path = value.pathname;
-
-                                try f.copyTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
-                            },
-                            .noop => {},
-                            .pending => unreachable,
-                        }
+                        const rel_path = f.writeToDisk(root_dir, from_path) catch |err| {
+                            Output.err(err, "failed to write file '{}'", .{bun.fmt.quote(f.dest_path)});
+                            continue;
+                        };
 
                         // Print summary
                         _ = try writer.write("\n");
@@ -538,13 +475,13 @@ pub const BuildCommand = struct {
                 }
             }
 
-            try log.printForLogLevel(Output.errorWriter());
+            try log.print(Output.errorWriter());
             exitOrWatch(0, ctx.debug.hot_reload == .watch);
         }
     }
 };
 
-fn exitOrWatch(code: u8, watch: bool) void {
+fn exitOrWatch(code: u8, watch: bool) noreturn {
     if (watch) {
         // the watcher thread will exit the process
         std.time.sleep(std.math.maxInt(u64) - 1);

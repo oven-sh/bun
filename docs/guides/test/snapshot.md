@@ -96,4 +96,4 @@ Ran 1 tests across 1 files. [102.00ms]
 
 ---
 
-See [Docs > Test Runner > Snapshots](/docs/test/mocks) for complete documentation on mocking with the Bun test runner.
+See [Docs > Test Runner > Snapshots](https://bun.sh/docs/test/mocks) for complete documentation on mocking with the Bun test runner.

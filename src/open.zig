@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 const DotEnv = @import("env_loader.zig");
 
-const opener = switch (@import("builtin").target.os.tag) {
+pub const opener = switch (@import("builtin").target.os.tag) {
     .macos => "/usr/bin/open",
     .windows => "start",
     else => "xdg-open",

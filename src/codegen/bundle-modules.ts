@@ -12,6 +12,7 @@ import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
 import path from "path";
+import ErrorCode from "../bun.js/bindings/ErrorCode";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeZig } from "./generate-js2native";
@@ -116,7 +117,7 @@ for (let i = 0; i < moduleList.length; i++) {
 ${importStatements.join("\n")}
 
 ${processed.result.slice(1).trim()}
-$$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
+;$$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
 `;
 
     // Attempt to optimize "$exports = ..." to a variableless return
@@ -431,6 +432,31 @@ writeIfNotChanged(path.join(CODEGEN_DIR, "GeneratedJS2Native.h"), getJS2NativeCP
 // zig will complain if this file is outside of the module
 const js2nativeZigPath = path.join(import.meta.dir, "../bun.js/bindings/GeneratedJS2Native.zig");
 writeIfNotChanged(js2nativeZigPath, getJS2NativeZig(js2nativeZigPath));
+
+const generatedDTSPath = path.join(CODEGEN_DIR, "generated.d.ts");
+writeIfNotChanged(
+  generatedDTSPath,
+  (() => {
+    let dts = `
+// GENERATED TEMP FILE - DO NOT EDIT
+`;
+
+    for (let i = 0; i < ErrorCode.length; i++) {
+      const [code, _, name] = ErrorCode[i];
+      dts += `
+/**
+ * Generate a ${name} error with the \`code\` property set to ${code}.
+ *
+ * @param msg The error message
+ * @param args Additional arguments
+ */
+declare function $${code}(msg: string, ...args: any[]): ${name};
+`;
+    }
+
+    return dts;
+  })(),
+);
 
 mark("Generate Code");
 

@@ -2,7 +2,7 @@
 name: Run your tests with the Bun test runner
 ---
 
-Bun has a built-in [test runner](/docs/cli/test) with a Jest-like `expect` API.
+Bun has a built-in [test runner](https://bun.sh/docs/cli/test) with a Jest-like `expect` API.
 
 ---
 
@@ -108,4 +108,4 @@ Ran 6 tests across 3 files. [59.00ms]
 
 ---
 
-See [Docs > Test Runner](/docs/cli/test) for complete documentation on the test runner.
+See [Docs > Test Runner](https://bun.sh/docs/cli/test) for complete documentation on the test runner.

@@ -24,18 +24,25 @@
 // If you decide to not use INIT_NATIVE_MODULE. make sure the first property
 // given is the default export
 
-#define BUN_FOREACH_NATIVE_MODULE(macro) \
+#define BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
     macro("bun"_s, BunObject) \
     macro("bun:test"_s, BunTest) \
     macro("bun:jsc"_s, BunJSC) \
     macro("node:buffer"_s, NodeBuffer) \
     macro("node:constants"_s, NodeConstants) \
-    macro("node:module"_s, NodeModule) \
-    macro("node:process"_s, NodeProcess) \
     macro("node:string_decoder"_s, NodeStringDecoder) \
     macro("node:util/types"_s, NodeUtilTypes)  \
     macro("utf-8-validate"_s, UTF8Validate) \
-    macro("abort-controller"_s, AbortControllerModule) \
+    macro("abort-controller"_s, AbortControllerModule)
+
+#define BUN_FOREACH_ESM_NATIVE_MODULE(macro) \
+    BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
+    macro("node:module"_s, NodeModule)  \
+    macro("node:process"_s, NodeProcess)
+
+#define BUN_FOREACH_CJS_NATIVE_MODULE(macro) \
+    BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro)
+
 
 #if ASSERT_ENABLED
 

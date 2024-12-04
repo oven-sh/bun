@@ -1,13 +1,13 @@
 import { SystemError, dns } from "bun";
 import { describe, expect, test } from "bun:test";
-import { withoutAggressiveGC } from "harness";
+import { isWindows, withoutAggressiveGC } from "harness";
 import { isIP, isIPv4, isIPv6 } from "node:net";
 
 const backends = ["system", "libc", "c-ares"];
 const validHostnames = ["localhost", "example.com"];
 const invalidHostnames = ["adsfa.asdfasdf.asdf.com"]; // known invalid
 const malformedHostnames = [" ", ".", " .", "localhost:80", "this is not a hostname"];
-const isWindows = process.platform === "win32";
+
 describe("dns", () => {
   describe.each(backends)("lookup() [backend: %s]", backend => {
     describe.each(validHostnames)("%s", hostname => {

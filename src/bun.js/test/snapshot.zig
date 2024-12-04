@@ -84,27 +84,29 @@ pub const Snapshots = struct {
         var pretty_value = try MutableString.init(this.allocator, 0);
         try value.jestSnapshotPrettyFormat(&pretty_value, globalObject);
 
-        const serialized_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + pretty_value.list.items.len + "`;\n".len;
-        try this.file_buf.ensureUnusedCapacity(serialized_length);
-        this.file_buf.appendSliceAssumeCapacity("\nexports[`");
-        this.file_buf.appendSliceAssumeCapacity(name_with_counter);
-        this.file_buf.appendSliceAssumeCapacity("`] = `");
-        this.file_buf.appendSliceAssumeCapacity(pretty_value.list.items);
-        this.file_buf.appendSliceAssumeCapacity("`;\n");
+        const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + pretty_value.list.items.len + "`;\n".len;
+        try this.file_buf.ensureUnusedCapacity(estimated_length + 10);
+        try this.file_buf.writer().print(
+            "\nexports[`{}`] = `{}`;\n",
+            .{
+                strings.formatEscapes(name_with_counter, .{ .quote_char = '`' }),
+                strings.formatEscapes(pretty_value.list.items, .{ .quote_char = '`' }),
+            },
+        );
 
         this.added += 1;
         try this.values.put(name_hash, pretty_value.toOwnedSlice());
         return null;
     }
 
-    pub fn parseFile(this: *Snapshots) !void {
+    pub fn parseFile(this: *Snapshots, file: File) !void {
         if (this.file_buf.items.len == 0) return;
 
         const vm = VirtualMachine.get();
         const opts = js_parser.Parser.Options.init(vm.bundler.options.jsx, .js);
         var temp_log = logger.Log.init(this.allocator);
 
-        const test_file = Jest.runner.?.files.get(this._current_file.?.id);
+        const test_file = Jest.runner.?.files.get(file.id);
         const test_filename = test_file.source.path.name.filename;
         const dir_path = test_file.source.path.name.dirWithTrailingSlash();
 
@@ -140,48 +142,32 @@ pub const Snapshots = struct {
 
         // TODO: when common js transform changes, keep this updated or add flag to support this version
 
-        const export_default = brk: {
-            for (ast.parts.slice()) |part| {
-                for (part.stmts) |stmt| {
-                    if (stmt.data == .s_export_default and stmt.data.s_export_default.value == .expr) {
-                        break :brk stmt.data.s_export_default.value.expr;
-                    }
-                }
-            }
-
-            return;
-        };
-
-        if (export_default.data == .e_call) {
-            const function_call = export_default.data.e_call;
-            if (function_call.args.len == 2 and function_call.args.ptr[0].data == .e_function) {
-                const arg_function_stmts = function_call.args.ptr[0].data.e_function.func.body.stmts;
-                for (arg_function_stmts) |stmt| {
-                    switch (stmt.data) {
-                        .s_expr => |expr| {
-                            if (expr.value.data == .e_binary and expr.value.data.e_binary.op == .bin_assign) {
-                                const left = expr.value.data.e_binary.left;
-                                if (left.data == .e_index and left.data.e_index.index.data == .e_string and left.data.e_index.target.data == .e_identifier) {
-                                    const target: js_ast.E.Identifier = left.data.e_index.target.data.e_identifier;
-                                    var index: *js_ast.E.String = left.data.e_index.index.data.e_string;
-                                    if (target.ref.eql(exports_ref) and expr.value.data.e_binary.right.data == .e_string) {
-                                        const key = index.slice(this.allocator);
-                                        var value_string = expr.value.data.e_binary.right.data.e_string;
-                                        const value = value_string.slice(this.allocator);
-                                        defer {
-                                            if (!index.isUTF8()) this.allocator.free(key);
-                                            if (!value_string.isUTF8()) this.allocator.free(value);
-                                        }
-                                        const value_clone = try this.allocator.alloc(u8, value.len);
-                                        bun.copy(u8, value_clone, value);
-                                        const name_hash = bun.hash(key);
-                                        try this.values.put(name_hash, value_clone);
+        for (ast.parts.slice()) |part| {
+            for (part.stmts) |stmt| {
+                switch (stmt.data) {
+                    .s_expr => |expr| {
+                        if (expr.value.data == .e_binary and expr.value.data.e_binary.op == .bin_assign) {
+                            const left = expr.value.data.e_binary.left;
+                            if (left.data == .e_index and left.data.e_index.index.data == .e_string and left.data.e_index.target.data == .e_identifier) {
+                                const target: js_ast.E.Identifier = left.data.e_index.target.data.e_identifier;
+                                var index: *js_ast.E.String = left.data.e_index.index.data.e_string;
+                                if (target.ref.eql(exports_ref) and expr.value.data.e_binary.right.data == .e_string) {
+                                    const key = index.slice(this.allocator);
+                                    var value_string = expr.value.data.e_binary.right.data.e_string;
+                                    const value = value_string.slice(this.allocator);
+                                    defer {
+                                        if (!index.isUTF8()) this.allocator.free(key);
+                                        if (!value_string.isUTF8()) this.allocator.free(value);
                                     }
+                                    const value_clone = try this.allocator.alloc(u8, value.len);
+                                    bun.copy(u8, value_clone, value);
+                                    const name_hash = bun.hash(key);
+                                    try this.values.put(name_hash, value_clone);
                                 }
                             }
-                        },
-                        else => {},
-                    }
+                        }
+                    },
+                    else => {},
                 }
             }
         }
@@ -261,6 +247,7 @@ pub const Snapshots = struct {
                 .id = file_id,
                 .file = fd.asFile(),
             };
+            errdefer file.file.close();
 
             if (this.update_snapshots) {
                 try this.file_buf.appendSlice(file_header);
@@ -279,8 +266,8 @@ pub const Snapshots = struct {
                 }
             }
 
+            try this.parseFile(file);
             this._current_file = file;
-            try this.parseFile();
         }
 
         return JSC.Maybe(void).success;

@@ -44,8 +44,10 @@ test/**/* linguist-documentation
 bench/**/* linguist-documentation
 examples/**/* linguist-documentation
 
-src/deps/*.c linguist-vendored
-src/deps/brotli/** linguist-vendored
+vendor/*.c linguist-vendored
+vendor/brotli/** linguist-vendored
 
 test/js/node/test/fixtures linguist-vendored
 test/js/node/test/common linguist-vendored
+
+test/js/bun/css/files linguist-vendored

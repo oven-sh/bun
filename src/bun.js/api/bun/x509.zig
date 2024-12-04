@@ -6,7 +6,7 @@ const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 
-fn x509GetNameObject(globalObject: *JSGlobalObject, name: ?*BoringSSL.X509_NAME) JSValue {
+fn x509GetNameObject(globalObject: *JSGlobalObject, name: ?*BoringSSL.X509_NAME) bun.JSError!JSValue {
     const cnt = BoringSSL.X509_NAME_entry_count(name);
     if (cnt <= 0) {
         return JSValue.jsUndefined();
@@ -54,7 +54,7 @@ fn x509GetNameObject(globalObject: *JSGlobalObject, name: ?*BoringSSL.X509_NAME)
         // change here without breaking things. Note that this creates nested data
         // structures, yet still does not allow representing Distinguished Names
         // accurately.
-        if (result.getTruthy(globalObject, name_slice)) |value| {
+        if (try result.getTruthy(globalObject, name_slice)) |value| {
             if (value.jsType().isArray()) {
                 value.push(globalObject, JSC.ZigString.fromUTF8(value_slice).toJS(globalObject));
             } else {
@@ -434,19 +434,18 @@ fn toUpper(slice: []u8) void {
     }
 }
 
-pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
+pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) bun.JSError!JSValue {
     const bio = BoringSSL.BIO_new(BoringSSL.BIO_s_mem()) orelse {
-        globalObject.throw("Failed to create BIO", .{});
-        return .zero;
+        return globalObject.throw("Failed to create BIO", .{});
     };
     defer _ = BoringSSL.BIO_free(bio);
     var result = JSValue.createEmptyObject(globalObject, 8);
     // X509_check_ca() returns a range of values. Only 1 means "is a CA"
     const is_ca = BoringSSL.X509_check_ca(cert) == 1;
     const subject = BoringSSL.X509_get_subject_name(cert);
-    result.put(globalObject, ZigString.static("subject"), x509GetNameObject(globalObject, subject));
+    result.put(globalObject, ZigString.static("subject"), try x509GetNameObject(globalObject, subject));
     const issuer = BoringSSL.X509_get_issuer_name(cert);
-    result.put(globalObject, ZigString.static("issuer"), x509GetNameObject(globalObject, issuer));
+    result.put(globalObject, ZigString.static("issuer"), try x509GetNameObject(globalObject, issuer));
     result.put(globalObject, ZigString.static("subjectaltname"), x509GetSubjectAltNameString(globalObject, bio, cert));
     result.put(globalObject, ZigString.static("infoAccess"), x509GetInfoAccessString(globalObject, bio, cert));
     result.put(globalObject, ZigString.static("ca"), JSValue.jsBoolean(is_ca));
@@ -485,8 +484,7 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
 
                 const size = BoringSSL.i2d_RSA_PUBKEY(rsa, null);
                 if (size <= 0) {
-                    globalObject.throw("Failed to get public key length", .{});
-                    return .zero;
+                    return globalObject.throw("Failed to get public key length", .{});
                 }
 
                 var buffer = JSValue.createBufferFromLength(globalObject, @as(usize, @intCast(size)));
@@ -515,8 +513,7 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                     const form = BoringSSL.EC_KEY_get_conv_form(ec);
                     const size = BoringSSL.EC_POINT_point2oct(group, point, form, null, 0, null);
                     if (size <= 0) {
-                        globalObject.throw("Failed to get public key length", .{});
-                        return .zero;
+                        return globalObject.throw("Failed to get public key length", .{});
                     }
 
                     var buffer = JSValue.createBufferFromLength(globalObject, @as(usize, @intCast(size)));

@@ -101,6 +101,8 @@ typedef struct ResolvedSource {
     uint32_t tag;
     bool needsDeref;
     bool already_bundled;
+    uint8_t* bytecode_cache;
+    size_t bytecode_cache_size;
 } ResolvedSource;
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
@@ -343,6 +345,7 @@ extern "C" bool Bun__fetchBuiltinModule(
 
 // Used in process.version
 extern "C" const char* Bun__version;
+extern "C" const char* Bun__version_with_sha;
 
 // Used in process.versions
 extern "C" const char* Bun__versions_boringssl;

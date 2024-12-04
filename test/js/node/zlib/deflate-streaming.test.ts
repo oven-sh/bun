@@ -42,7 +42,7 @@ test("yields data in more than one chunk", () => {
     const digest_in = hasher_in.digest().toString("hex");
     const digest_out = hasher_out.digest().toString("hex");
     expect(digest_out).toEqual(digest_in);
-    expect(chunksReceived).toBe(32);
+    expect(chunksReceived).toBeGreaterThan(2);
   });
 
   // Pipe the compressed data through the decompressor

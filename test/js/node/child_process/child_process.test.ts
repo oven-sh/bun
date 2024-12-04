@@ -1,7 +1,7 @@
-import { semver } from "bun";
+import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, nodeExe, shellExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import path from "path";
@@ -64,6 +64,33 @@ describe("spawn()", () => {
   it("should spawn a process", () => {
     const child = spawn("bun", ["-v"]);
     expect(!!child).toBe(true);
+  });
+
+  it("should use cwd from options to search for executables", async () => {
+    const tmpdir = tmpdirSync();
+    await Promise.all([
+      write(
+        path.join(tmpdir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            foo: "file:foo-1.2.3.tgz",
+          },
+        }),
+      ),
+      fs.promises.cp(path.join(import.meta.dir, "fixtures", "foo-1.2.3.tgz"), path.join(tmpdir, "foo-1.2.3.tgz")),
+    ]);
+    await runBunInstall(bunEnv, tmpdir);
+
+    const { exitCode, out } = await new Promise<any>(resolve => {
+      const child = spawn("./node_modules/.bin/foo", { cwd: tmpdir, env: bunEnv });
+      child.on("exit", async exitCode => {
+        const out = await new Response(child.stdout).text();
+        resolve({ exitCode, out });
+      });
+    });
+    expect(out).toBe("hello bun!\n");
+    expect(exitCode).toBe(0);
   });
 
   it("should disallow invalid filename", () => {
@@ -252,6 +279,33 @@ describe("spawn()", () => {
     const { stdout } = spawnSync("bun", ["-v"], { encoding: "utf8" });
     expect(isValidSemver(stdout.trim())).toBe(true);
   });
+
+  describe("stdio", () => {
+    it("ignore", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "ignore" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).toBeNull();
+      expect(child.stderr).toBeNull();
+    });
+    it("inherit", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "inherit" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).toBeNull();
+      expect(child.stderr).toBeNull();
+    });
+    it("pipe", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "pipe" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).not.toBeNull();
+      expect(child.stderr).not.toBeNull();
+    });
+    it.todo("overlapped", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "overlapped" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).not.toBeNull();
+      expect(child.stderr).not.toBeNull();
+    });
+  });
 });
 
 describe("execFile()", () => {
@@ -390,3 +444,23 @@ it("it accepts stdio passthrough", async () => {
     throw e;
   }
 }, 10000);
+
+it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
+  const trapCode = `
+    process.kill(process.pid, "SIGTRAP");
+  `;
+
+  const { signal } = spawnSync(bunExe(), ["-e", trapCode]);
+
+  expect(signal).toBe("SIGTRAP");
+});
+
+it("spawnSync(does-not-exist)", () => {
+  const x = spawnSync("does-not-exist");
+  expect(x.error?.code).toEqual("ENOENT");
+  expect(x.error.path).toEqual("does-not-exist");
+  expect(x.signal).toEqual(null);
+  expect(x.output).toEqual([null, null, null]);
+  expect(x.stdout).toEqual(null);
+  expect(x.stderr).toEqual(null);
+});

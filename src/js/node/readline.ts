@@ -27,7 +27,19 @@
 // ----------------------------------------------------------------------------
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
+
+const {
+  validateFunction,
+  validateAbortSignal,
+  validateArray,
+  validateString,
+  validateBoolean,
+  validateInteger,
+  validateUint32,
+} = require("internal/validators");
+
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
+
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectValues = Object.values;
@@ -258,14 +270,6 @@ var NodeError = getNodeErrorByName("Error");
 var NodeTypeError = getNodeErrorByName("TypeError");
 var NodeRangeError = getNodeErrorByName("RangeError");
 
-class ERR_INVALID_ARG_TYPE extends NodeTypeError {
-  constructor(name, type, value) {
-    super(`The "${name}" argument must be of type ${type}. Received type ${typeof value}`, {
-      code: "ERR_INVALID_ARG_TYPE",
-    });
-  }
-}
-
 class ERR_INVALID_ARG_VALUE extends NodeTypeError {
   constructor(name, value, reason = "not specified") {
     super(`The value "${String(value)}" is invalid for argument '${name}'. Reason: ${reason}`, {
@@ -303,129 +307,6 @@ class AbortError extends Error {
   constructor() {
     super("The operation was aborted");
     this.code = "ABORT_ERR";
-  }
-}
-
-// Validators
-
-/**
- * @callback validateFunction
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is Function}
- */
-function validateFunction(value, name) {
-  if (typeof value !== "function") throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
-}
-
-/**
- * @callback validateAbortSignal
- * @param {*} signal
- * @param {string} name
- */
-function validateAbortSignal(signal, name) {
-  if (signal !== undefined && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-    throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
-  }
-}
-
-/**
- * @callback validateArray
- * @param {*} value
- * @param {string} name
- * @param {number} [minLength]
- * @returns {asserts value is any[]}
- */
-function validateArray(value, name, minLength = 0) {
-  // var validateArray = hideStackFrames((value, name, minLength = 0) => {
-  if (!$isJSArray(value)) {
-    throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
-  }
-  if (value.length < minLength) {
-    var reason = `must be longer than ${minLength}`;
-    throw new ERR_INVALID_ARG_VALUE(name, value, reason);
-  }
-}
-
-/**
- * @callback validateString
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is string}
- */
-function validateString(value, name) {
-  if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
-}
-
-/**
- * @callback validateBoolean
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is boolean}
- */
-function validateBoolean(value, name) {
-  if (typeof value !== "boolean") throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
-}
-
-/**
- * @callback validateObject
- * @param {*} value
- * @param {string} name
- * @param {{
- *   allowArray?: boolean,
- *   allowFunction?: boolean,
- *   nullable?: boolean
- * }} [options]
- */
-function validateObject(value, name, options = null) {
-  // var validateObject = hideStackFrames((value, name, options = null) => {
-  var allowArray = options?.allowArray ?? false;
-  var allowFunction = options?.allowFunction ?? false;
-  var nullable = options?.nullable ?? false;
-  if (
-    (!nullable && value === null) ||
-    (!allowArray && $isJSArray.$call(null, value)) ||
-    (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
-  ) {
-    throw new ERR_INVALID_ARG_TYPE(name, "object", value);
-  }
-}
-
-/**
- * @callback validateInteger
- * @param {*} value
- * @param {string} name
- * @param {number} [min]
- * @param {number} [max]
- * @returns {asserts value is number}
- */
-function validateInteger(value, name, min = NumberMIN_SAFE_INTEGER, max = NumberMAX_SAFE_INTEGER) {
-  if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
-  if (!NumberIsInteger(value)) throw new ERR_OUT_OF_RANGE(name, "an integer", value);
-  if (value < min || value > max) throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
-}
-
-/**
- * @callback validateUint32
- * @param {*} value
- * @param {string} name
- * @param {number|boolean} [positive=false]
- * @returns {asserts value is number}
- */
-function validateUint32(value, name, positive = false) {
-  if (typeof value !== "number") {
-    throw new ERR_INVALID_ARG_TYPE(name, "number", value);
-  }
-
-  if (!NumberIsInteger(value)) {
-    throw new ERR_OUT_OF_RANGE(name, "an integer", value);
-  }
-
-  var min = positive ? 1 : 0; // 2 ** 32 === 4294967296
-  var max = 4_294_967_295;
-
-  if (value < min || value > max) {
-    throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
   }
 }
 
@@ -2897,7 +2778,7 @@ class Readline {
 
   constructor(stream, options = undefined) {
     isWritable ??= require("node:stream").isWritable;
-    if (!isWritable(stream)) throw new ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
+    if (!isWritable(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
     this.#stream = stream;
     if (options?.autoCommit != null) {
       validateBoolean(options.autoCommit, "options.autoCommit");

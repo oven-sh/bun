@@ -7,7 +7,7 @@
 #include "headers-handwritten.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/CallFrame.h>
-#include "js_native_api_types.h"
+#include "js_native_api.h"
 #include <JavaScriptCore/JSWeakValue.h>
 #include "JSFFIFunction.h"
 #include "ZigGlobalObject.h"
@@ -39,7 +39,9 @@ static inline Zig::GlobalObject* toJS(napi_env val)
 static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObject)
 {
     if (val.isCell()) {
-        globalObject->m_currentNapiHandleScopeImpl.get()->append(val);
+        if (auto* scope = globalObject->m_currentNapiHandleScopeImpl.get()) {
+            scope->append(val);
+        }
     }
     return reinterpret_cast<napi_value>(JSC::JSValue::encode(val));
 }

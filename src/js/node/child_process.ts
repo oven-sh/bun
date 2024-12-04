@@ -4,6 +4,13 @@ const StreamModule = require("node:stream");
 const OsModule = require("node:os");
 const { ERR_INVALID_ARG_TYPE, ERR_IPC_DISCONNECTED } = require("internal/errors");
 const { kHandle } = require("internal/shared");
+const {
+  validateBoolean,
+  validateFunction,
+  validateString,
+  validateAbortSignal,
+  validateArray,
+} = require("internal/validators");
 
 var NetModule;
 
@@ -551,26 +558,38 @@ function spawnSync(file, args, options) {
     }
   }
 
-  const {
-    stdout = null,
-    stderr = null,
-    success,
-    exitCode,
-  } = Bun.spawnSync({
-    cmd: options.args,
-    env: options.env || undefined,
-    cwd: options.cwd || undefined,
-    stdio: bunStdio,
-    windowsVerbatimArguments: options.windowsVerbatimArguments,
-    windowsHide: options.windowsHide,
-  });
+  var error;
+  try {
+    var {
+      stdout = null,
+      stderr = null,
+      success,
+      exitCode,
+      signalCode,
+    } = Bun.spawnSync({
+      cmd: options.args,
+      env: options.env || undefined,
+      cwd: options.cwd || undefined,
+      stdio: bunStdio,
+      windowsVerbatimArguments: options.windowsVerbatimArguments,
+      windowsHide: options.windowsHide,
+    });
+  } catch (err) {
+    error = err;
+    stdout = null;
+    stderr = null;
+  }
 
   const result = {
-    signal: null,
+    signal: signalCode ?? null,
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     output: [null, stdout, stderr],
   };
+
+  if (error) {
+    result.error = error;
+  }
 
   if (stdout && encoding && encoding !== "buffer") {
     result.output[1] = result.output[1]?.toString(encoding);
@@ -583,8 +602,11 @@ function spawnSync(file, args, options) {
   result.stdout = result.output[1];
   result.stderr = result.output[2];
 
-  if (!success) {
+  if (!success && error == null) {
     result.error = new SystemError(result.output[2], options.file, "spawnSync", -1, result.status);
+  }
+
+  if (result.error) {
     result.error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
   }
 
@@ -1114,8 +1136,6 @@ class ChildProcess extends EventEmitter {
             if (autoResume) pipe.resume();
             return pipe;
           }
-          case "inherit":
-            return process[fdToStdioName(i)] || null;
           case "destroyed":
             return new ShimmedStdioOutStream();
           default:
@@ -1293,7 +1313,7 @@ class ChildProcess extends EventEmitter {
       options = undefined;
     } else if (options !== undefined) {
       if (typeof options !== "object" || options === null) {
-        throw ERR_INVALID_ARG_TYPE("options", "Object", options);
+        throw ERR_INVALID_ARG_TYPE("options", "object", options);
       }
     }
 
@@ -1585,35 +1605,6 @@ function validateTimeout(timeout) {
   }
 }
 
-function validateBoolean(value, name) {
-  if (typeof value !== "boolean") throw ERR_INVALID_ARG_TYPE(name, "boolean", value);
-}
-
-/**
- * @callback validateFunction
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is Function}
- */
-
-/** @type {validateFunction} */
-function validateFunction(value, name) {
-  if (typeof value !== "function") throw ERR_INVALID_ARG_TYPE(name, "Function", value);
-}
-
-/**
- * @callback validateAbortSignal
- * @param {*} signal
- * @param {string} name
- */
-
-/** @type {validateAbortSignal} */
-const validateAbortSignal = (signal, name) => {
-  if (signal !== undefined && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-    throw ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
-  }
-};
-
 /**
  * @callback validateOneOf
  * @template T
@@ -1660,38 +1651,6 @@ const validateObject = (value, name, options = null) => {
     throw ERR_INVALID_ARG_TYPE(name, "object", value);
   }
 };
-
-/**
- * @callback validateArray
- * @param {*} value
- * @param {string} name
- * @param {number} [minLength]
- * @returns {asserts value is any[]}
- */
-
-/** @type {validateArray} */
-const validateArray = (value, name, minLength = 0) => {
-  // const validateArray = hideStackFrames((value, name, minLength = 0) => {
-  if (!$isJSArray(value)) {
-    throw ERR_INVALID_ARG_TYPE(name, "Array", value);
-  }
-  if (value.length < minLength) {
-    const reason = `must be longer than ${minLength}`;
-    throw ERR_INVALID_ARG_VALUE(name, value, reason);
-  }
-};
-
-/**
- * @callback validateString
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is string}
- */
-
-/** @type {validateString} */
-function validateString(value, name) {
-  if (typeof value !== "string") throw ERR_INVALID_ARG_TYPE(name, "string", value);
-}
 
 function isInt32(value) {
   return value === (value | 0);
@@ -1765,7 +1724,7 @@ class AbortError extends Error {
   name = "AbortError";
   constructor(message = "The operation was aborted", options = undefined) {
     if (options !== undefined && typeof options !== "object") {
-      throw ERR_INVALID_ARG_TYPE("options", "Object", options);
+      throw ERR_INVALID_ARG_TYPE("options", "object", options);
     }
     super(message, options);
   }

@@ -56,7 +56,7 @@ test("all worker_threads module properties are present", () => {
   expect(SHARE_ENV).toBeDefined();
   expect(setEnvironmentData).toBeFunction();
   expect(threadId).toBeNumber();
-  expect(workerData).toBeUndefined();
+  expect(workerData).toBeNull();
   expect(BroadcastChannel).toBeDefined();
   expect(MessageChannel).toBeDefined();
   expect(MessagePort).toBeDefined();
@@ -233,7 +233,7 @@ test("support require in eval for a file that doesnt exist", async () => {
     worker.on("message", resolve);
     worker.on("error", resolve);
   });
-  expect(result.toString()).toInclude(`error: Cannot find module "./fixture-invalid.js" from "blob:`);
+  expect(result.toString()).toInclude(`error: Cannot find module './fixture-invalid.js' from 'blob:`);
   await worker.terminate();
 });
 

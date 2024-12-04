@@ -5,6 +5,7 @@
 #include "JavaScriptCore/JSString.h"
 #include "headers-handwritten.h"
 #include "wtf/NakedPtr.h"
+#include "BunClientData.h"
 
 namespace Zig {
 class GlobalObject;
@@ -17,6 +18,8 @@ class AbstractModuleRecord;
 }
 
 namespace Bun {
+
+using namespace JSC;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
@@ -102,6 +105,7 @@ public:
         JSC::MarkedArgumentBuffer& exportValues);
 
     JSValue exportsObject();
+    void setExportsObject(JSC::JSValue exportsObject);
     JSValue id();
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject, WTF::NakedPtr<JSC::Exception>&);
@@ -154,7 +158,7 @@ public:
     using Base = JSC::JSNonFinalObject;
 
     static RequireResolveFunctionPrototype* create(JSC::JSGlobalObject* globalObject);
-    static Structure* createStructure(VM& vm, JSC::JSGlobalObject* globalObject);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
     DECLARE_INFO;
 
@@ -180,7 +184,7 @@ public:
     using Base = JSC::JSNonFinalObject;
 
     static RequireFunctionPrototype* create(JSC::JSGlobalObject* globalObject);
-    static Structure* createStructure(VM& vm, JSC::JSGlobalObject* globalObject);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
     DECLARE_INFO;
 

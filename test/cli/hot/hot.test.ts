@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -15,6 +15,21 @@ beforeEach(() => {
   rmSync(hotPath, { recursive: true, force: true });
   cpSync(import.meta.dir, hotPath, { recursive: true, force: true });
   cwd = hotPath;
+});
+
+it("preload not found should exit with code 1 and not time out", async () => {
+  const root = hotRunnerRoot;
+  const runner = spawn({
+    cmd: [bunExe(), "--preload=/dev/foobarbarbar", "--hot", root],
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  await runner.exited;
+  expect(runner.signalCode).toBe(null);
+  expect(runner.exitCode).toBe(1);
+  expect(await new Response(runner.stderr).text()).toContain("preload not found");
 });
 
 it(
@@ -487,6 +502,7 @@ throw new Error('0');`,
       stderr: "inherit",
       stdin: "ignore",
     });
+    waitForFileToExist(hotRunnerRoot, 20);
     await using runner = spawn({
       cmd: [bunExe(), "--hot", "run", hotRunnerRoot],
       env: bunEnv,
@@ -576,6 +592,7 @@ throw new Error('0');`,
       stderr: "ignore",
       stdin: "ignore",
     });
+    waitForFileToExist(hotRunnerRoot, 20);
     await using runner = spawn({
       cmd: [
         //

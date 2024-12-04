@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "lib": ["DOM", "ESNext"],
+    "module": "esnext",
+    "target": "esnext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "noImplicitAny": false,
+    "allowJs": true,
+    "downlevelIteration": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "paths": {
+      "bun-framework-react/*": ["./bun-framework-react/*"]
+    },
+    "jsx": "react-jsx",
+    "types": ["react/experimental"]
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}

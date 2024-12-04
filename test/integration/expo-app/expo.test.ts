@@ -20,7 +20,7 @@ test("expo export works (no ajv issues)", async () => {
   });
   expect(exitCode).toBe(0);
 
-  ({ exitCode } = Bun.spawnSync([bunExe(), "run", "export", "-p", "web"], {
+  ({ exitCode } = Bun.spawnSync([bunExe(), "run", "export"], {
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",

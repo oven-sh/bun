@@ -14,7 +14,7 @@ console.log(<Component message="Hello world!" />);
 
 ## Configuration
 
-Bun reads your `tsconfig.json` or `jsconfig.json` configuration files to determines how to perform the JSX transform internally. To avoid using either of these, the following options can also be defined in [`bunfig.toml`](/docs/runtime/bunfig).
+Bun reads your `tsconfig.json` or `jsconfig.json` configuration files to determines how to perform the JSX transform internally. To avoid using either of these, the following options can also be defined in [`bunfig.toml`](https://bun.sh/docs/runtime/bunfig).
 
 The following compiler options are respected.
 
@@ -197,7 +197,7 @@ The module from which the component factory function (`createElement`, `jsx`, `j
 
 - ```jsonc
   {
-    "jsx": "react"
+    "jsx": "react",
     // jsxImportSource is not defined
     // default to "react"
   }
@@ -213,7 +213,7 @@ The module from which the component factory function (`createElement`, `jsx`, `j
 - ```jsonc
   {
     "jsx": "react-jsx",
-    "jsxImportSource": "preact"
+    "jsxImportSource": "preact",
   }
   ```
 
@@ -227,7 +227,7 @@ The module from which the component factory function (`createElement`, `jsx`, `j
 - ```jsonc
   {
     "jsx": "react-jsxdev",
-    "jsxImportSource": "preact"
+    "jsxImportSource": "preact",
   }
   ```
 
@@ -263,7 +263,7 @@ All of these values can be set on a per-file basis using _pragmas_. A pragma is 
 
 - ```jsonc
   {
-    "jsxFactory": "h"
+    "jsxFactory": "h",
   }
   ```
 
@@ -274,7 +274,7 @@ All of these values can be set on a per-file basis using _pragmas_. A pragma is 
   ```
 - ```jsonc
   {
-    "jsxFragmentFactory": "MyFragment"
+    "jsxFragmentFactory": "MyFragment",
   }
   ```
 
@@ -285,7 +285,7 @@ All of these values can be set on a per-file basis using _pragmas_. A pragma is 
   ```
 - ```jsonc
   {
-    "jsxImportSource": "preact"
+    "jsxImportSource": "preact",
   }
   ```
 

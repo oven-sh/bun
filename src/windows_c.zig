@@ -690,8 +690,9 @@ pub const SystemErrno = enum(u16) {
     }
 
     pub fn init(code: anytype) ?SystemErrno {
-        if (comptime @TypeOf(code) == u16) {
-            if (code <= 3950) {
+        if (@TypeOf(code) == u16 or (@TypeOf(code) == c_int and code > 0)) {
+            // Win32Error and WSA Error codes
+            if (code <= @intFromEnum(Win32Error.IO_REISSUE_AS_CACHED) or (code >= @intFromEnum(Win32Error.WSAEINTR) and code <= @intFromEnum(Win32Error.WSA_QOS_RESERVED_PETYPE))) {
                 return init(@as(Win32Error, @enumFromInt(code)));
             } else {
                 if (comptime bun.Environment.allow_assert)
@@ -1169,7 +1170,7 @@ pub const E = enum(u16) {
     HWPOISON = 133,
     UNKNOWN = 134,
     CHARSET = 135,
-    OF = 136,
+    EOF = 136,
 
     UV_E2BIG = -uv.UV_E2BIG,
     UV_EACCES = -uv.UV_EACCES,
@@ -1319,6 +1320,9 @@ pub fn getErrno(_: anytype) E {
         return sys.toE();
     }
 
+    if (bun.windows.WSAGetLastError()) |wsa| {
+        return wsa.toE();
+    }
     return .SUCCESS;
 }
 

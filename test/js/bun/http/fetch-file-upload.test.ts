@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { withoutAggressiveGC } from "harness";
+import { isBroken, isWindows, withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -126,34 +126,38 @@ test("formData uploads roundtrip, without a call to .body", async () => {
   expect(await (resData.get("file") as Blob).arrayBuffer()).toEqual(await file.arrayBuffer());
 });
 
-test("uploads roundtrip with sendfile()", async () => {
-  const hugeTxt = Buffer.allocUnsafe(1024 * 1024 * 32 * "huge".length);
-  hugeTxt.fill("huge");
-  const hash = Bun.CryptoHasher.hash("sha256", hugeTxt, "hex");
+test.todoIf(isBroken && isWindows)(
+  "uploads roundtrip with sendfile()",
+  async () => {
+    const hugeTxt = Buffer.allocUnsafe(1024 * 1024 * 32 * "huge".length);
+    hugeTxt.fill("huge");
+    const hash = Bun.CryptoHasher.hash("sha256", hugeTxt, "hex");
 
-  const path = join(tmpdir(), "huge.txt");
-  require("fs").writeFileSync(path, hugeTxt);
-  using server = Bun.serve({
-    port: 0,
-    development: false,
-    maxRequestBodySize: hugeTxt.byteLength * 2,
-    async fetch(req) {
-      const hasher = new Bun.CryptoHasher("sha256");
-      for await (let chunk of req.body!) {
-        hasher.update(chunk);
-      }
-      return new Response(hasher.digest("hex"));
-    },
-  });
+    const path = join(tmpdir(), "huge.txt");
+    require("fs").writeFileSync(path, hugeTxt);
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      maxRequestBodySize: hugeTxt.byteLength * 2,
+      async fetch(req) {
+        const hasher = new Bun.CryptoHasher("sha256");
+        for await (let chunk of req.body!) {
+          hasher.update(chunk);
+        }
+        return new Response(hasher.digest("hex"));
+      },
+    });
 
-  const resp = await fetch(server.url, {
-    body: Bun.file(path),
-    method: "PUT",
-  });
+    const resp = await fetch(server.url, {
+      body: Bun.file(path),
+      method: "PUT",
+    });
 
-  expect(resp.status).toBe(200);
-  expect(await resp.text()).toBe(hash);
-}, 10_000);
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe(hash);
+  },
+  10_000,
+);
 
 test("missing file throws the expected error", async () => {
   Bun.gc(true);

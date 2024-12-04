@@ -73,10 +73,10 @@ extern "C" size_t TextEncoder__encodeInto8(const LChar* stringPtr, size_t string
 extern "C" size_t TextEncoder__encodeInto16(const UChar* stringPtr, size_t stringLen, void* ptr, size_t len);
 extern "C" JSC::EncodedJSValue TextEncoder__encodeRopeString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* str);
 
-extern "C" {
-static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSTextEncoder*, DOMJIT::IDLJSArgumentType<IDLDOMString>));
-static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> source, DOMJIT::IDLJSArgumentType<IDLUint8Array> destination));
-}
+// extern "C" {
+// static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSTextEncoder*, DOMJIT::IDLJSArgumentType<IDLDOMString>));
+// static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> source, DOMJIT::IDLJSArgumentType<IDLUint8Array> destination));
+// }
 
 template<> TextEncoder::EncodeIntoResult convertDictionary<TextEncoder::EncodeIntoResult>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
@@ -214,90 +214,92 @@ template<> void JSTextEncoderDOMConstructor::initializeProperties(VM& vm, JSDOMG
     putDirect(vm, vm.propertyNames->prototype, JSTextEncoder::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
-static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck(
-    jsTextEncoderEncodeWithoutTypeCheck,
-    JSTextEncoder::info(),
-    // https://github.com/oven-sh/bun/issues/9226
-    // It's not totally clear what the correct side effects are for this function, so we just make it conservative for now.
-    JSC::DOMJIT::Effect {},
-    DOMJIT::IDLResultTypeFilter<IDLUint8Array>::value,
-    DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value);
+// static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck(
+//     jsTextEncoderEncodeWithoutTypeCheck,
+//     JSTextEncoder::info(),
+//     // https://github.com/oven-sh/bun/issues/9226
+//     // It's not totally clear what the correct side effects are for this function, so we just make it conservative for now.
+//     JSC::DOMJIT::Effect {},
+//     DOMJIT::IDLResultTypeFilter<IDLUint8Array>::value,
+//     DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value);
 
-static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck(
-    jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck,
-    JSTextEncoder::info(),
+// static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck(
+//     jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck,
+//     JSTextEncoder::info(),
 
-    JSC::DOMJIT::Effect {},
-    // JSC::DOMJIT::Effect::forReadWriteKinds(encodeIntoRead, encodeIntoWrite),
-    DOMJIT::IDLResultTypeFilter<IDLObject>::value,
-    DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value,
-    DOMJIT::IDLArgumentTypeFilter<IDLUint8Array>::value);
+//     JSC::DOMJIT::Effect {},
+//     // JSC::DOMJIT::Effect::forReadWriteKinds(encodeIntoRead, encodeIntoWrite),
+//     DOMJIT::IDLResultTypeFilter<IDLObject>::value,
+//     DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value,
+//     DOMJIT::IDLArgumentTypeFilter<IDLUint8Array>::value);
 
 /* Hash table for prototype */
 
 static const HashTableValue JSTextEncoderPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTextEncoderConstructor, 0 } },
     { "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsTextEncoder_encoding, 0 } },
-    { "encode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTextEncoderPrototypeFunction_encode, &DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck } },
-    { "encodeInto"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTextEncoderPrototypeFunction_encodeInto, &DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck } },
+    // { "encode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTextEncoderPrototypeFunction_encode, &DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck } },
+    // { "encodeInto"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTextEncoderPrototypeFunction_encodeInto, &DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck } },
+    { "encode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTextEncoderPrototypeFunction_encode, 1 } },
+    { "encodeInto"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTextEncoderPrototypeFunction_encodeInto, 2 } },
 };
 
-JSC_DEFINE_JIT_OPERATION(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> input))
-{
-    VM& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSC::EncodedJSValue res;
-    String str;
-    if (input->is8Bit()) {
-        if (input->isRope()) {
-            GCDeferralContext gcDeferralContext(vm);
-            auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
-            if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
-                RELEASE_AND_RETURN(throwScope, { encodedValue });
-            }
-        }
+// JSC_DEFINE_JIT_OPERATION(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> input))
+// {
+//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     IGNORE_WARNINGS_BEGIN("frame-address")
+//     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+//     IGNORE_WARNINGS_END
+//     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+//     auto throwScope = DECLARE_THROW_SCOPE(vm);
+//     JSC::EncodedJSValue res;
+//     String str;
+//     if (input->is8Bit()) {
+//         if (input->isRope()) {
+//             GCDeferralContext gcDeferralContext(vm);
+//             auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
+//             if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
+//                 RELEASE_AND_RETURN(throwScope, { encodedValue });
+//             }
+//         }
 
-        str = input->value(lexicalGlobalObject);
-        res = TextEncoder__encode8(lexicalGlobalObject, str.span8().data(), str.length());
-    } else {
-        str = input->value(lexicalGlobalObject);
-        res = TextEncoder__encode16(lexicalGlobalObject, str.span16().data(), str.length());
-    }
+//         str = input->value(lexicalGlobalObject);
+//         res = TextEncoder__encode8(lexicalGlobalObject, str.span8().data(), str.length());
+//     } else {
+//         str = input->value(lexicalGlobalObject);
+//         res = TextEncoder__encode16(lexicalGlobalObject, str.span16().data(), str.length());
+//     }
 
-    if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
-        throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));
-        return { encodedJSValue() };
-    }
+//     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
+//         throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));
+//         return { encodedJSValue() };
+//     }
 
-    RELEASE_AND_RETURN(throwScope, { res });
-}
+//     RELEASE_AND_RETURN(throwScope, { res });
+// }
 
-JSC_DEFINE_JIT_OPERATION(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> sourceStr, DOMJIT::IDLJSArgumentType<IDLUint8Array> destination))
-{
-    VM& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    String source = sourceStr->value(lexicalGlobalObject);
-    size_t res = 0;
-    if (!source.is8Bit()) {
-        res = TextEncoder__encodeInto16(source.span16().data(), source.length(), destination->vector(), destination->byteLength());
-    } else {
-        res = TextEncoder__encodeInto8(source.span8().data(), source.length(), destination->vector(), destination->byteLength());
-    }
+// JSC_DEFINE_JIT_OPERATION(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> sourceStr, DOMJIT::IDLJSArgumentType<IDLUint8Array> destination))
+// {
+//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     IGNORE_WARNINGS_BEGIN("frame-address")
+//     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+//     IGNORE_WARNINGS_END
+//     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+//     String source = sourceStr->value(lexicalGlobalObject);
+//     size_t res = 0;
+//     if (!source.is8Bit()) {
+//         res = TextEncoder__encodeInto16(source.span16().data(), source.length(), destination->vector(), destination->byteLength());
+//     } else {
+//         res = TextEncoder__encodeInto8(source.span8().data(), source.length(), destination->vector(), destination->byteLength());
+//     }
 
-    Bun::GlobalScope* globalScope = reinterpret_cast<Bun::GlobalScope*>(lexicalGlobalObject);
-    auto* result = JSC::constructEmptyObject(vm, globalScope->encodeIntoObjectStructure());
-    result->putDirectOffset(vm, 0, JSC::jsNumber(static_cast<uint32_t>(res)));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(static_cast<uint32_t>(res >> 32)));
+//     Bun::GlobalScope* globalScope = reinterpret_cast<Bun::GlobalScope*>(lexicalGlobalObject);
+//     auto* result = JSC::constructEmptyObject(vm, globalScope->encodeIntoObjectStructure());
+//     result->putDirectOffset(vm, 0, JSC::jsNumber(static_cast<uint32_t>(res)));
+//     result->putDirectOffset(vm, 1, JSC::jsNumber(static_cast<uint32_t>(res >> 32)));
 
-    return { JSValue::encode(result) };
-}
+//     return { JSValue::encode(result) };
+// }
 
 const ClassInfo JSTextEncoderPrototype::s_info = { "TextEncoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextEncoderPrototype) };
 
@@ -376,6 +378,10 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
+    if (argument0.value().isUndefined()) {
+        auto res = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), 0);
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(res));
+    }
     JSC::JSString* input = argument0.value().toStringOrNull(lexicalGlobalObject);
     JSC::EncodedJSValue res;
     String str;
@@ -397,7 +403,7 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
 
     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
         throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));
-        return encodedJSValue();
+        return {};
     }
 
     RELEASE_AND_RETURN(throwScope, res);
@@ -416,12 +422,12 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto source = argument0.value().toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto* destination = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(argument1.value());
     if (!destination) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
-        return encodedJSValue();
+        return {};
     }
 
     size_t res = 0;

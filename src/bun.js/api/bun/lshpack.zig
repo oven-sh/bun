@@ -5,6 +5,8 @@ const lshpack_header = extern struct {
     name_len: usize = 0,
     value: [*]const u8 = undefined,
     value_len: usize = 0,
+    never_index: bool = false,
+    hpack_index: u16 = 255,
 };
 
 /// wrapper implemented at src/bun.js/bindings/c-bindings.cpp
@@ -16,6 +18,8 @@ pub const HPACK = extern struct {
     pub const DecodeResult = struct {
         name: []const u8,
         value: []const u8,
+        never_index: bool,
+        well_know: u16,
         // offset of the next header position in src
         next: usize,
     };
@@ -37,6 +41,8 @@ pub const HPACK = extern struct {
             .name = header.name[0..header.name_len],
             .value = header.value[0..header.value_len],
             .next = offset,
+            .never_index = header.never_index,
+            .well_know = header.hpack_index,
         };
     }
 

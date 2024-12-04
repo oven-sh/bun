@@ -32,7 +32,10 @@ async function doBuildkiteAgent(action) {
 
   let homePath, cachePath, logsPath, agentLogPath, pidPath;
   if (isWindows) {
-    throw new Error("TODO: Windows");
+    homePath = "C:\\buildkite-agent";
+    cachePath = join(homePath, "cache");
+    logsPath = join(homePath, "logs");
+    agentLogPath = join(logsPath, "buildkite-agent.log");
   } else {
     homePath = "/var/lib/buildkite-agent";
     cachePath = "/var/cache/buildkite-agent";
@@ -44,6 +47,19 @@ async function doBuildkiteAgent(action) {
   async function install() {
     const command = process.execPath;
     const args = [realpathSync(process.argv[1]), "start"];
+
+    if (isWindows) {
+      const serviceCommand = [
+        "New-Service",
+        "-Name",
+        "buildkite-agent",
+        "-StartupType",
+        "Automatic",
+        "-BinaryPathName",
+        `${escape(command)} ${escape(args.map(escape).join(" "))}`,
+      ];
+      await spawnSafe(["powershell", "-Command", serviceCommand.join(" ")], { stdio: "inherit" });
+    }
 
     if (isOpenRc()) {
       const servicePath = "/etc/init.d/buildkite-agent";
@@ -67,6 +83,7 @@ async function doBuildkiteAgent(action) {
         }
       `;
       writeFile(servicePath, service, { mode: 0o755 });
+      writeFile(`/etc/conf.d/buildkite-agent`, `rc_ulimit="-n 262144"`);
       await spawnSafe(["rc-update", "add", "buildkite-agent", "default"], { stdio: "inherit", privileged: true });
     }
 
@@ -77,11 +94,11 @@ async function doBuildkiteAgent(action) {
         Description=Buildkite Agent
         After=syslog.target
         After=network-online.target
-      
+
         [Service]
         Type=simple
         User=${username}
-        ExecStart=${escape(command)} ${escape(args.map(escape).join(" "))}
+        ExecStart=${escape(command)} ${args.map(escape).join(" ")}
         RestartSec=5
         Restart=on-failure
         KillMode=process
@@ -89,7 +106,7 @@ async function doBuildkiteAgent(action) {
         [Journal]
         Storage=persistent
         StateDirectory=${escape(agentLogPath)}
-      
+
         [Install]
         WantedBy=multi-user.target
       `;

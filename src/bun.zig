@@ -884,7 +884,6 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
     return struct {
-        const flag_ = flag;
         const state = enum(u8) { idk, disabled, enabled };
         var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
         pub fn get() bool {
@@ -892,7 +891,10 @@ pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
                 .enabled => true,
                 .disabled => false,
                 .idk => {
-                    const enabled = if (getenvZ(flag_)) |val| strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true") else false;
+                    const enabled = if (getenvZ(flag)) |val|
+                        strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true")
+                    else
+                        false;
                     is_enabled.store(if (enabled) .enabled else .disabled, .seq_cst);
                     return enabled;
                 },
@@ -3343,11 +3345,10 @@ pub fn runtimeEmbedFile(
     };
 
     const static = struct {
-        var storage: [:0]const u8 = undefined;
-        var once = std.once(load);
+        var once = bun.once(load);
 
-        fn load() void {
-            storage = std.fs.cwd().readFileAllocOptions(
+        fn load() [:0]const u8 {
+            return std.fs.cwd().readFileAllocOptions(
                 default_allocator,
                 abs_path,
                 std.math.maxInt(usize),
@@ -3368,12 +3369,10 @@ pub fn runtimeEmbedFile(
 
     if ((root == .src_eager or root == .codegen_eager) and static.once.done) {
         static.once.done = false;
-        default_allocator.free(static.storage);
+        default_allocator.free(static.once.payload);
     }
 
-    static.once.call();
-
-    return static.storage;
+    return static.once.call(.{});
 }
 
 pub inline fn markWindowsOnly() if (Environment.isWindows) void else noreturn {
@@ -3876,7 +3875,12 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
 pub const DebugThreadLock = if (Environment.allow_assert)
     struct {
         owning_thread: ?std.Thread.Id = null,
-        locked_at: crash_handler.StoredTrace = crash_handler.StoredTrace.empty,
+        locked_at: crash_handler.StoredTrace,
+
+        pub const unlocked: DebugThreadLock = .{
+            .owning_thread = null,
+            .locked_at = crash_handler.StoredTrace.empty,
+        };
 
         pub fn lock(impl: *@This()) void {
             if (impl.owning_thread) |thread| {
@@ -3890,19 +3894,29 @@ pub const DebugThreadLock = if (Environment.allow_assert)
 
         pub fn unlock(impl: *@This()) void {
             impl.assertLocked();
-            impl.* = .{};
+            impl.* = unlocked;
         }
 
         pub fn assertLocked(impl: *const @This()) void {
             assert(impl.owning_thread != null); // not locked
             assert(impl.owning_thread == std.Thread.getCurrentId());
         }
+
+        pub fn initLocked() @This() {
+            var impl = DebugThreadLock.unlocked;
+            impl.lock();
+            return impl;
+        }
     }
 else
     struct {
+        pub const unlocked: @This() = .{};
         pub fn lock(_: *@This()) void {}
         pub fn unlock(_: *@This()) void {}
         pub fn assertLocked(_: *const @This()) void {}
+        pub fn initLocked() @This() {
+            return .{};
+        }
     };
 
 pub const bytecode_extension = ".jsc";
@@ -4032,21 +4046,24 @@ pub fn once(comptime f: anytype) Once(f) {
 /// It is undefined behavior if `f` re-enters the same Once instance.
 pub fn Once(comptime f: anytype) type {
     return struct {
+        const Return = @typeInfo(@TypeOf(f)).Fn.return_type.?;
+
         done: bool = false,
-        mutex: std.Thread.Mutex = std.Thread.Mutex{},
+        payload: Return = undefined,
+        mutex: std.Thread.Mutex = .{},
 
         /// Call the function `f`.
         /// If `call` is invoked multiple times `f` will be executed only the
         /// first time.
         /// The invocations are thread-safe.
-        pub fn call(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+        pub fn call(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) Return {
             if (@atomicLoad(bool, &self.done, .acquire))
-                return;
+                return self.payload;
 
             return self.callSlow(args);
         }
 
-        fn callSlow(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+        fn callSlow(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) Return {
             @setCold(true);
 
             self.mutex.lock();
@@ -4054,9 +4071,11 @@ pub fn Once(comptime f: anytype) type {
 
             // The first thread to acquire the mutex gets to run the initializer
             if (!self.done) {
-                @call(.auto, f, args);
+                self.payload = @call(.auto, f, args);
                 @atomicStore(bool, &self.done, true, .release);
             }
+
+            return self.payload;
         }
     };
 }
@@ -4099,6 +4118,3 @@ pub inline fn isComptimeKnown(x: anytype) bool {
 pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
     return if (index < slice.len) slice[index] else null;
 }
-
-/// Code used by the classes generator
-pub const gen_classes_lib = @import("gen_classes_lib.zig");

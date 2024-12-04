@@ -18,6 +18,11 @@
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
+#include "JavaScriptCore/ScriptCallStackFactory.h"
+#include "JavaScriptCore/ConsoleMessage.h"
+#include "JavaScriptCore/InspectorConsoleAgent.h"
+#include "JavaScriptCore/JSGlobalObjectDebuggable.h"
+#include <JavaScriptCore/StackFrame.h>
 #include <sys/stat.h>
 #include "ConsoleObject.h"
 #include <JavaScriptCore/GetterSetter.h>
@@ -28,6 +33,7 @@
 #include "wtf-bindings.h"
 #include "NodeValidator.h"
 
+#include <webcore/SerializedScriptValue.h>
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/OrdinalNumber.h"
@@ -827,12 +833,7 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
         MarkedArgumentBuffer args;
         args.append(jsString(globalObject->vm(), signalNameIdentifier.string()));
         args.append(jsNumber(signalNumber));
-        // TODO(@paperdave): add an ASSERT(isMainThread());
-        // This should be true on posix if I understand sigaction right
-        // On Windows it should be true if the uv_signal is created on the main thread's loop
-        //
-        // I would like to assert this because if that assumption is not true,
-        // this call will probably cause very confusing bugs.
+
         process->wrapped().emitForBindings(signalNameIdentifier, args);
     });
 };

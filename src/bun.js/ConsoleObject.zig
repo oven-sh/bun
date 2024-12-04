@@ -81,7 +81,7 @@ threadlocal var stdout_lock_count: u16 = 0;
 /// https://console.spec.whatwg.org/#formatter
 pub fn messageWithTypeAndLevel(
     //console_: ConsoleObject.Type,
-    _: ConsoleObject.Type,
+    ctype: ConsoleObject.Type,
     message_type: MessageType,
     //message_level: u32,
     level: MessageLevel,
@@ -89,6 +89,21 @@ pub fn messageWithTypeAndLevel(
     vals: [*]const JSValue,
     len: usize,
 ) callconv(JSC.conv) void {
+    messageWithTypeAndLevel_(ctype, message_type, level, global, vals, len) catch |err| switch (err) {
+        error.JSError => {},
+        error.OutOfMemory => global.throwOutOfMemory() catch {}, // TODO: properly propagate exception upwards
+    };
+}
+fn messageWithTypeAndLevel_(
+    //console_: ConsoleObject.Type,
+    _: ConsoleObject.Type,
+    message_type: MessageType,
+    //message_level: u32,
+    level: MessageLevel,
+    global: *JSGlobalObject,
+    vals: [*]const JSValue,
+    len: usize,
+) bun.JSError!void {
     if (comptime is_bindgen) {
         return;
     }
@@ -197,13 +212,13 @@ pub fn messageWithTypeAndLevel(
         print_length = 1;
         var opts = vals[1];
         if (opts.isObject()) {
-            if (opts.get(global, "depth")) |depth_prop| {
+            if (try opts.get(global, "depth")) |depth_prop| {
                 if (depth_prop.isInt32() or depth_prop.isNumber() or depth_prop.isBigInt())
                     print_options.max_depth = depth_prop.toU16()
                 else if (depth_prop.isNull())
                     print_options.max_depth = std.math.maxInt(u16);
             }
-            if (opts.get(global, "colors")) |colors_prop| {
+            if (try opts.get(global, "colors")) |colors_prop| {
                 if (colors_prop.isBoolean())
                     print_options.enable_colors = colors_prop.toBoolean();
             }
@@ -687,12 +702,11 @@ pub const FormatOptions = struct {
         const arg1 = arguments[0];
 
         if (arg1.isObject()) {
-            if (arg1.getTruthy(globalThis, "depth")) |opt| {
+            if (try arg1.getTruthy(globalThis, "depth")) |opt| {
                 if (opt.isInt32()) {
                     const arg = opt.toInt32();
                     if (arg < 0) {
-                        globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (opt.isNumber()) {
@@ -700,8 +714,7 @@ pub const FormatOptions = struct {
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
-                        globalThis.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
                     }
                 }
             }
@@ -722,8 +735,7 @@ pub const FormatOptions = struct {
                 if (depthArg.isInt32()) {
                     const arg = depthArg.toInt32();
                     if (arg < 0) {
-                        globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (depthArg.isNumber()) {
@@ -731,8 +743,7 @@ pub const FormatOptions = struct {
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
-                        globalThis.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
-                        return error.JSError;
+                        return globalThis.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
                     }
                 }
                 if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull()) {
@@ -1217,7 +1228,7 @@ pub const Formatter = struct {
                 .tag = switch (js_type) {
                     .ErrorInstance => .Error,
                     .NumberObject => .Double,
-                    .DerivedArray, JSValue.JSType.Array => .Array,
+                    .DerivedArray, JSValue.JSType.Array, .DirectArguments, .ScopedArguments, .ClonedArguments => .Array,
                     .DerivedStringObject, JSValue.JSType.String, JSValue.JSType.StringObject => .String,
                     .RegExpObject => .String,
                     .Symbol => .Symbol,
@@ -1910,6 +1921,8 @@ pub const Formatter = struct {
         value.getClassName(globalThis, &name_str);
         if (!name_str.eqlComptime("Object")) {
             return name_str;
+        } else if (value.getPrototype(globalThis).eqlValue(JSValue.null)) {
+            return ZigString.static("[Object: null prototype]").*;
         }
         return null;
     }
@@ -2154,10 +2167,23 @@ pub const Formatter = struct {
                 value.getClassName(this.globalThis, &printable);
                 this.addForNewLine(printable.len);
 
+                const proto = value.getPrototype(this.globalThis);
+                var printable_proto = ZigString.init(&name_buf);
+                proto.getClassName(this.globalThis, &printable_proto);
+                this.addForNewLine(printable_proto.len);
+
                 if (printable.len == 0) {
-                    writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous)]<r>", enable_ansi_colors), .{});
+                    if (printable_proto.isEmpty()) {
+                        writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous)]<r>", enable_ansi_colors), .{});
+                    } else {
+                        writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous) extends {}]<r>", enable_ansi_colors), .{printable_proto});
+                    }
                 } else {
-                    writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
+                    if (printable_proto.isEmpty()) {
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
+                    } else {
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {} extends {}]<r>", enable_ansi_colors), .{ printable, printable_proto });
+                    }
                 }
             },
             .Function => {
@@ -2168,7 +2194,7 @@ pub const Formatter = struct {
                 const func_name = proto.getName(this.globalThis); // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
                 defer func_name.deref();
 
-                if (printable.isEmpty()) {
+                if (printable.isEmpty() or func_name.eql(printable)) {
                     if (func_name.isEmpty()) {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
                     } else {
@@ -2358,16 +2384,18 @@ pub const Formatter = struct {
                         }
                     }
 
-                    const Iterator = PropertyIterator(Writer, enable_ansi_colors);
-                    var iter = Iterator{
-                        .formatter = this,
-                        .writer = writer_,
-                        .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
-                        .single_line = this.single_line,
-                        .parent = value,
-                        .i = i,
-                    };
-                    value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
+                    if (!jsType.isArguments()) {
+                        const Iterator = PropertyIterator(Writer, enable_ansi_colors);
+                        var iter = Iterator{
+                            .formatter = this,
+                            .writer = writer_,
+                            .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
+                            .single_line = this.single_line,
+                            .parent = value,
+                            .i = i,
+                        };
+                        value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
+                    }
                 }
 
                 if (!this.single_line and (this.ordered_properties or was_good_time or this.goodTimeForANewLine())) {
@@ -2396,7 +2424,7 @@ pub const Formatter = struct {
                     blob.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(JSC.FetchHeaders) != null) {
-                    if (value.get(this.globalThis, "toJSON")) |toJSONFunction| {
+                    if (value.get_unsafe(this.globalThis, "toJSON")) |toJSONFunction| {
                         this.addForNewLine("Headers ".len);
                         writer.writeAll(comptime Output.prettyFmt("<r>Headers ", enable_ansi_colors));
                         const prev_quote_keys = this.quote_keys;
@@ -2414,7 +2442,7 @@ pub const Formatter = struct {
                         );
                     }
                 } else if (value.as(JSC.DOMFormData) != null) {
-                    if (value.get(this.globalThis, "toJSON")) |toJSONFunction| {
+                    if (value.get_unsafe(this.globalThis, "toJSON")) |toJSONFunction| {
                         const prev_quote_keys = this.quote_keys;
                         this.quote_keys = true;
                         defer this.quote_keys = prev_quote_keys;
@@ -2516,7 +2544,7 @@ pub const Formatter = struct {
                 writer.writeAll(comptime Output.prettyFmt("<cyan>" ++ fmt ++ "<r>", enable_ansi_colors));
             },
             .Map => {
-                const length_value = value.get(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
+                const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
                 const length = length_value.toInt32();
 
                 const prev_quote_strings = this.quote_strings;
@@ -2620,7 +2648,7 @@ pub const Formatter = struct {
                 writer.writeAll("}");
             },
             .Set => {
-                const length_value = value.get(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
+                const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
                 const length = length_value.toInt32();
 
                 const prev_quote_strings = this.quote_strings;
@@ -2666,7 +2694,7 @@ pub const Formatter = struct {
                 writer.writeAll("}");
             },
             .toJSON => {
-                if (value.get(this.globalThis, "toJSON")) |func| brk: {
+                if (value.get_unsafe(this.globalThis, "toJSON")) |func| brk: {
                     const result = func.call(this.globalThis, value, &.{}) catch {
                         this.globalThis.clearException();
                         break :brk;
@@ -2706,7 +2734,7 @@ pub const Formatter = struct {
             },
             .Event => {
                 const event_type_value = brk: {
-                    const value_ = value.get(this.globalThis, "type") orelse break :brk JSValue.undefined;
+                    const value_ = value.get_unsafe(this.globalThis, "type") orelse break :brk JSValue.undefined;
                     if (value_.isString()) {
                         break :brk value_;
                     }
@@ -2827,7 +2855,7 @@ pub const Formatter = struct {
 
                 defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit();
 
-                if (value.get(this.globalThis, "type")) |type_value| {
+                if (value.get_unsafe(this.globalThis, "type")) |type_value| {
                     const _tag = Tag.getAdvanced(type_value, this.globalThis, .{ .hide_global = true });
 
                     if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
@@ -2857,7 +2885,7 @@ pub const Formatter = struct {
                 writer.writeAll(tag_name_slice.slice());
                 if (enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
 
-                if (value.get(this.globalThis, "key")) |key_value| {
+                if (value.get_unsafe(this.globalThis, "key")) |key_value| {
                     if (!key_value.isUndefinedOrNull()) {
                         if (needs_space)
                             writer.writeAll(" key=")
@@ -2874,7 +2902,7 @@ pub const Formatter = struct {
                     }
                 }
 
-                if (value.get(this.globalThis, "props")) |props| {
+                if (value.get_unsafe(this.globalThis, "props")) |props| {
                     const prev_quote_strings = this.quote_strings;
                     this.quote_strings = true;
                     defer this.quote_strings = prev_quote_strings;
@@ -2886,7 +2914,7 @@ pub const Formatter = struct {
                     }).init(this.globalThis, props);
                     defer props_iter.deinit();
 
-                    const children_prop = props.get(this.globalThis, "children");
+                    const children_prop = props.get_unsafe(this.globalThis, "children");
                     if (props_iter.len > 0) {
                         {
                             this.indent += 1;

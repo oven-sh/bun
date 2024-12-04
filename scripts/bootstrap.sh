@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 4
+# Version: 5
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -120,6 +120,22 @@ append_to_file() {
 	echo "$content" | while read -r line; do
 		if ! grep -q "$line" "$file"; then
 			echo "$line" >>"$file"
+		fi
+	done
+}
+
+append_to_file_sudo() {
+	file="$1"
+	content="$2"
+
+	if ! [ -f "$file" ]; then
+		execute_sudo mkdir -p "$(dirname "$file")"
+		execute_sudo touch "$file"
+	fi
+
+	echo "$content" | while read -r line; do
+		if ! grep -q "$line" "$file"; then
+			echo "$line" | execute_sudo tee "$file" > /dev/null
 		fi
 	done
 }
@@ -309,7 +325,7 @@ check_package_manager() {
 		pm="brew"
 		;;
 	linux)
-		if [ -f "$(which apt-get)" ]; then
+		if [ -f "$(which apt)" ]; then
 			pm="apt"
 		elif [ -f "$(which dnf)" ]; then
 			pm="dnf"
@@ -327,7 +343,8 @@ check_package_manager() {
 	print "Updating package manager..."
 	case "$pm" in
 	apt)
-		DEBIAN_FRONTEND=noninteractive package_manager update -y
+		export DEBIAN_FRONTEND=noninteractive
+		package_manager update -y
 		;;
 	apk)
 		package_manager update
@@ -370,10 +387,7 @@ check_user() {
 package_manager() {
 	case "$pm" in
 	apt)
-		while ! sudo -n apt-get update -y; do
-			sleep 1
-		done
-		DEBIAN_FRONTEND=noninteractive execute_sudo apt-get "$@"
+		execute_sudo apt "$@"
 		;;
 	dnf)
 		case "$distro" in
@@ -569,28 +583,25 @@ install_nodejs() {
 		install_packages nodejs
 		;;
 	esac
+
+	# Some distros do not install the node headers by default.
+	# These are needed for certain FFI tests, such as: `cc.test.ts`
+	case "$distro" in
+	alpine | amzn)
+		install_nodejs_headers
+		;;
+	esac
+}
+
+install_nodejs_headers() {
+	headers_tar="$(download_file "https://nodejs.org/download/release/v$(nodejs_version_exact)/node-v$(nodejs_version_exact)-headers.tar.gz")"
+	headers_dir="$(dirname "$headers_tar")"
+	execute tar -xzf "$headers_tar" -C "$headers_dir"
+	headers_include="$headers_dir/node-v$(nodejs_version_exact)/include"
+	execute_sudo cp -R "$headers_include/" "/usr"
 }
 
 install_bun() {
-	case "$os-$abi" in
-	linux-musl)
-		case "$arch" in
-		x64)
-			exe="$(download_file https://pub-61e0d0e2da4146a099e4545a59a9f0f7.r2.dev/bun-musl-x64)"
-			;;
-		aarch64)
-			exe="$(download_file https://pub-61e0d0e2da4146a099e4545a59a9f0f7.r2.dev/bun-musl-arm64)"
-			;;
-		esac
-		execute chmod +x "$exe"
-		execute mkdir -p "$home/.bun/bin"
-		execute mv "$exe" "$home/.bun/bin/bun"
-		execute ln -fs "$home/.bun/bin/bun" "$home/.bun/bin/bunx"
-		link_to_bin "$home/.bun/bin"
-		return
-		;;
-	esac
-
 	bash="$(require bash)"
 	script=$(download_file "https://bun.sh/install")
 
@@ -866,7 +877,7 @@ create_buildkite_user() {
 		execute_sudo mkdir -p "$path"
 		execute_sudo chown -R "$user:$group" "$path"
 	done
-	
+
 	files="/var/run/buildkite-agent/buildkite-agent.pid"
 	for file in $files; do
 		execute_sudo touch "$file"
@@ -959,6 +970,18 @@ install_chrome_dependencies() {
 			xorg-x11-utils
 		;;
 	esac
+
+	case "$distro" in
+	amzn)
+		install_packages \
+			mesa-libgbm
+		;;
+	esac
+}
+
+raise_file_descriptor_limit() {
+	append_to_file_sudo /etc/security/limits.conf '*  soft  nofile  262144'
+	append_to_file_sudo /etc/security/limits.conf '*  hard  nofile  262144'
 }
 
 main() {
@@ -971,6 +994,7 @@ main() {
 	install_common_software
 	install_build_essentials
 	install_chrome_dependencies
+	raise_file_descriptor_limit # XXX: temporary
 }
 
 main "$@"

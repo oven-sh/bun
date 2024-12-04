@@ -706,10 +706,14 @@ pub const String = extern struct {
     pub fn fromJS2(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
         var out: String = String.dead;
         if (BunString__fromJS(globalObject, value, &out)) {
-            bun.assert(out.tag != .Dead);
+            if (comptime bun.Environment.isDebug) {
+                bun.assert(out.tag != .Dead);
+            }
             return out;
         } else {
-            bun.assert(globalObject.hasException());
+            if (comptime bun.Environment.isDebug) {
+                bun.assert(globalObject.hasException());
+            }
             return error.JSError;
         }
     }
@@ -721,7 +725,9 @@ pub const String = extern struct {
         if (BunString__fromJSRef(globalObject, value, &out)) {
             return out;
         } else {
-            bun.assert(globalObject.hasException());
+            if (comptime bun.Environment.isDebug) {
+                bun.assert(globalObject.hasException());
+            }
             return error.JSError;
         }
     }
@@ -1328,7 +1334,7 @@ pub const String = extern struct {
     }
 
     pub fn jsGetStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const args = callFrame.arguments(1).slice();
+        const args = callFrame.arguments_old(1).slice();
 
         if (args.len == 0 or !args.ptr[0].isString()) {
             return JSC.jsNumber(@as(i32, 0));

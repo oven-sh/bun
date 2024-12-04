@@ -201,9 +201,7 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
       .filter(x => x.type === "zig")
       .flatMap(call => [
         `export fn ${symbol(call)}_workaround(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {`,
-        `  return global.errorUnionToCPP(@import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), call.filename))}).${
-          call.symbol
-        }(global));`,
+        `  return JSC.toJSHostValue(global, @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), call.filename))}).${call.symbol}(global));`,
         "}",
       ]),
     ...wrapperCalls
@@ -216,10 +214,7 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
         })}(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {`,
         `
           const function = @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), x.filename))});
-          return @call(.always_inline, function.${x.symbol_target}, .{global, call_frame}) catch |err| switch (err) {
-              error.JSError => .zero,
-              error.OutOfMemory => global.throwOutOfMemoryValue(),
-          };`,
+          return @call(.always_inline, JSC.toJSHostFunction(function.${x.symbol_target}), .{global, call_frame});`,
         "}",
       ]),
   ].join("\n");

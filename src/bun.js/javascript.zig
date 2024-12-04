@@ -433,17 +433,9 @@ comptime {
     const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
     @export(Bun__Process__send, .{ .name = "Bun__Process__send" });
 }
-pub fn Bun__Process__send_(
-    globalObject: *JSGlobalObject,
-    callFrame: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
-    var message, var handle, var options_, var callback = callFrame.arguments(4).ptr;
-
-    if (message == .zero) message = .undefined;
-    if (handle == .zero) handle = .undefined;
-    if (options_ == .zero) options_ = .undefined;
-    if (callback == .zero) callback = .undefined;
+    var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
 
     if (handle.isFunction()) {
         callback = handle;
@@ -453,12 +445,12 @@ pub fn Bun__Process__send_(
         callback = options_;
         options_ = .undefined;
     } else if (!options_.isUndefined()) {
-        if (!globalObject.validateObject("options", options_, .{})) return .zero;
+        try globalObject.validateObject("options", options_, .{});
     }
 
     const S = struct {
         fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments_ = callframe.arguments(1).slice();
+            const arguments_ = callframe.arguments_old(1).slice();
             const ex = arguments_[0];
             VirtualMachine.Process__emitErrorEvent(globalThis, ex);
             return .undefined;
@@ -1236,6 +1228,14 @@ pub const VirtualMachine = struct {
         return handled;
     }
 
+    pub fn handlePendingInternalPromiseRejection(this: *JSC.VirtualMachine) void {
+        var promise = this.pending_internal_promise;
+        if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
+            _ = this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
+            promise.setHandled(this.global.vm());
+        }
+    }
+
     pub fn defaultOnUnhandledRejection(this: *JSC.VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         this.runErrorHandler(value, this.onUnhandledRejectionExceptionList);
     }
@@ -1418,63 +1418,278 @@ pub const VirtualMachine = struct {
 
     pub var has_created_debugger: bool = false;
 
+    pub const TestReporterAgent = struct {
+        handle: ?*Handle = null,
+        const debug = Output.scoped(.TestReporterAgent, false);
+        pub const TestStatus = enum(u8) {
+            pass,
+            fail,
+            timeout,
+            skip,
+            todo,
+        };
+        pub const Handle = opaque {
+            extern "c" fn Bun__TestReporterAgentReportTestFound(agent: *Handle, callFrame: *JSC.CallFrame, testId: c_int, name: *String) void;
+            extern "c" fn Bun__TestReporterAgentReportTestStart(agent: *Handle, testId: c_int) void;
+            extern "c" fn Bun__TestReporterAgentReportTestEnd(agent: *Handle, testId: c_int, bunTestStatus: TestStatus, elapsed: f64) void;
+
+            pub fn reportTestFound(this: *Handle, callFrame: *JSC.CallFrame, testId: i32, name: *String) void {
+                Bun__TestReporterAgentReportTestFound(this, callFrame, testId, name);
+            }
+
+            pub fn reportTestStart(this: *Handle, testId: c_int) void {
+                Bun__TestReporterAgentReportTestStart(this, testId);
+            }
+
+            pub fn reportTestEnd(this: *Handle, testId: c_int, bunTestStatus: TestStatus, elapsed: f64) void {
+                Bun__TestReporterAgentReportTestEnd(this, testId, bunTestStatus, elapsed);
+            }
+        };
+        pub export fn Bun__TestReporterAgentEnable(agent: *Handle) void {
+            if (JSC.VirtualMachine.get().debugger) |*debugger| {
+                debug("enable", .{});
+                debugger.test_reporter_agent.handle = agent;
+            }
+        }
+        pub export fn Bun__TestReporterAgentDisable(agent: *Handle) void {
+            _ = agent; // autofix
+            if (JSC.VirtualMachine.get().debugger) |*debugger| {
+                debug("disable", .{});
+                debugger.test_reporter_agent.handle = null;
+            }
+        }
+
+        /// Caller must ensure that it is enabled first.
+        ///
+        /// Since we may have to call .deinit on the name string.
+        pub fn reportTestFound(this: TestReporterAgent, callFrame: *JSC.CallFrame, test_id: i32, name: *bun.String) void {
+            debug("reportTestFound", .{});
+
+            this.handle.?.reportTestFound(callFrame, test_id, name);
+        }
+
+        /// Caller must ensure that it is enabled first.
+        pub fn reportTestStart(this: TestReporterAgent, test_id: i32) void {
+            debug("reportTestStart", .{});
+            this.handle.?.reportTestStart(test_id);
+        }
+
+        /// Caller must ensure that it is enabled first.
+        pub fn reportTestEnd(this: TestReporterAgent, test_id: i32, bunTestStatus: TestStatus, elapsed: f64) void {
+            debug("reportTestEnd", .{});
+            this.handle.?.reportTestEnd(test_id, bunTestStatus, elapsed);
+        }
+
+        pub fn isEnabled(this: TestReporterAgent) bool {
+            return this.handle != null;
+        }
+    };
+
+    pub const LifecycleAgent = struct {
+        handle: ?*Handle = null,
+        const debug = Output.scoped(.LifecycleAgent, false);
+
+        pub const Handle = opaque {
+            extern "c" fn Bun__LifecycleAgentReportReload(agent: *Handle) void;
+            extern "c" fn Bun__LifecycleAgentReportError(agent: *Handle, exception: *JSC.ZigException) void;
+            extern "c" fn Bun__LifecycleAgentPreventExit(agent: *Handle) void;
+            extern "c" fn Bun__LifecycleAgentStopPreventingExit(agent: *Handle) void;
+
+            pub fn preventExit(this: *Handle) void {
+                Bun__LifecycleAgentPreventExit(this);
+            }
+
+            pub fn stopPreventingExit(this: *Handle) void {
+                Bun__LifecycleAgentStopPreventingExit(this);
+            }
+
+            pub fn reportReload(this: *Handle) void {
+                debug("reportReload", .{});
+                Bun__LifecycleAgentReportReload(this);
+            }
+
+            pub fn reportError(this: *Handle, exception: *JSC.ZigException) void {
+                debug("reportError", .{});
+                Bun__LifecycleAgentReportError(this, exception);
+            }
+        };
+
+        pub export fn Bun__LifecycleAgentEnable(agent: *Handle) void {
+            if (JSC.VirtualMachine.get().debugger) |*debugger| {
+                debug("enable", .{});
+                debugger.lifecycle_reporter_agent.handle = agent;
+            }
+        }
+
+        pub export fn Bun__LifecycleAgentDisable(agent: *Handle) void {
+            _ = agent; // autofix
+            if (JSC.VirtualMachine.get().debugger) |*debugger| {
+                debug("disable", .{});
+                debugger.lifecycle_reporter_agent.handle = null;
+            }
+        }
+
+        pub fn reportReload(this: *LifecycleAgent) void {
+            if (this.handle) |handle| {
+                handle.reportReload();
+            }
+        }
+
+        pub fn reportError(this: *LifecycleAgent, exception: *JSC.ZigException) void {
+            if (this.handle) |handle| {
+                handle.reportError(exception);
+            }
+        }
+
+        pub fn isEnabled(this: *const LifecycleAgent) bool {
+            return this.handle != null;
+        }
+    };
+
     pub const Debugger = struct {
         path_or_port: ?[]const u8 = null,
-        unix: []const u8 = "",
+        from_environment_variable: []const u8 = "",
         script_execution_context_id: u32 = 0,
         next_debugger_id: u64 = 1,
         poll_ref: Async.KeepAlive = .{},
-        wait_for_connection: bool = false,
+        wait_for_connection: Wait = .off,
+        // wait_for_connection: bool = false,
         set_breakpoint_on_first_line: bool = false,
+        mode: enum {
+            /// Bun acts as the server. https://debug.bun.sh/ uses this
+            listen,
+            /// Bun connects to this path. The VSCode extension uses this.
+            connect,
+        } = .listen,
 
-        const debug = Output.scoped(.DEBUGGER, false);
+        test_reporter_agent: TestReporterAgent = .{},
+        lifecycle_reporter_agent: LifecycleAgent = .{},
+        must_block_until_connected: bool = false,
+
+        pub const Wait = enum { off, shortly, forever };
+
+        pub const log = Output.scoped(.debugger, false);
 
         extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
         extern "C" fn Bun__ensureDebugger(u32, bool) void;
-        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String) void;
+        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String, c_int, bool) void;
         var futex_atomic: std.atomic.Value(u32) = undefined;
 
-        pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
-            debug("create", .{});
-            JSC.markBinding(@src());
-            if (has_created_debugger) return;
-            has_created_debugger = true;
-            var debugger = &this.debugger.?;
-            debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
-            if (!this.has_started_debugger) {
-                this.has_started_debugger = true;
-                futex_atomic = std.atomic.Value(u32).init(0);
-                var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
-                thread.detach();
+        pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
+            const debugger = &(this.debugger orelse return);
+            if (!debugger.must_block_until_connected) {
+                return;
             }
-            this.eventLoop().ensureWaker();
+            defer debugger.must_block_until_connected = false;
 
-            if (debugger.wait_for_connection) {
-                debugger.poll_ref.ref(this);
-            }
-
-            debug("spin", .{});
+            Debugger.log("spin", .{});
             while (futex_atomic.load(.monotonic) > 0) {
                 std.Thread.Futex.wait(&futex_atomic, 1);
             }
-            if (comptime Environment.allow_assert)
-                debug("waitForDebugger: {}", .{Output.ElapsedFormatter{
+            if (comptime Environment.enable_logs)
+                Debugger.log("waitForDebugger: {}", .{Output.ElapsedFormatter{
                     .colors = Output.enable_ansi_colors_stderr,
                     .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.CLI.start_time))),
                 }});
 
-            Bun__ensureDebugger(debugger.script_execution_context_id, debugger.wait_for_connection);
-            while (debugger.wait_for_connection) {
+            Bun__ensureDebugger(debugger.script_execution_context_id, debugger.wait_for_connection != .off);
+
+            // Sleep up to 30ms for automatic inspection.
+            const wait_for_connection_delay_ms = 30;
+
+            var deadline: bun.timespec = if (debugger.wait_for_connection == .shortly) bun.timespec.now().addMs(wait_for_connection_delay_ms) else undefined;
+
+            if (comptime Environment.isWindows) {
+                // TODO: remove this when tickWithTimeout actually works properly on Windows.
+                if (debugger.wait_for_connection == .shortly) {
+                    uv.uv_update_time(this.uvLoop());
+                    var timer = bun.default_allocator.create(uv.Timer) catch bun.outOfMemory();
+                    timer.* = std.mem.zeroes(uv.Timer);
+                    timer.init(this.uvLoop());
+                    const onDebuggerTimer = struct {
+                        fn call(handle: *uv.Timer) callconv(.C) void {
+                            const vm = JSC.VirtualMachine.get();
+                            vm.debugger.?.poll_ref.unref(vm);
+                            uv.uv_close(@ptrCast(handle), deinitTimer);
+                        }
+
+                        fn deinitTimer(handle: *anyopaque) callconv(.C) void {
+                            bun.default_allocator.destroy(@as(*uv.Timer, @alignCast(@ptrCast(handle))));
+                        }
+                    }.call;
+                    timer.start(wait_for_connection_delay_ms, 0, &onDebuggerTimer);
+                    timer.ref();
+                }
+            }
+
+            while (debugger.wait_for_connection != .off) {
                 this.eventLoop().tick();
-                if (debugger.wait_for_connection)
-                    this.eventLoop().autoTickActive();
+                switch (debugger.wait_for_connection) {
+                    .forever => {
+                        this.eventLoop().autoTickActive();
+
+                        if (comptime Environment.enable_logs)
+                            log("waited: {}", .{bun.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
+                    },
+                    .shortly => {
+                        // Handle .incrementRefConcurrently
+                        if (comptime Environment.isPosix) {
+                            const pending_unref = this.pending_unref_counter;
+                            if (pending_unref > 0) {
+                                this.pending_unref_counter = 0;
+                                this.uwsLoop().unrefCount(pending_unref);
+                            }
+                        }
+
+                        this.uwsLoop().tickWithTimeout(&deadline);
+
+                        if (comptime Environment.enable_logs)
+                            log("waited: {}", .{bun.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
+
+                        const elapsed = bun.timespec.now();
+                        if (elapsed.order(&deadline) != .lt) {
+                            debugger.poll_ref.unref(this);
+                            log("Timed out waiting for the debugger", .{});
+                            break;
+                        }
+                    },
+                    .off => {
+                        break;
+                    },
+                }
+            }
+        }
+
+        pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
+            log("create", .{});
+            JSC.markBinding(@src());
+            if (!has_created_debugger) {
+                has_created_debugger = true;
+                std.mem.doNotOptimizeAway(&TestReporterAgent.Bun__TestReporterAgentDisable);
+                std.mem.doNotOptimizeAway(&LifecycleAgent.Bun__LifecycleAgentDisable);
+                std.mem.doNotOptimizeAway(&TestReporterAgent.Bun__TestReporterAgentEnable);
+                std.mem.doNotOptimizeAway(&LifecycleAgent.Bun__LifecycleAgentEnable);
+                var debugger = &this.debugger.?;
+                debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
+                if (!this.has_started_debugger) {
+                    this.has_started_debugger = true;
+                    futex_atomic = std.atomic.Value(u32).init(0);
+                    var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
+                    thread.detach();
+                }
+                this.eventLoop().ensureWaker();
+
+                if (debugger.wait_for_connection != .off) {
+                    debugger.poll_ref.ref(this);
+                    debugger.must_block_until_connected = true;
+                }
             }
         }
 
         pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
             var arena = bun.MimallocArena.init() catch unreachable;
             Output.Source.configureNamedThread("Debugger");
-            debug("startJSDebuggerThread", .{});
+            log("startJSDebuggerThread", .{});
             JSC.markBinding(@src());
 
             var vm = JSC.VirtualMachine.init(.{
@@ -1494,9 +1709,10 @@ pub const VirtualMachine = struct {
 
         pub export fn Debugger__didConnect() void {
             var this = VirtualMachine.get();
-            bun.assert(this.debugger.?.wait_for_connection);
-            this.debugger.?.wait_for_connection = false;
-            this.debugger.?.poll_ref.unref(this);
+            if (this.debugger.?.wait_for_connection != .off) {
+                this.debugger.?.wait_for_connection = .off;
+                this.debugger.?.poll_ref.unref(this);
+            }
         }
 
         fn start(other_vm: *VirtualMachine) void {
@@ -1504,15 +1720,22 @@ pub const VirtualMachine = struct {
 
             var this = VirtualMachine.get();
             const debugger = other_vm.debugger.?;
+            const loop = this.eventLoop();
 
-            if (debugger.unix.len > 0) {
-                var url = bun.String.createUTF8(debugger.unix);
-                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
+            if (debugger.from_environment_variable.len > 0) {
+                var url = bun.String.createUTF8(debugger.from_environment_variable);
+
+                loop.enter();
+                defer loop.exit();
+                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 1, debugger.mode == .connect);
             }
 
             if (debugger.path_or_port) |path_or_port| {
                 var url = bun.String.createUTF8(path_or_port);
-                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
+
+                loop.enter();
+                defer loop.exit();
+                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 0, debugger.mode == .connect);
             }
 
             this.global.handleRejectedPromises();
@@ -1523,11 +1746,15 @@ pub const VirtualMachine = struct {
                 Output.flush();
             }
 
-            debug("wake", .{});
+            log("wake", .{});
             futex_atomic.store(0, .monotonic);
             std.Thread.Futex.wake(&futex_atomic, 1);
 
+            other_vm.eventLoop().wakeup();
+
             this.eventLoop().tick();
+
+            other_vm.eventLoop().wakeup();
 
             while (true) {
                 while (this.isEventLoopAlive()) {
@@ -1832,28 +2059,58 @@ pub const VirtualMachine = struct {
         }
     }
 
-    fn configureDebugger(this: *VirtualMachine, debugger: bun.CLI.Command.Debugger) void {
-        const unix = bun.getenvZ("BUN_INSPECT") orelse "";
-        const set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1");
-        const wait_for_connection = set_breakpoint_on_first_line or (unix.len > 0 and strings.endsWith(unix, "?wait=1"));
+    fn configureDebugger(this: *VirtualMachine, cli_flag: bun.CLI.Command.Debugger) void {
+        if (bun.getenvZ("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null) {
+            return;
+        }
 
-        switch (debugger) {
+        const unix = bun.getenvZ("BUN_INSPECT") orelse "";
+        const notify = bun.getenvZ("BUN_INSPECT_NOTIFY") orelse "";
+        const connect_to = bun.getenvZ("BUN_INSPECT_CONNECT_TO") orelse "";
+
+        const set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1"); // If we should set a breakpoint on the first line
+        const wait_for_debugger = unix.len > 0 and strings.endsWith(unix, "?wait=1"); // If we should wait for the debugger to connect before starting the event loop
+
+        const wait_for_connection: Debugger.Wait = switch (set_breakpoint_on_first_line or wait_for_debugger) {
+            true => if (notify.len > 0 or connect_to.len > 0) .shortly else .forever,
+            false => .off,
+        };
+
+        switch (cli_flag) {
             .unspecified => {
                 if (unix.len > 0) {
                     this.debugger = Debugger{
                         .path_or_port = null,
-                        .unix = unix,
+                        .from_environment_variable = unix,
                         .wait_for_connection = wait_for_connection,
                         .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
+                    };
+                } else if (notify.len > 0) {
+                    this.debugger = Debugger{
+                        .path_or_port = null,
+                        .from_environment_variable = notify,
+                        .wait_for_connection = wait_for_connection,
+                        .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
+                        .mode = .connect,
+                    };
+                } else if (connect_to.len > 0) {
+                    // This works in the vscode debug terminal because that relies on unix or notify being set, which they
+                    // are in the debug terminal. This branch doesn't reach
+                    this.debugger = Debugger{
+                        .path_or_port = null,
+                        .from_environment_variable = connect_to,
+                        .wait_for_connection = wait_for_connection,
+                        .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
+                        .mode = .connect,
                     };
                 }
             },
             .enable => {
                 this.debugger = Debugger{
-                    .path_or_port = debugger.enable.path_or_port,
-                    .unix = unix,
-                    .wait_for_connection = wait_for_connection or debugger.enable.wait_for_connection,
-                    .set_breakpoint_on_first_line = set_breakpoint_on_first_line or debugger.enable.set_breakpoint_on_first_line,
+                    .path_or_port = cli_flag.enable.path_or_port,
+                    .from_environment_variable = unix,
+                    .wait_for_connection = if (cli_flag.enable.wait_for_connection) .forever else wait_for_connection,
+                    .set_breakpoint_on_first_line = set_breakpoint_on_first_line or cli_flag.enable.set_breakpoint_on_first_line,
                 };
             },
         }
@@ -2393,7 +2650,8 @@ pub const VirtualMachine = struct {
         query_string: ?*ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false) catch {};
+        // TODO: handle js exception
     }
 
     pub fn resolveFilePathForAPI(
@@ -2404,7 +2662,8 @@ pub const VirtualMachine = struct {
         query_string: ?*ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true) catch {};
+        // TODO: handle js exception
     }
 
     pub fn resolve(
@@ -2415,7 +2674,8 @@ pub const VirtualMachine = struct {
         query_string: ?*ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true) catch {};
+        // TODO: handle js exception
     }
 
     fn normalizeSource(source: []const u8) []const u8 {
@@ -2426,15 +2686,7 @@ pub const VirtualMachine = struct {
         return source;
     }
 
-    fn resolveMaybeNeedsTrailingSlash(
-        res: *ErrorableString,
-        global: *JSGlobalObject,
-        specifier: bun.String,
-        source: bun.String,
-        query_string: ?*ZigString,
-        is_esm: bool,
-        comptime is_a_file_path: bool,
-    ) void {
+    fn resolveMaybeNeedsTrailingSlash(res: *ErrorableString, global: *JSGlobalObject, specifier: bun.String, source: bun.String, query_string: ?*ZigString, is_esm: bool, comptime is_a_file_path: bool) bun.JSError!void {
         if (is_a_file_path and specifier.length() > comptime @as(u32, @intFromFloat(@trunc(@as(f64, @floatFromInt(bun.MAX_PATH_BYTES)) * 1.5)))) {
             const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
             defer specifier_utf8.deinit();
@@ -2472,7 +2724,7 @@ pub const VirtualMachine = struct {
                 else
                     specifier_utf8.slice()[namespace.len + 1 .. specifier_utf8.len];
 
-                if (plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.fromUTF8(after_namespace), source, .bun)) |resolved_path| {
+                if (try plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.fromUTF8(after_namespace), source, .bun)) |resolved_path| {
                     res.* = resolved_path;
                     return;
                 }
@@ -2796,10 +3048,22 @@ pub const VirtualMachine = struct {
         return null;
     }
 
+    pub fn ensureDebugger(this: *VirtualMachine, block_until_connected: bool) !void {
+        if (this.debugger != null) {
+            try Debugger.create(this, this.global);
+
+            if (block_until_connected) {
+                Debugger.waitForDebuggerIfNecessary(this);
+            }
+        }
+    }
+
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
         this.main_hash = GenericWatcher.getHash(entry_path);
+
+        try this.ensureDebugger(true);
 
         try this.entry_point.generate(
             this.allocator,
@@ -2808,10 +3072,6 @@ pub const VirtualMachine = struct {
             main_file_name,
         );
         this.eventLoop().ensureWaker();
-
-        if (this.debugger != null) {
-            try Debugger.create(this, this.global);
-        }
 
         if (!this.bundler.options.disable_transpilation) {
             if (try this.loadPreloads()) |promise| {
@@ -2841,9 +3101,7 @@ pub const VirtualMachine = struct {
 
         this.eventLoop().ensureWaker();
 
-        if (this.debugger != null) {
-            try Debugger.create(this, this.global);
-        }
+        try this.ensureDebugger(true);
 
         if (!this.bundler.options.disable_transpilation) {
             if (try this.loadPreloads()) |promise| {
@@ -3504,9 +3762,14 @@ pub const VirtualMachine = struct {
         this.had_errors = true;
         defer this.had_errors = prev_had_errors;
 
-        if (allow_side_effects and Output.is_github_action) {
-            defer printGithubAnnotation(exception);
+        if (allow_side_effects) {
+            if (this.debugger) |*debugger| {
+                debugger.lifecycle_reporter_agent.reportError(exception);
+            }
         }
+
+        defer if (allow_side_effects and Output.is_github_action)
+            printGithubAnnotation(exception);
 
         // This is a longer number than necessary because we don't handle this case very well
         // At the very least, we shouldn't dump 100 KB of minified code into your terminal.
@@ -3686,7 +3949,7 @@ pub const VirtualMachine = struct {
 
         if (error_instance != .zero and error_instance.isCell() and error_instance.jsType().canGet()) {
             inline for (extra_fields) |field| {
-                if (error_instance.getTruthyComptime(this.global, field)) |value| {
+                if (try error_instance.getTruthyComptime(this.global, field)) |value| {
                     const kind = value.jsType();
                     if (kind.isStringLike()) {
                         if (value.toStringOrNull(this.global)) |str| {
@@ -3992,7 +4255,7 @@ pub const VirtualMachine = struct {
                     IPC.log("Received IPC internal message from parent", .{});
                     event_loop.enter();
                     defer event_loop.exit();
-                    node_cluster_binding.handleInternalMessageChild(globalThis, data);
+                    node_cluster_binding.handleInternalMessageChild(globalThis, data) catch return;
                 },
             }
         }
@@ -4182,16 +4445,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 };
             }
 
-            pub fn append(this: *HotReloadTask, path: []const u8, id: u32) void {
+            pub fn append(this: *HotReloadTask, id: u32) void {
                 if (this.count == 8) {
                     this.enqueue();
                     this.count = 0;
                 }
 
                 this.hashes[this.count] = id;
-                // TODO(@paperdave/bake): this allocation is terrible and must be removed
-                if (Ctx == bun.bake.DevServer)
-                    this.paths[this.count] = default_allocator.dupe(u8, path) catch bun.outOfMemory();
                 this.count += 1;
             }
 
@@ -4386,7 +4646,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             debug("File changed: {s}", .{fs.relativeTo(file_path)});
 
                         if (event.op.write or event.op.delete or event.op.rename) {
-                            current_task.append(file_path, current_hash);
+                            current_task.append(current_hash);
                         }
 
                         // TODO: delete events?
@@ -4474,7 +4734,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                                 if (hash == file_hash) {
                                                     if (file_descriptors[entry_id] != .zero) {
                                                         if (prev_entry_id != entry_id) {
-                                                            current_task.append(file_paths[entry_id], hashes[entry_id]);
+                                                            current_task.append(hashes[entry_id]);
                                                             ctx.removeAtIndex(
                                                                 @as(u16, @truncate(entry_id)),
                                                                 0,
@@ -4548,15 +4808,13 @@ comptime {
 }
 
 pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-    const args = callframe.arguments(1).slice();
+    const args = callframe.arguments_old(1).slice();
     if (args.len < 1) {
-        globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);
-        return JSValue.zero;
+        return globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);
     }
 
     if (!args[0].isNumber()) {
-        globalObject.throwInvalidArguments("setSyntheticAllocationLimitForTesting expects a number", .{});
-        return JSValue.zero;
+        return globalObject.throwInvalidArguments("setSyntheticAllocationLimitForTesting expects a number", .{});
     }
 
     const limit: usize = @intCast(@max(args[0].coerceToInt64(globalObject), 1024 * 1024));

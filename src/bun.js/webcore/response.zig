@@ -364,7 +364,7 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        const args_list = callframe.arguments(2);
+        const args_list = callframe.arguments_old(2);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
@@ -432,7 +432,7 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSValue {
-        var args_list = callframe.arguments(4);
+        var args_list = callframe.arguments_old(4);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
@@ -453,7 +453,7 @@ pub const Response = struct {
             var url_string = ZigString.init("");
 
             if (@intFromEnum(url_string_value) != 0) {
-                url_string = url_string_value.getZigString(globalThis.ptr());
+                url_string = url_string_value.getZigString(globalThis);
             }
             url_string_slice = url_string.toSlice(getAllocator(globalThis));
             var did_succeed = false;
@@ -523,7 +523,7 @@ pub const Response = struct {
                 break :brk try Init.init(globalThis, arguments[1]) orelse unreachable;
             }
             if (!globalThis.hasException()) {
-                return globalThis.throwInvalidArguments2("Failed to construct 'Response': The provided body value is not of type 'ResponseInit'", .{});
+                return globalThis.throwInvalidArguments("Failed to construct 'Response': The provided body value is not of type 'ResponseInit'", .{});
             }
             return error.JSError;
         });
@@ -618,7 +618,7 @@ pub const Response = struct {
                         result.headers = orig.cloneThis(globalThis);
                     }
                 } else {
-                    result.headers = FetchHeaders.createFromJS(globalThis.ptr(), headers);
+                    result.headers = FetchHeaders.createFromJS(globalThis, headers);
                 }
             }
 
@@ -633,7 +633,7 @@ pub const Response = struct {
                 } else {
                     if (!globalThis.hasException()) {
                         const err = globalThis.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
-                        globalThis.throwValue(err);
+                        return globalThis.throwValue(err);
                     }
                     return error.JSError;
                 }
@@ -834,6 +834,18 @@ pub const Fetch = struct {
             }
         }
 
+        pub fn derefFromThread(this: *FetchTasklet) void {
+            const count = this.ref_count.fetchSub(1, .monotonic);
+            bun.debugAssert(count > 0);
+
+            if (count == 1) {
+                // this is really unlikely to happen, but can happen
+                // lets make sure that we always call deinit from main thread
+
+                this.javascript_vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
+            }
+        }
+
         pub const HTTPRequestBody = union(enum) {
             AnyBlob: AnyBlob,
             Sendfile: http.Sendfile,
@@ -918,7 +930,7 @@ pub const Fetch = struct {
             this.clearAbortSignal();
         }
 
-        fn deinit(this: *FetchTasklet) void {
+        pub fn deinit(this: *FetchTasklet) void {
             log("deinit", .{});
 
             bun.assert(this.ref_count.load(.monotonic) == 0);
@@ -1252,17 +1264,28 @@ pub const Fetch = struct {
                     if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
                         defer BoringSSL.X509_free(x509);
                         const globalObject = this.global_this;
-                        const js_cert = X509.toJS(x509, globalObject);
+                        const js_cert = X509.toJS(x509, globalObject) catch |err| {
+                            switch (err) {
+                                error.JSError => {},
+                                error.OutOfMemory => globalObject.throwOutOfMemory() catch {},
+                            }
+                            const check_result = globalObject.tryTakeException().?;
+                            // mark to wait until deinit
+                            this.is_waiting_abort = this.result.has_more;
+                            this.abort_reason.set(globalObject, check_result);
+                            this.signal_store.aborted.store(true, .monotonic);
+                            this.tracker.didCancel(this.global_this);
+                            // we need to abort the request
+                            if (this.http) |http_| http.http_thread.scheduleShutdown(http_);
+                            this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                            return false;
+                        };
                         var hostname: bun.String = bun.String.createUTF8(certificate_info.hostname);
                         defer hostname.deref();
                         const js_hostname = hostname.toJS(globalObject);
                         js_hostname.ensureStillAlive();
                         js_cert.ensureStillAlive();
-                        const check_result = check_server_identity.call(
-                            globalObject,
-                            .undefined,
-                            &.{ js_hostname, js_cert },
-                        ) catch |err| globalObject.takeException(err);
+                        const check_result = check_server_identity.call(globalObject, .undefined, &.{ js_hostname, js_cert }) catch |err| globalObject.takeException(err);
 
                         // > Returns <Error> object [...] on failure
                         if (check_result.isAnyError()) {
@@ -1774,12 +1797,15 @@ pub const Fetch = struct {
         }
 
         pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
-            task.mutex.lock();
-            defer task.mutex.unlock();
+            // at this point only this thread is accessing result to is no race condition
             const is_done = !result.has_more;
             // we are done with the http client so we can deref our side
-            defer if (is_done) task.deref();
+            // this is a atomic operation and will enqueue a task to deinit on the main thread
+            defer if (is_done) task.derefFromThread();
 
+            task.mutex.lock();
+            // we need to unlock before task.deref();
+            defer task.mutex.unlock();
             task.http.?.* = async_http.*;
             task.http.?.response_buffer = async_http.response_buffer;
 
@@ -1893,11 +1919,10 @@ pub const Fetch = struct {
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments(1).slice();
+        const arguments = callframe.arguments_old(1).slice();
 
         if (arguments.len < 1) {
-            globalObject.throwNotEnoughArguments("fetch.preconnect", 1, arguments.len);
-            return .zero;
+            return globalObject.throwNotEnoughArguments("fetch.preconnect", 1, arguments.len);
         }
 
         var url_str = try JSC.URL.hrefFromJS(arguments[0], globalObject);
@@ -1908,32 +1933,27 @@ pub const Fetch = struct {
         }
 
         if (url_str.tag == .Dead) {
-            globalObject.ERR_INVALID_ARG_TYPE("Invalid URL", .{}).throw();
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE("Invalid URL", .{}).throw();
         }
 
         if (url_str.isEmpty()) {
-            globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
         }
 
         const url = ZigURL.parse(url_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory());
         if (!url.isHTTP() and !url.isHTTPS()) {
-            globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
             bun.default_allocator.free(url.href);
-            return .zero;
+            return globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
         }
 
         if (url.hostname.len == 0) {
-            globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
             bun.default_allocator.free(url.href);
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
         }
 
         if (!url.hasValidPort()) {
-            globalObject.throwInvalidArguments("Invalid port", .{});
             bun.default_allocator.free(url.href);
-            return .zero;
+            return globalObject.throwInvalidArguments("Invalid port", .{});
         }
 
         bun.http.AsyncHTTP.preconnect(url, true);
@@ -1961,8 +1981,8 @@ pub const Fetch = struct {
         callframe: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        const globalThis = ctx.ptr();
-        const arguments = callframe.arguments(2);
+        const globalThis = ctx;
+        const arguments = callframe.arguments_old(2);
         bun.Analytics.Features.fetch += 1;
         const vm = JSC.VirtualMachine.get();
 
@@ -2170,7 +2190,7 @@ pub const Fetch = struct {
         // "method"
         method = extract_method: {
             if (options_object) |options| {
-                if (options.getTruthyComptime(globalThis, "method")) |method_| {
+                if (try options.getTruthyComptime(globalThis, "method")) |method_| {
                     break :extract_method Method.fromJS(globalThis, method_);
                 }
 
@@ -2185,7 +2205,7 @@ pub const Fetch = struct {
             }
 
             if (request_init_object) |req| {
-                if (req.getTruthyComptime(globalThis, "method")) |method_| {
+                if (try req.getTruthyComptime(globalThis, "method")) |method_| {
                     break :extract_method Method.fromJS(globalThis, method_);
                 }
 
@@ -2212,7 +2232,7 @@ pub const Fetch = struct {
 
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "decompress")) |decompression_value| {
+                    if (try objects_to_try[i].get(globalThis, "decompress")) |decompression_value| {
                         if (decompression_value.isBoolean()) {
                             break :extract_disable_decompression !decompression_value.asBoolean();
                         } else if (decompression_value.isNumber()) {
@@ -2244,9 +2264,9 @@ pub const Fetch = struct {
 
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "tls")) |tls| {
+                    if (try objects_to_try[i].get(globalThis, "tls")) |tls| {
                         if (tls.isObject()) {
-                            if (tls.get(ctx, "rejectUnauthorized")) |reject| {
+                            if (try tls.get(ctx, "rejectUnauthorized")) |reject| {
                                 if (reject.isBoolean()) {
                                     reject_unauthorized = reject.asBoolean();
                                 } else if (reject.isNumber()) {
@@ -2259,7 +2279,7 @@ pub const Fetch = struct {
                                 return .zero;
                             }
 
-                            if (tls.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
+                            if (try tls.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
                                 if (checkServerIdentity.isCell() and checkServerIdentity.isCallable(globalThis.vm())) {
                                     check_server_identity = checkServerIdentity;
                                 }
@@ -2300,7 +2320,7 @@ pub const Fetch = struct {
 
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "unix")) |socket_path| {
+                    if (try objects_to_try[i].get(globalThis, "unix")) |socket_path| {
                         if (socket_path.isString() and socket_path.getLength(ctx) > 0) {
                             if (socket_path.toSliceCloneWithAllocator(globalThis, allocator)) |slice| {
                                 break :extract_unix_socket_path slice;
@@ -2331,7 +2351,7 @@ pub const Fetch = struct {
 
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "timeout")) |timeout_value| {
+                    if (try objects_to_try[i].get(globalThis, "timeout")) |timeout_value| {
                         if (timeout_value.isBoolean()) {
                             break :extract_disable_timeout !timeout_value.asBoolean();
                         } else if (timeout_value.isNumber()) {
@@ -2389,7 +2409,7 @@ pub const Fetch = struct {
 
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "keepalive")) |keepalive_value| {
+                    if (try objects_to_try[i].get(globalThis, "keepalive")) |keepalive_value| {
                         if (keepalive_value.isBoolean()) {
                             break :extract_disable_keepalive !keepalive_value.asBoolean();
                         } else if (keepalive_value.isNumber()) {
@@ -2421,7 +2441,7 @@ pub const Fetch = struct {
 
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "verbose")) |verb| {
+                    if (try objects_to_try[i].get(globalThis, "verbose")) |verb| {
                         if (verb.isString()) {
                             if (verb.getZigString(globalThis).eqlComptime("curl")) {
                                 break :extract_verbose .curl;
@@ -2448,7 +2468,7 @@ pub const Fetch = struct {
             };
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "proxy")) |proxy_arg| {
+                    if (try objects_to_try[i].get(globalThis, "proxy")) |proxy_arg| {
                         if (proxy_arg.isString() and proxy_arg.getLength(ctx) > 0) {
                             var href = try JSC.URL.hrefFromJS(proxy_arg, globalThis);
                             if (href.tag == .Dead) {
@@ -2457,10 +2477,7 @@ pub const Fetch = struct {
                                 return JSPromise.rejectedPromiseValue(globalThis, err);
                             }
                             defer href.deref();
-                            const buffer = std.fmt.allocPrint(allocator, "{s}{}", .{ url_proxy_buffer, href }) catch {
-                                globalThis.throwOutOfMemory();
-                                return .zero;
-                            };
+                            const buffer = try std.fmt.allocPrint(allocator, "{s}{}", .{ url_proxy_buffer, href });
                             url = ZigURL.parse(buffer[0..url.href.len]);
                             if (url.isFile()) {
                                 url_type = URLType.file;
@@ -2492,7 +2509,7 @@ pub const Fetch = struct {
         // signal: AbortSignal | undefined;
         signal = extract_signal: {
             if (options_object) |options| {
-                if (options.get(globalThis, "signal")) |signal_| {
+                if (try options.get(globalThis, "signal")) |signal_| {
                     if (!signal_.isUndefined()) {
                         if (signal_.as(JSC.WebCore.AbortSignal)) |signal__| {
                             break :extract_signal signal__.ref();
@@ -2514,7 +2531,7 @@ pub const Fetch = struct {
             }
 
             if (request_init_object) |options| {
-                if (options.get(globalThis, "signal")) |signal_| {
+                if (try options.get(globalThis, "signal")) |signal_| {
                     if (signal_.isUndefined()) {
                         break :extract_signal null;
                     }
@@ -2542,7 +2559,7 @@ pub const Fetch = struct {
             if (options_object) |options| {
                 if (options.fastGet(globalThis, .body)) |body__| {
                     if (!body__.isUndefined()) {
-                        var body_value = try Body.Value.fromJS(ctx.ptr(), body__);
+                        var body_value = try Body.Value.fromJS(ctx, body__);
                         break :extract_body body_value.useAsAnyBlob();
                     }
                 }
@@ -2555,9 +2572,7 @@ pub const Fetch = struct {
 
             if (request) |req| {
                 if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(Request, globalThis, first_arg)))) {
-                    globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
-                    is_error = true;
-                    return .zero;
+                    return globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
                 }
 
                 break :extract_body req.body.value.useAsAnyBlob();
@@ -2566,7 +2581,7 @@ pub const Fetch = struct {
             if (request_init_object) |req| {
                 if (req.fastGet(globalThis, .body)) |body__| {
                     if (!body__.isUndefined()) {
-                        var body_value = try Body.Value.fromJS(ctx.ptr(), body__);
+                        var body_value = try Body.Value.fromJS(ctx, body__);
                         break :extract_body body_value.useAsAnyBlob();
                     }
                 }
@@ -2601,7 +2616,7 @@ pub const Fetch = struct {
                                 break :brk headers__;
                             }
 
-                            if (FetchHeaders.createFromJS(ctx.ptr(), headers_value)) |headers__| {
+                            if (FetchHeaders.createFromJS(ctx, headers_value)) |headers__| {
                                 fetch_headers_to_deref = headers__;
                                 break :brk headers__;
                             }
@@ -2635,7 +2650,7 @@ pub const Fetch = struct {
                                 break :brk headers__;
                             }
 
-                            if (FetchHeaders.createFromJS(ctx.ptr(), headers_value)) |headers__| {
+                            if (FetchHeaders.createFromJS(ctx, headers_value)) |headers__| {
                                 fetch_headers_to_deref = headers__;
                                 break :brk headers__;
                             }
@@ -2707,8 +2722,7 @@ pub const Fetch = struct {
                     .remote => unreachable,
                 },
             ) catch |err| {
-                globalThis.throwError(err, "Failed to decode file url");
-                return .zero;
+                return globalThis.throwError(err, "Failed to decode file url");
             }];
             var url_string: bun.String = bun.String.empty;
             defer url_string.deref();
@@ -2738,8 +2752,7 @@ pub const Fetch = struct {
                                 url_path_decoded = url_path_decoded[1..];
                             }
                             break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf, url_path_decoded) catch |err| {
-                                globalThis.throwError(err, "Failed to resolve file url");
-                                return .zero;
+                                return globalThis.throwError(err, "Failed to resolve file url");
                             };
                         }
                         break :brk url_path_decoded;
@@ -2747,8 +2760,7 @@ pub const Fetch = struct {
 
                     var cwd_buf: bun.PathBuffer = undefined;
                     const cwd = if (Environment.isWindows) (bun.getcwd(&cwd_buf) catch |err| {
-                        globalThis.throwError(err, "Failed to resolve file url");
-                        return .zero;
+                        return globalThis.throwError(err, "Failed to resolve file url");
                     }) else globalThis.bunVM().bundler.fs.top_level_dir;
 
                     const fullpath = bun.path.joinAbsStringBuf(
@@ -2763,8 +2775,7 @@ pub const Fetch = struct {
                     );
                     if (Environment.isWindows) {
                         break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf2, fullpath) catch |err| {
-                            globalThis.throwError(err, "Failed to resolve file url");
-                            return .zero;
+                            return globalThis.throwError(err, "Failed to resolve file url");
                         };
                     }
                     break :brk fullpath;
@@ -2774,10 +2785,7 @@ pub const Fetch = struct {
 
                 var pathlike: JSC.Node.PathOrFileDescriptor = .{
                     .path = .{
-                        .encoded_slice = ZigString.Slice.init(bun.default_allocator, bun.default_allocator.dupe(u8, temp_file_path) catch {
-                            globalThis.throwOutOfMemory();
-                            return .zero;
-                        }),
+                        .encoded_slice = ZigString.Slice.init(bun.default_allocator, try bun.default_allocator.dupe(u8, temp_file_path)),
                     },
                 };
 

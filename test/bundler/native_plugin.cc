@@ -4,12 +4,12 @@
 
   It stores the number of occurences in the External struct.
 */
-#include <bun-native-bundler-plugin-api/bundler_plugin.h>
-#include <node_api.h>
 #include <atomic>
+#include <bun-native-bundler-plugin-api/bundler_plugin.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <node_api.h>
 
 struct External {
   std::atomic<size_t> foo_count;
@@ -51,7 +51,7 @@ void compilation_ctx_free(CompilationCtx *ctx) {
 void log_error(const OnBeforeParseArguments *args,
                const OnBeforeParseResult *result, BunLogLevel level,
                const char *message, size_t message_len) {
-  BunLogOptions options = {
+  BunLogOptions options = (BunLogOptions){
       .message_ptr = (uint8_t *)message,
       .message_len = message_len,
       .path_ptr = args->path_ptr,
@@ -68,7 +68,8 @@ void log_error(const OnBeforeParseArguments *args,
 }
 
 extern "C" void plugin_impl_with_needle(const OnBeforeParseArguments *args,
-                             OnBeforeParseResult *result, const char *needle) {
+                                        OnBeforeParseResult *result,
+                                        const char *needle) {
   // if (args->__struct_size < sizeof(OnBeforeParseArguments)) {
   //     log_error(args, result, BUN_LOG_LEVEL_ERROR, "Invalid
   //     OnBeforeParseArguments struct size", sizeof("Invalid
@@ -100,8 +101,7 @@ extern "C" void plugin_impl_with_needle(const OnBeforeParseArguments *args,
 
   const char *end = (const char *)result->source_ptr + result->source_len;
 
-  char *cursor =
-      (char *) strstr((const char *)result->source_ptr, needle);
+  char *cursor = (char *)strstr((const char *)result->source_ptr, needle);
   while (cursor != nullptr) {
     needle_count++;
     cursor += needle_len;
@@ -123,7 +123,7 @@ extern "C" void plugin_impl_with_needle(const OnBeforeParseArguments *args,
       cursor[0] = 'q';
       cursor += 3;
       if (cursor + 3 < end) {
-        cursor = (char*) strstr((const char *)cursor, needle);
+        cursor = (char *)strstr((const char *)cursor, needle);
       } else
         break;
     }
@@ -146,7 +146,8 @@ extern "C" void plugin_impl_with_needle(const OnBeforeParseArguments *args,
     result->source_len = result->source_len;
     result->plugin_source_code_context =
         compilation_ctx_new(new_source, result->source_len, free_counter);
-    result->free_plugin_source_code_context = (void (*)(void*))compilation_ctx_free;
+    result->free_plugin_source_code_context =
+        (void (*)(void *))compilation_ctx_free;
   } else {
     result->source_ptr = nullptr;
     result->source_len = 0;
@@ -155,17 +156,17 @@ extern "C" void plugin_impl_with_needle(const OnBeforeParseArguments *args,
 }
 
 extern "C" void plugin_impl(const OnBeforeParseArguments *args,
-                 OnBeforeParseResult *result) {
+                            OnBeforeParseResult *result) {
   plugin_impl_with_needle(args, result, "foo");
 }
 
 extern "C" void plugin_impl_bar(const OnBeforeParseArguments *args,
-                     OnBeforeParseResult *result) {
+                                OnBeforeParseResult *result) {
   plugin_impl_with_needle(args, result, "bar");
 }
 
 extern "C" void plugin_impl_baz(const OnBeforeParseArguments *args,
-                     OnBeforeParseResult *result) {
+                                OnBeforeParseResult *result) {
   plugin_impl_with_needle(args, result, "baz");
 }
 
@@ -296,8 +297,8 @@ napi_value get_compilation_ctx_freed_count(napi_env env,
   }
 
   napi_value result;
-  status = napi_create_int32(
-      env, external->compilation_ctx_freed_count.load(), &result);
+  status = napi_create_int32(env, external->compilation_ctx_freed_count.load(),
+                             &result);
   if (status != napi_ok) {
     napi_throw_error(env, nullptr, "Failed to create array");
     return nullptr;
@@ -450,7 +451,8 @@ napi_value Init(napi_env env, napi_value exports) {
   status =
       napi_set_named_property(env, exports, "getFooCount", fn_get_foo_count);
   if (status != napi_ok) {
-    napi_throw_error(env, nullptr, "Failed to add get_names function to exports");
+    napi_throw_error(env, nullptr,
+                     "Failed to add get_names function to exports");
     return nullptr;
   }
 
@@ -464,7 +466,8 @@ napi_value Init(napi_env env, napi_value exports) {
   status =
       napi_set_named_property(env, exports, "getBarCount", fn_get_bar_count);
   if (status != napi_ok) {
-    napi_throw_error(env, nullptr, "Failed to add get_names function to exports");
+    napi_throw_error(env, nullptr,
+                     "Failed to add get_names function to exports");
     return nullptr;
   }
 
@@ -478,16 +481,19 @@ napi_value Init(napi_env env, napi_value exports) {
   status =
       napi_set_named_property(env, exports, "getBazCount", fn_get_baz_count);
   if (status != napi_ok) {
-    napi_throw_error(env, nullptr, "Failed to add get_names function to exports");
+    napi_throw_error(env, nullptr,
+                     "Failed to add get_names function to exports");
     return nullptr;
   }
 
   // Register get_compilation_ctx_freed_count function
-  status = napi_create_function(env, nullptr, 0, get_compilation_ctx_freed_count,
-                                nullptr, &fn_get_compilation_ctx_freed_count);
+  status =
+      napi_create_function(env, nullptr, 0, get_compilation_ctx_freed_count,
+                           nullptr, &fn_get_compilation_ctx_freed_count);
   if (status != napi_ok) {
     napi_throw_error(
-        env, nullptr, "Failed to create get_compilation_ctx_freed_count function");
+        env, nullptr,
+        "Failed to create get_compilation_ctx_freed_count function");
     return nullptr;
   }
   status = napi_set_named_property(env, exports, "getCompilationCtxFreedCount",
@@ -503,7 +509,8 @@ napi_value Init(napi_env env, napi_value exports) {
   status = napi_create_function(env, nullptr, 0, set_throws_errors, nullptr,
                                 &fn_set_throws_errors);
   if (status != napi_ok) {
-    napi_throw_error(env, nullptr, "Failed to create set_throws_errors function");
+    napi_throw_error(env, nullptr,
+                     "Failed to create set_throws_errors function");
     return nullptr;
   }
   status = napi_set_named_property(env, exports, "setThrowsErrors",
@@ -579,7 +586,7 @@ struct NewOnBeforeParseResult {
 void new_log_error(const NewOnBeforeParseArguments *args,
                    const NewOnBeforeParseResult *result, BunLogLevel level,
                    const char *message, size_t message_len) {
-  BunLogOptions options = {
+  BunLogOptions options = (BunLogOptions){
       .message_ptr = (uint8_t *)message,
       .message_len = message_len,
       .path_ptr = args->path_ptr,
@@ -595,8 +602,9 @@ void new_log_error(const NewOnBeforeParseArguments *args,
   (result->log)(args, &options);
 }
 
-extern "C" void incompatible_version_plugin_impl(const NewOnBeforeParseArguments *args,
-                                      NewOnBeforeParseResult *result) {
+extern "C" void
+incompatible_version_plugin_impl(const NewOnBeforeParseArguments *args,
+                                 NewOnBeforeParseResult *result) {
   if (args->__struct_size < sizeof(NewOnBeforeParseArguments)) {
     const char *msg = "This plugin is built for a newer version of Bun than "
                       "the one currently running.";
@@ -619,13 +627,9 @@ struct RandomUserContext {
 
 extern "C" void random_user_context_free(void *ptr) { free(ptr); }
 
-extern "C" void plugin_impl_bad_free_function_pointer(const OnBeforeParseArguments *args,
-                                           OnBeforeParseResult *result) {
-  RandomUserContext *ctx = new RandomUserContext{
-      .foo = "hi",
-      .bar = 420,
-  };
-  (void)ctx;
+extern "C" void
+plugin_impl_bad_free_function_pointer(const OnBeforeParseArguments *args,
+                                      OnBeforeParseResult *result) {
 
   // Intentionally not setting the context here:
   // result->plugin_source_code_context = ctx;

@@ -1457,7 +1457,8 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.markBinding(@src());
 
             log("resume", .{});
-            if (this.flags.is_paused) {
+            // we should not allow pausing/resuming a wrapped socket because a wrapped socket is 2 sockets and this can cause issues
+            if (this.wrapped == .none and this.flags.is_paused) {
                 this.flags.is_paused = !this.socket.resumeStream();
             }
             return .undefined;
@@ -1466,9 +1467,11 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.markBinding(@src());
 
             log("pause", .{});
-            if (!this.flags.is_paused) {
+            // we should not allow pausing/resuming a wrapped socket because a wrapped socket is 2 sockets and this can cause issues
+            if (this.wrapped == .none and !this.flags.is_paused) {
                 this.flags.is_paused = this.socket.pauseStream();
             }
+
             return .undefined;
         }
 

@@ -66,7 +66,15 @@ void log_error(const OnBeforeParseArguments *args,
   (result->log)(args, &options);
 }
 
-extern "C" void plugin_impl_with_needle(const OnBeforeParseArguments *args,
+#ifdef _WIN32
+#define BUN_PLUGIN_EXPORT __declspec(dllexport)
+#else
+#define BUN_PLUGIN_EXPORT
+#endif
+
+
+
+extern "C" BUN_PLUGIN_EXPORT void plugin_impl_with_needle(const OnBeforeParseArguments *args,
                                         OnBeforeParseResult *result,
                                         const char *needle) {
   // if (args->__struct_size < sizeof(OnBeforeParseArguments)) {
@@ -154,17 +162,17 @@ extern "C" void plugin_impl_with_needle(const OnBeforeParseArguments *args,
   }
 }
 
-extern "C" void plugin_impl(const OnBeforeParseArguments *args,
+extern "C" BUN_PLUGIN_EXPORT void plugin_impl(const OnBeforeParseArguments *args,
                             OnBeforeParseResult *result) {
   plugin_impl_with_needle(args, result, "foo");
 }
 
-extern "C" void plugin_impl_bar(const OnBeforeParseArguments *args,
+extern "C" BUN_PLUGIN_EXPORT void plugin_impl_bar(const OnBeforeParseArguments *args,
                                 OnBeforeParseResult *result) {
   plugin_impl_with_needle(args, result, "bar");
 }
 
-extern "C" void plugin_impl_baz(const OnBeforeParseArguments *args,
+extern "C" BUN_PLUGIN_EXPORT void plugin_impl_baz(const OnBeforeParseArguments *args,
                                 OnBeforeParseResult *result) {
   plugin_impl_with_needle(args, result, "baz");
 }
@@ -600,7 +608,7 @@ void new_log_error(const NewOnBeforeParseArguments *args,
   (result->log)(args, &options);
 }
 
-extern "C" void
+extern "C" BUN_PLUGIN_EXPORT void
 incompatible_version_plugin_impl(const NewOnBeforeParseArguments *args,
                                  NewOnBeforeParseResult *result) {
   if (args->__struct_size < sizeof(NewOnBeforeParseArguments)) {
@@ -623,9 +631,11 @@ struct RandomUserContext {
   size_t bar;
 };
 
-extern "C" void random_user_context_free(void *ptr) { free(ptr); }
+extern "C" BUN_PLUGIN_EXPORT void random_user_context_free(void *ptr) {
+  free(ptr);
+}
 
-extern "C" void
+extern "C" BUN_PLUGIN_EXPORT void
 plugin_impl_bad_free_function_pointer(const OnBeforeParseArguments *args,
                                       OnBeforeParseResult *result) {
 

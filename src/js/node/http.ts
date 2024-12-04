@@ -778,7 +778,7 @@ function requestHasNoBody(method, req) {
     return true;
   const headers = req?.headers;
   const encoding = headers?.["transfer-encoding"];
-  if (encoding?.indexOf("chunked") !== -1) return false;
+  if (encoding?.indexOf?.("chunked") !== -1) return false;
 
   const contentLength = headers?.["content-length"];
   if (!parseInt(contentLength, 10)) return true;

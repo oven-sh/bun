@@ -633,7 +633,7 @@ pub const Response = struct {
                 } else {
                     if (!globalThis.hasException()) {
                         const err = globalThis.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
-                        globalThis.throwValue(err);
+                        return globalThis.throwValue(err);
                     }
                     return error.JSError;
                 }
@@ -834,6 +834,18 @@ pub const Fetch = struct {
             }
         }
 
+        pub fn derefFromThread(this: *FetchTasklet) void {
+            const count = this.ref_count.fetchSub(1, .monotonic);
+            bun.debugAssert(count > 0);
+
+            if (count == 1) {
+                // this is really unlikely to happen, but can happen
+                // lets make sure that we always call deinit from main thread
+
+                this.javascript_vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
+            }
+        }
+
         pub const HTTPRequestBody = union(enum) {
             AnyBlob: AnyBlob,
             Sendfile: http.Sendfile,
@@ -918,7 +930,7 @@ pub const Fetch = struct {
             this.clearAbortSignal();
         }
 
-        fn deinit(this: *FetchTasklet) void {
+        pub fn deinit(this: *FetchTasklet) void {
             log("deinit", .{});
 
             bun.assert(this.ref_count.load(.monotonic) == 0);
@@ -1785,12 +1797,15 @@ pub const Fetch = struct {
         }
 
         pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
-            task.mutex.lock();
-            defer task.mutex.unlock();
+            // at this point only this thread is accessing result to is no race condition
             const is_done = !result.has_more;
             // we are done with the http client so we can deref our side
-            defer if (is_done) task.deref();
+            // this is a atomic operation and will enqueue a task to deinit on the main thread
+            defer if (is_done) task.derefFromThread();
 
+            task.mutex.lock();
+            // we need to unlock before task.deref();
+            defer task.mutex.unlock();
             task.http.?.* = async_http.*;
             task.http.?.response_buffer = async_http.response_buffer;
 
@@ -1918,13 +1933,11 @@ pub const Fetch = struct {
         }
 
         if (url_str.tag == .Dead) {
-            globalObject.ERR_INVALID_ARG_TYPE("Invalid URL", .{}).throw();
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE("Invalid URL", .{}).throw();
         }
 
         if (url_str.isEmpty()) {
-            globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
         }
 
         const url = ZigURL.parse(url_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory());
@@ -1934,9 +1947,8 @@ pub const Fetch = struct {
         }
 
         if (url.hostname.len == 0) {
-            globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
             bun.default_allocator.free(url.href);
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
         }
 
         if (!url.hasValidPort()) {
@@ -2560,9 +2572,7 @@ pub const Fetch = struct {
 
             if (request) |req| {
                 if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(Request, globalThis, first_arg)))) {
-                    globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
-                    is_error = true;
-                    return .zero;
+                    return globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
                 }
 
                 break :extract_body req.body.value.useAsAnyBlob();

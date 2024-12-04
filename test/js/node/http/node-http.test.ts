@@ -2439,25 +2439,22 @@ it("client should use chunked encoded if more than one write is called", async (
   function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
-  await using server = http.createServer((req, res) => {
-    if (req.headers["transfer-encoding"] !== "chunked") {
-      return res.writeHead(500).end();
-    }
-    res.writeHead(200);
-    req.on("data", data => {
-      res.write(data);
-    });
-    req.on("end", () => {
-      res.end();
-    });
+  // Bun.serve is used here until #15576 or similar fix is merged
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      if (req.headers.get("transfer-encoding") !== "chunked") {
+        return new Response("should be chunked encoding", { status: 500 });
+      }
+      return new Response(req.body);
+    },
   });
-
-  await once(server.listen(0, "127.0.0.1"), "listening");
 
   // Options for the HTTP request
   const options = {
     hostname: "127.0.0.1", // Replace with the target server
-    port: server.address().port,
+    port: server.port,
     path: "/api/data",
     method: "POST",
     headers: {
@@ -2482,6 +2479,7 @@ it("client should use chunked encoded if more than one write is called", async (
       resolve(chunks);
     });
   });
+
   // Handle errors
   req.on("error", reject);
 

@@ -4199,7 +4199,7 @@ pub const JSValue = enum(i64) {
         return cppFn("putRecord", .{ value, global, key, values_array, values_len });
     }
 
-    fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
+    pub fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
         @import("./headers.zig").JSC__JSValue__put(value, global, key, result);
     }
 

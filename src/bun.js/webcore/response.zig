@@ -992,7 +992,7 @@ pub const Fetch = struct {
             this.readable_stream_ref.deinit();
 
             this.scheduled_response_buffer.deinit();
-            if (this.is_waiting_request_stream_start) {
+            if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
                 this.request_body.detach();
             }
 

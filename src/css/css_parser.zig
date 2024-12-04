@@ -6247,6 +6247,22 @@ pub const serializer = struct {
             };
         } else notation: {
             var buf: [129]u8 = undefined;
+            // We must pass finite numbers to dtoa_short
+            if (std.math.isPositiveInf(value)) {
+                const output = "1e999";
+                @memcpy(buf[0..output.len], output);
+                try writer.writeAll(buf[0..output.len]);
+                return;
+            } else if (std.math.isNegativeInf(value)) {
+                const output = "-1e999";
+                @memcpy(buf[0..output.len], output);
+                try writer.writeAll(buf[0..output.len]);
+                return;
+            }
+            // We shouldn't receive NaN here.
+            // NaN is not a valid CSS token and any inlined calculations from `calc()` we ensure
+            // are not NaN.
+            bun.debugAssert(!std.math.isNan(value));
             const str, const notation = dtoa_short(&buf, value, 6);
             try writer.writeAll(str);
             break :notation notation;
@@ -6685,6 +6701,7 @@ const Notation = struct {
 
 pub fn dtoa_short(buf: *[129]u8, value: f32, comptime precision: u8) struct { []u8, Notation } {
     buf[0] = '0';
+    bun.debugAssert(std.math.isFinite(value));
     const buf_len = bun.fmt.FormatDouble.dtoa(@ptrCast(buf[1..].ptr), @floatCast(value)).len;
     return restrict_prec(buf[0 .. buf_len + 1], precision);
 }

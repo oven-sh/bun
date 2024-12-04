@@ -5,9 +5,19 @@
 import { describe, expect, test } from "bun:test";
 import "harness";
 import path from "path";
-import { attrTest, cssTest, indoc, indoc, minify_test, minifyTest, prefix_test } from "./util";
+import { attrTest, cssTest, indoc, minify_test, minifyTest, prefix_test } from "./util";
 
 describe("css tests", () => {
+  test("edge case", () => {
+    minifyTest(
+      // Problem: the value is being printed as Infinity in our restrict_prec thing but the internal thing actually wants it as 3.40282e38px
+      `.rounded-full {
+  border-radius: calc(infinity * 1px);
+  width: calc(infinity * -1px);
+}`,
+      indoc`.rounded-full{border-radius:1e999px;width:-1e999px}`,
+    );
+  });
   describe("border_spacing", () => {
     minifyTest(
       `

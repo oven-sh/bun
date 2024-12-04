@@ -572,7 +572,6 @@ pub const Framework = struct {
         out.options.out_extensions = bun.StringHashMap([]const u8).init(out.allocator);
         out.options.hot_module_reloading = mode == .development;
         out.options.code_splitting = mode != .development;
-
         // force disable filesystem output, even though bundle_v2
         // is special cased to return before that code is reached.
         out.options.output_dir = "";
@@ -592,10 +591,10 @@ pub const Framework = struct {
 
         out.options.production = mode != .development;
 
-        out.options.tree_shaking = mode != .development;
-        out.options.minify_syntax = mode != .development;
-        out.options.minify_identifiers = mode != .development;
-        out.options.minify_whitespace = mode != .development;
+        out.options.tree_shaking = false; // mode != .development;
+        out.options.minify_syntax = false; // mode != .development;
+        out.options.minify_identifiers = false; // mode != .development;
+        out.options.minify_whitespace = false; // mode != .development;
 
         out.options.experimental_css = true;
         out.options.css_chunking = true;

@@ -573,7 +573,18 @@ pub const BundleV2 = struct {
 
         // If we don't include the runtime, __toESM or __toCommonJS will not get
         // imported and weird things will happen
-        visitor.visit(Index.runtime, false, false);
+        // We need to visit Index.runtime as well as Index.runtime_client when
+        // running in production build mode
+        if (this.bundler.options.dev_server == null) {
+            if (this.bundler.options.server_components) {
+                visitor.visit(Index.runtime, false, false);
+                visitor.visit(Index.runtime_client, false, false);
+            } else {
+                visitor.visit(Index.runtime, false, false);
+            }
+        } else {
+            visitor.visit(Index.runtime, false, false);
+        }
 
         switch (this.bundler.options.code_splitting) {
             inline else => |check_dynamic_imports| {
@@ -1011,25 +1022,52 @@ pub const BundleV2 = struct {
         var batch = ThreadPoolLib.Batch{};
 
         {
-            // Add the runtime
-            const rt = ParseTask.getRuntimeSource(this.bundler.options.target);
-            try this.graph.input_files.append(bun.default_allocator, Graph.InputFile{
-                .source = rt.source,
-                .loader = .js,
-                .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
-            });
+            switch (variant) {
+                .normal, .dev_server => {
+                    // Add the runtime
+                    const rt = ParseTask.getRuntimeSource(this.bundler.options.target);
+                    try this.graph.input_files.append(bun.default_allocator, Graph.InputFile{
+                        .source = rt.source,
+                        .loader = .js,
+                        .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
+                    });
 
-            // try this.graph.entry_points.append(allocator, Index.runtime);
-            try this.graph.ast.append(bun.default_allocator, JSAst.empty);
-            try this.graph.path_to_source_index_map.put(this.graph.allocator, bun.hash("bun:wrap"), Index.runtime.get());
-            var runtime_parse_task = try this.graph.allocator.create(ParseTask);
-            runtime_parse_task.* = rt.parse_task;
-            runtime_parse_task.ctx = this;
-            runtime_parse_task.task = .{ .callback = &ParseTask.callback };
-            runtime_parse_task.tree_shaking = true;
-            runtime_parse_task.loader = .js;
-            this.incrementScanCounter();
-            batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
+                    // try this.graph.entry_points.append(allocator, Index.runtime);
+                    try this.graph.ast.append(bun.default_allocator, JSAst.empty);
+                    try this.graph.path_to_source_index_map.put(this.graph.allocator, bun.hash("bun:wrap"), Index.runtime.get());
+                    var runtime_parse_task = try this.graph.allocator.create(ParseTask);
+                    runtime_parse_task.* = rt.parse_task;
+                    runtime_parse_task.ctx = this;
+                    runtime_parse_task.task = .{ .callback = &ParseTask.callback };
+                    runtime_parse_task.tree_shaking = true;
+                    runtime_parse_task.loader = .js;
+                    this.incrementScanCounter();
+                    batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
+                },
+                else => {
+                    // Add the runtime
+                    const rt_n = ParseTask.getRuntimeSourceForBake();
+
+                    inline for (rt_n) |rt| {
+                        try this.graph.input_files.append(bun.default_allocator, Graph.InputFile{
+                            .source = rt.source,
+                            .loader = .js,
+                            .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
+                        });
+                        // try this.graph.entry_points.append(allocator, Index.runtime);
+                        try this.graph.ast.append(bun.default_allocator, JSAst.empty);
+                        try this.graph.path_to_source_index_map.put(this.graph.allocator, bun.hash("bun:wrap"), rt.parse_task.source_index.get());
+                        var runtime_parse_task = try this.graph.allocator.create(ParseTask);
+                        runtime_parse_task.* = rt.parse_task;
+                        runtime_parse_task.ctx = this;
+                        runtime_parse_task.task = .{ .callback = &ParseTask.callback };
+                        runtime_parse_task.tree_shaking = true;
+                        runtime_parse_task.loader = .js;
+                        this.incrementScanCounter();
+                        batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
+                    }
+                },
+            }
         }
 
         // Bake reserves two source indexes at the start of the file list, but
@@ -2371,8 +2409,8 @@ pub const BundleV2 = struct {
         _ = fw.server_components orelse return;
 
         // Call this after
-        bun.assert(this.graph.input_files.len == 1);
-        bun.assert(this.graph.ast.len == 1);
+        bun.assert(this.graph.input_files.len == 2);
+        bun.assert(this.graph.ast.len == 2);
 
         try this.graph.ast.ensureUnusedCapacity(this.graph.allocator, 2);
         try this.graph.input_files.ensureUnusedCapacity(this.graph.allocator, 2);
@@ -2412,7 +2450,13 @@ pub const BundleV2 = struct {
         for (ast.import_records.slice()) |*import_record| {
             if (import_record.is_internal) {
                 import_record.tag = .runtime;
-                import_record.source_index = Index.runtime;
+                import_record.source_index = if (this.framework != null and this.framework.?.server_components != null)
+                    if (this.bundler.options.target == .bun)
+                        Index.runtime
+                    else
+                        Index.runtime_client
+                else
+                    Index.runtime;
             }
 
             if (import_record.is_unused) {
@@ -3373,7 +3417,7 @@ pub const ParseTask = struct {
         source: Logger.Source,
     };
 
-    fn getRuntimeSourceComptime(comptime target: options.Target) RuntimeSource {
+    fn getRuntimeSourceComptime(comptime target: options.Target, comptime index: Index) RuntimeSource {
         // When the `require` identifier is visited, it is replaced with e_require_call_target
         // and then that is either replaced with the module itself, or an import to the
         // runtime here.
@@ -3489,7 +3533,7 @@ pub const ParseTask = struct {
 
         const parse_task = ParseTask{
             .ctx = undefined,
-            .path = Fs.Path.initWithNamespace("runtime", "bun:runtime"),
+            .path = Fs.Path.initWithNamespace(std.fmt.comptimePrint("runtime-{s}", .{@tagName(target)}), "bun:runtime"),
             .side_effects = .no_side_effects__pure_data,
             .jsx = .{
                 .parse = false,
@@ -3497,21 +3541,28 @@ pub const ParseTask = struct {
             .contents_or_fd = .{
                 .contents = runtime_code,
             },
-            .source_index = Index.runtime,
+            .source_index = index,
             .loader = .js,
             .known_target = target,
         };
         const source = Logger.Source{
             .path = parse_task.path,
             .contents = parse_task.contents_or_fd.contents,
-            .index = Index.runtime,
+            .index = index,
         };
         return .{ .parse_task = parse_task, .source = source };
     }
 
     fn getRuntimeSource(target: options.Target) RuntimeSource {
         return switch (target) {
-            inline else => |t| comptime getRuntimeSourceComptime(t),
+            inline else => |t| comptime getRuntimeSourceComptime(t, Index.runtime),
+        };
+    }
+
+    fn getRuntimeSourceForBake() [2]RuntimeSource {
+        return [2]RuntimeSource{
+            getRuntimeSourceComptime(.bun, Index.runtime),
+            getRuntimeSourceComptime(.browser, Index.runtime_client),
         };
     }
 
@@ -3899,6 +3950,7 @@ pub const ParseTask = struct {
         opts.warn_about_unbundled_modules = false;
         opts.macro_context = &this.data.macro_context;
         opts.package_version = task.package_version;
+        opts.features.is_runtime = source.index.value == Index.runtime.value or (source.index.value == Index.runtime_client.value and bundler.options.server_components);
 
         opts.features.auto_polyfill_require = output_format == .esm and !target.isBun();
         opts.features.allow_runtime = !source.index.isRuntime();
@@ -4644,8 +4696,8 @@ const LinkerGraph = struct {
         };
     }
 
-    pub fn runtimeFunction(this: *const LinkerGraph, name: string) Ref {
-        return this.ast.items(.named_exports)[Index.runtime.value].get(name).?.ref;
+    pub fn runtimeFunction(this: *const LinkerGraph, runtime_index: Index, name: string) Ref {
+        return this.ast.items(.named_exports)[runtime_index.value].get(name).?.ref;
     }
 
     pub fn generateNewSymbol(this: *LinkerGraph, source_index: u32, kind: Symbol.Kind, original_name: string) Ref {
@@ -4673,6 +4725,7 @@ const LinkerGraph = struct {
 
     pub fn generateRuntimeSymbolImportAndUse(
         graph: *LinkerGraph,
+        runtime_index: Index,
         source_index: Index.Int,
         entry_point_part_index: Index,
         name: []const u8,
@@ -4681,13 +4734,13 @@ const LinkerGraph = struct {
         if (count == 0) return;
         debug("generateRuntimeSymbolImportAndUse({s}) for {d}", .{ name, source_index });
 
-        const ref = graph.runtimeFunction(name);
+        const ref = graph.runtimeFunction(runtime_index, name);
         try graph.generateSymbolImportAndUse(
             source_index,
             entry_point_part_index.get(),
             ref,
             count,
-            Index.runtime,
+            runtime_index,
         );
     }
 
@@ -5064,8 +5117,12 @@ pub const LinkerContext = struct {
     cjs_runtime_ref: Ref = Ref.None,
     esm_runtime_ref: Ref = Ref.None,
 
+    cjs_runtime_ref_client: Ref = Ref.None,
+    esm_runtime_ref_client: Ref = Ref.None,
+
     /// We may need to refer to the CommonJS "module" symbol for exports
     unbound_module_ref: Ref = Ref.None,
+    unbound_module_ref_client: Ref = Ref.None,
 
     options: LinkerOptions = .{},
 
@@ -5220,6 +5277,34 @@ pub const LinkerContext = struct {
         return true;
     }
 
+    fn getRuntimeIndex(this: *LinkerContext, index: u32) Index {
+        return if (this.framework != null and this.framework.?.server_components != null)
+            if (this.graph.ast.items(.target)[index] == .browser) Index.runtime_client else Index.runtime
+        else
+            Index.runtime;
+    }
+
+    fn getCjsRuntimeRef(this: *LinkerContext, index: u32) Ref {
+        return if (this.framework != null and this.framework.?.server_components != null)
+            if (this.graph.ast.items(.target)[index] == .browser) this.cjs_runtime_ref_client else this.cjs_runtime_ref
+        else
+            this.cjs_runtime_ref;
+    }
+
+    fn getEsmRuntimeRef(this: *LinkerContext, index: u32) Ref {
+        return if (this.framework != null and this.framework.?.server_components != null)
+            if (this.graph.ast.items(.target)[index] == .browser) this.esm_runtime_ref_client else this.esm_runtime_ref
+        else
+            this.esm_runtime_ref;
+    }
+
+    fn getUnboundModuleRef(this: *LinkerContext, index: u32) Ref {
+        return if (this.framework != null and this.framework.?.server_components != null)
+            if (this.graph.ast.items(.target)[index] == .browser) this.unbound_module_ref_client else this.unbound_module_ref
+        else
+            this.unbound_module_ref;
+    }
+
     fn load(
         this: *LinkerContext,
         bundle: *BundleV2,
@@ -5253,6 +5338,17 @@ pub const LinkerContext = struct {
 
         if (this.options.output_format == .cjs) {
             this.unbound_module_ref = this.graph.generateNewSymbol(Index.runtime.get(), .unbound, "module");
+        }
+
+        if (this.framework != null and this.framework.?.server_components != null) {
+            var runtime_client_named_exports = &this.graph.ast.items(.named_exports)[Index.runtime_client.get()];
+
+            this.esm_runtime_ref_client = runtime_client_named_exports.get("__esm").?.ref;
+            this.cjs_runtime_ref_client = runtime_client_named_exports.get("__commonJS").?.ref;
+
+            if (this.options.output_format == .cjs) {
+                this.unbound_module_ref_client = this.graph.generateNewSymbol(Index.runtime_client.get(), .unbound, "module");
+            }
         }
 
         if (this.options.output_format == .cjs or this.options.output_format == .iife) {
@@ -5819,7 +5915,7 @@ pub const LinkerContext = struct {
                             part_index != js_ast.namespace_export_part_index and
                             v.c.shouldIncludePart(source_index, part))
                         {
-                            const js_parts = if (source_index == Index.runtime.value)
+                            const js_parts = if (source_index == v.c.getRuntimeIndex(source_index).value)
                                 &v.parts_prefix
                             else
                                 &v.part_ranges;
@@ -5875,7 +5971,7 @@ pub const LinkerContext = struct {
         switch (this.graph.code_splitting) {
             inline else => |with_code_splitting| switch (this.graph.is_scb_bitset.bit_length > 0) {
                 inline else => |with_scb| {
-                    visitor.visit(Index.runtime.value, with_code_splitting, with_scb);
+                    visitor.visit(this.getRuntimeIndex(chunk.entry_point.source_index).value, with_code_splitting, with_scb);
 
                     for (chunk_order_array.items) |order| {
                         visitor.visit(order.source_index, with_code_splitting, with_scb);
@@ -6428,6 +6524,7 @@ pub const LinkerContext = struct {
                     !this.options.target.isBun())
                 {
                     this.graph.generateRuntimeSymbolImportAndUse(
+                        this.getRuntimeIndex(source_index),
                         source_index,
                         Index.part(1),
                         "__require",
@@ -6889,7 +6986,6 @@ pub const LinkerContext = struct {
             defer trace.end();
             // const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items(.needs_export_symbol_from_runtime);
 
-            var runtime_export_symbol_ref: Ref = Ref.None;
             var entry_point_kinds: []EntryPoint.Kind = this.graph.files.items(.entry_point_kind);
             var flags: []JSMeta.Flags = this.graph.meta.items(.flags);
             var ast_fields = this.graph.ast.slice();
@@ -7007,9 +7103,7 @@ pub const LinkerContext = struct {
                 // previous step. The previous step can't do this because it's running in
                 // parallel and can't safely mutate the "importsToBind" map of another file.
                 if (flag.needs_export_symbol_from_runtime) {
-                    if (!runtime_export_symbol_ref.isValid()) {
-                        runtime_export_symbol_ref = this.runtimeFunction("__export");
-                    }
+                    const runtime_export_symbol_ref = this.runtimeFunction(source_index, "__export");
 
                     bun.assert(runtime_export_symbol_ref.isValid());
 
@@ -7018,7 +7112,7 @@ pub const LinkerContext = struct {
                         js_ast.namespace_export_part_index,
                         runtime_export_symbol_ref,
                         1,
-                        Index.runtime,
+                        this.getRuntimeIndex(source_index),
                     ) catch unreachable;
                 }
                 var imports_to_bind_list: []RefImportData = this.graph.meta.items(.imports_to_bind);
@@ -7132,6 +7226,7 @@ pub const LinkerContext = struct {
                     // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
                     if (force_include_exports and output_format != .internal_bake_dev) {
                         this.graph.generateRuntimeSymbolImportAndUse(
+                            this.getRuntimeIndex(source_index),
                             source_index,
                             Index.part(entry_point_part_index),
                             "__toCommonJS",
@@ -7328,6 +7423,7 @@ pub const LinkerContext = struct {
                         // If there's an ES6 import of a CommonJS module, then we're going to need the
                         // "__toESM" symbol from the runtime to wrap the result of "require()"
                         this.graph.generateRuntimeSymbolImportAndUse(
+                            this.getRuntimeIndex(source_index),
                             source_index,
                             Index.part(part_index),
                             "__toESM",
@@ -7337,6 +7433,7 @@ pub const LinkerContext = struct {
                         // If there's a CommonJS require of an ES6 module, then we're going to need the
                         // "__toCommonJS" symbol from the runtime to wrap the exports object
                         this.graph.generateRuntimeSymbolImportAndUse(
+                            this.getRuntimeIndex(source_index),
                             source_index,
                             Index.part(part_index),
                             "__toCommonJS",
@@ -7346,6 +7443,7 @@ pub const LinkerContext = struct {
                         // If there are unbundled calls to "require()" and we're not generating
                         // code for node, then substitute a "__require" wrapper for "require".
                         this.graph.generateRuntimeSymbolImportAndUse(
+                            this.getRuntimeIndex(source_index),
                             source_index,
                             Index.part(part_index),
                             "__require",
@@ -7353,6 +7451,7 @@ pub const LinkerContext = struct {
                         ) catch unreachable;
 
                         this.graph.generateRuntimeSymbolImportAndUse(
+                            this.getRuntimeIndex(source_index),
                             source_index,
                             Index.part(part_index),
                             "__reExport",
@@ -7529,7 +7628,7 @@ pub const LinkerContext = struct {
         // "__export(exports, { foo: () => foo })"
         var export_ref = Ref.None;
         if (properties.items.len > 0) {
-            export_ref = c.runtimeFunction("__export");
+            export_ref = c.runtimeFunction(id, "__export");
             var args = allocator.alloc(js_ast.Expr, 2) catch unreachable;
             args[0..2].* = [_]js_ast.Expr{
                 js_ast.Expr.initIdentifier(exports_ref, loc),
@@ -7553,11 +7652,11 @@ pub const LinkerContext = struct {
             );
             remaining_stmts = remaining_stmts[1..];
             // Make sure this file depends on the "__export" symbol
-            const parts = c.topLevelSymbolsToPartsForRuntime(export_ref);
+            const parts = c.topLevelSymbolsToPartsForRuntime(id, export_ref);
             ns_export_dependencies.ensureUnusedCapacity(parts.len) catch unreachable;
             for (parts) |part_index| {
                 ns_export_dependencies.appendAssumeCapacity(
-                    .{ .source_index = Index.runtime, .part_index = part_index },
+                    .{ .source_index = c.getRuntimeIndex(id), .part_index = part_index },
                 );
             }
 
@@ -7571,7 +7670,7 @@ pub const LinkerContext = struct {
         // bundle (including the entry point module) may do "import * as" to get
         // access to the exports object and should NOT see the "__esModule" flag.
         if (force_include_exports_for_entry_point) {
-            const toCommonJSRef = c.runtimeFunction("__toCommonJS");
+            const toCommonJSRef = c.runtimeFunction(id, "__toCommonJS");
 
             var call_args = allocator.alloc(js_ast.Expr, 1) catch unreachable;
             call_args[0] = Expr.initIdentifier(exports_ref, Loc.Empty);
@@ -7582,7 +7681,7 @@ pub const LinkerContext = struct {
                     E.Dot{
                         .name = "exports",
                         .name_loc = Loc.Empty,
-                        .target = Expr.initIdentifier(c.unbound_module_ref, Loc.Empty),
+                        .target = Expr.initIdentifier(c.getUnboundModuleRef(id), Loc.Empty),
                     },
                     Loc.Empty,
                 ),
@@ -8788,7 +8887,13 @@ pub const LinkerContext = struct {
         defer _ = arena.reset(.retain_capacity);
         worker.stmt_list.reset();
 
-        var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Index.runtime.value].get()];
+        var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[
+            c.graph.files.items(.input_file)[
+                c.getRuntimeIndex(
+                    part_range.source_index.value,
+                ).value
+            ].get()
+        ];
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
@@ -9102,7 +9207,13 @@ pub const LinkerContext = struct {
         var cross_chunk_prefix: []u8 = &.{};
         var cross_chunk_suffix: []u8 = &.{};
 
-        var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Index.runtime.value].get()];
+        var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[
+            c.graph.files.items(.input_file)[
+                c.getRuntimeIndex(
+                    chunk.entry_point.source_index,
+                ).value
+            ].get()
+        ];
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
@@ -9258,7 +9369,7 @@ pub const LinkerContext = struct {
         if (c.options.output_format == .internal_bake_dev) {
             for (compile_results) |compile_result| {
                 const source_index = compile_result.sourceIndex();
-                if (source_index != Index.runtime.value) break;
+                if (source_index != c.getRuntimeIndex(source_index).value) break;
                 line_offset.advance(compile_result.code());
                 j.push(compile_result.code(), bun.default_allocator);
             }
@@ -9300,7 +9411,7 @@ pub const LinkerContext = struct {
         const targets: []const options.Target = c.parse_graph.ast.items(.target);
         for (compile_results) |compile_result| {
             const source_index = compile_result.sourceIndex();
-            const is_runtime = source_index == Index.runtime.value;
+            const is_runtime = source_index == c.getRuntimeIndex(source_index).value;
 
             // TODO: extracated legal comments
 
@@ -10185,7 +10296,7 @@ pub const LinkerContext = struct {
                                 Expr.init(
                                     E.Dot,
                                     .{
-                                        .target = Expr.initIdentifier(c.unbound_module_ref, Logger.Loc.Empty),
+                                        .target = Expr.initIdentifier(c.getUnboundModuleRef(source_index), Logger.Loc.Empty),
                                         .name = "exports",
                                         .name_loc = Logger.Loc.Empty,
                                     },
@@ -10546,7 +10657,7 @@ pub const LinkerContext = struct {
                         allocator,
                         E.Identifier,
                         E.Identifier{
-                            .ref = c.unbound_module_ref,
+                            .ref = c.getUnboundModuleRef(source_index),
                         },
                         Logger.Loc.Empty,
                     ),
@@ -10639,7 +10750,7 @@ pub const LinkerContext = struct {
                                 );
 
                                 // Prefix this module with "__reExport(exports, ns, module.exports)"
-                                const export_star_ref = c.runtimeFunction("__reExport");
+                                const export_star_ref = c.runtimeFunction(source_index, "__reExport");
                                 var args = try allocator.alloc(Expr, 2 + @as(usize, @intFromBool(module_exports_for_export != null)));
                                 args[0..2].* = .{
                                     Expr.init(
@@ -10731,7 +10842,7 @@ pub const LinkerContext = struct {
                                 };
 
                                 // Prefix this module with "__reExport(exports, require(path), module.exports)"
-                                const export_star_ref = c.runtimeFunction("__reExport");
+                                const export_star_ref = c.runtimeFunction(source_index, "__reExport");
                                 var args = try allocator.alloc(Expr, 2 + @as(usize, @intFromBool(module_exports_for_export != null)));
                                 args[0..2].* = .{
                                     Expr.init(
@@ -11145,8 +11256,8 @@ pub const LinkerContext = struct {
         }
     }
 
-    fn runtimeFunction(c: *LinkerContext, name: []const u8) Ref {
-        return c.graph.runtimeFunction(name);
+    fn runtimeFunction(c: *LinkerContext, source_index: u32, name: []const u8) Ref {
+        return c.graph.runtimeFunction(c.getRuntimeIndex(source_index), name);
     }
 
     fn generateCodeForFileInChunkJS(
@@ -11485,7 +11596,7 @@ pub const LinkerContext = struct {
                             .target = Expr.init(
                                 E.Identifier,
                                 E.Identifier{
-                                    .ref = c.cjs_runtime_ref,
+                                    .ref = c.getCjsRuntimeRef(part_range.source_index.value),
                                 },
                                 Logger.Loc.Empty,
                             ),
@@ -11651,7 +11762,7 @@ pub const LinkerContext = struct {
 
                         // "var init_foo = __esm(...);"
                         const value = Expr.init(E.Call, .{
-                            .target = Expr.initIdentifier(c.esm_runtime_ref, Logger.Loc.Empty),
+                            .target = Expr.initIdentifier(c.getEsmRuntimeRef(part_range.source_index.value), Logger.Loc.Empty),
                             .args = bun.BabyList(Expr).init(esm_args),
                         }, Logger.Loc.Empty);
 
@@ -12359,11 +12470,12 @@ pub const LinkerContext = struct {
                     .source_map_index = source_map_index,
                     .bytecode_index = bytecode_index,
                     .side = switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
-                        .browser => .client,
+                        .browser,
+                        => .client,
                         else => .server,
                     },
                     .entry_point_index = if (output_kind == .@"entry-point")
-                        chunk.entry_point.source_index - @as(u32, (if (c.framework) |fw| if (fw.server_components != null) 3 else 1 else 1))
+                        chunk.entry_point.source_index - @as(u32, (if (c.framework) |fw| if (fw.server_components != null) 4 else 1 else 1))
                     else
                         null,
                     .referenced_css_files = switch (chunk.content) {
@@ -13444,8 +13556,8 @@ pub const LinkerContext = struct {
         return c.graph.topLevelSymbolToParts(id, ref);
     }
 
-    pub fn topLevelSymbolsToPartsForRuntime(c: *LinkerContext, ref: Ref) []u32 {
-        return topLevelSymbolsToParts(c, Index.runtime.get(), ref);
+    pub fn topLevelSymbolsToPartsForRuntime(c: *LinkerContext, source_index: Index.Int, ref: Ref) []u32 {
+        return topLevelSymbolsToParts(c, c.getRuntimeIndex(source_index).get(), ref);
     }
 
     pub fn createWrapperForFile(
@@ -13471,14 +13583,14 @@ pub const LinkerContext = struct {
             // dependencies and let the general-purpose reachability analysis take care
             // of it.
             .cjs => {
-                const common_js_parts = c.topLevelSymbolsToPartsForRuntime(c.cjs_runtime_ref);
+                const common_js_parts = c.topLevelSymbolsToPartsForRuntime(source_index, c.getCjsRuntimeRef(source_index));
 
                 for (common_js_parts) |part_id| {
-                    const runtime_parts = c.graph.ast.items(.parts)[Index.runtime.get()].slice();
+                    const runtime_parts = c.graph.ast.items(.parts)[c.getRuntimeIndex(source_index).get()].slice();
                     const part: *js_ast.Part = &runtime_parts[part_id];
                     const symbol_refs = part.symbol_uses.keys();
                     for (symbol_refs) |ref| {
-                        if (ref.eql(c.cjs_runtime_ref)) continue;
+                        if (ref.eql(c.getCjsRuntimeRef(source_index))) continue;
                     }
                 }
 
@@ -13488,7 +13600,7 @@ pub const LinkerContext = struct {
                     for (common_js_parts, dependencies) |part, *cjs| {
                         cjs.* = .{
                             .part_index = part,
-                            .source_index = Index.runtime,
+                            .source_index = c.getRuntimeIndex(source_index),
                         };
                     }
                     break :brk dependencies;
@@ -13523,9 +13635,9 @@ pub const LinkerContext = struct {
                     c.graph.generateSymbolImportAndUse(
                         source_index,
                         part_index,
-                        c.cjs_runtime_ref,
+                        c.getCjsRuntimeRef(source_index),
                         1,
-                        Index.runtime,
+                        c.getRuntimeIndex(source_index),
                     ) catch unreachable;
                 }
             },
@@ -13542,7 +13654,7 @@ pub const LinkerContext = struct {
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
                 const esm_parts = if (wrapper_ref.isValid() and c.options.output_format != .internal_bake_dev)
-                    c.topLevelSymbolsToPartsForRuntime(c.esm_runtime_ref)
+                    c.topLevelSymbolsToPartsForRuntime(source_index, c.getEsmRuntimeRef(source_index))
                 else
                     &.{};
 
@@ -13551,7 +13663,7 @@ pub const LinkerContext = struct {
                 for (esm_parts, dependencies) |part, *esm| {
                     esm.* = .{
                         .part_index = part,
-                        .source_index = Index.runtime,
+                        .source_index = c.getRuntimeIndex(source_index),
                     };
                 }
 
@@ -13577,9 +13689,9 @@ pub const LinkerContext = struct {
                     c.graph.generateSymbolImportAndUse(
                         source_index,
                         part_index,
-                        c.esm_runtime_ref,
+                        c.getEsmRuntimeRef(source_index),
                         1,
-                        Index.runtime,
+                        c.getRuntimeIndex(source_index),
                     ) catch bun.outOfMemory();
                 }
             },
@@ -14080,7 +14192,7 @@ pub const LinkerContext = struct {
             flags.did_wrap_dependencies = true;
 
             // Never wrap the runtime file since it always comes first
-            if (source_index == Index.runtime.get()) {
+            if (source_index == this.linker.getRuntimeIndex(source_index).get()) {
                 return;
             }
 

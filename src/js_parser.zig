@@ -5163,7 +5163,7 @@ fn NewParser_(
         /// use this instead of checking p.source.index
         /// because when not bundling, p.source.index is `0`
         inline fn isSourceRuntime(p: *const P) bool {
-            return p.options.bundle and p.source.index.isRuntime();
+            return p.options.features.is_runtime;
         }
 
         pub fn transposeImport(p: *P, arg: Expr, state: *const TransposeState) Expr {

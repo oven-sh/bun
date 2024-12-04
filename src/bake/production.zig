@@ -185,9 +185,9 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             bundler.options.minify_syntax = false;
             bundler.options.minify_identifiers = false;
             bundler.options.minify_whitespace = false;
-            bundler.resolver.opts.entry_naming = "";
-            bundler.resolver.opts.chunk_naming = "";
-            bundler.resolver.opts.asset_naming = "";
+            bundler.resolver.opts.entry_naming = "[dir]/[name].[hash].[ext]";
+            bundler.resolver.opts.chunk_naming = "[dir]/[name].[hash].chunk.[ext]";
+            bundler.resolver.opts.asset_naming = "[dir]/[name].[hash].asset.[ext]";
         }
     }
 

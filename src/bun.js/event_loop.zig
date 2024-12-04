@@ -299,27 +299,41 @@ pub const CppTask = opaque {
         JSC.markBinding(@src());
         Bun__performTask(global, this);
     }
+};
 
-    pub const Concurrent = struct {
-        cpp_task: *CppTask,
-        workpool_task: JSC.WorkPoolTask = .{ .callback = &runFromWorkpool },
+pub const ConcurrentCppTask = struct {
+    cpp_task: *EventLoopTaskNoContext,
+    workpool_task: JSC.WorkPoolTask = .{ .callback = &runFromWorkpool },
 
-        pub fn runFromWorkpool(task: *JSC.WorkPoolTask) void {
-            var this: *Concurrent = @fieldParentPtr("workpool_task", task);
-            const cpp_task = this.cpp_task;
-            this.destroy();
-            // TODO figure out what this should be
-            cpp_task.run(undefined);
+    const EventLoopTaskNoContext = opaque {
+        extern fn Bun__EventLoopTaskNoContext__performTask(task: *EventLoopTaskNoContext) void;
+
+        /// Deallocates `this`
+        pub fn run(this: *EventLoopTaskNoContext) void {
+            Bun__EventLoopTaskNoContext__performTask(this);
         }
-
-        pub usingnamespace bun.New(@This());
     };
 
-    pub export fn ConcurrentCppTask__createAndRun(cpp_task: *CppTask) void {
-        const cpp = Concurrent.new(.{ .cpp_task = cpp_task });
+    pub fn runFromWorkpool(task: *JSC.WorkPoolTask) void {
+        var this: *ConcurrentCppTask = @fieldParentPtr("workpool_task", task);
+        const cpp_task = this.cpp_task;
+        this.destroy();
+        cpp_task.run();
+    }
+
+    pub usingnamespace bun.New(@This());
+
+    pub export fn ConcurrentCppTask__createAndRun(cpp_task: *EventLoopTaskNoContext) void {
+        JSC.markBinding(@src());
+        const cpp = ConcurrentCppTask.new(.{ .cpp_task = cpp_task });
         JSC.WorkPool.schedule(&cpp.workpool_task);
     }
 };
+
+comptime {
+    _ = ConcurrentCppTask.ConcurrentCppTask__createAndRun;
+}
+
 pub const JSCScheduler = struct {
     pub const JSCDeferredWorkTask = opaque {
         extern fn Bun__runDeferredWork(task: *JSCScheduler.JSCDeferredWorkTask) void;

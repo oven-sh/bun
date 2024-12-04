@@ -798,7 +798,6 @@ function isJavaScriptTest(path) {
  */
 function isTest(path) {
   if (path.startsWith("js/node/test/parallel/") && isMacOS && isArm64) return true;
-  if (path.replaceAll(sep, "/").includes("/test-cluster-") && path.endsWith(".js")) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
   return isTestStrict(path);
 }

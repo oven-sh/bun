@@ -577,7 +577,16 @@ install_nodejs() {
 
 	case "$pm" in
 	apk)
-		install_packages nodejs npm
+		case "$arch" in
+		x64)
+			node_tar=$(download_file "https://unofficial-builds.nodejs.org/download/release/v$(nodejs_version_exact)/node-v$(nodejs_version_exact)-linux-$arch-musl.tar.xz")
+			tar -xJf "$node_tar" -C /usr/local --strip-components=1 --no-same-owner
+			;;
+		aarch64)
+  			# repo above doesn't have binaries for aarch64; get from pm instead.
+			install_packages nodejs
+			;;
+		esac
 		;;
 	*)
 		install_packages nodejs
@@ -587,7 +596,7 @@ install_nodejs() {
 	# Some distros do not install the node headers by default.
 	# These are needed for certain FFI tests, such as: `cc.test.ts`
 	case "$distro" in
-	alpine | amzn)
+	amzn)
 		install_nodejs_headers
 		;;
 	esac

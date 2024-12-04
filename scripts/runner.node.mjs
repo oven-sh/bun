@@ -207,13 +207,13 @@ async function runTests() {
     for (const testPath of tests) {
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
       if (title.startsWith("test/js/node/test/parallel/")) {
-        const t = await runTest(title, async () => {
-          const { ok, error, stdout, exitCode } = await spawnBun(execPath, {
+        await runTest(title, async () => {
+          const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
             args: [title],
             timeout: spawnTimeout,
             env: {
-              GITHUB_ACTIONS: "true", // always true so annotations are parsed
+              FORCE_COLOR: "0",
             },
             stdout: chunk => pipeTestStdout(process.stdout, chunk),
             stderr: chunk => pipeTestStdout(process.stderr, chunk),

@@ -4750,10 +4750,11 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
     *arg2 = Zig::toZigString(view);
 }
 
-bool JSC__JSValue__getClassInfoName(JSValue value, BunString* out)
+bool JSC__JSValue__getClassInfoName(JSValue value, const uint8_t** outPtr, size_t* outLen)
 {
     if (auto info = value.classInfoOrNull()) {
-        *out = Bun::toString(info->className);
+        *outPtr = info->className.span8().data();
+        *outLen = info->className.span8().size();
         return true;
     }
     return false;

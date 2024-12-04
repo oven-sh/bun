@@ -23,6 +23,8 @@ export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
 export const isPosix = isMacOS || isLinux;
 
+export const isArm64 = process.arch === "arm64";
+
 /**
  * @param {string} name
  * @param {boolean} [required]

@@ -325,7 +325,11 @@ const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, top_level_dir: string, allocator: std.mem.Allocator) !Fs.Path {
     // TODO: outbase
     var buf: bun.PathBuffer = undefined;
-    if (path.isFile()) {
+
+    // "file" namespace should use the relative file path for its display name.
+    // the "node" namespace is also put through this code path so that the
+    // "node:" prefix is not emitted.
+    if (path.isFile() or bun.strings.eqlComptime(path.namespace, "node")) {
         const rel = bun.path.relativePlatform(top_level_dir, path.text, .loose, false);
         var path_clone = path;
         // stack-allocated temporary is not leaked because dupeAlloc on the path will
@@ -400,6 +404,7 @@ pub const BundleV2 = struct {
         framework: bake.Framework,
         client_bundler: *Bundler,
         ssr_bundler: *Bundler,
+        plugins: ?*JSC.API.JSBundler.Plugin,
     };
 
     const debug = Output.scoped(.Bundle, false);
@@ -907,6 +912,7 @@ pub const BundleV2 = struct {
             this.ssr_bundler = bo.ssr_bundler;
             this.framework = bo.framework;
             this.linker.framework = &this.framework.?;
+            this.plugins = bo.plugins;
             bun.assert(bundler.options.server_components);
             bun.assert(this.client_bundler.options.server_components);
             if (bo.framework.server_components.?.separate_ssr_graph)
@@ -2939,7 +2945,9 @@ pub const BundleV2 = struct {
                 graph.ast.set(result.source.index.get(), result.ast);
 
                 // For files with use directives, index and prepare the other side.
-                if (result.use_directive != .none and
+                if (result.use_directive != .none and if (this.framework.?.server_components.?.separate_ssr_graph)
+                    ((result.use_directive == .client) == (result.ast.target == .browser))
+                else
                     ((result.use_directive == .client) != (result.ast.target == .browser)))
                 {
                     if (result.use_directive == .server)
@@ -11078,7 +11086,7 @@ pub const LinkerContext = struct {
 
                         const items = try allocator.alloc(Expr, st.items.len);
                         for (st.items, items) |item, *str| {
-                            str.* = Expr.init(E.String, .{ .data = item.original_name }, item.name.loc);
+                            str.* = Expr.init(E.String, .{ .data = item.alias }, item.name.loc);
                         }
 
                         break :call Expr.init(E.Call, .{
@@ -12352,7 +12360,9 @@ pub const LinkerContext = struct {
                     .is_executable = chunk.is_executable,
                     .source_map_index = source_map_index,
                     .bytecode_index = bytecode_index,
-                    .side = switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
+                    .side = if (chunk.content == .css)
+                        .client
+                    else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
                         .browser => .client,
                         else => .server,
                     },
@@ -12761,7 +12771,9 @@ pub const LinkerContext = struct {
                 .data = .{
                     .saved = 0,
                 },
-                .side = switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
+                .side = if (chunk.content == .css)
+                    .client
+                else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
                     .browser => .client,
                     else => .server,
                 },

@@ -90,7 +90,11 @@ for (const mode of [
       killed: proc.killed,
       exitCode: proc.exitCode,
       signalCode: proc.signalCode,
-    }).toEqual({
+    }).toEqual(isWindows ? {
+      killed: true,
+      exitCode: 1,
+      signalCode: null,
+    } : {
       killed: true,
       exitCode: null,
       signalCode: "SIGINT",

@@ -12,6 +12,7 @@ await plugin({
         {
           filename: path,
           generate: "server",
+          dev: false,
         },
       ).js.code,
       loader: "js",

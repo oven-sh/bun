@@ -2436,23 +2436,28 @@ it("should work when sending https.request with agent:false", async () => {
 });
 
 it("client should use chunked encoded if more than one write is called", async () => {
-  using server = Bun.serve({
-    port: 0,
-    hostname: "127.0.0.1",
-    fetch(req) {
-      if (req.headers.get("transfer-encoding") !== "chunked") {
-        return new Response("Body should be chunked", {
-          status: 500,
-        });
-      }
-      return new Response(req.body);
-    },
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+  await using server = http.createServer((req, res) => {
+    if (req.headers["transfer-encoding"] !== "chunked") {
+      return res.writeHead(500).end();
+    }
+    res.writeHead(200);
+    req.on("data", data => {
+      res.write(data);
+    });
+    req.on("end", () => {
+      res.end();
+    });
   });
+
+  await once(server.listen(0, "127.0.0.1"), "listening");
 
   // Options for the HTTP request
   const options = {
     hostname: "127.0.0.1", // Replace with the target server
-    port: server.port,
+    port: server.address().port,
     path: "/api/data",
     method: "POST",
     headers: {
@@ -2483,8 +2488,9 @@ it("client should use chunked encoded if more than one write is called", async (
   // Write chunks to the request body
   req.write("Hello");
   req.write(" ");
+  await sleep(100);
   req.write("World");
-  await Bun.sleep(100);
+  await sleep(100);
   req.write(" BUN!");
   // End the request and signal no more data will be sent
   req.end();
@@ -2496,23 +2502,25 @@ it("client should use chunked encoded if more than one write is called", async (
 });
 
 it("client should use content-length if only one write is called", async () => {
-  using server = Bun.serve({
-    port: 0,
-    hostname: "127.0.0.1",
-    fetch(req) {
-      if (req.headers.get("transfer-encoding") === "chunked") {
-        return new Response("Body should not be chunked", {
-          status: 500,
-        });
-      }
-      return new Response(req.body);
-    },
+  await using server = http.createServer((req, res) => {
+    if (req.headers["transfer-encoding"] === "chunked") {
+      return res.writeHead(500).end();
+    }
+    res.writeHead(200);
+    req.on("data", data => {
+      res.write(data);
+    });
+    req.on("end", () => {
+      res.end();
+    });
   });
+
+  await once(server.listen(0, "127.0.0.1"), "listening");
 
   // Options for the HTTP request
   const options = {
     hostname: "127.0.0.1", // Replace with the target server
-    port: server.port,
+    port: server.address().port,
     path: "/api/data",
     method: "POST",
     headers: {

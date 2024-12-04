@@ -913,7 +913,7 @@ describe("whoami", async () => {
       },
     });
     const out = await Bun.readableStreamToText(stdout);
-    expect(out).toBe("whoami-npmrc\n");
+    expect(out).toBe("whoami-two-npmrc\n");
     const err = await Bun.readableStreamToText(stderr);
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);

@@ -652,7 +652,7 @@ extern "C" int JSBundlerPlugin__callOnBeforeParsePlugins(
     void* bunContextPtr,
     const BunString* namespaceStr,
     const BunString* pathString,
-    BundlerPlugin::OnBeforeParseArguments* onBeforeParseArgs,
+    OnBeforeParseArguments* onBeforeParseArgs,
     void* onBeforeParseResult,
     int* shouldContinue)
 {

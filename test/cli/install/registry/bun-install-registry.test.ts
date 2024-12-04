@@ -3156,6 +3156,61 @@ describe("binaries", () => {
   });
 });
 
+test("--config cli flag works", async () => {
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+        devDependencies: {
+          "a-dep": "1.0.1",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "bunfig2.toml"),
+      `
+[install]
+cache = "${join(packageDir, ".bun-cache")}"
+registry = "http://localhost:${port}/"
+dev = false
+`,
+    ),
+  ]);
+
+  // should install dev dependencies
+  let { exited } = spawn({
+    cmd: [bunExe(), "i"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toEqual({
+    name: "a-dep",
+    version: "1.0.1",
+  });
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  // should not install dev dependencies
+  ({ exited } = spawn({
+    cmd: [bunExe(), "i", "--config=bunfig2.toml"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  expect(await exited).toBe(0);
+  expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBeFalse();
+});
+
 test("it should invalid cached package if package.json is missing", async () => {
   await Promise.all([
     write(

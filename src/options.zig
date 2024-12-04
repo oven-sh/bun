@@ -2071,42 +2071,58 @@ pub const OutputFile = struct {
     }
 
     /// Given the `--outdir` as root_dir, this will return the relative path to display in terminal
-    pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u8) ![]const u8 {
+    pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, longest_common_path: []const u8) ![]const u8 {
         switch (f.value) {
             .saved => {
                 var rel_path = f.dest_path;
-                if (f.dest_path.len > root_dir_path.len) {
-                    rel_path = resolve_path.relative(root_dir_path, f.dest_path);
+                if (f.dest_path.len > longest_common_path.len) {
+                    rel_path = resolve_path.relative(longest_common_path, f.dest_path);
                 }
                 return rel_path;
             },
             .buffer => |value| {
                 var rel_path = f.dest_path;
-                if (f.dest_path.len > root_dir_path.len) {
-                    rel_path = resolve_path.relative(root_dir_path, f.dest_path);
+
+                if (f.dest_path.len > longest_common_path.len) {
+                    rel_path = resolve_path.relative(longest_common_path, f.dest_path);
                     if (std.fs.path.dirname(rel_path)) |parent| {
-                        if (parent.len > root_dir_path.len) {
+                        if (parent.len > longest_common_path.len) {
                             try root_dir.makePath(parent);
                         }
                     }
                 }
 
-                var path_buf: bun.PathBuffer = undefined;
-                _ = try JSC.Node.NodeFS.writeFileWithPathBuffer(&path_buf, .{
-                    .data = .{ .buffer = .{
-                        .buffer = .{
-                            .ptr = @constCast(value.bytes.ptr),
-                            .len = value.bytes.len,
-                            .byte_len = value.bytes.len,
+                var handled_file_not_found = false;
+                while (true) {
+                    var path_buf: bun.PathBuffer = undefined;
+                    JSC.Node.NodeFS.writeFileWithPathBuffer(&path_buf, .{
+                        .data = .{ .buffer = .{
+                            .buffer = .{
+                                .ptr = @constCast(value.bytes.ptr),
+                                .len = value.bytes.len,
+                                .byte_len = value.bytes.len,
+                            },
+                        } },
+                        .encoding = .buffer,
+                        .mode = if (f.is_executable) 0o755 else 0o644,
+                        .dirfd = bun.toFD(root_dir.fd),
+                        .file = .{ .path = .{
+                            .string = JSC.PathString.init(rel_path),
+                        } },
+                    }).unwrap() catch |err| switch (err) {
+                        error.FileNotFound, error.ENOENT => {
+                            if (handled_file_not_found) return err;
+                            handled_file_not_found = true;
+                            try root_dir.makePath(
+                                std.fs.path.dirname(rel_path) orelse
+                                    return err,
+                            );
+                            continue;
                         },
-                    } },
-                    .encoding = .buffer,
-                    .mode = if (f.is_executable) 0o755 else 0o644,
-                    .dirfd = bun.toFD(root_dir.fd),
-                    .file = .{ .path = .{
-                        .string = JSC.PathString.init(rel_path),
-                    } },
-                }).unwrap();
+                        else => return err,
+                    };
+                    break;
+                }
 
                 return rel_path;
             },

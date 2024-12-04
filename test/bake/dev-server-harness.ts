@@ -27,7 +27,9 @@ export const minimalFramework: Bake.Framework = {
   },
 };
 
-export interface DevServerTest {
+export type DevServerTest = ({
+  /** Starting files */
+  files: FileObject;
   /**
    * Framework to use. Consider `minimalFramework` if possible.
    * Provide this object or `files['bun.app.ts']` for a dynamic one.
@@ -38,8 +40,13 @@ export interface DevServerTest {
    * combined with the `framework` option.
    */
   pluginFile?: string;
-  /** Starting files */
-  files: FileObject;
+} | {
+  /** 
+   * Copy all files from test/bake/fixtures/<name>
+   * This directory must contain `bun.app.ts` to allow hacking on fixtures manually via `bun run .`
+   */
+  fixture: string;
+}) & {
   test: (dev: Dev) => Promise<void>;
 }
 
@@ -327,31 +334,47 @@ export function devTest<T extends DevServerTest>(description: string, options: T
 
   jest.test(`DevServer > ${basename}.${count}: ${description}`, async () => {
     const root = path.join(tempDir, basename + count);
-    writeAll(root, options.files);
-    if (options.files["bun.app.ts"] == undefined) {
-      if (!options.framework) {
-        throw new Error("Must specify a options.framework or provide a bun.app.ts file");
+    if ('files' in options) {
+      writeAll(root, options.files);
+      if (options.files["bun.app.ts"] == undefined) {
+        if (!options.framework) {
+          throw new Error("Must specify a options.framework or provide a bun.app.ts file");
+        }
+        if (options.pluginFile) {
+          fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
+        }
+        fs.writeFileSync(
+          path.join(root, "bun.app.ts"),
+          dedent`
+            ${options.pluginFile ? 
+              `import plugins from './pluginFile.ts';` : "let plugins = undefined;"
+            }
+            export default {
+              app: {
+                framework: ${JSON.stringify(options.framework)},
+                plugins,
+              },
+            };
+          `,
+        );
+      } else {
+        if (options.pluginFile) {
+          throw new Error("Cannot provide both bun.app.ts and pluginFile");
+        }
       }
-      if (options.pluginFile) {
-        fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
-      }
-      fs.writeFileSync(
-        path.join(root, "bun.app.ts"),
-        dedent`
-          ${options.pluginFile ? 
-            `import plugins from './pluginFile.ts';` : "let plugins = undefined;"
-          }
-          export default {
-            app: {
-              framework: ${JSON.stringify(options.framework)},
-              plugins,
-            },
-          };
-        `,
-      );
     } else {
-      if (options.pluginFile) {
-        throw new Error("Cannot provide both bun.app.ts and pluginFile");
+      if (!options.fixture) {
+        throw new Error("Must provide either `fixture` or `files`");
+      }
+      const fixture = path.join(devTestRoot, "../fixtures", options.fixture);
+      fs.cpSync(fixture, root, { recursive: true });
+
+      if(!fs.existsSync(path.join(root, "bun.app.ts"))) {
+        throw new Error(`Fixture ${fixture} must contain a bun.app.ts file.`); 
+      }
+      if (!fs.existsSync(path.join(root, "node_modules"))) {
+        // link the node_modules directory from test/node_modules to the temp directory
+        fs.symlinkSync(path.join(devTestRoot, "../../node_modules"), path.join(root, "node_modules"), "junction");
       }
     }
     fs.writeFileSync(
@@ -359,8 +382,8 @@ export function devTest<T extends DevServerTest>(description: string, options: T
       dedent`
         import appConfig from "./bun.app.ts";
         export default {
+          ...appConfig,
           port: 0,
-          ...appConfig
         };
       `,
     );
@@ -373,6 +396,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
         {
           FORCE_COLOR: "1",
           BUN_DEV_SERVER_TEST_RUNNER: "1",
+          BUN_DUMP_STATE_ON_CRASH: "1",
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],

@@ -51,19 +51,18 @@ void compilation_ctx_free(CompilationCtx *ctx) {
 void log_error(const OnBeforeParseArguments *args,
                const OnBeforeParseResult *result, BunLogLevel level,
                const char *message, size_t message_len) {
-  BunLogOptions options = (BunLogOptions){
-      .message_ptr = (uint8_t *)message,
-      .message_len = message_len,
-      .path_ptr = args->path_ptr,
-      .path_len = args->path_len,
-      .source_line_text_ptr = nullptr,
-      .source_line_text_len = 0,
-      .level = (int8_t)level,
-      .line = 0,
-      .lineEnd = 0,
-      .column = 0,
-      .columnEnd = 0,
-  };
+  BunLogOptions options;
+  options.message_ptr = (uint8_t *)message;
+  options.message_len = message_len;
+  options.path_ptr = args->path_ptr;
+  options.path_len = args->path_len;
+  options.source_line_text_ptr = nullptr;
+  options.source_line_text_len = 0;
+  options.level = (int8_t)level;
+  options.line = 0;
+  options.lineEnd = 0;
+  options.column = 0;
+  options.columnEnd = 0;
   (result->log)(args, &options);
 }
 
@@ -586,19 +585,18 @@ struct NewOnBeforeParseResult {
 void new_log_error(const NewOnBeforeParseArguments *args,
                    const NewOnBeforeParseResult *result, BunLogLevel level,
                    const char *message, size_t message_len) {
-  BunLogOptions options = (BunLogOptions){
-      .message_ptr = (uint8_t *)message,
-      .message_len = message_len,
-      .path_ptr = args->path_ptr,
-      .path_len = args->path_len,
-      .source_line_text_ptr = nullptr,
-      .source_line_text_len = 0,
-      .level = (int8_t)level,
-      .line = 0,
-      .lineEnd = 0,
-      .column = 0,
-      .columnEnd = 0,
-  };
+  BunLogOptions options;
+  options.message_ptr = (uint8_t *)message;
+  options.message_len = message_len;
+  options.path_ptr = args->path_ptr;
+  options.path_len = args->path_len;
+  options.source_line_text_ptr = nullptr;
+  options.source_line_text_len = 0;
+  options.level = (int8_t)level;
+  options.line = 0;
+  options.lineEnd = 0;
+  options.column = 0;
+  options.columnEnd = 0;
   (result->log)(args, &options);
 }
 

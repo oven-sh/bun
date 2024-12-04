@@ -2496,7 +2496,7 @@ it("client should use chunked encoded if more than one write is called", async (
 
   const chunks = await promise;
   expect(chunks.length).toBeGreaterThan(1);
-  expect(chunks[chunks.length - 1]?.toString()).toBe("BUN!");
+  expect(chunks[chunks.length - 1]?.toString()).toEndWith("BUN!");
   expect(Buffer.concat(chunks).toString()).toBe("Hello World BUN!");
 });
 

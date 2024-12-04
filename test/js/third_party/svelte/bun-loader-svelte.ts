@@ -11,7 +11,7 @@ await plugin({
         readFileSync(path.substring(0, path.includes("?") ? path.indexOf("?") : path.length), "utf-8"),
         {
           filename: path,
-          generate: "ssr",
+          generate: "server",
         },
       ).js.code,
       loader: "js",

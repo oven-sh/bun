@@ -1889,7 +1889,7 @@ async function getGithubOrgSshKeys(organization) {
  * @returns {Promise<import("./utils.mjs").SpawnResult>}
  */
 async function spawnSsh(options, spawnOptions = {}) {
-  const { hostname, port, username, identityPaths, retries = 10, command: spawnCommand } = options;
+  const { hostname, port, username, identityPaths, retries = 5, command: spawnCommand } = options;
 
   if (!hostname.includes("@")) {
     await waitForPort({
@@ -1924,12 +1924,20 @@ async function spawnSsh(options, spawnOptions = {}) {
       break;
     }
 
+    const sshLogs = readFile(logPath, { encoding: "utf-8" });
+    if (sshLogs.includes("Authenticated")) {
+      break;
+    }
+
     await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
   }
 
-  const { error } = result;
-  if (error) {
-    console.warn("SSH logs:", readFile(logPath, { encoding: "utf-8" }));
+  if (spawnOptions?.throwOnError) {
+    const { error } = result;
+    if (error) {
+      console.warn("SSH logs:", readFile(logPath, { encoding: "utf-8" }));
+      throw error;
+    }
   }
 
   return result;
@@ -2324,7 +2332,8 @@ async function main() {
         const args = ci ? ["--ci"] : [];
         await startGroup("Running bootstrap...", async () => {
           await machine.upload(bootstrapPath, remotePath);
-          await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });
+          console.log(await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" }));
+          console.log("HERE");
         });
       }
     }

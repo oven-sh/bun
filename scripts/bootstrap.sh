@@ -947,13 +947,8 @@ create_buildkite_user() {
 	esac
 
 	if [ -z "$(getent passwd "$user")" ]; then
-		if [ "$(which useradd)" ]; then
-			execute_sudo useradd "$user" \
-				--system \
-				--shell "$(require sh)" \
-				--no-create-home \
-				--home-dir "$home"
-		elif [ "$(which adduser)" ]; then
+		case "$distro" in
+		alpine)
 			execute_sudo addgroup \
 				--system "$group"
 			execute_sudo adduser "$user" \
@@ -962,7 +957,15 @@ create_buildkite_user() {
 				--shell "$(require sh)" \
 				--home "$home" \
 				--disabled-password
-		fi
+			;;
+		*)
+			execute_sudo useradd "$user" \
+				--system \
+				--shell "$(require sh)" \
+				--no-create-home \
+				--home-dir "$home"
+			;;
+		esac
 	fi
 
 	if [ -n "$(getent group docker)" ]; then

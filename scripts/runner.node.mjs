@@ -221,12 +221,12 @@ async function runTests() {
           });
           return {
             testPath: title,
-            ok,
+            ok: ok,
             status: ok ? "pass" : "fail",
-            error,
+            error: error,
             errors: [],
             tests: [],
-            stdout,
+            stdout: stdout,
             stdoutPreview: "",
           };
         });

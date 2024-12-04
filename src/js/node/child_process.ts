@@ -576,6 +576,8 @@ function spawnSync(file, args, options) {
     });
   } catch (err) {
     error = err;
+    stdout = null;
+    stderr = null;
   }
 
   const result = {

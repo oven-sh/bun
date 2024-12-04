@@ -1200,6 +1200,7 @@ pub const TestCommand = struct {
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
+        var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
         JSC.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
@@ -1220,6 +1221,7 @@ pub const TestCommand = struct {
                     .file_buf = &snapshot_file_buf,
                     .values = &snapshot_values,
                     .counts = &snapshot_counts,
+                    .inline_snapshots_to_write = &inline_snapshots_to_write,
                 },
             },
             .callback = undefined,
@@ -1382,6 +1384,7 @@ pub const TestCommand = struct {
         }
 
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
+        try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         var coverage = ctx.test_options.coverage;
 
         if (reporter.summary.pass > 20) {

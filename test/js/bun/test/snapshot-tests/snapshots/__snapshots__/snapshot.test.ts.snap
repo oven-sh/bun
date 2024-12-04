@@ -551,3 +551,16 @@ exports[\`t2 1\`] = \`"abc\\\`def"\`;
 exports[\`t3 1\`] = \`"abc def ghi"\`;
 "
 `;
+
+exports[`snapshots property matchers 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`
+{
+  "createdAt": Any<Date>,
+  "id": Any<Number>,
+  "name": "LeBron James",
+}
+\`;
+"
+`;

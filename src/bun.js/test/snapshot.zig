@@ -32,13 +32,27 @@ pub const Snapshots = struct {
     counts: *bun.StringHashMap(usize),
     _current_file: ?File = null,
     snapshot_dir_path: ?string = null,
+    inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(InlineSnapshotToWrite)),
+
+    pub const InlineSnapshotToWrite = struct {
+        line: c_ulong,
+        col: c_ulong,
+        value: []const u8,
+        has_matchers: bool,
+
+        fn lessThanFn(_: void, a: InlineSnapshotToWrite, b: InlineSnapshotToWrite) bool {
+            if (a.line < b.line) return true;
+            if (a.col < b.col) return true;
+            return false;
+        }
+    };
 
     const File = struct {
         id: TestRunner.File.ID,
         file: std.fs.File,
     };
 
-    pub fn getOrPut(this: *Snapshots, expect: *Expect, value: JSValue, hint: string, globalObject: *JSC.JSGlobalObject) !?string {
+    pub fn getOrPut(this: *Snapshots, expect: *Expect, target_value: []const u8, hint: string) !?string {
         switch (try this.getSnapshotFile(expect.testScope().?.describe.file_id)) {
             .result => {},
             .err => |err| {
@@ -81,21 +95,18 @@ pub const Snapshots = struct {
         }
 
         // doesn't exist. append to file bytes and add to hashmap.
-        var pretty_value = try MutableString.init(this.allocator, 0);
-        try value.jestSnapshotPrettyFormat(&pretty_value, globalObject);
-
-        const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + pretty_value.list.items.len + "`;\n".len;
+        const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + target_value.len + "`;\n".len;
         try this.file_buf.ensureUnusedCapacity(estimated_length + 10);
         try this.file_buf.writer().print(
             "\nexports[`{}`] = `{}`;\n",
             .{
                 strings.formatEscapes(name_with_counter, .{ .quote_char = '`' }),
-                strings.formatEscapes(pretty_value.list.items, .{ .quote_char = '`' }),
+                strings.formatEscapes(target_value, .{ .quote_char = '`' }),
             },
         );
 
         this.added += 1;
-        try this.values.put(name_hash, pretty_value.toOwnedSlice());
+        try this.values.put(name_hash, try this.allocator.dupe(u8, target_value));
         return null;
     }
 
@@ -194,6 +205,70 @@ pub const Snapshots = struct {
             }
             this.counts.clearAndFree();
         }
+    }
+
+    pub fn addInlineSnapshotToWrite(self: *Snapshots, file_id: TestRunner.File.ID, value: InlineSnapshotToWrite) !void {
+        const gpres = try self.inline_snapshots_to_write.getOrPut(file_id);
+        if (!gpres.found_existing) {
+            gpres.value_ptr.* = std.ArrayList(InlineSnapshotToWrite).init(self.allocator);
+        }
+        try gpres.value_ptr.append(value);
+    }
+
+    pub fn writeInlineSnapshots(this: *Snapshots) !void {
+        // for each item
+        // sort the array by lyn,col
+        for (this.inline_snapshots_to_write.keys(), this.inline_snapshots_to_write.values()) |file_id, *ils_info| {
+            // 1. sort ils_info by row, col
+            std.mem.sort(InlineSnapshotToWrite, ils_info.items, {}, InlineSnapshotToWrite.lessThanFn);
+
+            // 2. load file text
+            const test_file = Jest.runner.?.files.get(file_id);
+            const test_filename = try this.allocator.dupeZ(u8, test_file.source.path.name.filename);
+            defer this.allocator.free(test_filename);
+
+            const file = switch (bun.sys.open(test_filename, bun.O.RDWR, 0o644)) {
+                .result => |r| r,
+                .err => |e| {
+                    _ = e;
+                    // TODO: print error
+                    return error.WriteInlineSnapshotsFail;
+                },
+            };
+            const file_text = try file.asFile().readToEndAlloc(this.allocator, std.math.maxInt(usize));
+            defer this.allocator.free(file_text);
+
+            var result_text = std.ArrayList(u8).init(this.allocator);
+            defer result_text.deinit();
+
+            // 3. start looping, finding bytes from line/col
+
+            var uncommitted_segment_end: usize = 0;
+            for (ils_info.items) |ils| {
+                // items are in order from start to end
+                // advance and find the byte from the line/col
+                // - make sure this works right with invalid utf-8, eg 0b11110_000 'a', 0b11110_000 0b10_000000 'a', ...
+                // - make sure this works right with the weird newline characters javascript allows
+
+                // initialize a parser and parse a single expression: toMatchInlineSnapshot(...args)
+                // find the start and end bytes
+                // append result_text from uncommitted_segment_end to this start
+                // print the snapshot into a backtick string
+                // uncommitted_segment_end = this end
+                // continue
+
+                _ = ils;
+                _ = &result_text;
+                _ = &uncommitted_segment_end;
+                @panic("TODO find byte & append to al");
+            }
+            // commit the last segment
+            try result_text.appendSlice(file_text[uncommitted_segment_end..]);
+
+            // 4. write out result_text to the file
+            @panic("TODO write file");
+        }
+        @panic("TODO writeInlineSnapshots");
     }
 
     fn getSnapshotFile(this: *Snapshots, file_id: TestRunner.File.ID) !JSC.Maybe(void) {

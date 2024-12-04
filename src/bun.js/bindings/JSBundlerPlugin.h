@@ -46,8 +46,6 @@ public:
         void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, unsigned& index);
     };
 
-#include "../../../packages/bun-native-bundler-plugin-api/bundler_plugin.h"
-
     /// In native plugins, the regular expression could be called concurrently on multiple threads.
     /// Therefore, we need a mutex to synchronize access.
     typedef std::pair<Yarr::RegularExpression, std::shared_ptr<std::mutex>> NativeFilterRegexp;

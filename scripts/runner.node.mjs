@@ -224,6 +224,7 @@ async function runTests() {
             status: ok ? "pass" : "fail",
             error,
             errors: [],
+            tests: [],
             stdout,
             stdoutPreview: "",
           };

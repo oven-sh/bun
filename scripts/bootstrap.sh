@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 5
+# Version: 7
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -92,7 +92,7 @@ download_file() {
 	execute chmod 755 "$tmp"
 
 	path="$tmp/$filename"
-	fetch "$url" > "$path"
+	fetch "$url" >"$path"
 	execute chmod 644 "$path"
 
 	print "$path"
@@ -112,14 +112,23 @@ append_to_file() {
 	file="$1"
 	content="$2"
 
-	if ! [ -f "$file" ]; then
+	file_needs_sudo="0"
+	if [ -f "$file" ]; then
+		if ! [ -r "$file" ] || ! [ -w "$file" ]; then
+			file_needs_sudo="1"
+		fi
+	else
 		execute_as_user mkdir -p "$(dirname "$file")"
 		execute_as_user touch "$file"
 	fi
 
 	echo "$content" | while read -r line; do
 		if ! grep -q "$line" "$file"; then
-			echo "$line" >>"$file"
+			if [ "$file_needs_sudo" = "1" ]; then
+				execute_sudo sh -c "echo '$line' >> '$file'"
+			else
+				echo "$line" >>"$file"
+			fi
 		fi
 	done
 }
@@ -135,7 +144,7 @@ append_to_file_sudo() {
 
 	echo "$content" | while read -r line; do
 		if ! grep -q "$line" "$file"; then
-			echo "$line" | execute_sudo tee "$file" > /dev/null
+			echo "$line" | execute_sudo tee "$file" >/dev/null
 		fi
 	done
 }
@@ -161,18 +170,21 @@ append_to_path() {
 	export PATH="$path:$PATH"
 }
 
-link_to_bin() {
-	path="$1"
-	if ! [ -d "$path" ]; then
-		error "Could not find directory: \"$path\""
+move_to_bin() {
+	exe_path="$1"
+	if ! [ -f "$exe_path" ]; then
+		error "Could not find executable: \"$exe_path\""
 	fi
 
-	for file in "$path"/*; do
-		if [ -f "$file" ]; then
-			grant_to_user "$file"
-			execute_sudo ln -sf "$file" "/usr/bin/$(basename "$file")"
+	usr_paths="/usr/bin /usr/local/bin"
+	for usr_path in $usr_paths; do
+		if [ -d "$usr_path" ] && [ -w "$usr_path" ]; then
+			break
 		fi
 	done
+
+	grant_to_user "$exe_path"
+	execute_sudo mv -f "$exe_path" "$usr_path/$(basename "$exe_path")"
 }
 
 check_features() {
@@ -381,6 +393,74 @@ check_user() {
 	elif [ -f "$(which sudo)" ] && [ "$(sudo -n echo 1 2>/dev/null)" = "1" ]; then
 		can_sudo=1
 		print "Sudo: can be used"
+	fi
+}
+
+check_ulimit() {
+	if ! [ "$ci" = "1" ]; then
+		return
+	fi
+
+	print "Checking ulimits..."
+	systemd_conf="/etc/systemd/system.conf"
+	if [ -f "$systemd_conf" ]; then
+		limits_conf="/etc/security/limits.d/99-unlimited.conf"
+		if ! [ -f "$limits_conf" ]; then
+			execute_sudo mkdir -p "$(dirname "$limits_conf")"
+			execute_sudo touch "$limits_conf"
+		fi
+	fi
+
+	limits="core data fsize memlock nofile rss stack cpu nproc as locks sigpending msgqueue"
+	for limit in $limits; do
+		limit_upper="$(echo "$limit" | tr '[:lower:]' '[:upper:]')"
+
+		limit_value="unlimited"
+		case "$limit" in
+		nofile | nproc)
+			limit_value="1048576"
+			;;
+		esac
+
+		if [ -f "$limits_conf" ]; then
+			limit_users="root *"
+			for limit_user in $limit_users; do
+				append_to_file "$limits_conf" "$limit_user soft $limit $limit_value"
+				append_to_file "$limits_conf" "$limit_user hard $limit $limit_value"
+			done
+		fi
+
+		if [ -f "$systemd_conf" ]; then
+			append_to_file "$systemd_conf" "DefaultLimit$limit_upper=$limit_value"
+		fi
+	done
+
+	rc_conf="/etc/rc.conf"
+	if [ -f "$rc_conf" ]; then
+		rc_ulimit=""
+		limit_flags="c d e f i l m n q r s t u v x"
+		for limit_flag in $limit_flags; do
+			limit_value="unlimited"
+			case "$limit_flag" in
+			n | u)
+				limit_value="1048576"
+				;;
+			esac
+			rc_ulimit="$rc_ulimit -$limit_flag $limit_value"
+		done
+		append_to_file "$rc_conf" "rc_ulimit=\"$rc_ulimit\""
+	fi
+
+	pam_confs="/etc/pam.d/common-session /etc/pam.d/common-session-noninteractive"
+	for pam_conf in $pam_confs; do
+		if [ -f "$pam_conf" ]; then
+			append_to_file "$pam_conf" "session optional pam_limits.so"
+		fi
+	done
+
+	systemctl="$(which systemctl)"
+	if [ -f "$systemctl" ]; then
+		execute_sudo "$systemctl" daemon-reload
 	fi
 }
 
@@ -602,6 +682,14 @@ install_nodejs_headers() {
 }
 
 install_bun() {
+	case "$pm" in
+	apk)
+		install_packages \
+			libgcc \
+			libstdc++
+		;;
+	esac
+
 	bash="$(require bash)"
 	script=$(download_file "https://bun.sh/install")
 
@@ -615,7 +703,10 @@ install_bun() {
 		;;
 	esac
 
-	link_to_bin "$home/.bun/bin"
+	move_to_bin "$home/.bun/bin/bun"
+	bun_path="$(which bun)"
+	bunx_path="$(dirname "$bun_path")/bunx"
+	execute_sudo ln -sf "$bun_path" "$bunx_path"
 }
 
 install_cmake() {
@@ -628,14 +719,14 @@ install_cmake() {
 		cmake_version="3.30.5"
 		case "$arch" in
 		x64)
-			url="https://github.com/Kitware/CMake/releases/download/v$cmake_version/cmake-$cmake_version-linux-x86_64.sh"
+			cmake_url="https://github.com/Kitware/CMake/releases/download/v$cmake_version/cmake-$cmake_version-linux-x86_64.sh"
 			;;
 		aarch64)
-			url="https://github.com/Kitware/CMake/releases/download/v$cmake_version/cmake-$cmake_version-linux-aarch64.sh"
+			cmake_url="https://github.com/Kitware/CMake/releases/download/v$cmake_version/cmake-$cmake_version-linux-aarch64.sh"
 			;;
 		esac
-		script=$(download_file "$url")
-		execute_sudo "$sh" "$script" \
+		cmake_script=$(download_file "$cmake_url")
+		execute_sudo "$sh" "$cmake_script" \
 			--skip-license \
 			--prefix=/usr
 		;;
@@ -732,13 +823,13 @@ install_llvm() {
 	case "$pm" in
 	apt)
 		bash="$(require bash)"
-		script="$(download_file "https://apt.llvm.org/llvm.sh")"
+		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
 		case "$distro-$release" in
 		ubuntu-24*)
-			execute_sudo "$bash" "$script" "$(llvm_version)" all -njammy
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all -njammy
 			;;
 		*)
-			execute_sudo "$bash" "$script" "$(llvm_version)" all
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
 			;;
 		esac
 		;;
@@ -779,11 +870,6 @@ install_rust() {
 		execute_as_user "$sh" "$script" -y
 		;;
 	esac
-
-	# FIXME: This causes cargo to fail to build:
-	# > error: rustup could not choose a version of cargo to run,
-	# > because one wasn't specified explicitly, and no default is configured.
-	# link_to_bin "$home/.cargo/bin"
 }
 
 install_docker() {
@@ -796,7 +882,7 @@ install_docker() {
 	*)
 		case "$distro-$release" in
 		amzn-2 | amzn-1)
-			execute amazon-linux-extras install docker
+			execute_sudo amazon-linux-extras install docker
 			;;
 		amzn-* | alpine-*)
 			install_packages docker
@@ -832,8 +918,8 @@ install_tailscale() {
 	case "$os" in
 	linux)
 		sh="$(require sh)"
-		script=$(download_file "https://tailscale.com/install.sh")
-		execute "$sh" "$script"
+		tailscale_script=$(download_file "https://tailscale.com/install.sh")
+		execute "$sh" "$tailscale_script"
 		;;
 	darwin)
 		install_packages go
@@ -862,24 +948,39 @@ create_buildkite_user() {
 	esac
 
 	if [ -z "$(getent passwd "$user")" ]; then
-		execute_sudo useradd "$user" \
-			--system \
-			--no-create-home \
-			--home-dir "$home"
+		case "$distro" in
+		alpine)
+			execute_sudo addgroup \
+				--system "$group"
+			execute_sudo adduser "$user" \
+				--system \
+				--ingroup "$group" \
+				--shell "$(require sh)" \
+				--home "$home" \
+				--disabled-password
+			;;
+		*)
+			execute_sudo useradd "$user" \
+				--system \
+				--shell "$(require sh)" \
+				--no-create-home \
+				--home-dir "$home"
+			;;
+		esac
 	fi
 
 	if [ -n "$(getent group docker)" ]; then
 		execute_sudo usermod -aG docker "$user"
 	fi
 
-	paths="$home /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /var/run/buildkite-agent/buildkite-agent.sock"
-	for path in $paths; do
+	buildkite_paths="$home /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /var/run/buildkite-agent/buildkite-agent.sock"
+	for path in $buildkite_paths; do
 		execute_sudo mkdir -p "$path"
 		execute_sudo chown -R "$user:$group" "$path"
 	done
 
-	files="/var/run/buildkite-agent/buildkite-agent.pid"
-	for file in $files; do
+	buildkite_files="/var/run/buildkite-agent/buildkite-agent.pid"
+	for file in $buildkite_files; do
 		execute_sudo touch "$file"
 		execute_sudo chown "$user:$group" "$file"
 	done
@@ -890,19 +991,42 @@ install_buildkite() {
 		return
 	fi
 
-	bash="$(require bash)"
-	script="$(download_file "https://raw.githubusercontent.com/buildkite/agent/main/install.sh")"
-	tmp_dir="$(execute dirname "$script")"
-	HOME="$tmp_dir" execute "$bash" "$script"
+	buildkite_version="3.87.0"
+	case "$os-$arch" in
+	linux-aarch64)
+		buildkite_filename="buildkite-agent-linux-arm64-$buildkite_version.tar.gz"
+		;;
+	linux-x64)
+		buildkite_filename="buildkite-agent-linux-amd64-$buildkite_version.tar.gz"
+		;;
+	darwin-aarch64)
+		buildkite_filename="buildkite-agent-darwin-arm64-$buildkite_version.tar.gz"
+		;;
+	darwin-x64)
+		buildkite_filename="buildkite-agent-darwin-amd64-$buildkite_version.tar.gz"
+		;;
+	esac
+	buildkite_url="https://github.com/buildkite/agent/releases/download/v$buildkite_version/$buildkite_filename"
+	buildkite_filepath="$(download_file "$buildkite_url" "$buildkite_filename")"
+	buildkite_tmpdir="$(dirname "$buildkite_filepath")"
 
-	out_dir="$tmp_dir/.buildkite-agent"
-	execute_sudo mv -f "$out_dir/bin/buildkite-agent" "/usr/bin/buildkite-agent"
+	execute tar -xzf "$buildkite_filepath" -C "$buildkite_tmpdir"
+	move_to_bin "$buildkite_tmpdir/buildkite-agent"
+	execute rm -rf "$buildkite_tmpdir"
 }
 
-install_chrome_dependencies() {
+install_chromium() {
 	# https://github.com/puppeteer/puppeteer/blob/main/docs/troubleshooting.md#chrome-doesnt-launch-on-linux
 	# https://github.com/puppeteer/puppeteer/blob/main/docs/troubleshooting.md#running-puppeteer-in-the-cloud
 	case "$pm" in
+	apk)
+		install_packages \
+			chromium \
+      nss \
+      freetype \
+      harfbuzz \
+      ttf-freefont
+		;;
 	apt)
 		install_packages \
 			fonts-liberation \
@@ -979,22 +1103,17 @@ install_chrome_dependencies() {
 	esac
 }
 
-raise_file_descriptor_limit() {
-	append_to_file_sudo /etc/security/limits.conf '*  soft  nofile  262144'
-	append_to_file_sudo /etc/security/limits.conf '*  hard  nofile  262144'
-}
-
 main() {
 	check_features "$@"
 	check_operating_system
 	check_inside_docker
 	check_user
+	check_ulimit
 	check_package_manager
 	create_buildkite_user
 	install_common_software
 	install_build_essentials
-	install_chrome_dependencies
-	raise_file_descriptor_limit # XXX: temporary
+	install_chromium
 }
 
 main "$@"

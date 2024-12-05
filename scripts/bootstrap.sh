@@ -596,7 +596,7 @@ install_nodejs() {
 	# Some distros do not install the node headers by default.
 	# These are needed for certain FFI tests, such as: `cc.test.ts`
 	case "$distro" in
-	amzn)
+	alpine | amzn)
 		install_nodejs_headers
 		;;
 	esac

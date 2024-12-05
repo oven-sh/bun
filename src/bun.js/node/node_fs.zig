@@ -5458,7 +5458,9 @@ pub const NodeFS = struct {
     }
 
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime _: Flavor) Maybe(Return.Stat) {
-        return switch (Syscall.stat(args.path.sliceZ(&this.sync_error_buf))) {
+        const bufp = &this.sync_error_buf;
+        const path = if (Environment.isWindows) strings.toNTMaxPath(bufp, args.path.slice()) else args.path.osPath(bufp);
+        return switch (Syscall.stat(path)) {
             .result => |result| .{
                 .result = .{ .stats = Stats.init(result, args.big_int) },
             },

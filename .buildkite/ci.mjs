@@ -304,7 +304,7 @@ function getCppAgent(platform) {
 
   return getEc2Agent(platform, {
     instanceType: arch === "aarch64" ? "c8g.16xlarge" : "c7i.16xlarge",
-    cpuCount: 64,
+    cpuCount: 32,
     threadsPerCore: 1,
   });
 }
@@ -329,7 +329,7 @@ function getZigAgent(platform) {
   //   },
   //   {
   //     instanceType: arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge",
-  //     cpuCount: 8,
+  //     cpuCount: 4,
   //     threadsPerCore: 1,
   //   },
   // );

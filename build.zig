@@ -413,8 +413,16 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         }
     }
     addInternalPackages(b, obj, opts);
-    obj.root_module.addIncludePath(.{ .cwd_relative = "./packages" });
     obj.root_module.addImport("build_options", opts.buildOptionsModule(b));
+
+    const translate_plugin_api = b.addTranslateC(.{
+        .root_source_file = b.path("./packages/bun-native-bundler-plugin-api/bundler_plugin.h"),
+        .target = opts.target,
+        .optimize = opts.optimize,
+        .link_libc = true,
+    });
+    obj.root_module.addImport("bun-native-bundler-plugin-api", translate_plugin_api.createModule());
+
     return obj;
 }
 

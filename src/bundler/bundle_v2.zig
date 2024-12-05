@@ -3899,9 +3899,7 @@ pub const ParseTask = struct {
 
         result: ?*OnBeforeParseResult = null,
 
-        const headers = @cImport({
-            @cInclude("bun-native-bundler-plugin-api/bundler_plugin.h");
-        });
+        const headers = @import("bun-native-bundler-plugin-api");
 
         comptime {
             bun.assert(@sizeOf(OnBeforeParseArguments) == @sizeOf(headers.OnBeforeParseArguments));

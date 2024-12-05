@@ -99,7 +99,7 @@ describe("fetch doesn't leak", () => {
   }
 });
 
-describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams"])("Sending %s", type => {
+describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "stream", "iterator"])("Sending %s", type => {
   test(
     "does not leak",
     async () => {

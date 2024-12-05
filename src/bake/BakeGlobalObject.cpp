@@ -1,10 +1,12 @@
 #include "BakeGlobalObject.h"
+#include "BakeSourceProvider.h"
 #include "JSNextTickQueue.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/JSInternalPromise.h"
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/JSSourceCode.h"
 
 extern "C" BunString BakeProdResolve(JSC::JSGlobalObject*, BunString a, BunString b);
 
@@ -72,6 +74,58 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
     return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, origin);
 }
 
+static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+{
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSInternalPromise* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
+    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, JSC::jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32AsAnyInt() | JSC::JSPromise::isFirstResolvingFunctionCalledFlag | static_cast<unsigned>(JSC::JSPromise::Status::Rejected)));
+    return promise;
+}
+
+static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+{
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSInternalPromise* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
+    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, JSC::jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32AsAnyInt() | JSC::JSPromise::isFirstResolvingFunctionCalledFlag | static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
+    return promise;
+}
+
+extern "C" BunString BakeProdLoad(ProductionPerThread* perThreadData, BunString a);
+
+JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
+    JSC::JSModuleLoader* loader, JSC::JSValue key,
+    JSC::JSValue parameters, JSC::JSValue script)
+{
+    Bake::GlobalObject* global = jsCast<Bake::GlobalObject*>(globalObject);
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto moduleKey = key.toWTFString(globalObject);
+    if (UNLIKELY(scope.exception()))
+        return rejectedInternalPromise(globalObject, scope.exception()->value());
+
+    if (moduleKey.startsWith("bake:/"_s)) {
+        if (LIKELY(global->m_perThreadData)) {
+            BunString source = BakeProdLoad(global->m_perThreadData, Bun::toString(moduleKey));
+            if (source.tag != BunStringTag::Dead) {
+                JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(moduleKey));
+                JSC::SourceCode sourceCode = JSC::SourceCode(Bake::SourceProvider::create(
+                    source.toWTFString(),
+                    origin,
+                    WTFMove(moduleKey),
+                    WTF::TextPosition(),
+                    JSC::SourceProviderSourceType::Module));
+                return resolvedInternalPromise(globalObject, JSC::JSSourceCode::create(vm, WTFMove(sourceCode)));
+            }
+            return rejectedInternalPromise(globalObject, createTypeError(globalObject, makeString("Bundle does not have \""_s, moduleKey, "\". This is a bug in Bun's bundler."_s)));
+        }
+        return rejectedInternalPromise(globalObject, createTypeError(globalObject, "BakeGlobalObject does not have per-thread data configured"_s));
+    }
+
+    return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, key, parameters, script);
+}
+
 #define INHERIT_HOOK_METHOD(name) \
     Zig::GlobalObject::s_globalObjectMethodTable.name
 
@@ -83,7 +137,7 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     INHERIT_HOOK_METHOD(shouldInterruptScriptBeforeTimeout),
     bakeModuleLoaderImportModule,
     bakeModuleLoaderResolve,
-    INHERIT_HOOK_METHOD(moduleLoaderFetch),
+    bakeModuleLoaderFetch,
     INHERIT_HOOK_METHOD(moduleLoaderCreateImportMetaProperties),
     INHERIT_HOOK_METHOD(moduleLoaderEvaluate),
     INHERIT_HOOK_METHOD(promiseRejectionTracker),
@@ -153,6 +207,11 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     // });
 
     return global;
+}
+
+extern "C" void BakeGlobalObject__attachPerThreadData(GlobalObject* global, ProductionPerThread* perThreadData)
+{
+    global->m_perThreadData = perThreadData;
 }
 
 }; // namespace Bake

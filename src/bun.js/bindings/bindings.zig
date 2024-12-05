@@ -4197,7 +4197,7 @@ pub const JSValue = enum(i64) {
         return cppFn("putRecord", .{ value, global, key, values_array, values_len });
     }
 
-    fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
+    pub fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
         @import("./headers.zig").JSC__JSValue__put(value, global, key, result);
     }
 
@@ -6175,13 +6175,14 @@ pub const JSValue = enum(i64) {
         return Bun__ProxyObject__getInternalField(this, field);
     }
 
-    extern fn JSC__JSValue__getClassInfoName(value: JSValue, out: *bun.String) bool;
+    extern fn JSC__JSValue__getClassInfoName(value: JSValue, out: *[*:0]const u8, len: *usize) bool;
 
     /// For native C++ classes extending JSCell, this retrieves s_info's name
-    pub fn getClassInfoName(this: JSValue) ?bun.String {
+    /// This is a readonly ASCII string.
+    pub fn getClassInfoName(this: JSValue) ?[:0]const u8 {
         if (!this.isCell()) return null;
-        var out: bun.String = bun.String.empty;
-        if (!JSC__JSValue__getClassInfoName(this, &out)) return null;
+        var out: [:0]const u8 = "";
+        if (!JSC__JSValue__getClassInfoName(this, &out.ptr, &out.len)) return null;
         return out;
     }
 };

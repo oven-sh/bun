@@ -12016,6 +12016,9 @@ exports[`next build works: bun 1`] = `
         "tag": "root",
         "value": "",
       },
+      "scripts": {
+        "postinstall": "cd node_modules/puppeteer && bun install.mjs",
+      },
     },
     {
       "bin": {

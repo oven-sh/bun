@@ -3,7 +3,7 @@ import { spawn } from "../spawn";
 import { chmod, join, rename, rm, tmp, write } from "../fs";
 import { unzipSync } from "zlib";
 import type { Platform } from "../platform";
-import { os, arch, supportedPlatforms } from "../platform";
+import { os, arch, abi, supportedPlatforms } from "../platform";
 import { debug, error } from "../console";
 
 declare const version: string;
@@ -12,7 +12,7 @@ declare const owner: string;
 
 export async function importBun(): Promise<string> {
   if (!supportedPlatforms.length) {
-    throw new Error(`Unsupported platform: ${os} ${arch}`);
+    throw new Error(`Unsupported platform: ${os} ${arch} ${abi || ""}`);
   }
   for (const platform of supportedPlatforms) {
     try {
@@ -121,7 +121,8 @@ async function downloadBun(platform: Platform, dst: string): Promise<void> {
 }
 
 export function optimizeBun(path: string): void {
-  const installScript = os === "win32" ? 'powershell -c "irm bun.sh/install.ps1 | iex"' : "curl -fsSL https://bun.sh/install | bash";
+  const installScript =
+    os === "win32" ? 'powershell -c "irm bun.sh/install.ps1 | iex"' : "curl -fsSL https://bun.sh/install | bash";
   try {
     rename(path, join(__dirname, "bin", "bun.exe"));
     return;

@@ -2,6 +2,7 @@ import { BunFile, Loader, plugin } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import path, { dirname, join, resolve } from "path";
 import source from "./native_plugin.cc" with { type: "file" };
+import notAPlugin from "./not_native_plugin.cc" with { type: "file" };
 import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { itBundled } from "bundler/expectBundled";
@@ -15,6 +16,7 @@ describe("native-plugins", async () => {
     const files = {
       "bun-native-bundler-plugin-api/bundler_plugin.h": await Bun.file(bundlerPluginHeader).text(),
       "plugin.cc": await Bun.file(source).text(),
+      "not_a_plugin.cc": await Bun.file(notAPlugin).text(),
       "package.json": JSON.stringify({
         "name": "fake-plugin",
         "module": "index.ts",
@@ -47,6 +49,11 @@ values;`,
           {
             "target_name": "xXx123_foo_counter_321xXx",
             "sources": [ "plugin.cc" ],
+            "include_dirs": [ "." ]
+          },
+          {
+            "target_name": "not_a_plugin",
+            "sources": [ "not_a_plugin.cc" ],
             "include_dirs": [ "." ]
           }
         ]
@@ -489,6 +496,32 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
 
     const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
     expect(compilationCtxFreedCount).toBe(0);
+  });
+
+  it("should fail gracefully when passing something that is NOT a bunler plugin", async () => {
+    const not_plugins = [require(path.join(tempdir, "build/Release/not_a_plugin.node")), 420, "hi", {}];
+
+    for (const napiModule of not_plugins) {
+      try {
+        await Bun.build({
+          outdir,
+          entrypoints: [path.join(tempdir, "index.ts")],
+          plugins: [
+            {
+              name: "not_a_plugin",
+              setup(build) {
+                build.onBeforeParse({ filter: /\.ts/ }, { napiModule, symbol: "plugin_impl" });
+              },
+            },
+          ],
+        });
+        expect.unreachable();
+      } catch (e) {
+        expect(e.toString()).toContain(
+          "onBeforeParse `napiModule` must be a Napi module which exports the `BUN_PLUGIN_SYMBOL`",
+        );
+      }
+    }
   });
 
   it("should use result of the first plugin that runs and doesn't execute the others", async () => {

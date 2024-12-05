@@ -22,8 +22,7 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
         const buffer: JSC.Buffer = JSC.Buffer.fromJS(globalThis, data) orelse {
             const ty_str = data.jsTypeString(globalThis).toSlice(globalThis, bun.default_allocator);
             defer ty_str.deinit();
-            globalThis.ERR_INVALID_ARG_TYPE("The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {s}", .{ty_str.slice()}).throw();
-            return .zero;
+            return globalThis.ERR_INVALID_ARG_TYPE("The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {s}", .{ty_str.slice()}).throw();
         };
         break :blk ZigString.Slice.fromUTF8NeverFree(buffer.slice());
     };
@@ -42,12 +41,10 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
         const max = std.math.maxInt(u32);
 
         if (@floor(valuef) != valuef) {
-            globalThis.ERR_OUT_OF_RANGE("The value of \"{s}\" is out of range. It must be an integer. Received {}", .{ "value", valuef }).throw();
-            return .zero;
+            return globalThis.ERR_OUT_OF_RANGE("The value of \"{s}\" is out of range. It must be an integer. Received {}", .{ "value", valuef }).throw();
         }
         if (valuef < min or valuef > max) {
-            globalThis.ERR_OUT_OF_RANGE("The value of \"{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ "value", min, max, valuef }).throw();
-            return .zero;
+            return globalThis.ERR_OUT_OF_RANGE("The value of \"{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ "value", min, max, valuef }).throw();
         }
         break :blk @intFromFloat(valuef);
     };
@@ -63,8 +60,7 @@ pub fn CompressionStream(comptime T: type) type {
             const arguments = callframe.argumentsUndef(7).slice();
 
             if (arguments.len != 7) {
-                globalThis.ERR_MISSING_ARGS("write(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
-                return .zero;
+                return globalThis.ERR_MISSING_ARGS("write(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
             }
 
             var in_off: u32 = 0;
@@ -155,8 +151,7 @@ pub fn CompressionStream(comptime T: type) type {
             const arguments = callframe.argumentsUndef(7).slice();
 
             if (arguments.len != 7) {
-                globalThis.ERR_MISSING_ARGS("writeSync(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
-                return .zero;
+                return globalThis.ERR_MISSING_ARGS("writeSync(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
             }
 
             var in_off: u32 = 0;
@@ -334,8 +329,7 @@ pub const SNativeZlib = struct {
         }
         const mode_int: i64 = @intFromFloat(mode_double);
         if (mode_int < 1 or mode_int > 7) {
-            _ = globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 1, .max = 7 });
-            return error.JSError;
+            return globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 1, .max = 7 });
         }
 
         const ptr = SNativeZlib.new(.{
@@ -357,8 +351,7 @@ pub const SNativeZlib = struct {
         const arguments = callframe.argumentsUndef(7).slice();
 
         if (arguments.len != 7) {
-            globalThis.ERR_MISSING_ARGS("init(windowBits, level, memLevel, strategy, writeResult, writeCallback, dictionary)", .{}).throw();
-            return .zero;
+            return globalThis.ERR_MISSING_ARGS("init(windowBits, level, memLevel, strategy, writeResult, writeCallback, dictionary)", .{}).throw();
         }
 
         const windowBits = try validators.validateInt32(globalThis, arguments[0], "windowBits", .{}, null, null);
@@ -382,8 +375,7 @@ pub const SNativeZlib = struct {
         const arguments = callframe.argumentsUndef(2).slice();
 
         if (arguments.len != 2) {
-            globalThis.ERR_MISSING_ARGS("params(level, strategy)", .{}).throw();
-            return .zero;
+            return globalThis.ERR_MISSING_ARGS("params(level, strategy)", .{}).throw();
         }
 
         const level = try validators.validateInt32(globalThis, arguments[0], "level", .{}, null, null);
@@ -692,8 +684,7 @@ pub const SNativeBrotli = struct {
         }
         const mode_int: i64 = @intFromFloat(mode_double);
         if (mode_int < 8 or mode_int > 9) {
-            _ = globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 8, .max = 9 });
-            return error.JSError;
+            return globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 8, .max = 9 });
         }
 
         const ptr = @This().new(.{
@@ -718,8 +709,7 @@ pub const SNativeBrotli = struct {
     pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(3).slice();
         if (arguments.len != 3) {
-            globalThis.ERR_MISSING_ARGS("init(params, writeResult, writeCallback)", .{}).throw();
-            return .zero;
+            return globalThis.ERR_MISSING_ARGS("init(params, writeResult, writeCallback)", .{}).throw();
         }
 
         // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.

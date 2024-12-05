@@ -736,7 +736,7 @@ pub const ZigString = extern struct {
     pub fn toExternalU16(ptr: [*]const u16, len: usize, global: *JSGlobalObject) JSValue {
         if (len > String.max_length()) {
             bun.default_allocator.free(ptr[0..len]);
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw();
+            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
         return shim.cppFn("toExternalU16", .{ ptr, len, global });
@@ -922,7 +922,7 @@ pub const ZigString = extern struct {
         this.assertGlobal();
         if (this.len > String.max_length()) {
             bun.default_allocator.free(@constCast(this.byteSlice()));
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw();
+            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
         return shim.cppFn("toExternalValue", .{ this, global });
@@ -944,7 +944,7 @@ pub const ZigString = extern struct {
     ) JSValue {
         if (this.len > String.max_length()) {
             callback(ctx, @constCast(@ptrCast(this.byteSlice().ptr)), this.len);
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw();
+            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
 
@@ -2966,7 +2966,7 @@ pub const JSGlobalObject = opaque {
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
         const err = this.createErrorInstance("{s}", .{msg});
         err.put(this, ZigString.static("name"), bun.String.static("TODOError").toJS(this));
-        return this.throwValue2(err);
+        return this.throwValue(err);
     }
 
     pub const throwTerminationException = JSGlobalObject__throwTerminationException;
@@ -2982,18 +2982,17 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwInvalidArguments(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
         const err = JSC.toInvalidArguments(fmt, args, this);
-        return this.vm().throwError2(this, err);
+        return this.throwValue(err);
     }
 
-    pub inline fn throwMissingArgumentsValue(this: *JSGlobalObject, comptime arg_names: []const []const u8) JSValue {
-        switch (arg_names.len) {
+    pub inline fn throwMissingArgumentsValue(this: *JSGlobalObject, comptime arg_names: []const []const u8) bun.JSError {
+        return switch (arg_names.len) {
             0 => @compileError("requires at least one argument"),
             1 => this.ERR_MISSING_ARGS("The \"{s}\" argument must be specified", .{arg_names[0]}).throw(),
             2 => this.ERR_MISSING_ARGS("The \"{s}\" and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1] }).throw(),
             3 => this.ERR_MISSING_ARGS("The \"{s}\", \"{s}\", and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1], arg_names[2] }).throw(),
             else => @compileError("implement this message"),
-        }
-        return .zero;
+        };
     }
 
     pub fn createInvalidArgumentType(
@@ -3014,8 +3013,8 @@ pub const JSGlobalObject = opaque {
         comptime name_: []const u8,
         comptime field: []const u8,
         comptime typename: []const u8,
-    ) void {
-        this.throwValue(this.createInvalidArgumentType(name_, field, typename));
+    ) bun.JSError {
+        return this.throwValue(this.createInvalidArgumentType(name_, field, typename));
     }
 
     pub fn throwInvalidArgumentTypeValue(
@@ -3025,8 +3024,7 @@ pub const JSGlobalObject = opaque {
         value: JSValue,
     ) bun.JSError {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = this };
-        this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, value.toFmt(&formatter) }).throw();
-        return error.JSError;
+        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, value.toFmt(&formatter) }).throw();
     }
 
     pub fn throwInvalidArgumentRangeValue(
@@ -3035,8 +3033,7 @@ pub const JSGlobalObject = opaque {
         typename: []const u8,
         value: i64,
     ) bun.JSError {
-        this.ERR_OUT_OF_RANGE("The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
-        return error.JSError;
+        return this.ERR_OUT_OF_RANGE("The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
     }
 
     pub fn throwInvalidPropertyTypeValue(
@@ -3047,8 +3044,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
         defer ty_str.deinit();
-        this.ERR_INVALID_ARG_TYPE("The \"{s}\" property must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }).throw();
-        return error.JSError;
+        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" property must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }).throw();
     }
 
     pub fn createNotEnoughArguments(
@@ -3066,7 +3062,7 @@ pub const JSGlobalObject = opaque {
         comptime expected: usize,
         got: usize,
     ) bun.JSError {
-        return this.throwValue2(this.createNotEnoughArguments(name_, expected, got));
+        return this.throwValue(this.createNotEnoughArguments(name_, expected, got));
     }
 
     extern fn JSC__JSGlobalObject__reload(JSC__JSGlobalObject__ptr: *JSGlobalObject) void;
@@ -3194,16 +3190,10 @@ pub const JSGlobalObject = opaque {
         return err;
     }
 
-    pub fn throw(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) void {
+    pub fn throw(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSError {
         const instance = this.createErrorInstance(fmt, args);
         bun.assert(instance != .zero);
-        this.vm().throwError(this, instance);
-    }
-
-    pub fn throw2(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSError {
-        const instance = this.createErrorInstance(fmt, args);
-        bun.assert(instance != .zero);
-        return this.vm().throwError2(this, instance);
+        return this.throwValue(instance);
     }
 
     pub fn throwPretty(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
@@ -3211,8 +3201,9 @@ pub const JSGlobalObject = opaque {
             inline else => |enabled| this.createErrorInstance(Output.prettyFmt(fmt, enabled), args),
         };
         bun.assert(instance != .zero);
-        return this.vm().throwError2(this, instance);
+        return this.throwValue(instance);
     }
+
     extern fn JSC__JSGlobalObject__queueMicrotaskCallback(*JSGlobalObject, *anyopaque, Function: *const (fn (*anyopaque) callconv(.C) void)) void;
     pub fn queueMicrotaskCallback(
         this: *JSGlobalObject,
@@ -3231,11 +3222,7 @@ pub const JSGlobalObject = opaque {
         JSC__JSGlobalObject__queueMicrotaskCallback(this, ctx_val, &Wrapper.call);
     }
 
-    pub fn queueMicrotask(
-        this: *JSGlobalObject,
-        function: JSValue,
-        args: []const JSC.JSValue,
-    ) void {
+    pub fn queueMicrotask(this: *JSGlobalObject, function: JSValue, args: []const JSC.JSValue) void {
         this.queueMicrotaskJob(
             function,
             if (args.len > 0) args[0] else .zero,
@@ -3244,27 +3231,13 @@ pub const JSGlobalObject = opaque {
     }
 
     extern fn JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject__ptr: *JSGlobalObject, JSValue, JSValue, JSValue) void;
-    pub fn queueMicrotaskJob(
-        this: *JSGlobalObject,
-        function: JSValue,
-        first: JSValue,
-        second: JSValue,
-    ) void {
+    pub fn queueMicrotaskJob(this: *JSGlobalObject, function: JSValue, first: JSValue, second: JSValue) void {
         JSC__JSGlobalObject__queueMicrotaskJob(this, function, first, second);
     }
 
-    pub fn throwValue(
-        this: *JSGlobalObject,
-        value: JSC.JSValue,
-    ) void {
+    pub fn throwValue(this: *JSGlobalObject, value: JSC.JSValue) JSError {
         this.vm().throwError(this, value);
-    }
-
-    pub fn throwValue2(
-        this: *JSGlobalObject,
-        value: JSC.JSValue,
-    ) JSError {
-        return this.vm().throwError2(this, value);
+        return error.JSError;
     }
 
     pub fn throwError(this: *JSGlobalObject, err: anyerror, comptime fmt: [:0]const u8) bun.JSError {
@@ -3284,7 +3257,8 @@ pub const JSGlobalObject = opaque {
         defer allocator_.free(buffer);
         const str = ZigString.initUTF8(buffer);
         const err_value = str.toErrorInstance(this);
-        return this.vm().throwError2(this, err_value);
+        this.vm().throwError(this, err_value);
+        return error.JSError;
     }
 
     pub fn ref(this: *JSGlobalObject) C_API.JSContextRef {
@@ -3440,10 +3414,11 @@ pub const JSGlobalObject = opaque {
         }
     }
 
-    pub fn throwRangeError(this: *JSGlobalObject, value: anytype, options: bun.fmt.OutOfRangeOptions) void {
+    pub fn throwRangeError(this: *JSGlobalObject, value: anytype, options: bun.fmt.OutOfRangeOptions) bun.JSError {
+        // TODO:
         // This works around a Zig compiler bug
         // when using this.ERR_OUT_OF_RANGE.
-        JSC.Error.ERR_OUT_OF_RANGE.throw(this, "{}", .{bun.fmt.outOfRange(value, options)});
+        return JSC.Error.ERR_OUT_OF_RANGE.throw(this, "{}", .{bun.fmt.outOfRange(value, options)});
     }
 
     pub const IntegerRange = struct {
@@ -3481,8 +3456,7 @@ pub const JSGlobalObject = opaque {
                 return 0;
             }
             if (int < min_t or int > max_t) {
-                this.throwRangeError(int, .{ .field_name = field_name, .min = min, .max = max });
-                return error.JSError;
+                return this.throwRangeError(int, .{ .field_name = field_name, .min = min, .max = max });
             }
             return @intCast(int);
         }
@@ -3503,8 +3477,7 @@ pub const JSGlobalObject = opaque {
             return this.throwInvalidPropertyTypeValue(field_name, "integer", value);
         }
         if (f64_val < min_t or f64_val > max_t) {
-            this.throwRangeError(f64_val, .{ .field_name = comptime field_name, .min = min, .max = max });
-            return error.JSError;
+            return this.throwRangeError(f64_val, .{ .field_name = comptime field_name, .min = min, .max = max });
         }
 
         return @intFromFloat(f64_val);
@@ -3536,7 +3509,7 @@ pub const JSGlobalObject = opaque {
         // when querying from JavaScript, 'func.len'
         comptime argument_count: u32,
     ) JSValue {
-        return NewRuntimeFunction(global, ZigString.static(display_name), argument_count, toJSHostFunction(function), false, false);
+        return NewRuntimeFunction(global, ZigString.static(display_name), argument_count, toJSHostFunction(function), false, false, null);
     }
 
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
@@ -4224,7 +4197,7 @@ pub const JSValue = enum(i64) {
         return cppFn("putRecord", .{ value, global, key, values_array, values_len });
     }
 
-    fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
+    pub fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
         @import("./headers.zig").JSC__JSValue__put(value, global, key, result);
     }
 
@@ -6202,13 +6175,14 @@ pub const JSValue = enum(i64) {
         return Bun__ProxyObject__getInternalField(this, field);
     }
 
-    extern fn JSC__JSValue__getClassInfoName(value: JSValue, out: *bun.String) bool;
+    extern fn JSC__JSValue__getClassInfoName(value: JSValue, out: *[*:0]const u8, len: *usize) bool;
 
     /// For native C++ classes extending JSCell, this retrieves s_info's name
-    pub fn getClassInfoName(this: JSValue) ?bun.String {
+    /// This is a readonly ASCII string.
+    pub fn getClassInfoName(this: JSValue) ?[:0]const u8 {
         if (!this.isCell()) return null;
-        var out: bun.String = bun.String.empty;
-        if (!JSC__JSValue__getClassInfoName(this, &out)) return null;
+        var out: [:0]const u8 = "";
+        if (!JSC__JSValue__getClassInfoName(this, &out.ptr, &out.len)) return null;
         return out;
     }
 };
@@ -6416,18 +6390,11 @@ pub const VM = extern struct {
         });
     }
 
-    pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) void {
-        return cppFn("throwError", .{
-            vm,
-            global_object,
-            value,
-        });
-    }
-
-    // TODO: rewrite all `throwError` to use `JSError`
-    pub fn throwError2(vm: *VM, global_object: *JSGlobalObject, value: JSValue) JSError {
-        vm.throwError(global_object, value);
-        return error.JSError;
+    // manual extern to workaround shimmer limitation
+    // shimmer doesnt let you change the return type or make it non-pub
+    extern fn JSC__VM__throwError(*VM, *JSGlobalObject, JSValue) void;
+    fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) void {
+        JSC__VM__throwError(vm, global_object, value);
     }
 
     pub fn releaseWeakRefs(vm: *VM) void {
@@ -6808,6 +6775,7 @@ const private = struct {
         functionPointer: JSHostFunctionPtr,
         strong: bool,
         add_ptr_field: bool,
+        inputFunctionPtr: ?*anyopaque,
     ) JSValue;
 
     pub extern fn Bun__untrackFFIFunction(
@@ -6827,9 +6795,9 @@ pub fn NewFunction(
     strong: bool,
 ) JSValue {
     if (@TypeOf(functionPointer) == JSC.JSHostFunctionType) {
-        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, strong, false);
+        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, strong, false, null);
     }
-    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false, null);
 }
 
 pub fn createCallback(
@@ -6841,7 +6809,7 @@ pub fn createCallback(
     if (@TypeOf(functionPointer) == JSC.JSHostFunctionType) {
         return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, false, false);
     }
-    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false, null);
 }
 
 pub fn NewRuntimeFunction(
@@ -6851,9 +6819,10 @@ pub fn NewRuntimeFunction(
     functionPointer: JSHostFunctionPtr,
     strong: bool,
     add_ptr_property: bool,
+    inputFunctionPtr: ?*anyopaque,
 ) JSValue {
     JSC.markBinding(@src());
-    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong, add_ptr_property);
+    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong, add_ptr_property, inputFunctionPtr);
 }
 
 pub fn getFunctionData(function: JSValue) ?*anyopaque {

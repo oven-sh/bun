@@ -454,3 +454,13 @@ it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
 
   expect(signal).toBe("SIGTRAP");
 });
+
+it("spawnSync(does-not-exist)", () => {
+  const x = spawnSync("does-not-exist");
+  expect(x.error?.code).toEqual("ENOENT");
+  expect(x.error.path).toEqual("does-not-exist");
+  expect(x.signal).toEqual(null);
+  expect(x.output).toEqual([null, null, null]);
+  expect(x.stdout).toEqual(null);
+  expect(x.stderr).toEqual(null);
+});

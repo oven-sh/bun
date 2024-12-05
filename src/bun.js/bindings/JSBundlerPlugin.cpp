@@ -303,7 +303,8 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
                 }
 
                 JSBundlerPluginNativeOnBeforeParseCallback callback = callbacks[i].callback;
-                CrashHandler__setInsideNativePlugin(callbacks[i].name);
+                const char* name = callbacks[i].name ? callbacks[i].name : "<unknown>";
+                CrashHandler__setInsideNativePlugin(name);
                 callback(onBeforeParseArgs, onBeforeParseResult);
                 CrashHandler__setInsideNativePlugin(nullptr);
 
@@ -371,11 +372,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     const char** native_plugin_name = (const char**)dlsym(dlopen_handle, "BUN_PLUGIN_NAME");
 #endif
 
-    if (!native_plugin_name) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected NAPI module to export a BUN_PLUGIN_NAME symbol which contains the name of the plugin."_s);
-        return {};
-    }
-
     if (!on_before_parse_symbol_ptr) {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected on_before_parse_symbol (3rd argument) to be a valid symbol"_s);
         return {};
@@ -393,7 +389,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
         }
     }
 
-    thisObject->plugin.onBeforeParse.append(vm, newRegexp, namespaceStr, callback, *native_plugin_name, externalPtr);
+    thisObject->plugin.onBeforeParse.append(vm, newRegexp, namespaceStr, callback, native_plugin_name ? *native_plugin_name : nullptr, externalPtr);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

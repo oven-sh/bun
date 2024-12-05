@@ -36,6 +36,7 @@ pub const BuildCommand = struct {
     const compile_define_keys = &.{
         "process.platform",
         "process.arch",
+        "process.versions.bun",
     };
 
     pub fn exec(ctx: Command.Context) !void {
@@ -45,6 +46,10 @@ pub const BuildCommand = struct {
         if (ctx.bundler_options.compile or ctx.bundler_options.bytecode) {
             // set this early so that externals are set up correctly and define is right
             ctx.args.target = .bun;
+        }
+
+        if (ctx.bundler_options.bake) {
+            return bun.bake.production.buildCommand(ctx);
         }
 
         const compile_target = &ctx.bundler_options.compile_target;
@@ -82,6 +87,9 @@ pub const BuildCommand = struct {
         }
 
         var outfile = ctx.bundler_options.outfile;
+        const output_to_stdout = !ctx.bundler_options.compile and outfile.len == 0 and ctx.bundler_options.outdir.len == 0;
+
+        this_bundler.options.supports_multiple_outputs = !(output_to_stdout or outfile.len > 0);
 
         this_bundler.options.public_path = ctx.bundler_options.public_path;
         this_bundler.options.entry_naming = ctx.bundler_options.entry_naming;
@@ -102,6 +110,7 @@ pub const BuildCommand = struct {
         this_bundler.options.drop = ctx.args.drop;
 
         this_bundler.options.experimental_css = ctx.bundler_options.experimental_css;
+        this_bundler.options.css_chunking = ctx.bundler_options.css_chunking;
 
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
         this_bundler.options.output_format = ctx.bundler_options.output_format;
@@ -276,7 +285,7 @@ pub const BuildCommand = struct {
                 );
 
                 if (log.hasErrors()) {
-                    try log.printForLogLevel(Output.errorWriter());
+                    try log.print(Output.errorWriter());
 
                     if (result.errors.len > 0 or result.output_files.len == 0) {
                         Output.flush();
@@ -290,17 +299,15 @@ pub const BuildCommand = struct {
 
             break :brk (BundleV2.generateFromCLI(
                 &this_bundler,
-                if (this_bundler.options.server_components) @panic("TODO") else null,
                 allocator,
                 bun.JSC.AnyEventLoop.init(ctx.allocator),
-                std.crypto.random.int(u64),
                 ctx.debug.hot_reload == .watch,
                 &reachable_file_count,
                 &minify_duration,
                 &input_code_length,
             ) catch |err| {
                 if (log.msgs.items.len > 0) {
-                    try log.printForLogLevel(Output.errorWriter());
+                    try log.print(Output.errorWriter());
                 } else {
                     try Output.errorWriter().print("error: {s}", .{@errorName(err)});
                 }
@@ -434,79 +441,11 @@ pub const BuildCommand = struct {
                     // So don't do that unless we actually need to.
                     // const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < output_files.len;
 
-                    var filepath_buf: bun.PathBuffer = undefined;
-                    filepath_buf[0] = '.';
-                    filepath_buf[1] = '/';
-
                     for (output_files) |f| {
-                        var rel_path: []const u8 = undefined;
-                        switch (f.value) {
-                            // Nothing to do in this case
-                            .saved => {
-                                rel_path = f.dest_path;
-                                if (f.dest_path.len > from_path.len) {
-                                    rel_path = resolve_path.relative(from_path, f.dest_path);
-                                }
-                            },
-
-                            // easy mode: write the buffer
-                            .buffer => |value| {
-                                rel_path = f.dest_path;
-                                if (f.dest_path.len > from_path.len) {
-                                    rel_path = resolve_path.relative(from_path, f.dest_path);
-                                    if (std.fs.path.dirname(rel_path)) |parent| {
-                                        if (parent.len > root_path.len) {
-                                            try root_dir.makePath(parent);
-                                        }
-                                    }
-                                }
-                                const JSC = bun.JSC;
-                                var path_buf: bun.PathBuffer = undefined;
-                                switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
-                                    &path_buf,
-                                    JSC.Node.Arguments.WriteFile{
-                                        .data = JSC.Node.StringOrBuffer{
-                                            .buffer = JSC.Buffer{
-                                                .buffer = .{
-                                                    .ptr = @constCast(value.bytes.ptr),
-                                                    // TODO: handle > 4 GB files
-                                                    .len = @as(u32, @truncate(value.bytes.len)),
-                                                    .byte_len = @as(u32, @truncate(value.bytes.len)),
-                                                },
-                                            },
-                                        },
-                                        .encoding = .buffer,
-                                        .mode = if (f.is_executable) 0o755 else 0o644,
-                                        .dirfd = bun.toFD(root_dir.fd),
-                                        .file = .{
-                                            .path = JSC.Node.PathLike{
-                                                .string = JSC.PathString.init(rel_path),
-                                            },
-                                        },
-                                    },
-                                )) {
-                                    .err => |err| {
-                                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write file <b>{}<r>\n{}", .{ bun.fmt.quote(rel_path), err });
-                                    },
-                                    .result => {},
-                                }
-                            },
-                            .move => |value| {
-                                const primary = f.dest_path[from_path.len..];
-                                bun.copy(u8, filepath_buf[2..], primary);
-                                rel_path = filepath_buf[0 .. primary.len + 2];
-                                rel_path = value.pathname;
-
-                                try f.moveTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
-                            },
-                            .copy => |value| {
-                                rel_path = value.pathname;
-
-                                try f.copyTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
-                            },
-                            .noop => {},
-                            .pending => unreachable,
-                        }
+                        const rel_path = f.writeToDisk(root_dir, from_path) catch |err| {
+                            Output.err(err, "failed to write file '{}'", .{bun.fmt.quote(f.dest_path)});
+                            continue;
+                        };
 
                         // Print summary
                         _ = try writer.write("\n");
@@ -536,7 +475,7 @@ pub const BuildCommand = struct {
                 }
             }
 
-            try log.printForLogLevel(Output.errorWriter());
+            try log.print(Output.errorWriter());
             exitOrWatch(0, ctx.debug.hot_reload == .watch);
         }
     }

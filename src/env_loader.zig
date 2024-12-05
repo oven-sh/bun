@@ -37,7 +37,7 @@ pub const Loader = struct {
     @".env.test.local": ?logger.Source = null,
     @".env": ?logger.Source = null,
 
-    // only populated with files specified explicitely (e.g. --env-file arg)
+    // only populated with files specified explicitly (e.g. --env-file arg)
     custom_files_loaded: bun.StringArrayHashMap(logger.Source),
 
     quiet: bool = false,
@@ -291,7 +291,7 @@ pub const Loader = struct {
     /// **lower priority** so that users may override defaults. Unlike regular
     /// defines, environment variables are loaded as JavaScript string literals.
     ///
-    /// Empty enivronment variables become empty strings.
+    /// Empty environment variables become empty strings.
     pub fn copyForDefine(
         this: *Loader,
         comptime JSONStore: type,
@@ -1189,6 +1189,20 @@ pub const Map = struct {
             bun.assert(bun.strings.indexOfChar(key, '\x00') == null);
         }
         try this.map.put(key, .{
+            .value = value,
+            .conditional = false,
+        });
+    }
+
+    pub fn ensureUnusedCapacity(this: *Map, additional_count: usize) !void {
+        return this.map.ensureUnusedCapacity(additional_count);
+    }
+
+    pub fn putAssumeCapacity(this: *Map, key: string, value: string) void {
+        if (Environment.isWindows and Environment.allow_assert) {
+            bun.assert(bun.strings.indexOfChar(key, '\x00') == null);
+        }
+        this.map.putAssumeCapacity(key, .{
             .value = value,
             .conditional = false,
         });

@@ -8,6 +8,7 @@
 #include "JavaScriptCore/SourceCode.h"
 #include "js_native_api_types.h"
 #include "napi_handle_scope.h"
+#include "napi_type_tag.h"
 
 #include "helpers.h"
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -50,6 +51,7 @@
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/BigIntObject.h>
+#include <JavaScriptCore/JSWeakMapInlines.h>
 #include "ScriptExecutionContext.h"
 #include "Strong.h"
 
@@ -64,6 +66,7 @@
 #include "CommonJSModuleRecord.h"
 #include "wtf/text/ASCIIFastPath.h"
 #include "JavaScriptCore/WeakInlines.h"
+#include <JavaScriptCore/BuiltinNames.h>
 
 // #include <iostream>
 using namespace JSC;
@@ -596,15 +599,16 @@ extern "C" napi_status napi_set_property(napi_env env, napi_value target,
 
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
-    auto* object = targetValue.getObject();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto* object = targetValue.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     auto keyProp = toJS(key);
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     PutPropertySlot slot(object, false);
 
     Identifier identifier = keyProp.toPropertyKey(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     JSValue jsValue = toJS(value);
 
@@ -635,15 +639,13 @@ extern "C" napi_status napi_has_property(napi_env env, napi_value object,
 
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
-    auto* target = toJS(object).getObject();
-    if (!target) {
-        return napi_object_expected;
-    }
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto* target = toJS(object).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     auto keyProp = toJS(key);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     *result = target->hasProperty(globalObject, keyProp.toPropertyKey(globalObject));
-    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     scope.clearException();
     return napi_ok;
@@ -691,16 +693,14 @@ extern "C" napi_status napi_get_property(napi_env env, napi_value object,
 
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
-    auto* target = toJS(object).getObject();
-    if (!target) {
-        return napi_object_expected;
-    }
+    auto* target = toJS(object).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
     JSC::EnsureStillAliveScope ensureAlive(target);
 
     auto keyProp = toJS(key);
     JSC::EnsureStillAliveScope ensureAlive2(keyProp);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     *result = toNapi(target->get(globalObject, keyProp.toPropertyKey(globalObject)), globalObject);
     RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
@@ -715,16 +715,14 @@ extern "C" napi_status napi_delete_property(napi_env env, napi_value object,
 
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
-    auto* target = toJS(object).getObject();
-    if (!target) {
-        return napi_object_expected;
-    }
+    auto* target = toJS(object).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     auto keyProp = toJS(key);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto deleteResult = target->deleteProperty(globalObject, keyProp.toPropertyKey(globalObject));
-    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     if (LIKELY(result)) {
         *result = deleteResult;
@@ -744,16 +742,14 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
 
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
-    auto* target = toJS(object).getObject();
-    if (!target) {
-        return napi_object_expected;
-    }
+    auto* target = toJS(object).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     auto keyProp = toJS(key);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     *result = target->hasOwnProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject)));
-    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     scope.clearException();
     return napi_ok;
@@ -766,11 +762,10 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     NAPI_PREMABLE
 
     auto globalObject = toJS(env);
-    auto target = toJS(object).getObject();
     auto& vm = globalObject->vm();
-    if (UNLIKELY(!target)) {
-        return napi_object_expected;
-    }
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto target = toJS(object).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     if (UNLIKELY(utf8name == nullptr || !*utf8name || !value)) {
         return napi_invalid_arg;
@@ -783,11 +778,10 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     auto nameStr = WTF::String::fromUTF8({ utf8name, strlen(utf8name) });
     auto identifier = JSC::Identifier::fromString(vm, WTFMove(nameStr));
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     PutPropertySlot slot(target, true);
 
     target->put(target, globalObject, identifier, jsValue, slot);
-    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
     scope.clearException();
     return napi_ok;
 }
@@ -849,18 +843,16 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
 
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
-    JSObject* target = toJS(object).getObject();
-    if (UNLIKELY(!target)) {
-        return napi_object_expected;
-    }
+    JSObject* target = toJS(object).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     PROPERTY_NAME_FROM_UTF8(name);
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     PropertySlot slot(target, PropertySlot::InternalMethodType::HasProperty);
     *result = target->getPropertySlot(globalObject, name, slot);
-    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     scope.clearException();
     return napi_ok;
@@ -878,14 +870,12 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
 
-    JSObject* target = toJS(object).getObject();
-    if (UNLIKELY(!target)) {
-        return napi_object_expected;
-    }
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    JSObject* target = toJS(object).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     PROPERTY_NAME_FROM_UTF8(name);
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     *result = toNapi(target->get(globalObject, name), globalObject);
     RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
@@ -966,13 +956,14 @@ node_api_create_external_string_utf16(napi_env env,
 
     return napi_ok;
 }
-
+extern "C" size_t Bun__napi_module_register_count;
 extern "C" void napi_module_register(napi_module* mod)
 {
     auto* globalObject = defaultGlobalObject();
     JSC::VM& vm = globalObject->vm();
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
     globalObject->napiModuleRegisterCallCount++;
+    Bun__napi_module_register_count++;
     JSValue pendingNapiModule = globalObject->m_pendingNapiModuleAndExports[0].get();
     JSObject* object = (pendingNapiModule && pendingNapiModule.isObject()) ? pendingNapiModule.getObject()
                                                                            : nullptr;
@@ -1013,6 +1004,16 @@ extern "C" void napi_module_register(napi_module* mod)
         globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
         return;
     }
+
+    auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+
+    // TODO: think about the finalizer here
+    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr);
+
+    bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    ASSERT(success);
+
+    globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288
@@ -2551,7 +2552,8 @@ extern "C" napi_status napi_get_value_external(napi_env env, napi_value value,
         return napi_invalid_arg;
     }
 
-    auto* external = jsDynamicCast<Bun::NapiExternal*>(toJS(value));
+    JSValue jsval = toJS(value);
+    auto* external = jsDynamicCast<Bun::NapiExternal*>(jsval);
     if (UNLIKELY(!external)) {
         return napi_invalid_arg;
     }
@@ -2786,4 +2788,51 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
     RELEASE_AND_RETURN(scope, napi_ok);
+}
+
+extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, const napi_type_tag* type_tag)
+{
+    NAPI_PREMABLE
+    if (!env || !value || !type_tag) {
+        return napi_invalid_arg;
+    }
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSObject* js_object = toJS(value).getObject();
+    if (!js_object) {
+        return napi_object_expected;
+    }
+
+    auto* existing_tag = jsDynamicCast<Bun::NapiTypeTag*>(globalObject->napiTypeTags()->get(js_object));
+    // cannot tag an object that is already tagged
+    if (existing_tag) {
+        return napi_invalid_arg;
+    }
+
+    auto& vm = globalObject->vm();
+    auto* new_tag = Bun::NapiTypeTag::create(vm, globalObject->NapiTypeTagStructure(), *type_tag);
+    globalObject->napiTypeTags()->set(vm, js_object, new_tag);
+    return napi_ok;
+}
+
+extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value, const napi_type_tag* type_tag, bool* result)
+{
+    NAPI_PREMABLE
+    if (!env || !value || !type_tag) {
+        return napi_invalid_arg;
+    }
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSObject* js_object = toJS(value).getObject();
+    if (!js_object) {
+        return napi_object_expected;
+    }
+
+    bool match = false;
+    auto* found_tag = jsDynamicCast<Bun::NapiTypeTag*>(globalObject->napiTypeTags()->get(js_object));
+    if (found_tag && found_tag->matches(*type_tag)) {
+        match = true;
+    }
+    if (LIKELY(result)) {
+        *result = match;
+    }
+    return napi_ok;
 }

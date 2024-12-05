@@ -90,7 +90,7 @@ pub fn getNames(this: *const Router) ![]const string {
     return this.routes.list.items(.name);
 }
 
-const banned_dirs = [_]string{
+pub const banned_dirs = [_]string{
     "node_modules",
 };
 
@@ -993,7 +993,7 @@ pub const Test = struct {
         const Resolver = @import("./resolver/resolver.zig").Resolver;
         var logger = Logger.Log.init(default_allocator);
         errdefer {
-            logger.printForLogLevel(Output.errorWriter()) catch {};
+            logger.print(Output.errorWriter()) catch {};
         }
 
         const opts = Options.BundleOptions{
@@ -1049,7 +1049,7 @@ pub const Test = struct {
         const Resolver = @import("./resolver/resolver.zig").Resolver;
         var logger = Logger.Log.init(default_allocator);
         errdefer {
-            logger.printForLogLevel(Output.errorWriter()) catch {};
+            logger.print(Output.errorWriter()) catch {};
         }
 
         const opts = Options.BundleOptions{

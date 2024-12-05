@@ -76,8 +76,8 @@ pub const BoxShadow = struct {
             }
 
             if (color == null) {
-                if (input.tryParse(CssColor.parse, .{}).isOk()) {
-                    color = input.tryParse(CssColor.parse, .{}).result;
+                if (input.tryParse(CssColor.parse, .{}).asValue()) |c| {
+                    color = c;
                     continue;
                 }
             }

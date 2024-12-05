@@ -85,9 +85,6 @@ fn literalLength(comptime T: type, comptime str: string) usize {
     };
 }
 
-// TODO: remove this
-pub const toUTF16LiteralZ = toUTF16Literal;
-
 pub const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
 pub fn indexOfAny(slice: string, comptime str: []const u8) ?OptionalUsize {
     switch (comptime str.len) {
@@ -135,6 +132,7 @@ pub fn indexOfAny16(self: []const u16, comptime str: anytype) ?OptionalUsize {
 
 pub fn indexOfAnyT(comptime T: type, str: []const T, comptime chars: anytype) ?OptionalUsize {
     if (T == u8) return indexOfAny(str, chars);
+
     for (str, 0..) |c, i| {
         inline for (chars) |a| {
             if (c == a) {
@@ -216,9 +214,8 @@ pub fn isNPMPackageName(target: string) bool {
     return !scoped or slash_index > 0 and slash_index + 1 < target.len;
 }
 
-pub fn startsWithUUID(str: string) bool {
-    const uuid_len = 36;
-    if (str.len < uuid_len) return false;
+pub fn isUUID(str: string) bool {
+    if (str.len != uuid_len) return false;
     for (0..8) |i| {
         switch (str[i]) {
             '0'...'9', 'a'...'f', 'A'...'F' => {},
@@ -256,6 +253,12 @@ pub fn startsWithUUID(str: string) bool {
     return true;
 }
 
+pub const uuid_len = 36;
+
+pub fn startsWithUUID(str: string) bool {
+    return isUUID(str[0..@min(str.len, uuid_len)]);
+}
+
 /// https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/%40npmcli/redact/lib/matchers.js#L7
 /// /\b(npms?_)[a-zA-Z0-9]{36,48}\b/gi
 /// Returns the length of the secret if one exist.
@@ -291,6 +294,128 @@ pub fn startsWithNpmSecret(str: string) u8 {
     }
 
     return i;
+}
+
+fn startsWithRedactedItem(text: string, comptime item: string) ?struct { usize, usize } {
+    if (!strings.hasPrefixComptime(text, item)) return null;
+
+    var whitespace = false;
+    var offset: usize = item.len;
+    while (offset < text.len and std.ascii.isWhitespace(text[offset])) {
+        offset += 1;
+        whitespace = true;
+    }
+    if (offset == text.len) return null;
+    const cont = js_lexer.isIdentifierContinue(text[offset]);
+
+    // must be another identifier
+    if (!whitespace and cont) return null;
+
+    // `null` is not returned after this point. Redact to the next
+    // newline if anything is unexpected
+    if (cont) return .{ offset, indexOfChar(text[offset..], '\n') orelse text[offset..].len };
+    offset += 1;
+
+    var end = offset;
+    while (end < text.len and std.ascii.isWhitespace(text[end])) {
+        end += 1;
+    }
+
+    if (end == text.len) {
+        return .{ offset, text[offset..].len };
+    }
+
+    switch (text[end]) {
+        inline '\'', '"', '`' => |q| {
+            // attempt to find closing
+            const opening = end;
+            end += 1;
+            while (end < text.len) {
+                switch (text[end]) {
+                    '\\' => {
+                        // skip
+                        end += 1;
+                        end += 1;
+                    },
+                    q => {
+                        // closing
+                        return .{ opening + 1, (end - 1) - opening };
+                    },
+                    else => {
+                        end += 1;
+                    },
+                }
+            }
+
+            const len = strings.indexOfChar(text[offset..], '\n') orelse text[offset..].len;
+            return .{ offset, len };
+        },
+        else => {
+            const len = strings.indexOfChar(text[offset..], '\n') orelse text[offset..].len;
+            return .{ offset, len };
+        },
+    }
+}
+
+/// Returns offset and length of first secret found.
+pub fn startsWithSecret(str: string) ?struct { usize, usize } {
+    if (startsWithRedactedItem(str, "_auth")) |auth| {
+        const offset, const len = auth;
+        return .{ offset, len };
+    }
+    if (startsWithRedactedItem(str, "_authToken")) |auth_token| {
+        const offset, const len = auth_token;
+        return .{ offset, len };
+    }
+    if (startsWithRedactedItem(str, "email")) |email| {
+        const offset, const len = email;
+        return .{ offset, len };
+    }
+    if (startsWithRedactedItem(str, "_password")) |password| {
+        const offset, const len = password;
+        return .{ offset, len };
+    }
+    if (startsWithRedactedItem(str, "token")) |token| {
+        const offset, const len = token;
+        return .{ offset, len };
+    }
+
+    if (startsWithUUID(str)) {
+        return .{ 0, 36 };
+    }
+
+    const npm_secret_len = startsWithNpmSecret(str);
+    if (npm_secret_len > 0) {
+        return .{ 0, npm_secret_len };
+    }
+
+    if (findUrlPassword(str)) |url_pass| {
+        const offset, const len = url_pass;
+        return .{ offset, len };
+    }
+
+    return null;
+}
+
+pub fn findUrlPassword(text: string) ?struct { usize, usize } {
+    if (!strings.hasPrefixComptime(text, "http")) return null;
+    var offset: usize = "http".len;
+    if (hasPrefixComptime(text[offset..], "://")) {
+        offset += "://".len;
+    } else if (hasPrefixComptime(text[offset..], "s://")) {
+        offset += "s://".len;
+    } else {
+        return null;
+    }
+    var remain = text[offset..];
+    const end = indexOfChar(remain, '\n') orelse remain.len;
+    remain = remain[0..end];
+    const at = indexOfChar(remain, '@') orelse return null;
+    const colon = indexOfCharNeg(remain[0..at], ':');
+    if (colon == -1 or colon == at - 1) return null;
+    offset += @intCast(colon + 1);
+    const len: usize = at - @as(usize, @intCast(colon + 1));
+    return .{ offset, len };
 }
 
 pub fn indexAnyComptime(target: string, comptime chars: string) ?usize {
@@ -741,34 +866,24 @@ pub fn withoutTrailingSlash(this: string) []const u8 {
     return href;
 }
 
-/// Does not strip the C:\
-pub fn withoutTrailingSlashWindowsPath(this: string) []const u8 {
-    if (this.len < 3 or
-        this[1] != ':') return withoutTrailingSlash(this);
+/// Does not strip the device root (C:\ or \\Server\Share\ portion off of the path)
+pub fn withoutTrailingSlashWindowsPath(input: string) []const u8 {
+    if (Environment.isPosix or input.len < 3 or input[1] != ':')
+        return withoutTrailingSlash(input);
 
-    var href = this;
-    while (href.len > 3 and (switch (href[href.len - 1]) {
+    const root_len = bun.path.windowsFilesystemRoot(input).len + 1;
+
+    var path = input;
+    while (path.len > root_len and (switch (path[path.len - 1]) {
         '/', '\\' => true,
         else => false,
     })) {
-        href.len -= 1;
+        path.len -= 1;
     }
 
-    return href;
-}
+    bun.assert(!isWindowsAbsolutePathMissingDriveLetter(u8, path));
 
-/// This will remove ONE trailing slash at the end of a string,
-/// but on Windows it will not remove the \ in "C:\"
-pub fn pathWithoutTrailingSlashOne(str: []const u8) []const u8 {
-    return if (str.len > 0 and charIsAnySlash(str[str.len - 1]))
-        if (Environment.isWindows and str.len == 3 and str[1] == ':')
-            // Preserve "C:\"
-            str
-        else
-            // Remove one slash
-            str[0 .. str.len - 1]
-    else
-        str;
+    return path;
 }
 
 pub fn withoutLeadingSlash(this: string) []const u8 {
@@ -1828,24 +1943,20 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     }
 }
 
-/// Checks if a path is missing a windows drive letter. Not a perfect check,
-/// but it is good enough for most cases. For windows APIs, this is used for
-/// an assertion, and PosixToWinNormalizer can help make an absolute path
-/// contain a drive letter.
+/// Checks if a path is missing a windows drive letter. For windows APIs,
+/// this is used for an assertion, and PosixToWinNormalizer can help make
+/// an absolute path contain a drive letter.
 pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const T) bool {
     bun.unsafeAssert(bun.path.Platform.windows.isAbsoluteT(T, chars));
     bun.unsafeAssert(chars.len > 0);
 
     // 'C:\hello' -> false
+    // This is the most common situation, so we check it first
     if (!(chars[0] == '/' or chars[0] == '\\')) {
         bun.unsafeAssert(chars.len > 2);
         bun.unsafeAssert(chars[1] == ':');
         return false;
     }
-
-    // '\\hello' -> false (probably a UNC path)
-    if (chars.len > 1 and
-        (chars[1] == '/' or chars[1] == '\\')) return false;
 
     if (chars.len > 4) {
         // '\??\hello' -> false (has the NT object prefix)
@@ -1861,9 +1972,13 @@ pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const 
             return false;
     }
 
-    // oh no, '/hello/world'
-    // where is the drive letter!
-    return true;
+    // A path starting with `/` can be a UNC path with forward slashes,
+    // or actually just a posix path.
+    //
+    // '\\Server\Share' -> false (unc)
+    // '\\Server\\Share' -> true (not unc because extra slashes)
+    // '\Server\Share' -> true (posix path)
+    return bun.path.windowsFilesystemRootT(T, chars).len == 1;
 }
 
 pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
@@ -1978,13 +2093,19 @@ pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPathMaybeDir(wbuf, utf8, true);
 }
-
+fn isUNCPath(comptime T: type, path: []const T) bool {
+    return path.len >= 3 and
+        bun.path.Platform.windows.isSeparatorT(T, path[0]) and
+        bun.path.Platform.windows.isSeparatorT(T, path[1]) and
+        !bun.path.Platform.windows.isSeparatorT(T, path[2]) and
+        path[2] != '.';
+}
 pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
     if (Environment.allow_assert and Environment.isWindows) {
         if (bun.path.Platform.windows.isAbsoluteT(T, path) and
             isWindowsAbsolutePathMissingDriveLetter(T, path) and
             // is it a null device path? that's not an error. it's just a weird file path.
-            !eqlComptimeT(T, path, "\\\\.\\NUL") and !eqlComptimeT(T, path, "\\\\.\\nul") and !eqlComptimeT(T, path, "\\nul") and !eqlComptimeT(T, path, "\\NUL"))
+            !eqlComptimeT(T, path, "\\\\.\\NUL") and !eqlComptimeT(T, path, "\\\\.\\nul") and !eqlComptimeT(T, path, "\\nul") and !eqlComptimeT(T, path, "\\NUL") and !isUNCPath(T, path))
         {
             std.debug.panic("Internal Error: Do not pass posix paths to Windows APIs, was given '{s}'" ++ if (Environment.isDebug) " (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)" else ". Please open an issue on GitHub with a reproduction.", .{
                 if (T == u8) path else bun.fmt.utf16(path),
@@ -2031,6 +2152,20 @@ pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: 
     return list;
 }
 
+pub fn convertUTF16ToUTF8WithoutInvalidSurrogatePairs(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
+    var list = list_;
+    const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(
+        utf16,
+        list.items.ptr[0..list.capacity],
+    );
+    if (result.status == .surrogate) {
+        return error.SurrogatePair;
+    }
+
+    list.items.len = result.count;
+    return list;
+}
+
 pub fn convertUTF16ToUTF8Append(list: *std.ArrayList(u8), utf16: []const u16) !void {
     const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(
         utf16,
@@ -2044,6 +2179,20 @@ pub fn convertUTF16ToUTF8Append(list: *std.ArrayList(u8), utf16: []const u16) !v
     }
 
     list.items.len += result.count;
+}
+
+pub fn toUTF8AllocWithTypeWithoutInvalidSurrogatePairs(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
+    if (bun.FeatureFlags.use_simdutf and comptime Type == []const u16) {
+        const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
+        // add 16 bytes of padding for SIMDUTF
+        var list = try std.ArrayList(u8).initCapacity(allocator, length + 16);
+        list = try convertUTF16ToUTF8(list, Type, utf16);
+        return list.items;
+    }
+
+    var list = try std.ArrayList(u8).initCapacity(allocator, utf16.len);
+    list = try toUTF8ListWithType(list, Type, utf16);
+    return list.items;
 }
 
 pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
@@ -4109,21 +4258,30 @@ pub fn containsNewlineOrNonASCIIOrQuote(slice_: []const u8) bool {
     return false;
 }
 
-pub fn indexOfNeedsEscape(slice: []const u8) ?u32 {
+pub fn indexOfNeedsEscape(slice: []const u8, comptime quote_char: u8) ?u32 {
     var remaining = slice;
     if (remaining.len == 0)
         return null;
 
-    if (remaining[0] >= 127 or remaining[0] < 0x20 or remaining[0] == '\\' or remaining[0] == '"') {
+    if (remaining[0] >= 127 or remaining[0] < 0x20 or remaining[0] == '\\' or remaining[0] == quote_char or (quote_char == '`' and remaining[0] == '$')) {
         return 0;
     }
 
     if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp = @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) | @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
+            const cmp: AsciiVectorU1 = if (comptime quote_char == '`') ( //
+                @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) |
+                @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
                 @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '"')))));
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '$'))))) //
+            ) else ( //
+                @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) |
+                @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))))) //
+            );
 
             if (@reduce(.Max, cmp) > 0) {
                 const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
@@ -4138,7 +4296,7 @@ pub fn indexOfNeedsEscape(slice: []const u8) ?u32 {
 
     for (remaining) |*char_| {
         const char = char_.*;
-        if (char > 127 or char < 0x20 or char == '\\' or char == '"') {
+        if (char > 127 or char < 0x20 or char == '\\' or char == quote_char or (quote_char == '`' and char == '$')) {
             return @as(u32, @truncate(@intFromPtr(char_) - @intFromPtr(slice.ptr)));
         }
     }
@@ -4176,6 +4334,27 @@ pub fn indexOfCharUsize(slice: []const u8, char: u8) ?usize {
     bun.assert(slice[i] == char);
 
     return i;
+}
+
+pub fn indexOfCharPos(slice: []const u8, char: u8, start_index: usize) ?usize {
+    if (!Environment.isNative) {
+        return std.mem.indexOfScalarPos(u8, slice, char);
+    }
+
+    if (start_index >= slice.len) return null;
+
+    const ptr = bun.C.memchr(slice.ptr + start_index, char, slice.len - start_index) orelse
+        return null;
+    const i = @intFromPtr(ptr) - @intFromPtr(slice.ptr);
+    bun.assert(i < slice.len);
+    bun.assert(slice[i] == char);
+
+    return i;
+}
+
+pub fn indexOfAnyPosComptime(slice: []const u8, comptime chars: []const u8, start_index: usize) ?usize {
+    if (chars.len == 1) return indexOfCharPos(slice, chars[0], start_index);
+    return std.mem.indexOfAnyPos(u8, slice, start_index, chars);
 }
 
 pub fn indexOfChar16Usize(slice: []const u16, char: u16) ?usize {
@@ -4397,7 +4576,7 @@ pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
 /// e.g.
 /// `trimLeadingPattern2("abcdef", 'a', 'b') == "cdef"`
 pub fn trimLeadingPattern2(slice_: []const u8, comptime byte1: u8, comptime byte2: u8) []const u8 {
-    const pattern: u16 = comptime @as(u16, byte1) << 8 | @as(u16, byte2);
+    const pattern: u16 = comptime @as(u16, byte2) << 8 | @as(u16, byte1);
     var slice = slice_;
     while (slice.len >= 2) {
         const sliceu16: [*]const u16 = @ptrCast(@alignCast(slice.ptr));
@@ -5537,9 +5716,6 @@ pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
         // Combining Diacritical Marks
         return true;
     }
-    if (cp >= 0x300 and cp <= 0x36f)
-        // Combining Diacritical Marks
-        return true;
 
     if (cp >= 0x200b and cp <= 0x200f) {
         // Modifying Invisible Characters
@@ -6340,24 +6516,25 @@ pub const visible = struct {
     };
 };
 
-pub const QuoteEscapeFormat = struct {
-    data: []const u8,
-
-    pub fn format(self: QuoteEscapeFormat, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        var i: usize = 0;
-        while (std.mem.indexOfAnyPos(u8, self.data, i, "\"\n\\")) |j| : (i = j + 1) {
-            try writer.writeAll(self.data[i..j]);
-            try writer.writeAll(switch (self.data[j]) {
-                '"' => "\\\"",
-                '\n' => "\\n",
-                '\\' => "\\\\",
-                else => unreachable,
-            });
-        }
-        if (i == self.data.len) return;
-        try writer.writeAll(self.data[i..]);
-    }
+pub const QuoteEscapeFormatFlags = struct {
+    quote_char: u8,
+    ascii_only: bool = false,
+    json: bool = false,
+    str_encoding: Encoding = .utf8,
 };
+/// usage: print(" string: '{'}' ", .{formatEscapesJS("hello'world!")});
+pub fn formatEscapes(str: []const u8, comptime flags: QuoteEscapeFormatFlags) QuoteEscapeFormat(flags) {
+    return .{ .data = str };
+}
+fn QuoteEscapeFormat(comptime flags: QuoteEscapeFormatFlags) type {
+    return struct {
+        data: []const u8,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try bun.js_printer.writePreQuotedString(self.data, @TypeOf(writer), writer, flags.quote_char, false, flags.json, flags.str_encoding);
+        }
+    };
+}
 
 /// Generic. Works on []const u8, []const u16, etc
 pub inline fn indexOfScalar(input: anytype, scalar: std.meta.Child(@TypeOf(input))) ?usize {

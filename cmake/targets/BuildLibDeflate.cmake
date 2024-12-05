@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     ebiggers/libdeflate
   COMMIT
-    dc76454a39e7e83b68c3704b6e3784654f8d5ac5
+    9d624d1d8ba82c690d6d6be1d0a961fc5a983ea4
 )
 
 register_cmake_command(

@@ -187,7 +187,7 @@ const Font = font.Font;
 // const TextEmphasisPositionVertical = text.TextEmphasisPositionVertical;
 // const TextEmphasisPositionHorizontal = text.TextEmphasisPositionHorizontal;
 // const TextEmphasisPosition = text.TextEmphasisPosition;
-// const TextShadow = text.TextShadow;
+const TextShadow = text.TextShadow;
 // const TextSizeAdjust = text.TextSizeAdjust;
 const Direction = text.Direction;
 // const UnicodeBidi = text.UnicodeBidi;
@@ -248,12 +248,12 @@ pub const Property = union(PropertyIdTag) {
     @"background-color": CssColor,
     @"background-image": SmallList(Image, 1),
     @"background-position-x": SmallList(css_values.position.HorizontalPosition, 1),
-    @"background-position-y": SmallList(css_values.position.HorizontalPosition, 1),
+    @"background-position-y": SmallList(css_values.position.VerticalPosition, 1),
     @"background-position": SmallList(background.BackgroundPosition, 1),
     @"background-size": SmallList(background.BackgroundSize, 1),
-    @"background-repeat": SmallList(background.BackgroundSize, 1),
+    @"background-repeat": SmallList(background.BackgroundRepeat, 1),
     @"background-attachment": SmallList(background.BackgroundAttachment, 1),
-    @"background-clip": struct { SmallList(background.BackgroundAttachment, 1), VendorPrefix },
+    @"background-clip": struct { SmallList(background.BackgroundClip, 1), VendorPrefix },
     @"background-origin": SmallList(background.BackgroundOrigin, 1),
     background: SmallList(background.Background, 1),
     @"box-shadow": struct { SmallList(box_shadow.BoxShadow, 1), VendorPrefix },
@@ -445,6 +445,7 @@ pub const Property = union(PropertyIdTag) {
     font: Font,
     @"text-decoration-color": struct { CssColor, VendorPrefix },
     @"text-emphasis-color": struct { CssColor, VendorPrefix },
+    @"text-shadow": SmallList(TextShadow, 1),
     direction: Direction,
     composes: Composes,
     @"mask-image": struct { SmallList(Image, 1), VendorPrefix },
@@ -540,20 +541,20 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a eql() function.\n";
             }
 
-            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "deepClone")) {
-                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a deepClone() function.\n";
+            if (!@hasDecl(SmallList(css_values.position.VerticalPosition, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.VerticalPosition, 1)) ++ ": does not have a deepClone() function.\n";
             }
 
-            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "parse")) {
-                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a parse() function.\n";
+            if (!@hasDecl(SmallList(css_values.position.VerticalPosition, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.VerticalPosition, 1)) ++ ": does not have a parse() function.\n";
             }
 
-            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "toCss")) {
-                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(SmallList(css_values.position.VerticalPosition, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.VerticalPosition, 1)) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "eql")) {
-                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a eql() function.\n";
+            if (!@hasDecl(SmallList(css_values.position.VerticalPosition, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.VerticalPosition, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(background.BackgroundPosition, 1), "deepClone")) {
@@ -588,36 +589,20 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a eql() function.\n";
             }
 
-            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "deepClone")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a deepClone() function.\n";
+            if (!@hasDecl(SmallList(background.BackgroundRepeat, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundRepeat, 1)) ++ ": does not have a deepClone() function.\n";
             }
 
-            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "parse")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a parse() function.\n";
+            if (!@hasDecl(SmallList(background.BackgroundRepeat, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundRepeat, 1)) ++ ": does not have a parse() function.\n";
             }
 
-            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "toCss")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(SmallList(background.BackgroundRepeat, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundRepeat, 1)) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "eql")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a eql() function.\n";
-            }
-
-            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "deepClone")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "parse")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "toCss")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a toCss() function.\n";
-            }
-
-            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "eql")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a eql() function.\n";
+            if (!@hasDecl(SmallList(background.BackgroundRepeat, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundRepeat, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "deepClone")) {
@@ -634,6 +619,22 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "eql")) {
                 compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundClip, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundClip, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundClip, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundClip, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundClip, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundClip, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundClip, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundClip, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(background.BackgroundOrigin, 1), "deepClone")) {
@@ -3548,6 +3549,22 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
             }
 
+            if (!@hasDecl(SmallList(TextShadow, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(TextShadow, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(TextShadow, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(TextShadow, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(TextShadow, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(TextShadow, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(TextShadow, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(TextShadow, 1)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(Direction, "deepClone")) {
                 compile_error = compile_error ++ @typeName(Direction) ++ ": does not have a deepClone() function.\n";
             }
@@ -4047,7 +4064,7 @@ pub const Property = union(PropertyIdTag) {
                 }
             },
             .@"background-position-y" => {
-                if (css.generic.parseWithOptions(SmallList(css_values.position.HorizontalPosition, 1), input, options).asValue()) |c| {
+                if (css.generic.parseWithOptions(SmallList(css_values.position.VerticalPosition, 1), input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"background-position-y" = c } };
                     }
@@ -4068,7 +4085,7 @@ pub const Property = union(PropertyIdTag) {
                 }
             },
             .@"background-repeat" => {
-                if (css.generic.parseWithOptions(SmallList(background.BackgroundSize, 1), input, options).asValue()) |c| {
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundRepeat, 1), input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"background-repeat" = c } };
                     }
@@ -4082,7 +4099,7 @@ pub const Property = union(PropertyIdTag) {
                 }
             },
             .@"background-clip" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(background.BackgroundAttachment, 1), input, options).asValue()) |c| {
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundClip, 1), input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"background-clip" = .{ c, pre } } };
                     }
@@ -5076,6 +5093,7 @@ pub const Property = union(PropertyIdTag) {
                 }
             },
             .@"margin-block-start" => {
+                @setEvalBranchQuota(5000);
                 if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"margin-block-start" = c } };
@@ -5423,6 +5441,13 @@ pub const Property = union(PropertyIdTag) {
                 if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"text-emphasis-color" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"text-shadow" => {
+                if (css.generic.parseWithOptions(SmallList(TextShadow, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-shadow" = c } };
                     }
                 }
             },
@@ -5854,6 +5879,7 @@ pub const Property = union(PropertyIdTag) {
             .font => .font,
             .@"text-decoration-color" => |*v| PropertyId{ .@"text-decoration-color" = v[1] },
             .@"text-emphasis-color" => |*v| PropertyId{ .@"text-emphasis-color" = v[1] },
+            .@"text-shadow" => .@"text-shadow",
             .direction => .direction,
             .composes => .composes,
             .@"mask-image" => |*v| PropertyId{ .@"mask-image" = v[1] },
@@ -6091,6 +6117,7 @@ pub const Property = union(PropertyIdTag) {
             .font => |*v| .{ .font = v.deepClone(allocator) },
             .@"text-decoration-color" => |*v| .{ .@"text-decoration-color" = .{ v[0].deepClone(allocator), v[1] } },
             .@"text-emphasis-color" => |*v| .{ .@"text-emphasis-color" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"text-shadow" => |*v| .{ .@"text-shadow" = v.deepClone(allocator) },
             .direction => |*v| .{ .direction = v.deepClone(allocator) },
             .composes => |*v| .{ .composes = v.deepClone(allocator) },
             .@"mask-image" => |*v| .{ .@"mask-image" = .{ v[0].deepClone(allocator), v[1] } },
@@ -6338,6 +6365,7 @@ pub const Property = union(PropertyIdTag) {
             .font => .{ "font", VendorPrefix{ .none = true } },
             .@"text-decoration-color" => |*x| .{ "text-decoration-color", x.@"1" },
             .@"text-emphasis-color" => |*x| .{ "text-emphasis-color", x.@"1" },
+            .@"text-shadow" => .{ "text-shadow", VendorPrefix{ .none = true } },
             .direction => .{ "direction", VendorPrefix{ .none = true } },
             .composes => .{ "composes", VendorPrefix{ .none = true } },
             .@"mask-image" => |*x| .{ "mask-image", x.@"1" },
@@ -6582,6 +6610,7 @@ pub const Property = union(PropertyIdTag) {
             .font => |*value| value.toCss(W, dest),
             .@"text-decoration-color" => |*value| value[0].toCss(W, dest),
             .@"text-emphasis-color" => |*value| value[0].toCss(W, dest),
+            .@"text-shadow" => |*value| value.toCss(W, dest),
             .direction => |*value| value.toCss(W, dest),
             .composes => |*value| value.toCss(W, dest),
             .@"mask-image" => |*value| value[0].toCss(W, dest),
@@ -6695,12 +6724,12 @@ pub const Property = union(PropertyIdTag) {
             .@"background-color" => |*v| css.generic.eql(CssColor, v, &rhs.@"background-color"),
             .@"background-image" => |*v| css.generic.eql(SmallList(Image, 1), v, &rhs.@"background-image"),
             .@"background-position-x" => |*v| css.generic.eql(SmallList(css_values.position.HorizontalPosition, 1), v, &rhs.@"background-position-x"),
-            .@"background-position-y" => |*v| css.generic.eql(SmallList(css_values.position.HorizontalPosition, 1), v, &rhs.@"background-position-y"),
+            .@"background-position-y" => |*v| css.generic.eql(SmallList(css_values.position.VerticalPosition, 1), v, &rhs.@"background-position-y"),
             .@"background-position" => |*v| css.generic.eql(SmallList(background.BackgroundPosition, 1), v, &rhs.@"background-position"),
             .@"background-size" => |*v| css.generic.eql(SmallList(background.BackgroundSize, 1), v, &rhs.@"background-size"),
-            .@"background-repeat" => |*v| css.generic.eql(SmallList(background.BackgroundSize, 1), v, &rhs.@"background-repeat"),
+            .@"background-repeat" => |*v| css.generic.eql(SmallList(background.BackgroundRepeat, 1), v, &rhs.@"background-repeat"),
             .@"background-attachment" => |*v| css.generic.eql(SmallList(background.BackgroundAttachment, 1), v, &rhs.@"background-attachment"),
-            .@"background-clip" => |*v| css.generic.eql(SmallList(background.BackgroundAttachment, 1), &v[0], &v[0]) and v[1].eq(rhs.@"background-clip"[1]),
+            .@"background-clip" => |*v| css.generic.eql(SmallList(background.BackgroundClip, 1), &v[0], &v[0]) and v[1].eq(rhs.@"background-clip"[1]),
             .@"background-origin" => |*v| css.generic.eql(SmallList(background.BackgroundOrigin, 1), v, &rhs.@"background-origin"),
             .background => |*v| css.generic.eql(SmallList(background.Background, 1), v, &rhs.background),
             .@"box-shadow" => |*v| css.generic.eql(SmallList(box_shadow.BoxShadow, 1), &v[0], &v[0]) and v[1].eq(rhs.@"box-shadow"[1]),
@@ -6892,6 +6921,7 @@ pub const Property = union(PropertyIdTag) {
             .font => |*v| css.generic.eql(Font, v, &rhs.font),
             .@"text-decoration-color" => |*v| css.generic.eql(CssColor, &v[0], &v[0]) and v[1].eq(rhs.@"text-decoration-color"[1]),
             .@"text-emphasis-color" => |*v| css.generic.eql(CssColor, &v[0], &v[0]) and v[1].eq(rhs.@"text-emphasis-color"[1]),
+            .@"text-shadow" => |*v| css.generic.eql(SmallList(TextShadow, 1), v, &rhs.@"text-shadow"),
             .direction => |*v| css.generic.eql(Direction, v, &rhs.direction),
             .composes => |*v| css.generic.eql(Composes, v, &rhs.composes),
             .@"mask-image" => |*v| css.generic.eql(SmallList(Image, 1), &v[0], &v[0]) and v[1].eq(rhs.@"mask-image"[1]),
@@ -7127,6 +7157,7 @@ pub const PropertyId = union(PropertyIdTag) {
     font,
     @"text-decoration-color": VendorPrefix,
     @"text-emphasis-color": VendorPrefix,
+    @"text-shadow",
     direction,
     composes,
     @"mask-image": VendorPrefix,
@@ -7370,6 +7401,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .font => VendorPrefix.empty(),
             .@"text-decoration-color" => |p| p,
             .@"text-emphasis-color" => |p| p,
+            .@"text-shadow" => VendorPrefix.empty(),
             .direction => VendorPrefix.empty(),
             .composes => VendorPrefix.empty(),
             .@"mask-image" => |p| p,
@@ -7404,696 +7436,931 @@ pub const PropertyId = union(PropertyIdTag) {
     }
 
     pub fn fromNameAndPrefix(name1: []const u8, pre: VendorPrefix) ?PropertyId {
-        // TODO: todo_stuff.match_ignore_ascii_case
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-color")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"background-color";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-image")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"background-image";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-position-x")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"background-position-x";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-position-y")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"background-position-y";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-position")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"background-position";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-size")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"background-size";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-repeat")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"background-repeat";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-attachment")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"background-attachment";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-clip")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"background-clip" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-origin")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"background-origin";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .background;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-shadow")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"box-shadow" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "opacity")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .opacity;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "color")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .color;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "display")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .display;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "visibility")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .visibility;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .width;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "height")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .height;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "min-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"min-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "min-height")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"min-height";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "max-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"max-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "max-height")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"max-height";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "block-size")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"block-size";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inline-size")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"inline-size";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "min-block-size")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"min-block-size";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "min-inline-size")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"min-inline-size";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "max-block-size")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"max-block-size";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "max-inline-size")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"max-inline-size";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-sizing")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"box-sizing" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "aspect-ratio")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"aspect-ratio";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "overflow")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .overflow;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "overflow-x")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"overflow-x";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "overflow-y")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"overflow-y";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-overflow")) {
-            const allowed_prefixes = VendorPrefix{ .o = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"text-overflow" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "position")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .position;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "top")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .top;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "bottom")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .bottom;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "left")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .left;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "right")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .right;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset-block-start")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"inset-block-start";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset-block-end")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"inset-block-end";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset-inline-start")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"inset-inline-start";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset-inline-end")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"inset-inline-end";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset-block")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"inset-block";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset-inline")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"inset-inline";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .inset;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-spacing")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-spacing";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top-color")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-top-color";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom-color")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-bottom-color";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-left-color")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-left-color";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-right-color")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-right-color";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-start-color")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-block-start-color";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-end-color")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-block-end-color";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-start-color")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-inline-start-color";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-end-color")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-inline-end-color";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top-style")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-top-style";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom-style")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-bottom-style";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-left-style")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-left-style";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-right-style")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-right-style";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-start-style")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-block-start-style";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-end-style")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-block-end-style";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-start-style")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-inline-start-style";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-end-style")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-inline-end-style";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-top-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-bottom-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-left-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-left-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-right-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-right-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-start-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-block-start-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-end-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-block-end-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-start-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-inline-start-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-end-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-inline-end-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top-left-radius")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"border-top-left-radius" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top-right-radius")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"border-top-right-radius" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom-left-radius")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"border-bottom-left-radius" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom-right-radius")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"border-bottom-right-radius" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-start-start-radius")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-start-start-radius";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-start-end-radius")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-start-end-radius";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-end-start-radius")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-end-start-radius";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-end-end-radius")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-end-end-radius";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-radius")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"border-radius" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-image-source")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-image-source";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-image-outset")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-image-outset";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-image-repeat")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-image-repeat";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-image-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-image-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-image-slice")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-image-slice";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-image")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true, .o = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"border-image" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-color")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-color";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-style")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-style";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-color")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-block-color";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-style")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-block-style";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-block-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-color")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-inline-color";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-style")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-inline-style";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-inline-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .border;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-top";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-bottom";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-left")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-left";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-right")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-right";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-block";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-start")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-block-start";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-end")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-block-end";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-inline";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-start")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-inline-start";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-end")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"border-inline-end";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "outline")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .outline;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "outline-color")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"outline-color";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "outline-style")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"outline-style";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "outline-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"outline-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-direction")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .ms = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"flex-direction" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-wrap")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .ms = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"flex-wrap" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-flow")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .ms = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"flex-flow" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-grow")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"flex-grow" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-shrink")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"flex-shrink" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-basis")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"flex-basis" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .ms = true };
-            if (allowed_prefixes.contains(pre)) return .{ .flex = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "order")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .order = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "align-content")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"align-content" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "justify-content")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"justify-content" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "place-content")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"place-content";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "align-self")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"align-self" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "justify-self")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"justify-self";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "place-self")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"place-self";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "align-items")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"align-items" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "justify-items")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"justify-items";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "place-items")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"place-items";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "row-gap")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"row-gap";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "column-gap")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"column-gap";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "gap")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .gap;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-orient")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"box-orient" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-direction")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"box-direction" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-ordinal-group")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"box-ordinal-group" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-align")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"box-align" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-flex")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"box-flex" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-flex-group")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"box-flex-group" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-pack")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"box-pack" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-lines")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"box-lines" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-pack")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"flex-pack" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-order")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"flex-order" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-align")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"flex-align" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-item-align")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"flex-item-align" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-line-pack")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"flex-line-pack" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-positive")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"flex-positive" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-negative")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"flex-negative" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-preferred-size")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"flex-preferred-size" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-top")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"margin-top";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-bottom")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"margin-bottom";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-left")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"margin-left";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-right")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"margin-right";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-block-start")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"margin-block-start";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-block-end")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"margin-block-end";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-inline-start")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"margin-inline-start";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-inline-end")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"margin-inline-end";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-block")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"margin-block";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-inline")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"margin-inline";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .margin;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-top")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"padding-top";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-bottom")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"padding-bottom";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-left")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"padding-left";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-right")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"padding-right";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-block-start")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"padding-block-start";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-block-end")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"padding-block-end";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-inline-start")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"padding-inline-start";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-inline-end")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"padding-inline-end";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-block")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"padding-block";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-inline")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"padding-inline";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .padding;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-top")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-top";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-bottom")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-bottom";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-left")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-left";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-right")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-right";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-block-start")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-block-start";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-block-end")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-block-end";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-inline-start")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-inline-start";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-inline-end")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-inline-end";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-block")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-block";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-inline")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-inline";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-margin";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-top")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-top";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-bottom")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-bottom";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-left")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-left";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-right")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-right";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-block-start")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-block-start";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-block-end")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-block-end";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-inline-start")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-inline-start";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-inline-end")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-inline-end";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-block")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-block";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-inline")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-inline";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"scroll-padding";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "font-weight")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"font-weight";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "font-size")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"font-size";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "font-stretch")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"font-stretch";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "font-family")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"font-family";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "font-style")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"font-style";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "font-variant-caps")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"font-variant-caps";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "line-height")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"line-height";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "font")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .font;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-decoration-color")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"text-decoration-color" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-emphasis-color")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"text-emphasis-color" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "direction")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .direction;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "composes")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .composes;
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-image")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"mask-image" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-mode")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"mask-mode";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-repeat")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"mask-repeat" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-position-x")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"mask-position-x";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-position-y")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"mask-position-y";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-position")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"mask-position" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-clip")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"mask-clip" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-origin")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"mask-origin" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-size")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"mask-size" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-composite")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"mask-composite";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-type")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"mask-type";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .mask = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border-source")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"mask-border-source";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border-mode")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"mask-border-mode";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border-slice")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"mask-border-slice";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border-width")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"mask-border-width";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border-outset")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"mask-border-outset";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border-repeat")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"mask-border-repeat";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"mask-border";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "-webkit-mask-composite")) {
-            const allowed_prefixes = VendorPrefix{ .none = true };
-            if (allowed_prefixes.contains(pre)) return .@"-webkit-mask-composite";
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-source-type")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"mask-source-type" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-source")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-source" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-slice")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-slice" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-width")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-width" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-outset")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-outset" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-repeat")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
-            if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-repeat" = pre };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "all")) {} else {
-            return null;
+        const Enum = enum { @"background-color", @"background-image", @"background-position-x", @"background-position-y", @"background-position", @"background-size", @"background-repeat", @"background-attachment", @"background-clip", @"background-origin", background, @"box-shadow", opacity, color, display, visibility, width, height, @"min-width", @"min-height", @"max-width", @"max-height", @"block-size", @"inline-size", @"min-block-size", @"min-inline-size", @"max-block-size", @"max-inline-size", @"box-sizing", @"aspect-ratio", overflow, @"overflow-x", @"overflow-y", @"text-overflow", position, top, bottom, left, right, @"inset-block-start", @"inset-block-end", @"inset-inline-start", @"inset-inline-end", @"inset-block", @"inset-inline", inset, @"border-spacing", @"border-top-color", @"border-bottom-color", @"border-left-color", @"border-right-color", @"border-block-start-color", @"border-block-end-color", @"border-inline-start-color", @"border-inline-end-color", @"border-top-style", @"border-bottom-style", @"border-left-style", @"border-right-style", @"border-block-start-style", @"border-block-end-style", @"border-inline-start-style", @"border-inline-end-style", @"border-top-width", @"border-bottom-width", @"border-left-width", @"border-right-width", @"border-block-start-width", @"border-block-end-width", @"border-inline-start-width", @"border-inline-end-width", @"border-top-left-radius", @"border-top-right-radius", @"border-bottom-left-radius", @"border-bottom-right-radius", @"border-start-start-radius", @"border-start-end-radius", @"border-end-start-radius", @"border-end-end-radius", @"border-radius", @"border-image-source", @"border-image-outset", @"border-image-repeat", @"border-image-width", @"border-image-slice", @"border-image", @"border-color", @"border-style", @"border-width", @"border-block-color", @"border-block-style", @"border-block-width", @"border-inline-color", @"border-inline-style", @"border-inline-width", border, @"border-top", @"border-bottom", @"border-left", @"border-right", @"border-block", @"border-block-start", @"border-block-end", @"border-inline", @"border-inline-start", @"border-inline-end", outline, @"outline-color", @"outline-style", @"outline-width", @"flex-direction", @"flex-wrap", @"flex-flow", @"flex-grow", @"flex-shrink", @"flex-basis", flex, order, @"align-content", @"justify-content", @"place-content", @"align-self", @"justify-self", @"place-self", @"align-items", @"justify-items", @"place-items", @"row-gap", @"column-gap", gap, @"box-orient", @"box-direction", @"box-ordinal-group", @"box-align", @"box-flex", @"box-flex-group", @"box-pack", @"box-lines", @"flex-pack", @"flex-order", @"flex-align", @"flex-item-align", @"flex-line-pack", @"flex-positive", @"flex-negative", @"flex-preferred-size", @"margin-top", @"margin-bottom", @"margin-left", @"margin-right", @"margin-block-start", @"margin-block-end", @"margin-inline-start", @"margin-inline-end", @"margin-block", @"margin-inline", margin, @"padding-top", @"padding-bottom", @"padding-left", @"padding-right", @"padding-block-start", @"padding-block-end", @"padding-inline-start", @"padding-inline-end", @"padding-block", @"padding-inline", padding, @"scroll-margin-top", @"scroll-margin-bottom", @"scroll-margin-left", @"scroll-margin-right", @"scroll-margin-block-start", @"scroll-margin-block-end", @"scroll-margin-inline-start", @"scroll-margin-inline-end", @"scroll-margin-block", @"scroll-margin-inline", @"scroll-margin", @"scroll-padding-top", @"scroll-padding-bottom", @"scroll-padding-left", @"scroll-padding-right", @"scroll-padding-block-start", @"scroll-padding-block-end", @"scroll-padding-inline-start", @"scroll-padding-inline-end", @"scroll-padding-block", @"scroll-padding-inline", @"scroll-padding", @"font-weight", @"font-size", @"font-stretch", @"font-family", @"font-style", @"font-variant-caps", @"line-height", font, @"text-decoration-color", @"text-emphasis-color", @"text-shadow", direction, composes, @"mask-image", @"mask-mode", @"mask-repeat", @"mask-position-x", @"mask-position-y", @"mask-position", @"mask-clip", @"mask-origin", @"mask-size", @"mask-composite", @"mask-type", mask, @"mask-border-source", @"mask-border-mode", @"mask-border-slice", @"mask-border-width", @"mask-border-outset", @"mask-border-repeat", @"mask-border", @"-webkit-mask-composite", @"mask-source-type", @"mask-box-image", @"mask-box-image-source", @"mask-box-image-slice", @"mask-box-image-width", @"mask-box-image-outset", @"mask-box-image-repeat" };
+        const Map = comptime bun.ComptimeEnumMap(Enum);
+        if (Map.getASCIIICaseInsensitive(name1)) |prop| {
+            switch (prop) {
+                .@"background-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"background-color";
+                },
+                .@"background-image" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"background-image";
+                },
+                .@"background-position-x" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"background-position-x";
+                },
+                .@"background-position-y" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"background-position-y";
+                },
+                .@"background-position" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"background-position";
+                },
+                .@"background-size" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"background-size";
+                },
+                .@"background-repeat" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"background-repeat";
+                },
+                .@"background-attachment" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"background-attachment";
+                },
+                .@"background-clip" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"background-clip" = pre };
+                },
+                .@"background-origin" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"background-origin";
+                },
+                .background => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .background;
+                },
+                .@"box-shadow" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"box-shadow" = pre };
+                },
+                .opacity => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .opacity;
+                },
+                .color => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .color;
+                },
+                .display => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .display;
+                },
+                .visibility => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .visibility;
+                },
+                .width => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .width;
+                },
+                .height => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .height;
+                },
+                .@"min-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"min-width";
+                },
+                .@"min-height" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"min-height";
+                },
+                .@"max-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"max-width";
+                },
+                .@"max-height" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"max-height";
+                },
+                .@"block-size" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"block-size";
+                },
+                .@"inline-size" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"inline-size";
+                },
+                .@"min-block-size" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"min-block-size";
+                },
+                .@"min-inline-size" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"min-inline-size";
+                },
+                .@"max-block-size" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"max-block-size";
+                },
+                .@"max-inline-size" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"max-inline-size";
+                },
+                .@"box-sizing" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"box-sizing" = pre };
+                },
+                .@"aspect-ratio" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"aspect-ratio";
+                },
+                .overflow => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .overflow;
+                },
+                .@"overflow-x" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"overflow-x";
+                },
+                .@"overflow-y" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"overflow-y";
+                },
+                .@"text-overflow" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .o = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"text-overflow" = pre };
+                },
+                .position => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .position;
+                },
+                .top => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .top;
+                },
+                .bottom => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .bottom;
+                },
+                .left => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .left;
+                },
+                .right => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .right;
+                },
+                .@"inset-block-start" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"inset-block-start";
+                },
+                .@"inset-block-end" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"inset-block-end";
+                },
+                .@"inset-inline-start" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"inset-inline-start";
+                },
+                .@"inset-inline-end" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"inset-inline-end";
+                },
+                .@"inset-block" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"inset-block";
+                },
+                .@"inset-inline" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"inset-inline";
+                },
+                .inset => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .inset;
+                },
+                .@"border-spacing" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-spacing";
+                },
+                .@"border-top-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-top-color";
+                },
+                .@"border-bottom-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-bottom-color";
+                },
+                .@"border-left-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-left-color";
+                },
+                .@"border-right-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-right-color";
+                },
+                .@"border-block-start-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-block-start-color";
+                },
+                .@"border-block-end-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-block-end-color";
+                },
+                .@"border-inline-start-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-inline-start-color";
+                },
+                .@"border-inline-end-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-inline-end-color";
+                },
+                .@"border-top-style" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-top-style";
+                },
+                .@"border-bottom-style" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-bottom-style";
+                },
+                .@"border-left-style" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-left-style";
+                },
+                .@"border-right-style" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-right-style";
+                },
+                .@"border-block-start-style" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-block-start-style";
+                },
+                .@"border-block-end-style" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-block-end-style";
+                },
+                .@"border-inline-start-style" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-inline-start-style";
+                },
+                .@"border-inline-end-style" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-inline-end-style";
+                },
+                .@"border-top-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-top-width";
+                },
+                .@"border-bottom-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-bottom-width";
+                },
+                .@"border-left-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-left-width";
+                },
+                .@"border-right-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-right-width";
+                },
+                .@"border-block-start-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-block-start-width";
+                },
+                .@"border-block-end-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-block-end-width";
+                },
+                .@"border-inline-start-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-inline-start-width";
+                },
+                .@"border-inline-end-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-inline-end-width";
+                },
+                .@"border-top-left-radius" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"border-top-left-radius" = pre };
+                },
+                .@"border-top-right-radius" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"border-top-right-radius" = pre };
+                },
+                .@"border-bottom-left-radius" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"border-bottom-left-radius" = pre };
+                },
+                .@"border-bottom-right-radius" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"border-bottom-right-radius" = pre };
+                },
+                .@"border-start-start-radius" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-start-start-radius";
+                },
+                .@"border-start-end-radius" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-start-end-radius";
+                },
+                .@"border-end-start-radius" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-end-start-radius";
+                },
+                .@"border-end-end-radius" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-end-end-radius";
+                },
+                .@"border-radius" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"border-radius" = pre };
+                },
+                .@"border-image-source" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-image-source";
+                },
+                .@"border-image-outset" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-image-outset";
+                },
+                .@"border-image-repeat" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-image-repeat";
+                },
+                .@"border-image-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-image-width";
+                },
+                .@"border-image-slice" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-image-slice";
+                },
+                .@"border-image" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .o = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"border-image" = pre };
+                },
+                .@"border-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-color";
+                },
+                .@"border-style" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-style";
+                },
+                .@"border-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-width";
+                },
+                .@"border-block-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-block-color";
+                },
+                .@"border-block-style" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-block-style";
+                },
+                .@"border-block-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-block-width";
+                },
+                .@"border-inline-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-inline-color";
+                },
+                .@"border-inline-style" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-inline-style";
+                },
+                .@"border-inline-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-inline-width";
+                },
+                .border => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .border;
+                },
+                .@"border-top" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-top";
+                },
+                .@"border-bottom" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-bottom";
+                },
+                .@"border-left" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-left";
+                },
+                .@"border-right" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-right";
+                },
+                .@"border-block" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-block";
+                },
+                .@"border-block-start" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-block-start";
+                },
+                .@"border-block-end" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-block-end";
+                },
+                .@"border-inline" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-inline";
+                },
+                .@"border-inline-start" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-inline-start";
+                },
+                .@"border-inline-end" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"border-inline-end";
+                },
+                .outline => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .outline;
+                },
+                .@"outline-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"outline-color";
+                },
+                .@"outline-style" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"outline-style";
+                },
+                .@"outline-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"outline-width";
+                },
+                .@"flex-direction" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-direction" = pre };
+                },
+                .@"flex-wrap" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-wrap" = pre };
+                },
+                .@"flex-flow" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-flow" = pre };
+                },
+                .@"flex-grow" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-grow" = pre };
+                },
+                .@"flex-shrink" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-shrink" = pre };
+                },
+                .@"flex-basis" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-basis" = pre };
+                },
+                .flex => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .flex = pre };
+                },
+                .order => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .order = pre };
+                },
+                .@"align-content" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"align-content" = pre };
+                },
+                .@"justify-content" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"justify-content" = pre };
+                },
+                .@"place-content" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"place-content";
+                },
+                .@"align-self" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"align-self" = pre };
+                },
+                .@"justify-self" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"justify-self";
+                },
+                .@"place-self" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"place-self";
+                },
+                .@"align-items" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"align-items" = pre };
+                },
+                .@"justify-items" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"justify-items";
+                },
+                .@"place-items" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"place-items";
+                },
+                .@"row-gap" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"row-gap";
+                },
+                .@"column-gap" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"column-gap";
+                },
+                .gap => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .gap;
+                },
+                .@"box-orient" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"box-orient" = pre };
+                },
+                .@"box-direction" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"box-direction" = pre };
+                },
+                .@"box-ordinal-group" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"box-ordinal-group" = pre };
+                },
+                .@"box-align" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"box-align" = pre };
+                },
+                .@"box-flex" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"box-flex" = pre };
+                },
+                .@"box-flex-group" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"box-flex-group" = pre };
+                },
+                .@"box-pack" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"box-pack" = pre };
+                },
+                .@"box-lines" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"box-lines" = pre };
+                },
+                .@"flex-pack" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-pack" = pre };
+                },
+                .@"flex-order" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-order" = pre };
+                },
+                .@"flex-align" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-align" = pre };
+                },
+                .@"flex-item-align" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-item-align" = pre };
+                },
+                .@"flex-line-pack" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-line-pack" = pre };
+                },
+                .@"flex-positive" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-positive" = pre };
+                },
+                .@"flex-negative" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-negative" = pre };
+                },
+                .@"flex-preferred-size" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-preferred-size" = pre };
+                },
+                .@"margin-top" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"margin-top";
+                },
+                .@"margin-bottom" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"margin-bottom";
+                },
+                .@"margin-left" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"margin-left";
+                },
+                .@"margin-right" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"margin-right";
+                },
+                .@"margin-block-start" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"margin-block-start";
+                },
+                .@"margin-block-end" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"margin-block-end";
+                },
+                .@"margin-inline-start" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"margin-inline-start";
+                },
+                .@"margin-inline-end" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"margin-inline-end";
+                },
+                .@"margin-block" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"margin-block";
+                },
+                .@"margin-inline" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"margin-inline";
+                },
+                .margin => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .margin;
+                },
+                .@"padding-top" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"padding-top";
+                },
+                .@"padding-bottom" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"padding-bottom";
+                },
+                .@"padding-left" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"padding-left";
+                },
+                .@"padding-right" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"padding-right";
+                },
+                .@"padding-block-start" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"padding-block-start";
+                },
+                .@"padding-block-end" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"padding-block-end";
+                },
+                .@"padding-inline-start" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"padding-inline-start";
+                },
+                .@"padding-inline-end" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"padding-inline-end";
+                },
+                .@"padding-block" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"padding-block";
+                },
+                .@"padding-inline" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"padding-inline";
+                },
+                .padding => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .padding;
+                },
+                .@"scroll-margin-top" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-top";
+                },
+                .@"scroll-margin-bottom" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-bottom";
+                },
+                .@"scroll-margin-left" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-left";
+                },
+                .@"scroll-margin-right" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-right";
+                },
+                .@"scroll-margin-block-start" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-block-start";
+                },
+                .@"scroll-margin-block-end" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-block-end";
+                },
+                .@"scroll-margin-inline-start" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-inline-start";
+                },
+                .@"scroll-margin-inline-end" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-inline-end";
+                },
+                .@"scroll-margin-block" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-block";
+                },
+                .@"scroll-margin-inline" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-inline";
+                },
+                .@"scroll-margin" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin";
+                },
+                .@"scroll-padding-top" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-top";
+                },
+                .@"scroll-padding-bottom" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-bottom";
+                },
+                .@"scroll-padding-left" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-left";
+                },
+                .@"scroll-padding-right" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-right";
+                },
+                .@"scroll-padding-block-start" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-block-start";
+                },
+                .@"scroll-padding-block-end" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-block-end";
+                },
+                .@"scroll-padding-inline-start" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-inline-start";
+                },
+                .@"scroll-padding-inline-end" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-inline-end";
+                },
+                .@"scroll-padding-block" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-block";
+                },
+                .@"scroll-padding-inline" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-inline";
+                },
+                .@"scroll-padding" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding";
+                },
+                .@"font-weight" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"font-weight";
+                },
+                .@"font-size" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"font-size";
+                },
+                .@"font-stretch" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"font-stretch";
+                },
+                .@"font-family" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"font-family";
+                },
+                .@"font-style" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"font-style";
+                },
+                .@"font-variant-caps" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"font-variant-caps";
+                },
+                .@"line-height" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"line-height";
+                },
+                .font => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .font;
+                },
+                .@"text-decoration-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"text-decoration-color" = pre };
+                },
+                .@"text-emphasis-color" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"text-emphasis-color" = pre };
+                },
+                .@"text-shadow" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"text-shadow";
+                },
+                .direction => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .direction;
+                },
+                .composes => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .composes;
+                },
+                .@"mask-image" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-image" = pre };
+                },
+                .@"mask-mode" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"mask-mode";
+                },
+                .@"mask-repeat" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-repeat" = pre };
+                },
+                .@"mask-position-x" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"mask-position-x";
+                },
+                .@"mask-position-y" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"mask-position-y";
+                },
+                .@"mask-position" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-position" = pre };
+                },
+                .@"mask-clip" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-clip" = pre };
+                },
+                .@"mask-origin" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-origin" = pre };
+                },
+                .@"mask-size" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-size" = pre };
+                },
+                .@"mask-composite" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"mask-composite";
+                },
+                .@"mask-type" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"mask-type";
+                },
+                .mask => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .mask = pre };
+                },
+                .@"mask-border-source" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"mask-border-source";
+                },
+                .@"mask-border-mode" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"mask-border-mode";
+                },
+                .@"mask-border-slice" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"mask-border-slice";
+                },
+                .@"mask-border-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"mask-border-width";
+                },
+                .@"mask-border-outset" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"mask-border-outset";
+                },
+                .@"mask-border-repeat" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"mask-border-repeat";
+                },
+                .@"mask-border" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"mask-border";
+                },
+                .@"-webkit-mask-composite" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"-webkit-mask-composite";
+                },
+                .@"mask-source-type" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-source-type" = pre };
+                },
+                .@"mask-box-image" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image" = pre };
+                },
+                .@"mask-box-image-source" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-source" = pre };
+                },
+                .@"mask-box-image-slice" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-slice" = pre };
+                },
+                .@"mask-box-image-width" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-width" = pre };
+                },
+                .@"mask-box-image-outset" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-outset" = pre };
+                },
+                .@"mask-box-image-repeat" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
+                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-repeat" = pre };
+                },
+            }
         }
 
         return null;
@@ -8301,6 +8568,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .font => .font,
             .@"text-decoration-color" => .{ .@"text-decoration-color" = pre },
             .@"text-emphasis-color" => .{ .@"text-emphasis-color" = pre },
+            .@"text-shadow" => .@"text-shadow",
             .direction => .direction,
             .composes => .composes,
             .@"mask-image" => .{ .@"mask-image" = pre },
@@ -8616,6 +8884,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"text-emphasis-color" => |*p| {
                 p.insert(pre);
             },
+            .@"text-shadow" => {},
             .direction => {},
             .composes => {},
             .@"mask-image" => |*p| {
@@ -8901,6 +9170,7 @@ pub const PropertyIdTag = enum(u16) {
     font,
     @"text-decoration-color",
     @"text-emphasis-color",
+    @"text-shadow",
     direction,
     composes,
     @"mask-image",
@@ -8933,4 +9203,484 @@ pub const PropertyIdTag = enum(u16) {
     all,
     unparsed,
     custom,
+
+    /// Helper function used in comptime code to know whether to access the underlying value
+    /// with tuple indexing syntax because it may have a VendorPrefix associated with it.
+    pub fn hasVendorPrefix(this: PropertyIdTag) bool {
+        return switch (this) {
+            .@"background-color" => false,
+            .@"background-image" => false,
+            .@"background-position-x" => false,
+            .@"background-position-y" => false,
+            .@"background-position" => false,
+            .@"background-size" => false,
+            .@"background-repeat" => false,
+            .@"background-attachment" => false,
+            .@"background-clip" => true,
+            .@"background-origin" => false,
+            .background => false,
+            .@"box-shadow" => true,
+            .opacity => false,
+            .color => false,
+            .display => false,
+            .visibility => false,
+            .width => false,
+            .height => false,
+            .@"min-width" => false,
+            .@"min-height" => false,
+            .@"max-width" => false,
+            .@"max-height" => false,
+            .@"block-size" => false,
+            .@"inline-size" => false,
+            .@"min-block-size" => false,
+            .@"min-inline-size" => false,
+            .@"max-block-size" => false,
+            .@"max-inline-size" => false,
+            .@"box-sizing" => true,
+            .@"aspect-ratio" => false,
+            .overflow => false,
+            .@"overflow-x" => false,
+            .@"overflow-y" => false,
+            .@"text-overflow" => true,
+            .position => false,
+            .top => false,
+            .bottom => false,
+            .left => false,
+            .right => false,
+            .@"inset-block-start" => false,
+            .@"inset-block-end" => false,
+            .@"inset-inline-start" => false,
+            .@"inset-inline-end" => false,
+            .@"inset-block" => false,
+            .@"inset-inline" => false,
+            .inset => false,
+            .@"border-spacing" => false,
+            .@"border-top-color" => false,
+            .@"border-bottom-color" => false,
+            .@"border-left-color" => false,
+            .@"border-right-color" => false,
+            .@"border-block-start-color" => false,
+            .@"border-block-end-color" => false,
+            .@"border-inline-start-color" => false,
+            .@"border-inline-end-color" => false,
+            .@"border-top-style" => false,
+            .@"border-bottom-style" => false,
+            .@"border-left-style" => false,
+            .@"border-right-style" => false,
+            .@"border-block-start-style" => false,
+            .@"border-block-end-style" => false,
+            .@"border-inline-start-style" => false,
+            .@"border-inline-end-style" => false,
+            .@"border-top-width" => false,
+            .@"border-bottom-width" => false,
+            .@"border-left-width" => false,
+            .@"border-right-width" => false,
+            .@"border-block-start-width" => false,
+            .@"border-block-end-width" => false,
+            .@"border-inline-start-width" => false,
+            .@"border-inline-end-width" => false,
+            .@"border-top-left-radius" => true,
+            .@"border-top-right-radius" => true,
+            .@"border-bottom-left-radius" => true,
+            .@"border-bottom-right-radius" => true,
+            .@"border-start-start-radius" => false,
+            .@"border-start-end-radius" => false,
+            .@"border-end-start-radius" => false,
+            .@"border-end-end-radius" => false,
+            .@"border-radius" => true,
+            .@"border-image-source" => false,
+            .@"border-image-outset" => false,
+            .@"border-image-repeat" => false,
+            .@"border-image-width" => false,
+            .@"border-image-slice" => false,
+            .@"border-image" => true,
+            .@"border-color" => false,
+            .@"border-style" => false,
+            .@"border-width" => false,
+            .@"border-block-color" => false,
+            .@"border-block-style" => false,
+            .@"border-block-width" => false,
+            .@"border-inline-color" => false,
+            .@"border-inline-style" => false,
+            .@"border-inline-width" => false,
+            .border => false,
+            .@"border-top" => false,
+            .@"border-bottom" => false,
+            .@"border-left" => false,
+            .@"border-right" => false,
+            .@"border-block" => false,
+            .@"border-block-start" => false,
+            .@"border-block-end" => false,
+            .@"border-inline" => false,
+            .@"border-inline-start" => false,
+            .@"border-inline-end" => false,
+            .outline => false,
+            .@"outline-color" => false,
+            .@"outline-style" => false,
+            .@"outline-width" => false,
+            .@"flex-direction" => true,
+            .@"flex-wrap" => true,
+            .@"flex-flow" => true,
+            .@"flex-grow" => true,
+            .@"flex-shrink" => true,
+            .@"flex-basis" => true,
+            .flex => true,
+            .order => true,
+            .@"align-content" => true,
+            .@"justify-content" => true,
+            .@"place-content" => false,
+            .@"align-self" => true,
+            .@"justify-self" => false,
+            .@"place-self" => false,
+            .@"align-items" => true,
+            .@"justify-items" => false,
+            .@"place-items" => false,
+            .@"row-gap" => false,
+            .@"column-gap" => false,
+            .gap => false,
+            .@"box-orient" => true,
+            .@"box-direction" => true,
+            .@"box-ordinal-group" => true,
+            .@"box-align" => true,
+            .@"box-flex" => true,
+            .@"box-flex-group" => true,
+            .@"box-pack" => true,
+            .@"box-lines" => true,
+            .@"flex-pack" => true,
+            .@"flex-order" => true,
+            .@"flex-align" => true,
+            .@"flex-item-align" => true,
+            .@"flex-line-pack" => true,
+            .@"flex-positive" => true,
+            .@"flex-negative" => true,
+            .@"flex-preferred-size" => true,
+            .@"margin-top" => false,
+            .@"margin-bottom" => false,
+            .@"margin-left" => false,
+            .@"margin-right" => false,
+            .@"margin-block-start" => false,
+            .@"margin-block-end" => false,
+            .@"margin-inline-start" => false,
+            .@"margin-inline-end" => false,
+            .@"margin-block" => false,
+            .@"margin-inline" => false,
+            .margin => false,
+            .@"padding-top" => false,
+            .@"padding-bottom" => false,
+            .@"padding-left" => false,
+            .@"padding-right" => false,
+            .@"padding-block-start" => false,
+            .@"padding-block-end" => false,
+            .@"padding-inline-start" => false,
+            .@"padding-inline-end" => false,
+            .@"padding-block" => false,
+            .@"padding-inline" => false,
+            .padding => false,
+            .@"scroll-margin-top" => false,
+            .@"scroll-margin-bottom" => false,
+            .@"scroll-margin-left" => false,
+            .@"scroll-margin-right" => false,
+            .@"scroll-margin-block-start" => false,
+            .@"scroll-margin-block-end" => false,
+            .@"scroll-margin-inline-start" => false,
+            .@"scroll-margin-inline-end" => false,
+            .@"scroll-margin-block" => false,
+            .@"scroll-margin-inline" => false,
+            .@"scroll-margin" => false,
+            .@"scroll-padding-top" => false,
+            .@"scroll-padding-bottom" => false,
+            .@"scroll-padding-left" => false,
+            .@"scroll-padding-right" => false,
+            .@"scroll-padding-block-start" => false,
+            .@"scroll-padding-block-end" => false,
+            .@"scroll-padding-inline-start" => false,
+            .@"scroll-padding-inline-end" => false,
+            .@"scroll-padding-block" => false,
+            .@"scroll-padding-inline" => false,
+            .@"scroll-padding" => false,
+            .@"font-weight" => false,
+            .@"font-size" => false,
+            .@"font-stretch" => false,
+            .@"font-family" => false,
+            .@"font-style" => false,
+            .@"font-variant-caps" => false,
+            .@"line-height" => false,
+            .font => false,
+            .@"text-decoration-color" => true,
+            .@"text-emphasis-color" => true,
+            .@"text-shadow" => false,
+            .direction => false,
+            .composes => false,
+            .@"mask-image" => true,
+            .@"mask-mode" => false,
+            .@"mask-repeat" => true,
+            .@"mask-position-x" => false,
+            .@"mask-position-y" => false,
+            .@"mask-position" => true,
+            .@"mask-clip" => true,
+            .@"mask-origin" => true,
+            .@"mask-size" => true,
+            .@"mask-composite" => false,
+            .@"mask-type" => false,
+            .mask => true,
+            .@"mask-border-source" => false,
+            .@"mask-border-mode" => false,
+            .@"mask-border-slice" => false,
+            .@"mask-border-width" => false,
+            .@"mask-border-outset" => false,
+            .@"mask-border-repeat" => false,
+            .@"mask-border" => false,
+            .@"-webkit-mask-composite" => false,
+            .@"mask-source-type" => true,
+            .@"mask-box-image" => true,
+            .@"mask-box-image-source" => true,
+            .@"mask-box-image-slice" => true,
+            .@"mask-box-image-width" => true,
+            .@"mask-box-image-outset" => true,
+            .@"mask-box-image-repeat" => true,
+            .unparsed => false,
+            .custom => false,
+            .all => false,
+        };
+    }
+
+    /// Helper function used in comptime code to know whether to access the underlying value
+    /// with tuple indexing syntax because it may have a VendorPrefix associated with it.
+    pub fn valueType(this: PropertyIdTag) type {
+        return switch (this) {
+            .@"background-color" => CssColor,
+            .@"background-image" => SmallList(Image, 1),
+            .@"background-position-x" => SmallList(css_values.position.HorizontalPosition, 1),
+            .@"background-position-y" => SmallList(css_values.position.VerticalPosition, 1),
+            .@"background-position" => SmallList(background.BackgroundPosition, 1),
+            .@"background-size" => SmallList(background.BackgroundSize, 1),
+            .@"background-repeat" => SmallList(background.BackgroundRepeat, 1),
+            .@"background-attachment" => SmallList(background.BackgroundAttachment, 1),
+            .@"background-clip" => SmallList(background.BackgroundClip, 1),
+            .@"background-origin" => SmallList(background.BackgroundOrigin, 1),
+            .background => SmallList(background.Background, 1),
+            .@"box-shadow" => SmallList(box_shadow.BoxShadow, 1),
+            .opacity => css.css_values.alpha.AlphaValue,
+            .color => CssColor,
+            .display => display.Display,
+            .visibility => display.Visibility,
+            .width => size.Size,
+            .height => size.Size,
+            .@"min-width" => size.Size,
+            .@"min-height" => size.Size,
+            .@"max-width" => size.MaxSize,
+            .@"max-height" => size.MaxSize,
+            .@"block-size" => size.Size,
+            .@"inline-size" => size.Size,
+            .@"min-block-size" => size.Size,
+            .@"min-inline-size" => size.Size,
+            .@"max-block-size" => size.MaxSize,
+            .@"max-inline-size" => size.MaxSize,
+            .@"box-sizing" => size.BoxSizing,
+            .@"aspect-ratio" => size.AspectRatio,
+            .overflow => overflow.Overflow,
+            .@"overflow-x" => overflow.OverflowKeyword,
+            .@"overflow-y" => overflow.OverflowKeyword,
+            .@"text-overflow" => overflow.TextOverflow,
+            .position => position.Position,
+            .top => LengthPercentageOrAuto,
+            .bottom => LengthPercentageOrAuto,
+            .left => LengthPercentageOrAuto,
+            .right => LengthPercentageOrAuto,
+            .@"inset-block-start" => LengthPercentageOrAuto,
+            .@"inset-block-end" => LengthPercentageOrAuto,
+            .@"inset-inline-start" => LengthPercentageOrAuto,
+            .@"inset-inline-end" => LengthPercentageOrAuto,
+            .@"inset-block" => margin_padding.InsetBlock,
+            .@"inset-inline" => margin_padding.InsetInline,
+            .inset => margin_padding.Inset,
+            .@"border-spacing" => css.css_values.size.Size2D(Length),
+            .@"border-top-color" => CssColor,
+            .@"border-bottom-color" => CssColor,
+            .@"border-left-color" => CssColor,
+            .@"border-right-color" => CssColor,
+            .@"border-block-start-color" => CssColor,
+            .@"border-block-end-color" => CssColor,
+            .@"border-inline-start-color" => CssColor,
+            .@"border-inline-end-color" => CssColor,
+            .@"border-top-style" => border.LineStyle,
+            .@"border-bottom-style" => border.LineStyle,
+            .@"border-left-style" => border.LineStyle,
+            .@"border-right-style" => border.LineStyle,
+            .@"border-block-start-style" => border.LineStyle,
+            .@"border-block-end-style" => border.LineStyle,
+            .@"border-inline-start-style" => border.LineStyle,
+            .@"border-inline-end-style" => border.LineStyle,
+            .@"border-top-width" => BorderSideWidth,
+            .@"border-bottom-width" => BorderSideWidth,
+            .@"border-left-width" => BorderSideWidth,
+            .@"border-right-width" => BorderSideWidth,
+            .@"border-block-start-width" => BorderSideWidth,
+            .@"border-block-end-width" => BorderSideWidth,
+            .@"border-inline-start-width" => BorderSideWidth,
+            .@"border-inline-end-width" => BorderSideWidth,
+            .@"border-top-left-radius" => Size2D(LengthPercentage),
+            .@"border-top-right-radius" => Size2D(LengthPercentage),
+            .@"border-bottom-left-radius" => Size2D(LengthPercentage),
+            .@"border-bottom-right-radius" => Size2D(LengthPercentage),
+            .@"border-start-start-radius" => Size2D(LengthPercentage),
+            .@"border-start-end-radius" => Size2D(LengthPercentage),
+            .@"border-end-start-radius" => Size2D(LengthPercentage),
+            .@"border-end-end-radius" => Size2D(LengthPercentage),
+            .@"border-radius" => BorderRadius,
+            .@"border-image-source" => Image,
+            .@"border-image-outset" => Rect(LengthOrNumber),
+            .@"border-image-repeat" => BorderImageRepeat,
+            .@"border-image-width" => Rect(BorderImageSideWidth),
+            .@"border-image-slice" => BorderImageSlice,
+            .@"border-image" => BorderImage,
+            .@"border-color" => BorderColor,
+            .@"border-style" => BorderStyle,
+            .@"border-width" => BorderWidth,
+            .@"border-block-color" => BorderBlockColor,
+            .@"border-block-style" => BorderBlockStyle,
+            .@"border-block-width" => BorderBlockWidth,
+            .@"border-inline-color" => BorderInlineColor,
+            .@"border-inline-style" => BorderInlineStyle,
+            .@"border-inline-width" => BorderInlineWidth,
+            .border => Border,
+            .@"border-top" => BorderTop,
+            .@"border-bottom" => BorderBottom,
+            .@"border-left" => BorderLeft,
+            .@"border-right" => BorderRight,
+            .@"border-block" => BorderBlock,
+            .@"border-block-start" => BorderBlockStart,
+            .@"border-block-end" => BorderBlockEnd,
+            .@"border-inline" => BorderInline,
+            .@"border-inline-start" => BorderInlineStart,
+            .@"border-inline-end" => BorderInlineEnd,
+            .outline => Outline,
+            .@"outline-color" => CssColor,
+            .@"outline-style" => OutlineStyle,
+            .@"outline-width" => BorderSideWidth,
+            .@"flex-direction" => FlexDirection,
+            .@"flex-wrap" => FlexWrap,
+            .@"flex-flow" => FlexFlow,
+            .@"flex-grow" => CSSNumber,
+            .@"flex-shrink" => CSSNumber,
+            .@"flex-basis" => LengthPercentageOrAuto,
+            .flex => Flex,
+            .order => CSSInteger,
+            .@"align-content" => AlignContent,
+            .@"justify-content" => JustifyContent,
+            .@"place-content" => PlaceContent,
+            .@"align-self" => AlignSelf,
+            .@"justify-self" => JustifySelf,
+            .@"place-self" => PlaceSelf,
+            .@"align-items" => AlignItems,
+            .@"justify-items" => JustifyItems,
+            .@"place-items" => PlaceItems,
+            .@"row-gap" => GapValue,
+            .@"column-gap" => GapValue,
+            .gap => Gap,
+            .@"box-orient" => BoxOrient,
+            .@"box-direction" => BoxDirection,
+            .@"box-ordinal-group" => CSSInteger,
+            .@"box-align" => BoxAlign,
+            .@"box-flex" => CSSNumber,
+            .@"box-flex-group" => CSSInteger,
+            .@"box-pack" => BoxPack,
+            .@"box-lines" => BoxLines,
+            .@"flex-pack" => FlexPack,
+            .@"flex-order" => CSSInteger,
+            .@"flex-align" => BoxAlign,
+            .@"flex-item-align" => FlexItemAlign,
+            .@"flex-line-pack" => FlexLinePack,
+            .@"flex-positive" => CSSNumber,
+            .@"flex-negative" => CSSNumber,
+            .@"flex-preferred-size" => LengthPercentageOrAuto,
+            .@"margin-top" => LengthPercentageOrAuto,
+            .@"margin-bottom" => LengthPercentageOrAuto,
+            .@"margin-left" => LengthPercentageOrAuto,
+            .@"margin-right" => LengthPercentageOrAuto,
+            .@"margin-block-start" => LengthPercentageOrAuto,
+            .@"margin-block-end" => LengthPercentageOrAuto,
+            .@"margin-inline-start" => LengthPercentageOrAuto,
+            .@"margin-inline-end" => LengthPercentageOrAuto,
+            .@"margin-block" => MarginBlock,
+            .@"margin-inline" => MarginInline,
+            .margin => Margin,
+            .@"padding-top" => LengthPercentageOrAuto,
+            .@"padding-bottom" => LengthPercentageOrAuto,
+            .@"padding-left" => LengthPercentageOrAuto,
+            .@"padding-right" => LengthPercentageOrAuto,
+            .@"padding-block-start" => LengthPercentageOrAuto,
+            .@"padding-block-end" => LengthPercentageOrAuto,
+            .@"padding-inline-start" => LengthPercentageOrAuto,
+            .@"padding-inline-end" => LengthPercentageOrAuto,
+            .@"padding-block" => PaddingBlock,
+            .@"padding-inline" => PaddingInline,
+            .padding => Padding,
+            .@"scroll-margin-top" => LengthPercentageOrAuto,
+            .@"scroll-margin-bottom" => LengthPercentageOrAuto,
+            .@"scroll-margin-left" => LengthPercentageOrAuto,
+            .@"scroll-margin-right" => LengthPercentageOrAuto,
+            .@"scroll-margin-block-start" => LengthPercentageOrAuto,
+            .@"scroll-margin-block-end" => LengthPercentageOrAuto,
+            .@"scroll-margin-inline-start" => LengthPercentageOrAuto,
+            .@"scroll-margin-inline-end" => LengthPercentageOrAuto,
+            .@"scroll-margin-block" => ScrollMarginBlock,
+            .@"scroll-margin-inline" => ScrollMarginInline,
+            .@"scroll-margin" => ScrollMargin,
+            .@"scroll-padding-top" => LengthPercentageOrAuto,
+            .@"scroll-padding-bottom" => LengthPercentageOrAuto,
+            .@"scroll-padding-left" => LengthPercentageOrAuto,
+            .@"scroll-padding-right" => LengthPercentageOrAuto,
+            .@"scroll-padding-block-start" => LengthPercentageOrAuto,
+            .@"scroll-padding-block-end" => LengthPercentageOrAuto,
+            .@"scroll-padding-inline-start" => LengthPercentageOrAuto,
+            .@"scroll-padding-inline-end" => LengthPercentageOrAuto,
+            .@"scroll-padding-block" => ScrollPaddingBlock,
+            .@"scroll-padding-inline" => ScrollPaddingInline,
+            .@"scroll-padding" => ScrollPadding,
+            .@"font-weight" => FontWeight,
+            .@"font-size" => FontSize,
+            .@"font-stretch" => FontStretch,
+            .@"font-family" => BabyList(FontFamily),
+            .@"font-style" => FontStyle,
+            .@"font-variant-caps" => FontVariantCaps,
+            .@"line-height" => LineHeight,
+            .font => Font,
+            .@"text-decoration-color" => CssColor,
+            .@"text-emphasis-color" => CssColor,
+            .@"text-shadow" => SmallList(TextShadow, 1),
+            .direction => Direction,
+            .composes => Composes,
+            .@"mask-image" => SmallList(Image, 1),
+            .@"mask-mode" => SmallList(MaskMode, 1),
+            .@"mask-repeat" => SmallList(BackgroundRepeat, 1),
+            .@"mask-position-x" => SmallList(HorizontalPosition, 1),
+            .@"mask-position-y" => SmallList(VerticalPosition, 1),
+            .@"mask-position" => SmallList(Position, 1),
+            .@"mask-clip" => SmallList(MaskClip, 1),
+            .@"mask-origin" => SmallList(GeometryBox, 1),
+            .@"mask-size" => SmallList(BackgroundSize, 1),
+            .@"mask-composite" => SmallList(MaskComposite, 1),
+            .@"mask-type" => MaskType,
+            .mask => SmallList(Mask, 1),
+            .@"mask-border-source" => Image,
+            .@"mask-border-mode" => MaskBorderMode,
+            .@"mask-border-slice" => BorderImageSlice,
+            .@"mask-border-width" => Rect(BorderImageSideWidth),
+            .@"mask-border-outset" => Rect(LengthOrNumber),
+            .@"mask-border-repeat" => BorderImageRepeat,
+            .@"mask-border" => MaskBorder,
+            .@"-webkit-mask-composite" => SmallList(WebKitMaskComposite, 1),
+            .@"mask-source-type" => SmallList(WebKitMaskSourceType, 1),
+            .@"mask-box-image" => BorderImage,
+            .@"mask-box-image-source" => Image,
+            .@"mask-box-image-slice" => BorderImageSlice,
+            .@"mask-box-image-width" => Rect(BorderImageSideWidth),
+            .@"mask-box-image-outset" => Rect(LengthOrNumber),
+            .@"mask-box-image-repeat" => BorderImageRepeat,
+            .all => CSSWideKeyword,
+            .unparsed => UnparsedProperty,
+            .custom => CustomProperty,
+        };
+    }
 };

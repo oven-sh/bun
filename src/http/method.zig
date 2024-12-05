@@ -54,16 +54,15 @@ pub const Method = enum {
         var values = std.enums.EnumSet(Method).initFull();
         values.remove(.HEAD);
         values.remove(.TRACE);
-        values.remove(.OPTIONS);
         break :brk values;
     };
 
     const with_request_body: std.enums.EnumSet(Method) = brk: {
         var values = std.enums.EnumSet(Method).initFull();
-        values.remove(.HEAD);
-        values.remove(.TRACE);
-        values.remove(.OPTIONS);
         values.remove(.GET);
+        values.remove(.HEAD);
+        values.remove(.OPTIONS);
+        values.remove(.TRACE);
         break :brk values;
     };
 

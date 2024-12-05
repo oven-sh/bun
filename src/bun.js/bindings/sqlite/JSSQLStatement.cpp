@@ -153,10 +153,10 @@ static void sqlite_free_typed_array(void* ctx, void* buf)
     sqlite3_free((void*)buf);
 }
 
-static int DEFAULT_SQLITE_FLAGS
+static constexpr int DEFAULT_SQLITE_FLAGS
     = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
-static unsigned int DEFAULT_SQLITE_PREPARE_FLAGS = SQLITE_PREPARE_PERSISTENT;
-static int MAX_SQLITE_PREPARE_FLAG = SQLITE_PREPARE_PERSISTENT | SQLITE_PREPARE_NORMALIZE | SQLITE_PREPARE_NO_VTAB;
+static constexpr unsigned int DEFAULT_SQLITE_PREPARE_FLAGS = SQLITE_PREPARE_PERSISTENT;
+static constexpr int MAX_SQLITE_PREPARE_FLAG = SQLITE_PREPARE_PERSISTENT | SQLITE_PREPARE_NORMALIZE | SQLITE_PREPARE_NO_VTAB;
 
 static inline JSC::JSValue jsNumberFromSQLite(sqlite3_stmt* stmt, unsigned int i)
 {

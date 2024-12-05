@@ -14,6 +14,7 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
+  import type { FFIFunctionCallableSymbol } from "bun:ffi";
   import type { Encoding as CryptoEncoding } from "crypto";
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
   interface Env {
@@ -3785,7 +3786,7 @@ declare module "bun" {
     | "browser";
 
   /** https://bun.sh/docs/bundler/loaders */
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text";
+  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css";
 
   interface PluginConstraints {
     /**
@@ -3873,10 +3874,17 @@ declare module "bun" {
      * The default loader for this file extension
      */
     loader: Loader;
+    /**
+     * Defer the execution of this callback until all other modules have been parsed.
+     *
+     * @returns Promise which will be resolved when all modules have been parsed
+     */
+    defer: () => Promise<void>;
   }
 
-  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined;
+  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
+  type OnStartCallback = () => void | Promise<void>;
 
   interface OnResolveArgs {
     /**
@@ -3891,6 +3899,10 @@ declare module "bun" {
      * The namespace of the importer.
      */
     namespace: string;
+    /** 
+     * The directory to perform file-based resolutions in.
+     */
+    resolveDir: string;
     /**
      * The kind of import this resolve is for.
      */
@@ -3920,7 +3932,30 @@ declare module "bun" {
     args: OnResolveArgs,
   ) => OnResolveResult | Promise<OnResolveResult | undefined | null> | undefined | null;
 
+  type FFIFunctionCallable = Function & {
+    // Making a nominally typed function so that the user must get it from dlopen
+    readonly __ffi_function_callable: typeof FFIFunctionCallableSymbol;
+  };
+
   interface PluginBuilder {
+    /**
+     * Register a callback which will be invoked when bundling starts.
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   setup(builder) {
+     *     builder.onStart(() => {
+     *       console.log("bundle just started!!")
+     *     });
+     *   },
+     * });
+     * ```
+     */
+    onStart(callback: OnStartCallback): void;
+    onBeforeParse(
+      constraints: PluginConstraints,
+      callback: { napiModule: unknown; symbol: string; external?: unknown | undefined },
+    ): void;
     /**
      * Register a callback to load imports with a specific import specifier
      * @param constraints The constraints to apply the plugin to
@@ -4362,6 +4397,35 @@ declare module "bun" {
      * @param [size=16384] The maximum TLS fragment size. The maximum value is `16384`.
      */
     setMaxSendFragment(size: number): boolean;
+
+    /**
+     * Enable/disable the use of Nagle's algorithm.
+     * Only available for already connected sockets, will return false otherwise
+     * @param noDelay Default: `true`
+     * @returns true if is able to setNoDelay and false if it fails.
+     */
+    setNoDelay(noDelay?: boolean): boolean;
+
+    /**
+     * Enable/disable keep-alive functionality, and optionally set the initial delay before the first keepalive probe is sent on an idle socket.
+     * Set `initialDelay` (in milliseconds) to set the delay between the last data packet received and the first keepalive probe.
+     * Only available for already connected sockets, will return false otherwise.
+     *
+     * Enabling the keep-alive functionality will set the following socket options:
+     * SO_KEEPALIVE=1
+     * TCP_KEEPIDLE=initialDelay
+     * TCP_KEEPCNT=10
+     * TCP_KEEPINTVL=1
+     * @param enable Default: `false`
+     * @param initialDelay Default: `0`
+     * @returns true if is able to setNoDelay and false if it fails.
+     */
+    setKeepAlive(enable?: boolean, initialDelay?: number): boolean;
+
+    /**
+     * The number of bytes written to the socket.
+     */
+    readonly bytesWritten: number;
   }
 
   interface SocketListener<Data = undefined> extends Disposable {
@@ -4467,6 +4531,7 @@ declare module "bun" {
     port: number;
     tls?: TLSOptions;
     exclusive?: boolean;
+    allowHalfOpen?: boolean;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
@@ -4474,11 +4539,17 @@ declare module "bun" {
     port: number;
     tls?: boolean;
     exclusive?: boolean;
+    allowHalfOpen?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
     tls?: TLSOptions;
     unix: string;
+  }
+
+  interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    tls?: TLSOptions;
+    fd: number;
   }
 
   /**
@@ -5464,6 +5535,57 @@ declare module "bun" {
      */
     match(str: string): boolean;
   }
+
+  /**
+   * Generate a UUIDv7, which is a sequential ID based on the current timestamp with a random component.
+   *
+   * When the same timestamp is used multiple times, a monotonically increasing
+   * counter is appended to allow sorting. The final 8 bytes are
+   * cryptographically random. When the timestamp changes, the counter resets to
+   * a psuedo-random integer.
+   *
+   * @param encoding "hex" | "base64" | "base64url"
+   * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv7 } from "bun";
+   * const array = [
+   *   randomUUIDv7(),
+   *   randomUUIDv7(),
+   *   randomUUIDv7(),
+   * ]
+   * [
+   *   "0192ce07-8c4f-7d66-afec-2482b5c9b03c",
+   *   "0192ce07-8c4f-7d67-805f-0f71581b5622",
+   *   "0192ce07-8c4f-7d68-8170-6816e4451a58"
+   * ]
+   * ```
+   */
+  function randomUUIDv7(
+    /**
+     * @default "hex"
+     */
+    encoding?: "hex" | "base64" | "base64url",
+    /**
+     * @default Date.now()
+     */
+    timestamp?: number | Date,
+  ): string;
+
+  /**
+   * Generate a UUIDv7 as a Buffer
+   *
+   * @param encoding "buffer"
+   * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
+   */
+  function randomUUIDv7(
+    encoding: "buffer",
+    /**
+     * @default Date.now()
+     */
+    timestamp?: number | Date,
+  ): Buffer;
 }
 
 // extends lib.dom.d.ts

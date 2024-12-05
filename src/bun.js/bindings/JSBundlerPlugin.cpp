@@ -365,7 +365,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
 
 #if OS(WINDOWS)
     void* on_before_parse_symbol_ptr = GetProcAddress((HMODULE)dlopen_handle, utf8.data());
-    const char** native_plugin_name = (const char*)GetProcAddress((HMODULE)dlopen_handle, "BUN_PLUGIN_NAME");
+    const char** native_plugin_name = (const char**)GetProcAddress((HMODULE)dlopen_handle, "BUN_PLUGIN_NAME");
 #else
     void* on_before_parse_symbol_ptr = dlsym(dlopen_handle, utf8.data());
     const char** native_plugin_name = (const char**)dlsym(dlopen_handle, "BUN_PLUGIN_NAME");

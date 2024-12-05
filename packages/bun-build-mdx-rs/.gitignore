@@ -197,3 +197,6 @@ Cargo.lock
 *.node
 
 dist/
+
+index.js
+index.d.ts

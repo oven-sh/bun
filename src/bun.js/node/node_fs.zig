@@ -3244,6 +3244,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .close,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Close).success;
@@ -4004,6 +4005,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .open,
                 .path = args.path.slice(),
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Open).initResult(FDImpl.decode(bun.toFD(@as(u32, @intCast(rc)))));
@@ -4074,6 +4076,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .read,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Read).initResult(.{ .bytes_read = @intCast(rc) });
@@ -4086,6 +4089,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .readv,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Readv).initResult(.{ .bytes_read = @intCast(rc) });
@@ -4110,6 +4114,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .write,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Write).initResult(.{ .bytes_written = @intCast(rc) });
@@ -4122,6 +4127,7 @@ pub const NodeFS = struct {
                 .errno = @intCast(-rc),
                 .syscall = .writev,
                 .fd = args.fd,
+                .from_libuv = true,
             } };
         }
         return Maybe(Return.Writev).initResult(.{ .bytes_written = @intCast(rc) });

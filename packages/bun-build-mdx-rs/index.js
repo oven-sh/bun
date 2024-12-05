@@ -310,6 +310,6 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { registerBunPlugin } = nativeBinding
+const { bunPluginRegister } = nativeBinding
 
-module.exports.registerBunPlugin = registerBunPlugin
+module.exports.bunPluginRegister = bunPluginRegister

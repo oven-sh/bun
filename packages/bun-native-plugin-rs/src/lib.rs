@@ -276,6 +276,8 @@ unsafe impl Sync for BunPluginName {}
 
 use std::{
     any::TypeId,
+    borrow::Cow,
+    cell::UnsafeCell,
     ffi::{c_char, c_void},
     str::Utf8Error,
 };
@@ -321,20 +323,25 @@ impl Drop for SourceCodeContext {
 pub type BunLogLevel = sys::BunLogLevel;
 pub type BunLoader = sys::BunLoader;
 
-fn get_from_raw_str(ptr: *const u8, len: usize) -> Result<&'static str> {
+fn get_from_raw_str<'a>(ptr: *const u8, len: usize) -> Result<Cow<'a, str>> {
+    let slice: &'a [u8] = unsafe { std::slice::from_raw_parts(ptr, len) };
+
     // Windows allows invalid UTF-16 strings in the filesystem. These get converted to WTF-8 in Zig.
     // Meaning the string may contain invalid UTF-8, we'll have to use the safe checked version.
     #[cfg(target_os = "windows")]
     {
-        Ok(std::str::from_utf8(unsafe {
-            std::slice::from_raw_parts(ptr, len)
-        })?)
+        std::str::from_utf8(slice)
+            .map(Into::into)
+            .or_else(|_| Ok(String::from_utf8_lossy(slice)))
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         // SAFETY: The source code comes from Zig, which uses UTF-8, so this should be safe.
-        Ok(unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, len)) })
+
+        std::str::from_utf8(slice)
+            .map(Into::into)
+            .or_else(|_| Ok(String::from_utf8_lossy(slice)))
     }
 }
 
@@ -364,7 +371,7 @@ impl From<Utf8Error> for Error {
 /// To initialize this struct, see the `from_raw` method.
 pub struct OnBeforeParse<'a> {
     args_raw: &'a sys::OnBeforeParseArguments,
-    result_raw: &'a mut sys::OnBeforeParseResult,
+    result_raw: *mut sys::OnBeforeParseResult,
     compilation_context: *mut SourceCodeContext,
 }
 
@@ -388,10 +395,10 @@ impl<'a> OnBeforeParse<'a> {
     /// ```
     pub fn from_raw(
         args: &'a sys::OnBeforeParseArguments,
-        result: &'a mut sys::OnBeforeParseResult,
+        result: *mut sys::OnBeforeParseResult,
     ) -> Result<Self> {
         if args.__struct_size < std::mem::size_of::<sys::OnBeforeParseArguments>()
-            || result.__struct_size < std::mem::size_of::<sys::OnBeforeParseResult>()
+            || unsafe { (*result).__struct_size } < std::mem::size_of::<sys::OnBeforeParseResult>()
         {
             let message = "This plugin is not compatible with the current version of Bun.";
             let mut log_options = sys::BunLogOptions {
@@ -410,7 +417,7 @@ impl<'a> OnBeforeParse<'a> {
             };
             // SAFETY: The `log` function pointer is guaranteed to be valid by the Bun runtime.
             unsafe {
-                (result.log.unwrap())(args, &mut log_options);
+                ((*result).log.unwrap())(args, &mut log_options);
             }
             return Err(Error::IncompatiblePluginVersion);
         }
@@ -418,15 +425,15 @@ impl<'a> OnBeforeParse<'a> {
         Ok(Self {
             args_raw: args,
             result_raw: result,
-            compilation_context: std::ptr::null_mut(),
+            compilation_context: std::ptr::null_mut() as *mut _,
         })
     }
 
-    pub fn path(&self) -> Result<&'static str> {
+    pub fn path(&self) -> Result<Cow<'_, str>> {
         get_from_raw_str(self.args_raw.path_ptr, self.args_raw.path_len)
     }
 
-    pub fn namespace(&self) -> Result<&'static str> {
+    pub fn namespace(&self) -> Result<Cow<'_, str>> {
         get_from_raw_str(self.args_raw.namespace_ptr, self.args_raw.namespace_len)
     }
 
@@ -498,7 +505,7 @@ impl<'a> OnBeforeParse<'a> {
     ///
     /// This is unsafe as you must ensure that no other invocation of the plugin
     /// simultaneously holds a mutable reference to the external.
-    pub unsafe fn external_mut<T: 'static + Sync>(&self) -> Result<Option<&mut T>> {
+    pub unsafe fn external_mut<T: 'static + Sync>(&mut self) -> Result<Option<&mut T>> {
         if self.args_raw.external.is_null() {
             return Ok(None);
         }
@@ -518,14 +525,18 @@ impl<'a> OnBeforeParse<'a> {
     ///
     /// On Windows, this function may return an `Err(Error::Utf8(...))` if the
     /// source code contains invalid UTF-8.
-    pub fn input_source_code(&mut self) -> Result<&'static str> {
-        let fetch_result =
-            unsafe { (self.result_raw.fetchSourceCode.unwrap())(self.args_raw, self.result_raw) };
+    pub fn input_source_code(&self) -> Result<Cow<'_, str>> {
+        let fetch_result = unsafe {
+            ((*self.result_raw).fetchSourceCode.unwrap())(self.args_raw, self.result_raw)
+        };
 
         if fetch_result != 0 {
             Err(Error::Unknown)
         } else {
-            get_from_raw_str(self.result_raw.source_ptr, self.result_raw.source_len)
+            // SAFETY: We don't hand out mutable references to `result_raw` so dereferencing here is safe.
+            unsafe {
+                get_from_raw_str((*self.result_raw).source_ptr, (*self.result_raw).source_len)
+            }
         }
     }
 
@@ -542,44 +553,59 @@ impl<'a> OnBeforeParse<'a> {
                 source_len,
                 source_cap,
             }));
-            self.result_raw.plugin_source_code_context = self.compilation_context as *mut c_void;
-            self.result_raw.free_plugin_source_code_context = Some(free_plugin_source_code_context);
-        } else {
-            // SAFETY: We always set the compilation_context pointer before we access it.
-            let context = unsafe { &mut *self.compilation_context };
+
+            // SAFETY: We don't hand out mutable references to `result_raw` so dereferencing it is safe.
             unsafe {
+                (*self.result_raw).plugin_source_code_context =
+                    self.compilation_context as *mut c_void;
+                (*self.result_raw).free_plugin_source_code_context =
+                    Some(free_plugin_source_code_context);
+            }
+        } else {
+            unsafe {
+                // SAFETY: If we're here we know that `compilation_context` is not null.
+                let context = &mut *self.compilation_context;
+
                 drop(String::from_raw_parts(
                     context.source_ptr,
                     context.source_len,
                     context.source_cap,
-                ))
+                ));
+
+                context.source_ptr = source_ptr;
+                context.source_len = source_len;
+                context.source_cap = source_cap;
             }
-            context.source_ptr = source_ptr;
-            context.source_len = source_len;
-            context.source_cap = source_cap;
         }
-        self.result_raw.loader = loader as u8;
-        self.result_raw.source_ptr = source_ptr;
-        self.result_raw.source_len = source_len;
+
+        // SAFETY: We don't hand out mutable references to `result_raw` so dereferencing it is safe.
+        unsafe {
+            (*self.result_raw).loader = loader as u8;
+            (*self.result_raw).source_ptr = source_ptr;
+            (*self.result_raw).source_len = source_len;
+        }
     }
 
     /// Set the output loader for the current file.
-    pub fn set_output_loader(&mut self, loader: BunLogLevel) {
-        self.result_raw.loader = loader as u8;
+    pub fn set_output_loader(&self, loader: BunLogLevel) {
+        // SAFETY: We don't hand out mutable references to `result_raw` so dereferencing it is safe.
+        unsafe {
+            (*self.result_raw).loader = loader as u8;
+        }
     }
 
     /// Get the output loader for the current file.
     pub fn output_loader(&self) -> BunLoader {
-        unsafe { std::mem::transmute(self.result_raw.loader as u32) }
+        unsafe { std::mem::transmute((*self.result_raw).loader as u32) }
     }
 
     /// Log an error message.
-    pub fn log_error(&mut self, message: &str) {
+    pub fn log_error(&self, message: &str) {
         self.log(message, BunLogLevel::BUN_LOG_LEVEL_ERROR)
     }
 
     /// Log a message with the given level.
-    pub fn log(&mut self, message: &str, level: BunLogLevel) {
+    pub fn log(&self, message: &str, level: BunLogLevel) {
         let mut log_options = sys::BunLogOptions {
             __struct_size: std::mem::size_of::<sys::BunLogOptions>(),
             message_ptr: message.as_ptr(),
@@ -595,7 +621,7 @@ impl<'a> OnBeforeParse<'a> {
             columnEnd: 0,
         };
         unsafe {
-            (self.result_raw.log.unwrap())(self.args_raw, &mut log_options);
+            ((*self.result_raw).log.unwrap())(self.args_raw, &mut log_options);
         }
     }
 }

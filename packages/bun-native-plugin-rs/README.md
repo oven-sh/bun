@@ -35,7 +35,11 @@ Now, inside the `lib.rs` file, expose a C ABI function which has the same functi
 For example, implementing `onBeforeParse`:
 
 ```rs
-use bun_native_plugin::{OnBeforeParse};
+use bun_native_plugin::{define_bun_plugin, OnBeforeParse};
+use napi_derive::napi;
+
+/// Define with the name of the plugin
+define_bun_plugin!("replace-foo-with-bar");
 
 /// This is necessary for napi-rs to compile this into a proper NAPI module
 #[napi]
@@ -52,7 +56,6 @@ pub extern "C" fn on_before_parse_plugin_impl(
   result: *mut bun_native_plugin::sys::OnBeforeParseResult,
 ) {
   let args = unsafe { &*args };
-  let result = unsafe { &mut *result };
 
   // This returns a handle which is a safe wrapper over the raw
   // C API.
@@ -201,7 +204,6 @@ pub extern "C" fn on_before_parse_plugin_impl(
   result: *mut bun_native_plugin::sys::OnBeforeParseResult,
 ) {
   let args = unsafe { &*args };
-  let result = unsafe { &mut *result };
 
   let mut handle = OnBeforeParse::from_raw(args, result) {
     Ok(handle) => handle,

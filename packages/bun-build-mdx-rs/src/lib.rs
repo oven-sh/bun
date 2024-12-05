@@ -8,12 +8,11 @@ extern crate napi;
 define_bun_plugin!("bun-mdx-rs");
 
 #[no_mangle]
-pub unsafe extern "C" fn bun_mdx_rs(
+pub extern "C" fn bun_mdx_rs(
   args: *const bun_native_plugin::sys::OnBeforeParseArguments,
   result: *mut bun_native_plugin::sys::OnBeforeParseResult,
 ) {
-  let args = &*args;
-  let result = &mut *result;
+  let args = unsafe { &*args };
 
   let mut handle = match OnBeforeParse::from_raw(args, result) {
     Ok(handle) => handle,
@@ -42,9 +41,9 @@ pub unsafe extern "C" fn bun_mdx_rs(
       return;
     }
   };
-  options.filepath = Some(path.to_owned());
+  options.filepath = Some(path.to_string());
 
-  match compile(source_str, &options) {
+  match compile(&source_str, &options) {
     Ok(compiled) => {
       handle.set_output_source_code(compiled, BunLoader::BUN_LOADER_JSX);
     }

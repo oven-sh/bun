@@ -1015,10 +1015,18 @@ install_buildkite() {
 	execute rm -rf "$buildkite_tmpdir"
 }
 
-install_chrome_dependencies() {
+install_chromium() {
 	# https://github.com/puppeteer/puppeteer/blob/main/docs/troubleshooting.md#chrome-doesnt-launch-on-linux
 	# https://github.com/puppeteer/puppeteer/blob/main/docs/troubleshooting.md#running-puppeteer-in-the-cloud
 	case "$pm" in
+	apk)
+		install_packages \
+			chromium \
+      nss \
+      freetype \
+      harfbuzz \
+      ttf-freefont
+		;;
 	apt)
 		install_packages \
 			fonts-liberation \
@@ -1095,11 +1103,6 @@ install_chrome_dependencies() {
 	esac
 }
 
-raise_file_descriptor_limit() {
-	append_to_file_sudo /etc/security/limits.conf '*  soft  nofile  262144'
-	append_to_file_sudo /etc/security/limits.conf '*  hard  nofile  262144'
-}
-
 main() {
 	check_features "$@"
 	check_operating_system
@@ -1110,7 +1113,7 @@ main() {
 	create_buildkite_user
 	install_common_software
 	install_build_essentials
-	install_chrome_dependencies
+	install_chromium
 }
 
 main "$@"

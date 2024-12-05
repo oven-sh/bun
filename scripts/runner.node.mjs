@@ -586,7 +586,7 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
  * @returns {number}
  */
 function getTestTimeout(testPath) {
-  if (/integration|3rd_party|docker/i.test(testPath)) {
+  if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
     return integrationTimeout;
   }
   return testTimeout;

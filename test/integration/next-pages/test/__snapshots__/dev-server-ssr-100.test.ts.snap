@@ -12016,9 +12016,6 @@ exports[`ssr works for 100-ish requests 1`] = `
         "tag": "root",
         "value": "",
       },
-      "scripts": {
-        "postinstall": "cd node_modules/puppeteer && bun install.mjs",
-      },
     },
     {
       "bin": {

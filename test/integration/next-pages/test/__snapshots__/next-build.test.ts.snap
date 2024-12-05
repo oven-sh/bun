@@ -12016,9 +12016,6 @@ exports[`next build works: bun 1`] = `
         "tag": "root",
         "value": "",
       },
-      "scripts": {
-        "postinstall": "cd node_modules/puppeteer && bun install.mjs",
-      },
     },
     {
       "bin": {
@@ -34619,9 +34616,6 @@ exports[`next build works: node 1`] = `
         "resolved": "",
         "tag": "root",
         "value": "",
-      },
-      "scripts": {
-        "postinstall": "cd node_modules/puppeteer && bun install.mjs",
       },
     },
     {

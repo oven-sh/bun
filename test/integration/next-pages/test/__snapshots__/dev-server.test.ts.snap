@@ -12016,9 +12016,6 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "tag": "root",
         "value": "",
       },
-      "scripts": {
-        "postinstall": "cd node_modules/puppeteer && bun install.mjs",
-      },
     },
     {
       "bin": {

@@ -1407,7 +1407,7 @@ describe("readFile", () => {
     });
   });
 
-  it.only("works with flags", async () => {
+  it("works with flags", async () => {
     const mydir = tempDirWithFiles("fs-read", {});
     console.log(mydir);
 

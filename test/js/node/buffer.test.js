@@ -633,6 +633,37 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(dot.toString("base64url")).toBe("__4uAA");
       });
 
+      describe("writing with offset undefined", () => {
+        [
+          ["writeUInt8", "readUInt8", 8, 1],
+          ["writeInt8", "readInt8", 8, 1],
+          ["writeUInt16LE", "readUInt16LE", 8, 2],
+          ["writeInt16LE", "readInt16LE", 8, 2],
+          ["writeUInt16BE", "readUInt16BE", 8, 2],
+          ["writeInt16BE", "readInt16BE", 8, 2],
+          ["writeUInt32LE", "readUInt32LE", 8, 4],
+          ["writeInt32LE", "readInt32LE", 8, 4],
+          ["writeUInt32BE", "readUInt32BE", 8, 4],
+          ["writeInt32BE", "readInt32BE", 8, 4],
+          ["writeFloatLE", "readFloatLE", 8, 4],
+          ["writeFloatBE", "readFloatBE", 8, 4],
+          ["writeDoubleLE", "readDoubleLE", 8, 8],
+          ["writeDoubleBE", "readDoubleBE", 8, 8],
+        ].forEach(([method, read, value, size]) => {
+          it(`${method} (implicit offset)`, () => {
+            const b = Buffer.alloc(10, 42);
+            expect(b[method](value)).toBe(size);
+            expect(b[read]()).toBe(value);
+          });
+
+          it(`${method} (explicit offset)`, () => {
+            const b = Buffer.alloc(10, 42);
+            expect(b[method](value, 0)).toBe(size);
+            expect(b[read]()).toBe(value);
+          });
+        });
+      });
+
       // https://github.com/joyent/node/issues/402
       it("writing base64 at a position > 0 should not mangle the result", () => {
         const segments = ["TWFkbmVzcz8h", "IFRoaXM=", "IGlz", "IG5vZGUuanMh"];

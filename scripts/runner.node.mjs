@@ -17,7 +17,6 @@ import {
   accessSync,
   appendFileSync,
   readdirSync,
-  rmSync,
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { join, basename, dirname, relative, sep } from "node:path";
@@ -28,6 +27,7 @@ import {
   getEnv,
   getFileUrl,
   getLoggedInUserCount,
+  getShell,
   getWindowsExitReason,
   isArm64,
   isBuildkite,
@@ -462,12 +462,14 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   const path = addPath(dirname(execPath), process.env.PATH);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
+  const shellPath = getShell();
   const bunEnv = {
     ...process.env,
     PATH: path,
     TMPDIR: tmpdirPath,
     USER: username,
     HOME: homedir,
+    SHELL: shellPath,
     FORCE_COLOR: "1",
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
     BUN_DEBUG_QUIET_LOGS: "1",

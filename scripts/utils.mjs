@@ -1969,6 +1969,25 @@ export function getDistroVersion() {
 }
 
 /**
+ * @returns {string | undefined}
+ */
+export function getShell() {
+  if (isWindows) {
+    const pwsh = which(["pwsh", "powershell"]);
+    if (pwsh) {
+      return pwsh;
+    }
+  }
+
+  const sh = which(["bash", "sh"]);
+  if (sh) {
+    return sh;
+  }
+
+  return getEnv("SHELL", false);
+}
+
+/**
  * @typedef {"aws" | "google"} Cloud
  */
 

@@ -271,6 +271,8 @@ pub const BuildCommand = struct {
         var minify_duration: u64 = 0;
         var input_code_length: u64 = 0;
 
+        this_bundler.configureAutoInstall(ctx.install, &ctx.debug);
+
         const output_files: []options.OutputFile = brk: {
             if (ctx.bundler_options.transform_only) {
                 this_bundler.options.import_path_format = .relative;

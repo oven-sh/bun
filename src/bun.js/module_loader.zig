@@ -812,7 +812,7 @@ pub const ModuleLoader = struct {
                 this.vm().packageManager().drainDependencyList();
             }
 
-            pub fn onDependencyError(ctx: *anyopaque, dependency: Dependency, root_dependency_id: Install.DependencyID, err: anyerror) void {
+            pub fn onDependencyError(ctx: *anyopaque, dependency: *const Dependency, root_dependency_id: Install.DependencyID, err: anyerror) void {
                 var this = bun.cast(*Queue, ctx);
                 debug("onDependencyError: {s}", .{this.vm().packageManager().lockfile.str(&dependency.name)});
 
@@ -1016,7 +1016,7 @@ pub const ModuleLoader = struct {
                             continue;
                         }
 
-                        const package = pm.lockfile.packages.get(package_id);
+                        const package = &pm.lockfile.packages.get(package_id);
                         bun.assert(package.resolution.tag != .root);
 
                         var name_and_version_hash: ?u64 = null;

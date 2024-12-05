@@ -2730,7 +2730,7 @@ pub const PackageManager = struct {
     // name hash from alias package name -> aliased package dependency version info
     known_npm_aliases: NpmAliasMap = .{},
 
-    event_loop: JSC.AnyEventLoop,
+    event_loop: JSC.EventLoopHandle,
 
     // During `installPackages` we learn exactly what dependencies from --trust
     // actually have scripts to run, and we add them to this list
@@ -3082,8 +3082,8 @@ pub const PackageManager = struct {
             return bun.cast(*const fn (ctx: *anyopaque, pm: *PackageManager) void, t.handler);
         }
 
-        pub inline fn getonDependencyError(t: @This()) *const fn (ctx: *anyopaque, Dependency, DependencyID, anyerror) void {
-            return bun.cast(*const fn (ctx: *anyopaque, Dependency, DependencyID, anyerror) void, t.handler);
+        pub inline fn getonDependencyError(t: @This()) *const fn (ctx: *anyopaque, *const Dependency, DependencyID, anyerror) void {
+            return bun.cast(*const fn (ctx: *anyopaque, *const Dependency, DependencyID, anyerror) void, t.handler);
         }
     };
 
@@ -3091,7 +3091,7 @@ pub const PackageManager = struct {
         if (this.onWake.context) |ctx| {
             this.onWake.getonDependencyError()(
                 ctx,
-                dependency.*,
+                dependency,
                 dependency_id,
                 err,
             );
@@ -3139,12 +3139,12 @@ pub const PackageManager = struct {
         version_buf: []const u8,
         behavior: Dependency.Behavior,
     ) DependencyToEnqueue {
-        const dep_id = @as(DependencyID, @truncate(brk: {
+        const dep_id: u32, const is_newly_added = brk: {
             const str_buf = this.lockfile.buffers.string_bytes.items;
             for (this.lockfile.buffers.dependencies.items, 0..) |dep, id| {
                 if (!strings.eqlLong(dep.name.slice(str_buf), name, true)) continue;
                 if (!dep.version.eql(version, str_buf, version_buf)) continue;
-                break :brk id;
+                break :brk .{ @truncate(id), true };
             }
 
             var builder = this.lockfile.stringBuilder();
@@ -3164,100 +3164,50 @@ pub const PackageManager = struct {
             this.lockfile.buffers.dependencies.append(this.allocator, dep) catch unreachable;
             this.lockfile.buffers.resolutions.append(this.allocator, invalid_package_id) catch unreachable;
             if (comptime Environment.allow_assert) bun.assert(this.lockfile.buffers.dependencies.items.len == this.lockfile.buffers.resolutions.items.len);
-            break :brk index;
-        }));
+            break :brk .{ @truncate(index), false };
+        };
+        _ = is_newly_added; // autofix
 
-        if (this.lockfile.buffers.resolutions.items[dep_id] == invalid_package_id) {
+        const initial_pending_task_count = this.pendingTaskCount();
+        _ = initial_pending_task_count; // autofix
+
+        var resolution_id = this.lockfile.buffers.resolutions.items[dep_id];
+        if (resolution_id == invalid_package_id) {
             this.enqueueDependencyWithMainAndSuccessFn(
                 dep_id,
                 &this.lockfile.buffers.dependencies.items[dep_id],
-                invalid_package_id,
+                resolution_id,
                 false,
                 assignRootResolution,
                 failRootResolution,
             ) catch |err| {
                 return .{ .failure = err };
             };
+            // We might immediately resolve it.
+            resolution_id = this.lockfile.buffers.resolutions.items[dep_id];
         }
 
-        const resolution_id = switch (this.lockfile.buffers.resolutions.items[dep_id]) {
-            invalid_package_id => brk: {
-                this.drainDependencyList();
+        this.drainDependencyList();
 
-                switch (this.options.log_level) {
-                    inline else => |log_levela| {
-                        const Closure = struct {
-                            // https://github.com/ziglang/zig/issues/19586
-                            pub fn issue_19586_workaround(comptime log_level: Options.LogLevel) type {
-                                return struct {
-                                    err: ?anyerror = null,
-                                    manager: *PackageManager,
-                                    pub fn isDone(closure: *@This()) bool {
-                                        const manager = closure.manager;
-                                        if (manager.pendingTaskCount() > 0) {
-                                            manager.runTasks(
-                                                void,
-                                                {},
-                                                .{
-                                                    .onExtract = {},
-                                                    .onResolve = {},
-                                                    .onPackageManifestError = {},
-                                                    .onPackageDownloadError = {},
-                                                },
-                                                false,
-                                                log_level,
-                                            ) catch |err| {
-                                                closure.err = err;
-                                                return true;
-                                            };
-
-                                            if (PackageManager.verbose_install and manager.pendingTaskCount() > 0) {
-                                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{closure.manager.pendingTaskCount()});
-                                            }
-                                        }
-
-                                        return manager.pendingTaskCount() == 0;
-                                    }
-                                };
-                            }
-                        }.issue_19586_workaround(log_levela);
-
-                        if (comptime log_levela.showProgress()) {
-                            this.startProgressBarIfNone();
-                        }
-
-                        var closure = Closure{ .manager = this };
-                        this.sleepUntil(&closure, &Closure.isDone);
-
-                        if (comptime log_levela.showProgress()) {
-                            this.endProgressBar();
-                            Output.flush();
-                        }
-
-                        if (closure.err) |err| {
-                            return .{ .failure = err };
-                        }
-                    },
-                }
-
-                break :brk this.lockfile.buffers.resolutions.items[dep_id];
-            },
-            // we managed to synchronously resolve the dependency
-            else => |pkg_id| pkg_id,
-        };
-
-        if (resolution_id == invalid_package_id) {
-            return .{
-                .not_found = {},
-            };
+        var out_name_and_version_hash: ?u64 = null;
+        var out_patchfile_hash: ?u64 = null;
+        if (resolution_id != invalid_package_id) {
+            switch (this.determinePreinstallStateAndPossiblyDownloadPackageIntoCache(&this.lockfile.packages.get(resolution_id), dep_id, this.lockfile, &out_name_and_version_hash, &out_patchfile_hash)) {
+                .extract, .extracting => {
+                    return .{ .pending = dep_id };
+                },
+                else => {
+                    return .{
+                        .resolution = .{
+                            .resolution = this.lockfile.packages.items(.resolution)[resolution_id],
+                            .package_id = resolution_id,
+                        },
+                    };
+                },
+            }
         }
 
-        return .{
-            .resolution = .{
-                .resolution = this.lockfile.packages.items(.resolution)[resolution_id],
-                .package_id = resolution_id,
-            },
-        };
+        return .{ .pending = dep_id };
     }
 
     pub fn globalLinkDir(this: *PackageManager) !std.fs.Dir {
@@ -3336,7 +3286,7 @@ pub const PackageManager = struct {
 
     pub fn determinePreinstallState(
         manager: *PackageManager,
-        this: Package,
+        this: *const Package,
         lockfile: *Lockfile,
         out_name_and_version_hash: *?u64,
         out_patchfile_hash: *?u64,
@@ -3416,6 +3366,94 @@ pub const PackageManager = struct {
 
                 manager.setPreinstallState(this.meta.id, lockfile, .extract);
                 return .extract;
+            },
+            else => |val| return val,
+        }
+    }
+
+    pub fn determinePreinstallStateAndPossiblyDownloadPackageIntoCache(
+        manager: *PackageManager,
+        this: *const Package,
+        dependency_id: DependencyID,
+        lockfile: *Lockfile,
+        out_name_and_version_hash: *?u64,
+        out_patchfile_hash: *?u64,
+    ) PreinstallState {
+        switch (manager.getPreinstallState(this.meta.id)) {
+            .unknown => switch (manager.determinePreinstallState(this, lockfile, out_name_and_version_hash, out_patchfile_hash)) {
+                .extract => {
+                    if (this.resolution.tag.canEnqueueInstallTask()) {
+                        switch (this.resolution.tag) {
+                            .git => {
+                                manager.enqueueGitForCheckout(
+                                    dependency_id,
+                                    "",
+                                    &this.resolution,
+                                    .{ .root_dependency = dependency_id },
+                                    out_name_and_version_hash.*,
+                                );
+                            },
+                            .github => {
+                                const url = manager.allocGitHubURL(&this.resolution.value.github);
+                                defer manager.allocator.free(url);
+                                manager.enqueueTarballForDownload(
+                                    dependency_id,
+                                    this.meta.id,
+                                    url,
+                                    .{ .root_dependency = dependency_id },
+                                    out_name_and_version_hash.*,
+                                );
+                            },
+                            .local_tarball => {
+                                manager.enqueueTarballForReading(
+                                    dependency_id,
+                                    "",
+                                    &this.resolution,
+                                    .{ .root_dependency = dependency_id },
+                                );
+                            },
+                            .remote_tarball => {
+                                manager.enqueueTarballForDownload(
+                                    dependency_id,
+                                    this.meta.id,
+                                    manager.lockfile.str(&this.resolution.value.remote_tarball),
+                                    .{ .root_dependency = dependency_id },
+                                    out_name_and_version_hash.*,
+                                );
+                            },
+                            .npm => {
+                                if (comptime Environment.isDebug) {
+                                    // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
+                                    // This caused bugs. We can't assert on it because they could come from old lockfiles
+                                    if (this.resolution.value.npm.url.isEmpty()) {
+                                        Output.debugWarn("package {s}@{} missing tarball_url", .{ manager.lockfile.str(&this.name), this.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .posix) });
+                                    }
+                                }
+
+                                manager.enqueuePackageForDownload(
+                                    manager.lockfile.str(&this.name),
+                                    dependency_id,
+                                    this.meta.id,
+                                    this.resolution.value.npm.version,
+                                    manager.lockfile.str(&this.resolution.value.npm.url),
+                                    .{ .root_dependency = dependency_id },
+                                    out_name_and_version_hash.*,
+                                );
+                            },
+                            else => {
+                                if (comptime Environment.allow_assert) {
+                                    @panic("unreachable, handled above");
+                                }
+                            },
+                        }
+
+                        manager.setPreinstallState(this.meta.id, lockfile, .extracting);
+                        return .extracting;
+                    }
+
+                    return .extract;
+                },
+                else => |val| return val,
             },
             else => |val| return val,
         }
@@ -3975,6 +4013,7 @@ pub const PackageManager = struct {
 
                 return this.pathForCachedNPMPath(buf, package_name, npm.version);
             },
+
             else => return "",
         }
     }
@@ -4262,7 +4301,7 @@ pub const PackageManager = struct {
         var patchfile_hash: ?u64 = null;
 
         return switch (this.determinePreinstallState(
-            package,
+            &package,
             this.lockfile,
             &name_and_version_hash,
             &patchfile_hash,
@@ -4571,33 +4610,14 @@ pub const PackageManager = struct {
 
         switch (version.tag) {
             .npm, .dist_tag => {
-                resolve_from_workspace: {
-                    if (version.tag == .npm) {
-                        const workspace_path = if (this.lockfile.workspace_paths.count() > 0) this.lockfile.workspace_paths.get(name_hash) else null;
-                        const workspace_version = this.lockfile.workspace_versions.get(name_hash);
-                        const buf = this.lockfile.buffers.string_bytes.items;
-                        if ((workspace_version != null and version.value.npm.version.satisfies(workspace_version.?, buf, buf)) or
-
-                            // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
-                            // if the workspace doesn't have a version, it can still be used if
-                            // dependency version is wildcard
-                            (workspace_path != null and version.value.npm.version.@"is *"()))
-                        {
-                            const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
-                            const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
-                            const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
-
-                            for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
-                                if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
-                                    // make sure verifyResolutions sees this resolution as a valid package id
-                                    successFn(this, dependency_id, workspace_package_id);
-                                    return .{
-                                        .package = this.lockfile.packages.get(workspace_package_id),
-                                        .is_first_time = false,
-                                    };
-                                }
-                            }
-                        }
+                if (version.tag == .npm) {
+                    if (this.lockfile.resolveWorkspaceFromNpmVersion(name_hash, &version)) |workspace_package_id| {
+                        // make sure verifyResolutions sees this resolution as a valid package id
+                        successFn(this, dependency_id, workspace_package_id);
+                        return .{
+                            .package = this.lockfile.packages.get(workspace_package_id),
+                            .is_first_time = false,
+                        };
                     }
                 }
 
@@ -4614,26 +4634,14 @@ pub const PackageManager = struct {
                     .npm => manifest.findBestVersion(version.value.npm.version, this.lockfile.buffers.string_bytes.items),
                     else => unreachable,
                 } orelse {
-                    resolve_workspace_from_dist_tag: {
-                        // choose a workspace for a dist_tag only if a version was not found
-                        if (version.tag == .dist_tag) {
-                            const workspace_path = if (this.lockfile.workspace_paths.count() > 0) this.lockfile.workspace_paths.get(name_hash) else null;
-                            if (workspace_path != null) {
-                                const root_package = this.lockfile.rootPackage() orelse break :resolve_workspace_from_dist_tag;
-                                const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
-                                const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
 
-                                for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
-                                    if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
-                                        // make sure verifyResolutions sees this resolution as a valid package id
-                                        successFn(this, dependency_id, workspace_package_id);
-                                        return .{
-                                            .package = this.lockfile.packages.get(workspace_package_id),
-                                            .is_first_time = false,
-                                        };
-                                    }
-                                }
-                            }
+                    // choose a workspace for a dist_tag only if a version was not found
+                    if (version.tag == .dist_tag) {
+                        if (this.lockfile.resolveWorkspaceFromNpmDistTag(name_hash)) |workspace_package_id| {
+                            return .{
+                                .package = this.lockfile.packages.get(workspace_package_id),
+                                .is_first_time = false,
+                            };
                         }
                     }
 
@@ -6277,6 +6285,7 @@ pub const PackageManager = struct {
                     const name = manifest_req.name;
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
+                            manager.startProgressBarIfNone();
                             manager.setNodeName(manager.downloads_node.?, name.slice(), ProgressStrings.download_emoji, true);
                             has_updated_this_run = true;
                         }
@@ -6624,6 +6633,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
+                            manager.startProgressBarIfNone();
                             manager.setNodeName(manager.downloads_node.?, extract.name.slice(), ProgressStrings.extract_emoji, true);
                             has_updated_this_run = true;
                         }
@@ -6691,6 +6701,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
+                            manager.startProgressBarIfNone();
                             manager.setNodeName(manager.downloads_node.?, manifest.name(), ProgressStrings.download_emoji, true);
                             has_updated_this_run = true;
                         }
@@ -6818,6 +6829,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
+                            manager.startProgressBarIfNone();
                             manager.setNodeName(manager.downloads_node.?, alias, ProgressStrings.extract_emoji, true);
                             has_updated_this_run = true;
                         }
@@ -6863,6 +6875,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
+                            manager.startProgressBarIfNone();
                             manager.setNodeName(manager.downloads_node.?, name, ProgressStrings.download_emoji, true);
                             has_updated_this_run = true;
                         }
@@ -6942,6 +6955,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
+                            manager.startProgressBarIfNone();
                             manager.setNodeName(manager.downloads_node.?, alias.slice(), ProgressStrings.download_emoji, true);
                             has_updated_this_run = true;
                         }
@@ -8727,16 +8741,16 @@ pub const PackageManager = struct {
             .root_package_json_file = root_package_json_file,
             // .progress
             .event_loop = .{
-                .mini = JSC.MiniEventLoop.init(bun.default_allocator),
+                .mini = bun.create(bun.default_allocator, JSC.MiniEventLoop, JSC.MiniEventLoop.init(bun.default_allocator)),
             },
             .original_package_json_path = original_package_json_path,
             .workspace_package_json_cache = workspace_package_json_cache,
             .workspace_name_hash = workspace_name_hash,
             .subcommand = subcommand,
         };
-        manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(&manager.event_loop));
+        manager.event_loop.loop().internal_loop_data.setParentEventLoop(manager.event_loop);
         manager.lockfile = try ctx.allocator.create(Lockfile);
-        JSC.MiniEventLoop.global = &manager.event_loop.mini;
+        JSC.MiniEventLoop.global = manager.event_loop.mini;
         if (!manager.options.enable.cache) {
             manager.options.enable.manifest_cache = false;
             manager.options.enable.manifest_cache_control = false;
@@ -8831,7 +8845,10 @@ pub const PackageManager = struct {
         cli: CommandLineArguments,
         env: *DotEnv.Loader,
     ) *PackageManager {
-        init_with_runtime_once.call(.{
+        init_with_event_loop_once.call(.{
+            .{
+                .js = JSC.VirtualMachine.get().eventLoop(),
+            },
             log,
             bun_install,
             allocator,
@@ -8841,9 +8858,22 @@ pub const PackageManager = struct {
         return PackageManager.get();
     }
 
-    var init_with_runtime_once = bun.once(initWithRuntimeOnce);
+    var init_with_event_loop_once = bun.once(initWithEventLoopOnce);
 
-    pub fn initWithRuntimeOnce(
+    pub fn initWithEventLoop(
+        loop: JSC.EventLoopHandle,
+        log: *logger.Log,
+        bun_install: ?*Api.BunInstall,
+        allocator: std.mem.Allocator,
+        cli: CommandLineArguments,
+        env: *DotEnv.Loader,
+    ) *PackageManager {
+        init_with_event_loop_once.call(.{ loop, log, bun_install, allocator, cli, env });
+        return PackageManager.get();
+    }
+
+    fn initWithEventLoopOnce(
+        loop: JSC.EventLoopHandle,
         log: *logger.Log,
         bun_install: ?*Api.BunInstall,
         allocator: std.mem.Allocator,
@@ -8889,9 +8919,7 @@ pub const PackageManager = struct {
             }),
             .lockfile = undefined,
             .root_package_json_file = undefined,
-            .event_loop = .{
-                .js = JSC.VirtualMachine.get().eventLoop(),
-            },
+            .event_loop = loop,
             .original_package_json_path = original_package_json_path[0..original_package_json_path.len :0],
             .subcommand = .install,
         };
@@ -11761,7 +11789,7 @@ pub const PackageManager = struct {
                 Global.crash();
             };
             const paths = bun.patch.gitDiffPreprocessPaths(bun.default_allocator, old_folder, new_folder, false);
-            const opts = bun.patch.spawnOpts(paths[0], paths[1], cwd, git, &manager.event_loop);
+            const opts = bun.patch.spawnOpts(paths[0], paths[1], cwd, git, manager.event_loop);
 
             var spawn_result = switch (bun.spawnSync(&opts) catch |e| {
                 Output.prettyError(

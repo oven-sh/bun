@@ -204,7 +204,7 @@ pub const PatchTask = struct {
             var out_name_and_version_hash: ?u64 = null;
             var out_patchfile_hash: ?u64 = null;
             manager.setPreinstallState(pkg.meta.id, manager.lockfile, .unknown);
-            switch (manager.determinePreinstallState(pkg, manager.lockfile, &out_name_and_version_hash, &out_patchfile_hash)) {
+            switch (manager.determinePreinstallState(&pkg, manager.lockfile, &out_name_and_version_hash, &out_patchfile_hash)) {
                 .done => {
                     // patched pkg in folder path, should now be handled by PackageInstall.install()
                     debug("pkg: {s} done", .{pkg.name.slice(manager.lockfile.buffers.string_bytes.items)});

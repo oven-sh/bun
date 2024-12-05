@@ -48,8 +48,8 @@ pub const LifecycleScriptSubprocess = struct {
         return this.manager.event_loop.loop();
     }
 
-    pub fn eventLoop(this: *const LifecycleScriptSubprocess) *JSC.AnyEventLoop {
-        return &this.manager.event_loop;
+    pub fn eventLoop(this: *const LifecycleScriptSubprocess) JSC.EventLoopHandle {
+        return this.manager.event_loop;
     }
 
     pub fn scriptName(this: *const LifecycleScriptSubprocess) []const u8 {
@@ -187,7 +187,7 @@ pub const LifecycleScriptSubprocess = struct {
 
             .windows = if (Environment.isWindows)
                 .{
-                    .loop = JSC.EventLoopHandle.init(&manager.event_loop),
+                    .loop = this.eventLoop(),
                 }
             else {},
 
@@ -233,7 +233,7 @@ pub const LifecycleScriptSubprocess = struct {
             }
         }
 
-        const event_loop = &this.manager.event_loop;
+        const event_loop = this.manager.event_loop;
         var process = spawned.toProcess(
             event_loop,
             false,

@@ -77,14 +77,7 @@ pub const Run = struct {
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
 
-        b.options.install = ctx.install;
-        b.resolver.opts.install = ctx.install;
-        b.resolver.opts.global_cache = ctx.debug.global_cache;
-        b.resolver.opts.prefer_offline_install = (ctx.debug.offline_mode_setting orelse .online) == .offline;
-        b.resolver.opts.prefer_latest_install = (ctx.debug.offline_mode_setting orelse .online) == .latest;
-        b.options.global_cache = b.resolver.opts.global_cache;
-        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
-        b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
+        b.configureAutoInstall(ctx.install, &ctx.debug);
         b.resolver.env_loader = b.env;
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
@@ -222,14 +215,7 @@ pub const Run = struct {
             }
         }
 
-        b.options.install = ctx.install;
-        b.resolver.opts.install = ctx.install;
-        b.resolver.opts.global_cache = ctx.debug.global_cache;
-        b.resolver.opts.prefer_offline_install = (ctx.debug.offline_mode_setting orelse .online) == .offline;
-        b.resolver.opts.prefer_latest_install = (ctx.debug.offline_mode_setting orelse .online) == .latest;
-        b.options.global_cache = b.resolver.opts.global_cache;
-        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
-        b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
+        b.configureAutoInstall(ctx.install, &ctx.debug);
         b.resolver.env_loader = b.env;
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;

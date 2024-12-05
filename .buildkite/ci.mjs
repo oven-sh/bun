@@ -1006,7 +1006,20 @@ async function getPipeline(options = {}) {
   }
 
   const { skipBuilds, forceBuilds, unifiedBuilds } = options;
-  if (!skipBuilds || forceBuilds) {
+
+  /** @type {string | undefined} */
+  let buildId;
+  if (skipBuilds && !forceBuilds) {
+    const lastBuild = await getLastSuccessfulBuild();
+    if (lastBuild) {
+      const { id } = lastBuild;
+      buildId = id;
+    } else {
+      console.warn("No last successful build found, must force builds...");
+    }
+  }
+
+  if (!buildId) {
     steps.push(
       ...buildPlatforms
         .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
@@ -1035,16 +1048,6 @@ async function getPipeline(options = {}) {
 
   const { skipTests, forceTests, unifiedTests, testFiles } = options;
   if (!skipTests || forceTests) {
-    /** @type {string | undefined} */
-    let buildId;
-    if (skipBuilds) {
-      const lastBuild = await getLastSuccessfulBuild();
-      if (lastBuild) {
-        const { id } = lastBuild;
-        buildId = id;
-      }
-    }
-
     steps.push(
       ...testPlatforms
         .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))

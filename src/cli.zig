@@ -22,7 +22,7 @@ const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
 const builtin = @import("builtin");
 
-const debug = Output.scoped(.CLI, true);
+const debug = Output.scoped(.CLI, false);
 
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
@@ -379,7 +379,7 @@ pub const Arguments = struct {
 
         var auto_loaded: bool = false;
         if (config_path_.len == 0 and (user_config_path_ != null or
-            Command.Tag.always_loads_config.get(cmd) or
+            Command.Tag.loads_config.get(cmd) or
             (cmd == .AutoCommand and
             // "bun"
             (ctx.positionals.len == 0 or
@@ -1054,16 +1054,14 @@ pub const Arguments = struct {
                 ctx.debug.silent = true;
             }
 
-            if (opts.define) |define| {
-                if (define.keys.len > 0)
-                    bun.JSC.RuntimeTranspilerCache.is_disabled = true;
-            }
-        }
-
-        if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .BunxCommand) {
             // "run.bun" in bunfig.toml
             if (args.flag("--bun")) {
                 ctx.debug.run_in_bun = true;
+            }
+
+            if (opts.define) |define| {
+                if (define.keys.len > 0)
+                    bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             }
         }
 
@@ -1475,6 +1473,8 @@ pub const Command = struct {
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
                 global_cli_ctx.args = try Arguments.parse(allocator, global_cli_ctx, command);
+            } else if (comptime Command.Tag.loads_config.get(command)) {
+                try bun.CLI.Arguments.loadConfig(allocator, null, global_cli_ctx, comptime command);
             }
 
             if (comptime Environment.isWindows) {
@@ -2660,21 +2660,6 @@ pub const Command = struct {
             .AutoCommand = true,
             .RunCommand = true,
             .RunAsNodeCommand = true,
-            .OutdatedCommand = true,
-            .PublishCommand = true,
-        });
-
-        pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
-            .BuildCommand = true,
-            .TestCommand = true,
-            .InstallCommand = true,
-            .AddCommand = true,
-            .RemoveCommand = true,
-            .UpdateCommand = true,
-            .PatchCommand = true,
-            .PatchCommitCommand = true,
-            .PackageManagerCommand = true,
-            .BunxCommand = true,
             .OutdatedCommand = true,
             .PublishCommand = true,
         });

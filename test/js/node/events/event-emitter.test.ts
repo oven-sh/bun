@@ -878,3 +878,7 @@ test("getEventListeners", () => {
   target.dispatchEvent(new Event("hey"));
   expect(getEventListeners(target, "hey").length).toBe(0);
 });
+
+test("EventEmitter.name", () => {
+  expect(EventEmitter.name).toBe("EventEmitter");
+});

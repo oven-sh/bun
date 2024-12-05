@@ -24,7 +24,8 @@ const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
 const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
 const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
 const Environment = bun.Environment;
-const PackCommand = @import("./pack_command.zig").PackCommand;
+pub const PackCommand = @import("./pack_command.zig").PackCommand;
+const Npm = Install.Npm;
 
 const ByName = struct {
     dependencies: []const Dependency,
@@ -109,6 +110,7 @@ pub const PackageManagerCommand = struct {
             \\  <d>└<r>  <cyan>-g<r>                     print the <b>global<r> path to bin folder
             \\  bun pm <b>ls<r>                 list the dependency tree according to the current lockfile
             \\  <d>└<r>  <cyan>--all<r>                  list the entire dependency tree according to the current lockfile
+            \\  bun pm <b>whoami<r>             print the current npm username
             \\  bun pm <b>hash<r>               generate & print the hash of the current lockfile
             \\  bun pm <b>hash-string<r>        print the string used to hash the lockfile
             \\  bun pm <b>hash-print<r>         print the hash stored in the current lockfile
@@ -151,6 +153,23 @@ pub const PackageManagerCommand = struct {
 
         if (strings.eqlComptime(subcommand, "pack")) {
             try PackCommand.execWithManager(ctx, pm);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "whoami")) {
+            const username = Npm.whoami(ctx.allocator, pm) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                    error.NeedAuth => {
+                        Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
+                    },
+                    error.ProbablyInvalidAuth => {
+                        Output.errGeneric("failed to authenticate with registry '{}'", .{
+                            bun.fmt.redactedNpmUrl(pm.options.scope.url.href),
+                        });
+                    },
+                }
+                Global.crash();
+            };
+            Output.println("{s}", .{username});
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "bin")) {
             const output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));
@@ -374,7 +393,7 @@ pub const PackageManagerCommand = struct {
             }
             handleLoadLockfileErrors(load_lockfile, pm);
             const lockfile = load_lockfile.ok.lockfile;
-            lockfile.saveToDisk(pm.options.lockfile_path);
+            lockfile.saveToDisk(pm.options.lockfile_path, pm.options.log_level.isVerbose());
             Global.exit(0);
         }
 

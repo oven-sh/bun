@@ -16,7 +16,7 @@ Add the following to your local or global `.gitattributes` file:
 *.lockb binary diff=lockb
 ```
 
-Then add the following to you local git config with:
+Then add the following to your local git config with:
 
 ```sh
 $ git config diff.lockb.textconv bun

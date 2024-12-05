@@ -225,7 +225,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoadModule, (JSGlobalObject * lexicalGlobalOb
     if (!moduleObject->load(vm, globalObject, exception)) {
         throwException(globalObject, throwScope, exception.get());
         exception.clear();
-        return JSValue::encode({});
+        return {};
     }
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(true)));
@@ -511,11 +511,11 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     String sourceString = callframe->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSValue filenameValue = callframe->argument(1);
     String filenameString = filenameValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     String wrappedString = makeString(
         "(function(exports,require,module,__filename,__dirname){"_s,
@@ -536,7 +536,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
 #else
     JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
 #endif
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     String dirnameString = dirnameValue.toWTFString(globalObject);
 
@@ -552,7 +552,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     if (exception) {
         throwException(globalObject, throwScope, exception.get());
         exception.clear();
-        return JSValue::encode({});
+        return {};
     }
 
     return JSValue::encode(jsUndefined());
@@ -763,7 +763,7 @@ void populateESMExports(
     bool ignoreESModuleAnnotation)
 {
     auto& vm = globalObject->vm();
-    Identifier esModuleMarker = builtinNames(vm).__esModulePublicName();
+    const Identifier& esModuleMarker = vm.propertyNames->__esModule;
 
     // Bun's intepretation of the "__esModule" annotation:
     //
@@ -795,9 +795,23 @@ void populateESMExports(
     //       unit tests of build tools. Happy to revisit this if users file an issue.
     bool needsToAssignDefault = true;
 
-    if (result.isObject()) {
-        auto* exports = result.getObject();
-        bool hasESModuleMarker = !ignoreESModuleAnnotation && exports->hasProperty(globalObject, esModuleMarker);
+    if (auto* exports = result.getObject()) {
+        bool hasESModuleMarker = false;
+        if (!ignoreESModuleAnnotation) {
+            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            if (exports->getPropertySlot(globalObject, esModuleMarker, slot)) {
+                JSValue value = slot.getValue(globalObject, esModuleMarker);
+                if (!value.isUndefinedOrNull()) {
+                    if (value.pureToBoolean() == TriState::True) {
+                        hasESModuleMarker = true;
+                    }
+                }
+            }
+            if (catchScope.exception()) {
+                catchScope.clearException();
+            }
+        }
 
         auto* structure = exports->structure();
         uint32_t size = structure->inlineSize() + structure->outOfLineSize();
@@ -942,6 +956,11 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
     populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation);
 }
 
+void JSCommonJSModule::setExportsObject(JSC::JSValue exportsObject)
+{
+    this->putDirect(vm(), JSC::PropertyName(clientData(vm())->builtinNames().exportsPublicName()), exportsObject, 0);
+}
+
 JSValue JSCommonJSModule::exportsObject()
 {
     return this->get(globalObject(), JSC::PropertyName(clientData(vm())->builtinNames().exportsPublicName()));
@@ -1003,12 +1022,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     JSValue specifierValue = callframe->argument(0);
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-
-    // Special-case for "process" to just return the process object directly.
-    if (UNLIKELY(specifier == "process"_s || specifier == "node:process"_s)) {
-        jsCast<JSCommonJSModule*>(callframe->argument(1))->putDirect(vm, builtinNames(vm).exportsPublicName(), globalObject->processObject(), 0);
-        return JSValue::encode(globalObject->processObject());
-    }
 
     WTF::String referrer = thisObject->id().toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});

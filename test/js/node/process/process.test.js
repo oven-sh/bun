@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
+import { familySync } from "detect-libc";
 
 expect.extend({
   toRunInlineFixture(input) {
@@ -100,11 +101,32 @@ it("process", () => {
   expect(cwd).toEqual(process.cwd());
 });
 
-it("process.hrtime()", () => {
+it("process.chdir() on root dir", () => {
+  const cwd = process.cwd();
+  try {
+    let root = "/";
+    if (process.platform === "win32") {
+      const driveLetter = process.cwd().split(":\\")[0];
+      root = `${driveLetter}:\\`;
+    }
+    process.chdir(root);
+    expect(process.cwd()).toBe(root);
+    process.chdir(cwd);
+    expect(process.cwd()).toBe(cwd);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+it("process.hrtime()", async () => {
   const start = process.hrtime();
   const end = process.hrtime(start);
-  const end2 = process.hrtime();
   expect(end[0]).toBe(0);
+
+  // Flaky on Ubuntu.
+  await Bun.sleep(0);
+  const end2 = process.hrtime();
+
   expect(end2[1] > start[1]).toBe(true);
 });
 
@@ -118,8 +140,9 @@ it("process.release", () => {
   expect(process.release.name).toBe("node");
   const platform = process.platform == "win32" ? "windows" : process.platform;
   const arch = { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch;
-  const nonbaseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}.zip`;
-  const baseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}-baseline.zip`;
+  const abi = familySync() === "musl" ? "-musl" : "";
+  const nonbaseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}${abi}.zip`;
+  const baseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}${abi}-baseline.zip`;
 
   expect(process.release.sourceUrl).toBeOneOf([nonbaseline, baseline]);
 });
@@ -217,7 +240,7 @@ it("process.umask()", () => {
   for (let notNumber of notNumbers) {
     expect(() => {
       process.umask(notNumber);
-    }).toThrow('The "mask" argument must be a number');
+    }).toThrow('The "mask" argument must be of type number');
   }
 
   let rangeErrors = [NaN, -1.4, Infinity, -Infinity, -1, 1.3, 4294967296];
@@ -263,6 +286,9 @@ const versions = existsSync(generated_versions_list);
   );
   versions.ares = versions.c_ares;
   delete versions.c_ares;
+
+  // Handled by BUN_WEBKIT_VERSION #define
+  delete versions.webkit;
 
   for (const name in versions) {
     expect(process.versions).toHaveProperty(name);

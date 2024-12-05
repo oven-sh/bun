@@ -40,7 +40,7 @@ describe("Channel", () => {
     expect(() => {
       // @ts-expect-error
       channel(null);
-    }).toThrow(/channel argument must be of type/);
+    }).toThrow(/"channel" argument must be of type string or symbol/);
 
     checkCalls();
   });
@@ -99,7 +99,7 @@ describe("Channel", () => {
     expect(() => {
       // @ts-expect-error
       subscribe(name, null);
-    }).toThrow(/subscription argument must be of type/);
+    }).toThrow(/"subscription" argument must be of type/);
 
     // Reaching zero subscribers should not delete from the channels map as there
     // will be no more weakref to incRef if another subscribe happens while the
@@ -154,7 +154,7 @@ describe("Channel", () => {
     expect(() => {
       // @ts-expect-error
       subscribe(null);
-    }).toThrow(/channel argument must be of type/);
+    }).toThrow(/"channel" argument must be of type/);
 
     checkCalls();
   });

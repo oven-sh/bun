@@ -550,7 +550,7 @@ pub const TimerObject = struct {
         return .{ timer, timer_js };
     }
 
-    pub fn doRef(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn doRef(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
         this_value.ensureStillAlive();
 
@@ -564,7 +564,7 @@ pub const TimerObject = struct {
         return this_value;
     }
 
-    pub fn doRefresh(this: *TimerObject, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn doRefresh(this: *TimerObject, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
 
         // setImmediate does not support refreshing and we do not support refreshing after cleanup
@@ -578,7 +578,7 @@ pub const TimerObject = struct {
         return this_value;
     }
 
-    pub fn doUnref(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn doUnref(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
         this_value.ensureStillAlive();
 
@@ -643,10 +643,10 @@ pub const TimerObject = struct {
         }
     }
 
-    pub fn hasRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn hasRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         return JSValue.jsBoolean(this.is_keeping_event_loop_alive);
     }
-    pub fn toPrimitive(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn toPrimitive(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         if (!this.has_accessed_primitive) {
             this.has_accessed_primitive = true;
             const vm = VirtualMachine.get();
@@ -724,7 +724,25 @@ pub const EventLoopTimer = struct {
 
     tag: Tag = .TimerCallback,
 
-    pub const Tag = enum {
+    pub const Tag = if (Environment.isWindows) enum {
+        TimerCallback,
+        TimerObject,
+        TestRunner,
+        StatWatcherScheduler,
+        UpgradedDuplex,
+        WindowsNamedPipe,
+
+        pub fn Type(comptime T: Tag) type {
+            return switch (T) {
+                .TimerCallback => TimerCallback,
+                .TimerObject => TimerObject,
+                .TestRunner => JSC.Jest.TestRunner,
+                .StatWatcherScheduler => StatWatcherScheduler,
+                .UpgradedDuplex => uws.UpgradedDuplex,
+                .WindowsNamedPipe => uws.WindowsNamedPipe,
+            };
+        }
+    } else enum {
         TimerCallback,
         TimerObject,
         TestRunner,
@@ -800,6 +818,11 @@ pub const EventLoopTimer = struct {
                 }
                 if (comptime t.Type() == uws.UpgradedDuplex) {
                     return container.onTimeout();
+                }
+                if (Environment.isWindows) {
+                    if (comptime t.Type() == uws.WindowsNamedPipe) {
+                        return container.onTimeout();
+                    }
                 }
 
                 if (comptime t.Type() == JSC.Jest.TestRunner) {

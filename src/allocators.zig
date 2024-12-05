@@ -177,6 +177,11 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
     };
 }
 
+/// "Formerly-BSSList"
+/// It's not actually BSS anymore.
+///
+/// We do keep a pointer to it globally, but because the data is not zero-initialized, it ends up taking space in the object file.
+/// We don't want to spend 1-2 MB on these structs.
 pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     const count = _count * 2;
     const max_index = count - 1;
@@ -205,7 +210,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         backing_buf: [count]ValueType = undefined,
         used: u32 = 0,
 
-        pub var instance: Self = undefined;
+        pub var instance: *Self = undefined;
         pub var loaded = false;
 
         pub inline fn blockIndex(index: u31) usize {
@@ -214,7 +219,8 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
-                instance = Self{
+                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                instance.* = Self{
                     .allocator = allocator,
                     .tail = OverflowBlock{},
                 };
@@ -222,7 +228,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
                 loaded = true;
             }
 
-            return &instance;
+            return instance;
         }
 
         pub fn isOverflowing() bool {
@@ -289,7 +295,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         slice_buf: [count][]const u8 = undefined,
         slice_buf_used: u16 = 0,
         mutex: Mutex = .{},
-        pub var instance: Self = undefined;
+        pub var instance: *Self = undefined;
         var loaded: bool = false;
         // only need the mutex on append
 
@@ -299,14 +305,15 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
-                instance = Self{
+                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                instance.* = Self{
                     .allocator = allocator,
                     .backing_buf_used = 0,
                 };
                 loaded = true;
             }
 
-            return &instance;
+            return instance;
         }
 
         pub inline fn isOverflowing() bool {
@@ -469,20 +476,21 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         backing_buf: [count]ValueType = undefined,
         backing_buf_used: u16 = 0,
 
-        pub var instance: Self = undefined;
+        pub var instance: *Self = undefined;
 
         var loaded: bool = false;
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
-                instance = Self{
+                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                instance.* = Self{
                     .index = IndexMap{},
                     .allocator = allocator,
                 };
                 loaded = true;
             }
 
-            return &instance;
+            return instance;
         }
 
         pub fn isOverflowing() bool {
@@ -490,7 +498,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
 
         pub fn getOrPut(self: *Self, denormalized_key: []const u8) !Result {
-            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
+            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, std.fs.path.sep_str) else denormalized_key;
             const _key = bun.hash(key);
 
             self.mutex.lock();
@@ -518,7 +526,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
 
         pub fn get(self: *Self, denormalized_key: []const u8) ?*ValueType {
-            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
+            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, std.fs.path.sep_str) else denormalized_key;
             const _key = bun.hash(key);
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -580,7 +588,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             defer self.mutex.unlock();
 
             const key = if (comptime remove_trailing_slashes)
-                std.mem.trimRight(u8, denormalized_key, "/")
+                std.mem.trimRight(u8, denormalized_key, std.fs.path.sep_str)
             else
                 denormalized_key;
 
@@ -621,18 +629,19 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         key_list_overflow: OverflowList([]u8, count / 4) = OverflowList([]u8, count / 4){},
 
         const Self = @This();
-        pub var instance: Self = undefined;
+        pub var instance: *Self = undefined;
         pub var instance_loaded = false;
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!instance_loaded) {
-                instance = Self{
+                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                instance.* = Self{
                     .map = BSSMapType.init(allocator),
                 };
                 instance_loaded = true;
             }
 
-            return &instance;
+            return instance;
         }
 
         pub fn isOverflowing() bool {
@@ -676,7 +685,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
 
         // There's two parts to this.
-        // 1. Storing the underyling string.
+        // 1. Storing the underlying string.
         // 2. Making the key accessible at the index.
         pub fn putKey(self: *Self, key: anytype, result: *Result) !void {
             self.map.mutex.lock();

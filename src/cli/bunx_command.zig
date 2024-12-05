@@ -82,7 +82,7 @@ pub const BunxCommand = struct {
         bun.JSAst.Expr.Data.Store.create();
         bun.JSAst.Stmt.Data.Store.create();
 
-        const expr = try bun.JSON.ParsePackageJSONUTF8(&source, bundler.log, bundler.allocator);
+        const expr = try bun.JSON.parsePackageJSONUTF8(&source, bundler.log, bundler.allocator);
 
         // choose the first package that fits
         if (expr.get("bin")) |bin_expr| {
@@ -271,6 +271,7 @@ pub const BunxCommand = struct {
         defer requests_buf.deinit(ctx.allocator);
         const update_requests = bun.PackageManager.UpdateRequest.parse(
             ctx.allocator,
+            null,
             ctx.log,
             &.{package_name},
             &requests_buf,
@@ -322,6 +323,9 @@ pub const BunxCommand = struct {
             root_dir_info.abs_path,
             ctx.debug.run_in_bun,
         );
+        this_bundler.env.map.put("npm_command", "exec") catch unreachable;
+        this_bundler.env.map.put("npm_lifecycle_event", "bunx") catch unreachable;
+        this_bundler.env.map.put("npm_lifecycle_script", package_name) catch unreachable;
 
         const ignore_cwd = this_bundler.env.get("BUN_WHICH_IGNORE_CWD") orelse "";
 

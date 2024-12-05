@@ -121,7 +121,9 @@ extern "C" void* WebWorker__create(
     StringImpl* argvPtr,
     uint32_t argvLen,
     StringImpl* execArgvPtr,
-    uint32_t execArgvLen);
+    uint32_t execArgvLen,
+    BunString* preloadModulesPtr,
+    uint32_t preloadModulesLen);
 extern "C" void WebWorker__setRef(
     void* worker,
     bool ref);
@@ -149,7 +151,12 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
 
     WTF::String url = urlInit;
     if (url.startsWith("file://"_s)) {
-        url = WTF::URL(url).fileSystemPath();
+        WTF::URL urlObject = WTF::URL(url);
+        if (urlObject.isValid()) {
+            url = urlObject.fileSystemPath();
+        } else {
+            return Exception { TypeError, makeString("Invalid file URL: \""_s, urlInit, '"') };
+        }
     }
     BunString urlStr = Bun::toString(url);
     BunString errorMessage = BunStringEmpty;
@@ -160,6 +167,20 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
 
     Vector<String>* argv = worker->m_options.bun.argv.get();
     Vector<String>* execArgv = worker->m_options.bun.execArgv.get();
+    Vector<String>* preloadModuleStrings = &worker->m_options.bun.preloadModules;
+    Vector<BunString> preloadModules;
+    preloadModules.reserveInitialCapacity(preloadModuleStrings->size());
+    for (auto& str : *preloadModuleStrings) {
+        if (str.startsWith("file://"_s)) {
+            WTF::URL urlObject = WTF::URL(str);
+            if (!urlObject.isValid()) {
+                return Exception { TypeError, makeString("Invalid file URL: \""_s, str, '"') };
+            }
+            str = urlObject.fileSystemPath();
+        }
+
+        preloadModules.append(Bun::toString(str));
+    }
 
     void* impl = WebWorker__create(
         worker.ptr(),
@@ -174,7 +195,11 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         argv ? reinterpret_cast<StringImpl*>(argv->data()) : nullptr,
         argv ? static_cast<uint32_t>(argv->size()) : 0,
         execArgv ? reinterpret_cast<StringImpl*>(execArgv->data()) : nullptr,
-        execArgv ? static_cast<uint32_t>(execArgv->size()) : 0);
+        execArgv ? static_cast<uint32_t>(execArgv->size()) : 0,
+        preloadModules.size() ? preloadModules.data() : nullptr,
+        static_cast<uint32_t>(preloadModules.size()));
+
+    preloadModuleStrings->clear();
 
     if (!impl) {
         return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
@@ -434,14 +459,14 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
 
     if (callFrame->argumentCount() < 1) {
         throwTypeError(lexicalGlobalObject, scope, "receiveMessageOnPort needs 1 argument"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     auto port = callFrame->argument(0);
 
     if (!port.isObject()) {
         throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
-        return JSC::JSValue::encode(jsUndefined());
+        return {};
     }
 
     if (auto* messagePort = jsDynamicCast<JSMessagePort*>(port)) {
@@ -452,7 +477,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     }
 
     throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
-    return JSC::JSValue::encode(jsUndefined());
+    return {};
 }
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)

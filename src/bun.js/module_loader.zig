@@ -88,56 +88,6 @@ const String = bun.String;
 
 const debug = Output.scoped(.ModuleLoader, true);
 
-// Setting BUN_OVERRIDE_MODULE_PATH to the path to the bun repo will make it so modules are loaded
-// from there instead of the ones embedded into the binary.
-// In debug mode, this is set automatically for you, using the path relative to this file.
-fn jsModuleFromFile(from_path: string, comptime input: string) string {
-    // `modules_dev` is not minified or committed. Later we could also try loading source maps for it too.
-    const moduleFolder = if (comptime Environment.isDebug) "modules_dev" else "modules";
-
-    const Holder = struct {
-        pub const file = @embedFile("../js/out/" ++ moduleFolder ++ "/" ++ input);
-    };
-
-    if ((comptime !Environment.allow_assert) and from_path.len == 0) {
-        return Holder.file;
-    }
-
-    var file: std.fs.File = undefined;
-    if ((comptime Environment.allow_assert) and from_path.len == 0) {
-        const absolute_path = comptime (Environment.base_path ++ (std.fs.path.dirname(std.fs.path.dirname(@src().file).?).?) ++ "/js/out/" ++ moduleFolder ++ "/" ++ input);
-        file = std.fs.openFileAbsoluteZ(absolute_path, .{ .mode = .read_only }) catch {
-            const WarnOnce = struct {
-                pub var warned = false;
-            };
-            if (!WarnOnce.warned) {
-                WarnOnce.warned = true;
-                Output.prettyErrorln("Could not find file: " ++ absolute_path ++ " - using embedded version", .{});
-            }
-            return Holder.file;
-        };
-    } else {
-        var parts = [_]string{ from_path, "src/js/out/" ++ moduleFolder ++ "/" ++ input };
-        var buf: bun.PathBuffer = undefined;
-        var absolute_path_to_use = Fs.FileSystem.instance.absBuf(&parts, &buf);
-        buf[absolute_path_to_use.len] = 0;
-        file = std.fs.openFileAbsoluteZ(absolute_path_to_use[0..absolute_path_to_use.len :0], .{ .mode = .read_only }) catch {
-            const WarnOnce = struct {
-                pub var warned = false;
-            };
-            if (!WarnOnce.warned) {
-                WarnOnce.warned = true;
-                Output.prettyErrorln("Could not find file: {s}, so using embedded version", .{absolute_path_to_use});
-            }
-            return Holder.file;
-        };
-    }
-
-    const contents = file.readToEndAlloc(bun.default_allocator, std.math.maxInt(usize)) catch @panic("Cannot read file " ++ input);
-    file.close();
-    return contents;
-}
-
 inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String) ResolvedSource {
     return ResolvedSource{
         .allocator = null,
@@ -234,9 +184,9 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 \\  "mappings": "{}"
                 \\}}
             , .{
-                js_printer.formatJSONStringUTF8(std.fs.path.basename(specifier)),
-                js_printer.formatJSONStringUTF8(specifier),
-                js_printer.formatJSONStringUTF8(source_file),
+                bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier)),
+                bun.fmt.formatJSONStringUTF8(specifier),
+                bun.fmt.formatJSONStringUTF8(source_file),
                 mappings.formatVLQs(),
             });
             try bufw.flush();
@@ -486,7 +436,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-            const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
+            const is_node_override = strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path);
 
             const macro_remappings = if (vm.macro_mode or !vm.has_any_macro_remappings or is_node_override)
                 MacroRemap{}
@@ -529,6 +479,7 @@ pub const RuntimeTranspilerStore = struct {
                     setBreakPointOnFirstLine(),
                 .runtime_transpiler_cache = if (!JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
                 .remove_cjs_module_wrapper = is_main and vm.module_loader.eval_source != null,
+                .allow_bytecode_cache = true,
             };
 
             defer {
@@ -541,7 +492,7 @@ pub const RuntimeTranspilerStore = struct {
             if (is_node_override) {
                 if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
                     const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
-                    fallback_source = logger.Source{ .path = fallback_path, .contents = code, .key_path = fallback_path };
+                    fallback_source = logger.Source{ .path = fallback_path, .contents = code };
                     parse_options.virtual_source = &fallback_source;
                 }
             }
@@ -623,8 +574,9 @@ pub const RuntimeTranspilerStore = struct {
                 return;
             }
 
-            if (parse_result.already_bundled) {
+            if (parse_result.already_bundled != .none) {
                 const duped = String.createUTF8(specifier);
+                const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -632,6 +584,9 @@ pub const RuntimeTranspilerStore = struct {
                     .source_url = duped.createIfDifferent(path.text),
                     .already_bundled = true,
                     .hash = 0,
+                    .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
+                    .bytecode_cache_size = bytecode_slice.len,
+                    .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                 };
                 this.resolved_source.source_code.ensureHash();
                 return;
@@ -717,10 +672,10 @@ pub const RuntimeTranspilerStore = struct {
                 // In a benchmarking loading @babel/standalone 100 times:
                 //
                 // After ensureHash:
-                // 354.00 ms    4.2%	354.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                // 354.00 ms    4.2%    354.00 ms           WTF::StringImpl::hashSlowCase() const
                 //
                 // Before ensureHash:
-                // 506.00 ms    6.1%	506.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                // 506.00 ms    6.1%    506.00 ms           WTF::StringImpl::hashSlowCase() const
                 //
                 result.ensureHash();
 
@@ -1632,7 +1587,7 @@ pub const ModuleLoader = struct {
                 }
 
                 // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-                const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
+                const is_node_override = strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path);
 
                 const macro_remappings = if (jsc_vm.macro_mode or !jsc_vm.has_any_macro_remappings or is_node_override)
                     MacroRemap{}
@@ -1665,6 +1620,7 @@ pub const ModuleLoader = struct {
                     .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
                     .keep_json_and_toml_as_one_statement = true,
+                    .allow_bytecode_cache = true,
                     .set_breakpoint_on_first_line = is_main and
                         jsc_vm.debugger != null and
                         jsc_vm.debugger.?.set_breakpoint_on_first_line and
@@ -1682,7 +1638,7 @@ pub const ModuleLoader = struct {
                 if (is_node_override) {
                     if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
                         const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
-                        fallback_source = logger.Source{ .path = fallback_path, .contents = code, .key_path = fallback_path };
+                        fallback_source = logger.Source{ .path = fallback_path, .contents = code };
                         parse_options.virtual_source = &fallback_source;
                     }
                 }
@@ -1690,6 +1646,12 @@ pub const ModuleLoader = struct {
                 var parse_result: ParseResult = switch (disable_transpilying or
                     (loader == .json and !path.isJSONCFile())) {
                     inline else => |return_file_only| brk: {
+                        const heap_access = if (!disable_transpilying)
+                            jsc_vm.jsc.releaseHeapAccess()
+                        else
+                            JSC.VM.ReleaseHeapAccess{ .vm = jsc_vm.jsc, .needs_to_release = false };
+                        defer heap_access.acquire();
+
                         break :brk jsc_vm.bundler.parseMaybeReturnFileOnly(
                             parse_options,
                             null,
@@ -1805,12 +1767,13 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
-                        .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global, .{}) catch @panic("Unexpected JS error"),
+                        .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch @panic("Unexpected JS error"),
                         .tag = .exports_object,
                     };
                 }
 
-                if (parse_result.already_bundled) {
+                if (parse_result.already_bundled != .none) {
+                    const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -1818,6 +1781,9 @@ pub const ModuleLoader = struct {
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .already_bundled = true,
                         .hash = 0,
+                        .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
+                        .bytecode_cache_size = if (bytecode_slice.len > 0) bytecode_slice.len else 0,
+                        .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                     };
                 }
 
@@ -2183,7 +2149,7 @@ pub const ModuleLoader = struct {
                     writer.writeAll(";\n") catch bun.outOfMemory();
                 }
 
-                const public_url = bun.String.createUTF8(buf.toOwnedSliceLeaky());
+                const public_url = bun.String.createUTF8(buf.slice());
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
                     .source_code = public_url,
@@ -2198,34 +2164,14 @@ pub const ModuleLoader = struct {
     pub fn normalizeSpecifier(jsc_vm: *VirtualMachine, slice_: string, string_to_use_for_source: *[]const u8) string {
         var slice = slice_;
         if (slice.len == 0) return slice;
-        var was_http = false;
-        if (jsc_vm.bundler.options.serve) {
-            if (strings.hasPrefixComptime(slice, "https://")) {
-                slice = slice["https://".len..];
-                was_http = true;
-            } else if (strings.hasPrefixComptime(slice, "http://")) {
-                slice = slice["http://".len..];
-                was_http = true;
-            }
-        }
 
         if (strings.hasPrefix(slice, jsc_vm.origin.host)) {
             slice = slice[jsc_vm.origin.host.len..];
-        } else if (was_http) {
-            if (strings.indexOfChar(slice, '/')) |i| {
-                slice = slice[i..];
-            }
         }
 
         if (jsc_vm.origin.path.len > 1) {
             if (strings.hasPrefix(slice, jsc_vm.origin.path)) {
                 slice = slice[jsc_vm.origin.path.len..];
-            }
-        }
-
-        if (jsc_vm.bundler.options.routes.asset_prefix_path.len > 0) {
-            if (strings.hasPrefix(slice, jsc_vm.bundler.options.routes.asset_prefix_path)) {
-                slice = slice[jsc_vm.bundler.options.routes.asset_prefix_path.len..];
             }
         }
 
@@ -2339,7 +2285,6 @@ pub const ModuleLoader = struct {
                     virtual_source_to_use = logger.Source{
                         .path = path,
                         .contents = blob.sharedView(),
-                        .key_path = path,
                     };
                     virtual_source = &virtual_source_to_use.?;
                 }
@@ -2467,7 +2412,8 @@ pub const ModuleLoader = struct {
         else
             specifier[@min(namespace.len + 1, specifier.len)..];
 
-        return globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), .bun) orelse return JSValue.zero;
+        return globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), .bun) orelse
+            return JSValue.zero;
     }
 
     pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?ResolvedSource {
@@ -2527,7 +2473,7 @@ pub const ModuleLoader = struct {
                     return jsSyntheticModule(.@"bun:sql", specifier);
                 },
                 .@"bun:sqlite" => return jsSyntheticModule(.@"bun:sqlite", specifier),
-                .@"detect-libc" => return jsSyntheticModule(if (Environment.isLinux) .@"detect-libc/linux" else .@"detect-libc", specifier),
+                .@"detect-libc" => return jsSyntheticModule(if (!Environment.isLinux) .@"detect-libc" else if (!Environment.isMusl) .@"detect-libc/linux" else .@"detect-libc/musl", specifier),
                 .@"node:assert" => return jsSyntheticModule(.@"node:assert", specifier),
                 .@"node:assert/strict" => return jsSyntheticModule(.@"node:assert/strict", specifier),
                 .@"node:async_hooks" => return jsSyntheticModule(.@"node:async_hooks", specifier),
@@ -2624,6 +2570,9 @@ pub const ModuleLoader = struct {
                     .source_url = specifier.dupeRef(),
                     .hash = 0,
                     .source_code_needs_deref = false,
+                    .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
+                    .bytecode_cache_size = file.bytecode.len,
+                    .is_commonjs_module = file.module_format == .cjs,
                 };
             }
         }
@@ -2870,8 +2819,8 @@ pub const HardcodedModule = enum {
     );
 
     pub const Alias = struct {
-        path: string,
-        tag: ImportRecord.Tag = ImportRecord.Tag.hardcoded,
+        path: [:0]const u8,
+        tag: ImportRecord.Tag = .builtin,
     };
 
     pub const Aliases = struct {

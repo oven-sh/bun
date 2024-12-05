@@ -175,7 +175,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConst
         [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) {
             throwArgumentMustBeFunctionError(lexicalGlobalObject, scope, 0, "callback"_s, "PerformanceObserver"_s, nullptr);
         });
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = PerformanceObserver::create(*context, callback.releaseNonNull());
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -289,7 +289,7 @@ static inline JSC::EncodedJSValue jsPerformanceObserverPrototypeFunction_observe
     auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto options = convert<IDLDictionary<PerformanceObserver::Init>>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.observe(WTFMove(options)); })));
 }
 

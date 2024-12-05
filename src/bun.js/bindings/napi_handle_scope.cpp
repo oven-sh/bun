@@ -78,18 +78,35 @@ NapiHandleScopeImpl::Slot* NapiHandleScopeImpl::reserveSlot()
     return &m_storage.last();
 }
 
-NapiHandleScopeImpl* NapiHandleScope::push(Zig::GlobalObject* globalObject, bool escapable)
+NapiHandleScopeImpl* NapiHandleScope::open(Zig::GlobalObject* globalObject, bool escapable)
 {
-    auto* impl = NapiHandleScopeImpl::create(globalObject->vm(),
+    auto& vm = globalObject->vm();
+    // Do not create a new handle scope while a finalizer is in progress
+    // This state is possible because we call napi finalizers immediately
+    // so a finalizer can be called while an allocation is in progress.
+    // An example where this happens:
+    // 1. Use the `sqlite3` package
+    // 2. Do an allocation in a hot code path
+    // 3. the napi_ref finalizer is called while the constructor is running
+    // 4. The finalizer creates a new handle scope (yes, it should not do that. No, we can't change that.)
+    if (vm.heap.mutatorState() == JSC::MutatorState::Sweeping) {
+        return nullptr;
+    }
+
+    auto* impl = NapiHandleScopeImpl::create(vm,
         globalObject->NapiHandleScopeImplStructure(),
         globalObject->m_currentNapiHandleScopeImpl.get(),
         escapable);
-    globalObject->m_currentNapiHandleScopeImpl.set(globalObject->vm(), globalObject, impl);
+    globalObject->m_currentNapiHandleScopeImpl.set(vm, globalObject, impl);
     return impl;
 }
 
-void NapiHandleScope::pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
+void NapiHandleScope::close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
 {
+    // napi handle scopes may be null pointers if created inside a finalizer
+    if (!current) {
+        return;
+    }
     RELEASE_ASSERT_WITH_MESSAGE(current == globalObject->m_currentNapiHandleScopeImpl.get(),
         "Unbalanced napi_handle_scope opens and closes");
     if (auto* parent = current->parent()) {
@@ -101,23 +118,23 @@ void NapiHandleScope::pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* 
 
 NapiHandleScope::NapiHandleScope(Zig::GlobalObject* globalObject)
     : m_globalObject(globalObject)
-    , m_impl(NapiHandleScope::push(globalObject, false))
+    , m_impl(NapiHandleScope::open(globalObject, false))
 {
 }
 
 NapiHandleScope::~NapiHandleScope()
 {
-    NapiHandleScope::pop(m_globalObject, m_impl);
+    NapiHandleScope::close(m_globalObject, m_impl);
 }
 
-extern "C" NapiHandleScopeImpl* NapiHandleScope__push(Zig::GlobalObject* globalObject, bool escapable)
+extern "C" NapiHandleScopeImpl* NapiHandleScope__open(Zig::GlobalObject* globalObject, bool escapable)
 {
-    return NapiHandleScope::push(globalObject, escapable);
+    return NapiHandleScope::open(globalObject, escapable);
 }
 
-extern "C" void NapiHandleScope__pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
+extern "C" void NapiHandleScope__close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
 {
-    return NapiHandleScope::pop(globalObject, current);
+    return NapiHandleScope::close(globalObject, current);
 }
 
 extern "C" void NapiHandleScope__append(Zig::GlobalObject* globalObject, JSC::EncodedJSValue value)

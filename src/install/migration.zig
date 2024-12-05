@@ -77,7 +77,7 @@ pub fn detectAndLoadOtherLockfile(
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
                 Output.prettyErrorln("Error: {s}", .{@errorName(err)});
-                log.printForLogLevel(Output.errorWriter()) catch {};
+                log.print(Output.errorWriter()) catch {};
                 Output.prettyErrorln("Invalid NPM package-lock.json\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
                 Global.exit(1);
             }
@@ -137,7 +137,7 @@ pub fn migrateNPMLockfile(
     Install.initializeStore();
 
     const json_src = logger.Source.initPathString(abs_path, data);
-    const json = bun.JSON.ParseJSONUTF8(&json_src, log, allocator) catch return error.InvalidNPMLockfile;
+    const json = bun.JSON.parseUTF8(&json_src, log, allocator) catch return error.InvalidNPMLockfile;
 
     if (json.data != .e_object) {
         return error.InvalidNPMLockfile;
@@ -515,23 +515,31 @@ pub fn migrateNPMLockfile(
                 .origin = if (package_id == 0) .local else .npm,
 
                 .arch = if (pkg.get("cpu")) |cpu_array| arch: {
+                    var arch = Npm.Architecture.none.negatable();
                     if (cpu_array.data != .e_array) return error.InvalidNPMLockfile;
-                    var arch: Npm.Architecture = .none;
+                    if (cpu_array.data.e_array.items.len == 0) {
+                        break :arch arch.combine();
+                    }
+
                     for (cpu_array.data.e_array.items.slice()) |item| {
                         if (item.data != .e_string) return error.InvalidNPMLockfile;
-                        arch = arch.apply(item.data.e_string.data);
+                        arch.apply(item.data.e_string.data);
                     }
-                    break :arch arch;
+                    break :arch arch.combine();
                 } else .all,
 
                 .os = if (pkg.get("os")) |cpu_array| arch: {
+                    var os = Npm.OperatingSystem.none.negatable();
                     if (cpu_array.data != .e_array) return error.InvalidNPMLockfile;
-                    var os: Npm.OperatingSystem = .none;
+                    if (cpu_array.data.e_array.items.len == 0) {
+                        break :arch .all;
+                    }
+
                     for (cpu_array.data.e_array.items.slice()) |item| {
                         if (item.data != .e_string) return error.InvalidNPMLockfile;
-                        os = os.apply(item.data.e_string.data);
+                        os.apply(item.data.e_string.data);
                     }
-                    break :arch os;
+                    break :arch os.combine();
                 } else .all,
 
                 .man_dir = String{},
@@ -774,6 +782,7 @@ pub fn migrateNPMLockfile(
                         sliced.slice,
                         &sliced,
                         log,
+                        manager,
                     ) orelse {
                         return error.InvalidNPMLockfile;
                     };

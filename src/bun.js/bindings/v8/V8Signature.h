@@ -6,4 +6,4 @@ namespace v8 {
 
 class Signature : public Data {};
 
-}
+} // namespace v8

@@ -118,6 +118,10 @@ pub fn exit(code: u32) noreturn {
 
     switch (Environment.os) {
         .mac => std.c.exit(@bitCast(code)),
+        .windows => {
+            Bun__onExit();
+            std.os.windows.kernel32.ExitProcess(code);
+        },
         else => bun.C.quick_exit(@bitCast(code)),
     }
 }
@@ -126,7 +130,20 @@ pub fn raiseIgnoringPanicHandler(sig: bun.SignalCode) noreturn {
     Output.flush();
     Output.Source.Stdio.restore();
 
+    // clear segfault handler
     bun.crash_handler.resetSegfaultHandler();
+
+    // clear signal handler
+    if (bun.Environment.os != .windows) {
+        var sa: std.c.Sigaction = .{
+            .handler = .{ .handler = std.posix.SIG.DFL },
+            .mask = std.posix.empty_sigset,
+            .flags = std.posix.SA.RESETHAND,
+        };
+        _ = std.c.sigaction(@intFromEnum(sig), &sa, null);
+    }
+
+    // kill self
     _ = std.c.raise(@intFromEnum(sig));
     std.c.abort();
 }
@@ -172,22 +189,15 @@ const string = bun.string;
 pub const BunInfo = struct {
     bun_version: string,
     platform: Analytics.GenerateHeader.GeneratePlatform.Platform,
-    framework: string = "",
-    framework_version: string = "",
 
     const Analytics = @import("./analytics/analytics_thread.zig");
     const JSON = bun.JSON;
     const JSAst = bun.JSAst;
-    pub fn generate(comptime Bundler: type, bundler: Bundler, allocator: std.mem.Allocator) !JSAst.Expr {
-        var info = BunInfo{
+    pub fn generate(comptime Bundler: type, _: Bundler, allocator: std.mem.Allocator) !JSAst.Expr {
+        const info = BunInfo{
             .bun_version = Global.package_json_version,
             .platform = Analytics.GenerateHeader.GeneratePlatform.forOS(),
         };
-
-        if (bundler.options.framework) |framework| {
-            info.framework = framework.package;
-            info.framework_version = framework.version;
-        }
 
         return try JSON.toAST(allocator, BunInfo, info);
     }

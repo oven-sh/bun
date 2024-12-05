@@ -137,15 +137,15 @@ var log = function log() {
 };
 var inherits = function inherits(ctor, superCtor) {
   if (ctor === undefined || ctor === null) {
-    throw ERR_INVALID_ARG_TYPE("ctor", "Function", ctor);
+    throw ERR_INVALID_ARG_TYPE("ctor", "function", ctor);
   }
 
   if (superCtor === undefined || superCtor === null) {
-    throw ERR_INVALID_ARG_TYPE("superCtor", "Function", superCtor);
+    throw ERR_INVALID_ARG_TYPE("superCtor", "function", superCtor);
   }
 
   if (superCtor.prototype === undefined) {
-    throw ERR_INVALID_ARG_TYPE("superCtor.prototype", "Object", superCtor.prototype);
+    throw ERR_INVALID_ARG_TYPE("superCtor.prototype", "object", superCtor.prototype);
   }
   ctor.super_ = superCtor;
   Object.setPrototypeOf(ctor.prototype, superCtor.prototype);

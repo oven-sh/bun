@@ -41,10 +41,14 @@ async function getDevServerURL() {
 
   const { resolve: loaded, promise, reject } = Promise.withResolvers();
   dev_server.exited
+    .then(() => {
+      console.log("Dev server exited", dev_server?.exitCode, dev_server?.signalCode);
+    })
     .catch(e => {
       dev_server_pid = undefined;
       dev_server = undefined;
 
+      console.error("Dev server failed to load", e);
       if (hasLoaded) {
         reportError(e);
       } else {

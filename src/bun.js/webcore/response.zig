@@ -633,7 +633,7 @@ pub const Response = struct {
                 } else {
                     if (!globalThis.hasException()) {
                         const err = globalThis.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
-                        globalThis.throwValue(err);
+                        return globalThis.throwValue(err);
                     }
                     return error.JSError;
                 }
@@ -765,14 +765,17 @@ pub const Fetch = struct {
     };
 
     pub const FetchTasklet = struct {
-        const log = Output.scoped(.FetchTasklet, false);
+        pub const FetchTaskletStream = JSC.WebCore.FetchTaskletChunkedRequestSink;
 
+        const log = Output.scoped(.FetchTasklet, false);
+        sink: ?*FetchTaskletStream.JSSink = null,
         http: ?*http.AsyncHTTP = null,
         result: http.HTTPClientResult = .{},
         metadata: ?http.HTTPResponseMetadata = null,
         javascript_vm: *VirtualMachine = undefined,
         global_this: *JSGlobalObject = undefined,
         request_body: HTTPRequestBody = undefined,
+
         /// buffer being used by AsyncHTTP
         response_buffer: MutableString = undefined,
         /// buffer used to stream response to JS
@@ -814,6 +817,7 @@ pub const Fetch = struct {
         hostname: ?[]u8 = null,
         is_waiting_body: bool = false,
         is_waiting_abort: bool = false,
+        is_waiting_request_stream_start: bool = false,
         mutex: Mutex,
 
         tracker: JSC.AsyncTaskTracker,
@@ -834,9 +838,24 @@ pub const Fetch = struct {
             }
         }
 
+        pub fn derefFromThread(this: *FetchTasklet) void {
+            const count = this.ref_count.fetchSub(1, .monotonic);
+            bun.debugAssert(count > 0);
+
+            if (count == 1) {
+                // this is really unlikely to happen, but can happen
+                // lets make sure that we always call deinit from main thread
+
+                this.javascript_vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
+            }
+        }
+
         pub const HTTPRequestBody = union(enum) {
             AnyBlob: AnyBlob,
             Sendfile: http.Sendfile,
+            ReadableStream: JSC.WebCore.ReadableStream.Strong,
+
+            pub const Empty: HTTPRequestBody = .{ .AnyBlob = .{ .Blob = .{} } };
 
             pub fn store(this: *HTTPRequestBody) ?*JSC.WebCore.Blob.Store {
                 return switch (this.*) {
@@ -855,6 +874,9 @@ pub const Fetch = struct {
             pub fn detach(this: *HTTPRequestBody) void {
                 switch (this.*) {
                     .AnyBlob => this.AnyBlob.detach(),
+                    .ReadableStream => |*stream| {
+                        stream.deinit();
+                    },
                     .Sendfile => {
                         if (@max(this.Sendfile.offset, this.Sendfile.remain) > 0)
                             _ = bun.sys.close(this.Sendfile.fd);
@@ -863,10 +885,69 @@ pub const Fetch = struct {
                     },
                 }
             }
+
+            pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) bun.JSError!HTTPRequestBody {
+                var body_value = try Body.Value.fromJS(globalThis, value);
+                if (body_value == .Used or (body_value == .Locked and (body_value.Locked.action != .none or body_value.Locked.isDisturbed2(globalThis)))) {
+                    return globalThis.ERR_BODY_ALREADY_USED("body already used", .{}).throw();
+                }
+                if (body_value == .Locked) {
+                    if (body_value.Locked.readable.has()) {
+                        // just grab the ref
+                        return FetchTasklet.HTTPRequestBody{ .ReadableStream = body_value.Locked.readable };
+                    }
+                    const readable = body_value.toReadableStream(globalThis);
+                    if (!readable.isEmptyOrUndefinedOrNull() and body_value == .Locked and body_value.Locked.readable.has()) {
+                        return FetchTasklet.HTTPRequestBody{ .ReadableStream = body_value.Locked.readable };
+                    }
+                }
+                return FetchTasklet.HTTPRequestBody{ .AnyBlob = body_value.useAsAnyBlob() };
+            }
+
+            pub fn needsToReadFile(this: *HTTPRequestBody) bool {
+                return switch (this.*) {
+                    .AnyBlob => |blob| blob.needsToReadFile(),
+                    else => false,
+                };
+            }
+
+            pub fn hasContentTypeFromUser(this: *HTTPRequestBody) bool {
+                return switch (this.*) {
+                    .AnyBlob => |blob| blob.hasContentTypeFromUser(),
+                    else => false,
+                };
+            }
+
+            pub fn getAnyBlob(this: *HTTPRequestBody) ?*AnyBlob {
+                return switch (this.*) {
+                    .AnyBlob => &this.AnyBlob,
+                    else => null,
+                };
+            }
+
+            pub fn hasBody(this: *HTTPRequestBody) bool {
+                return switch (this.*) {
+                    .AnyBlob => |blob| blob.size() > 0,
+                    .ReadableStream => |*stream| stream.has(),
+                    .Sendfile => true,
+                };
+            }
         };
 
         pub fn init(_: std.mem.Allocator) anyerror!FetchTasklet {
             return FetchTasklet{};
+        }
+
+        fn clearSink(this: *FetchTasklet) void {
+            if (this.sink) |wrapper| {
+                this.sink = null;
+
+                wrapper.sink.done = true;
+                wrapper.sink.ended = true;
+                wrapper.sink.finalize();
+                wrapper.detach();
+                wrapper.sink.finalizeAndDestroy();
+            }
         }
 
         fn clearData(this: *FetchTasklet) void {
@@ -911,14 +992,16 @@ pub const Fetch = struct {
             this.readable_stream_ref.deinit();
 
             this.scheduled_response_buffer.deinit();
-            this.request_body.detach();
+            if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
+                this.request_body.detach();
+            }
 
             this.abort_reason.deinit();
             this.check_server_identity.deinit();
             this.clearAbortSignal();
         }
 
-        fn deinit(this: *FetchTasklet) void {
+        pub fn deinit(this: *FetchTasklet) void {
             log("deinit", .{});
 
             bun.assert(this.ref_count.load(.monotonic) == 0);
@@ -953,6 +1036,144 @@ pub const Fetch = struct {
             return null;
         }
 
+        pub fn onResolveRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            var args = callframe.arguments_old(2);
+            var this: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+            defer this.deref();
+            if (this.request_body == .ReadableStream) {
+                var readable_stream_ref = this.request_body.ReadableStream;
+                this.request_body.ReadableStream = .{};
+                defer readable_stream_ref.deinit();
+                if (readable_stream_ref.get()) |stream| {
+                    stream.done(globalThis);
+                    this.clearSink();
+                }
+            }
+
+            return JSValue.jsUndefined();
+        }
+
+        pub fn onRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            const args = callframe.arguments_old(2);
+            var this = args.ptr[args.len - 1].asPromisePtr(@This());
+            defer this.deref();
+            const err = args.ptr[0];
+            if (this.request_body == .ReadableStream) {
+                var readable_stream_ref = this.request_body.ReadableStream;
+                this.request_body.ReadableStream = .{};
+                defer readable_stream_ref.deinit();
+                if (readable_stream_ref.get()) |stream| {
+                    stream.cancel(globalThis);
+                    this.clearSink();
+                }
+            }
+
+            this.abortListener(err);
+            return JSValue.jsUndefined();
+        }
+        pub const shim = JSC.Shimmer("Bun", "FetchTasklet", @This());
+
+        pub const Export = shim.exportFunctions(.{
+            .onResolveRequestStream = onResolveRequestStream,
+            .onRejectRequestStream = onRejectRequestStream,
+        });
+        comptime {
+            const jsonResolveRequestStream = JSC.toJSHostFunction(onResolveRequestStream);
+            @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+            const jsonRejectRequestStream = JSC.toJSHostFunction(onRejectRequestStream);
+            @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+        }
+
+        pub fn startRequestStream(this: *FetchTasklet) void {
+            this.is_waiting_request_stream_start = false;
+            bun.assert(this.request_body == .ReadableStream);
+            if (this.request_body.ReadableStream.get()) |stream| {
+                this.ref(); // lets only unref when sink is done
+
+                const globalThis = this.global_this;
+                var response_stream = FetchTaskletStream.new(.{
+                    .task = this,
+                    .buffer = .{},
+                    .globalThis = globalThis,
+                }).toSink();
+                var signal = &response_stream.sink.signal;
+                this.sink = response_stream;
+
+                signal.* = FetchTaskletStream.JSSink.SinkSignal.init(JSValue.zero);
+
+                // explicitly set it to a dead pointer
+                // we use this memory address to disable signals being sent
+                signal.clear();
+                bun.assert(signal.isDead());
+
+                // We are already corked!
+                const assignment_result: JSValue = FetchTaskletStream.JSSink.assignToStream(
+                    globalThis,
+                    stream.value,
+                    response_stream,
+                    @as(**anyopaque, @ptrCast(&signal.ptr)),
+                );
+
+                assignment_result.ensureStillAlive();
+
+                // assert that it was updated
+                bun.assert(!signal.isDead());
+
+                if (assignment_result.toError()) |err_value| {
+                    response_stream.detach();
+                    this.sink = null;
+                    response_stream.sink.finalizeAndDestroy();
+                    return this.abortListener(err_value);
+                }
+
+                if (!assignment_result.isEmptyOrUndefinedOrNull()) {
+                    this.javascript_vm.drainMicrotasks();
+
+                    assignment_result.ensureStillAlive();
+                    // it returns a Promise when it goes through ReadableStreamDefaultReader
+                    if (assignment_result.asAnyPromise()) |promise| {
+                        switch (promise.status(globalThis.vm())) {
+                            .pending => {
+                                this.ref();
+                                assignment_result.then(
+                                    globalThis,
+                                    this,
+                                    onResolveRequestStream,
+                                    onRejectRequestStream,
+                                );
+                            },
+                            .fulfilled => {
+                                var readable_stream_ref = this.request_body.ReadableStream;
+                                this.request_body.ReadableStream = .{};
+                                defer {
+                                    stream.done(globalThis);
+                                    this.clearSink();
+                                    readable_stream_ref.deinit();
+                                }
+                            },
+                            .rejected => {
+                                var readable_stream_ref = this.request_body.ReadableStream;
+                                this.request_body.ReadableStream = .{};
+                                defer {
+                                    stream.cancel(globalThis);
+                                    this.clearSink();
+                                    readable_stream_ref.deinit();
+                                }
+
+                                this.abortListener(promise.result(globalThis.vm()));
+                            },
+                        }
+                        return;
+                    } else {
+                        // if is not a promise we treat it as Error
+                        response_stream.detach();
+                        this.sink = null;
+                        response_stream.sink.finalizeAndDestroy();
+                        return this.abortListener(assignment_result);
+                    }
+                }
+            }
+        }
         pub fn onBodyReceived(this: *FetchTasklet) void {
             const success = this.result.isSuccess();
             const globalThis = this.global_this;
@@ -1129,11 +1350,17 @@ pub const Fetch = struct {
                     this.deref();
                 }
             }
+            if (this.is_waiting_request_stream_start and this.result.can_stream) {
+                // start streaming
+                this.startRequestStream();
+            }
             // if we already respond the metadata and still need to process the body
             if (this.is_waiting_body) {
                 this.onBodyReceived();
                 return;
             }
+            if (this.metadata == null and this.result.isSuccess()) return;
+
             // if we abort because of cert error
             // we wait the Http Client because we already have the response
             // we just need to deinit
@@ -1183,7 +1410,6 @@ pub const Fetch = struct {
                 this.promise.deinit();
             }
             const success = this.result.isSuccess();
-
             const result = switch (success) {
                 true => JSC.Strong.create(this.onResolve(), globalThis),
                 false => brk: {
@@ -1701,7 +1927,18 @@ pub const Fetch = struct {
                     .tls_props = fetch_options.ssl_config,
                 },
             );
-
+            // enable streaming the write side
+            const isStream = fetch_tasklet.request_body == .ReadableStream;
+            fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
+            fetch_tasklet.is_waiting_request_stream_start = isStream;
+            if (isStream) {
+                fetch_tasklet.http.?.request_body = .{
+                    .stream = .{
+                        .buffer = .{},
+                        .ended = false,
+                    },
+                };
+            }
             // TODO is this necessary? the http client already sets the redirect type,
             // so manually setting it here seems redundant
             if (fetch_options.redirect_type != FetchRedirect.follow) {
@@ -1728,6 +1965,22 @@ pub const Fetch = struct {
             log("abortListener", .{});
             reason.ensureStillAlive();
             this.abort_reason.set(this.global_this, reason);
+            this.abortTask();
+            if (this.sink) |wrapper| {
+                wrapper.sink.abort();
+                return;
+            }
+        }
+
+        pub fn sendRequestData(this: *FetchTasklet, data: []const u8, ended: bool) void {
+            if (this.http) |http_| {
+                http.http_thread.scheduleRequestWrite(http_, data, ended);
+            } else if (data.len != 3) {
+                bun.default_allocator.free(data);
+            }
+        }
+
+        pub fn abortTask(this: *FetchTasklet) void {
             this.signal_store.aborted.store(true, .monotonic);
             this.tracker.didCancel(this.global_this);
 
@@ -1785,12 +2038,15 @@ pub const Fetch = struct {
         }
 
         pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
-            task.mutex.lock();
-            defer task.mutex.unlock();
+            // at this point only this thread is accessing result to is no race condition
             const is_done = !result.has_more;
             // we are done with the http client so we can deref our side
-            defer if (is_done) task.deref();
+            // this is a atomic operation and will enqueue a task to deinit on the main thread
+            defer if (is_done) task.derefFromThread();
 
+            task.mutex.lock();
+            // we need to unlock before task.deref();
+            defer task.mutex.unlock();
             task.http.?.* = async_http.*;
             task.http.?.response_buffer = async_http.response_buffer;
 
@@ -1918,13 +2174,11 @@ pub const Fetch = struct {
         }
 
         if (url_str.tag == .Dead) {
-            globalObject.ERR_INVALID_ARG_TYPE("Invalid URL", .{}).throw();
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE("Invalid URL", .{}).throw();
         }
 
         if (url_str.isEmpty()) {
-            globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
         }
 
         const url = ZigURL.parse(url_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory());
@@ -1934,9 +2188,8 @@ pub const Fetch = struct {
         }
 
         if (url.hostname.len == 0) {
-            globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
             bun.default_allocator.free(url.href);
-            return .zero;
+            return globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
         }
 
         if (!url.hasValidPort()) {
@@ -2005,9 +2258,7 @@ pub const Fetch = struct {
         // which is important for FormData.
         // https://github.com/oven-sh/bun/issues/2264
         //
-        var body: AnyBlob = AnyBlob{
-            .Blob = .{},
-        };
+        var body: FetchTasklet.HTTPRequestBody = FetchTasklet.HTTPRequestBody.Empty;
 
         var disable_timeout = false;
         var disable_keepalive = false;
@@ -2547,8 +2798,7 @@ pub const Fetch = struct {
             if (options_object) |options| {
                 if (options.fastGet(globalThis, .body)) |body__| {
                     if (!body__.isUndefined()) {
-                        var body_value = try Body.Value.fromJS(ctx, body__);
-                        break :extract_body body_value.useAsAnyBlob();
+                        break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, body__);
                     }
                 }
 
@@ -2560,25 +2810,32 @@ pub const Fetch = struct {
 
             if (request) |req| {
                 if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(Request, globalThis, first_arg)))) {
-                    globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
-                    is_error = true;
-                    return .zero;
+                    return globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
                 }
 
-                break :extract_body req.body.value.useAsAnyBlob();
+                if (req.body.value == .Locked) {
+                    if (req.body.value.Locked.readable.has()) {
+                        break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get().?, globalThis) };
+                    }
+                    const readable = req.body.value.toReadableStream(globalThis);
+                    if (!readable.isEmptyOrUndefinedOrNull() and req.body.value == .Locked and req.body.value.Locked.readable.has()) {
+                        break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get().?, globalThis) };
+                    }
+                }
+
+                break :extract_body FetchTasklet.HTTPRequestBody{ .AnyBlob = req.body.value.useAsAnyBlob() };
             }
 
             if (request_init_object) |req| {
                 if (req.fastGet(globalThis, .body)) |body__| {
                     if (!body__.isUndefined()) {
-                        var body_value = try Body.Value.fromJS(ctx, body__);
-                        break :extract_body body_value.useAsAnyBlob();
+                        break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, body__);
                     }
                 }
             }
 
             break :extract_body null;
-        } orelse AnyBlob{ .Blob = .{} };
+        } orelse FetchTasklet.HTTPRequestBody.Empty;
 
         if (globalThis.hasException()) {
             is_error = true;
@@ -2672,7 +2929,7 @@ pub const Fetch = struct {
                     hostname = _hostname.toOwnedSliceZ(allocator) catch bun.outOfMemory();
                 }
 
-                break :extract_headers Headers.from(headers_, allocator, .{ .body = &body }) catch bun.outOfMemory();
+                break :extract_headers Headers.from(headers_, allocator, .{ .body = body.getAnyBlob() }) catch bun.outOfMemory();
             }
 
             break :extract_headers headers;
@@ -2806,27 +3063,25 @@ pub const Fetch = struct {
             }
         }
 
-        if (!method.hasRequestBody() and body.size() > 0) {
+        if (!method.hasRequestBody() and body.hasBody()) {
             const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_unexpected_body, .{}, ctx);
             is_error = true;
             return JSPromise.rejectedPromiseValue(globalThis, err);
         }
 
-        if (headers == null and body.size() > 0 and body.hasContentTypeFromUser()) {
+        if (headers == null and body.hasBody() and body.hasContentTypeFromUser()) {
             headers = Headers.from(
                 null,
                 allocator,
-                .{ .body = &body },
+                .{ .body = body.getAnyBlob() },
             ) catch bun.outOfMemory();
         }
 
-        var http_body = FetchTasklet.HTTPRequestBody{
-            .AnyBlob = body,
-        };
+        var http_body = body;
 
         if (body.needsToReadFile()) {
             prepare_body: {
-                const opened_fd_res: JSC.Maybe(bun.FileDescriptor) = switch (body.Blob.store.?.data.file.pathlike) {
+                const opened_fd_res: JSC.Maybe(bun.FileDescriptor) = switch (body.store().?.data.file.pathlike) {
                     .fd => |fd| bun.sys.dup(fd),
                     .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), if (Environment.isWindows) bun.O.RDONLY else bun.O.RDONLY | bun.O.NOCTTY, 0),
                 };
@@ -2860,7 +3115,7 @@ pub const Fetch = struct {
                             break :use_sendfile;
                         }
 
-                        const original_size = body.Blob.size;
+                        const original_size = body.AnyBlob.Blob.size;
                         const stat_size = @as(Blob.SizeType, @intCast(stat.size));
                         const blob_size = if (bun.isRegularFile(stat.mode))
                             stat_size
@@ -2870,8 +3125,8 @@ pub const Fetch = struct {
                         http_body = .{
                             .Sendfile = .{
                                 .fd = opened_fd,
-                                .remain = body.Blob.offset + original_size,
-                                .offset = body.Blob.offset,
+                                .remain = body.AnyBlob.Blob.offset + original_size,
+                                .offset = body.AnyBlob.Blob.offset,
                                 .content_size = blob_size,
                             },
                         };
@@ -2892,13 +3147,13 @@ pub const Fetch = struct {
                     .{
                         .encoding = .buffer,
                         .path = .{ .fd = opened_fd },
-                        .offset = body.Blob.offset,
-                        .max_size = body.Blob.size,
+                        .offset = body.AnyBlob.Blob.offset,
+                        .max_size = body.AnyBlob.Blob.size,
                     },
                     .sync,
                 );
 
-                if (body.Blob.store.?.data.file.pathlike == .path) {
+                if (body.store().?.data.file.pathlike == .path) {
                     _ = bun.sys.close(opened_fd);
                 }
 
@@ -2912,8 +3167,8 @@ pub const Fetch = struct {
                     },
                     .result => |result| {
                         body.detach();
-                        body.from(std.ArrayList(u8).fromOwnedSlice(allocator, @constCast(result.slice())));
-                        http_body = .{ .AnyBlob = body };
+                        body.AnyBlob.from(std.ArrayList(u8).fromOwnedSlice(allocator, @constCast(result.slice())));
+                        http_body = .{ .AnyBlob = body.AnyBlob };
                     },
                 }
             }
@@ -2983,9 +3238,7 @@ pub const Fetch = struct {
             body.detach();
         } else {
             // These are single-use, and have effectively been moved to the FetchTasklet.
-            body = .{
-                .Blob = .{},
-            };
+            body = FetchTasklet.HTTPRequestBody.Empty;
         }
         proxy = null;
         url_proxy_buffer = "";

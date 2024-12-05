@@ -672,16 +672,18 @@ async function main() {
   }
 
   let changedFiles;
-  // FIXME: Fix various bugs when calculating changed files
-  // false -> !isFork() && !isMainBranch()
-  if (false) {
+  let changedFilesBranch;
+  if (!isFork() && !isMainBranch()) {
     console.log("Checking changed files...");
-    const baseRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
+    const targetRef = getTargetBranch();
+    console.log(" - Target Ref:", targetRef);
+    const baseRef = lastBuild?.commit_id || targetRef || getMainBranch();
     console.log(" - Base Ref:", baseRef);
     const headRef = getCommit();
     console.log(" - Head Ref:", headRef);
 
     changedFiles = await getChangedFiles(undefined, baseRef, headRef);
+    changedFilesBranch = await getChangedFiles(undefined, targetRef, headRef);
     if (changedFiles) {
       if (changedFiles.length) {
         changedFiles.forEach(filename => console.log(` - ${filename}`));
@@ -706,7 +708,7 @@ async function main() {
       forceBuild = true;
     }
     for (const coref of [".buildkite/ci.mjs", "scripts/utils.mjs", "scripts/bootstrap.sh", "scripts/machine.mjs"]) {
-      if (changedFiles && changedFiles.includes(coref)) {
+      if (changedFilesBranch && changedFilesBranch.includes(coref)) {
         console.log(" - Yes, because the list of changed files contains:", coref);
         forceBuild = true;
         ciFileChanged = true;

@@ -290,6 +290,7 @@ pub const Arguments = struct {
         clap.parseParam("--server-components              (EXPERIMENTAL) Enable server components") catch unreachable,
     } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
         clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
+        clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
     } else .{};
     pub const build_params = build_only_params ++ transpiler_params_ ++ base_params_;
 
@@ -797,6 +798,8 @@ pub const Arguments = struct {
                 ctx.bundler_options.bake = true;
                 ctx.bundler_options.bake_debug_dump_server = bun.FeatureFlags.bake_debugging_features and
                     args.flag("--debug-dump-server-files");
+                ctx.bundler_options.bake_debug_disable_minify = bun.FeatureFlags.bake_debugging_features and
+                    args.flag("--debug-no-minify");
             }
 
             // TODO: support --format=esm
@@ -1457,6 +1460,7 @@ pub const Command = struct {
 
             bake: bool = false,
             bake_debug_dump_server: bool = false,
+            bake_debug_disable_minify: bool = false,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
@@ -2533,19 +2537,25 @@ pub const Command = struct {
                     ;
                     const outro_text =
                         \\<b>Examples:<r>
-                        \\  <d>Install the latest stable version<r>
+                        \\  <d>Install the latest {s} version<r>
                         \\  <b><green>bun upgrade<r>
                         \\
-                        \\  <d>Install the most recent canary version of Bun<r>
-                        \\  <b><green>bun upgrade --canary<r>
+                        \\  <d>{s}<r>
+                        \\  <b><green>bun upgrade<r> <cyan>--{s}<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/installation#upgrading<r>
                         \\
                     ;
+
+                    const args = comptime switch (Environment.is_canary) {
+                        true => .{ "canary", "Switch from the canary version back to the latest stable release", "stable" },
+                        false => .{ "stable", "Install the most recent canary version of Bun", "canary" },
+                    };
+
                     Output.pretty(intro_text, .{});
                     Output.pretty("\n\n", .{});
                     Output.flush();
-                    Output.pretty(outro_text, .{});
+                    Output.pretty(outro_text, args);
                     Output.flush();
                 },
                 Command.Tag.ReplCommand => {

@@ -257,6 +257,7 @@ function getPriority() {
  * @typedef {Object} Ec2Options
  * @property {string} instanceType
  * @property {number} cpuCount
+ * @property {number} threadsPerCore
  */
 
 /**
@@ -266,7 +267,7 @@ function getPriority() {
  */
 function getEc2Agent(platform, options) {
   const { os, arch, abi, distro, release } = platform;
-  const { instanceType, cpuCount } = options;
+  const { instanceType, cpuCount, threadsPerCore } = options;
   return {
     os,
     arch,
@@ -280,6 +281,7 @@ function getEc2Agent(platform, options) {
     "image-name": getImageName(platform),
     "instance-type": instanceType,
     "cpu-count": cpuCount,
+    "threads-per-core": threadsPerCore,
     "preemptible": false,
   };
 }
@@ -302,6 +304,7 @@ function getCppAgent(platform) {
   return getEc2Agent(platform, {
     instanceType: arch === "aarch64" ? "c8g.16xlarge" : "c7i.16xlarge",
     cpuCount: 64,
+    threadsPerCore: 1,
   });
 }
 
@@ -326,6 +329,7 @@ function getZigAgent(platform) {
   //   {
   //     instanceType: arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge",
   //     cpuCount: 8,
+  //     threadsPerCore: 1,
   //   },
   // );
 }
@@ -351,12 +355,14 @@ function getTestAgent(platform) {
     return getEc2Agent(platform, {
       instanceType: "c7i.2xlarge",
       cpuCount: 8,
+      threadsPerCore: 2,
     });
   }
 
   return getEc2Agent(platform, {
     instanceType: arch === "aarch64" ? "c8g.xlarge" : "c7i.xlarge",
     cpuCount: 4,
+    threadsPerCore: 2,
   });
 }
 

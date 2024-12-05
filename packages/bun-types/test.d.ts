@@ -1296,6 +1296,29 @@ declare module "bun:test" {
      */
     toMatchSnapshot(propertyMatchers?: object, hint?: string): void;
     /**
+     * Asserts that a value matches the most recent inline snapshot.
+     *
+     * @example
+     * expect("Hello").toMatchInlineSnapshot(`"Hello"`);
+     * @param value The latest snapshot value.
+     */
+    toMatchInlineSnapshot(value?: string): void;
+    /**
+     * Asserts that a value matches the most recent inline snapshot.
+     *
+     * @example
+     * expect("Hello").toMatchInlineSnapshot(`"Hello"`);
+     * expect({ c: new Date() }).toMatchInlineSnapshot({ c: expect.any(Date) }, `
+     * {
+     *   "v": Any<Date>,
+     * }
+     * `);
+     *
+     * @param propertyMatchers Object containing properties to match against the value.
+     * @param hint Hint used to identify the snapshot in the snapshot file.
+     */
+    toMatchInlineSnapshot(propertyMatchers?: object, value?: string): void;
+    /**
      * Asserts that an object matches a subset of properties.
      *
      * @example

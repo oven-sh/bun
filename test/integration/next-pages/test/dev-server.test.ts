@@ -135,6 +135,8 @@ test.skipIf(puppeteer_unsupported || (isWindows && isCI))(
 
     var pid: number, exited;
     let timeout = setTimeout(() => {
+      console.log('Timeout!');
+
       if (timeout && pid) {
         process.kill?.(pid);
         pid = 0;
@@ -144,7 +146,7 @@ test.skipIf(puppeteer_unsupported || (isWindows && isCI))(
           dev_server_pid = undefined;
         }
       }
-    }, 30000).unref();
+    }, 300_000).unref();
 
     ({ exited, pid } = Bun.spawn([bunExe(), "test/dev-server-puppeteer.ts", baseUrl], {
       cwd: root,

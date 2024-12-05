@@ -11482,7 +11482,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
     },
   ],
   "format": "v2",
-  "meta_hash": "632a4f7405ad36643df0c844e942395e7c61cf79c7738eb128eba03ebdd1e094",
+  "meta_hash": "86c6be13420c912f4219afc0429239f52f2322f47b4dd65ec971d04a8064d4ea",
   "package_index": {
     "@alloc/quick-lru": 13,
     "@babel/code-frame": 202,
@@ -12016,9 +12016,7 @@ exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
         "tag": "root",
         "value": "",
       },
-      "scripts": {
-        "postinstall": "cd node_modules/puppeteer && bun install.mjs",
-      },
+      "scripts": {},
     },
     {
       "bin": {

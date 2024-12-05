@@ -42,6 +42,7 @@ pub const Snapshots = struct {
 
         fn lessThanFn(_: void, a: InlineSnapshotToWrite, b: InlineSnapshotToWrite) bool {
             if (a.line < b.line) return true;
+            if (a.line > b.line) return false;
             if (a.col < b.col) return true;
             return false;
         }
@@ -215,36 +216,64 @@ pub const Snapshots = struct {
         try gpres.value_ptr.append(value);
     }
 
-    pub fn writeInlineSnapshots(this: *Snapshots) !void {
+    const inline_snapshot_dbg = bun.Output.scoped(.inline_snapshot, false);
+    pub fn writeInlineSnapshots(this: *Snapshots) !bool {
+        var arena_backing = bun.ArenaAllocator.init(this.allocator);
+        defer arena_backing.deinit();
+        const arena = arena_backing.allocator();
+
+        var success = true;
+        const vm = VirtualMachine.get();
+        const opts = js_parser.Parser.Options.init(vm.bundler.options.jsx, .js);
+
         // for each item
         // sort the array by lyn,col
         for (this.inline_snapshots_to_write.keys(), this.inline_snapshots_to_write.values()) |file_id, *ils_info| {
+            _ = arena_backing.reset(.retain_capacity);
+
+            var log = bun.logger.Log.init(arena);
+            defer if (log.errors > 0) {
+                log.print(bun.Output.errorWriter()) catch {};
+                success = false;
+            };
+
             // 1. sort ils_info by row, col
             std.mem.sort(InlineSnapshotToWrite, ils_info.items, {}, InlineSnapshotToWrite.lessThanFn);
 
             // 2. load file text
             const test_file = Jest.runner.?.files.get(file_id);
-            const test_filename = try this.allocator.dupeZ(u8, test_file.source.path.name.filename);
-            defer this.allocator.free(test_filename);
+            const test_filename = try arena.dupeZ(u8, test_file.source.path.text);
 
-            const file = switch (bun.sys.open(test_filename, bun.O.RDWR, 0o644)) {
+            const fd = switch (bun.sys.open(test_filename, bun.O.RDWR, 0o644)) {
                 .result => |r| r,
                 .err => |e| {
-                    _ = e;
-                    // TODO: print error
-                    return error.WriteInlineSnapshotsFail;
+                    try log.addErrorFmt(&bun.logger.Source.initEmptyFile(test_filename), .{ .start = 0 }, arena, "Failed to update inline snapshot: Failed to open file: {s}", .{e.name()});
+                    continue;
                 },
             };
-            const file_text = try file.asFile().readToEndAlloc(this.allocator, std.math.maxInt(usize));
-            defer this.allocator.free(file_text);
+            var file: File = .{
+                .id = file_id,
+                .file = fd.asFile(),
+            };
+            errdefer file.file.close();
 
-            var result_text = std.ArrayList(u8).init(this.allocator);
-            defer result_text.deinit();
+            const file_text = try file.file.readToEndAlloc(arena, std.math.maxInt(usize));
+
+            var source = bun.logger.Source.initPathString(test_filename, file_text);
+
+            var result_text = std.ArrayList(u8).init(arena);
 
             // 3. start looping, finding bytes from line/col
 
             var uncommitted_segment_end: usize = 0;
+            var last_byte: usize = 0;
+            var last_line: c_ulong = 1;
+            var last_col: c_ulong = 1;
             for (ils_info.items) |ils| {
+                if (ils.line == last_line and ils.col == last_col) {
+                    try log.addErrorFmt(&source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots for the same call are not supported", .{});
+                    continue;
+                }
                 // items are in order from start to end
                 // advance and find the byte from the line/col
                 // - make sure this works right with invalid utf-8, eg 0b11110_000 'a', 0b11110_000 0b10_000000 'a', ...
@@ -257,18 +286,173 @@ pub const Snapshots = struct {
                 // uncommitted_segment_end = this end
                 // continue
 
-                _ = ils;
-                _ = &result_text;
-                _ = &uncommitted_segment_end;
-                @panic("TODO find byte & append to al");
+                // RangeData
+                inline_snapshot_dbg("Finding byte for {}/{}", .{ ils.line, ils.col });
+                const byte_offset_add = logger.Source.lineColToByteOffset(file_text[last_byte..], last_line, last_col, ils.line, ils.col) orelse {
+                    inline_snapshot_dbg("-> Could not find byte", .{});
+                    try log.addErrorFmt(&source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Could not find byte for line/column: {d}/{d}", .{ ils.line, ils.col });
+                    continue;
+                };
+
+                // found
+                last_byte += byte_offset_add;
+                last_line = ils.line;
+                last_col = ils.col;
+
+                var next_start = last_byte;
+                inline_snapshot_dbg("-> Found byte {}", .{next_start});
+
+                const final_start: i32, const final_end: i32, const needs_pre_comma: bool = blk: {
+                    if (file_text[next_start..].len > 0) switch (file_text[next_start]) {
+                        ' ', '.' => {
+                            // work around off-by-1 error in `expect("§").toMatchInlineSnapshot()`
+                            next_start += 1;
+                        },
+                        else => {},
+                    };
+                    const fn_name = "toMatchInlineSnapshot";
+                    if (!bun.strings.startsWith(file_text[next_start..], fn_name)) {
+                        try log.addErrorFmt(&source, .{ .start = @intCast(next_start) }, arena, "Failed to update inline snapshot: Could not find 'toMatchInlineSnapshot' here", .{});
+                        continue;
+                    }
+                    next_start += fn_name.len;
+
+                    // lexer init
+                    // lexer seek (next_start)
+
+                    var lexer = bun.js_lexer.Lexer.initWithoutReading(&log, source, arena);
+                    if (next_start > 0) {
+                        // equivalent to lexer.consumeRemainderBytes(next_start)
+                        lexer.current += next_start - (lexer.current - lexer.end);
+                        lexer.step();
+                    }
+                    try lexer.next();
+                    var parser: bun.js_parser.TSXParser = undefined;
+                    try bun.js_parser.TSXParser.init(arena, &log, &source, vm.bundler.options.define, lexer, opts, &parser);
+
+                    try parser.lexer.expect(.t_open_paren);
+                    const after_open_paren_loc = parser.lexer.loc().start;
+                    if (parser.lexer.token == .t_close_paren) {
+                        // zero args
+                        if (ils.has_matchers) {
+                            try log.addErrorFmt(&source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Snapshot has matchers and yet has no arguments", .{});
+                            continue;
+                        }
+                        const close_paren_loc = parser.lexer.loc().start;
+                        try parser.lexer.expect(.t_close_paren);
+                        break :blk .{ after_open_paren_loc, close_paren_loc, false };
+                    }
+                    if (parser.lexer.token == .t_dot_dot_dot) {
+                        try log.addErrorFmt(&source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Spread is not allowed", .{});
+                        continue;
+                    }
+
+                    const before_expr_loc = parser.lexer.loc().start;
+                    const expr_1 = try parser.parseExpr(.comma);
+                    const after_expr_loc = parser.lexer.loc().start;
+
+                    var is_one_arg = false;
+                    if (parser.lexer.token == .t_comma) {
+                        try parser.lexer.expect(.t_comma);
+                        if (parser.lexer.token == .t_close_paren) is_one_arg = true;
+                    } else is_one_arg = true;
+                    const after_comma_loc = parser.lexer.loc().start;
+
+                    if (is_one_arg) {
+                        try parser.lexer.expect(.t_close_paren);
+                        if (ils.has_matchers) {
+                            break :blk .{ after_expr_loc, after_comma_loc, true };
+                        } else {
+                            if (expr_1.data != .e_string) {
+                                try log.addErrorFmt(&source, expr_1.loc, arena, "Failed to update inline snapshot: Argument must be a string literal", .{});
+                                continue;
+                            }
+                            break :blk .{ before_expr_loc, after_expr_loc, false };
+                        }
+                    }
+
+                    if (parser.lexer.token == .t_dot_dot_dot) {
+                        try log.addErrorFmt(&source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Spread is not allowed", .{});
+                        continue;
+                    }
+
+                    const before_expr_2_loc = parser.lexer.loc().start;
+                    const expr_2 = try parser.parseExpr(.comma);
+                    const after_expr_2_loc = parser.lexer.loc().start;
+
+                    if (!ils.has_matchers) {
+                        try log.addErrorFmt(&source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Snapshot does not have matchers and yet has two arguments", .{});
+                        continue;
+                    }
+                    if (expr_2.data != .e_string) {
+                        try log.addErrorFmt(&source, expr_2.loc, arena, "Failed to update inline snapshot: Argument must be a string literal", .{});
+                        continue;
+                    }
+
+                    if (parser.lexer.token == .t_comma) {
+                        try parser.lexer.expect(.t_comma);
+                    }
+                    if (parser.lexer.token != .t_close_paren) {
+                        try log.addErrorFmt(&source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Snapshot expects at most two arguments", .{});
+                        continue;
+                    }
+                    try parser.lexer.expect(.t_close_paren);
+
+                    break :blk .{ before_expr_2_loc, after_expr_2_loc, false };
+                };
+                const final_start_usize = std.math.cast(usize, final_start) orelse 0;
+                const final_end_usize = std.math.cast(usize, final_end) orelse 0;
+                inline_snapshot_dbg("  -> Found update range {}-{}", .{ final_start_usize, final_end_usize });
+
+                if (final_end_usize < final_start_usize or final_start_usize < uncommitted_segment_end) {
+                    try log.addErrorFmt(&source, .{ .start = final_start }, arena, "Failed to update inline snapshot: Did not advance.", .{});
+                    continue;
+                }
+
+                try result_text.appendSlice(file_text[uncommitted_segment_end..final_start_usize]);
+                uncommitted_segment_end = final_end_usize;
+
+                if (needs_pre_comma) try result_text.appendSlice(", ");
+                const result_text_writer = result_text.writer();
+                try result_text.appendSlice("`");
+                try bun.js_printer.writePreQuotedString(ils.value, @TypeOf(result_text_writer), result_text_writer, '`', false, false, .utf8);
+                try result_text.appendSlice("`");
             }
+
             // commit the last segment
             try result_text.appendSlice(file_text[uncommitted_segment_end..]);
 
+            if (log.errors > 0) {
+                // skip writing the file if there were errors
+                continue;
+            }
+
             // 4. write out result_text to the file
-            @panic("TODO write file");
+            file.file.seekTo(0) catch |e| {
+                try log.addErrorFmt(&source, .{ .start = 0 }, arena, "Failed to update inline snapshot: Seek file error: {s}", .{@errorName(e)});
+                continue;
+            };
+
+            file.file.writeAll(result_text.items) catch |e| {
+                try log.addErrorFmt(&source, .{ .start = 0 }, arena, "Failed to update inline snapshot: Write file error: {s}", .{@errorName(e)});
+                continue;
+            };
+            if (result_text.items.len < file_text.len) {
+                file.file.setEndPos(result_text.items.len) catch {
+                    @panic("Failed to update inline snapshot: File was left in an invalid state");
+                };
+            }
         }
-        @panic("TODO writeInlineSnapshots");
+        return success;
+
+        // make sure to test:
+        // toMatchSnapshot()
+        // toMatchSnapshot(a)
+        // toMatchSnapshot(a,)
+        // toMatchSnapshot(a,b)
+        // toMatchSnapshot(a,b,)
+        // toMatchSnapshot(a,b,c)
+        // toMatchSnapshot(() => toMatchSnapshot())
     }
 
     fn getSnapshotFile(this: *Snapshots, file_id: TestRunner.File.ID) !JSC.Maybe(void) {

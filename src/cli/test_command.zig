@@ -1383,8 +1383,12 @@ pub const TestCommand = struct {
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
 
+        if (!try jest.Jest.runner.?.snapshots.writeInlineSnapshots()) {
+            Output.flush();
+            Global.exit(1);
+        }
+
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
-        try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         var coverage = ctx.test_options.coverage;
 
         if (reporter.summary.pass > 20) {

@@ -2507,6 +2507,9 @@ pub const Expect = struct {
         return this.throw(globalThis, signature, expected_fmt, .{ expected_class, result.toFmt(&formatter) });
     }
     pub fn toMatchInlineSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+        // in jest, a failing inline snapshot does not block the rest from running
+        // not sure why - empty snapshots will autofill and with the `-u` flag none will fail
+
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
         const _arguments = callFrame.arguments_old(2);

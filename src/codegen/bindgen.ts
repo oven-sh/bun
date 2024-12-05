@@ -1,0 +1,701 @@
+// The binding generator to rule them all.
+import * as path from "node:path";
+import * as fs from "node:fs";
+import {
+  CodeWriter,
+  DictionaryField,
+  TypeImpl,
+  TypeKind,
+  Variant,
+  cAbiTypeInfo,
+  cap,
+  extDispatchVariant,
+  extJsFunction,
+  files,
+  typeHashToReachableType,
+  snake,
+  src,
+  str,
+  typeHashToNamespace,
+  zid,
+  ReturnStrategy,
+  cAbiTypeName,
+} from "./bindgen-lib-internal";
+import assert from "node:assert";
+import { argParse, writeIfNotChanged } from "./helpers";
+
+// arg parsing
+let { 
+  "codegen-root": codegenRoot,
+  debug,
+} = argParse(['codegen-root', 'debug']);
+if (debug === "false" || debug === "0" || debug == "OFF") debug = false;
+if (!codegenRoot) {
+  console.error("Missing --codegen-root=...");
+  process.exit(1);
+}
+
+function resolveVariantStrategies(variant: Variant) {
+  let argIndex = 0;
+  for (const arg of variant.args) {
+    if (arg.type.isVirtualArgument() && variant.globalObjectArg === undefined) {
+      variant.globalObjectArg = argIndex;
+    }
+    argIndex += 1;
+
+    // If `extern struct` can represent this type, that is the simplest way to cross the C-ABI boundary.
+    const abiType = arg.type.canDirectlyMapToCAbi();
+    if (abiType) {
+      arg.loweringStrategy = {
+        type: cAbiTypeInfo(abiType)[0] > 8 ? "c-abi-pointer" : "c-abi-value",
+        abiType,
+      };
+      continue;
+    }
+
+    // TODO: other strategies
+    throw new Error(
+      `TODO: resolve argument strategy for ${Bun.inspect(arg.type, {
+        colors: Bun.enableANSIColors,
+      })}`,
+    );
+  }
+
+  if (variant.globalObjectArg) {
+    variant.globalObjectArg = "hidden";
+  }
+
+  if (variant.ret.kind === 'any') {
+    variant.returnStrategy = { type: 'jsvalue' };
+    return;
+  } 
+  const abiType = variant.ret.canDirectlyMapToCAbi();
+  if (abiType) {
+    variant.returnStrategy = {
+      type: 'basic-out-param',
+      abiType,
+    };
+    return;
+  }
+}
+
+function emitCppCallToVariant(variant: Variant, dispatchFunctionName: string) {
+  let i = 0;
+  for (const arg of variant.args) {
+    if (!arg.type.isVirtualArgument()) {
+      cpp.line(`JSC::EnsureStillAliveScope arg${i} = callFrame->uncheckedArgument(${i});`);
+      emitDeclareConvertValue("arg" + cap(arg.name), arg.type, `arg${i}.value()`, 'declare');
+      i += 1;
+    }
+  }
+
+  const returnStrategy = variant.returnStrategy!;
+  switch (returnStrategy.type) {
+    case 'jsvalue':
+      cpp.line(`return ${dispatchFunctionName}(`);
+      break;
+    case 'basic-out-param':
+      cpp.line(`${cAbiTypeName(returnStrategy.abiType)} out;`);
+      cpp.line(`if (!${dispatchFunctionName}(`);
+      break;
+    default:
+      throw new Error(`TODO: emitCppCallToVariant for ${Bun.inspect(returnStrategy, { colors: Bun.enableANSIColors })}`);
+  }
+
+  let emittedFirstArgument = false;
+  function addCommaAfterArgument() {
+    if (emittedFirstArgument) {
+      cpp.line(",");
+    } else {
+      emittedFirstArgument = true;
+    }
+  }
+  
+  const totalArgs = variant.args.length;
+  i = 0;
+  cpp.indent();
+
+  if (variant.globalObjectArg === 'hidden') {
+    addCommaAfterArgument();
+    cpp.add("global");
+  }
+
+  for (const arg of variant.args) {
+    addCommaAfterArgument();
+    i += 1;
+    if (arg.type.isVirtualArgument()) {
+      switch(arg.type.kind) {
+        case "zigVirtualMachine":
+        case "globalObject":
+          cpp.add("global");
+          break;
+        default:
+          throw new Error(`TODO: emitCppCallToVariant for ${Bun.inspect(arg.type, { colors: Bun.enableANSIColors })}`);
+      }
+    } else {
+      const storageLocation = `arg${cap(arg.name)}`;
+      const strategy = arg.loweringStrategy!;
+      switch(strategy.type) {
+        case "c-abi-pointer":
+          cpp.add(`&${storageLocation}`);
+          break;
+        case "c-abi-value":
+          cpp.add(`${storageLocation}`);
+          break;
+        default:
+          throw new Error(`TODO: emitCppCallToVariant for ${Bun.inspect(strategy, { colors: Bun.enableANSIColors })}`);
+      }
+    }
+  }
+
+  switch (returnStrategy.type) {
+    case 'jsvalue':
+      cpp.dedent();
+      if(totalArgs === 0) {
+        cpp.trimLastNewline();
+      }
+      cpp.line(");");
+      break;
+    case 'basic-out-param':
+      addCommaAfterArgument();
+      cpp.add("&out");
+      cpp.line();
+      cpp.dedent();
+      cpp.line(")) {");
+      cpp.line(`    return {};`);
+      cpp.line("}");
+      const simpleType = simpleIdlTypes[variant.ret.kind];
+      assert(simpleType); // TODO:
+      cpp.line(`return JSC::JSValue::encode(WebCore::toJS<${simpleType}>(*global, out));`);
+      break;
+    default:
+      throw new Error(`TODO: emitCppCallToVariant for ${Bun.inspect(returnStrategy, { colors: Bun.enableANSIColors })}`);
+  }
+}
+
+const simpleIdlTypes: { [K in TypeKind]?: string } = {
+  boolean: "WebCore::IDLBoolean",
+  undefined: "WebCore::IDLUndefined",
+  f64: 'WebCore::IDLDouble',
+  // u32: 'WebCore::IDLUnsignedLong',
+  usize: 'WebCore::IDLUnsignedLongLong',
+};
+
+function emitDeclareConvertValue(storageLocation: string, type: TypeImpl, jsValueRef: string, decl: "declare" | "assign") {
+  if(decl === 'declare') {
+    cpp.add(`${type.cppName()} `);
+  }
+
+  const simpleType = simpleIdlTypes[type.kind];
+  if (simpleType) {
+    const cAbiType = type.canDirectlyMapToCAbi();
+    assert(cAbiType);
+    cpp.line(`${storageLocation} = WebCore::convert<${simpleType}>(*global, ${jsValueRef});`);
+    cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
+    return;
+  }
+  switch (type.kind) {
+    case 'any':
+      cpp.line(`${storageLocation} = JSC::JSValue::encode(${jsValueRef});`);
+      return;
+    case "USVString":
+    case "DOMString":
+    case "ByteString":
+      cpp.line(`${storageLocation} = Bun::toString(WebCore::convert<WebCore::IDL${type.kind}>(*global, ${jsValueRef}));`);
+      cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
+      return;
+    case "dictionary": {
+      cpp.line(`${storageLocation};`);
+      cpp.line(`if (!convert${type.cppName()}(&${storageLocation}, global, ${jsValueRef}))`);
+      cpp.indent();
+      cpp.line(`return {};`);
+      cpp.dedent();
+      return;
+    }
+    default:
+      throw new Error(`TODO: emitParseValue for Type ${type.kind}`);
+  }
+}
+
+function emitConvertDictionaryFunction(type: TypeImpl) {
+  assert(type.kind === "dictionary");
+  const fields = type.data as DictionaryField[];
+
+  cpp.line(`bool convert${type.cppName()}(${type.cppName()}* result, JSC::JSGlobalObject* global, JSC::JSValue value) {`);
+  cpp.indent();
+
+  cpp.line(`auto& vm = JSC::getVM(global);`);
+  cpp.line(`auto throwScope = DECLARE_THROW_SCOPE(vm);`);
+  cpp.line(`bool isNullOrUndefined = value.isUndefinedOrNull();`);
+  cpp.line(`auto* object = isNullOrUndefined ? nullptr : value.getObject();`);
+  cpp.line(`if (UNLIKELY(!isNullOrUndefined && !object)) {`);
+  cpp.line(`    throwTypeError(global, throwScope);`);
+  cpp.line(`    return false;`);
+  cpp.line(`}`);
+  cpp.line(`JSC::JSValue propValue;`);
+
+  for (const field of fields) {
+    const { key, type: fieldType } = field;
+    cpp.line("// " + key);
+    cpp.line(`if (isNullOrUndefined) {`);
+    cpp.line(`    propValue = JSC::jsUndefined();`);
+    cpp.line(`} else {`);
+    cpp.line(`    propValue = object->get(global, JSC::Identifier::fromString(vm, ${str(key)}_s));`);
+    cpp.line(`    RETURN_IF_EXCEPTION(throwScope, false);`);
+    cpp.line(`}`);
+    cpp.line(`if (!propValue.isUndefined()) {`);
+    cpp.indent();
+    emitDeclareConvertValue(`result->${snake(key)}`, fieldType, "propValue", "assign");
+    cpp.dedent();
+    cpp.line(`} else {`);
+    cpp.indent();
+    if (type.flags.required) {
+      cpp.line(`throwTypeError(global, throwScope);`);
+      cpp.line(`return false;`);
+    } else if ('default' in fieldType.flags) {
+      cpp.line(`result->${key} = ${fieldType.emitCppDefaultValue()};`);
+    } else {
+      throw new Error(`TODO: optional dictionary field`);
+    }
+    cpp.dedent();
+    cpp.line(`}`);
+  }
+  
+  cpp.line(`return true;`);
+  cpp.dedent();
+  cpp.line(`}`);
+  cpp.line();
+}
+
+function emitZigStruct(type: TypeImpl) {
+  zig.add(`pub const ${type.name()} = `);
+
+  const externLayout = type.canDirectlyMapToCAbi();
+  if (externLayout) {
+    if (typeof externLayout === "string") {
+      zig.line(externLayout + ";");
+    } else {
+      externLayout.emitZig(zig, "with-semi");
+    }
+    return;
+  }
+
+  switch (type.kind) {
+    case "dictionary": {
+      zig.line("struct {");
+      zig.indent();
+      for (const { key, type: fieldType } of type.data as DictionaryField[]) {
+        zig.line(`    ${snake(key)}: ${zigTypeName(fieldType)},`);
+      }
+      zig.dedent();
+      zig.line(`};`);
+      break;
+    }
+    default: {
+      throw new Error(`TODO: emitZigStruct for Type ${type.kind}`);
+    }
+  }
+}
+
+function emitCppStruct(type: TypeImpl) {
+  const externLayout = type.canDirectlyMapToCAbi();
+  if (externLayout) {
+    if (typeof externLayout === "string") {
+      zig.line(`typedef ${externLayout} ${type.name()};`);
+      console.warn('should this really be done lol', type);
+    } else {
+      externLayout.emitCpp(cpp, type.name());
+      cpp.line();
+    }
+    return;
+  }
+
+  switch (type.kind) {
+    default: {
+      throw new Error(`TODO: emitZigStruct for Type ${type.kind}`);
+    }
+  }
+}
+
+function zigTypeName(type: TypeImpl): string {
+  let name = zigTypeNameInner(type);
+  if (type.flags.optional) {
+    name = "?" + name;
+  }
+  return name;
+}
+
+function zigTypeNameInner(type: TypeImpl): string {
+  if (type.lowersToStruct()) {
+    const namespace = typeHashToNamespace.get(type.hash());
+    return namespace ? `${namespace}.${type.name()}` : type.name();
+  }
+  switch (type.kind) {
+    case "USVString":
+    case "DOMString":
+    case "ByteString":
+      return "bun.String";
+    case "boolean":
+      return "bool";
+    case "usize":
+      return "usize";
+    case "UTF8String":
+      return "[]const u8";
+    case "globalObject":
+    case "zigVirtualMachine":
+      return "*JSC.JSGlobalObject";
+    default:
+      throw new Error(`TODO: emitZigTypeName for Type ${type.kind}`);
+  }
+}
+
+function returnStrategyCppType(strategy: ReturnStrategy): string {
+  switch (strategy.type) {
+    case "basic-out-param":
+      return "bool"; // true=success, false=exception
+    case "jsvalue":
+      return "JSC::EncodedJSValue";
+    default:
+      throw new Error(`TODO: returnStrategyCppType for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`);
+  }
+}
+
+function returnStrategyZigType(strategy: ReturnStrategy): string {
+  switch (strategy.type) {
+    case "basic-out-param":
+      return "bool"; // true=success, false=exception
+    case "jsvalue":
+      return "JSC.JSValue";
+    default:
+      throw new Error(`TODO: returnStrategyZigType for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`);
+  }
+}
+
+// BEGIN
+
+// Search for all .bind.ts files
+const unsortedFiles = new Bun.Glob("**/*.bind.ts").scanSync({
+  onlyFiles: true,
+  absolute: true,
+  cwd: src,
+});
+// Sort for deterministic output
+for (const file of [...unsortedFiles].sort()) {
+  const exports = import.meta.require(file);
+
+  // Mark all exported TypeImpl as reachable
+  const zigFile = path.relative(src, file.replace(/\.bind\.ts$/, ".zig"));
+  for (const [key, value] of Object.entries(exports)) {
+    if (value instanceof TypeImpl) {
+      const file = files.get(zigFile);
+      value.assignName(key);
+      value.markReachable();
+      const td = { name: key, type: value };
+      if (!file) {
+        files.set(zigFile, { functions: [], typedefs: [td] });
+      } else {
+        file.typedefs.push(td);
+      }
+    }
+  }
+}
+
+const zig = new CodeWriter();
+const zigInternal = new CodeWriter();
+const cpp = new CodeWriter();
+const headers = new Set<string>();
+zig.line('const bun = @import("root").bun;');
+zig.line("const JSC = bun.JSC;");
+zig.line("const JSHostFunctionType = JSC.JSHostFunctionType;\n");
+
+zigInternal.line();
+zigInternal.line("const binding_internals = struct {");
+zigInternal.indent();
+
+headers.add("root.h");
+headers.add("IDLTypes.h");
+headers.add("JSDOMBinding.h");
+headers.add("JSDOMConvertBase.h");
+headers.add("JSDOMConvertBoolean.h");
+headers.add("JSDOMConvertNumbers.h");
+headers.add("JSDOMConvertStrings.h");
+headers.add("JSDOMExceptionHandling.h");
+headers.add("JSDOMOperation.h");
+
+/**
+ * Indexed by `zigFile`, values are the generated zig identifier name, without
+ * collisions.
+ */
+const fileMap = new Map<string, string>();
+const fileNames = new Set<string>();
+
+for (const [filename, { functions, typedefs }] of files) {
+  if (functions.length === 0) continue;
+
+  const basename = path.basename(filename, ".zig");
+  let varName = basename;
+  if (fileNames.has(varName)) {
+    throw new Error(`File name collision: ${basename}.zig`);
+  }
+  fileNames.add(varName);
+  fileMap.set(filename, varName);
+
+  for (const td of typedefs) {
+    typeHashToNamespace.set(td.type.hash(), varName);
+  }
+
+  zig.line(`const import_${varName} = @import(${str(path.relative(src + "/bun.js", filename))});`);
+
+  for (const fn of functions) {
+    for (const vari of fn.variants) {
+      for (const arg of vari.args) {
+        arg.type.markReachable();
+      }
+    }
+  }
+}
+zig.line("");
+
+for (const type of typeHashToReachableType.values()) {
+  emitCppStruct(type);
+
+  // Emit convert functions for compound types
+  switch(type.kind) {
+    case 'dictionary':
+      emitConvertDictionaryFunction(type);
+      break;
+  }
+}
+
+for (const [filename, { functions, typedefs }] of files) {
+  const namespaceVar = fileMap.get(filename)!;
+  assert(namespaceVar);
+  zig.line(`pub const ${namespaceVar} = struct {`);
+  zig.indent();
+
+  for (const fn of functions) {
+    const externName = extJsFunction(namespaceVar, fn.name);
+
+    // C++ forward declarations
+    let variNum = 1;
+    for (const vari of fn.variants) {
+      resolveVariantStrategies(vari);
+      const dispatchName = extDispatchVariant(namespaceVar, fn.name, variNum);
+
+      const args: string[] = [];
+
+      let argNum = 0;
+      if (vari.globalObjectArg === 'hidden') {
+        args.push('JSC::JSGlobalObject*');
+      }
+      for (const arg of vari.args) {
+        argNum += 1;
+        const strategy = arg.loweringStrategy!;
+        switch (strategy.type) {
+          case "c-abi-pointer":
+            args.push(`const ${arg.type.cppName()}*`);
+            break;
+          case "c-abi-value":
+            args.push(arg.type.cppName());
+            break;
+          default:
+            throw new Error(
+              `TODO: C++ dispatch function for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
+            );
+        }
+      } 
+      const returnStrategy = vari.returnStrategy!;
+      if (returnStrategy.type === 'basic-out-param') {
+        args.push(cAbiTypeName(returnStrategy.abiType) + "*");
+      }
+
+      cpp.line(`extern "C" ${returnStrategyCppType(vari.returnStrategy!)} ${dispatchName}(${args.join(', ')});`);
+
+      variNum += 1;
+    }
+    cpp.line();
+
+    // Public function
+    zig.line(
+      `pub const ${zid("js" + cap(fn.name))} = @extern(*const JSHostFunctionType, .{ .name = ${str(externName)} });`,
+    );
+
+    // Generated JSC host function
+    cpp.line(
+      `extern "C" SYSV_ABI JSC::EncodedJSValue ${externName}(JSC::JSGlobalObject* global, JSC::CallFrame* callFrame)`,
+    );
+    cpp.line(`{`);
+    cpp.indent();
+    cpp.line(`auto& vm = JSC::getVM(global);`);
+    cpp.line(`auto throwScope = DECLARE_THROW_SCOPE(vm);`);
+
+
+    if (fn.variants.length === 1) {
+      emitCppCallToVariant(fn.variants[0], extDispatchVariant(namespaceVar, fn.name, 1));
+    } else {
+      throw new Error(`TODO: multiple variant dispatch`);
+    }
+
+    cpp.dedent();
+    cpp.line(`}`);
+
+    // Generated Zig dispatch functions
+    variNum = 1;
+    for (const vari of fn.variants) {
+      const dispatchName = extDispatchVariant(namespaceVar, fn.name, variNum);
+      const args: string[] = [];
+      const returnStrategy = vari.returnStrategy!;
+
+      let globalObjectArg = '';
+      if (vari.globalObjectArg === 'hidden') {
+        args.push(`global: *JSC.JSGlobalObject`);
+        globalObjectArg = 'global';
+      }
+      let argNum = 0;
+      for (const arg of vari.args) {
+        let argName = `arg_${snake(arg.name)}`;
+        if (vari.globalObjectArg === argNum) {
+          if (arg.type.kind !== 'globalObject') {
+            argName = 'global';
+          }
+          globalObjectArg = argName;
+        }
+        argNum += 1;
+        arg.zigMappedName = argName;
+        const strategy = arg.loweringStrategy!;
+        switch (strategy.type) {
+          case "c-abi-pointer":
+            args.push(`${argName}: *const ${zigTypeName(arg.type)}`);
+            break;
+          case "c-abi-value":
+            args.push(`${argName}: ${zigTypeName(arg.type)}`);
+            break;
+          default:
+            throw new Error(
+              `TODO: zig dispatch function for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
+            );
+        }
+      }
+      assert(globalObjectArg, `globalObjectArg not found from ${vari.globalObjectArg}`);
+
+      if (returnStrategy.type === 'basic-out-param') {
+        args.push(`out: *${zigTypeName(vari.ret)}`);
+      }
+      
+      zigInternal.line(`export fn ${zid(dispatchName)}(${args.join(", ")}) ${returnStrategyZigType(returnStrategy)} {`);
+      zigInternal.indent();
+      switch(returnStrategy.type) {
+        case 'jsvalue':
+            zigInternal.add(`return JSC.toJSHostValue(${globalObjectArg}, `);
+            break;
+        case 'basic-out-param':
+            zigInternal.add(`out.* = @as(bun.JSError!${returnStrategy.abiType}, `);
+            break;
+      }
+
+      zigInternal.line(`${zid("import_" + namespaceVar)}.${vari.impl}(`);
+      zigInternal.indent();
+      for (const arg of vari.args) {
+        const argName = arg.zigMappedName!;
+
+        if (arg.type.isVirtualArgument()) {
+          switch (arg.type.kind) {
+            case "zigVirtualMachine":
+              zigInternal.line(`${argName}.bunVM(),`);
+              break;
+            case "globalObject":
+              zigInternal.line(`${argName},`);
+              break;
+            default:
+              throw new Error('unexpected');
+          }
+          continue;
+        }
+
+        const strategy = arg.loweringStrategy!;
+        switch (strategy.type) {
+          case "c-abi-pointer":
+            zigInternal.line(`${argName}.*,`);
+            break;
+          case "c-abi-value":
+            zigInternal.line(`${argName},`);
+            break;
+          default:
+            throw new Error(`TODO: zig dispatch function for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`);
+        }
+      }
+      zigInternal.dedent();
+      switch(returnStrategy.type) {
+        case 'jsvalue':
+            zigInternal.line(`));`);
+            break;
+        case 'basic-out-param':
+            zigInternal.line(`)) catch |err| switch(err) {`);
+            zigInternal.line(`    error.JSError => return false,`);
+            zigInternal.line(`    error.OutOfMemory => ${globalObjectArg}.throwOutOfMemory() catch return false,`);
+            zigInternal.line(`};`);
+            zigInternal.line(`return true;`);
+            break;
+      }
+      zigInternal.dedent();
+      zigInternal.line(`}`);
+      variNum += 1;
+    }
+  }
+
+  if (typedefs.length > 0) {
+    zig.line();
+  }
+  for (const td of typedefs) {
+    emitZigStruct(td.type);
+  }
+
+  zig.dedent();
+  zig.line(`};`);
+}
+
+zigInternal.dedent();
+zigInternal.line("};");
+zigInternal.line();
+zigInternal.line("comptime {");
+zigInternal.line("    for (@typeInfo(binding_internals).Struct.decls) |decl| {");
+zigInternal.line("        _ = &@field(binding_internals, decl.name);");
+zigInternal.line("    }");
+zigInternal.line("}");
+
+writeIfNotChanged(path.join(codegenRoot, "GeneratedBindings.cpp"), [...headers].map(name => `#include ${str(name)}\n`).join('') + '\n' + cpp.buffer);
+writeIfNotChanged(path.join(src, "bun.js/bindings/GeneratedBindings.zig"), zig.buffer + zigInternal.buffer);
+
+// Headers
+for (const [filename, { functions, typedefs }] of files) {
+  const namespaceVar = fileMap.get(filename)!;
+  const header = new CodeWriter();
+  header.line("#pragma once");
+  header.line();
+  header.line(`#include "root.h"`);
+  
+  header.line(`namespace {`);
+  header.line();
+  for (const fn of functions) {
+    const externName = extJsFunction(namespaceVar, fn.name);
+    header.line(`extern "C" SYSV_ABI JSC::EncodedJSValue ${externName}(JSC::JSGlobalObject*, JSC::CallFrame*);`);
+  }
+  header.line();
+  header.line(`} // namespace`);
+
+  header.line(`namespace Generated {`);
+  header.line();
+  header.line(`namespace ${namespaceVar} {`);
+  header.line();
+  for (const fn of functions) {
+    const externName = extJsFunction(namespaceVar, fn.name);
+    header.line(`const auto& js${cap(fn.name)} = ${externName};`);
+  }
+  header.line();
+  header.line(`} // namespace ${namespaceVar}`);
+  header.line();
+  header.line(`} // namespace Generated`);
+  header.line();
+
+  writeIfNotChanged(path.join(codegenRoot, `Generated${namespaceVar}.h`), header.buffer);
+}

@@ -85,7 +85,8 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     buildWithVm(ctx, cwd, vm) catch |err| switch (err) {
         error.JSError => |e| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
-            vm.printErrorLikeObjectToConsole(vm.global.takeException(e));
+            const error_value = vm.global.takeException(e);
+            vm.printErrorLikeObjectToConsole(error_value.toError() orelse error_value);
             if (vm.exit_handler.exit_code == 0) {
                 vm.exit_handler.exit_code = 1;
             }

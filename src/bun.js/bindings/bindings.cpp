@@ -4884,7 +4884,7 @@ void JSC__Exception__getStackTrace(JSC__Exception* arg0, ZigStackTrace* trace)
 
 #pragma mark - JSC::VM
 
-JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
+size_t JSC__VM__runGC(JSC__VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
 
@@ -4917,7 +4917,7 @@ JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
     }
 #endif
 
-    return JSC::JSValue::encode(JSC::jsNumber(vm->heap.sizeAfterLastFullCollection()));
+    return vm->heap.sizeAfterLastFullCollection();
 }
 
 bool JSC__VM__isJITEnabled() { return JSC::Options::useJIT(); }

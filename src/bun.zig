@@ -115,6 +115,12 @@ pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
 pub const bun_js = @import("./bun_js.zig");
 
+pub const generated = @import("bun.js/bindings/GeneratedBindings.zig");
+
+comptime {
+    _ = &generated;
+}
+
 /// Copied from Zig std.trait
 pub const trait = @import("./trait.zig");
 /// Copied from Zig std.Progress before 0.13 rewrite

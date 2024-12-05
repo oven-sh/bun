@@ -216,6 +216,7 @@
     __ZNK2v88Function7GetNameEv;
     __ZNK2v85Value10IsFunctionEv;
     __ZN2v812api_internal17FromJustIsNothingEv;
+    __ZNK2v85Array6LengthEv
     _uv_os_getpid;
     _uv_os_getppid;
 };

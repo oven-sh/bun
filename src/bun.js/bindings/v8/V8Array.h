@@ -11,6 +11,7 @@ namespace v8 {
 class Array : public Object {
 public:
     BUN_EXPORT static Local<Array> New(Isolate* isolate, Local<Value>* elements, size_t length);
+    BUN_EXPORT uint32_t Length() const;
 };
 
 } // namespace v8

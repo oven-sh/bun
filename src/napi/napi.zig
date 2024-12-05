@@ -1886,6 +1886,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZNK2v88Function7GetNameEv() *anyopaque;
     pub extern fn _ZNK2v85Value10IsFunctionEv() *anyopaque;
     pub extern fn _ZN2v812api_internal17FromJustIsNothingEv() *anyopaque;
+    pub extern fn _ZNK2v85Array6LengthEv() *anyopaque;
     pub extern fn uv_os_getpid() *anyopaque;
     pub extern fn uv_os_getppid() *anyopaque;
 } else struct {
@@ -1957,6 +1958,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"() *anyopaque;
     pub extern fn @"?IsFunction@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?FromJustIsNothing@api_internal@v8@@YAXXZ"() *anyopaque;
+    pub extern fn @"?Length@Array@v8@@QEBAHXZ"() *anyopaque;
 };
 
 // To update this list, use find + multi-cursor in your editor.

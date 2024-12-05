@@ -524,6 +524,28 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     }
   });
 
+  it("should fail gracefully when can't find the symbol", async () => {
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+
+    try {
+      await Bun.build({
+        outdir,
+        entrypoints: [path.join(tempdir, "index.ts")],
+        plugins: [
+          {
+            name: "not_a_plugin",
+            setup(build) {
+              build.onBeforeParse({ filter: /\.ts/ }, { napiModule, symbol: "OOGA_BOOGA_420" });
+            },
+          },
+        ],
+      });
+      expect.unreachable();
+    } catch (e) {
+      expect(e.toString()).toContain('TypeError: Could not find the symbol "OOGA_BOOGA_420" in the given napi module.');
+    }
+  });
+
   it("should use result of the first plugin that runs and doesn't execute the others", async () => {
     const filter = /\.ts/;
 

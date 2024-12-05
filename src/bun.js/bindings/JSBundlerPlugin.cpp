@@ -373,7 +373,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
 #endif
 
     if (!on_before_parse_symbol_ptr) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected on_before_parse_symbol (3rd argument) to be a valid symbol"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, makeString("Could not find the symbol \""_s, on_before_parse_symbol, "\" in the given napi module."_s));
         return {};
     }
 

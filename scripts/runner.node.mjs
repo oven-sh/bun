@@ -199,6 +199,8 @@ async function runTests() {
             stdout: chunk => pipeTestStdout(process.stdout, chunk),
             stderr: chunk => pipeTestStdout(process.stderr, chunk),
           });
+          const mb = 1024 ** 3;
+          const stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
           return {
             testPath: title,
             ok: ok,
@@ -207,7 +209,7 @@ async function runTests() {
             errors: [],
             tests: [],
             stdout: stdout,
-            stdoutPreview: stdout,
+            stdoutPreview: stdoutPreview,
           };
         });
         continue;

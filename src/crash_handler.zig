@@ -50,7 +50,7 @@ var panic_mutex = std.Thread.Mutex{};
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
 
-threadlocal var inside_native_plugin: bool = false;
+threadlocal var inside_native_plugin: ?[*:0]const u8 = false;
 threadlocal var inside_native_plugin_str: ?[*:0]const u8 = null;
 
 export fn CrashHandler__setInsideNativePlugin(value: bool, name: ?[*:0]const u8) callconv(.C) void {
@@ -767,7 +767,6 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
             std.posix.SIG.ILL => .{ .illegal_instruction = addr },
             std.posix.SIG.BUS => .{ .bus_error = addr },
             std.posix.SIG.FPE => .{ .floating_point_error = addr },
-            std.posix.SIG.KILL => .{ .segmentation_fault = addr },
 
             // we do not register this handler for other signals
             else => unreachable,

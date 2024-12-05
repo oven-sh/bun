@@ -3904,17 +3904,17 @@ pub const ParseTask = struct {
         });
 
         comptime {
-            std.debug.assert(@sizeOf(OnBeforeParseArguments) == @sizeOf(headers.OnBeforeParseArguments));
-            std.debug.assert(@alignOf(OnBeforeParseArguments) == @alignOf(headers.OnBeforeParseArguments));
+            bun.assert(@sizeOf(OnBeforeParseArguments) == @sizeOf(headers.OnBeforeParseArguments));
+            bun.assert(@alignOf(OnBeforeParseArguments) == @alignOf(headers.OnBeforeParseArguments));
 
-            std.debug.assert(@sizeOf(BunLogOptions) == @sizeOf(headers.BunLogOptions));
-            std.debug.assert(@alignOf(BunLogOptions) == @alignOf(headers.BunLogOptions));
+            bun.assert(@sizeOf(BunLogOptions) == @sizeOf(headers.BunLogOptions));
+            bun.assert(@alignOf(BunLogOptions) == @alignOf(headers.BunLogOptions));
 
-            std.debug.assert(@sizeOf(OnBeforeParseResult) == @sizeOf(headers.OnBeforeParseResult));
-            std.debug.assert(@alignOf(OnBeforeParseResult) == @alignOf(headers.OnBeforeParseResult));
+            bun.assert(@sizeOf(OnBeforeParseResult) == @sizeOf(headers.OnBeforeParseResult));
+            bun.assert(@alignOf(OnBeforeParseResult) == @alignOf(headers.OnBeforeParseResult));
 
-            std.debug.assert(@sizeOf(BunLogOptions) == @sizeOf(headers.BunLogOptions));
-            std.debug.assert(@alignOf(BunLogOptions) == @alignOf(headers.BunLogOptions));
+            bun.assert(@sizeOf(BunLogOptions) == @sizeOf(headers.BunLogOptions));
+            bun.assert(@alignOf(BunLogOptions) == @alignOf(headers.BunLogOptions));
         }
 
         const OnBeforeParseArguments = extern struct {
@@ -3939,8 +3939,8 @@ pub const ParseTask = struct {
             level: Logger.Log.Level = .err,
             line: i32 = 0,
             column: i32 = 0,
-            lineEnd: i32 = 0,
-            columnEnd: i32 = 0,
+            line_end: i32 = 0,
+            column_end: i32 = 0,
 
             pub fn sourceLineText(this: *const BunLogOptions) string {
                 if (this.source_line_text_ptr) |ptr| {
@@ -3977,7 +3977,7 @@ pub const ParseTask = struct {
                     namespace,
                     @max(this.line, -1),
                     @max(this.column, -1),
-                    @max(this.columnEnd - this.column, 0),
+                    @max(this.column_end - this.column, 0),
                     if (source_line_text.len > 0) allocator.dupe(u8, source_line_text) catch bun.outOfMemory() else null,
                     null,
                 );
@@ -4049,7 +4049,6 @@ pub const ParseTask = struct {
                 this.allocator,
                 this.file_path,
 
-                // Allow the user to modify the loader
                 result.loader,
 
                 this.experimental_css,

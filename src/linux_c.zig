@@ -794,7 +794,7 @@ fn simulateLibcErrno(rc: usize) c_int {
     const signed: isize = @bitCast(rc);
     const int: c_int = @intCast(if (signed > -4096 and signed < 0) -signed else 0);
     std.c._errno().* = int;
-    return int;
+    return if (signed > -4096 and signed < 0) -1 else int;
 }
 
 pub export fn stat(path: [*:0]const u8, buf: *std.os.linux.Stat) c_int {

@@ -1439,11 +1439,10 @@ pub const EventLoop = struct {
         }
 
         this.processGCTimer();
-        loop.tick();
-
+        ctx.runWithAPILock(@TypeOf(loop.*), loop, @TypeOf(loop.*).tick);
         ctx.onAfterEventLoop();
         this.tickConcurrent();
-        this.tick();
+        ctx.runWithAPILock(@TypeOf(loop.*), loop, @TypeOf(loop.*).tick);
     }
 
     fn noopForeverTimer(_: *uws.Timer) callconv(.C) void {

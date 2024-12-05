@@ -3745,10 +3745,11 @@ pub const NodeFS = struct {
     pub fn mkdirNonRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
         _ = flavor;
 
-        const path = args.path.sliceZ(&this.sync_error_buf);
+        const bufp = &this.sync_error_buf;
+        const path = if (Environment.isWindows) strings.toNTMaxPath(bufp, args.path.slice()) else args.path.osPath(bufp);
         return switch (Syscall.mkdir(path, args.mode)) {
             .result => Maybe(Return.Mkdir){ .result = .{ .none = {} } },
-            .err => |err| Maybe(Return.Mkdir){ .err = err },
+            .err => |err| Maybe(Return.Mkdir){ .err = err.withPath((path)) },
         };
     }
 

@@ -154,7 +154,7 @@ __asm__(".symver sincosf,sincosf@GLIBC_2.17");
 __asm__(".symver sinf,sinf@GLIBC_2.17");
 __asm__(".symver tanf,tanf@GLIBC_2.17");
 
-__asm__(".symver pthread_sigmask,pthread_sigmask@GLIBC_2.2.5"
+__asm__(".symver pthread_sigmask,pthread_sigmask@GLIBC_2.2.5");
 #endif
 
 #if defined(__x86_64__) || defined(__aarch64__)

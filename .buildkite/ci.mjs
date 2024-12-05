@@ -14,6 +14,7 @@ import {
   getCommitMessage,
   getEmoji,
   getEnv,
+  getLastSuccessfulBuild,
   isBuildkite,
   isBuildManual,
   isFork,
@@ -1034,13 +1035,23 @@ async function getPipeline(options = {}) {
 
   const { skipTests, forceTests, unifiedTests, testFiles } = options;
   if (!skipTests || forceTests) {
+    /** @type {string | undefined} */
+    let buildId;
+    if (skipBuilds) {
+      const lastBuild = await getLastSuccessfulBuild();
+      if (lastBuild) {
+        const { id } = lastBuild;
+        buildId = id;
+      }
+    }
+
     steps.push(
       ...testPlatforms
         .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
         .map(target => ({
           key: getTargetKey(target),
           group: getTargetLabel(target),
-          steps: [getTestBunStep(target, { unifiedTests, testFiles })],
+          steps: [getTestBunStep(target, { unifiedTests, testFiles, buildId })],
         })),
     );
   }

@@ -49,6 +49,8 @@ register_command(
     CARGO_TERM_VERBOSE=true
     CARGO_TERM_DIAGNOSTIC=true
     CARGO_ENCODED_RUSTFLAGS=${RUSTFLAGS}
+    CARGO_HOME=${CARGO_HOME}
+    RUSTUP_HOME=${RUSTUP_HOME}
 )
 
 target_link_libraries(${bun} PRIVATE ${LOLHTML_LIBRARY})

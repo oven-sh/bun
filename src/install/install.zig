@@ -443,6 +443,7 @@ const NetworkTask = struct {
             .http_proxy = this.package_manager.httpProxy(url),
         });
         this.http.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+        this.http.client.flags.redirect_headers_behavior = .curl;
 
         if (PackageManager.verbose_install) {
             this.http.client.verbose = .headers;
@@ -532,6 +533,7 @@ const NetworkTask = struct {
             .http_proxy = this.package_manager.httpProxy(url),
         });
         this.http.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+        this.http.client.flags.redirect_headers_behavior = .curl;
         if (PackageManager.verbose_install) {
             this.http.client.verbose = .headers;
         }

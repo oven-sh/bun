@@ -1990,6 +1990,25 @@ pub const HTTPVerboseLevel = enum {
     curl,
 };
 
+pub const RedirectHeadersBehavior = enum {
+    /// fetch() spec treats origin as ${protocol}://${hostname}:${port}
+    fetch,
+
+    /// curl treats origin as ${hostname}
+    curl,
+
+    /// always preserve headers
+    always,
+
+    pub fn isSameOrigin(this: RedirectHeadersBehavior, url: *const URL, new_url: *const URL) bool {
+        return switch (this) {
+            .fetch => strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(url.origin), true),
+            .curl => strings.eqlCaseInsensitiveASCII(url.hostname, new_url.hostname, true),
+            .always => true,
+        };
+    }
+};
+
 pub const Flags = packed struct {
     disable_timeout: bool = false,
     disable_keepalive: bool = false,
@@ -2000,6 +2019,7 @@ pub const Flags = packed struct {
     proxy_tunneling: bool = false,
     reject_unauthorized: bool = true,
     is_preconnect_only: bool = false,
+    redirect_headers_behavior: RedirectHeadersBehavior = .fetch,
 };
 
 // TODO: reduce the size of this struct
@@ -2478,8 +2498,10 @@ pub const AsyncHTTP = struct {
 
     fn reset(this: *AsyncHTTP) !void {
         const aborted = this.client.aborted;
+        const redirect_headers_behavior = this.client.flags.redirect_headers_behavior;
         this.client = try HTTPClient.init(this.allocator, this.method, this.client.url, this.client.header_entries, this.client.header_buf, aborted);
         this.client.http_proxy = this.http_proxy;
+        this.client.flags.redirect_headers_behavior = redirect_headers_behavior;
 
         if (this.http_proxy) |proxy| {
             //TODO: need to understand how is possible to reuse Proxy with TSL, so disable keepalive if url is HTTPS
@@ -4110,7 +4132,7 @@ pub fn handleResponseMetadata(
                             const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
 
                             const new_url = URL.parse(normalized_url_str);
-                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
+                            is_same_origin = this.flags.redirect_headers_behavior.isSameOrigin(&this.url, &new_url);
                             this.url = new_url;
                             this.redirect = normalized_url_str;
                         } else if (strings.hasPrefixComptime(location, "//")) {
@@ -4150,7 +4172,7 @@ pub fn handleResponseMetadata(
                             const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
 
                             const new_url = URL.parse(normalized_url_str);
-                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
+                            is_same_origin = this.flags.redirect_headers_behavior.isSameOrigin(&this.url, &new_url);
                             this.url = new_url;
                             this.redirect = normalized_url_str;
                         } else {
@@ -4170,7 +4192,7 @@ pub fn handleResponseMetadata(
                                 return error.RedirectURLTooLong;
                             };
                             this.url = URL.parse(new_url);
-                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
+                            is_same_origin = this.flags.redirect_headers_behavior.isSameOrigin(&this.url, &original_url);
                             this.redirect = new_url;
                         }
                     }

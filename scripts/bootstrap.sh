@@ -1029,7 +1029,6 @@ install_chromium() {
 		;;
 	apt)
 		install_packages \
-		  chromium \
 			fonts-liberation \
 			libatk-bridge2.0-0 \
 			libatk1.0-0 \

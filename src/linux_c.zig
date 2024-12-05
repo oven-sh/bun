@@ -798,7 +798,8 @@ fn simulateLibcErrno(rc: usize) c_int {
 }
 
 pub export fn stat(path: [*:0]const u8, buf: *std.os.linux.Stat) c_int {
-    const rc = std.os.linux.stat(path, buf);
+    // https://git.musl-libc.org/cgit/musl/tree/src/stat/stat.c
+    const rc = std.os.linux.fstatat(std.os.linux.AT.FDCWD, path, buf, 0);
     return simulateLibcErrno(rc);
 }
 
@@ -808,7 +809,8 @@ pub const fstat64 = fstat;
 pub const fstatat64 = fstatat;
 
 pub export fn lstat(path: [*:0]const u8, buf: *std.os.linux.Stat) c_int {
-    const rc = std.os.linux.lstat(path, buf);
+    // https://git.musl-libc.org/cgit/musl/tree/src/stat/lstat.c
+    const rc = std.os.linux.fstatat(std.os.linux.AT.FDCWD, path, buf, std.os.linux.AT.SYMLINK_NOFOLLOW);
     return simulateLibcErrno(rc);
 }
 

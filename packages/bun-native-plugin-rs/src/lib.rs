@@ -249,7 +249,36 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use std::{any::TypeId, ffi::c_void, str::Utf8Error};
+#[repr(transparent)]
+pub struct BunPluginName(*const c_char);
+
+impl BunPluginName {
+    pub const fn new(ptr: *const c_char) -> Self {
+        Self(ptr)
+    }
+}
+
+#[macro_export]
+macro_rules! define_bun_plugin {
+    ($name:expr) => {
+        pub static BUN_PLUGIN_NAME_STRING: &str = $name;
+
+        #[no_mangle]
+        pub static BUN_PLUGIN_NAME: bun_native_plugin::BunPluginName =
+            bun_native_plugin::BunPluginName::new(BUN_PLUGIN_NAME_STRING.as_ptr() as *const _);
+
+        #[napi]
+        fn bun_plugin_register() {}
+    };
+}
+
+unsafe impl Sync for BunPluginName {}
+
+use std::{
+    any::TypeId,
+    ffi::{c_char, c_void},
+    str::Utf8Error,
+};
 
 pub mod sys {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));

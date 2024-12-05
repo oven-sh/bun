@@ -122,27 +122,14 @@ pub const JSBundler = struct {
                         return globalThis.throwInvalidArguments("Expected plugin to be an object", .{});
                     }
 
-                    const name = name: {
-                        var raw_val = try plugin.get(globalThis, "name") orelse {
-                            return globalThis.throwInvalidArguments("Expected plugin to have a name", .{});
-                        };
-                        if (!raw_val.isString()) {
-                            return globalThis.throwInvalidArguments("Expected plugin to have a name", .{});
-                        }
-                        const bunstr: bun.String = try raw_val.toBunString2(globalThis);
-                        if (bunstr.length() == 0) {
-                            bunstr.deref();
+                    if (try plugin.getOptional(globalThis, "name", ZigString.Slice)) |slice| {
+                        defer slice.deinit();
+                        if (slice.len == 0) {
                             return globalThis.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
                         }
-                        if (bunstr.tag != .WTFStringImpl) {
-                            var new_bun_str = raw_val.toBunString(globalThis);
-                            new_bun_str.toWTF();
-                            break :name new_bun_str;
-                        }
-                        break :name bunstr;
-                    };
-                    defer name.deref();
-                    bun.debugAssert(name.tag == .WTFStringImpl);
+                    } else {
+                        return globalThis.throwInvalidArguments("Expected plugin to have a name", .{});
+                    }
 
                     const function = try plugin.getFunction(globalThis, "setup") orelse {
                         return globalThis.throwInvalidArguments("Expected plugin to have a setup() function", .{});
@@ -151,7 +138,6 @@ pub const JSBundler = struct {
                     var bun_plugins: *Plugin = plugins.* orelse brk: {
                         plugins.* = Plugin.create(
                             globalThis,
-                            name.value.WTFStringImpl,
                             switch (this.target) {
                                 .bun, .bun_macro => JSC.JSGlobalObject.BunPluginTarget.bun,
                                 .node => JSC.JSGlobalObject.BunPluginTarget.node,
@@ -865,10 +851,10 @@ pub const JSBundler = struct {
     };
 
     pub const Plugin = opaque {
-        extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, ?bun.WTF.StringImpl, JSC.JSGlobalObject.BunPluginTarget) *Plugin;
-        pub fn create(global: *JSC.JSGlobalObject, name: ?bun.WTF.StringImpl, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
+        extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, JSC.JSGlobalObject.BunPluginTarget) *Plugin;
+        pub fn create(global: *JSC.JSGlobalObject, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
             JSC.markBinding(@src());
-            const plugin = JSBundlerPlugin__create(global, name, target);
+            const plugin = JSBundlerPlugin__create(global, target);
             JSC.JSValue.fromCell(plugin).protect();
             return plugin;
         }

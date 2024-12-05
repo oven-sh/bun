@@ -1,5 +1,11 @@
-use bun_native_plugin::{BunLoader, OnBeforeParse};
+use bun_native_plugin::{define_bun_plugin, BunLoader, OnBeforeParse};
 use mdxjs::{compile, Options as CompileOptions};
+use napi_derive::napi;
+
+#[macro_use]
+extern crate napi;
+
+define_bun_plugin!("bun-mdx-rs");
 
 #[no_mangle]
 pub unsafe extern "C" fn bun_mdx_rs(
@@ -48,9 +54,3 @@ pub unsafe extern "C" fn bun_mdx_rs(
     }
   }
 }
-
-#[macro_use]
-extern crate napi_derive;
-
-#[napi]
-pub fn register_bun_plugin() {}

@@ -107,7 +107,7 @@ pub const SplitBundlerOptions = struct {
     };
 
     pub fn parsePluginArray(opts: *SplitBundlerOptions, plugin_array: JSValue, global: *JSC.JSGlobalObject) !void {
-        const plugin = opts.plugin orelse Plugin.create(global, null, .bun);
+        const plugin = opts.plugin orelse Plugin.create(global, .bun);
         opts.plugin = plugin;
         const empty_object = JSValue.createEmptyObject(global, 0);
 

@@ -11,6 +11,16 @@
 #include <cstring>
 #include <node_api.h>
 
+#ifdef _WIN32
+#define BUN_PLUGIN_EXPORT __declspec(dllexport)
+#else
+#define BUN_PLUGIN_EXPORT
+#include <signal.h>
+#include <unistd.h>
+#endif
+
+BUN_PLUGIN_EXPORT const char *BUN_PLUGIN_NAME = "native_plugin_test";
+
 struct External {
   std::atomic<size_t> foo_count;
   std::atomic<size_t> bar_count;
@@ -66,17 +76,9 @@ void log_error(const OnBeforeParseArguments *args,
   (result->log)(args, &options);
 }
 
-#ifdef _WIN32
-#define BUN_PLUGIN_EXPORT __declspec(dllexport)
-#else
-#define BUN_PLUGIN_EXPORT
-#endif
-
-
-
-extern "C" BUN_PLUGIN_EXPORT void plugin_impl_with_needle(const OnBeforeParseArguments *args,
-                                        OnBeforeParseResult *result,
-                                        const char *needle) {
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_with_needle(const OnBeforeParseArguments *args,
+                        OnBeforeParseResult *result, const char *needle) {
   // if (args->__struct_size < sizeof(OnBeforeParseArguments)) {
   //     log_error(args, result, BUN_LOG_LEVEL_ERROR, "Invalid
   //     OnBeforeParseArguments struct size", sizeof("Invalid
@@ -90,9 +92,9 @@ extern "C" BUN_PLUGIN_EXPORT void plugin_impl_with_needle(const OnBeforeParseArg
                 sizeof("Throwing an error") - 1);
       return;
     } else if (external->simulate_crash.load()) {
-      // Do something very bad to crash the plugin
-      char *naughty = (char *)args;
-      memset((void *)naughty, 69, 42069);
+#ifndef _WIN32
+      raise(SIGSEGV);
+#endif
     }
   }
 
@@ -162,18 +164,20 @@ extern "C" BUN_PLUGIN_EXPORT void plugin_impl_with_needle(const OnBeforeParseArg
   }
 }
 
-extern "C" BUN_PLUGIN_EXPORT void plugin_impl(const OnBeforeParseArguments *args,
-                            OnBeforeParseResult *result) {
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl(const OnBeforeParseArguments *args, OnBeforeParseResult *result) {
   plugin_impl_with_needle(args, result, "foo");
 }
 
-extern "C" BUN_PLUGIN_EXPORT void plugin_impl_bar(const OnBeforeParseArguments *args,
-                                OnBeforeParseResult *result) {
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_bar(const OnBeforeParseArguments *args,
+                OnBeforeParseResult *result) {
   plugin_impl_with_needle(args, result, "bar");
 }
 
-extern "C" BUN_PLUGIN_EXPORT void plugin_impl_baz(const OnBeforeParseArguments *args,
-                                OnBeforeParseResult *result) {
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_baz(const OnBeforeParseArguments *args,
+                OnBeforeParseResult *result) {
   plugin_impl_with_needle(args, result, "baz");
 }
 

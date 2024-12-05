@@ -393,55 +393,53 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     expect(compilationCtxFreedCount).toBe(0);
   });
 
-  // it("prints name when plugin crashes", async () => {
-  //   const prelude = /* ts */ `import values from "./stuff.ts"
-  // const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
-  //     `;
-  //   await Bun.$`echo ${prelude} > index.ts`;
+  // don't know how to reliably test this on windows
+  it.skipIf(process.platform === "win32")("prints name when plugin crashes", async () => {
+    const prelude = /* ts */ `import values from "./stuff.ts"
+  const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
+      `;
+    await Bun.$`echo ${prelude} > index.ts`;
 
-  //   const build_code = /* ts */ `
-  //   import * as path from "path";
-  //   const tempdir = process.env.BUN_TEST_TEMP_DIR;
-  //   const filter = /\.ts/;
-  //   console.log('Running this shit man', tempdir);
-  //   const resultPromise = await Bun.build({
-  //     outdir: "dist",
-  //     entrypoints: [path.join(tempdir, "index.ts")],
-  //     plugins: [
-  //       {
-  //         name: "xXx123_foo_counter_321xXx",
-  //         setup(build) {
-  //   const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
-  //   const external = napiModule.createExternal();
-  //           napiModule.setWillCrash(external, true);
+    const build_code = /* ts */ `
+    import * as path from "path";
+    const tempdir = process.env.BUN_TEST_TEMP_DIR;
+    const filter = /\.ts/;
+    const resultPromise = await Bun.build({
+      outdir: "dist",
+      entrypoints: [path.join(tempdir, "index.ts")],
+      plugins: [
+        {
+          name: "xXx123_foo_counter_321xXx",
+          setup(build) {
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+            napiModule.setWillCrash(external, true);
 
-  //           build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl", external });
+            build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl", external });
 
-  //           build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
-  //             await defer();
-  //             let count = 0;
-  //             try {
-  //               count = napiModule.getFooCount(external);
-  //             } catch (e) {}
-  //             return {
-  //               contents: JSON.stringify({ fooCount: count }),
-  //               loader: "json",
-  //             };
-  //           });
-  //         },
-  //       },
-  //     ],
-  //   });
-  //   console.log(resultPromise);
-  //   `;
+            build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
+              await defer();
+              let count = 0;
+              try {
+                count = napiModule.getFooCount(external);
+              } catch (e) {}
+              return {
+                contents: JSON.stringify({ fooCount: count }),
+                loader: "json",
+              };
+            });
+          },
+        },
+      ],
+    });
+    console.log(resultPromise);
+    `;
 
-  //   await Bun.$`echo ${build_code} > build.ts`;
-  //   const { stdout, stderr } = await Bun.$`BUN_TEST_TEMP_DIR=${tempdir} ${bunExe()} run build.ts`.throws(false);
-  //   console.log("stdout", stdout.toString());
-  //   console.log("stderr", stderr.toString().length, stderr.toString());
-  //   const errorString = stdout.toString();
-  //   expect(errorString).toContain('crash while running the "xXx123_foo_counter_321xXx" native plugin');
-  // });
+    await Bun.$`echo ${build_code} > build.ts`;
+    const { stdout, stderr } = await Bun.$`BUN_TEST_TEMP_DIR=${tempdir} ${bunExe()} run build.ts`.throws(false);
+    const errorString = stderr.toString();
+    expect(errorString).toContain('\x1b[31m\x1b[2m"native_plugin_test"\x1b[0m');
+  });
 
   it("detects when plugin sets function pointer but does not user context pointer", async () => {
     const filter = /\.ts/;

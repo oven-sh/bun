@@ -355,23 +355,23 @@ function getTestAgent(platform) {
   if (os === "windows") {
     return getEc2Agent(platform, {
       instanceType: "c7i.2xlarge",
-      cpuCount: 8,
-      threadsPerCore: 2,
+      cpuCount: 1,
+      threadsPerCore: 1,
     });
   }
 
   if (arch === "aarch64") {
     return getEc2Agent(platform, {
       instanceType: "c8g.xlarge",
-      cpuCount: 4,
+      cpuCount: 1,
       threadsPerCore: 1,
     });
   }
 
   return getEc2Agent(platform, {
     instanceType: "c7i.xlarge",
-    cpuCount: 4,
-    threadsPerCore: 2,
+    cpuCount: 1,
+    threadsPerCore: 1,
   });
 }
 

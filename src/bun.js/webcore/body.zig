@@ -158,6 +158,18 @@ pub const Body = struct {
 
             return false;
         }
+
+        pub fn isDisturbed2(this: *const PendingValue, globalObject: *JSC.JSGlobalObject) bool {
+            if (this.promise != null) {
+                return true;
+            }
+
+            if (this.readable.get()) |readable| {
+                return readable.isDisturbed(globalObject);
+            }
+
+            return false;
+        }
         pub fn isStreamingOrBuffering(this: *PendingValue) bool {
             return this.readable.held.has() or (this.promise != null and !this.promise.?.isEmptyOrUndefinedOrNull());
         }

@@ -392,6 +392,12 @@ pub const BunxCommand = struct {
         debug("install_param: {s}", .{install_param});
         debug("result_package_name: {s}", .{result_package_name});
 
+        if (strings.eqlComptime(result_package_name, "bun-repl")) {
+            this_bundler.env.map.remove("BUN_INSPECT_CONNECT_TO");
+            this_bundler.env.map.remove("BUN_INSPECT_NOTIFY");
+            this_bundler.env.map.remove("BUN_INSPECT");
+        }
+
         const temp_dir = bun.fs.FileSystem.RealFS.platformTempDir();
 
         const PATH_FOR_BIN_DIRS = brk: {

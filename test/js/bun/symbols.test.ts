@@ -6,7 +6,7 @@ import { semver } from "bun";
 const BUN_EXE = bunExe();
 
 if (process.platform === "linux") {
-  test("objdump -T does not include symbols from glibc > 2.27", async () => {
+  test("objdump -T does not include symbols from glibc >= 2.27", async () => {
     const objdump = Bun.which("objdump") || Bun.which("llvm-objdump");
     if (!objdump) {
       throw new Error("objdump executable not found. Please install it.");

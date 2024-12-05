@@ -226,8 +226,6 @@ pub const Snapshots = struct {
         const vm = VirtualMachine.get();
         const opts = js_parser.Parser.Options.init(vm.bundler.options.jsx, .js);
 
-        // for each item
-        // sort the array by lyn,col
         for (this.inline_snapshots_to_write.keys(), this.inline_snapshots_to_write.values()) |file_id, *ils_info| {
             _ = arena_backing.reset(.retain_capacity);
 
@@ -274,19 +272,7 @@ pub const Snapshots = struct {
                     try log.addErrorFmt(&source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots for the same call are not supported", .{});
                     continue;
                 }
-                // items are in order from start to end
-                // advance and find the byte from the line/col
-                // - make sure this works right with invalid utf-8, eg 0b11110_000 'a', 0b11110_000 0b10_000000 'a', ...
-                // - make sure this works right with the weird newline characters javascript allows
 
-                // initialize a parser and parse a single expression: toMatchInlineSnapshot(...args)
-                // find the start and end bytes
-                // append result_text from uncommitted_segment_end to this start
-                // print the snapshot into a backtick string
-                // uncommitted_segment_end = this end
-                // continue
-
-                // RangeData
                 inline_snapshot_dbg("Finding byte for {}/{}", .{ ils.line, ils.col });
                 const byte_offset_add = logger.Source.lineColToByteOffset(file_text[last_byte..], last_line, last_col, ils.line, ils.col) orelse {
                     inline_snapshot_dbg("-> Could not find byte", .{});
@@ -316,9 +302,6 @@ pub const Snapshots = struct {
                         continue;
                     }
                     next_start += fn_name.len;
-
-                    // lexer init
-                    // lexer seek (next_start)
 
                     var lexer = bun.js_lexer.Lexer.initWithoutReading(&log, source, arena);
                     if (next_start > 0) {
@@ -444,15 +427,6 @@ pub const Snapshots = struct {
             }
         }
         return success;
-
-        // make sure to test:
-        // toMatchSnapshot()
-        // toMatchSnapshot(a)
-        // toMatchSnapshot(a,)
-        // toMatchSnapshot(a,b)
-        // toMatchSnapshot(a,b,)
-        // toMatchSnapshot(a,b,c)
-        // toMatchSnapshot(() => toMatchSnapshot())
     }
 
     fn getSnapshotFile(this: *Snapshots, file_id: TestRunner.File.ID) !JSC.Maybe(void) {

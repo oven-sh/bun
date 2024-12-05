@@ -729,8 +729,3 @@ describe("inline snapshots", () => {
     );
   });
 });
-
-// test cases:
-// - all errors in writeInlineSnapshots
-// - all errors in pub fn toMatchInlineSnapshot (eg different file, ...)
-// - same snapshot multiple times in the same location

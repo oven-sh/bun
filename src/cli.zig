@@ -2612,14 +2612,19 @@ pub const Command = struct {
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .BunxCommand,
-                .PackageManagerCommand,
+                .BuildCommand,
+                .TestCommand,
                 .InstallCommand,
                 .AddCommand,
                 .RemoveCommand,
                 .UpdateCommand,
                 .PatchCommand,
                 .PatchCommitCommand,
+                .PackageManagerCommand,
+                .BunxCommand,
+                .AutoCommand,
+                .RunCommand,
+                .RunAsNodeCommand,
                 .OutdatedCommand,
                 .PublishCommand,
                 => true,

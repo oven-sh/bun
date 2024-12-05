@@ -27,7 +27,6 @@ import {
   getBuildUrl,
   getEnv,
   getFileUrl,
-  getLoggedInUserCount,
   getWindowsExitReason,
   isArm64,
   isBuildkite,
@@ -57,10 +56,6 @@ const { values: options, positionals: filters } = parseArgs({
       default: "bun",
     },
     ["step"]: {
-      type: "string",
-      default: undefined,
-    },
-    ["build-id"]: {
       type: "string",
       default: undefined,
     },
@@ -104,7 +99,32 @@ const { values: options, positionals: filters } = parseArgs({
 async function runTests() {
   let execPath;
   if (options["step"]) {
-    execPath = await getExecPathFromBuildKite(options["step"], options["build-id"]);
+    downloadLoop: for (let i = 0; i < 10; i++) {
+      execPath = await getExecPathFromBuildKite(options["step"]);
+      for (let j = 0; j < 10; j++) {
+        const { error } = spawnSync(execPath, ["--version"], {
+          encoding: "utf-8",
+          timeout: spawnTimeout,
+          env: {
+            PATH: process.env.PATH,
+            BUN_DEBUG_QUIET_LOGS: 1,
+          },
+        });
+        if (!error) {
+          break downloadLoop;
+        }
+        const { code } = error;
+        if (code === "EBUSY") {
+          console.log("Bun appears to be busy, retrying...");
+          continue;
+        }
+        if (code === "UNKNOWN") {
+          console.log("Bun appears to be corrupted, downloading again...");
+          rmSync(execPath, { force: true });
+          continue downloadLoop;
+        }
+      }
+    }
   } else {
     execPath = getExecPath(options["exec-path"]);
   }
@@ -1060,10 +1080,9 @@ function getExecPath(bunExe) {
 
 /**
  * @param {string} target
- * @param {string} [buildId]
  * @returns {Promise<string>}
  */
-async function getExecPathFromBuildKite(target, buildId) {
+async function getExecPathFromBuildKite(target) {
   if (existsSync(target) || target.includes("/")) {
     return getExecPath(target);
   }
@@ -1071,27 +1090,23 @@ async function getExecPathFromBuildKite(target, buildId) {
   const releasePath = join(cwd, "release");
   mkdirSync(releasePath, { recursive: true });
 
+  const args = ["artifact", "download", "**", releasePath, "--step", target];
+  const buildId = process.env["BUILDKITE_ARTIFACT_BUILD_ID"];
+  if (buildId) {
+    args.push("--build", buildId);
+  }
+
+  await spawnSafe({
+    command: "buildkite-agent",
+    args,
+  });
+
   let zipPath;
-  for (let i = 0; i < 10; i++) {
-    const args = ["artifact", "download", "**", releasePath, "--step", target];
-    if (buildId) {
-      args.push("--build", buildId);
+  for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
+    if (/^bun.*\.zip$/i.test(entry) && !entry.includes("-profile.zip")) {
+      zipPath = join(releasePath, entry);
+      break;
     }
-
-    await spawnSafe({
-      command: "buildkite-agent",
-      args,
-    });
-
-    for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
-      if (/^bun.*\.zip$/i.test(entry) && !entry.includes("-profile.zip")) {
-        zipPath = join(releasePath, entry);
-        break;
-      }
-    }
-
-    console.warn(`Waiting for ${target}.zip to be available...`);
-    await new Promise(resolve => setTimeout(resolve, i * 1000));
   }
 
   if (!zipPath) {
@@ -1100,15 +1115,13 @@ async function getExecPathFromBuildKite(target, buildId) {
 
   await unzip(zipPath, releasePath);
 
-  const releaseFiles = readdirSync(releasePath, { recursive: true, encoding: "utf-8" });
-  for (const entry of releaseFiles) {
+  for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
     const execPath = join(releasePath, entry);
-    if (/bun(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
+    if (/bun(?:\.exe)?$/i.test(entry) && isExecutable(execPath)) {
       return execPath;
     }
   }
 
-  console.warn(`Found ${releaseFiles.length} files in ${releasePath}:`);
   throw new Error(`Could not find executable from BuildKite: ${releasePath}`);
 }
 
@@ -1453,39 +1466,8 @@ export async function main() {
   }
 
   printEnvironment();
-
-  // FIXME: Some DNS tests hang unless we set the DNS server to 8.8.8.8
-  // It also appears to hang on 1.1.1.1, which could explain this issue:
-  // https://github.com/oven-sh/bun/issues/11136
-  if (isWindows && isCI) {
-    await spawn("pwsh", [
-      "-Command",
-      "Set-DnsClientServerAddress -InterfaceAlias 'Ethernet 4' -ServerAddresses ('8.8.8.8','8.8.4.4')",
-    ]);
-  }
-
   const results = await runTests();
   const ok = results.every(({ ok }) => ok);
-
-  let waitForUser = false;
-  while (isCI) {
-    const userCount = getLoggedInUserCount();
-    if (!userCount) {
-      if (waitForUser) {
-        console.log("No users logged in, exiting runner...");
-      }
-      break;
-    }
-
-    if (!waitForUser) {
-      startGroup("Summary");
-      console.warn(`Found ${userCount} users logged in, keeping the runner alive until logout...`);
-      waitForUser = true;
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 60_000));
-  }
-
   process.exit(getExitCode(ok ? "pass" : "fail"));
 }
 

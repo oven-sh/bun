@@ -2100,24 +2100,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
         throwSystemError(throwScope, globalObject, "getgroups"_s, errno);
         return {};
     }
-
-    gid_t egid = getegid();
-    JSArray* groups = constructEmptyArray(globalObject, nullptr, static_cast<unsigned int>(ngroups));
+    JSArray* groups = constructEmptyArray(globalObject, nullptr, ngroups);
     Vector<gid_t> groupVector(ngroups);
-    getgroups(1, &egid);
-    bool needsEgid = true;
+    getgroups(ngroups, groupVector.data());
     for (unsigned i = 0; i < ngroups; i++) {
-        auto current = groupVector[i];
-        if (current == needsEgid) {
-            needsEgid = false;
-        }
-
-        groups->putDirectIndex(globalObject, i, jsNumber(current));
+        groups->putDirectIndex(globalObject, i, jsNumber(groupVector[i]));
     }
-
-    if (needsEgid)
-        groups->push(globalObject, jsNumber(egid));
-
     return JSValue::encode(groups);
 }
 #endif

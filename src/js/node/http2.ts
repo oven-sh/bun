@@ -2561,7 +2561,7 @@ class ServerHttp2Session extends Http2Session {
   }
 
   setLocalWindowSize(windowSize) {
-    return this.#parser?.setLocalWindowSize(windowSize);
+    return this.#parser?.setLocalWindowSize?.(windowSize);
   }
 
   settings(settings: Settings, callback) {
@@ -2940,7 +2940,7 @@ class ClientHttp2Session extends Http2Session {
   }
 
   setLocalWindowSize(windowSize) {
-    return this.#parser?.setLocalWindowSize(windowSize);
+    return this.#parser?.setLocalWindowSize?.(windowSize);
   }
   get socket() {
     if (this.#socket_proxy) return this.#socket_proxy;

@@ -1,16 +1,12 @@
 if(CI)
   set(DEFAULT_ENABLE_CODESIGN ${CMAKE_SYSTEM_NAME})
 else()
-  set(DEFAULT_ENABLE_CODESIGN OFF)
+  set(DEFAULT_ENABLE_CODESIGN "OFF")
 endif()
 
 optionx(ENABLE_CODESIGN STRING "Enable code signing" DEFAULT ${DEFAULT_ENABLE_CODESIGN})
 
-if(NOT ENABLE_CODESIGN OR NOT ENABLE_CODESIGN MATCHES "${CMAKE_HOST_SYSTEM_NAME}")
-  return()
-endif()
-
-if(ENABLE_CODESIGN OR ENABLE_CODESIGN MATCHES "Darwin")
+if(ENABLE_CODESIGN STREQUAL "ON" OR ENABLE_CODESIGN MATCHES "Darwin")
   find_command(VARIABLE SECURITY_PROGRAM COMMAND security REQUIRED)
   find_command(VARIABLE CODESIGN_PROGRAM COMMAND codesign REQUIRED)
   find_command(VARIABLE DITTO_PROGRAM COMMAND ditto REQUIRED)
@@ -60,7 +56,7 @@ if(ENABLE_CODESIGN OR ENABLE_CODESIGN MATCHES "Darwin")
     message(FATAL_ERROR "Code signing is enabled, but no APPLE_CODESIGN_IDENTITY is set.\n"
       "To fix this, either:\n"
       "  - Set ENABLE_APPLE_CODESIGN=OFF to disable code signing\n"
-      "  - Fi"
+      "  - Find your identity in your keychain and set APPLE_CODESIGN_IDENTITY to the identity's name\n"
     )
   endif()
 
@@ -146,6 +142,6 @@ if(ENABLE_CODESIGN OR ENABLE_CODESIGN MATCHES "Darwin")
   endif()
 endif()
 
-if(ENABLE_CODESIGN OR ENABLE_CODESIGN MATCHES "Windows")
+if(ENABLE_CODESIGN STREQUAL "ON" OR ENABLE_CODESIGN MATCHES "Windows")
   # TODO: Implement code signing for Windows
 endif()

@@ -16,7 +16,6 @@ include(Globals)
 
 include(SetupLLVM)
 include(SetupCcache)
-include(SetupCodesign)
 
 # --- Project ---
 
@@ -34,6 +33,7 @@ include(SetupBun)
 include(SetupEsbuild)
 include(SetupZig)
 include(SetupRust)
+include(SetupCodesign)
 
 # --- Targets ---
 

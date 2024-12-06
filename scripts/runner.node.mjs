@@ -34,6 +34,7 @@ import {
   isGithubAction,
   isMacOS,
   isWindows,
+  isX64,
   printEnvironment,
   startGroup,
   tmpdir,
@@ -780,13 +781,18 @@ function isJavaScriptTest(path) {
  * @returns {boolean}
  */
 function isTest(path) {
-  if (path.replaceAll(sep, "/").startsWith("js/node/test/parallel/") && !(isMacOS && process.arch === "x64")) return true;
+  if (path.replaceAll(sep, "/").startsWith("js/node/test/parallel/") && targetDoesRunNodeTests()) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
   return isTestStrict(path);
 }
 
 function isTestStrict(path) {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
+}
+
+function targetDoesRunNodeTests() {
+  if (isMacOS && isX64) return false;
+  return true;
 }
 
 /**

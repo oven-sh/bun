@@ -1103,12 +1103,10 @@ if(NOT BUN_CPP_ONLY)
           ${bun}
         TARGET_PHASE
           POST_BUILD
-        TARGETS
-          apple-codesign-identity
         COMMENT
           "Signing ${bunStripExe}"
         COMMAND
-          ${APPLE_CODESIGN_PROGRAM}
+          ${CODESIGN_PROGRAM}
             ${bunStripExe}
             --sign ${APPLE_CODESIGN_IDENTITY}
             --keychain ${APPLE_CODESIGN_KEYCHAIN_PATH}
@@ -1119,6 +1117,7 @@ if(NOT BUN_CPP_ONLY)
             -vvvv
             --deep
             --strict
+        ALWAYS_RUN
       )
     endif()
   endif()
@@ -1147,34 +1146,15 @@ if(NOT BUN_CPP_ONLY)
   endif()
 
   if(APPLE AND ENABLE_APPLE_CODESIGN)
-    # Add diagnostic commands before signing
     register_command(
       TARGET
         ${bun}
       TARGET_PHASE
         POST_BUILD
-      COMMENT
-        "Checking keychain state before signing"
-      COMMAND
-        ${SHELL_PROGRAM} -c
-          "${APPLE_SECURITY_PROGRAM} list-keychains
-           && echo '\nChecking keychain content:'
-           && ${APPLE_SECURITY_PROGRAM} find-identity -v -p codesigning ${APPLE_CODESIGN_KEYCHAIN_PATH}
-           && echo '\nChecking keychain access:'
-           && ${APPLE_SECURITY_PROGRAM} show-keychain-info ${APPLE_CODESIGN_KEYCHAIN_PATH}"
-    )
-
-    register_command(
-      TARGET
-        ${bun}
-      TARGET_PHASE
-        POST_BUILD
-      TARGETS
-        apple-codesign-identity
       COMMENT
         "Signing ${bunExe}"
       COMMAND
-        ${APPLE_CODESIGN_PROGRAM}
+        ${CODESIGN_PROGRAM}
           ${bunExe}
           --sign ${APPLE_CODESIGN_IDENTITY}
           --keychain ${APPLE_CODESIGN_KEYCHAIN_PATH}
@@ -1185,6 +1165,7 @@ if(NOT BUN_CPP_ONLY)
           -vvvv
           --deep
           --strict
+      ALWAYS_RUN
     )
   endif()
 

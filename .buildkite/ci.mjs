@@ -408,7 +408,10 @@ function getBuildVendorStep(platform) {
     agents: getCppAgent(platform),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform),
+    env: {
+      ...getBuildEnv(platform),
+      ENABLE_CODESIGN: "OFF",
+    },
     command: "bun run build:ci --target dependencies",
   };
 }
@@ -425,8 +428,9 @@ function getBuildCppStep(platform) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {
-      BUN_CPP_ONLY: "ON",
       ...getBuildEnv(platform),
+      BUN_CPP_ONLY: "ON",
+      ENABLE_CODESIGN: "OFF",
     },
     command: "bun run build:ci --target bun",
   };
@@ -460,7 +464,11 @@ function getBuildZigStep(platform) {
     agents: getZigAgent(platform),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform),
+    env: {
+      ...getBuildEnv(platform),
+      ENABLE_LLVM: "OFF",
+      ENABLE_CODESIGN: "OFF",
+    },
     command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
   };
 }
@@ -482,8 +490,8 @@ function getLinkBunStep(platform) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {
-      BUN_LINK_ONLY: "ON",
       ...getBuildEnv(platform),
+      BUN_LINK_ONLY: "ON",
     },
     command: "bun run build:ci --target bun",
   };

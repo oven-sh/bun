@@ -14,11 +14,9 @@ include(Globals)
 
 # --- Compilers ---
 
-if(CMAKE_HOST_APPLE)
-  include(SetupMacSDK)
-endif()
 include(SetupLLVM)
 include(SetupCcache)
+include(SetupCodesign)
 
 # --- Project ---
 

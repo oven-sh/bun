@@ -4771,8 +4771,8 @@ pub const NodeFS = struct {
 
                 break :brk switch (bun.sys.open(
                     path,
-                    bun.O.RDONLY | bun.O.NOCTTY,
-                    0,
+                    @intFromEnum(args.flag) | bun.O.NOCTTY,
+                    default_permission,
                 )) {
                     .err => |err| return .{
                         .err = err.withPath(if (args.path == .path) args.path.path.slice() else ""),

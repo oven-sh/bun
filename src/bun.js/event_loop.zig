@@ -1473,6 +1473,7 @@ pub const EventLoop = struct {
         }
 
         this.processGCTimer();
+        this.processGCTimer();
         loop.tick();
 
         ctx.onAfterEventLoop();

@@ -6621,6 +6621,10 @@ pub const CallFrame = opaque {
         };
     }
 
+    pub fn arguments(self: *const CallFrame) []const JSValue {
+        // this presumably isn't allowed given that it doesn't exist
+        return self.argumentsPtr()[0..self.argumentsCount()];
+    }
     pub fn arguments_old(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const len = self.argumentsCount();
         const ptr = self.argumentsPtr();
@@ -6663,6 +6667,24 @@ pub const CallFrame = opaque {
             value[i] = call_frame.argument(i);
         }
         return value;
+    }
+
+    extern fn Bun__CallFrame__getCallerSrcLoc(*const CallFrame, *JSGlobalObject, *c_uint, *c_uint, *c_uint) void;
+    pub const CallerSrcLoc = struct {
+        source_file_id: c_uint,
+        line: c_uint,
+        column: c_uint,
+    };
+    pub fn getCallerSrcLoc(call_frame: *const CallFrame, globalThis: *JSGlobalObject) CallerSrcLoc {
+        var source_id: c_uint = undefined;
+        var line: c_uint = undefined;
+        var column: c_uint = undefined;
+        Bun__CallFrame__getCallerSrcLoc(call_frame, globalThis, &source_id, &line, &column);
+        return .{
+            .source_file_id = source_id,
+            .line = line,
+            .column = column,
+        };
     }
 };
 

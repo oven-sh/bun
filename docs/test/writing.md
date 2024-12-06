@@ -531,7 +531,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.toMatchInlineSnapshot()`](https://jestjs.io/docs/expect#tomatchinlinesnapshotpropertymatchers-inlinesnapshot)
 
 ---

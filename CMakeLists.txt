@@ -43,7 +43,9 @@ include(BuildBun)
 
 # --- Analysis ---
 
-include(RunClangFormat)
-include(RunClangTidy)
-include(RunZigFormat)
-include(RunPrettier)
+if(ENABLE_ANALYSIS)
+  include(RunClangFormat)
+  include(RunClangTidy)
+  include(RunZigFormat)
+  include(RunPrettier)
+endif()

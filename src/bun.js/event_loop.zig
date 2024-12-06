@@ -380,10 +380,8 @@ const Futimes = JSC.Node.Async.futimes;
 const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
-const BrotliDecoder = JSC.API.BrotliDecoder;
-const BrotliEncoder = JSC.API.BrotliEncoder;
-const ZlibDecoder = JSC.API.ZlibDecoder;
-const ZlibEncoder = JSC.API.ZlibEncoder;
+const NativeZlib = JSC.API.NativeZlib;
+const NativeBrotli = JSC.API.NativeBrotli;
 
 const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
@@ -466,10 +464,8 @@ pub const Task = TaggedPointerUnion(.{
     Lchmod,
     Lchown,
     Unlink,
-    BrotliEncoder,
-    BrotliDecoder,
-    ZlibEncoder,
-    ZlibDecoder,
+    NativeZlib,
+    NativeBrotli,
     ShellGlobTask,
     ShellRmTask,
     ShellRmDirTask,
@@ -484,13 +480,11 @@ pub const Task = TaggedPointerUnion(.{
     ShellAsyncSubprocessDone,
     TimerObject,
     bun.shell.Interpreter.Builtin.Yes.YesTask,
-
-    bun.kit.DevServer.BundleTask,
-    bun.kit.DevServer.HotReloadTask,
-
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
     ServerAllConnectionsClosedTask,
+    bun.bake.DevServer.HotReloadEvent,
+    bun.bundle_v2.DeferredBatchTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -552,6 +546,7 @@ pub const GarbageCollectionController = struct {
         const actual = uws.Loop.get();
         this.gc_timer = uws.Timer.createFallthrough(actual, this);
         this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
+        actual.internal_loop_data.jsc_vm = vm.jsc;
 
         if (comptime Environment.isDebug) {
             if (bun.getenvZ("BUN_TRACK_LAST_FN_NAME") != null) {
@@ -885,6 +880,17 @@ pub const EventLoop = struct {
             globalObject.reportActiveExceptionAsUnhandled(err);
     }
 
+    pub fn runCallbackWithResult(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) JSC.JSValue {
+        this.enter();
+        defer this.exit();
+
+        const result = callback.call(globalObject, thisValue, arguments) catch |err| {
+            globalObject.reportActiveExceptionAsUnhandled(err);
+            return .zero;
+        };
+        return result;
+    }
+
     fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, comptime queue_name: []const u8) u32 {
         var global = this.global;
         const global_vm = global.vm();
@@ -1006,7 +1012,7 @@ pub const EventLoop = struct {
                 },
                 .ThreadSafeFunction => {
                     var transform_task: *ThreadSafeFunction = task.as(ThreadSafeFunction);
-                    transform_task.call();
+                    transform_task.onDispatch();
                 },
                 @field(Task.Tag, @typeName(ReadFileTask)) => {
                     var transform_task: *ReadFileTask = task.get(ReadFileTask).?;
@@ -1024,18 +1030,15 @@ pub const EventLoop = struct {
                     transform_task.deinit();
                 },
                 @field(Task.Tag, @typeName(HotReloadTask)) => {
-                    var transform_task: *HotReloadTask = task.get(HotReloadTask).?;
-                    transform_task.*.run();
+                    const transform_task: *HotReloadTask = task.get(HotReloadTask).?;
+                    transform_task.run();
                     transform_task.deinit();
                     // special case: we return
                     return 0;
                 },
-                @field(Task.Tag, @typeName(bun.kit.DevServer.HotReloadTask)) => {
-                    const transform_task = task.get(bun.kit.DevServer.HotReloadTask).?;
-                    transform_task.*.run();
-                    transform_task.deinit();
-                    // special case: we return
-                    return 0;
+                @field(Task.Tag, typeBaseName(@typeName(bun.bake.DevServer.HotReloadEvent))) => {
+                    const hmr_task: *bun.bake.DevServer.HotReloadEvent = task.get(bun.bake.DevServer.HotReloadEvent).?;
+                    hmr_task.run();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
                     var transform_task: *FSWatchTask = task.get(FSWatchTask).?;
@@ -1224,20 +1227,12 @@ pub const EventLoop = struct {
                     var any: *Unlink = task.get(Unlink).?;
                     any.runFromJSThread();
                 },
-                @field(Task.Tag, typeBaseName(@typeName(BrotliEncoder))) => {
-                    var any: *BrotliEncoder = task.get(BrotliEncoder).?;
+                @field(Task.Tag, typeBaseName(@typeName(NativeZlib))) => {
+                    var any: *NativeZlib = task.get(NativeZlib).?;
                     any.runFromJSThread();
                 },
-                @field(Task.Tag, typeBaseName(@typeName(BrotliDecoder))) => {
-                    var any: *BrotliDecoder = task.get(BrotliDecoder).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ZlibEncoder))) => {
-                    var any: *ZlibEncoder = task.get(ZlibEncoder).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ZlibDecoder))) => {
-                    var any: *ZlibDecoder = task.get(ZlibDecoder).?;
+                @field(Task.Tag, typeBaseName(@typeName(NativeBrotli))) => {
+                    var any: *NativeBrotli = task.get(NativeBrotli).?;
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ProcessWaiterThreadTask))) => {
@@ -1257,15 +1252,13 @@ pub const EventLoop = struct {
                     var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
                     any.runFromJSThread(virtual_machine);
                 },
-                @field(Task.Tag, typeBaseName(@typeName(bun.kit.DevServer.BundleTask))) => {
-                    task.get(bun.kit.DevServer.BundleTask).?.completeOnMainThread();
+                @field(Task.Tag, typeBaseName(@typeName(bun.bundle_v2.DeferredBatchTask))) => {
+                    var any: *bun.bundle_v2.DeferredBatchTask = task.get(bun.bundle_v2.DeferredBatchTask).?;
+                    any.runOnJSThread();
                 },
 
-                else => if (Environment.allow_assert) {
-                    bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
-                } else {
-                    log("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
-                    unreachable;
+                else => {
+                    bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
                 },
             }
 
@@ -1446,6 +1439,7 @@ pub const EventLoop = struct {
         }
 
         this.processGCTimer();
+        this.processGCTimer();
         loop.tick();
 
         ctx.onAfterEventLoop();
@@ -1494,38 +1488,36 @@ pub const EventLoop = struct {
 
     pub fn tick(this: *EventLoop) void {
         JSC.markBinding(@src());
-        {
-            this.entered_event_loop_count += 1;
-            this.debug.enter();
-            defer {
-                this.entered_event_loop_count -= 1;
-                this.debug.exit();
-            }
-
-            const ctx = this.virtual_machine;
-            this.tickConcurrent();
-            this.processGCTimer();
-
-            const global = ctx.global;
-            const global_vm = ctx.jsc;
-
-            while (true) {
-                while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
-                    this.tickConcurrent();
-                } else {
-                    this.drainMicrotasksWithGlobal(global, global_vm);
-                    this.tickConcurrent();
-                    if (this.tasks.count > 0) continue;
-                }
-                break;
-            }
-
-            while (this.tickWithCount(ctx) > 0) {
-                this.tickConcurrent();
-            }
-
-            this.global.handleRejectedPromises();
+        this.entered_event_loop_count += 1;
+        this.debug.enter();
+        defer {
+            this.entered_event_loop_count -= 1;
+            this.debug.exit();
         }
+
+        const ctx = this.virtual_machine;
+        this.tickConcurrent();
+        this.processGCTimer();
+
+        const global = ctx.global;
+        const global_vm = ctx.jsc;
+
+        while (true) {
+            while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
+                this.tickConcurrent();
+            } else {
+                this.drainMicrotasksWithGlobal(global, global_vm);
+                this.tickConcurrent();
+                if (this.tasks.count > 0) continue;
+            }
+            break;
+        }
+
+        while (this.tickWithCount(ctx) > 0) {
+            this.tickConcurrent();
+        }
+
+        this.global.handleRejectedPromises();
     }
 
     pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
@@ -1714,8 +1706,7 @@ pub const MiniVM = struct {
     }
 
     pub inline fn incrementPendingUnrefCounter(this: @This()) void {
-        _ = this; // autofix
-
+        _ = this;
         @panic("FIXME TODO");
     }
 
@@ -2036,13 +2027,6 @@ pub const AnyEventLoop = union(enum) {
 
     pub const Task = AnyTaskWithExtraContext;
 
-    pub fn fromJSC(
-        this: *AnyEventLoop,
-        jsc: *EventLoop,
-    ) void {
-        this.* = .{ .js = jsc };
-    }
-
     pub fn wakeup(this: *AnyEventLoop) void {
         this.loop().wakeup();
     }
@@ -2124,7 +2108,7 @@ pub const AnyEventLoop = union(enum) {
     ) void {
         switch (this.*) {
             .js => {
-                unreachable; // TODO:
+                bun.todoPanic(@src(), "AnyEventLoop.enqueueTaskConcurrent", .{});
                 // const TaskType = AnyTask.New(Context, Callback);
                 // @field(ctx, field) = TaskType.init(ctx);
                 // var concurrent = bun.default_allocator.create(ConcurrentTask) catch unreachable;

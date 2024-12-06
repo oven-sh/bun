@@ -10,4 +10,6 @@ public:
     BUN_EXPORT ~EscapableHandleScope();
 };
 
-}
+static_assert(sizeof(EscapableHandleScope) == 32, "EscapableHandleScope has wrong layout");
+
+} // namespace v8

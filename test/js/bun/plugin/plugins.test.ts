@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
-import { describe, expect, it } from "bun:test";
-import { resolve } from "path";
+import { describe, expect, it, test } from "bun:test";
+import path, { dirname, join, resolve } from "path";
 
 declare global {
   var failingObject: any;
@@ -187,13 +187,14 @@ plugin({
 // This is to test that it works when imported from a separate file
 import "../../third_party/svelte";
 import "./module-plugins";
+import { render as svelteRender } from 'svelte/server'; 
 
 describe("require", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", () => {
     const { default: App } = require("./hello.svelte");
-    const { html } = App.render();
+    const { body } = svelteRender(App);
 
-    expect(html).toBe("<h1>Hello world!</h1>");
+    expect(body).toBe("<!--[--><h1>Hello world!</h1><!--]-->");
   });
 
   it("beep:boop returns 42", () => {
@@ -293,9 +294,8 @@ describe("dynamic import", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", async () => {
     const { default: App }: any = await import("./hello.svelte");
 
-    const { html } = App.render();
-
-    expect(html).toBe("<h1>Hello world!</h1>");
+    const { body } = svelteRender(App);
+    expect(body).toBe("<!--[--><h1>Hello world!</h1><!--]-->");
   });
 
   it("beep:boop returns 42", async () => {
@@ -324,9 +324,9 @@ import Hello from ${JSON.stringify(resolve(import.meta.dir, "hello2.svelte"))};
 export default Hello;
 `;
     const { default: SvelteApp } = await import("delay:hello2.svelte");
-    const { html } = SvelteApp.render();
+    const { body } = svelteRender(SvelteApp);
 
-    expect(html).toBe("<h1>Hello world!</h1>");
+    expect(body).toBe("<!--[--><h1>Hello world!</h1><!--]-->");
   });
 });
 

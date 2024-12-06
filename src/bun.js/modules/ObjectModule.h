@@ -5,15 +5,15 @@
 
 namespace Zig {
 JSC::SyntheticSourceProvider::SyntheticSourceGenerator
-generateObjectModuleSourceCode(JSC::JSGlobalObject *globalObject,
-                               JSC::JSObject *object);
+generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
+    JSC::JSObject* object);
 
 JSC::SyntheticSourceProvider::SyntheticSourceGenerator
-generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject *globalObject,
-                                      JSC::JSObject *object);
+generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
+    JSC::JSObject* object);
 
 JSC::SyntheticSourceProvider::SyntheticSourceGenerator
-generateJSValueModuleSourceCode(JSC::JSGlobalObject *globalObject,
-                                JSC::JSValue value);
+generateJSValueModuleSourceCode(JSC::JSGlobalObject* globalObject,
+    JSC::JSValue value);
 
 } // namespace Zig

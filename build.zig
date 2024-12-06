@@ -52,14 +52,14 @@ const BunBuildOptions = struct {
     /// instead of at compile time. This is disabled in release or if this flag
     /// is set (to allow CI to build a portable executable). Affected files:
     ///
-    /// - src/kit/runtime.ts (bundled)
+    /// - src/bake/runtime.ts (bundled)
     /// - src/bun.js/api/FFI.h
     ///
     /// A similar technique is used in C++ code for JavaScript builtins
-    force_embed_code: bool = false,
+    codegen_embed: bool = false,
 
     /// `./build/codegen` or equivalent
-    generated_code_dir: []const u8,
+    codegen_path: []const u8,
     no_llvm: bool,
 
     cached_options_module: ?*Module = null,
@@ -71,7 +71,7 @@ const BunBuildOptions = struct {
     }
 
     pub fn shouldEmbedCode(opts: *const BunBuildOptions) bool {
-        return opts.optimize != .Debug or opts.force_embed_code;
+        return opts.optimize != .Debug or opts.codegen_embed;
     }
 
     pub fn buildOptionsModule(this: *BunBuildOptions, b: *Build) *Module {
@@ -83,10 +83,10 @@ const BunBuildOptions = struct {
         opts.addOption([]const u8, "base_path", b.pathFromRoot("."));
         opts.addOption([]const u8, "codegen_path", std.fs.path.resolve(b.graph.arena, &.{
             b.build_root.path.?,
-            this.generated_code_dir,
+            this.codegen_path,
         }) catch @panic("OOM"));
 
-        opts.addOption(bool, "embed_code", this.shouldEmbedCode());
+        opts.addOption(bool, "codegen_embed", this.shouldEmbedCode());
         opts.addOption(u32, "canary_revision", this.canary_revision orelse 0);
         opts.addOption(bool, "is_canary", this.canary_revision != null);
         opts.addOption(Version, "version", this.version);
@@ -157,7 +157,7 @@ pub fn build(b: *Build) !void {
 
     // TODO: Upgrade path for 0.14.0
     // b.graph.zig_lib_directory = brk: {
-    //     const sub_path = "src/deps/zig/lib";
+    //     const sub_path = "vendor/zig/lib";
     //     const dir = try b.build_root.handle.openDir(sub_path, .{});
     //     break :brk .{ .handle = dir, .path = try b.build_root.join(b.graph.arena, &.{sub_path}) };
     // };
@@ -165,7 +165,7 @@ pub fn build(b: *Build) !void {
     var target_query = b.standardTargetOptionsQueryOnly(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const os, const arch = brk: {
+    const os, const arch, const abi = brk: {
         // resolve the target query to pick up what operating system and cpu
         // architecture that is desired. this information is used to slightly
         // refine the query.
@@ -179,7 +179,8 @@ pub fn build(b: *Build) !void {
             .windows => .windows,
             else => |t| std.debug.panic("Unsupported OS tag {}", .{t}),
         };
-        break :brk .{ os, arch };
+        const abi = temp_resolved.result.abi;
+        break :brk .{ os, arch, abi };
     };
 
     // target must be refined to support older but very popular devices on
@@ -191,16 +192,17 @@ pub fn build(b: *Build) !void {
     }
 
     target_query.os_version_min = getOSVersionMin(os);
-    target_query.glibc_version = getOSGlibCVersion(os);
+    target_query.glibc_version = if (abi.isGnu()) getOSGlibCVersion(os) else null;
 
     const target = b.resolveTargetQuery(target_query);
 
-    const generated_code_dir = b.pathFromRoot(
-        b.option([]const u8, "generated-code", "Set the generated code directory") orelse
+    const codegen_path = b.pathFromRoot(
+        b.option([]const u8, "codegen_path", "Set the generated code directory") orelse
             "build/debug/codegen",
     );
+    const codegen_embed = b.option(bool, "codegen_embed", "If codegen files should be embedded in the binary") orelse false;
+
     const bun_version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0";
-    const force_embed_js_code = b.option(bool, "force_embed_js_code", "Always embed JavaScript builtins") orelse false;
 
     b.reference_trace = ref_trace: {
         const trace = b.option(u32, "reference-trace", "Set the reference trace") orelse 16;
@@ -218,8 +220,8 @@ pub fn build(b: *Build) !void {
         .os = os,
         .arch = arch,
 
-        .generated_code_dir = generated_code_dir,
-        .force_embed_code = force_embed_js_code,
+        .codegen_path = codegen_path,
+        .codegen_embed = codegen_embed,
         .no_llvm = no_llvm,
 
         .version = try Version.parse(bun_version),
@@ -234,9 +236,10 @@ pub fn build(b: *Build) !void {
         ),
 
         .sha = sha: {
-            const sha = b.option([]const u8, "sha", "Force the git sha") orelse
-                b.graph.env_map.get("GITHUB_SHA") orelse
-                b.graph.env_map.get("GIT_SHA") orelse fetch_sha: {
+            const sha_buildoption = b.option([]const u8, "sha", "Force the git sha");
+            const sha_github = b.graph.env_map.get("GITHUB_SHA");
+            const sha_env = b.graph.env_map.get("GIT_SHA");
+            const sha = sha_buildoption orelse sha_github orelse sha_env orelse fetch_sha: {
                 const result = std.process.Child.run(.{
                     .allocator = b.allocator,
                     .argv = &.{
@@ -295,7 +298,7 @@ pub fn build(b: *Build) !void {
         bun_check_obj.generated_bin = null;
         step.dependOn(&bun_check_obj.step);
 
-        // The default install step will run zig build check This is so ZLS
+        // The default install step will run zig build check. This is so ZLS
         // identifies the codebase, as well as performs checking if build on
         // save is enabled.
 
@@ -312,6 +315,8 @@ pub fn build(b: *Build) !void {
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
             .{ .os = .linux, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64, .musl = true },
+            .{ .os = .linux, .arch = .aarch64, .musl = true },
         });
     }
 
@@ -324,20 +329,20 @@ pub fn build(b: *Build) !void {
     }
 }
 
-pub inline fn addMultiCheck(
+pub fn addMultiCheck(
     b: *Build,
     parent_step: *Step,
     root_build_options: BunBuildOptions,
-    to_check: []const struct { os: OperatingSystem, arch: Arch },
+    to_check: []const struct { os: OperatingSystem, arch: Arch, musl: bool = false },
 ) void {
-    inline for (to_check) |check| {
-        inline for (.{ .Debug, .ReleaseFast }) |mode| {
+    for (to_check) |check| {
+        for ([_]std.builtin.Mode{ .Debug, .ReleaseFast }) |mode| {
             const check_target = b.resolveTargetQuery(.{
                 .os_tag = OperatingSystem.stdOSTag(check.os),
                 .cpu_arch = check.arch,
                 .cpu_model = getCpuModel(check.os, check.arch) orelse .determined_by_cpu_arch,
                 .os_version_min = getOSVersionMin(check.os),
-                .glibc_version = getOSGlibCVersion(check.os),
+                .glibc_version = if (check.musl) null else getOSGlibCVersion(check.os),
             });
 
             var options: BunBuildOptions = .{
@@ -351,7 +356,7 @@ pub inline fn addMultiCheck(
                 .tracy_callstack_depth = root_build_options.tracy_callstack_depth,
                 .version = root_build_options.version,
                 .reported_nodejs_version = root_build_options.reported_nodejs_version,
-                .generated_code_dir = root_build_options.generated_code_dir,
+                .codegen_path = root_build_options.codegen_path,
                 .no_llvm = root_build_options.no_llvm,
             };
 
@@ -368,6 +373,7 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .root_source_file = switch (opts.os) {
             .wasm => b.path("root_wasm.zig"),
             else => b.path("root.zig"),
+            // else => b.path("root_css.zig"),
         },
         .target = opts.target,
         .optimize = opts.optimize,
@@ -408,6 +414,15 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
     }
     addInternalPackages(b, obj, opts);
     obj.root_module.addImport("build_options", opts.buildOptionsModule(b));
+
+    const translate_plugin_api = b.addTranslateC(.{
+        .root_source_file = b.path("./packages/bun-native-bundler-plugin-api/bundler_plugin.h"),
+        .target = opts.target,
+        .optimize = opts.optimize,
+        .link_libc = true,
+    });
+    obj.root_module.addImport("bun-native-bundler-plugin-api", translate_plugin_api.createModule());
+
     return obj;
 }
 
@@ -474,13 +489,45 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .{ .file = "ZigGeneratedClasses.zig", .import = "ZigGeneratedClasses" },
         .{ .file = "ResolvedSourceTag.zig", .import = "ResolvedSourceTag" },
         .{ .file = "ErrorCode.zig", .import = "ErrorCode" },
-        .{ .file = "kit.client.js", .import = "kit-codegen/kit.client.js", .enable = opts.shouldEmbedCode() },
-        .{ .file = "kit.server.js", .import = "kit-codegen/kit.server.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "runtime.out.js" },
+        .{ .file = "bake.client.js", .import = "bake-codegen/bake.client.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bake.error.js", .import = "bake-codegen/bake.error.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bake.server.js", .import = "bake-codegen/bake.server.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bun-error/index.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bun-error/bun-error.css", .enable = opts.shouldEmbedCode() },
+        .{ .file = "fallback-decoder.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/assert.js" },
+        .{ .file = "node-fallbacks/buffer.js" },
+        .{ .file = "node-fallbacks/console.js" },
+        .{ .file = "node-fallbacks/constants.js" },
+        .{ .file = "node-fallbacks/crypto.js" },
+        .{ .file = "node-fallbacks/domain.js" },
+        .{ .file = "node-fallbacks/events.js" },
+        .{ .file = "node-fallbacks/http.js" },
+        .{ .file = "node-fallbacks/https.js" },
+        .{ .file = "node-fallbacks/net.js" },
+        .{ .file = "node-fallbacks/os.js" },
+        .{ .file = "node-fallbacks/path.js" },
+        .{ .file = "node-fallbacks/process.js" },
+        .{ .file = "node-fallbacks/punycode.js" },
+        .{ .file = "node-fallbacks/querystring.js" },
+        .{ .file = "node-fallbacks/stream.js" },
+        .{ .file = "node-fallbacks/string_decoder.js" },
+        .{ .file = "node-fallbacks/sys.js" },
+        .{ .file = "node-fallbacks/timers.js" },
+        .{ .file = "node-fallbacks/tty.js" },
+        .{ .file = "node-fallbacks/url.js" },
+        .{ .file = "node-fallbacks/util.js" },
+        .{ .file = "node-fallbacks/zlib.js" },
     }) |entry| {
         if (!@hasField(@TypeOf(entry), "enable") or entry.enable) {
-            const path = b.pathJoin(&.{ opts.generated_code_dir, entry.file });
+            const path = b.pathJoin(&.{ opts.codegen_path, entry.file });
             validateGeneratedPath(path);
-            obj.root_module.addAnonymousImport(entry.import, .{
+            const import_path = if (@hasField(@TypeOf(entry), "import"))
+                entry.import
+            else
+                entry.file;
+            obj.root_module.addAnonymousImport(import_path, .{
                 .root_source_file = .{ .cwd_relative = path },
             });
         }

@@ -18,6 +18,11 @@
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
+#include "JavaScriptCore/ScriptCallStackFactory.h"
+#include "JavaScriptCore/ConsoleMessage.h"
+#include "JavaScriptCore/InspectorConsoleAgent.h"
+#include "JavaScriptCore/JSGlobalObjectDebuggable.h"
+#include <JavaScriptCore/StackFrame.h>
 #include <sys/stat.h>
 #include "ConsoleObject.h"
 #include <JavaScriptCore/GetterSetter.h>
@@ -26,14 +31,16 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "wtf-bindings.h"
-
+#include <webcore/SerializedScriptValue.h>
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/OrdinalNumber.h"
 
 #include "AsyncContextFrame.h"
+#include "ErrorCode.h"
 
 #include "napi_handle_scope.h"
+#include "napi_external.h"
 
 #ifndef WIN32
 #include <errno.h>
@@ -57,7 +64,10 @@ typedef int mode_t;
 #include "ProcessBindingNatives.h"
 
 #if OS(LINUX)
+#include <features.h>
+#ifdef __GNU_LIBRARY__
 #include <gnu/libc-version.h>
+#endif
 #endif
 
 #pragma mark - Node.js Process
@@ -110,7 +120,6 @@ JSC_DECLARE_CUSTOM_GETTER(Process_getPID);
 JSC_DECLARE_CUSTOM_GETTER(Process_getPPID);
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*));
-static bool processIsExiting = false;
 
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
@@ -231,7 +240,7 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
-
+    static bool processIsExiting = false;
     if (processIsExiting)
         return;
     processIsExiting = true;
@@ -269,6 +278,8 @@ extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
+
+extern "C" size_t Bun__process_dlopen_count;
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
@@ -349,6 +360,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
 #endif
 
+    globalObject->m_pendingNapiModuleDlopenHandle = handle;
+
+    Bun__process_dlopen_count++;
+
     if (!handle) {
 #if OS(WINDOWS)
         DWORD errorId = GetLastError();
@@ -382,7 +397,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         return JSValue::encode(jsUndefined());
     }
 
-    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject * globalObject,
+    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject* globalObject,
         JSC::EncodedJSValue exports);
 #if OS(WINDOWS)
 #define dlsym GetProcAddress
@@ -413,10 +428,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
     JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(globalObject, exportsValue));
 
+    // TODO: think about the finalizer here
+    // currently we do not dealloc napi modules so we don't have to worry about it right now
+    auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr);
+    bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    ASSERT(success);
+
     RETURN_IF_EXCEPTION(scope, {});
 
     globalObject->m_pendingNapiModuleAndExports[0].clear();
     globalObject->m_pendingNapiModuleAndExports[1].clear();
+    globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288
@@ -442,24 +465,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     JSValue numberValue = callFrame->argument(0);
 
     if (!numberValue.isNumber()) {
-        throwTypeError(globalObject, throwScope, "The \"mask\" argument must be a number"_s);
-        return {};
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "mask"_s, "number"_s, numberValue);
     }
 
     if (!numberValue.isAnyInt()) {
-        throwNodeRangeError(globalObject, throwScope, "The \"mask\" argument must be an integer"_s);
-        return {};
+        return Bun::ERR::OUT_OF_RANGE(throwScope, globalObject, "mask"_s, "an integer"_s, numberValue);
     }
 
     double number = numberValue.toNumber(globalObject);
     int64_t newUmask = isInt52(number) ? tryConvertToInt52(number) : numberValue.toInt32(globalObject);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
     if (newUmask < 0 || newUmask > 4294967295) {
-        StringBuilder messageBuilder;
-        messageBuilder.append("The \"mask\" value must be in range [0, 4294967295]. Received value: "_s);
-        messageBuilder.append(int52ToString(vm, newUmask, 10)->getString(globalObject));
-        throwNodeRangeError(globalObject, throwScope, messageBuilder.toString());
-        return {};
+        return Bun::ERR::OUT_OF_RANGE(throwScope, globalObject, "mask"_s, 0, 4294967295, numberValue);
     }
 
     return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
@@ -654,45 +671,51 @@ struct SignalHandleValue {
 };
 static HashMap<int, SignalHandleValue>* signalToContextIdsMap = nullptr;
 
-static const NeverDestroyed<String> signalNames[] = {
-    MAKE_STATIC_STRING_IMPL("SIGHUP"),
-    MAKE_STATIC_STRING_IMPL("SIGINT"),
-    MAKE_STATIC_STRING_IMPL("SIGQUIT"),
-    MAKE_STATIC_STRING_IMPL("SIGILL"),
-    MAKE_STATIC_STRING_IMPL("SIGTRAP"),
-    MAKE_STATIC_STRING_IMPL("SIGABRT"),
-    MAKE_STATIC_STRING_IMPL("SIGIOT"),
-    MAKE_STATIC_STRING_IMPL("SIGBUS"),
-    MAKE_STATIC_STRING_IMPL("SIGFPE"),
-    MAKE_STATIC_STRING_IMPL("SIGKILL"),
-    MAKE_STATIC_STRING_IMPL("SIGUSR1"),
-    MAKE_STATIC_STRING_IMPL("SIGSEGV"),
-    MAKE_STATIC_STRING_IMPL("SIGUSR2"),
-    MAKE_STATIC_STRING_IMPL("SIGPIPE"),
-    MAKE_STATIC_STRING_IMPL("SIGALRM"),
-    MAKE_STATIC_STRING_IMPL("SIGTERM"),
-    MAKE_STATIC_STRING_IMPL("SIGCHLD"),
-    MAKE_STATIC_STRING_IMPL("SIGCONT"),
-    MAKE_STATIC_STRING_IMPL("SIGSTOP"),
-    MAKE_STATIC_STRING_IMPL("SIGTSTP"),
-    MAKE_STATIC_STRING_IMPL("SIGTTIN"),
-    MAKE_STATIC_STRING_IMPL("SIGTTOU"),
-    MAKE_STATIC_STRING_IMPL("SIGURG"),
-    MAKE_STATIC_STRING_IMPL("SIGXCPU"),
-    MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
-    MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
-    MAKE_STATIC_STRING_IMPL("SIGPROF"),
-    MAKE_STATIC_STRING_IMPL("SIGWINCH"),
-    MAKE_STATIC_STRING_IMPL("SIGIO"),
-    MAKE_STATIC_STRING_IMPL("SIGINFO"),
-    MAKE_STATIC_STRING_IMPL("SIGSYS"),
-};
+static const NeverDestroyed<String>* getSignalNames()
+{
+    static const NeverDestroyed<String> signalNames[] = {
+        MAKE_STATIC_STRING_IMPL("SIGHUP"),
+        MAKE_STATIC_STRING_IMPL("SIGINT"),
+        MAKE_STATIC_STRING_IMPL("SIGQUIT"),
+        MAKE_STATIC_STRING_IMPL("SIGILL"),
+        MAKE_STATIC_STRING_IMPL("SIGTRAP"),
+        MAKE_STATIC_STRING_IMPL("SIGABRT"),
+        MAKE_STATIC_STRING_IMPL("SIGIOT"),
+        MAKE_STATIC_STRING_IMPL("SIGBUS"),
+        MAKE_STATIC_STRING_IMPL("SIGFPE"),
+        MAKE_STATIC_STRING_IMPL("SIGKILL"),
+        MAKE_STATIC_STRING_IMPL("SIGUSR1"),
+        MAKE_STATIC_STRING_IMPL("SIGSEGV"),
+        MAKE_STATIC_STRING_IMPL("SIGUSR2"),
+        MAKE_STATIC_STRING_IMPL("SIGPIPE"),
+        MAKE_STATIC_STRING_IMPL("SIGALRM"),
+        MAKE_STATIC_STRING_IMPL("SIGTERM"),
+        MAKE_STATIC_STRING_IMPL("SIGCHLD"),
+        MAKE_STATIC_STRING_IMPL("SIGCONT"),
+        MAKE_STATIC_STRING_IMPL("SIGSTOP"),
+        MAKE_STATIC_STRING_IMPL("SIGTSTP"),
+        MAKE_STATIC_STRING_IMPL("SIGTTIN"),
+        MAKE_STATIC_STRING_IMPL("SIGTTOU"),
+        MAKE_STATIC_STRING_IMPL("SIGURG"),
+        MAKE_STATIC_STRING_IMPL("SIGXCPU"),
+        MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
+        MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
+        MAKE_STATIC_STRING_IMPL("SIGPROF"),
+        MAKE_STATIC_STRING_IMPL("SIGWINCH"),
+        MAKE_STATIC_STRING_IMPL("SIGIO"),
+        MAKE_STATIC_STRING_IMPL("SIGINFO"),
+        MAKE_STATIC_STRING_IMPL("SIGSYS"),
+    };
+
+    return signalNames;
+}
 
 static void loadSignalNumberMap()
 {
 
     static std::once_flag signalNameToNumberMapOnceFlag;
     std::call_once(signalNameToNumberMapOnceFlag, [] {
+        auto signalNames = getSignalNames();
         signalNameToNumberMap = new HashMap<String, int>();
         signalNameToNumberMap->reserveInitialCapacity(31);
 #if OS(WINDOWS)
@@ -702,85 +725,91 @@ static void loadSignalNumberMap()
         signalNameToNumberMap->add(signalNames[9], SIGKILL);
         signalNameToNumberMap->add(signalNames[15], SIGTERM);
 #else
-            signalNameToNumberMap->add(signalNames[0], SIGHUP);
-            signalNameToNumberMap->add(signalNames[1], SIGINT);
-            signalNameToNumberMap->add(signalNames[2], SIGQUIT);
-            signalNameToNumberMap->add(signalNames[3], SIGILL);
+        signalNameToNumberMap->add(signalNames[0], SIGHUP);
+        signalNameToNumberMap->add(signalNames[1], SIGINT);
+        signalNameToNumberMap->add(signalNames[2], SIGQUIT);
+        signalNameToNumberMap->add(signalNames[3], SIGILL);
 #ifdef SIGTRAP
-            signalNameToNumberMap->add(signalNames[4], SIGTRAP);
+        signalNameToNumberMap->add(signalNames[4], SIGTRAP);
 #endif
-            signalNameToNumberMap->add(signalNames[5], SIGABRT);
+        signalNameToNumberMap->add(signalNames[5], SIGABRT);
 #ifdef SIGIOT
-            signalNameToNumberMap->add(signalNames[6], SIGIOT);
+        signalNameToNumberMap->add(signalNames[6], SIGIOT);
 #endif
 #ifdef SIGBUS
-            signalNameToNumberMap->add(signalNames[7], SIGBUS);
+        signalNameToNumberMap->add(signalNames[7], SIGBUS);
 #endif
-            signalNameToNumberMap->add(signalNames[8], SIGFPE);
-            signalNameToNumberMap->add(signalNames[9], SIGKILL);
+        signalNameToNumberMap->add(signalNames[8], SIGFPE);
+        signalNameToNumberMap->add(signalNames[9], SIGKILL);
 #ifdef SIGUSR1
-            signalNameToNumberMap->add(signalNames[10], SIGUSR1);
+        signalNameToNumberMap->add(signalNames[10], SIGUSR1);
 #endif
-            signalNameToNumberMap->add(signalNames[11], SIGSEGV);
+        signalNameToNumberMap->add(signalNames[11], SIGSEGV);
 #ifdef SIGUSR2
-            signalNameToNumberMap->add(signalNames[12], SIGUSR2);
+        signalNameToNumberMap->add(signalNames[12], SIGUSR2);
 #endif
 #ifdef SIGPIPE
-            signalNameToNumberMap->add(signalNames[13], SIGPIPE);
+        signalNameToNumberMap->add(signalNames[13], SIGPIPE);
 #endif
 #ifdef SIGALRM
-            signalNameToNumberMap->add(signalNames[14], SIGALRM);
+        signalNameToNumberMap->add(signalNames[14], SIGALRM);
 #endif
-            signalNameToNumberMap->add(signalNames[15], SIGTERM);
+        signalNameToNumberMap->add(signalNames[15], SIGTERM);
 #ifdef SIGCHLD
-            signalNameToNumberMap->add(signalNames[16], SIGCHLD);
+        signalNameToNumberMap->add(signalNames[16], SIGCHLD);
 #endif
 #ifdef SIGCONT
-            signalNameToNumberMap->add(signalNames[17], SIGCONT);
+        signalNameToNumberMap->add(signalNames[17], SIGCONT);
 #endif
 #ifdef SIGSTOP
-            signalNameToNumberMap->add(signalNames[18], SIGSTOP);
+        signalNameToNumberMap->add(signalNames[18], SIGSTOP);
 #endif
 #ifdef SIGTSTP
-            signalNameToNumberMap->add(signalNames[19], SIGTSTP);
+        signalNameToNumberMap->add(signalNames[19], SIGTSTP);
 #endif
 #ifdef SIGTTIN
-            signalNameToNumberMap->add(signalNames[20], SIGTTIN);
+        signalNameToNumberMap->add(signalNames[20], SIGTTIN);
 #endif
 #ifdef SIGTTOU
-            signalNameToNumberMap->add(signalNames[21], SIGTTOU);
+        signalNameToNumberMap->add(signalNames[21], SIGTTOU);
 #endif
 #ifdef SIGURG
-            signalNameToNumberMap->add(signalNames[22], SIGURG);
+        signalNameToNumberMap->add(signalNames[22], SIGURG);
 #endif
 #ifdef SIGXCPU
-            signalNameToNumberMap->add(signalNames[23], SIGXCPU);
+        signalNameToNumberMap->add(signalNames[23], SIGXCPU);
 #endif
 #ifdef SIGXFSZ
-            signalNameToNumberMap->add(signalNames[24], SIGXFSZ);
+        signalNameToNumberMap->add(signalNames[24], SIGXFSZ);
 #endif
 #ifdef SIGVTALRM
-            signalNameToNumberMap->add(signalNames[25], SIGVTALRM);
+        signalNameToNumberMap->add(signalNames[25], SIGVTALRM);
 #endif
 #ifdef SIGPROF
-            signalNameToNumberMap->add(signalNames[26], SIGPROF);
+        signalNameToNumberMap->add(signalNames[26], SIGPROF);
 #endif
-            signalNameToNumberMap->add(signalNames[27], SIGWINCH);
+        signalNameToNumberMap->add(signalNames[27], SIGWINCH);
 #ifdef SIGIO
-            signalNameToNumberMap->add(signalNames[28], SIGIO);
+        signalNameToNumberMap->add(signalNames[28], SIGIO);
 #endif
 #ifdef SIGINFO
-            signalNameToNumberMap->add(signalNames[29], SIGINFO);
+        signalNameToNumberMap->add(signalNames[29], SIGINFO);
 #endif
 
 #ifndef SIGINFO
-            signalNameToNumberMap->add(signalNames[29], 255);
+        signalNameToNumberMap->add(signalNames[29], 255);
 #endif
 #ifdef SIGSYS
-            signalNameToNumberMap->add(signalNames[30], SIGSYS);
+        signalNameToNumberMap->add(signalNames[30], SIGSYS);
 #endif
 #endif
     });
+}
+
+bool isSignalName(WTF::String input)
+{
+    loadSignalNumberMap();
+    return signalNameToNumberMap->contains(input);
 }
 
 #if OS(WINDOWS)
@@ -813,12 +842,7 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
         MarkedArgumentBuffer args;
         args.append(jsString(globalObject->vm(), signalNameIdentifier.string()));
         args.append(jsNumber(signalNumber));
-        // TODO(@paperdave): add an ASSERT(isMainThread());
-        // This should be true on posix if I understand sigaction right
-        // On Windows it should be true if the uv_signal is created on the main thread's loop
-        //
-        // I would like to assert this because if that assumption is not true,
-        // this call will probably cause very confusing bugs.
+
         process->wrapped().emitForBindings(signalNameIdentifier, args);
     });
 };
@@ -924,6 +948,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         loadSignalNumberMap();
         static std::once_flag signalNumberToNameMapOnceFlag;
         std::call_once(signalNumberToNameMapOnceFlag, [] {
+            auto signalNames = getSignalNames();
             signalNumberToNameMap = new HashMap<int, String>();
             signalNumberToNameMap->reserveInitialCapacity(31);
             signalNumberToNameMap->add(SIGHUP, signalNames[0]);
@@ -1572,8 +1597,11 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         }
 
 #if OS(LINUX)
+#ifdef __GNU_LIBRARY__
         header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionCompiler"_s), JSC::jsString(vm, makeString(__GLIBC__, '.', __GLIBC_MINOR__)), 0);
         header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionRuntime"_s), JSC::jsString(vm, String::fromUTF8(gnu_get_libc_version()), 0));
+#else
+#endif
 #endif
 
         header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);
@@ -2895,11 +2923,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    int pid = callFrame->argument(0).toInt32(globalObject);
+    auto pid_value = callFrame->argument(0);
+    int pid = pid_value.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (pid < 0) {
-        throwNodeRangeError(globalObject, scope, "pid must be a positive integer"_s);
-        return {};
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "pid"_s, "a positive integer"_s, pid_value);
     }
     JSC::JSValue signalValue = callFrame->argument(1);
     int signal = SIGTERM;
@@ -2912,13 +2940,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
             signal = num;
             RETURN_IF_EXCEPTION(scope, {});
         } else {
-            throwNodeRangeError(globalObject, scope, "Unknown signal name"_s);
-            return {};
+            return Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, signalValue);
         }
         RETURN_IF_EXCEPTION(scope, {});
     } else if (!signalValue.isUndefinedOrNull()) {
-        throwTypeError(globalObject, scope, "signal must be a string or number"_s);
-        return {};
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "signal"_s, "string or number"_s, signalValue);
     }
 
     auto global = jsCast<Zig::GlobalObject*>(globalObject);

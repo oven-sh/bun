@@ -5,6 +5,7 @@ import { readFile, readlink, writeFile } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
+import detectLibc from "detect-libc";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -18,6 +19,15 @@ export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
 export const isBuildKite = process.env.BUILDKITE === "true";
+export const libcFamily = detectLibc.familySync() as "glibc" | "musl";
+export const isVerbose = process.env.DEBUG === "1";
+
+// Use these to mark a test as flaky or broken.
+// This will help us keep track of these tests.
+//
+// test.todoIf(isFlaky && isMacOS)("this test is flaky");
+export const isFlaky = isCI;
+export const isBroken = isCI;
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -30,6 +40,7 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
+  BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
 };
 
 if (isWindows) {
@@ -133,7 +144,7 @@ export function hideFromStackTrace(block: CallableFunction) {
   });
 }
 
-type DirectoryTree = {
+export type DirectoryTree = {
   [name: string]:
     | string
     | Buffer
@@ -300,137 +311,174 @@ const binaryTypes = {
   "float32array": Float32Array,
   "float64array": Float64Array,
 } as const;
-
-expect.extend({
-  toHaveTestTimedOutAfter(actual: any, expected: number) {
-    if (typeof actual !== "string") {
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to be a string`,
-      };
-    }
-
-    const preStartI = actual.indexOf("timed out after ");
-    if (preStartI === -1) {
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to contain "timed out after "`,
-      };
-    }
-    const startI = preStartI + "timed out after ".length;
-    const endI = actual.indexOf("ms", startI);
-    if (endI === -1) {
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to contain "ms" after "timed out after "`,
-      };
-    }
-    const int = parseInt(actual.slice(startI, endI));
-    if (!Number.isSafeInteger(int)) {
-      return {
-        pass: false,
-        message: () => `Expected ${int} to be a safe integer`,
-      };
-    }
-
-    return {
-      pass: int >= expected,
-      message: () => `Expected ${int} to be >= ${expected}`,
-    };
-  },
-  toBeBinaryType(actual: any, expected: keyof typeof binaryTypes) {
-    switch (expected) {
-      case "buffer":
+if (expect.extend)
+  expect.extend({
+    toHaveTestTimedOutAfter(actual: any, expected: number) {
+      if (typeof actual !== "string") {
         return {
-          pass: Buffer.isBuffer(actual),
-          message: () => `Expected ${actual} to be buffer`,
+          pass: false,
+          message: () => `Expected ${actual} to be a string`,
         };
-      case "arraybuffer":
+      }
+
+      const preStartI = actual.indexOf("timed out after ");
+      if (preStartI === -1) {
         return {
-          pass: actual instanceof ArrayBuffer,
-          message: () => `Expected ${actual} to be ArrayBuffer`,
+          pass: false,
+          message: () => `Expected ${actual} to contain "timed out after "`,
         };
-      default: {
-        const ctor = binaryTypes[expected];
-        if (!ctor) {
+      }
+      const startI = preStartI + "timed out after ".length;
+      const endI = actual.indexOf("ms", startI);
+      if (endI === -1) {
+        return {
+          pass: false,
+          message: () => `Expected ${actual} to contain "ms" after "timed out after "`,
+        };
+      }
+      const int = parseInt(actual.slice(startI, endI));
+      if (!Number.isSafeInteger(int)) {
+        return {
+          pass: false,
+          message: () => `Expected ${int} to be a safe integer`,
+        };
+      }
+
+      return {
+        pass: int >= expected,
+        message: () => `Expected ${int} to be >= ${expected}`,
+      };
+    },
+    toBeBinaryType(actual: any, expected: keyof typeof binaryTypes) {
+      switch (expected) {
+        case "buffer":
           return {
-            pass: false,
-            message: () => `Expected ${expected} to be a binary type`,
+            pass: Buffer.isBuffer(actual),
+            message: () => `Expected ${actual} to be buffer`,
+          };
+        case "arraybuffer":
+          return {
+            pass: actual instanceof ArrayBuffer,
+            message: () => `Expected ${actual} to be ArrayBuffer`,
+          };
+        default: {
+          const ctor = binaryTypes[expected];
+          if (!ctor) {
+            return {
+              pass: false,
+              message: () => `Expected ${expected} to be a binary type`,
+            };
+          }
+
+          return {
+            pass: actual instanceof ctor,
+            message: () => `Expected ${actual} to be ${expected}`,
           };
         }
-
-        return {
-          pass: actual instanceof ctor,
-          message: () => `Expected ${actual} to be ${expected}`,
-        };
       }
-    }
-  },
-  toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
-    const result = Bun.spawnSync({
-      cmd: [bunExe(), ...cmds],
-      env: bunEnv,
-      stdio: ["inherit", "pipe", "inherit"],
-    });
+    },
+    toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
+      const result = Bun.spawnSync({
+        cmd: [bunExe(), ...cmds],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "inherit"],
+      });
 
-    if (result.exitCode !== expectedCode) {
-      return {
-        pass: false,
-        message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
-      };
-    }
-
-    if (optionalStdout != null) {
-      return {
-        pass: result.stdout.toString("utf-8") === optionalStdout,
-        message: () =>
-          `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
-      };
-    }
-
-    return {
-      pass: true,
-      message: () => `Expected ${cmds.join(" ")} to fail`,
-    };
-  },
-  toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
-    try {
-      fn();
-      return {
-        pass: false,
-        message: () => `Received function did not throw`,
-      };
-    } catch (e) {
-      // expect(e).toBeInstanceOf(cls);
-      if (!(e instanceof cls)) {
+      if (result.exitCode !== expectedCode) {
         return {
           pass: false,
-          message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+          message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
         };
       }
 
-      // expect(e).toHaveProperty("code");
-      if (!("code" in e)) {
+      if (optionalStdout != null) {
         return {
-          pass: false,
-          message: () => `Expected error to have property 'code'; got ${e}`,
-        };
-      }
-
-      // expect(e.code).toEqual(code);
-      if (e.code !== code) {
-        return {
-          pass: false,
-          message: () => `Expected error to have code '${code}'; got ${e.code}`,
+          pass: result.stdout.toString("utf-8") === optionalStdout,
+          message: () =>
+            `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
         };
       }
 
       return {
         pass: true,
+        message: () => `Expected ${cmds.join(" ")} to fail`,
       };
-    }
-  },
-});
+    },
+    toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+      try {
+        fn();
+        return {
+          pass: false,
+          message: () => `Received function did not throw`,
+        };
+      } catch (e) {
+        // expect(e).toBeInstanceOf(cls);
+        if (!(e instanceof cls)) {
+          return {
+            pass: false,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+          };
+        }
+
+        // expect(e).toHaveProperty("code");
+        if (!("code" in e)) {
+          return {
+            pass: false,
+            message: () => `Expected error to have property 'code'; got ${e}`,
+          };
+        }
+
+        // expect(e.code).toEqual(code);
+        if (e.code !== code) {
+          return {
+            pass: false,
+            message: () => `Expected error to have code '${code}'; got ${e.code}`,
+          };
+        }
+
+        return {
+          pass: true,
+        };
+      }
+    },
+    async toThrowWithCodeAsync(fn: CallableFunction, cls: CallableFunction, code: string) {
+      try {
+        await fn();
+        return {
+          pass: false,
+          message: () => `Received function did not throw`,
+        };
+      } catch (e) {
+        // expect(e).toBeInstanceOf(cls);
+        if (!(e instanceof cls)) {
+          return {
+            pass: false,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+          };
+        }
+
+        // expect(e).toHaveProperty("code");
+        if (!("code" in e)) {
+          return {
+            pass: false,
+            message: () => `Expected error to have property 'code'; got ${e}`,
+          };
+        }
+
+        // expect(e.code).toEqual(code);
+        if (e.code !== code) {
+          return {
+            pass: false,
+            message: () => `Expected error to have code '${code}'; got ${e.code}`,
+          };
+        }
+
+        return {
+          pass: true,
+        };
+      }
+    },
+  });
 
 export function ospath(path: string) {
   if (isWindows) {
@@ -969,7 +1017,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err = (await new Response(stderr).text()).replace(/warn: Slow filesystem.*/g, "");
+  let err = stderrForInstall(await new Response(stderr).text());
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -983,6 +1031,11 @@ export async function runBunInstall(
   let out = await new Response(stdout).text();
   expect(await exited).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
+}
+
+// stderr with `slow filesystem` warning removed
+export function stderrForInstall(err: string) {
+  return err.replace(/warn: Slow filesystem.*/g, "");
 }
 
 export async function runBunUpdate(
@@ -1009,6 +1062,30 @@ export async function runBunUpdate(
   }
 
   return { out: out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/), err, exitCode };
+}
+
+export async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
+  const { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "pm", "pack", ...args],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("warning:");
+  expect(err).not.toContain("failed");
+  expect(err).not.toContain("panic:");
+
+  const out = await Bun.readableStreamToText(stdout);
+
+  const exitCode = await exited;
+  expect(exitCode).toBe(0);
+
+  return { out, err };
 }
 
 // If you need to modify, clone it
@@ -1042,34 +1119,35 @@ String.prototype.isUTF16 = function () {
   return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
 };
 
-expect.extend({
-  toBeLatin1String(actual: unknown) {
-    if ((actual as string).isLatin1()) {
+if (expect.extend)
+  expect.extend({
+    toBeLatin1String(actual: unknown) {
+      if ((actual as string).isLatin1()) {
+        return {
+          pass: true,
+          message: () => `Expected ${actual} to be a Latin1 string`,
+        };
+      }
+
       return {
-        pass: true,
+        pass: false,
         message: () => `Expected ${actual} to be a Latin1 string`,
       };
-    }
+    },
+    toBeUTF16String(actual: unknown) {
+      if ((actual as string).isUTF16()) {
+        return {
+          pass: true,
+          message: () => `Expected ${actual} to be a UTF16 string`,
+        };
+      }
 
-    return {
-      pass: false,
-      message: () => `Expected ${actual} to be a Latin1 string`,
-    };
-  },
-  toBeUTF16String(actual: unknown) {
-    if ((actual as string).isUTF16()) {
       return {
-        pass: true,
+        pass: false,
         message: () => `Expected ${actual} to be a UTF16 string`,
       };
-    }
-
-    return {
-      pass: false,
-      message: () => `Expected ${actual} to be a UTF16 string`,
-    };
-  },
-});
+    },
+  });
 
 interface BunHarnessTestMatchers {
   toBeLatin1String(): void;
@@ -1078,6 +1156,7 @@ interface BunHarnessTestMatchers {
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
   toRun(optionalStdout?: string, expectedCode?: number): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
+  toThrowWithCodeAsync(cls: CallableFunction, code: string): void;
 }
 
 declare module "bun:test" {
@@ -1289,4 +1368,38 @@ export function waitForFileToExist(path: string, interval: number) {
   while (!fs.existsSync(path)) {
     sleepSync(interval);
   }
+}
+
+export function libcPathForDlopen() {
+  switch (process.platform) {
+    case "linux":
+      switch (libcFamily) {
+        case "glibc":
+          return "libc.so.6";
+        case "musl":
+          return "/usr/lib/libc.so";
+      }
+    case "darwin":
+      return "libc.dylib";
+    default:
+      throw new Error("TODO");
+  }
+}
+
+export function cwdScope(cwd: string) {
+  const original = process.cwd();
+  process.chdir(cwd);
+  return {
+    [Symbol.dispose]() {
+      process.chdir(original);
+    },
+  };
+}
+
+export function rmScope(path: string) {
+  return {
+    [Symbol.dispose]() {
+      fs.rmSync(path, { recursive: true, force: true });
+    },
+  };
 }

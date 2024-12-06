@@ -11,7 +11,9 @@ const server = Bun.serve({
         },
       });
     }
-    if (url.endsWith("/buffering")) {
+    if (url.endsWith("/json-buffering")) {
+      await req.json();
+    } else if (url.endsWith("/buffering")) {
       await req.text();
     } else if (url.endsWith("/buffering+body-getter")) {
       req.body;

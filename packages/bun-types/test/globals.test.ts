@@ -209,10 +209,6 @@ const writableStream = new WritableStream();
   a.level;
 }
 {
-  const a = new EventSource("asdf");
-  a.CLOSED;
-}
-{
   const a = new AbortController();
   a;
 }

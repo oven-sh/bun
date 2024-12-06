@@ -46,13 +46,13 @@ public:
 
 private:
     JSC::VM& m_vm;
-    JSC::JSCell* m_callee;
+    JSC::JSCell* m_callee { nullptr };
 
     // May be null
     JSC::CallFrame* m_callFrame;
 
     // May be null
-    JSC::CodeBlock* m_codeBlock;
+    JSC::CodeBlock* m_codeBlock { nullptr };
     JSC::BytecodeIndex m_bytecodeIndex;
 
     // Lazy-initialized
@@ -96,8 +96,40 @@ public:
     SourcePositions* getSourcePositions();
 
     bool isWasmFrame() const { return m_isWasmFrame; }
-    bool isEval() const { return m_codeBlock && (JSC::EvalCode == m_codeBlock->codeType()); }
-    bool isConstructor() const { return m_codeBlock && (JSC::CodeForConstruct == m_codeBlock->specializationKind()); }
+    bool isEval()
+    {
+        if (m_codeBlock) {
+            if (m_codeBlock->codeType() == JSC::EvalCode) {
+                return true;
+            }
+            auto* executable = m_codeBlock->ownerExecutable();
+            if (!executable) {
+                return false;
+            }
+
+            switch (executable->evalContextType()) {
+            case JSC::EvalContextType::None: {
+                return false;
+            }
+            case JSC::EvalContextType::FunctionEvalContext:
+            case JSC::EvalContextType::InstanceFieldEvalContext:
+                return true;
+            }
+        }
+
+        if (m_callee && m_callee->inherits<JSC::JSFunction>()) {
+            auto* function = jsCast<JSC::JSFunction*>(m_callee);
+            if (function->isHostFunction()) {
+                return false;
+            }
+        }
+
+        return false;
+    }
+    bool isConstructor() const
+    {
+        return m_codeBlock && (JSC::CodeForConstruct == m_codeBlock->specializationKind());
+    }
 
 private:
     ALWAYS_INLINE String retrieveSourceURL();
@@ -130,9 +162,16 @@ public:
     {
     }
 
+    JSCStackTrace(WTF::Vector<JSCStackFrame>&& frames)
+        : m_frames(WTFMove(frames))
+    {
+    }
+
     size_t size() const { return m_frames.size(); }
     bool isEmpty() const { return m_frames.isEmpty(); }
     JSCStackFrame& at(size_t i) { return m_frames.at(i); }
+
+    WTF::Vector<JSCStackFrame>&& frames() { return WTFMove(m_frames); }
 
     static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames);
 
@@ -145,6 +184,7 @@ public:
      *
      * Return value must remain stack allocated. */
     static JSCStackTrace captureCurrentJSStackTrace(Zig::GlobalObject* globalObject, JSC::CallFrame* callFrame, size_t frameLimit, JSC::JSValue caller);
+    static void getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit);
 
     /* In JSC, JSC::Exception points to the actual value that was thrown, usually
      * a JSC::ErrorInstance (but could be any JSValue). In v8, on the other hand,
@@ -171,4 +211,6 @@ private:
     }
 };
 
+bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor);
+bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame);
 }

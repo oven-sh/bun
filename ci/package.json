@@ -1,0 +1,27 @@
+{
+  "private": true,
+  "scripts": {
+    "bootstrap": "brew install gh jq cirruslabs/cli/tart cirruslabs/cli/sshpass hashicorp/tap/packer && packer init darwin",
+    "login": "token=$(gh auth token); username=$(gh api user --jq .login); echo \"Login as $username...\"; echo \"$token\" | tart login ghcr.io --username \"$username\" --password-stdin; echo \"$token\" | docker login ghcr.io --username \"$username\" --password-stdin",
+    "fetch:image-name": "echo ghcr.io/oven-sh/bun-vm",
+    "fetch:darwin-version": "echo 1",
+    "fetch:macos-version": "sw_vers -productVersion | cut -d. -f1",
+    "fetch:script-version": "cat ../scripts/bootstrap.sh | grep 'v=' | sed 's/v=\"//;s/\"//' | head -n 1",
+    "build:darwin-aarch64-vanilla": "packer build '-only=*.bun-darwin-aarch64-vanilla' -var release=$(bun fetch:macos-version) darwin/",
+    "build:darwin-aarch64-vanilla-15": "packer build '-only=*.bun-darwin-aarch64-vanilla' -var release=15 darwin/",
+    "build:darwin-aarch64-vanilla-14": "packer build '-only=*.bun-darwin-aarch64-vanilla' -var release=14 darwin/",
+    "build:darwin-aarch64-vanilla-13": "packer build '-only=*.bun-darwin-aarch64-vanilla' -var release=13 darwin/",
+    "build:darwin-aarch64": "packer build '-only=*.bun-darwin-aarch64' -var release=$(bun fetch:macos-version) darwin/",
+    "build:darwin-aarch64-15": "packer build '-only=*.bun-darwin-aarch64' -var release=15 darwin/",
+    "build:darwin-aarch64-14": "packer build '-only=*.bun-darwin-aarch64' -var release=14 darwin/",
+    "build:darwin-aarch64-13": "packer build '-only=*.bun-darwin-aarch64' -var release=13 darwin/",
+    "publish:darwin-aarch64-vanilla": "image=$(tart list --format json | jq -r \".[] | select(.Name | test(\\\"^bun-darwin-aarch64-vanilla-.*-$(bun fetch:macos-version)$\\\")) | .Name\" | head -n 1 | sed 's/bun-//'); tart push \"bun-$image\" \"ghcr.io/oven-sh/bun-vm:$image-v$(bun fetch:darwin-version)\"",
+    "publish:darwin-aarch64-vanilla-15": "tart push bun-darwin-aarch64-vanilla-sequoia-15 \"$(bun fetch:image-name):darwin-aarch64-vanilla-sequoia-15-v$(bun fetch:darwin-version)\"",
+    "publish:darwin-aarch64-vanilla-14": "tart push bun-darwin-aarch64-vanilla-sonoma-14 \"$(bun fetch:image-name):darwin-aarch64-vanilla-sonoma-14-v$(bun fetch:darwin-version)\"",
+    "publish:darwin-aarch64-vanilla-13": "tart push bun-darwin-aarch64-vanilla-ventura-13 \"$(bun fetch:image-name):darwin-aarch64-vanilla-ventura-13-v$(bun fetch:darwin-version)\"",
+    "publish:darwin-aarch64": "image=$(tart list --format json | jq -r \".[] | select(.Name | test(\\\"^bun-darwin-aarch64-.*-$(bun fetch:macos-version)$\\\")) | .Name\" | head -n 1 | sed 's/bun-//'); tart push \"bun-$image\" \"ghcr.io/oven-sh/bun-vm:$image-v$(bun fetch:script-version)\"",
+    "publish:darwin-aarch64-15": "tart push bun-darwin-aarch64-sequoia-15 \"$(bun fetch:image-name):darwin-aarch64-sequoia-15-v$(bun fetch:script-version)\"",
+    "publish:darwin-aarch64-14": "tart push bun-darwin-aarch64-sonoma-14 \"$(bun fetch:image-name):darwin-aarch64-sonoma-14-v$(bun fetch:script-version)\"",
+    "publish:darwin-aarch64-13": "tart push bun-darwin-aarch64-ventura-13 \"$(bun fetch:image-name):darwin-aarch64-ventura-13-v$(bun fetch:script-version)\""
+  }
+}

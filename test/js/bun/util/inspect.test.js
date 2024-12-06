@@ -147,7 +147,6 @@ it("utf16 property name", () => {
         笑: "😀",
       },
     ],
-    null,
     2,
   );
   expect(Bun.inspect(db.prepare("select '😀' as 笑").all())).toBe(output);
@@ -526,13 +525,39 @@ it("Bun.inspect array with non-indexed properties", () => {
 });
 
 describe("console.logging function displays async and generator names", async () => {
-  const cases = [function a() {}, async function b() {}, function* c() {}, async function* d() {}];
+  const cases = [
+    function () {},
+    function a() {},
+    async function b() {},
+    function* c() {},
+    async function* d() {},
+    async function* () {},
+  ];
 
   const expected_logs = [
+    "[Function]",
     "[Function: a]",
     "[AsyncFunction: b]",
     "[GeneratorFunction: c]",
     "[AsyncGeneratorFunction: d]",
+    "[AsyncGeneratorFunction]",
+  ];
+
+  for (let i = 0; i < cases.length; i++) {
+    it(expected_logs[i], () => {
+      expect(Bun.inspect(cases[i])).toBe(expected_logs[i]);
+    });
+  }
+});
+describe("console.logging class displays names and extends", async () => {
+  class A {}
+  const cases = [A, class B extends A {}, class extends A {}, class {}];
+
+  const expected_logs = [
+    "[class A]",
+    "[class B extends A]",
+    "[class (anonymous) extends A]",
+    "[class (anonymous)]",
   ];
 
   for (let i = 0; i < cases.length; i++) {
@@ -562,4 +587,15 @@ it("console.log on a Blob shows name", () => {
   expect(Bun.inspect(file)).toBe(
     `File (3 bytes) {\n  name: "",\n  type: "text/plain;charset=utf-8",\n  lastModified: ${file.lastModified}\n}`,
   );
+});
+
+it("console.log on a arguments shows list", () => {
+  function fn() {
+    expect(Bun.inspect(arguments)).toBe(`[ 1, [ 1 ], [Function: fn] ]`);
+  }
+  fn(1, [1], fn);
+});
+
+it("console.log on null prototype", () => {
+  expect(Bun.inspect(Object.create(null))).toBe("[Object: null prototype] {}");
 });

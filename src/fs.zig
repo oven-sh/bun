@@ -189,13 +189,13 @@ pub const FileSystem = struct {
                 const name = try strings.StringOrTinyString.initAppendIfNeeded(
                     name_slice,
                     *FileSystem.FilenameStore,
-                    &FileSystem.FilenameStore.instance,
+                    FileSystem.FilenameStore.instance,
                 );
 
                 const name_lowercased = try strings.StringOrTinyString.initLowerCaseAppendIfNeeded(
                     name_slice,
                     *FileSystem.FilenameStore,
-                    &FileSystem.FilenameStore.instance,
+                    FileSystem.FilenameStore.instance,
                 );
 
                 break :brk EntryStore.instance.append(.{
@@ -788,7 +788,9 @@ pub const FileSystem = struct {
 
         pub const Limit = struct {
             pub var handles: usize = 0;
+            pub var handles_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
             pub var stack: usize = 0;
+            pub var stack_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
         };
 
         // Always try to max out how many files we can keep open
@@ -797,26 +799,37 @@ pub const FileSystem = struct {
                 return std.math.maxInt(usize);
             }
 
-            const LIMITS = [_]std.posix.rlimit_resource{ std.posix.rlimit_resource.STACK, std.posix.rlimit_resource.NOFILE };
-            inline for (LIMITS, 0..) |limit_type, i| {
-                const limit = try std.posix.getrlimit(limit_type);
-
+            blk: {
+                const resource = std.posix.rlimit_resource.STACK;
+                const limit = try std.posix.getrlimit(resource);
+                Limit.stack_before = limit;
                 if (limit.cur < limit.max) {
                     var new_limit = std.mem.zeroes(std.posix.rlimit);
                     new_limit.cur = limit.max;
                     new_limit.max = limit.max;
 
-                    if (std.posix.setrlimit(limit_type, new_limit)) {
-                        if (i == 1) {
-                            Limit.handles = limit.max;
-                        } else {
-                            Limit.stack = limit.max;
-                        }
-                    } else |_| {}
+                    std.posix.setrlimit(resource, new_limit) catch break :blk;
+                    Limit.stack = limit.max;
                 }
-
-                if (i == LIMITS.len - 1) return limit.max;
             }
+            var file_limit: usize = 0;
+            blk: {
+                const resource = std.posix.rlimit_resource.NOFILE;
+                const limit = try std.posix.getrlimit(resource);
+                Limit.handles_before = limit;
+                file_limit = limit.max;
+                Limit.handles = file_limit;
+                if (limit.cur < limit.max or limit.max < 163840) {
+                    var new_limit = std.mem.zeroes(std.posix.rlimit);
+                    new_limit.cur = @max(limit.max, 163840);
+                    new_limit.max = @max(limit.max, 163840);
+
+                    std.posix.setrlimit(resource, new_limit) catch break :blk;
+                    file_limit = new_limit.max;
+                    Limit.handles = file_limit;
+                }
+            }
+            return file_limit;
         }
 
         var _entries_option_map: *EntriesOption.Map = undefined;
@@ -1033,7 +1046,7 @@ pub const FileSystem = struct {
             comptime Iterator: type,
             iterator: Iterator,
         ) !*EntriesOption {
-            var dir = bun.strings.pathWithoutTrailingSlashOne(dir_maybe_trail_slash);
+            var dir = bun.strings.withoutTrailingSlashWindowsPath(dir_maybe_trail_slash);
 
             bun.resolver.Resolver.assertValidCacheKey(dir);
             var cache_result: ?allocators.Result = null;
@@ -1403,7 +1416,7 @@ pub const FileSystem = struct {
             return cache;
         }
 
-        //     	// Stores the file entries for directories we've listed before
+        //         // Stores the file entries for directories we've listed before
         // entries_mutex: std.Mutex
         // entries      map[string]entriesOrErr
 
@@ -1625,9 +1638,15 @@ threadlocal var normalize_buf: [1024]u8 = undefined;
 threadlocal var join_buf: [1024]u8 = undefined;
 
 pub const Path = struct {
+    /// The display path. In the bundler, this is relative to the current
+    /// working directory. Since it can be emitted in bundles (and used
+    /// for content hashes), this should contain forward slashes on Windows.
     pretty: string,
+    /// The location of this resource. For the `file` namespace, this is
+    /// an absolute path with native slashes.
     text: string,
-    namespace: string = "unspecified",
+    namespace: string,
+    // TODO(@paperdave): investigate removing or simplifying this property (it's 64 bytes)
     name: PathName,
     is_disabled: bool = false,
     is_symlink: bool = false,
@@ -1855,13 +1874,23 @@ pub const Path = struct {
         };
     }
 
-    pub fn initWithNamespaceVirtual(comptime text: string, comptime namespace: string, comptime package: string) Path {
-        return Path{
-            .pretty = comptime "node:" ++ package,
+    pub inline fn initWithNamespaceVirtual(comptime text: string, comptime namespace: string, comptime package: string) Path {
+        return comptime Path{
+            .pretty = namespace ++ ":" ++ package,
             .is_symlink = true,
             .text = text,
             .namespace = namespace,
             .name = PathName.init(text),
+        };
+    }
+
+    pub inline fn initForKitBuiltIn(comptime namespace: string, comptime package: string) Path {
+        return comptime Path{
+            .pretty = namespace ++ ":" ++ package,
+            .is_symlink = true,
+            .text = "_bun/" ++ package,
+            .namespace = namespace,
+            .name = PathName.init(package),
         };
     }
 
@@ -1878,6 +1907,13 @@ pub const Path = struct {
 
     pub fn isJSXFile(this: *const Path) bool {
         return strings.hasSuffixComptime(this.name.filename, ".jsx") or strings.hasSuffixComptime(this.name.filename, ".tsx");
+    }
+
+    pub fn keyForIncrementalGraph(path: *const Path) []const u8 {
+        return if (path.isFile())
+            path.text
+        else
+            path.pretty;
     }
 };
 

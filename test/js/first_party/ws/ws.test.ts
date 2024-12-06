@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
+import { createServer } from "http";
+import { connect, AddressInfo } from "net";
+import { once } from "events";
+import crypto from "crypto";
 
 const strings = [
   {
@@ -411,6 +415,47 @@ it("close event", async () => {
   wss.close();
 });
 
+// https://github.com/oven-sh/bun/issues/14345
+it("WebSocket finishRequest mocked", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  using server = Bun.serve({
+    port: 0,
+    websocket: {
+      open() {},
+      close() {},
+      message() {},
+    },
+    fetch(req, server) {
+      expect(req.headers.get("X-Custom-Header")).toBe("CustomValue");
+      expect(req.headers.get("Another-Header")).toBe("AnotherValue");
+      return server.upgrade(req);
+    },
+  });
+
+  const customHeaders = {
+    "X-Custom-Header": "CustomValue",
+    "Another-Header": "AnotherValue",
+  };
+
+  const ws = new WebSocket(server.url, [], {
+    finishRequest: req => {
+      Object.entries(customHeaders).forEach(([key, value]) => {
+        req.setHeader(key, value);
+      });
+      req.end();
+    },
+  });
+
+  ws.once("open", () => {
+    ws.send("Hello");
+    ws.close();
+    resolve();
+  });
+
+  await promise;
+});
+
 function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) => void, timeout?: number) {
   it(
     label,
@@ -505,5 +550,177 @@ it("WebSocketServer should handle backpressure", async () => {
     expect(received).toBe(PAYLOAD_SIZE * ITERATIONS);
   } finally {
     wss.close();
+  }
+});
+
+it("Server should be able to send empty pings", async () => {
+  // WebSocket frame creation function with masking
+  function createWebSocketFrame(message: string) {
+    const messageBuffer = Buffer.from(message);
+    const frame = [];
+
+    // Add FIN bit and opcode for text frame
+    frame.push(0x81);
+
+    // Payload length
+    if (messageBuffer.length < 126) {
+      frame.push(messageBuffer.length | 0x80); // Mask bit set
+    } else if (messageBuffer.length < 65536) {
+      frame.push(126 | 0x80); // Mask bit set
+      frame.push((messageBuffer.length >> 8) & 0xff);
+      frame.push(messageBuffer.length & 0xff);
+    } else {
+      frame.push(127 | 0x80); // Mask bit set
+      for (let i = 7; i >= 0; i--) {
+        frame.push((messageBuffer.length >> (i * 8)) & 0xff);
+      }
+    }
+
+    // Generate masking key
+    const maskingKey = crypto.randomBytes(4);
+    frame.push(...maskingKey);
+
+    // Mask the payload
+    const maskedPayload = Buffer.alloc(messageBuffer.length);
+    for (let i = 0; i < messageBuffer.length; i++) {
+      maskedPayload[i] = messageBuffer[i] ^ maskingKey[i % 4];
+    }
+
+    // Combine frame header and masked payload
+    return Buffer.concat([Buffer.from(frame), maskedPayload]);
+  }
+
+  async function checkPing(helloMessage: string, pingMessage?: string) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const server = new WebSocketServer({ noServer: true });
+    const httpServer = createServer();
+
+    try {
+      server.on("connection", async incoming => {
+        incoming.on("message", value => {
+          try {
+            expect(value.toString()).toBe(helloMessage);
+            if (arguments.length > 1) {
+              incoming.ping(pingMessage);
+            } else {
+              incoming.ping();
+            }
+          } catch (e) {
+            reject(e);
+          }
+        });
+      });
+
+      httpServer.on("upgrade", async (request, socket, head) => {
+        server.handleUpgrade(request, socket, head, ws => {
+          server.emit("connection", ws, request);
+        });
+      });
+      httpServer.listen(0);
+      await once(httpServer, "listening");
+      const socket = connect({
+        port: (httpServer.address() as AddressInfo).port,
+        host: "127.0.0.1",
+      });
+
+      let upgradeResponse = "";
+
+      let state = 0; //connecting
+      socket.on("data", (data: Buffer) => {
+        switch (state) {
+          case 0: {
+            upgradeResponse += data.toString("utf8");
+
+            if (upgradeResponse.indexOf("\r\n\r\n") !== -1) {
+              if (upgradeResponse.indexOf("HTTP/1.1 101 Switching Protocols") !== -1) {
+                state = 1;
+                socket.write(createWebSocketFrame(helloMessage));
+              } else {
+                reject(new Error("Failed to Upgrade WebSockets"));
+                state = 2;
+                socket.end();
+              }
+            }
+            break;
+          }
+          case 1: {
+            if (data.at(0) === 137) {
+              try {
+                const len = data.at(1) as number;
+                if (len > 0) {
+                  const str = data.slice(2, len + 2).toString("utf8");
+                  resolve(str);
+                } else {
+                  resolve("");
+                }
+              } catch (e) {
+                reject(e);
+              }
+              state = 2;
+              socket.end();
+              break;
+            }
+            reject(new Error("Unexpected data received"));
+          }
+          case 2: {
+            reject(new Error("Connection Closed"));
+          }
+        }
+      });
+
+      // Generate a Sec-WebSocket-Key
+      const key = crypto.randomBytes(16).toString("base64");
+
+      // Create the WebSocket upgrade request
+      socket.write(
+        [
+          `GET / HTTP/1.1`,
+          `Host: 127.0.0.1`,
+          `Upgrade: websocket`,
+          `Connection: Upgrade`,
+          `Sec-WebSocket-Key: ${key}`,
+          `Sec-WebSocket-Version: 13`,
+          `\r\n`,
+        ].join("\r\n"),
+      );
+
+      return await promise;
+    } finally {
+      httpServer.closeAllConnections();
+    }
+  }
+  {
+    // test without any payload
+    const pingMessage = await checkPing("");
+    expect(pingMessage).toBe("");
+  }
+  {
+    // test with null payload
+    //@ts-ignore
+    const pingMessage = await checkPing("", null);
+    expect(pingMessage).toBe("");
+  }
+  {
+    // test with undefined payload
+    const pingMessage = await checkPing("", undefined);
+    expect(pingMessage).toBe("");
+  }
+  {
+    // test with some payload
+    const pingMessage = await checkPing("Hello", "bun");
+    expect(pingMessage).toBe("bun");
+  }
+  {
+    // test limits
+    const pingPayload = Buffer.alloc(125, "b").toString();
+    const pingMessage = await checkPing("Hello, World", pingPayload);
+    expect(pingMessage).toBe(pingPayload);
+  }
+
+  {
+    // should not be equal because is bigger than 125 bytes
+    const pingPayload = Buffer.alloc(126, "b").toString();
+    const pingMessage = await checkPing("Hello, World", pingPayload);
+    expect(pingMessage).not.toBe(pingPayload);
   }
 });

@@ -83,7 +83,11 @@ test("dependency on workspace without version in package.json", async () => {
     const lockfile = parseLockfile(packageDir);
     expect(lockfile).toMatchNodeModulesAt(packageDir);
     expect(lockfile).toMatchSnapshot(`version: ${version}`);
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
+      "",
+      "2 packages installed",
+    ]);
     rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
   }
@@ -106,7 +110,11 @@ test("dependency on workspace without version in package.json", async () => {
     const lockfile = parseLockfile(packageDir);
     expect(lockfile).toMatchNodeModulesAt(packageDir);
     expect(lockfile).toMatchSnapshot(`version: ${version}`);
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "3 packages installed"]);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
+      "",
+      "3 packages installed",
+    ]);
     rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "packages", "bar", "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
@@ -147,7 +155,11 @@ test("dependency on same name as workspace and dist-tag", async () => {
   const lockfile = parseLockfile(packageDir);
   expect(lockfile).toMatchSnapshot("with version");
   expect(lockfile).toMatchNodeModulesAt(packageDir);
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "3 packages installed"]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun install v1."),
+    "",
+    "3 packages installed",
+  ]);
 });
 
 test("successfully installs workspace when path already exists in node_modules", async () => {
@@ -218,6 +230,7 @@ test("adding workspace in workspace edits package.json with correct version (wor
   const out = await Bun.readableStreamToText(stdout);
 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun add v1."),
     "",
     "installed pkg2@workspace:apps/pkg2",
     "",
@@ -587,4 +600,61 @@ describe("relative tarballs", async () => {
       },
     });
   });
+});
+
+test("$npm_package_config_ works in root", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      workspaces: ["pkgs/*"],
+      config: { foo: "bar" },
+      scripts: { sample: "echo $npm_package_config_foo $npm_package_config_qux" },
+    }),
+  );
+  await write(
+    join(packageDir, "pkgs", "pkg1", "package.json"),
+    JSON.stringify({
+      name: "pkg1",
+      config: { qux: "tab" },
+      scripts: { sample: "echo $npm_package_config_foo $npm_package_config_qux" },
+    }),
+  );
+  const p = Bun.spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: packageDir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env,
+  });
+  expect(await p.exited).toBe(0);
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_package_config_foo $npm_package_config_qux\n`);
+  expect(await new Response(p.stdout).text()).toBe(`bar\n`);
+});
+test("$npm_package_config_ works in root in subpackage", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      workspaces: ["pkgs/*"],
+      config: { foo: "bar" },
+      scripts: { sample: "echo $npm_package_config_foo $npm_package_config_qux" },
+    }),
+  );
+  await write(
+    join(packageDir, "pkgs", "pkg1", "package.json"),
+    JSON.stringify({
+      name: "pkg1",
+      config: { qux: "tab" },
+      scripts: { sample: "echo $npm_package_config_foo $npm_package_config_qux" },
+    }),
+  );
+  const p = Bun.spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: join(packageDir, "pkgs", "pkg1"),
+    stdio: ["ignore", "pipe", "pipe"],
+    env,
+  });
+  expect(await p.exited).toBe(0);
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_package_config_foo $npm_package_config_qux\n`);
+  expect(await new Response(p.stdout).text()).toBe(`tab\n`);
 });

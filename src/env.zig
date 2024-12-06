@@ -25,6 +25,7 @@ pub const isLinux = @import("builtin").target.os.tag == .linux;
 pub const isAarch64 = @import("builtin").target.cpu.arch.isAARCH64();
 pub const isX86 = @import("builtin").target.cpu.arch.isX86();
 pub const isX64 = @import("builtin").target.cpu.arch == .x86_64;
+pub const isMusl = builtin.target.abi.isMusl();
 pub const allow_assert = isDebug or isTest or std.builtin.Mode.ReleaseSafe == @import("builtin").mode;
 
 pub const build_options = @import("build_options");
@@ -41,10 +42,8 @@ pub const dump_source = isDebug and !isTest;
 pub const base_path = build_options.base_path;
 pub const enable_logs = build_options.enable_logs or isDebug;
 
-/// See -Dforce_embed_code
-pub const embed_code = build_options.embed_code;
-
 pub const codegen_path = build_options.codegen_path;
+pub const codegen_embed = build_options.codegen_embed;
 
 pub const version: std.SemanticVersion = build_options.version;
 pub const version_string = std.fmt.comptimePrint("{d}.{d}.{d}", .{ version.major, version.minor, version.patch });

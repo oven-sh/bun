@@ -2769,8 +2769,6 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__generateKeySync, (JSC::JSGlobalObject * lexi
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Invalid length"_s));
             return {};
         }
-        // TODO(@paperdave 2023-10-19): i removed WTFMove from result.releaseNonNull() as per MSVC compiler error.
-        // We need to evaluate if that is the proper fix here.
         return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, result.releaseNonNull()));
     } else {
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "algorithm should be 'aes' or 'hmac'"_s));
@@ -3113,7 +3111,7 @@ static EncodedJSValue doAsymmetricSign(JSGlobalObject* globalObject, CallFrame* 
         // We may classify the key as RSA_OAEP, but it can still be used for signing. RSA_PSS relies
         // on an incompatible scheme, and must be used via the generic crypto.sign function.
         || (cryptoKey.algorithmIdentifier() != CryptoAlgorithmIdentifier::RSA_OAEP
-        && cryptoKey.algorithmIdentifier() != CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5)) {
+            && cryptoKey.algorithmIdentifier() != CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5)) {
         return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE,
             "unsupported key type for asymmetric signing"_s);
     }
@@ -3141,7 +3139,7 @@ static EncodedJSValue doAsymmetricSign(JSGlobalObject* globalObject, CallFrame* 
 
     const auto& rsaKey = downcast<CryptoKeyRSA>(cryptoKey);
     auto operation = encrypt ? CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSignNoAlgorithm
-        : CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerifyRecover;
+                             : CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerifyRecover;
     auto result = operation(rsaKey, padding, buffer);
     if (result.hasException()) {
         WebCore::propagateException(*globalObject, scope, result.releaseException());
@@ -3151,12 +3149,12 @@ static EncodedJSValue doAsymmetricSign(JSGlobalObject* globalObject, CallFrame* 
     return JSValue::encode(WebCore::createBuffer(globalObject, outBuffer));
 }
 
-JSC_DEFINE_HOST_FUNCTION(KeyObject__privateEncrypt, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(KeyObject__privateEncrypt, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return doAsymmetricSign(globalObject, callFrame, true);
 }
 
-JSC_DEFINE_HOST_FUNCTION(KeyObject__publicDecrypt, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(KeyObject__publicDecrypt, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return doAsymmetricSign(globalObject, callFrame, false);
 }

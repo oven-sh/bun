@@ -10,15 +10,24 @@ test("defineProperty", () => {
 
   expect(Bun.inspect(CJS.default)).toBe(`{\n  a: 1,\n  b: 2,\n  c: [Getter],\n}`);
 });
+import * as Self from "./esm-defineProperty.test.ts";
+export const __esModule = true;
+test("shows __esModule if it was exported", () => {
+  expect(Bun.inspect(Self)).toBe(`Module {
+  __esModule: true,
+}`);
+  expect(Object.getOwnPropertyNames(Self)).toContain("__esModule");
+});
 
 test("arraylike", () => {
-  console.log(globalThis);
   expect(CJSArrayLike[0]).toBe(0);
   expect(CJSArrayLike[1]).toBe(1);
   expect(CJSArrayLike[2]).toBe(3);
   expect(CJSArrayLike[3]).toBe(4);
   expect(CJSArrayLike[4]).toBe(undefined);
   expect(CJSArrayLike).toHaveProperty("4");
+  expect(Object.getOwnPropertyNames(CJSArrayLike)).not.toContain("__esModule");
+  expect(Object.getOwnPropertyNames(CJSArrayLike.default)).not.toContain("__esModule");
   expect(Bun.inspect(CJSArrayLike)).toBe(`Module {
   "0": 0,
   "1": 1,

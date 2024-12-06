@@ -7,18 +7,7 @@ on:
   workflow_call:
   workflow_dispatch:
   pull_request:
-    paths:
-      - ".github/workflows/clang-tidy.yml"
-      - ".clang-tidy"
-      - "package.json"
-      - "scripts/**"
-      - "cmake/**"
-      - "src/**/*.c"
-      - "src/**/*.cpp"
-      - "src/**/*.h"
-      - "packages/**/*.c"
-      - "packages/**/*.cpp"
-      - "packages/**/*.h"
+  merge_group:
 
 env:
   BUN_VERSION: "1.1.27"
@@ -33,14 +22,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          sparse-checkout: |
-            .github
-            .clang-tidy
-            package.json
-            scripts
-            cmake
-            src
-            packages
+          fetch-depth: 0
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -50,7 +32,6 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s -- ${{ env.LLVM_VERSION_MAJOR }} all
       - name: Clang Tidy
         env:
-          ENABLE_CCACHE: OFF
           LLVM_VERSION: ${{ env.LLVM_VERSION }}
         run: |
           bun run clang-tidy:diff

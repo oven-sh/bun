@@ -187,10 +187,10 @@ pub extern fn JSC__JSGlobalObject__reload(arg0: *bindings.JSGlobalObject) void;
 pub extern fn JSC__JSGlobalObject__startRemoteInspector(arg0: *bindings.JSGlobalObject, arg1: [*c]u8, arg2: u16) bool;
 pub extern fn JSC__JSGlobalObject__vm(arg0: *bindings.JSGlobalObject) *bindings.VM;
 pub extern fn JSC__JSMap__create(arg0: *bindings.JSGlobalObject) JSC__JSValue;
-pub extern fn JSC__JSMap__get_(arg0: ?*bindings.JSMap, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSMap__has(arg0: ?*bindings.JSMap, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) bool;
-pub extern fn JSC__JSMap__remove(arg0: ?*bindings.JSMap, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) bool;
-pub extern fn JSC__JSMap__set(arg0: ?*bindings.JSMap, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue, JSValue3: JSC__JSValue) void;
+pub extern fn JSC__JSMap__get_(arg0: ?*bindings.Map, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) JSC__JSValue;
+pub extern fn JSC__JSMap__has(arg0: ?*bindings.Map, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) bool;
+pub extern fn JSC__JSMap__remove(arg0: ?*bindings.Map, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) bool;
+pub extern fn JSC__JSMap__set(arg0: ?*bindings.Map, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue, JSValue3: JSC__JSValue) void;
 pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue, ArgFn3: ?bun.JSC.JSHostFunctionPtr, ArgFn4: ?bun.JSC.JSHostFunctionPtr) void;
 pub extern fn JSC__JSValue__asArrayBuffer_(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*Bun__ArrayBuffer) bool;
 pub extern fn JSC__JSValue__asBigIntCompare(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) u8;
@@ -289,7 +289,6 @@ pub extern fn JSC__JSValue__stringIncludes(JSValue0: JSC__JSValue, arg1: *bindin
 pub extern fn JSC__JSValue__symbolFor(arg0: *bindings.JSGlobalObject, arg1: [*c]ZigString) JSC__JSValue;
 pub extern fn JSC__JSValue__symbolKeyFor(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) bool;
 pub extern fn JSC__JSValue__toBoolean(JSValue0: JSC__JSValue) bool;
-pub extern fn JSC__JSValue__toBooleanSlow(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__toError_(JSValue0: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSValue__toInt32(JSValue0: JSC__JSValue) i32;
 pub extern fn JSC__JSValue__toInt64(JSValue0: JSC__JSValue) i64;
@@ -380,6 +379,13 @@ pub extern fn FileSink__setDestroyCallback(JSValue0: JSC__JSValue, callback: usi
 pub extern fn FileSink__fromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*anyopaque;
 pub extern fn FileSink__onClose(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) void;
 pub extern fn FileSink__onReady(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, JSValue2: JSC__JSValue) void;
+pub extern fn FetchTaskletChunkedRequestSink__assignToStream(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue, arg2: ?*anyopaque, arg3: [*c]*anyopaque) JSC__JSValue;
+pub extern fn FetchTaskletChunkedRequestSink__createObject(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque, onDestroyPtrTag: usize) JSC__JSValue;
+pub extern fn FetchTaskletChunkedRequestSink__detachPtr(JSValue0: JSC__JSValue) void;
+pub extern fn FetchTaskletChunkedRequestSink__setDestroyCallback(JSValue0: JSC__JSValue, callback: usize) void;
+pub extern fn FetchTaskletChunkedRequestSink__fromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*anyopaque;
+pub extern fn FetchTaskletChunkedRequestSink__onClose(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) void;
+pub extern fn FetchTaskletChunkedRequestSink__onReady(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, JSValue2: JSC__JSValue) void;
 pub extern fn ZigException__fromException(arg0: [*c]bindings.Exception) ZigException;
 
 pub const JSC__GetterSetter = bindings.GetterSetter;

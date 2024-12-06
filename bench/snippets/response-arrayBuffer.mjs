@@ -1,6 +1,6 @@
 // This snippet mostly exists to reproduce a memory leak
 //
-import { bench, run } from "mitata";
+import { bench, run } from "../runner.mjs";
 
 const obj = {
   "id": 1296269,

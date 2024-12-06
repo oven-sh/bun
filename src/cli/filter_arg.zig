@@ -5,7 +5,7 @@ const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const strings = bun.strings;
-const json_parser = bun.JSON;
+const JSON = bun.JSON;
 const Glob = @import("../glob.zig");
 
 const Package = @import("../install/lockfile.zig").Package;
@@ -65,7 +65,7 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
         };
         defer allocator.free(json_source.contents);
 
-        const json = try json_parser.ParsePackageJSONUTF8(&json_source, log, allocator);
+        const json = try JSON.parsePackageJSONUTF8(&json_source, log, allocator);
 
         const prop = json.asProperty("workspaces") orelse continue;
 

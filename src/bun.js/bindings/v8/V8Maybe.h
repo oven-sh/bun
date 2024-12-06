@@ -6,16 +6,16 @@ template<class T>
 class Maybe {
 public:
     Maybe()
-        : has_value(false)
+        : m_hasValue(false)
     {
     }
     explicit Maybe(const T& t)
-        : has_value(true)
-        , value(t)
+        : m_hasValue(true)
+        , m_value(t)
     {
     }
-    bool has_value;
-    T value;
+    bool m_hasValue;
+    T m_value;
 };
 
 template<class T>
@@ -30,4 +30,4 @@ inline Maybe<T> Just(const T& t)
     return Maybe<T>(t);
 }
 
-}
+} // namespace v8

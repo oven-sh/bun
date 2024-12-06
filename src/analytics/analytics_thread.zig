@@ -79,43 +79,53 @@ pub fn isCI() bool {
 
 /// This answers, "What parts of bun are people actually using?"
 pub const Features = struct {
-    /// Set right before JSC::initialize is called
-    pub var jsc: usize = 0;
+    pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
+
     pub var @"Bun.stderr": usize = 0;
     pub var @"Bun.stdin": usize = 0;
     pub var @"Bun.stdout": usize = 0;
+    pub var WebSocket: usize = 0;
     pub var abort_signal: usize = 0;
+    pub var binlinks: usize = 0;
     pub var bunfig: usize = 0;
     pub var define: usize = 0;
     pub var dotenv: usize = 0;
     pub var external: usize = 0;
     pub var extracted_packages: usize = 0;
-    /// Incremented for each call to `fetch`
     pub var fetch: usize = 0;
-    pub var filesystem_router: usize = 0;
     pub var git_dependencies: usize = 0;
     pub var html_rewriter: usize = 0;
     pub var http_server: usize = 0;
     pub var https_server: usize = 0;
+    /// Set right before JSC::initialize is called
+    pub var jsc: usize = 0;
+    /// Set when bake.DevServer is initialized
+    pub var dev_server: usize = 0;
     pub var lifecycle_scripts: usize = 0;
     pub var loaders: usize = 0;
     pub var lockfile_migration_from_package_lock: usize = 0;
     pub var macros: usize = 0;
+    pub var no_avx2: usize = 0;
+    pub var no_avx: usize = 0;
     pub var shell: usize = 0;
     pub var spawn: usize = 0;
-    pub var standalone_shell: usize = 0;
-    pub var transpiler_cache: usize = 0;
-    pub var tsconfig_paths: usize = 0;
-    pub var tsconfig: usize = 0;
-    pub var virtual_modules: usize = 0;
-    pub var WebSocket: usize = 0;
-    pub var no_avx: usize = 0;
-    pub var no_avx2: usize = 0;
-    pub var binlinks: usize = 0;
-    pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
     pub var standalone_executable: usize = 0;
+    pub var standalone_shell: usize = 0;
+    /// Set when invoking a todo panic
+    pub var todo_panic: usize = 0;
+    pub var transpiler_cache: usize = 0;
+    pub var tsconfig: usize = 0;
+    pub var tsconfig_paths: usize = 0;
+    pub var virtual_modules: usize = 0;
     pub var workers_spawned: usize = 0;
     pub var workers_terminated: usize = 0;
+    pub var napi_module_register: usize = 0;
+    pub var process_dlopen: usize = 0;
+
+    comptime {
+        @export(napi_module_register, .{ .name = "Bun__napi_module_register_count" });
+        @export(process_dlopen, .{ .name = "Bun__process_dlopen_count" });
+    }
 
     pub fn formatter() Formatter {
         return Formatter{};
@@ -331,6 +341,25 @@ pub const GenerateHeader = struct {
             _ = forOS();
 
             return linux_kernel_version;
+        }
+
+        export fn Bun__isEpollPwait2SupportedOnLinuxKernel() i32 {
+            if (comptime !Environment.isLinux) {
+                return 0;
+            }
+
+            // https://man.archlinux.org/man/epoll_pwait2.2.en#HISTORY
+            const min_epoll_pwait2 = Semver.Version{
+                .major = 5,
+                .minor = 11,
+                .patch = 0,
+            };
+
+            return switch (kernelVersion().order(min_epoll_pwait2, "", "")) {
+                .gt => 1,
+                .eq => 1,
+                .lt => 0,
+            };
         }
 
         fn forLinux() Analytics.Platform {

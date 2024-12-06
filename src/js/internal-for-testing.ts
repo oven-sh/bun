@@ -56,6 +56,13 @@ export const iniInternals = {
   loadNpmrc: $newZigFunction("ini.zig", "IniTestingAPIs.loadNpmrcFromJS", 2),
 };
 
+export const cssInternals = {
+  minifyTestWithOptions: $newZigFunction("css_internals.zig", "minifyTestWithOptions", 3),
+  testWithOptions: $newZigFunction("css_internals.zig", "testWithOptions", 3),
+  prefixTestWithOptions: $newZigFunction("css_internals.zig", "prefixTestWithOptions", 3),
+  attrTest: $newZigFunction("css_internals.zig", "attrTest", 3),
+};
+
 export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") as {
   getMachOImageZeroOffset: () => number;
   segfault: () => void;
@@ -106,6 +113,7 @@ export const npm_manifest_test_helpers = $zig("npm.zig", "PackageManifest.bindin
 };
 
 // Like npm-package-arg, sort of https://www.npmjs.com/package/npm-package-arg
+export type Dependency = any;
 export const npa: (name: string) => Dependency = $newZigFunction("dependency.zig", "fromJS", 1);
 
 export const npmTag: (
@@ -128,3 +136,16 @@ export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $n
 );
 
 export const createSocketPair: () => [number, number] = $newZigFunction("socket.zig", "jsCreateSocketPair", 0);
+
+export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
+  "NodeModuleModule.cpp",
+  "jsFunctionIsModuleResolveFilenameSlowPathEnabled",
+  0,
+);
+
+export const frameworkRouterInternals = $zig("FrameworkRouter.zig", "JSFrameworkRouter.getBindings") as {
+  parseRoutePattern: (style: string, pattern: string) => null | { kind: string; pattern: string };
+  FrameworkRouter: {
+    new(opts: any): any;
+  };
+};

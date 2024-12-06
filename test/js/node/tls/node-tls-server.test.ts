@@ -6,6 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import type { PeerCertificate } from "tls";
 import tls, { connect, createServer, rootCertificates, Server, TLSSocket } from "tls";
+import { once } from "node:events";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
@@ -661,4 +662,45 @@ it("tls.rootCertificates should exists", () => {
   expect(rootCertificates).toBeInstanceOf(Array);
   expect(rootCertificates.length).toBeGreaterThan(0);
   expect(typeof rootCertificates[0]).toBe("string");
+});
+
+it("connectionListener should emit the right amount of times, and with alpnProtocol available", async () => {
+  let count = 0;
+  const promises = [];
+  const server: Server = createServer(
+    {
+      ...COMMON_CERT,
+      ALPNProtocols: ["bun"],
+    },
+    socket => {
+      count++;
+      expect(socket.alpnProtocol).toBe("bun");
+      socket.end();
+    },
+  );
+  server.setMaxListeners(100);
+
+  server.listen(0);
+  await once(server, "listening");
+  for (let i = 0; i < 50; i++) {
+    const { promise, resolve } = Promise.withResolvers();
+    promises.push(promise);
+    const socket = connect(
+      {
+        ca: COMMON_CERT.cert,
+        rejectUnauthorized: false,
+        port: server.address().port,
+        host: "127.0.0.1",
+        ALPNProtocols: ["bun"],
+      },
+      () => {
+        socket.on("close", resolve);
+        socket.resume();
+        socket.end();
+      },
+    );
+  }
+
+  await Promise.all(promises);
+  expect(count).toBe(50);
 });

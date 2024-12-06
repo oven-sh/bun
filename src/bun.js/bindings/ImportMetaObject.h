@@ -71,7 +71,7 @@ public:
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     WTF::String url;
-    LazyProperty<JSObject, JSFunction> requireProperty;
+    LazyProperty<JSObject, JSCell> requireProperty;
     LazyProperty<JSObject, JSString> dirProperty;
     LazyProperty<JSObject, JSString> urlProperty;
     LazyProperty<JSObject, JSString> fileProperty;

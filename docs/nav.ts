@@ -164,6 +164,9 @@ export default {
     page("cli/update", "`bun update`", {
       description: "Update your project's dependencies.",
     }),
+    page("cli/publish", "`bun publish`", {
+      description: "Publish your package to an npm registry.",
+    }),
     page("cli/outdated", "`bun outdated`", {
       description: "Check for outdated dependencies.",
     }),
@@ -373,6 +376,10 @@ export default {
     page("api/semver", "Semver", {
       description: `Bun's native Semver implementation is 20x faster than the popular \`node-semver\` package.`,
     }), // "`Semver`"),
+
+    page("api/color", "Color", {
+      description: `Bun's color function leverages Bun's CSS parser for parsing, normalizing, and converting colors from user input to a variety of output formats.`,
+    }), // "`Color`"),
 
     // divider("Dev Server"),
     // page("bun-dev", "Vanilla"),

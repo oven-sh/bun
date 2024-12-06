@@ -965,8 +965,10 @@ int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int por
     char port_string[16];
     snprintf(port_string, 16, "%d", port);
 
-    if (getaddrinfo(host, port_string, &hints, &result)) {
-        return -1;
+    int gai_error = getaddrinfo(host, port_string, &hints, &result);
+
+    if (gai_error != 0) {
+        return gai_error;
     }
 
     if (result == NULL) {

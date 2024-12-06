@@ -4,7 +4,6 @@ import { basename, join } from "node:path";
 import { argParse } from "./helpers";
 
 // arg parsing
-// arg parsing
 let { "codegen-root": codegenRoot, debug, ...rest } = argParse(["codegen-root", "debug"]);
 if (debug === "false" || debug === "0" || debug == "OFF") debug = false;
 if (!codegenRoot) {

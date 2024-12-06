@@ -1,42 +1,15 @@
 {
+  "files": [],
+  "include": [],
   "compilerOptions": {
-    // Enable latest features
-    "lib": ["ESNext"],
-    "target": "ESNext",
-    "module": "ESNext",
-    "moduleDetection": "force",
-    "jsx": "react-jsx",
-    "allowJs": true,
-
-    // Bundler mode
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
     "noEmit": true,
-
-    // Best practices
-    "strict": true,
-    "skipLibCheck": true,
-    "noFallthroughCasesInSwitch": true,
-
-    // Stricter type-checking
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
-    "noPropertyAccessFromIndexSignature": false,
-    "noImplicitAny": false,
-
-    // Enable decorators
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-
-    // Path remapping
-    "baseUrl": ".",
-    "paths": {
-      "bindgen": ["./src/codegen/bindgen-lib.ts"]
-    }
+    "skipLibCheck": true
   },
-  // You can verify these two lists only include necessary files
-  // by running `tsc -p . --listFilesOnly`
-  "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "exclude": ["node_modules", "WebKit", "deps"]
+  "references": [
+    //
+    { "path": "./src" },
+    { "path": "./src/bake" },
+    { "path": "./src/js" },
+    { "path": "./test" }
+  ]
 }

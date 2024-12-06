@@ -11,6 +11,7 @@ import {
   getBuildkiteEmoji,
   getBuildMetadata,
   getBuildNumber,
+  getCanaryRevision,
   getCommitMessage,
   getEmoji,
   getEnv,
@@ -43,7 +44,7 @@ import {
  * @property {Arch} arch
  * @property {Abi} [abi]
  * @property {boolean} [baseline]
- * @property {boolean} [canary]
+ * @property {number} [canary]
  * @property {Profile} [profile]
  */
 
@@ -91,7 +92,7 @@ function getTargetLabel(target) {
  * @property {Arch} arch
  * @property {Abi} [abi]
  * @property {boolean} [baseline]
- * @property {boolean} [canary]
+ * @property {number} [canary]
  * @property {Profile} [profile]
  * @property {Distro} [distro]
  * @property {string} release
@@ -386,11 +387,13 @@ function getTestAgent(platform) {
 function getBuildEnv(target) {
   const { profile, baseline, canary, abi } = target;
   const release = !profile || profile === "release";
+  const revision = typeof canary === "undefined" ? 1 : canary;
 
   return {
     CMAKE_BUILD_TYPE: release ? "Release" : profile === "debug" ? "Debug" : "RelWithDebInfo",
     ENABLE_BASELINE: baseline ? "ON" : "OFF",
-    ENABLE_CANARY: canary === false ? "OFF" : "ON",
+    ENABLE_CANARY: revision > 0 ? "ON" : "OFF",
+    CANARY_REVISION: revision.toFixed(),
     ENABLE_ASSERTIONS: release ? "OFF" : "ON",
     ENABLE_LOGS: release ? "OFF" : "ON",
     ABI: abi === "musl" ? "musl" : undefined,
@@ -933,7 +936,7 @@ async function getPipelineOptions() {
     const buildPlatformKeys = parseArray(options["build-platforms"]);
     const testPlatformKeys = parseArray(options["test-platforms"]);
     return {
-      canary: parseBoolean(options["canary"]),
+      canary: parseBoolean(options["canary"]) ? await getCanaryRevision() : 0,
       skipBuilds: parseBoolean(options["skip-builds"]),
       forceBuilds: parseBoolean(options["force-builds"]),
       skipTests: parseBoolean(options["skip-tests"]),
@@ -967,10 +970,11 @@ async function getPipelineOptions() {
     return false;
   };
 
+  const canary =
+    !parseBoolean(getEnv("RELEASE", false) || "false") &&
+    !/\[(release|build release|release build)\]/i.test(commitMessage);
   return {
-    canary:
-      !parseBoolean(getEnv("RELEASE", false) || "false") &&
-      !/\[(release|build release|release build)\]/i.test(commitMessage),
+    canary: canary ? await getCanaryRevision() : 0,
     skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),

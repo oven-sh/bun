@@ -122,9 +122,12 @@ const testPlatforms = [
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },
+  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
+  { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
 ];
 
 /**

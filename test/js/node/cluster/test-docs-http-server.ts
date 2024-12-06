@@ -1,7 +1,13 @@
+import { isBroken, isWindows } from "harness";
 import assert from "node:assert";
 import cluster from "node:cluster";
 import http from "node:http";
 import { availableParallelism } from "node:os";
+
+if (isWindows && isBroken) {
+  console.log("Skipping on Windows because it does not work when there are more than 1 CPU");
+  process.exit(0);
+}
 
 const numCPUs = availableParallelism();
 let workers = 0;

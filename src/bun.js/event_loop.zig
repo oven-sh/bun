@@ -1458,12 +1458,7 @@ pub const EventLoop = struct {
         }
 
         this.processGCTimer();
-        if (!loop.isActive()) {
-            const timespec: bun.timespec = bun.timespec.msFromNow(std.time.ms_per_week);
-            loop.tickWithTimeout(&timespec);
-        } else {
-            loop.tick();
-        }
+        loop.tick();
 
         ctx.onAfterEventLoop();
         this.tickConcurrent();

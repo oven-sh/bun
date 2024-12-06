@@ -24,8 +24,9 @@ endmacro()
 #   PREVIEW     string - The preview value of the variable
 #   REGEX       string - The regex to match the value
 #   REQUIRED    bool   - Whether the variable is required
+#   SECRET      bool   - Whether the variable is secret
 macro(optionx variable type description)
-  set(options REQUIRED)
+  set(options REQUIRED SECRET)
   set(oneValueArgs DEFAULT PREVIEW REGEX)
   set(multiValueArgs)
   cmake_parse_arguments(${variable} "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -51,6 +52,23 @@ macro(optionx variable type description)
     set(${variable}_PREVIEW ${variable})
   endif()
 
+  if(${variable}_SECRET AND NOT DEFINED ${variable})
+    set(${variable}_SOURCE "secret")
+    set(${variable}_PREVIEW ${variable})
+    if(ENV{BUILDKITE} STREQUAL "true")
+      execute_process(
+        COMMAND buildkite-agent secret get "${variable}"
+        OUTPUT_VARIABLE ${variable}
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+      )
+    endif()
+  endif()
+
+  if(${${variable}_REQUIRED} AND NOT DEFINED ${variable})
+    message(FATAL_ERROR "Required ${${variable}_SOURCE} is missing: please set, ${${variable}_PREVIEW}=<${${variable}_REGEX}>")
+  endif()
+
   if(NOT ${variable} AND ${${variable}_REQUIRED})
     message(FATAL_ERROR "Required ${${variable}_SOURCE} is missing: please set, ${${variable}_PREVIEW}=<${${variable}_REGEX}>")
   endif()
@@ -69,6 +87,7 @@ macro(optionx variable type description)
     message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\", please use ${${variable}_PREVIEW}=<${${variable}_REGEX}>")
   endif()
 
+  
   if(NOT ${variable}_VALUE STREQUAL ${variable})
     message(STATUS "Set ${variable}: ${${variable}}")
   endif()

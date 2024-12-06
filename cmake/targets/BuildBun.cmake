@@ -1096,6 +1096,96 @@ if(NOT BUN_CPP_ONLY)
       OUTPUTS
         ${BUILD_PATH}/${bunStripExe}
     )
+
+    if(APPLE AND ENABLE_APPLE_CODESIGN)
+      register_command(
+        TARGET
+          ${bun}
+        TARGET_PHASE
+          POST_BUILD
+        TARGETS
+          apple-codesign-identity
+        COMMENT
+          "Signing ${bunStripExe}"
+        COMMAND
+          ${APPLE_CODESIGN_PROGRAM}
+            ${bunStripExe}
+            --sign ${APPLE_CODESIGN_IDENTITY}
+            --keychain ${APPLE_CODESIGN_KEYCHAIN_PATH}
+            --entitlements ${CWD}/entitlements.plist
+            --options runtime
+            --force
+            --timestamp
+            -vvvv
+            --deep
+            --strict
+      )
+    endif()
+  endif()
+
+  if(APPLE AND bunStrip)
+    register_command(
+      TARGET
+        ${bun}
+      TARGET_PHASE
+        POST_BUILD
+      COMMENT
+        "Generating ${bun}.dSYM"
+      COMMAND
+        ${CMAKE_DSYMUTIL}
+          ${bunExe}
+          --flat
+          --keep-function-for-static
+          --object-prefix-map .=${CWD}
+          -o ${bun}.dSYM
+          -j ${CMAKE_BUILD_PARALLEL_LEVEL}
+      CWD
+        ${BUILD_PATH}
+      OUTPUTS
+        ${BUILD_PATH}/${bun}.dSYM
+    )
+  endif()
+
+  if(APPLE AND ENABLE_APPLE_CODESIGN)
+    # Add diagnostic commands before signing
+    register_command(
+      TARGET
+        ${bun}
+      TARGET_PHASE
+        POST_BUILD
+      COMMENT
+        "Checking keychain state before signing"
+      COMMAND
+        ${SHELL_PROGRAM} -c
+          "${APPLE_SECURITY_PROGRAM} list-keychains
+           && echo '\nChecking keychain content:'
+           && ${APPLE_SECURITY_PROGRAM} find-identity -v -p codesigning ${APPLE_CODESIGN_KEYCHAIN_PATH}
+           && echo '\nChecking keychain access:'
+           && ${APPLE_SECURITY_PROGRAM} show-keychain-info ${APPLE_CODESIGN_KEYCHAIN_PATH}"
+    )
+
+    register_command(
+      TARGET
+        ${bun}
+      TARGET_PHASE
+        POST_BUILD
+      TARGETS
+        apple-codesign-identity
+      COMMENT
+        "Signing ${bunExe}"
+      COMMAND
+        ${APPLE_CODESIGN_PROGRAM}
+          ${bunExe}
+          --sign ${APPLE_CODESIGN_IDENTITY}
+          --keychain ${APPLE_CODESIGN_KEYCHAIN_PATH}
+          --entitlements ${CWD}/entitlements.debug.plist
+          --options runtime
+          --force
+          --timestamp
+          -vvvv
+          --deep
+          --strict
+    )
   endif()
 
   register_command(
@@ -1138,29 +1228,6 @@ if(NOT BUN_CPP_ONLY)
     )
   endif()
 
-  if(CMAKE_HOST_APPLE AND bunStrip)
-    register_command(
-      TARGET
-        ${bun}
-      TARGET_PHASE
-        POST_BUILD
-      COMMENT
-        "Generating ${bun}.dSYM"
-      COMMAND
-        ${CMAKE_DSYMUTIL}
-          ${bun}
-          --flat
-          --keep-function-for-static
-          --object-prefix-map .=${CWD}
-          -o ${bun}.dSYM
-          -j ${CMAKE_BUILD_PARALLEL_LEVEL}
-      CWD
-        ${BUILD_PATH}
-      OUTPUTS
-        ${BUILD_PATH}/${bun}.dSYM
-    )
-  endif()
-
   if(CI)
     set(bunTriplet bun-${OS}-${ARCH})
     if(LINUX AND ABI STREQUAL "musl")
@@ -1170,7 +1237,9 @@ if(NOT BUN_CPP_ONLY)
       set(bunTriplet ${bunTriplet}-baseline)
     endif()
     string(REPLACE bun ${bunTriplet} bunPath ${bun})
+
     set(bunFiles ${bunExe} features.json)
+
     if(WIN32)
       list(APPEND bunFiles ${bun}.pdb)
     elseif(APPLE)
@@ -1180,7 +1249,6 @@ if(NOT BUN_CPP_ONLY)
     if(APPLE OR LINUX)
       list(APPEND bunFiles ${bun}.linker-map)
     endif()
-
 
     register_command(
       TARGET
@@ -1200,6 +1268,24 @@ if(NOT BUN_CPP_ONLY)
       ARTIFACTS
         ${BUILD_PATH}/${bunPath}.zip
     )
+
+    if(APPLE AND ENABLE_APPLE_CODESIGN)
+      register_command(
+        TARGET
+          ${bun}
+        TARGET_PHASE
+          POST_BUILD
+        COMMENT
+          "Signing ${bunPath}.zip"
+        COMMAND
+          ${CMAKE_COMMAND} -E rm -rf ${bunPath}.zip
+          && ${DITTO_PROGRAM} -ck --rsrc --sequesterRsrc --keepParent ${bunPath} ${bunPath}.zip
+        CWD
+          ${BUILD_PATH}
+        ARTIFACTS
+          ${BUILD_PATH}/${bunPath}.zip
+      )
+    endif()
 
     if(bunStrip)
       string(REPLACE bun ${bunTriplet} bunStripPath ${bunStrip})
@@ -1221,6 +1307,24 @@ if(NOT BUN_CPP_ONLY)
         ARTIFACTS
           ${BUILD_PATH}/${bunStripPath}.zip
       )
+
+      if(APPLE AND ENABLE_APPLE_CODESIGN)
+        register_command(
+          TARGET
+            ${bun}
+          TARGET_PHASE
+            POST_BUILD
+          COMMENT
+            "Signing ${bunStripPath}.zip"
+          COMMAND
+            ${CMAKE_COMMAND} -E rm -rf ${bunStripPath}.zip
+            && ${DITTO_PROGRAM} -ck --rsrc --sequesterRsrc --keepParent ${bunStripPath} ${bunStripPath}.zip
+          CWD
+            ${BUILD_PATH}
+          ARTIFACTS
+            ${BUILD_PATH}/${bunStripPath}.zip
+        )
+      endif()
     endif()
   endif()
 endif()

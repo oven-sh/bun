@@ -12,6 +12,8 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const JSAst = bun.JSAst;
+const TextLockfile = @import("./bun.lock.zig");
+const OOM = bun.OOM;
 
 const JSLexer = bun.js_lexer;
 const logger = bun.logger;
@@ -209,63 +211,142 @@ pub fn isEmpty(this: *const Lockfile) bool {
     return this.packages.len == 0 or (this.packages.len == 1 and this.packages.get(0).resolutions.len == 0);
 }
 
-pub const LoadFromDiskResult = union(enum) {
+pub const LoadResult = union(enum) {
     not_found: void,
     err: struct {
         step: Step,
         value: anyerror,
+        lockfile_path: stringZ,
+        format: LockfileFormat,
     },
     ok: struct {
         lockfile: *Lockfile,
+        loaded_from_binary_lockfile: bool,
         was_migrated: bool = false,
         serializer_result: Serializer.SerializerLoadResult,
+        format: LockfileFormat,
     },
+
+    pub const LockfileFormat = enum {
+        text,
+        binary,
+
+        pub fn filename(this: LockfileFormat) stringZ {
+            return switch (this) {
+                .text => "bun.lock",
+                .binary => "bun.lockb",
+            };
+        }
+    };
 
     pub const Step = enum { open_file, read_file, parse_file, migrating };
 };
 
-pub fn loadFromDisk(
+pub fn loadFromCwd(
     this: *Lockfile,
     manager: ?*PackageManager,
     allocator: Allocator,
     log: *logger.Log,
-    filename: stringZ,
     comptime attempt_loading_from_other_lockfile: bool,
-) LoadFromDiskResult {
+) LoadResult {
     if (comptime Environment.allow_assert) assert(FileSystem.instance_loaded);
 
-    const buf = (if (filename.len > 0)
-        File.readFrom(std.fs.cwd(), filename, allocator).unwrap()
-    else
-        File.from(std.io.getStdIn()).readToEnd(allocator).unwrap()) catch |err| {
-        return switch (err) {
-            error.EACCESS, error.EPERM, error.ENOENT => {
-                if (comptime attempt_loading_from_other_lockfile) {
-                    if (manager) |pm| {
-                        // Attempt to load from "package-lock.json", "yarn.lock", etc.
-                        return migration.detectAndLoadOtherLockfile(
-                            this,
-                            pm,
-                            allocator,
-                            log,
-                            filename,
-                        );
-                    }
-                }
+    var lockfile_format: LoadResult.LockfileFormat = .text;
+    const file = File.open("bun.lock", bun.O.RDONLY, 0).unwrap() catch |text_open_err| file: {
+        if (text_open_err != error.ENOENT) {
+            return .{ .err = .{
+                .step = .open_file,
+                .value = text_open_err,
+                .lockfile_path = "bun.lock",
+                .format = .text,
+            } };
+        }
 
-                return LoadFromDiskResult{
-                    .err = .{ .step = .open_file, .value = err },
-                };
-            },
-            error.EINVAL, error.ENOTDIR, error.EISDIR => LoadFromDiskResult{ .not_found = {} },
-            else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
+        lockfile_format = .binary;
+
+        break :file File.open("bun.lockb", bun.O.RDONLY, 0).unwrap() catch |binary_open_err| {
+            if (binary_open_err != error.ENOENT) {
+                return .{ .err = .{
+                    .step = .open_file,
+                    .value = binary_open_err,
+                    .lockfile_path = "bun.lockb",
+                    .format = .binary,
+                } };
+            }
+
+            if (comptime attempt_loading_from_other_lockfile) {
+                if (manager) |pm| {
+                    const migrate_result = migration.detectAndLoadOtherLockfile(
+                        this,
+                        pm,
+                        allocator,
+                        log,
+                    );
+
+                    if (migrate_result == .ok) {
+                        lockfile_format = .text;
+                    }
+
+                    return migrate_result;
+                }
+            }
+
+            return .not_found;
         };
     };
+
+    const buf = file.readToEnd(allocator).unwrap() catch |err| {
+        return .{ .err = .{
+            .step = .read_file,
+            .value = err,
+            .lockfile_path = if (lockfile_format == .text) "bun.lock" else "bun.lockb",
+            .format = lockfile_format,
+        } };
+    };
+
+    if (lockfile_format == .text) {
+        const source = logger.Source.initPathString("bun.lock", buf);
+        const json = JSON.parseUTF8(&source, log, allocator) catch |err| {
+            return .{
+                .err = .{
+                    .step = .parse_file,
+                    .value = err,
+                    .lockfile_path = "bun.lock",
+                    .format = lockfile_format,
+                },
+            };
+        };
+
+        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log) catch |err| {
+            switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+                else => {
+                    return .{
+                        .err = .{
+                            .step = .parse_file,
+                            .value = err,
+                            .lockfile_path = "bun.lock",
+                            .format = lockfile_format,
+                        },
+                    };
+                },
+            }
+        };
+
+        return .{
+            .ok = .{
+                .lockfile = this,
+                .serializer_result = .{},
+                .loaded_from_binary_lockfile = false,
+                .format = lockfile_format,
+            },
+        };
+    }
 
     return this.loadFromBytes(manager, buf, allocator, log);
 }
 
-pub fn loadFromBytes(this: *Lockfile, pm: ?*PackageManager, buf: []u8, allocator: Allocator, log: *logger.Log) LoadFromDiskResult {
+pub fn loadFromBytes(this: *Lockfile, pm: ?*PackageManager, buf: []u8, allocator: Allocator, log: *logger.Log) LoadResult {
     var stream = Stream{ .buffer = buf, .pos = 0 };
 
     this.format = FormatVersion.current;
@@ -277,17 +358,19 @@ pub fn loadFromBytes(this: *Lockfile, pm: ?*PackageManager, buf: []u8, allocator
     this.patched_dependencies = .{};
 
     const load_result = Lockfile.Serializer.load(this, &stream, allocator, log, pm) catch |err| {
-        return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
+        return LoadResult{ .err = .{ .step = .parse_file, .value = err, .lockfile_path = "bun.lockb", .format = .binary } };
     };
 
     if (Environment.allow_assert) {
         this.verifyData() catch @panic("lockfile data is corrupt");
     }
 
-    return LoadFromDiskResult{
+    return LoadResult{
         .ok = .{
             .lockfile = this,
             .serializer_result = load_result,
+            .loaded_from_binary_lockfile = true,
+            .format = .binary,
         },
     };
 }
@@ -340,89 +423,106 @@ pub const Tree = struct {
 
     const SubtreeError = error{ OutOfMemory, DependencyLoop };
 
-    pub const NodeModulesFolder = struct {
-        relative_path: stringZ,
-        dependencies: []const DependencyID,
-        tree_id: Tree.Id,
-
-        /// depth of the node_modules folder in the tree
-        ///
-        ///            0 (./node_modules)
-        ///           / \
-        ///          1   1
-        ///         /
-        ///        2
-        depth: usize,
-    };
-
     // max number of node_modules folders
     pub const max_depth = (bun.MAX_PATH_BYTES / "node_modules".len) + 1;
 
-    pub const Iterator = struct {
-        tree_id: Id,
-        path_buf: bun.PathBuffer = undefined,
-        last_parent: Id = invalid_id,
+    pub const DepthBuf = [max_depth]Id;
 
-        lockfile: *const Lockfile,
+    const IteratorPathStyle = enum {
+        /// `relative_path` will have the form `node_modules/jquery/node_modules/zod`.
+        /// Path separators are platform.
+        node_modules,
+        /// `relative_path` will have the form `jquery/zod`. Path separators are always
+        /// posix separators.
+        pkg_path,
+    };
 
-        depth_stack: DepthBuf = undefined,
+    pub fn Iterator(comptime path_style: IteratorPathStyle) type {
+        return struct {
+            tree_id: Id,
+            path_buf: bun.PathBuffer = undefined,
+            last_parent: Id = invalid_id,
 
-        pub const DepthBuf = [max_depth]Id;
+            lockfile: *const Lockfile,
 
-        pub fn init(lockfile: *const Lockfile) Iterator {
-            var iter = Iterator{
-                .tree_id = 0,
-                .lockfile = lockfile,
-            };
-            @memcpy(iter.path_buf[0.."node_modules".len], "node_modules");
-            return iter;
-        }
+            depth_stack: DepthBuf = undefined,
 
-        pub fn reset(this: *Iterator) void {
-            this.tree_id = 0;
-        }
-
-        pub fn nextNodeModulesFolder(this: *Iterator, completed_trees: ?*Bitset) ?NodeModulesFolder {
-            const trees = this.lockfile.buffers.trees.items;
-
-            if (this.tree_id >= trees.len) return null;
-
-            while (trees[this.tree_id].dependencies.len == 0) {
-                if (completed_trees) |_completed_trees| {
-                    _completed_trees.set(this.tree_id);
+            pub fn init(lockfile: *const Lockfile) @This() {
+                var iter: @This() = .{
+                    .tree_id = 0,
+                    .lockfile = lockfile,
+                };
+                if (comptime path_style == .node_modules) {
+                    @memcpy(iter.path_buf[0.."node_modules".len], "node_modules");
                 }
-                this.tree_id += 1;
-                if (this.tree_id >= trees.len) return null;
+                return iter;
             }
 
-            const current_tree_id = this.tree_id;
-            const tree = trees[current_tree_id];
-            const tree_dependencies = tree.dependencies.get(this.lockfile.buffers.hoisted_dependencies.items);
+            pub fn reset(this: *@This()) void {
+                this.tree_id = 0;
+            }
 
-            const relative_path, const depth = relativePathAndDepth(
-                this.lockfile,
-                current_tree_id,
-                &this.path_buf,
-                &this.depth_stack,
-            );
+            pub const Next = struct {
+                relative_path: stringZ,
+                dependencies: []const DependencyID,
+                tree_id: Tree.Id,
 
-            this.tree_id += 1;
-
-            return .{
-                .relative_path = relative_path,
-                .dependencies = tree_dependencies,
-                .tree_id = current_tree_id,
-                .depth = depth,
+                /// depth of the node_modules folder in the tree
+                ///
+                ///            0 (./node_modules)
+                ///           / \
+                ///          1   1
+                ///         /
+                ///        2
+                depth: usize,
             };
-        }
-    };
+
+            pub fn next(this: *@This(), completed_trees: if (path_style == .node_modules) ?*Bitset else void) ?Next {
+                const trees = this.lockfile.buffers.trees.items;
+
+                if (this.tree_id >= trees.len) return null;
+
+                while (trees[this.tree_id].dependencies.len == 0) {
+                    if (comptime path_style == .node_modules) {
+                        if (completed_trees) |_completed_trees| {
+                            _completed_trees.set(this.tree_id);
+                        }
+                    }
+                    this.tree_id += 1;
+                    if (this.tree_id >= trees.len) return null;
+                }
+
+                const current_tree_id = this.tree_id;
+                const tree = trees[current_tree_id];
+                const tree_dependencies = tree.dependencies.get(this.lockfile.buffers.hoisted_dependencies.items);
+
+                const relative_path, const depth = relativePathAndDepth(
+                    this.lockfile,
+                    current_tree_id,
+                    &this.path_buf,
+                    &this.depth_stack,
+                    path_style,
+                );
+
+                this.tree_id += 1;
+
+                return .{
+                    .relative_path = relative_path,
+                    .dependencies = tree_dependencies,
+                    .tree_id = current_tree_id,
+                    .depth = depth,
+                };
+            }
+        };
+    }
 
     /// Returns relative path and the depth of the tree
     pub fn relativePathAndDepth(
         lockfile: *const Lockfile,
         tree_id: Id,
         path_buf: *bun.PathBuffer,
-        depth_buf: *Iterator.DepthBuf,
+        depth_buf: *DepthBuf,
+        comptime path_style: IteratorPathStyle,
     ) struct { stringZ, usize } {
         const trees = lockfile.buffers.trees.items;
         var depth: usize = 0;
@@ -430,7 +530,10 @@ pub const Tree = struct {
         const tree = trees[tree_id];
 
         var parent_id = tree.id;
-        var path_written: usize = "node_modules".len;
+        var path_written: usize = switch (comptime path_style) {
+            .node_modules => "node_modules".len,
+            .pkg_path => 0,
+        };
 
         depth_buf[0] = 0;
 
@@ -449,16 +552,25 @@ pub const Tree = struct {
 
             depth = depth_buf_len;
             while (depth_buf_len > 0) : (depth_buf_len -= 1) {
-                path_buf[path_written] = std.fs.path.sep;
-                path_written += 1;
+                if (comptime path_style == .pkg_path) {
+                    if (depth_buf_len != depth) {
+                        path_buf[path_written] = '/';
+                        path_written += 1;
+                    }
+                } else {
+                    path_buf[path_written] = std.fs.path.sep;
+                    path_written += 1;
+                }
 
                 const id = depth_buf[depth_buf_len];
                 const name = dependencies[trees[id].dependency_id].name.slice(buf);
                 @memcpy(path_buf[path_written..][0..name.len], name);
                 path_written += name.len;
 
-                @memcpy(path_buf[path_written..][0.."/node_modules".len], std.fs.path.sep_str ++ "node_modules");
-                path_written += "/node_modules".len;
+                if (comptime path_style == .node_modules) {
+                    @memcpy(path_buf[path_written..][0.."/node_modules".len], std.fs.path.sep_str ++ "node_modules");
+                    path_written += "/node_modules".len;
+                }
             }
         }
         path_buf[path_written] = 0;
@@ -1235,7 +1347,7 @@ pub const Printer = struct {
 
         var lockfile = try allocator.create(Lockfile);
 
-        const load_from_disk = lockfile.loadFromDisk(null, allocator, log, lockfile_path, false);
+        const load_from_disk = lockfile.loadFromCwd(null, allocator, log, false);
         switch (load_from_disk) {
             .err => |cause| {
                 switch (cause.step) {
@@ -1992,7 +2104,7 @@ pub fn verifyData(this: *const Lockfile) !void {
     }
 }
 
-pub fn saveToDisk(this: *Lockfile, filename: stringZ, verbose_log: bool) void {
+pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbose_log: bool) void {
     if (comptime Environment.allow_assert) {
         this.verifyData() catch |err| {
             Output.prettyErrorln("<r><red>error:<r> failed to verify lockfile: {s}", .{@errorName(err)});
@@ -2001,10 +2113,17 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ, verbose_log: bool) void {
         assert(FileSystem.instance_loaded);
     }
 
-    var bytes = std.ArrayList(u8).init(bun.default_allocator);
-    defer bytes.deinit();
+    var timer = std.time.Timer.start() catch unreachable;
+    const bytes = if (save_format == .text)
+        TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this) catch |err| {
+            switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+            }
+        }
+    else bytes: {
+        var bytes = std.ArrayList(u8).init(bun.default_allocator);
+        defer bytes.deinit();
 
-    {
         var total_size: usize = 0;
         var end_pos: usize = 0;
         Lockfile.Serializer.save(this, verbose_log, &bytes, &total_size, &end_pos) catch |err| {
@@ -2013,12 +2132,18 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ, verbose_log: bool) void {
         };
         if (bytes.items.len >= end_pos)
             bytes.items[end_pos..][0..@sizeOf(usize)].* = @bitCast(total_size);
-    }
+        break :bytes bytes.items;
+    };
+    defer bun.default_allocator.free(bytes);
+    std.debug.print("time to write {s}: {}\n", .{ @tagName(save_format), bun.fmt.fmtDuration(timer.read()) });
 
     var tmpname_buf: [512]u8 = undefined;
     var base64_bytes: [8]u8 = undefined;
     bun.rand(&base64_bytes);
-    const tmpname = std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+    const tmpname = if (save_format == .text)
+        std.fmt.bufPrintZ(&tmpname_buf, ".lock-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable
+    else
+        std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
 
     const file = switch (File.openat(std.fs.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
@@ -2028,7 +2153,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ, verbose_log: bool) void {
         .result => |f| f,
     };
 
-    switch (file.writeAll(bytes.items)) {
+    switch (file.writeAll(bytes)) {
         .err => |e| {
             file.close();
             _ = bun.sys.unlink(tmpname);
@@ -2051,7 +2176,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ, verbose_log: bool) void {
         }
     }
 
-    file.closeAndMoveTo(tmpname, filename) catch |err| {
+    file.closeAndMoveTo(tmpname, save_format.filename()) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
         // note: file is already closed here.
@@ -6569,7 +6694,6 @@ pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
 
 pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: DependencyID, dep: Dependency, res: PackageID) !void {
     const sb = this.buffers.string_bytes.items;
-    var buf: [2048]u8 = undefined;
 
     try w.beginObject();
     defer w.endObject() catch {};
@@ -6598,7 +6722,7 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Depend
             try w.write(info.name.slice(sb));
 
             try w.objectField("version");
-            try w.write(try std.fmt.bufPrint(&buf, "{}", .{info.version.fmt(sb)}));
+            try w.print("{}", .{info.version.fmt(sb)});
         },
         .dist_tag => {
             try w.beginObject();
@@ -6692,7 +6816,6 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Depend
 }
 
 pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
-    var buf: [2048]u8 = undefined;
     const sb = this.buffers.string_bytes.items;
     try w.beginObject();
     defer w.endObject() catch {};
@@ -6736,7 +6859,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         const dependencies = this.buffers.dependencies.items;
         const hoisted_deps = this.buffers.hoisted_dependencies.items;
         const resolutions = this.buffers.resolutions.items;
-        var depth_buf: Tree.Iterator.DepthBuf = undefined;
+        var depth_buf: Tree.DepthBuf = undefined;
         var path_buf: bun.PathBuffer = undefined;
         @memcpy(path_buf[0.."node_modules".len], "node_modules");
 
@@ -6754,11 +6877,11 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 @intCast(tree_id),
                 &path_buf,
                 &depth_buf,
+                .node_modules,
             );
 
             try w.objectField("path");
-            const formatted = try std.fmt.bufPrint(&buf, "{}", .{bun.fmt.fmtPath(u8, relative_path, .{ .path_sep = .posix })});
-            try w.write(formatted);
+            try w.print("{}", .{bun.fmt.fmtPath(u8, relative_path, .{ .path_sep = .posix })});
 
             try w.objectField("depth");
             try w.write(depth);
@@ -6832,12 +6955,10 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 try w.write(@tagName(res.tag));
 
                 try w.objectField("value");
-                const formatted = try std.fmt.bufPrint(&buf, "{s}", .{res.fmt(sb, .posix)});
-                try w.write(formatted);
+                try w.print("{s}", .{res.fmt(sb, .posix)});
 
                 try w.objectField("resolved");
-                const formatted_url = try std.fmt.bufPrint(&buf, "{}", .{res.fmtURL(sb)});
-                try w.write(formatted_url);
+                try w.print("{}", .{res.fmtURL(sb)});
             }
 
             try w.objectField("dependencies");
@@ -6876,7 +6997,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
 
             try w.objectField("integrity");
             if (pkg.meta.integrity.tag != .unknown) {
-                try w.write(try std.fmt.bufPrint(&buf, "{}", .{pkg.meta.integrity}));
+                try w.print("{}", .{pkg.meta.integrity});
             } else {
                 try w.write(null);
             }
@@ -6940,13 +7061,15 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         }
     }
 
+    var buf: [100]u8 = undefined;
+
     try w.objectField("workspace_paths");
     {
         try w.beginObject();
         defer w.endObject() catch {};
 
         for (this.workspace_paths.keys(), this.workspace_paths.values()) |k, v| {
-            try w.objectField(try std.fmt.bufPrint(&buf, "{d}", .{k}));
+            try w.objectField(std.fmt.bufPrintIntToSlice(&buf, k, 10, .lower, .{}));
             try w.write(v.slice(sb));
         }
     }
@@ -6956,8 +7079,8 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         defer w.endObject() catch {};
 
         for (this.workspace_versions.keys(), this.workspace_versions.values()) |k, v| {
-            try w.objectField(try std.fmt.bufPrint(&buf, "{d}", .{k}));
-            try w.write(try std.fmt.bufPrint(&buf, "{}", .{v.fmt(sb)}));
+            try w.objectField(std.fmt.bufPrintIntToSlice(&buf, k, 10, .lower, .{}));
+            try w.print("{}", .{v.fmt(sb)});
         }
     }
 }

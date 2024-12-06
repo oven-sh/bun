@@ -260,6 +260,14 @@ pub const Repository = extern struct {
         return try formatter.format(layout, opts, writer);
     }
 
+    pub fn fmt(this: *const Repository, label: string, buf: []const u8) Formatter {
+        return .{
+            .repository = this,
+            .buf = buf,
+            .label = label,
+        };
+    }
+
     pub const Formatter = struct {
         label: []const u8 = "",
         buf: []const u8,

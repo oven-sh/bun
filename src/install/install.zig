@@ -147,7 +147,7 @@ const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const GlobalStringBuilder = @import("../string_builder.zig");
 const SlicedString = Semver.SlicedString;
-const Repository = @import("./repository.zig").Repository;
+pub const Repository = @import("./repository.zig").Repository;
 pub const Bin = @import("./bin.zig").Bin;
 pub const Dependency = @import("./dependency.zig");
 const Behavior = @import("./dependency.zig").Behavior;
@@ -4971,9 +4971,9 @@ pub const PackageManager = struct {
 
     pub fn updateLockfileIfNeeded(
         manager: *PackageManager,
-        load_lockfile_result: Lockfile.LoadFromDiskResult,
+        load_result: Lockfile.LoadResult,
     ) !void {
-        if (load_lockfile_result == .ok and load_lockfile_result.ok.serializer_result.packages_need_update) {
+        if (load_result == .ok and load_result.ok.serializer_result.packages_need_update) {
             const slice = manager.lockfile.packages.slice();
             for (slice.items(.meta)) |*meta| {
                 // these are possibly updated later, but need to make sure non are zero
@@ -6961,7 +6961,6 @@ pub const PackageManager = struct {
         // must be a variable due to global installs and bunx
         bin_path: stringZ = bun.pathLiteral("node_modules/.bin"),
 
-        lockfile_path: stringZ = Lockfile.default_filename,
         did_override_default_scope: bool = false,
         scope: Npm.Registry.Scope = undefined,
 
@@ -7001,6 +7000,8 @@ pub const PackageManager = struct {
 
         ca: []const string = &.{},
         ca_file_name: string = &.{},
+
+        save_text_lockfile: bool = false,
 
         pub const PublishConfig = struct {
             access: ?Access = null,
@@ -7387,6 +7388,8 @@ pub const PackageManager = struct {
                 if (cli.trusted) {
                     this.do.trust_dependencies_from_args = true;
                 }
+
+                this.save_text_lockfile = cli.save_text_lockfile;
 
                 this.local_package_features.optional_dependencies = !cli.omit.optional;
 
@@ -8950,24 +8953,10 @@ pub const PackageManager = struct {
         ) -| std.time.s_per_day;
 
         if (root_dir.entries.hasComptimeQuery("bun.lockb")) {
-            var buf: bun.PathBuffer = undefined;
-            var parts = [_]string{
-                "./bun.lockb",
-            };
-            const lockfile_path = Path.joinAbsStringBuf(
-                Fs.FileSystem.instance.top_level_dir,
-                &buf,
-                &parts,
-                .auto,
-            );
-            buf[lockfile_path.len] = 0;
-            const lockfile_path_z = buf[0..lockfile_path.len :0];
-
-            switch (manager.lockfile.loadFromDisk(
+            switch (manager.lockfile.loadFromCwd(
                 manager,
                 allocator,
                 log,
-                lockfile_path_z,
                 true,
             )) {
                 .ok => |load| manager.lockfile = load.lockfile,
@@ -9374,6 +9363,7 @@ pub const PackageManager = struct {
         clap.parseParam("--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables") catch unreachable,
         clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
         clap.parseParam("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)") catch unreachable,
+        clap.parseParam("--save-text-lockfile                  Save a text-based lockfile") catch unreachable,
         clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
     };
 
@@ -9501,6 +9491,8 @@ pub const PackageManager = struct {
 
         ca: []const string = &.{},
         ca_file_name: string = "",
+
+        save_text_lockfile: bool = false,
 
         const PatchOpts = union(enum) {
             nothing: struct {},
@@ -9852,6 +9844,10 @@ pub const PackageManager = struct {
                     Output.errGeneric("Expected --network-concurrency to be a number between 0 and 65535: {s}", .{network_concurrency});
                     Global.crash();
                 };
+            }
+
+            if (args.flag("--save-text-lockfile")) {
+                cli.save_text_lockfile = true;
             }
 
             // commands that support --filter
@@ -10865,8 +10861,8 @@ pub const PackageManager = struct {
         }
     }
 
-    fn nodeModulesFolderForDependencyIDs(iterator: *Lockfile.Tree.Iterator, ids: []const IdPair) !?Lockfile.Tree.NodeModulesFolder {
-        while (iterator.nextNodeModulesFolder(null)) |node_modules| {
+    fn nodeModulesFolderForDependencyIDs(iterator: *Lockfile.Tree.Iterator(.node_modules), ids: []const IdPair) !?Lockfile.Tree.Iterator(.node_modules).Next {
+        while (iterator.next(null)) |node_modules| {
             for (ids) |id| {
                 _ = std.mem.indexOfScalar(DependencyID, node_modules.dependencies, id[0]) orelse continue;
                 return node_modules;
@@ -10875,8 +10871,8 @@ pub const PackageManager = struct {
         return null;
     }
 
-    fn nodeModulesFolderForDependencyID(iterator: *Lockfile.Tree.Iterator, dependency_id: DependencyID) !?Lockfile.Tree.NodeModulesFolder {
-        while (iterator.nextNodeModulesFolder(null)) |node_modules| {
+    fn nodeModulesFolderForDependencyID(iterator: *Lockfile.Tree.Iterator(.node_modules), dependency_id: DependencyID) !?Lockfile.Tree.Iterator(.node_modules).Next {
+        while (iterator.next(null)) |node_modules| {
             _ = std.mem.indexOfScalar(DependencyID, node_modules.dependencies, dependency_id) orelse continue;
             return node_modules;
         }
@@ -10888,11 +10884,11 @@ pub const PackageManager = struct {
 
     fn pkgInfoForNameAndVersion(
         lockfile: *Lockfile,
-        iterator: *Lockfile.Tree.Iterator,
+        iterator: *Lockfile.Tree.Iterator(.node_modules),
         pkg_maybe_version_to_patch: []const u8,
         name: []const u8,
         version: ?[]const u8,
-    ) struct { PackageID, Lockfile.Tree.NodeModulesFolder } {
+    ) struct { PackageID, Lockfile.Tree.Iterator(.node_modules).Next } {
         var sfb = std.heap.stackFallback(@sizeOf(IdPair) * 4, lockfile.allocator);
         var pairs = std.ArrayList(IdPair).initCapacity(sfb.get(), 8) catch bun.outOfMemory();
         defer pairs.deinit();
@@ -11066,7 +11062,7 @@ pub const PackageManager = struct {
         const arg_kind: PatchArgKind = PatchArgKind.fromArg(argument);
 
         var folder_path_buf: bun.PathBuffer = undefined;
-        var iterator = Lockfile.Tree.Iterator.init(manager.lockfile);
+        var iterator = Lockfile.Tree.Iterator(.node_modules).init(manager.lockfile);
         var resolution_buf: [1024]u8 = undefined;
 
         var win_normalizer: if (bun.Environment.isWindows) bun.PathBuffer else struct {} = undefined;
@@ -11433,7 +11429,7 @@ pub const PackageManager = struct {
         var folder_path_buf: bun.PathBuffer = undefined;
         var lockfile: *Lockfile = try manager.allocator.create(Lockfile);
         defer lockfile.deinit();
-        switch (lockfile.loadFromDisk(manager, manager.allocator, manager.log, manager.options.lockfile_path, true)) {
+        switch (lockfile.loadFromCwd(manager, manager.allocator, manager.log, true)) {
             .not_found => {
                 Output.errGeneric("Cannot find lockfile. Install packages with `<cyan>bun install<r>` before patching them.", .{});
                 Global.crash();
@@ -11498,7 +11494,7 @@ pub const PackageManager = struct {
         };
         defer root_node_modules.close();
 
-        var iterator = Lockfile.Tree.Iterator.init(lockfile);
+        var iterator = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
         var resolution_buf: [1024]u8 = undefined;
         const _cache_dir: std.fs.Dir, const _cache_dir_subpath: stringZ, const _changes_dir: []const u8, const _pkg: Package = switch (arg_kind) {
             .path => result: {
@@ -12096,7 +12092,7 @@ pub const PackageManager = struct {
         lockfile: *Lockfile,
         progress: *Progress,
 
-        // relative paths from `nextNodeModulesFolder` will be copied into this list.
+        // relative paths from `next` will be copied into this list.
         node_modules: NodeModulesFolder,
 
         skip_verify_installed_version_number: bool,
@@ -12113,7 +12109,7 @@ pub const PackageManager = struct {
         destination_dir_subpath_buf: bun.PathBuffer = undefined,
         folder_path_buf: bun.PathBuffer = undefined,
         successfully_installed: Bitset,
-        tree_iterator: *Lockfile.Tree.Iterator,
+        tree_iterator: *Lockfile.Tree.Iterator(.node_modules),
         command_ctx: Command.Context,
         current_tree_id: Lockfile.Tree.Id = Lockfile.Tree.invalid_id,
 
@@ -12264,7 +12260,7 @@ pub const PackageManager = struct {
         }
 
         pub fn linkRemainingBins(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
-            var depth_buf: Lockfile.Tree.Iterator.DepthBuf = undefined;
+            var depth_buf: Lockfile.Tree.DepthBuf = undefined;
             var node_modules_rel_path_buf: bun.PathBuffer = undefined;
             @memcpy(node_modules_rel_path_buf[0.."node_modules".len], "node_modules");
 
@@ -12282,6 +12278,7 @@ pub const PackageManager = struct {
                         @intCast(tree_id),
                         &node_modules_rel_path_buf,
                         &depth_buf,
+                        .node_modules,
                     );
 
                     this.node_modules.path.appendSlice(rel_path) catch bun.outOfMemory();
@@ -13604,7 +13601,7 @@ pub const PackageManager = struct {
         };
 
         {
-            var iterator = Lockfile.Tree.Iterator.init(this.lockfile);
+            var iterator = Lockfile.Tree.Iterator(.node_modules).init(this.lockfile);
             if (comptime Environment.isPosix) {
                 Bin.Linker.ensureUmask();
             }
@@ -13744,7 +13741,7 @@ pub const PackageManager = struct {
 
             defer installer.deinit();
 
-            while (iterator.nextNodeModulesFolder(&installer.completed_trees)) |node_modules| {
+            while (iterator.next(&installer.completed_trees)) |node_modules| {
                 installer.node_modules.path.items.len = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir).len + 1;
                 try installer.node_modules.path.appendSlice(node_modules.relative_path);
                 installer.node_modules.tree_id = node_modules.tree_id;
@@ -14003,24 +14000,23 @@ pub const PackageManager = struct {
             bun.dns.internal.prefetch(manager.event_loop.loop(), hostname);
         }
 
-        var load_lockfile_result: Lockfile.LoadFromDiskResult = if (manager.options.do.load_lockfile)
-            manager.lockfile.loadFromDisk(
+        var load_result: Lockfile.LoadResult = if (manager.options.do.load_lockfile)
+            manager.lockfile.loadFromCwd(
                 manager,
                 manager.allocator,
                 manager.log,
-                manager.options.lockfile_path,
                 true,
             )
         else
             .{ .not_found = {} };
 
-        try manager.updateLockfileIfNeeded(load_lockfile_result);
+        try manager.updateLockfileIfNeeded(load_result);
 
         var root = Lockfile.Package{};
-        var needs_new_lockfile = load_lockfile_result != .ok or
-            (load_lockfile_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.update_requests.len > 0);
+        var needs_new_lockfile = load_result != .ok or
+            (load_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.update_requests.len > 0);
 
-        manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or (load_lockfile_result == .ok and load_lockfile_result.ok.was_migrated);
+        manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or (load_result == .ok and load_result.ok.was_migrated);
 
         // this defaults to false
         // but we force allowing updates to the lockfile when you do bun add
@@ -14030,7 +14026,7 @@ pub const PackageManager = struct {
         // Step 2. Parse the package.json file
         const root_package_json_source = logger.Source.initPathString(package_json_cwd, root_package_json_contents);
 
-        switch (load_lockfile_result) {
+        switch (load_result) {
             .err => |cause| {
                 if (log_level != .silent) {
                     switch (cause.step) {
@@ -14102,7 +14098,7 @@ pub const PackageManager = struct {
                     }
                 }
                 differ: {
-                    root = load_lockfile_result.ok.lockfile.rootPackage() orelse {
+                    root = load_result.ok.lockfile.rootPackage() orelse {
                         needs_new_lockfile = true;
                         break :differ;
                     };
@@ -14343,7 +14339,7 @@ pub const PackageManager = struct {
             root = .{};
             manager.lockfile.initEmpty(manager.allocator);
 
-            if (manager.options.enable.frozen_lockfile and load_lockfile_result != .not_found) {
+            if (manager.options.enable.frozen_lockfile and load_result != .not_found) {
                 if (comptime log_level != .silent) {
                     Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});
                 }
@@ -14583,7 +14579,7 @@ pub const PackageManager = struct {
 
         const packages_len_before_install = manager.lockfile.packages.len;
 
-        if (manager.options.enable.frozen_lockfile and load_lockfile_result != .not_found) {
+        if (manager.options.enable.frozen_lockfile and load_result != .not_found) {
             if (manager.lockfile.hasMetaHashChanged(PackageManager.verbose_install or manager.options.do.print_meta_hash_string, packages_len_before_install) catch false) {
                 if (comptime log_level != .silent) {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", .{});
@@ -14622,15 +14618,21 @@ pub const PackageManager = struct {
 
             // this will handle new trusted dependencies added through --trust
             manager.update_requests.len > 0 or
-            (load_lockfile_result == .ok and load_lockfile_result.ok.serializer_result.packages_need_update);
+            (load_result == .ok and load_result.ok.serializer_result.packages_need_update);
 
         // It's unnecessary work to re-save the lockfile if there are no changes
         if (manager.options.do.save_lockfile and
             (should_save_lockfile or manager.lockfile.isEmpty() or manager.options.enable.force_save_lockfile))
         save: {
             if (manager.lockfile.isEmpty()) {
-                if (!manager.options.dry_run) {
-                    std.fs.cwd().deleteFileZ(manager.options.lockfile_path) catch |err| brk: {
+                if (!manager.options.dry_run) delete: {
+                    const delete_format = switch (load_result) {
+                        .not_found => break :delete,
+                        .err => |err| err.format,
+                        .ok => |ok| ok.format,
+                    };
+
+                    std.fs.cwd().deleteFileZ(if (delete_format == .text) "bun.lock" else "bun.lockb") catch |err| brk: {
                         // we don't care
                         if (err == error.FileNotFound) {
                             if (had_any_diffs) break :save;
@@ -14663,7 +14665,15 @@ pub const PackageManager = struct {
                 manager.progress.refresh();
             }
 
-            manager.lockfile.saveToDisk(manager.options.lockfile_path, manager.options.log_level.isVerbose());
+            const save_format: Lockfile.LoadResult.LockfileFormat = if (manager.options.save_text_lockfile)
+                .text
+            else switch (load_result) {
+                .not_found => .text,
+                .err => |err| err.format,
+                .ok => |ok| ok.format,
+            };
+
+            manager.lockfile.saveToDisk(save_format, manager.options.log_level.isVerbose());
 
             if (comptime Environment.allow_assert) {
                 if (manager.lockfile.hasMetaHashChanged(false, packages_len_before_install) catch false) {
@@ -15003,7 +15013,7 @@ pub const bun_install_js_bindings = struct {
         // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
         const manager = globalObject.bunVM().bundler.resolver.getPackageManager();
 
-        const load_result: Lockfile.LoadFromDiskResult = lockfile.loadFromDisk(manager, allocator, &log, lockfile_path, true);
+        const load_result: Lockfile.LoadResult = lockfile.loadFromCwd(manager, allocator, &log, true);
 
         switch (load_result) {
             .err => |err| {

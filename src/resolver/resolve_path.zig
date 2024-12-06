@@ -2072,6 +2072,13 @@ pub fn dangerouslyConvertPathToPosixInPlace(comptime T: type, path: []T) void {
     }
 }
 
+pub fn dangerouslyConvertPathToWindowsInPlace(comptime T: type, path: []T) void {
+    var idx: usize = 0;
+    while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep_posix)) |index| : (idx = index + 1) {
+        path[index] = '\\';
+    }
+}
+
 pub fn pathToPosixBuf(comptime T: type, path: []const T, buf: []T) []T {
     var idx: usize = 0;
     while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep_windows)) |index| : (idx = index + 1) {

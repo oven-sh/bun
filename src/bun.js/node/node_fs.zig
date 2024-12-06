@@ -3770,10 +3770,12 @@ pub const NodeFS = struct {
     pub fn mkdirRecursiveImpl(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor, comptime Ctx: type, ctx: Ctx) Maybe(Return.Mkdir) {
         _ = flavor;
         var buf: bun.OSPathBuffer = undefined;
-        const path: bun.OSPathSliceZ = if (Environment.isWindows)
-            strings.toNTPath(&buf, args.path.slice())
-        else
-            args.path.osPath(&buf);
+        const path: bun.OSPathSliceZ = if (Environment.isWindows) blk: {
+            const path8 = strings.toNTMaxPath(&this.sync_error_buf, args.path.slice());
+            strings.copyU8IntoU16(&buf, path8);
+            buf[path8.len] = 0;
+            break :blk buf[0..path8.len :0];
+        } else args.path.osPath(&buf);
 
         // TODO: remove and make it always a comptime argument
         return switch (args.always_return_none) {
@@ -5206,12 +5208,9 @@ pub const NodeFS = struct {
         if (Environment.isWindows) {
             var req: uv.fs_t = uv.fs_t.uninitialized;
             defer req.deinit();
-            const rc = uv.uv_fs_realpath(
-                bun.Async.Loop.get(),
-                &req,
-                args.path.sliceZ(&this.sync_error_buf).ptr,
-                null,
-            );
+            const bufp = &this.sync_error_buf;
+            const path = if (Environment.isWindows) strings.toNTMaxPath(bufp, args.path.slice()) else args.path.osPath(bufp);
+            const rc = uv.uv_fs_realpath(bun.Async.Loop.get(), &req, path, null);
 
             if (rc.errno()) |errno|
                 return .{ .err = Syscall.Error{
@@ -5483,22 +5482,34 @@ pub const NodeFS = struct {
 
     pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime _: Flavor) Maybe(Return.Symlink) {
         var to_buf: bun.PathBuffer = undefined;
+        var link_type = args.link_type;
+
+        const target: [:0]u8 = args.old_path.sliceZWithForceCopy(&this.sync_error_buf, true);
+        const path = args.new_path.sliceZ(&to_buf);
 
         if (Environment.isWindows) {
-            const target: [:0]u8 = args.old_path.sliceZWithForceCopy(&this.sync_error_buf, true);
             // UV does not normalize slashes in symlink targets, but Node does
             // See https://github.com/oven-sh/bun/issues/8273
-            //
-            // TODO: investigate if simd can be easily used here
-            for (target) |*c| {
-                if (c.* == '/') {
-                    c.* = '\\';
+            bun.path.dangerouslyConvertPathToWindowsInPlace(u8, target);
+
+            blk: {
+                var target_abs_buf: bun.PathBuffer = undefined;
+                var target_abs_buf2: bun.PathBuffer = undefined;
+                const maybe_slice = JSC.Node.Path.resolveWindowsT(u8, &.{ path, "..", target }, &target_abs_buf, &target_abs_buf2);
+                if (maybe_slice == .err) break :blk;
+                const target_abs = maybe_slice.result;
+                const target_stat = switch (Syscall.stat(target_abs)) {
+                    .result => |result| result,
+                    .err => null,
+                };
+                if (link_type == .file and target_stat != null and std.os.linux.S.ISDIR(target_stat.?.mode)) {
+                    link_type = .dir;
                 }
             }
             return Syscall.symlinkUV(
                 target,
-                args.new_path.sliceZ(&to_buf),
-                switch (args.link_type) {
+                path,
+                switch (link_type) {
                     .file => 0,
                     .dir => uv.UV_FS_SYMLINK_DIR,
                     .junction => uv.UV_FS_SYMLINK_JUNCTION,
@@ -5507,8 +5518,8 @@ pub const NodeFS = struct {
         }
 
         return Syscall.symlink(
-            args.old_path.sliceZ(&this.sync_error_buf),
-            args.new_path.sliceZ(&to_buf),
+            target,
+            path,
         );
     }
 

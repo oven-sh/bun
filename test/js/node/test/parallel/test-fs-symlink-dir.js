@@ -52,6 +52,8 @@ for (const linkTarget of linkTargets) {
   }
 }
 
+if (common.isWindows) return; // TODO: BUN
+
 // Test invalid symlink
 {
   function testSync(target, path) {

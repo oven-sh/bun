@@ -871,6 +871,7 @@ if(LINUX)
     endif()
 
     target_link_options(${bun} PUBLIC
+      -lpthread
       -Wl,--wrap=cosf
       -Wl,--wrap=exp
       -Wl,--wrap=expf

@@ -55,13 +55,17 @@ macro(optionx variable type description)
   if(${variable}_SECRET AND NOT ${variable})
     set(${variable}_SOURCE "secret")
     set(${variable}_PREVIEW ${variable})
-    if(ENV{BUILDKITE} STREQUAL "true")
+    if(BUILDKITE)
       execute_process(
         COMMAND buildkite-agent secret get "${variable}"
         OUTPUT_VARIABLE ${variable}
         OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
+        ERROR_VARIABLE ${variable}_ERROR
+        ERROR_STRIP_TRAILING_WHITESPACE
       )
+      if(${variable}_ERROR)
+        message(FATAL_ERROR "Failed to get secret ${variable}: ${${variable}_ERROR}")
+      endif()
     endif()
   endif()
 

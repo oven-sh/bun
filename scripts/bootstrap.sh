@@ -816,63 +816,15 @@ install_llvm() {
 	case "$pm" in
 	apt)
 		bash="$(require bash)"
-		execute_sudo apt-get update -y -qq
 		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
 		case "$distro-$release" in
 		ubuntu-24*)
 			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" -njammy
 			;;
-		debian-12*)
-			# Add LLVM repository for Debian 12 (bookworm) specially
-			execute_sudo bash -c 'echo "deb http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-18 main" >> /etc/apt/sources.list.d/llvm.list'
-			execute_sudo bash -c 'echo "deb-src http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-18 main" >> /etc/apt/sources.list.d/llvm.list'
-
-			# Download and add LLVM GPG key
-			execute_sudo wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | execute_sudo apt-key add -
-
-			# Update package lists
-			execute_sudo apt-get update -y
-
-			# Install LLVM packages
-			execute_sudo apt-get install -y \
-					clang-18 \
-					lld-18 \
-					lldb-18 \
-					llvm-18 \
-					llvm-18-dev \
-					llvm-18-tools \
-					libc++-18-dev \
-					libc++abi-18-dev \
-					libunwind-18-dev
-			;;
 		*)
 			execute_sudo "$bash" "$llvm_script" "$(llvm_version)"
 			;;
 		esac
-
-		for f in "/usr/lib/llvm-$(llvm_version)/bin/"*; do
-			execute_sudo ln -sf "$f" "/usr/bin/"
-		done
-
-		execute_sudo ln -sf "/usr/bin/clang-$(llvm_version)" "/usr/bin/clang"
-		execute_sudo ln -sf "/usr/bin/clang++-$(llvm_version)" "/usr/bin/clang++"
-		execute_sudo ln -sf "/usr/bin/lld-$(llvm_version)" "/usr/bin/lld"
-		execute_sudo ln -sf "/usr/bin/lldb-$(llvm_version)" "/usr/bin/lldb"
-		execute_sudo ln -sf "/usr/bin/llvm-ar-$(llvm_version)" "/usr/bin/llvm-ar"
-		execute_sudo ln -sf "/usr/bin/ld.lld" "/usr/bin/ld"
-		execute_sudo ln -sf "/usr/bin/clang" "/usr/bin/cc"
-		execute_sudo ln -sf "/usr/bin/clang" "/usr/bin/c89"
-		execute_sudo ln -sf "/usr/bin/clang" "/usr/bin/c99"
-		execute_sudo ln -sf "/usr/bin/clang++" "/usr/bin/c++"
-		execute_sudo ln -sf "/usr/bin/clang++" "/usr/bin/g++"
-		execute_sudo ln -sf "/usr/bin/llvm-ar" "/usr/bin/ar"
-		execute_sudo ln -sf "/usr/bin/clang" "/usr/bin/gcc"
-
-		append_to_profile "export CC=clang-$(llvm_version)"
-		append_to_profile "export CXX=clang++-$(llvm_version)"
-		append_to_profile "export AR=llvm-ar-$(llvm_version)"
-		append_to_profile "export RANLIB=llvm-ranlib-$(llvm_version)" 
-		append_to_profile "export LD=lld-$(llvm_version)"
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"

@@ -805,14 +805,7 @@ install_build_essentials() {
 }
 
 llvm_version_exact() {
-	case "$os-$abi" in
-	darwin-* | windows-* | linux-musl)
-		print "18.1.8"
-		;;
-	linux-*)
-		print "16.0.6"
-		;;
-	esac
+	print "18.1.8"
 }
 
 llvm_version() {

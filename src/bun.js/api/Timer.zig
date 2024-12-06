@@ -878,8 +878,15 @@ pub const WTFTimer = struct {
     pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
         this.cancel();
 
-        // TODO increase precision
-        const interval = bun.timespec.msFromNow(@intFromFloat(seconds / std.time.ms_per_s));
+        const modf = std.math.modf(seconds);
+        var interval = bun.timespec.now();
+        interval.sec += @intFromFloat(modf.ipart);
+        interval.nsec += @intFromFloat(modf.fpart * std.time.ns_per_s);
+        if (interval.nsec >= std.time.ns_per_s) {
+            interval.sec += 1;
+            interval.nsec -= std.time.ns_per_s;
+        }
+
         this.event_loop_timer.next = interval;
         this.vm.timer.insert(&this.event_loop_timer);
         this.repeat = repeat;
@@ -930,9 +937,11 @@ pub const WTFTimer = struct {
     export fn WTFTimer__secondsUntilTimer(this: *const WTFTimer) f64 {
         if (this.event_loop_timer.state == .ACTIVE) {
             // TODO increase precision
-            return @as(f64, @floatFromInt(this.event_loop_timer.next.duration(&bun.timespec.now()).ms())) / std.time.ms_per_s;
+            const until = this.event_loop_timer.next.duration(&bun.timespec.now());
+            const sec: f64, const nsec: f64 = .{ @floatFromInt(until.sec), @floatFromInt(until.nsec) };
+            return sec + nsec / std.time.ns_per_s;
         }
-        @panic("TODO");
+        return std.math.inf(f64);
     }
 
     extern fn WTFTimer__fire(this: *RunLoopTimer) void;

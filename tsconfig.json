@@ -10,6 +10,7 @@
     { "path": "./src" },
     { "path": "./src/bake" },
     { "path": "./src/js" },
-    { "path": "./test" }
+    { "path": "./test" },
+    { "path": "./packages/bun-types" }
   ]
 }

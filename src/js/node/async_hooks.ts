@@ -320,11 +320,10 @@ function createWarning(message, isCreateHook?: boolean) {
       // times bundled into a framework or application. Their use defines three
       // handlers which are all TODO stubs. for more info see this comment:
       // https://github.com/oven-sh/bun/issues/13866#issuecomment-2397896065
-      if (typeof arg1 === 'object') {
+      if (typeof arg1 === "object") {
         const { init, promiseResolve, destroy } = arg1;
         if (init && promiseResolve && destroy) {
-          if (isEmptyFunction(init) && isEmptyFunction(destroy))
-            return;
+          if (isEmptyFunction(init) && isEmptyFunction(destroy)) return;
         }
       }
     }
@@ -337,8 +336,8 @@ function createWarning(message, isCreateHook?: boolean) {
 
 function isEmptyFunction(f: Function) {
   let str = f.toString();
-  if(!str.startsWith('function()'))return false;
-  str = str.slice('function()'.length).trim();
+  if (!str.startsWith("function()")) return false;
+  str = str.slice("function()".length).trim();
   return /^{\s*}$/.test(str);
 }
 

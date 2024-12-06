@@ -111,8 +111,7 @@ for (let i = 0; i < moduleList.length; i++) {
       true,
       x => requireTransformer(x, moduleList[i]),
     );
-    let fileToTranspile = `// @ts-nocheck
-// GENERATED TEMP FILE - DO NOT EDIT
+    let fileToTranspile = `// GENERATED TEMP FILE - DO NOT EDIT
 // Sourced from src/js/${moduleList[i]}
 ${importStatements.join("\n")}
 
@@ -139,7 +138,8 @@ ${processed.result.slice(1).trim()}
     if (!fs.existsSync(path.dirname(outputPath))) {
       verbose("directory did not exist after mkdir twice:", path.dirname(outputPath));
     }
-    // await Bun.sleep(10);
+
+    fileToTranspile = "// @ts-nocheck\n" + fileToTranspile;
 
     try {
       await writeFile(outputPath, fileToTranspile);

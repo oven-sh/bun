@@ -1,5 +1,5 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
     "paths": {
@@ -9,5 +9,6 @@
     "jsx": "react-jsx",
     "types": ["react/experimental"]
   },
-  "include": ["**/*.ts", "**/*.tsx"]
+  "include": ["**/*.ts", "**/*.tsx", "../runtime.js", "../runtime.bun.js"],
+  "references": [{ "path": "../../packages/bun-types" }]
 }

@@ -9,11 +9,13 @@
     "moduleDetection": "force",
     "jsx": "react-jsx",
     "allowJs": true,
+    "resolveJsonModule": true,
 
     // Bundler mode
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
+    // TODO: enable this
+    // "verbatimModuleSyntax": true,
     "noEmit": true,
 
     // Best practices
@@ -27,6 +29,7 @@
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false,
     "noImplicitAny": false,
+    "noImplicitThis": false,
 
     // Enable decorators
     "experimentalDecorators": true,

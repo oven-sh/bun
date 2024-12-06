@@ -5,8 +5,6 @@
 // In a debug build, the import is always allowed.
 // It is disallowed in release builds unless run in Bun's CI.
 
-/// <reference path="./private.d.ts" />
-
 const fmtBinding = $newZigFunction("fmt.zig", "fmt_js_test_bindings.jsFunctionStringFormatter", 2) as (
   code: string,
   id: number,
@@ -146,6 +144,6 @@ export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunc
 export const frameworkRouterInternals = $zig("FrameworkRouter.zig", "JSFrameworkRouter.getBindings") as {
   parseRoutePattern: (style: string, pattern: string) => null | { kind: string; pattern: string };
   FrameworkRouter: {
-    new(opts: any): any;
+    new (opts: any): any;
   };
 };

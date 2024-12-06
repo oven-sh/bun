@@ -3188,7 +3188,8 @@ pub const NodeFS = struct {
     pub const ReturnType = Return;
 
     pub fn access(this: *NodeFS, args: Arguments.Access, comptime _: Flavor) Maybe(Return.Access) {
-        const path = args.path.sliceZ(&this.sync_error_buf);
+        const bufp = &this.sync_error_buf;
+        const path = if (Environment.isWindows) strings.toNTMaxPath(bufp, args.path.slice()) else args.path.sliceZ(bufp);
         return Syscall.access(path, @intFromEnum(args.mode));
     }
 
@@ -3577,7 +3578,8 @@ pub const NodeFS = struct {
         _ = flavor;
         const Ret = Maybe(Return.Exists);
         const path = args.path orelse return Ret{ .result = false };
-        const slice = path.sliceZ(&this.sync_error_buf);
+        const bufp = &this.sync_error_buf;
+        const slice = if (Environment.isWindows) strings.toNTMaxPath(bufp, path.slice()) else path.sliceZ(bufp);
 
         // Use libuv access on windows
         if (Environment.isWindows) {

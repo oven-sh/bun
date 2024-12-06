@@ -131,6 +131,8 @@ const GlobWalker = bun.glob.GlobWalker_(ignoredWorkspacePaths, bun.glob.SyscallA
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
 format: FormatVersion = FormatVersion.current,
 
+text_lockfile_version: TextLockfile.Version = .v0,
+
 meta_hash: MetaHash = zero_hash,
 
 packages: Lockfile.Package.List = .{},
@@ -317,7 +319,7 @@ pub fn loadFromCwd(
             };
         };
 
-        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log) catch |err| {
+        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log, manager) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
                 else => {
@@ -343,7 +345,33 @@ pub fn loadFromCwd(
         };
     }
 
-    return this.loadFromBytes(manager, buf, allocator, log);
+    const result = this.loadFromBytes(manager, buf, allocator, log);
+
+    switch (result) {
+        .ok => {
+            if (bun.getenvZ("BUN_DEBUG_TEST_TEXT_LOCKFILE") != null) {
+
+                // Convert the loaded binary lockfile into a text lockfile in memory, then
+                // parse it back into a binary lockfile.
+
+                const text_lockfile_bytes = TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile) catch |err| {
+                    Output.panic("failed to convert binary lockfile to text lockfile: {s}", .{@errorName(err)});
+                };
+
+                const source = logger.Source.initPathString("bun.lock", text_lockfile_bytes);
+                const json = JSON.parseUTF8(&source, log, allocator) catch |err| {
+                    Output.panic("failed to print valid json from binary lockfile: {s}", .{@errorName(err)});
+                };
+
+                TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log, manager) catch |err| {
+                    Output.panic("failed to parse text lockfile converted from binary lockfile: {s}", .{@errorName(err)});
+                };
+            }
+        },
+        else => {},
+    }
+
+    return result;
 }
 
 pub fn loadFromBytes(this: *Lockfile, pm: ?*PackageManager, buf: []u8, allocator: Allocator, log: *logger.Log) LoadResult {
@@ -2122,7 +2150,6 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
         }
     else bytes: {
         var bytes = std.ArrayList(u8).init(bun.default_allocator);
-        defer bytes.deinit();
 
         var total_size: usize = 0;
         var end_pos: usize = 0;

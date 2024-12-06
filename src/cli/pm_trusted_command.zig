@@ -426,7 +426,7 @@ pub const TrustCommand = struct {
         const save_format: Lockfile.LoadResult.LockfileFormat = if (pm.options.save_text_lockfile)
             .text
         else switch (load_lockfile) {
-            .not_found => .text,
+            .not_found => .binary,
             .err => |err| err.format,
             .ok => |ok| ok.format,
         };

@@ -14668,7 +14668,7 @@ pub const PackageManager = struct {
             const save_format: Lockfile.LoadResult.LockfileFormat = if (manager.options.save_text_lockfile)
                 .text
             else switch (load_result) {
-                .not_found => .text,
+                .not_found => .binary,
                 .err => |err| err.format,
                 .ok => |ok| ok.format,
             };

@@ -26,6 +26,7 @@ const Progress = bun.Progress;
 const Environment = bun.Environment;
 const Global = bun.Global;
 const LoadResult = BinaryLockfile.LoadResult;
+const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
 
 /// A property key in the `packages` field of the lockfile
 pub const PkgPath = struct {
@@ -141,21 +142,16 @@ pub const PkgPath = struct {
     }
 };
 
+pub const Version = enum(u32) {
+    v0 = 0,
+
+    // probably bump when we support nested resolutions
+    // v1,
+
+    pub const current: Version = .v0;
+};
+
 pub const Stringifier = struct {
-    pub const Version = enum(u32) {
-        v0 = 0,
-        v1,
-
-        pub const current: Version = .v0;
-    };
-
-    const dependency_groups = [4]struct { []const u8, Dependency.Behavior }{
-        .{ "dependencies", Dependency.Behavior.normal },
-        .{ "devDependencies", Dependency.Behavior.dev },
-        .{ "peerDependencies", Dependency.Behavior.peer },
-        .{ "optionalDependencies", Dependency.Behavior.optional },
-    };
-
     const indent_scalar = 2;
 
     // pub fn save(this: *const Lockfile) void {
@@ -348,10 +344,12 @@ pub const Stringifier = struct {
                             });
 
                             if (lockfile.workspace_versions.get(pkg_name_hashes[pkg_id])) |workspace_version| {
-                                try writer.print(", \"{}\"", .{workspace_version.fmt(buf)});
+                                try writer.print(", \"{}\", ", .{workspace_version.fmt(buf)});
                             } else {
-                                try writer.writeAll(", \"\"");
+                                try writer.writeAll(", \"\", ");
                             }
+
+                            try writePackageDeps(writer, pkg_deps, buf);
 
                             try writer.writeByte(']');
                         },
@@ -390,7 +388,7 @@ pub const Stringifier = struct {
         try writer.writeByte('{');
 
         var any = false;
-        inline for (dependency_groups) |group| {
+        inline for (workspace_dependency_groups) |group| {
             const group_name, const group_behavior = group;
 
             var first = true;
@@ -466,7 +464,7 @@ pub const Stringifier = struct {
             any = true;
         }
 
-        inline for (dependency_groups) |group| {
+        inline for (workspace_dependency_groups) |group| {
             const group_name, const group_behavior = group;
 
             var first = true;
@@ -532,6 +530,19 @@ pub const Stringifier = struct {
     }
 };
 
+const dependency_groups = [3]struct { []const u8, Dependency.Behavior }{
+    .{ "dependencies", Dependency.Behavior.normal },
+    .{ "peerDependencies", Dependency.Behavior.normal },
+    .{ "optionalDependencies", Dependency.Behavior.normal },
+};
+
+const workspace_dependency_groups = [4]struct { []const u8, Dependency.Behavior }{
+    .{ "dependencies", Dependency.Behavior.normal },
+    .{ "devDependencies", Dependency.Behavior.dev },
+    .{ "peerDependencies", Dependency.Behavior.peer },
+    .{ "optionalDependencies", Dependency.Behavior.optional },
+};
+
 const ParseError = OOM || error{
     InvalidLockfileVersion,
     InvalidOptionalValue,
@@ -543,10 +554,12 @@ const ParseError = OOM || error{
     InvalidPackagesObject,
     InvalidPackagesProp,
     InvalidPackageKey,
-    InvalidPackageValue,
+    InvalidPackageInfo,
     InvalidPackageSpecifier,
     InvalidSemver,
     InvalidPackagesTree,
+    InvalidTrustedDependenciesSet,
+    InvalidOverridesObject,
 };
 
 pub fn parseIntoBinaryLockfile(
@@ -555,33 +568,209 @@ pub fn parseIntoBinaryLockfile(
     root: JSON.Expr,
     source: *const logger.Source,
     log: *logger.Log,
+    manager: ?*PackageManager,
 ) ParseError!void {
     lockfile.initEmpty(allocator);
 
-    const builder = lockfile.stringBuilder();
-    _ = builder;
-
-    const version_expr = root.get("lockfileVersion") orelse {
+    const lockfile_version_expr = root.get("lockfileVersion") orelse {
         try log.addError(source, root.loc, "Missing lockfile version");
         return error.InvalidLockfileVersion;
     };
 
-    const version: u32 = switch (version_expr.data) {
+    const lockfile_version: u32 = switch (lockfile_version_expr.data) {
         .e_number => |num| @intFromFloat(std.math.divExact(f64, num.value, 1) catch return error.InvalidLockfileVersion),
         else => return error.InvalidLockfileVersion,
     };
-    _ = version;
 
-    if (root.get("workspaces")) |workspaces| {
-        if (!workspaces.isObject()) {
-            try log.addError(source, workspaces.loc, "Expected an object");
+    lockfile.text_lockfile_version = std.meta.intToEnum(Version, lockfile_version) catch {
+        try log.addError(source, lockfile_version_expr.loc, "Unknown lockfile version");
+        return error.InvalidLockfileVersion;
+    };
+
+    var string_buf = String.Buf.init(allocator);
+
+    const deps_count: usize = 0;
+    _ = deps_count;
+
+    if (root.get("trustedDependencies")) |trusted_dependencies_expr| {
+        var trusted_dependencies: BinaryLockfile.TrustedDependenciesSet = .{};
+        if (!trusted_dependencies_expr.isArray()) {
+            try log.addError(source, trusted_dependencies_expr.loc, "Expected an array");
+            return error.InvalidTrustedDependenciesSet;
         }
-        const root_pkg: Expr = workspaces.get("") orelse {
-            try log.addError(source, workspaces.loc, "Expected root package");
+
+        for (trusted_dependencies_expr.data.e_array.items.slice()) |dep| {
+            if (!dep.isString()) {
+                try log.addError(source, dep.loc, "Expected a string");
+                return error.InvalidTrustedDependenciesSet;
+            }
+            const name_hash: TruncatedPackageNameHash = @truncate((try dep.asStringHash(allocator, String.Builder.stringHash)).?);
+            try trusted_dependencies.put(allocator, name_hash, {});
+        }
+
+        lockfile.trusted_dependencies = trusted_dependencies;
+    }
+
+    if (root.get("patchedDependencies")) |patched_dependencies_expr| {
+        if (!patched_dependencies_expr.isObject()) {
+            try log.addError(source, patched_dependencies_expr.loc, "Expected an object");
+            return error.InvalidPatchedDependencies;
+        }
+
+        var patched_dependencies: BinaryLockfile.PatchedDependenciesMap = .{};
+
+        for (patched_dependencies_expr.data.e_object.properties.slice()) |prop| {
+            const key = prop.key.?;
+            const value = prop.value.?;
+            if (!key.isString()) {
+                try log.addError(source, key.loc, "Expected a string");
+                return error.InvalidPatchedDependencies;
+            }
+
+            if (!value.isString()) {
+                try log.addError(source, value.loc, "Expected a string");
+                return error.InvalidPatchedDependencies;
+            }
+
+            const key_hash = (try key.asStringHash(allocator, String.Builder.stringHash)).?;
+            try patched_dependencies.put(
+                allocator,
+                key_hash,
+                .{ .path = try string_buf.append(value.asString(allocator).?) },
+            );
+        }
+
+        lockfile.patched_dependencies = patched_dependencies;
+    }
+
+    var overrides: BinaryLockfile.OverrideMap = .{};
+
+    if (root.get("overrides")) |overrides_expr| {
+        if (!overrides_expr.isObject()) {
+            try log.addError(source, overrides_expr.loc, "Expected an object");
+            return error.InvalidOverridesObject;
+        }
+
+        for (overrides_expr.data.e_object.properties.slice()) |prop| {
+            const key = prop.key.?;
+            const value = prop.value.?;
+
+            if (!key.isString() or key.data.e_string.len() == 0) {
+                try log.addError(source, key.loc, "Expected a non-empty string");
+                return error.InvalidOverridesObject;
+            }
+
+            const name_str = key.asString(allocator).?;
+            const name_hash = String.Builder.stringHash(name_str);
+            const name = try string_buf.appendWithHash(name_str, name_hash);
+
+            // TODO(dylan-conway) also accept object
+            if (!value.isString()) {
+                try log.addError(source, value.loc, "Expected a string");
+                return error.InvalidOverridesObject;
+            }
+
+            // TODO(dylan-conway) maybe check for '$' and make sure it exists in dependencies
+            const version_str = value.asString(allocator).?;
+            const version_hash = String.Builder.stringHash(version_str);
+            const version = try string_buf.appendWithHash(version_str, version_hash);
+            const version_sliced = version.sliced(string_buf.bytes.items);
+
+            const dep: Dependency = .{
+                .name = name,
+                .name_hash = name_hash,
+                .version = Dependency.parse(
+                    allocator,
+                    name,
+                    name_hash,
+                    version_sliced.slice,
+                    &version_sliced,
+                    log,
+                    manager,
+                ) orelse {
+                    try log.addError(source, value.loc, "Invalid override version");
+                    return error.InvalidOverridesObject;
+                },
+            };
+
+            try overrides.map.put(allocator, name_hash, dep);
+        }
+    } else if (root.get("resolutions")) |resolutions_expr| {
+        _ = resolutions_expr;
+    }
+
+    var workspace_paths: BinaryLockfile.NameHashMap = .{};
+    var workspace_versions: BinaryLockfile.VersionHashMap = .{};
+
+    const workspaces = root.getObject("workspaces") orelse {
+        try log.addError(source, root.loc, "Missing a workspaces object property");
+        return error.InvalidWorkspaceObject;
+    };
+
+    var root_pkg: ?Expr = null;
+
+    for (workspaces.data.e_object.properties.slice()) |prop| {
+        const key = prop.key.?;
+        const value: Expr = prop.value.?;
+        if (!key.isString()) {
+            try log.addError(source, key.loc, "Expected a string");
+            return error.InvalidWorkspaceObject;
+        }
+        if (!value.isObject()) {
+            try log.addError(source, value.loc, "Expected an object");
+            return error.InvalidWorkspaceObject;
+        }
+
+        const path = key.asString(allocator).?;
+
+        if (path.len == 0) {
+            if (root_pkg != null) {
+                try log.addError(source, key.loc, "Duplicate root package");
+                return error.InvalidWorkspaceObject;
+            }
+
+            root_pkg = value;
+            continue;
+        }
+
+        const name_expr: Expr = value.get("name") orelse {
+            try log.addError(source, value.loc, "Expected a string name property");
             return error.InvalidWorkspaceObject;
         };
 
-        std.debug.print("root_pkg: {s}\n", .{root_pkg.asString(allocator) orelse "ooops"});
+        const name_hash = try name_expr.asStringHash(allocator, String.Builder.stringHash) orelse {
+            try log.addError(source, name_expr.loc, "Expected a string name property");
+            return error.InvalidWorkspaceObject;
+        };
+
+        try workspace_paths.put(allocator, name_hash, try string_buf.append(path));
+
+        // versions are optional
+        if (value.get("version")) |version_expr| {
+            if (!version_expr.isString()) {
+                try log.addError(source, version_expr.loc, "Expected a string version property");
+                return error.InvalidWorkspaceObject;
+            }
+
+            const version_str = try string_buf.append(version_expr.asString(allocator).?);
+
+            const parsed = Semver.Version.parse(version_str.sliced(string_buf.bytes.items));
+            if (!parsed.valid) {
+                try log.addError(source, version_expr.loc, "Invalid semver version");
+                return error.InvalidSemver;
+            }
+
+            try workspace_versions.put(allocator, name_hash, parsed.version.min());
+        }
+    }
+    lockfile.workspace_paths = workspace_paths;
+    lockfile.workspace_versions = workspace_versions;
+
+    if (root_pkg) |pkg| {
+        _ = pkg;
+    } else {
+        try log.addError(source, workspaces.loc, "Expected root package");
+        return error.InvalidWorkspaceObject;
     }
 
     if (root.get("packages")) |pkgs| {
@@ -589,7 +778,24 @@ pub fn parseIntoBinaryLockfile(
             try log.addError(source, pkgs.loc, "Expected an object");
             return error.InvalidPackagesObject;
         }
+
+        for (pkgs.data.e_object.properties.slice()) |prop| {
+            const key = prop.key.?;
+            const value = prop.value.?;
+            if (!key.isString()) {
+                try log.addError(source, key.loc, "Expected a string");
+                return error.InvalidPackageKey;
+            }
+            if (!value.isArray()) {
+                try log.addError(source, value.loc, "Expected an array");
+                return error.InvalidPackageInfo;
+            }
+
+            // const info
+        }
     }
+
+    lockfile.overrides = overrides;
 }
 
 // fn loadFromJson(allocator: std.mem.Allocator, json: Expr, source: *const logger.Source, log: *logger.Log) !*Lockfile {
@@ -714,18 +920,18 @@ pub fn parseIntoBinaryLockfile(
 
 //             const value: Expr = prop.value orelse {
 //                 try log.addError(source, logger.Loc.Empty, "Expected package value");
-//                 return error.InvalidPackageValue;
+//                 return error.InvalidPackageInfo;;
 //             };
 
 //             if (!value.isArray()) {
 //                 try log.addError(source, value.loc, "Expected an array");
-//                 return error.InvalidPackageValue;
+//                 return error.InvalidPackageInfo;;
 //             }
 
 //             const pkg_items = value.data.e_array.slice();
 //             if (pkg_items.len == 0) {
 //                 try log.addError(source, value.loc, "Expected non-empty array");
-//                 return error.InvalidPackageValue;
+//                 return error.InvalidPackageInfo;;
 //             }
 
 //             const name_and_resolution_str = try pkg_items[0].asStringCloned(allocator) orelse {
@@ -735,7 +941,7 @@ pub fn parseIntoBinaryLockfile(
 
 //             const resolved_name, var res_str = Dependency.splitNameAndVersion(name_and_resolution_str) catch {
 //                 try log.addError(source, pkg_items[0].loc, "Expected package resolution");
-//                 return error.InvalidPackageValue;
+//                 return error.InvalidPackageInfo;;
 //             };
 
 //             const name = try string_buf.append(resolved_name);
@@ -1059,18 +1265,18 @@ pub fn parseIntoBinaryLockfile(
 
 //             const value: Expr = prop.value orelse {
 //                 try log.addError(source, logger.Loc.Empty, "Expected package value");
-//                 return error.InvalidPackageValue;
+//                 return error.InvalidPackageInfo;;
 //             };
 
 //             if (!value.isArray()) {
 //                 try log.addError(source, value.loc, "Expected an array");
-//                 return error.InvalidPackageValue;
+//                 return error.InvalidPackageInfo;;
 //             }
 
 //             const pkg_items = value.data.e_array.slice();
 //             if (pkg_items.len == 0) {
 //                 try log.addError(source, value.loc, "Expected non-empty array");
-//                 return error.InvalidPackageValue;
+//                 return error.InvalidPackageInfo;;
 //             }
 
 //             const name_and_resolution_str = try pkg_items[0].asStringCloned(allocator) orelse {
@@ -1080,7 +1286,7 @@ pub fn parseIntoBinaryLockfile(
 
 //             const resolved_name, var res_str = Dependency.splitNameAndVersion(name_and_resolution_str) catch {
 //                 try log.addError(source, pkg_items[0].loc, "Expected package resolution");
-//                 return error.InvalidPackageValue;
+//                 return error.InvalidPackageInfo;;
 //             };
 
 //             const name = try string_buf.append(resolved_name);

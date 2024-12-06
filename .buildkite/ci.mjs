@@ -269,7 +269,7 @@ function getPriority() {
  */
 function getEc2Agent(platform, options) {
   const { os, arch, abi, distro, release } = platform;
-  const { instanceType, cpuCount, threadsPerCore } = options;
+  const { instanceType, cpuCount, threadsPerCore, dryRun } = options;
   return {
     os,
     arch,

@@ -460,7 +460,7 @@ function getBuildZigStep(platform) {
     agents: getZigAgent(platform),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    env: { ...getBuildEnv(platform), ENABLE_LLVM: "OFF" },
+    env: getBuildEnv(platform),
     command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
   };
 }

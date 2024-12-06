@@ -52,7 +52,7 @@ macro(optionx variable type description)
     set(${variable}_PREVIEW ${variable})
   endif()
 
-  if(${variable}_SECRET AND NOT DEFINED ${variable})
+  if(${variable}_SECRET AND NOT ${variable})
     set(${variable}_SOURCE "secret")
     set(${variable}_PREVIEW ${variable})
     if(ENV{BUILDKITE} STREQUAL "true")

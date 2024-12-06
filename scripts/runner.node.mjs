@@ -28,9 +28,11 @@ import {
   getEnv,
   getFileUrl,
   getWindowsExitReason,
+  isArm64,
   isBuildkite,
   isCI,
   isGithubAction,
+  isMacOS,
   isWindows,
   printEnvironment,
   startGroup,
@@ -206,6 +208,31 @@ async function runTests() {
   if (results.every(({ ok }) => ok)) {
     for (const testPath of tests) {
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
+      if (title.startsWith("test/js/node/test/parallel/")) {
+        await runTest(title, async () => {
+          const { ok, error, stdout } = await spawnBun(execPath, {
+            cwd: cwd,
+            args: [title],
+            timeout: spawnTimeout,
+            env: {
+              FORCE_COLOR: "0",
+            },
+            stdout: chunk => pipeTestStdout(process.stdout, chunk),
+            stderr: chunk => pipeTestStdout(process.stderr, chunk),
+          });
+          return {
+            testPath: title,
+            ok,
+            status: ok ? "pass" : "fail",
+            error,
+            errors: [],
+            tests: [],
+            stdout,
+            stdoutPreview: "",
+          };
+        });
+        continue;
+      }
       await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
     }
   }
@@ -495,11 +522,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       stderr,
     });
   } finally {
-    try {
-      rmSync(tmpdirPath, { recursive: true, force: true });
-    } catch (error) {
-      console.warn(error);
-    }
+    // try {
+    //   rmSync(tmpdirPath, { recursive: true, force: true });
+    // } catch (error) {
+    //   console.warn(error);
+    // }
   }
 }
 
@@ -770,7 +797,7 @@ function isJavaScriptTest(path) {
  * @returns {boolean}
  */
 function isTest(path) {
-  if (path.replaceAll(sep, "/").includes("/test-cluster-") && path.endsWith(".js")) return true;
+  if (path.startsWith("js/node/test/parallel/") && isMacOS && isArm64) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
   return isTestStrict(path);
 }

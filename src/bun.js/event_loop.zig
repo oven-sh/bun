@@ -484,7 +484,7 @@ pub const Task = TaggedPointerUnion(.{
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
     ServerAllConnectionsClosedTask,
-    bun.bake.DevServer.HotReloadTask,
+    bun.bake.DevServer.HotReloadEvent,
     bun.bundle_v2.DeferredBatchTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
@@ -2063,13 +2063,6 @@ pub const AnyEventLoop = union(enum) {
 
     pub const Task = AnyTaskWithExtraContext;
 
-    pub fn fromJSC(
-        this: *AnyEventLoop,
-        jsc: *EventLoop,
-    ) void {
-        this.* = .{ .js = jsc };
-    }
-
     pub fn wakeup(this: *AnyEventLoop) void {
         this.loop().wakeup();
     }
@@ -2151,7 +2144,7 @@ pub const AnyEventLoop = union(enum) {
     ) void {
         switch (this.*) {
             .js => {
-                unreachable; // TODO:
+                bun.todoPanic(@src(), "AnyEventLoop.enqueueTaskConcurrent", .{});
                 // const TaskType = AnyTask.New(Context, Callback);
                 // @field(ctx, field) = TaskType.init(ctx);
                 // var concurrent = bun.default_allocator.create(ConcurrentTask) catch unreachable;

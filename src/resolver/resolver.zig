@@ -3302,8 +3302,7 @@ pub const Resolver = struct {
         const argument: bun.JSC.JSValue = callframe.argument(0);
 
         if (argument == .zero or !argument.isString()) {
-            globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
-            return .zero;
+            return globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
         }
 
         const in_str = argument.toBunString(globalThis);

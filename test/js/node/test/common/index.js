@@ -141,7 +141,7 @@ const isSunOS = process.platform === 'sunos';
 const isFreeBSD = process.platform === 'freebsd';
 const isOpenBSD = process.platform === 'openbsd';
 const isLinux = process.platform === 'linux';
-const isOSX = process.platform === 'darwin';
+const isMacOS = process.platform === 'darwin';
 const isASan = process.config.variables.asan === 1;
 const isPi = (() => {
   try {
@@ -338,10 +338,9 @@ if (global.structuredClone) {
   knownGlobals.push(global.structuredClone);
 }
 
-// BUN:TODO: uncommenting this crashes bun
-// if (global.EventSource) {
-//   knownGlobals.push(EventSource);
-// }
+if (global.EventSource) {
+  knownGlobals.push(EventSource);
+}
 
 if (global.fetch) {
   knownGlobals.push(fetch);
@@ -967,13 +966,18 @@ function getPrintedStackTrace(stderr) {
  * @param {object} mod result returned by require()
  * @param {object} expectation shape of expected namespace.
  */
-function expectRequiredModule(mod, expectation) {
+function expectRequiredModule(mod, expectation, checkESModule = true) {
+  const clone = { ...mod };
+  if (Object.hasOwn(mod, 'default') && checkESModule) {
+    assert.strictEqual(mod.__esModule, true);
+    delete clone.__esModule;
+  }
   assert(isModuleNamespaceObject(mod));
-  assert.deepStrictEqual({ ...mod }, { ...expectation });
+  assert.deepStrictEqual(clone, { ...expectation });
 }
 
 const common = {
-  allowGlobals: [],
+  allowGlobals,
   buildType,
   canCreateSymLink,
   childShouldThrowAndAbort,
@@ -1001,7 +1005,7 @@ const common = {
   isLinux,
   isMainThread,
   isOpenBSD,
-  isOSX,
+  isMacOS,
   isPi,
   isSunOS,
   isWindows,

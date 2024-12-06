@@ -10,6 +10,9 @@ pub const u_int64_t = c_ulonglong;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
 pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: i32 = 2;
+pub const LIBUS_SOCKET_REUSE_PORT: i32 = 4;
+pub const LIBUS_SOCKET_IPV6_ONLY: i32 = 8;
+
 pub const Socket = opaque {
     pub fn write2(this: *Socket, first: []const u8, second: []const u8) i32 {
         const rc = us_socket_write2(0, this, first.ptr, first.len, second.ptr, second.len);
@@ -2304,6 +2307,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 pub const SocketTCP = NewSocketHandler(false);
 pub const SocketTLS = NewSocketHandler(true);
 
+
+
 pub const SocketContext = opaque {
     pub fn getNativeHandle(this: *SocketContext, comptime ssl: bool) *anyopaque {
         return us_socket_context_get_native_handle(@intFromBool(ssl), this).?;
@@ -2315,6 +2320,11 @@ pub const SocketContext = opaque {
 
     fn _deinit(this: *SocketContext) void {
         us_socket_context_free(@as(i32, 0), this);
+    }
+
+    pub fn ref(this: *SocketContext, comptime ssl: bool) *SocketContext {
+        us_socket_context_ref(@intFromBool(ssl), this);
+        return this;
     }
 
     pub fn cleanCallbacks(ctx: *SocketContext, is_ssl: bool) void {
@@ -2558,6 +2568,7 @@ pub const PosixLoop = extern struct {
 };
 
 extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
+
 
 pub const us_socket_context_options_t = extern struct {
     key_file_name: [*c]const u8 = null,
@@ -3124,6 +3135,14 @@ pub const AnyResponse = union(enum) {
     SSL: *NewApp(true).Response,
     TCP: *NewApp(false).Response,
 
+    pub fn init(response: anytype) AnyResponse {
+        return switch (@TypeOf(response)) {
+            *NewApp(true).Response => .{ .SSL = response },
+            *NewApp(false).Response => .{ .TCP = response },
+            else => @compileError(unreachable),
+        };
+    }
+
     pub fn timeout(this: AnyResponse, seconds: u8) void {
         switch (this) {
             .SSL => |resp| resp.timeout(seconds),
@@ -3637,11 +3656,6 @@ pub fn NewApp(comptime ssl: bool) type {
 
                 return bun.toFD(@as(i32, @intCast(@intFromPtr(uws_res_get_native_handle(ssl_flag, res.downcast())))));
             }
-            pub fn getRemoteAddress(res: *Response) ?[]const u8 {
-                var buf: [*]const u8 = undefined;
-                const size = uws_res_get_remote_address(ssl_flag, res.downcast(), &buf);
-                return if (size > 0) buf[0..size] else null;
-            }
             pub fn getRemoteAddressAsText(res: *Response) ?[]const u8 {
                 var buf: [*]const u8 = undefined;
                 const size = uws_res_get_remote_address_as_text(ssl_flag, res.downcast(), &buf);
@@ -3963,7 +3977,6 @@ pub fn NewApp(comptime ssl: bool) type {
 extern fn uws_res_end_stream(ssl: i32, res: *uws_res, close_connection: bool) void;
 extern fn uws_res_prepare_for_sendfile(ssl: i32, res: *uws_res) void;
 extern fn uws_res_get_native_handle(ssl: i32, res: *uws_res) *Socket;
-extern fn uws_res_get_remote_address(ssl: i32, res: *uws_res, dest: *[*]const u8) usize;
 extern fn uws_res_get_remote_address_as_text(ssl: i32, res: *uws_res, dest: *[*]const u8) usize;
 extern fn uws_create_app(ssl: i32, options: us_bun_socket_context_options_t) ?*uws_app_t;
 extern fn uws_app_destroy(ssl: i32, app: *uws_app_t) void;

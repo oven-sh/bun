@@ -1013,6 +1013,47 @@ static napi_value try_add_tag(const Napi::CallbackInfo &info) {
   return Napi::Boolean::New(env, status == napi_ok);
 }
 
+// try_wrap(value: any, num: number): bool
+// wraps value in a C++ object corresponding to the number num
+// true if success
+static napi_value try_wrap(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value value = info[0];
+  napi_value js_num = info[1];
+  double c_num;
+  assert(napi_get_value_double(env, js_num, &c_num) == napi_ok);
+
+  napi_status status = napi_wrap(
+      env, value, reinterpret_cast<void *>(new double{c_num}),
+      [](napi_env env, void *data, void *hint) {
+        (void)env;
+        (void)hint;
+        delete reinterpret_cast<double *>(data);
+      },
+      nullptr, nullptr);
+
+  napi_value js_result;
+  assert(napi_get_boolean(env, status == napi_ok, &js_result) == napi_ok);
+  return js_result;
+}
+
+// try_unwrap(any): number|undefined
+static napi_value try_unwrap(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value value = info[0];
+
+  double *wrapped;
+  napi_status status =
+      napi_unwrap(env, value, reinterpret_cast<void **>(&wrapped));
+  napi_value result;
+  if (status == napi_ok) {
+    assert(napi_create_double(env, *wrapped, &result) == napi_ok);
+  } else {
+    assert(napi_get_undefined(env, &result) == napi_ok);
+  }
+  return result;
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -1079,6 +1120,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("add_tag", Napi::Function::New(env, add_tag));
   exports.Set("try_add_tag", Napi::Function::New(env, try_add_tag));
   exports.Set("check_tag", Napi::Function::New(env, check_tag));
+  exports.Set("try_wrap", Napi::Function::New(env, try_wrap));
+  exports.Set("try_unwrap", Napi::Function::New(env, try_unwrap));
 
   return exports;
 }

@@ -303,7 +303,7 @@ pub const UDPSocket = struct {
         } else {
             this.closed = true;
             this.deinit();
-            return globalThis.throw2("Failed to bind socket", .{});
+            return globalThis.throw("Failed to bind socket", .{});
         }
 
         errdefer {
@@ -319,7 +319,7 @@ pub const UDPSocket = struct {
                 }
 
                 if (bun.c_ares.Error.initEAI(ret)) |err| {
-                    return globalThis.throwValue2(err.toJS(globalThis));
+                    return globalThis.throwValue(err.toJS(globalThis));
                 }
             }
             this.connect_info = .{ .port = connect.port };

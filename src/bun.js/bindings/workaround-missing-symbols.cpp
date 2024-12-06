@@ -468,7 +468,7 @@ int __wrap_pthread_key_create(pthread_key_t* key, void (*destructor)(void*))
 
 int __wrap___pthread_key_create(pthread_key_t* key, void (*destructor)(void*))
 {
-    return __pthread_key_create(key, destructor);
+    return pthread_key_create(key, destructor);
 }
 
 int __wrap_pthread_key_delete(pthread_key_t key)

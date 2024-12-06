@@ -87,11 +87,12 @@ macro(optionx variable type description)
     endif()
   endif()
 
-  if(DEFINED ${variable}_REGEX AND NOT "^(${${variable}_REGEX})$" MATCHES "${${variable}}")
-    message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\", please use ${${variable}_PREVIEW}=<${${variable}_REGEX}>")
+  if(DEFINED ${variable}_REGEX)
+    if(NOT "^(${${variable}_REGEX})$" MATCHES "${${variable}}")
+      message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\", please use ${${variable}_PREVIEW}=<${${variable}_REGEX}>")
+    endif()
   endif()
 
-  
   if(NOT ${variable}_VALUE STREQUAL ${variable})
     message(STATUS "Set ${variable}: ${${variable}}")
   endif()

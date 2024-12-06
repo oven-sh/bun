@@ -2029,7 +2029,7 @@ static JSValue constructPid(VM& vm, JSObject* processObject)
 static JSValue constructPpid(VM& vm, JSObject* processObject)
 {
 #if OS(WINDOWS)
-    return jsNumber(0);
+    return jsNumber(uv_os_getppid());
 #else
     return jsNumber(getppid());
 #endif

@@ -2701,13 +2701,25 @@ pub const Expect = struct {
 
             // 1. find the src loc of the snapshot
             const srcloc = callFrame.getCallerSrcLoc(globalThis);
+            defer srcloc.str.deref();
             const describe = this.testScope().?.describe;
+            const fget = Jest.runner.?.files.get(describe.file_id);
 
-            // not sure how to get two comparable values
-            // if (srcloc.file != testrunner.file) {
-            //     const signature = comptime getSignature(fn_name, "", true);
-            //     return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot matchers must be called from the same file as the test\n", .{});
-            // }
+            if (!srcloc.str.eqlUTF8(fget.source.path.text)) {
+                const signature = comptime getSignature(fn_name, "", true);
+                return this.throw(globalThis, signature,
+                    \\
+                    \\
+                    \\<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:
+                    \\  Expected to be called from file: <green>"{}"<r>
+                    \\  {s} called from file: <red>"{}"<r>
+                    \\
+                , .{
+                    std.zig.fmtEscapes(fget.source.path.text),
+                    fn_name,
+                    std.zig.fmtEscapes(srcloc.str.toUTF8(Jest.runner.?.snapshots.allocator).slice()),
+                });
+            }
 
             // 2. save to write later
             try Jest.runner.?.snapshots.addInlineSnapshotToWrite(describe.file_id, .{

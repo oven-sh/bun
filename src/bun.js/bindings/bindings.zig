@@ -6666,19 +6666,19 @@ pub const CallFrame = opaque {
         return value;
     }
 
-    extern fn Bun__CallFrame__getCallerSrcLoc(*const CallFrame, *JSGlobalObject, *bool, *c_uint, *c_uint) void;
+    extern fn Bun__CallFrame__getCallerSrcLoc(*const CallFrame, *JSGlobalObject, *bun.String, *c_uint, *c_uint) void;
     pub const CallerSrcLoc = struct {
-        probably_test_file: bool,
+        str: bun.String,
         line: c_uint,
         column: c_uint,
     };
     pub fn getCallerSrcLoc(call_frame: *const CallFrame, globalThis: *JSGlobalObject) CallerSrcLoc {
-        var probably_test_file: bool = undefined;
+        var str: bun.String = undefined;
         var line: c_uint = undefined;
         var column: c_uint = undefined;
-        Bun__CallFrame__getCallerSrcLoc(call_frame, globalThis, &probably_test_file, &line, &column);
+        Bun__CallFrame__getCallerSrcLoc(call_frame, globalThis, &str, &line, &column);
         return .{
-            .probably_test_file = probably_test_file,
+            .str = str,
             .line = line,
             .column = column,
         };

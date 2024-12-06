@@ -276,7 +276,7 @@ pub const Snapshots = struct {
                 inline_snapshot_dbg("Finding byte for {}/{}", .{ ils.line, ils.col });
                 const byte_offset_add = logger.Source.lineColToByteOffset(file_text[last_byte..], last_line, last_col, ils.line, ils.col) orelse {
                     inline_snapshot_dbg("-> Could not find byte", .{});
-                    try log.addErrorFmt(&source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Could not find byte for line/column: {d}/{d}", .{ ils.line, ils.col });
+                    try log.addErrorFmt(&source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Ln {d}, Col {d} not found", .{ ils.line, ils.col });
                     continue;
                 };
 

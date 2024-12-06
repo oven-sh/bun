@@ -719,13 +719,11 @@ describe("inline snapshots", () => {
     tester.testError(
       {
         update: true,
-        // msg: "Matcher error: Inline snapshot matchers must be called from the same file as the test",
-        msg: "Failed to update inline snapshot: Could not find 'toMatchInlineSnapshot' here",
+        msg: "Inline snapshot matchers must be called from the test file",
       },
       /*js*/ `
         import {wrongFile} from "./helper";
         test("cases", () => {
-          expect("rightfile").toMatchInlineSnapshot();
           wrongFile("interesting");
         });
       `,

@@ -6032,11 +6032,10 @@ CPP_DECL bool Bun__CallFrame__isFromBunMain(JSC::CallFrame* callFrame, JSC::VM* 
     return source.string() == "builtin://bun/main"_s;
 }
 
-CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, bool* outProbablyTestFile, unsigned int* outLine, unsigned int* outColumn)
+CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)
 {
     JSC::VM& vm = globalObject->vm();
     JSC::LineColumn lineColumn;
-    JSC::SourceID sourceID = 0;
     String sourceURL;
 
     ZigStackFrame remappedFrame = {};
@@ -6050,7 +6049,6 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
             lineColumn = visitor->computeLineAndColumn();
 
             String sourceURLForFrame = visitor->sourceURL();
-            sourceID = visitor->sourceID();
 
             // Sometimes, the sourceURL is empty.
             // For example, pages in Next.js.
@@ -6099,6 +6097,7 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
         lineColumn.column = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.column_zero_based).oneBasedInt();
     }
 
+    *outSourceURL = Bun::toStringRef(sourceURL);
     *outLine = lineColumn.line;
     *outColumn = lineColumn.column;
 }

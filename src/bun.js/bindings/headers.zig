@@ -379,6 +379,13 @@ pub extern fn FileSink__setDestroyCallback(JSValue0: JSC__JSValue, callback: usi
 pub extern fn FileSink__fromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*anyopaque;
 pub extern fn FileSink__onClose(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) void;
 pub extern fn FileSink__onReady(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, JSValue2: JSC__JSValue) void;
+pub extern fn FetchTaskletChunkedRequestSink__assignToStream(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue, arg2: ?*anyopaque, arg3: [*c]*anyopaque) JSC__JSValue;
+pub extern fn FetchTaskletChunkedRequestSink__createObject(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque, onDestroyPtrTag: usize) JSC__JSValue;
+pub extern fn FetchTaskletChunkedRequestSink__detachPtr(JSValue0: JSC__JSValue) void;
+pub extern fn FetchTaskletChunkedRequestSink__setDestroyCallback(JSValue0: JSC__JSValue, callback: usize) void;
+pub extern fn FetchTaskletChunkedRequestSink__fromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*anyopaque;
+pub extern fn FetchTaskletChunkedRequestSink__onClose(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) void;
+pub extern fn FetchTaskletChunkedRequestSink__onReady(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, JSValue2: JSC__JSValue) void;
 pub extern fn ZigException__fromException(arg0: [*c]bindings.Exception) ZigException;
 
 pub const JSC__GetterSetter = bindings.GetterSetter;

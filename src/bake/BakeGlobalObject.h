@@ -4,9 +4,13 @@
 
 namespace Bake {
 
+struct ProductionPerThread;
+
 class GlobalObject : public Zig::GlobalObject {
 public:
     using Base = Zig::GlobalObject;
+
+    ProductionPerThread* m_perThreadData;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {

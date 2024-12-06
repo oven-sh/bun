@@ -9062,7 +9062,7 @@ fn NewParser_(
                     if (symbol.namespace_alias == null) {
                         symbol.namespace_alias = .{
                             .namespace_ref = stmt.namespace_ref,
-                            .alias = name,
+                            .alias = item.alias,
                             .import_record_index = stmt.import_record_index,
                         };
                     }
@@ -23977,7 +23977,7 @@ pub const ConvertESMExportsForHmr = struct {
                 return; // do not emit a statement here
             },
             .s_export_from => |st| stmt: {
-                for (st.items) |item| {
+                for (st.items) |*item| {
                     const ref = item.name.ref.?;
                     const symbol = &p.symbols.items[ref.innerIndex()];
                     if (symbol.namespace_alias == null) {
@@ -23988,6 +23988,15 @@ pub const ConvertESMExportsForHmr = struct {
                         };
                     }
                     try ctx.visitRefToExport(p, ref, item.alias, item.name.loc, true);
+
+                    // imports and export statements have their alias +
+                    // original_name swapped. this is likely a design bug in
+                    // the parser but since everything uses these
+                    // assumptions, this hack is simpler than making it
+                    // proper
+                    const alias = item.alias;
+                    item.alias = item.original_name;
+                    item.original_name = alias;
                 }
 
                 const gop = try ctx.imports_seen.getOrPut(p.allocator, st.import_record_index);

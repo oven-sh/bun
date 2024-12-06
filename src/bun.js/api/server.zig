@@ -1949,8 +1949,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn renderMissingInvalidResponse(ctx: *RequestContext, value: JSC.JSValue) void {
-            var class_name = value.getClassInfoName() orelse bun.String.empty;
-            defer class_name.deref();
+            const class_name = value.getClassInfoName() orelse "";
 
             if (ctx.server) |server| {
                 const globalThis: *JSC.JSGlobalObject = server.globalThis;
@@ -1958,7 +1957,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 Output.enableBuffering();
                 var writer = Output.errorWriter();
 
-                if (class_name.eqlComptime("Response")) {
+                if (bun.strings.eqlComptime(class_name, "Response")) {
                     Output.errGeneric("Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.", .{});
                 } else if (value != .zero and !globalThis.hasException()) {
                     var formatter = JSC.ConsoleObject.Formatter{
@@ -2099,7 +2098,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const has_responded = resp.hasResponded();
             if (!has_responded) {
                 const original_state = ctx.defer_deinit_until_callback_completes;
-                var should_deinit_context = false;
+                var should_deinit_context = if (original_state) |defer_deinit| defer_deinit.* else false;
                 ctx.defer_deinit_until_callback_completes = &should_deinit_context;
                 ctx.runErrorHandler(
                     value,
@@ -2343,13 +2342,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return this.sendWritableBytesForCompleteResponseBuffer(this.response_buf_owned.items, write_offset, resp);
         }
 
-        pub fn create(this: *RequestContext, server: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+        pub fn create(this: *RequestContext, server: *ThisServer, req: *uws.Request, resp: *App.Response, should_deinit_context: ?*bool) void {
             this.* = .{
                 .allocator = server.allocator,
                 .resp = resp,
                 .req = req,
                 .method = HTTP.Method.which(req.method()) orelse .GET,
                 .server = server,
+                .defer_deinit_until_callback_completes = should_deinit_context,
             };
 
             ctxLog("create<d> ({*})<r>", .{this});
@@ -4435,6 +4435,7 @@ pub const ServerWebSocket = struct {
     handler: *WebSocketServer.Handler,
     this_value: JSValue = .zero,
     flags: Flags = .{},
+    signal: ?*JSC.AbortSignal = null,
 
     // We pack the per-socket data into this struct below
     const Flags = packed struct(u64) {
@@ -4716,17 +4717,35 @@ pub const ServerWebSocket = struct {
                 handler.active_connections -|= 1;
             }
         }
+        const signal = this.signal;
+        this.signal = null;
+
+        defer {
+            if (signal) |sig| {
+                sig.pendingActivityUnref();
+                sig.unref();
+            }
+        }
 
         const vm = handler.vm;
-        if (vm.isShuttingDown()) return;
+        if (vm.isShuttingDown()) {
+            return;
+        }
 
         if (!handler.onClose.isEmptyOrUndefinedOrNull()) {
             var str = ZigString.init(message);
             const globalObject = handler.globalObject;
             const loop = vm.eventLoop();
+
             loop.enter();
             defer loop.exit();
             str.markUTF8();
+            if (signal) |sig| {
+                if (!sig.aborted()) {
+                    sig.signal(handler.globalObject, .ConnectionClosed);
+                }
+            }
+
             _ = handler.onClose.call(
                 globalObject,
                 .undefined,
@@ -4736,6 +4755,15 @@ pub const ServerWebSocket = struct {
                 log("onClose error", .{});
                 handler.runErrorCallback(vm, globalObject, err);
             };
+        } else if (signal) |sig| {
+            const loop = vm.eventLoop();
+
+            loop.enter();
+            defer loop.exit();
+
+            if (!sig.aborted()) {
+                sig.signal(handler.globalObject, .ConnectionClosed);
+            }
         }
 
         this.this_value.unprotect();
@@ -5828,7 +5856,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSValue.jsBoolean(false);
             }
 
-            var request = object.as(Request) orelse {
+            var request: *Request = object.as(Request) orelse {
                 return globalThis.throwInvalidArguments("upgrade requires a Request object", .{});
             };
 
@@ -5960,9 +5988,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             // obviously invalid pointer marks it as used
             upgrader.upgrade_context = @as(*uws.uws_socket_context_s, @ptrFromInt(std.math.maxInt(usize)));
-            // set the abort handler so we can receive onAbort to deref the context
-            upgrader.setAbortHandler();
-            // after upgrading we should not use the response anymore
+            const signal = upgrader.signal;
+
+            upgrader.signal = null;
             upgrader.resp = null;
             request.request_context = AnyRequestContext.Null;
             upgrader.request_weakref.deinit();
@@ -5971,6 +5999,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const ws = ServerWebSocket.new(.{
                 .handler = &this.config.websocket.?.handler,
                 .this_value = data_value,
+                .signal = signal,
             });
             data_value.ensureStillAlive();
 
@@ -5978,6 +6007,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             defer sec_websocket_protocol_str.deinit();
             var sec_websocket_extensions_str = sec_websocket_extensions.toSlice(bun.default_allocator);
             defer sec_websocket_extensions_str.deinit();
+
+            resp.clearAborted();
+            resp.clearOnData();
+            resp.clearOnWritable();
+            resp.clearTimeout();
+
+            upgrader.deref();
 
             resp.upgrade(
                 *ServerWebSocket,
@@ -6753,10 +6789,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            const prepared = this.prepareJsRequestContext(req, resp) orelse return;
+            // Track this before we enter JavaScript.
+            var should_deinit_context = false;
+            const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context) orelse return;
             const ctx = prepared.ctx;
 
             bun.assert(this.config.onRequest != .zero);
+
             const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &.{
                 prepared.js_request,
                 this.thisObject,
@@ -6767,14 +6806,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 // uWS request will not live longer than this function
                 prepared.request_object.request_context.detachRequest();
             }
-            const original_state = ctx.defer_deinit_until_callback_completes;
-            var should_deinit_context = false;
-            ctx.defer_deinit_until_callback_completes = &should_deinit_context;
+
             ctx.onResponse(this, prepared.js_request, response_value);
-            ctx.defer_deinit_until_callback_completes = original_state;
 
             // Reference in the stack here in case it is not for whatever reason
             prepared.js_request.ensureStillAlive();
+
+            ctx.defer_deinit_until_callback_completes = null;
 
             if (should_deinit_context) {
                 ctx.deinit();
@@ -6800,7 +6838,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             extra_args: [arg_count]JSValue,
         ) void {
             const prepared: PreparedRequest = switch (req) {
-                .stack => |r| this.prepareJsRequestContext(r, resp) orelse return,
+                .stack => |r| this.prepareJsRequestContext(r, resp, null) orelse return,
                 .saved => |data| .{
                     .js_request = data.js_request.get() orelse @panic("Request was unexpectedly freed"),
                     .request_object = data.request,
@@ -6872,7 +6910,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
         };
 
-        pub fn prepareJsRequestContext(this: *ThisServer, req: *uws.Request, resp: *App.Response) ?PreparedRequest {
+        pub fn prepareJsRequestContext(this: *ThisServer, req: *uws.Request, resp: *App.Response, should_deinit_context: ?*bool) ?PreparedRequest {
             JSC.markBinding(@src());
             this.onPendingRequest();
             if (comptime Environment.isDebug) {
@@ -6894,7 +6932,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             const ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
-            ctx.create(this, req, resp);
+            ctx.create(this, req, resp, should_deinit_context);
             this.vm.jsc.reportExtraMemory(@sizeOf(RequestContext));
             const body = this.vm.initRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
@@ -6982,7 +7020,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.pending_requests += 1;
             req.setYield(false);
             var ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
-            ctx.create(this, req, resp);
+            var should_deinit_context = false;
+            ctx.create(this, req, resp, &should_deinit_context);
             var body = this.vm.initRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
@@ -7005,22 +7044,20 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             };
             const request_value = args[0];
             request_value.ensureStillAlive();
+
             const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args) catch |err|
                 this.globalThis.takeException(err);
             defer {
                 // uWS request will not live longer than this function
                 request_object.request_context.detachRequest();
             }
-
-            const original_state = ctx.defer_deinit_until_callback_completes;
-            var should_deinit_context = false;
-            ctx.defer_deinit_until_callback_completes = &should_deinit_context;
             ctx.onResponse(
                 this,
                 request_value,
                 response_value,
             );
-            ctx.defer_deinit_until_callback_completes = original_state;
+
+            ctx.defer_deinit_until_callback_completes = null;
 
             if (should_deinit_context) {
                 ctx.deinit();

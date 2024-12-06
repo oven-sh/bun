@@ -20,7 +20,7 @@ pub const Options = struct {
 
     // Debugging features
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
-    dump_state_on_crash: ?bool = false,
+    dump_state_on_crash: ?bool = null,
     verbose_watcher: bool = false,
 };
 
@@ -623,7 +623,7 @@ fn ensureRouteIsBundled(
                     .data = switch (kind) {
                         .js_payload => .{ .js_payload = resp },
                         .server_handler => .{
-                            .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp) orelse return)
+                            .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp, null) orelse return)
                                 .save(dev.vm.global, req, resp),
                         },
                     },
@@ -676,7 +676,7 @@ fn ensureRouteIsBundled(
                     .data = switch (kind) {
                         .js_payload => .{ .js_payload = resp },
                         .server_handler => .{
-                            .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp) orelse return)
+                            .server_handler = (dev.server.?.DebugHTTPServer.prepareJsRequestContext(req, resp, null) orelse return)
                                 .save(dev.vm.global, req, resp),
                         },
                     },
@@ -904,6 +904,7 @@ fn startAsyncBundle(
             .framework = dev.framework,
             .client_bundler = &dev.client_bundler,
             .ssr_bundler = &dev.ssr_bundler,
+            .plugins = dev.bundler_options.plugin,
         } else @panic("TODO: support non-server components"),
         allocator,
         .{ .js = dev.vm.eventLoop() },
@@ -912,7 +913,6 @@ fn startAsyncBundle(
         heap,
     );
     bv2.bun_watcher = dev.bun_watcher;
-    bv2.plugins = dev.bundler_options.plugin;
     bv2.asynchronous = true;
 
     {
@@ -4352,7 +4352,7 @@ fn dumpStateDueToCrash(dev: *DevServer) !void {
     const filepath = std.fmt.bufPrintZ(&filepath_buf, "incremental-graph-crash-dump.{d}.html", .{std.time.timestamp()}) catch "incremental-graph-crash-dump.html";
     const file = std.fs.cwd().createFileZ(filepath, .{}) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
-        Output.warn("Could not open directory for dumping sources: {}", .{err});
+        Output.warn("Could not open file for dumping incremental graph: {}", .{err});
         return;
     };
     defer file.close();

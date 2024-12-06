@@ -777,6 +777,9 @@ function requestHasNoBody(method, req) {
   if ("GET" === method || "HEAD" === method || "TRACE" === method || "CONNECT" === method || "OPTIONS" === method)
     return true;
   const headers = req?.headers;
+  const encoding = headers?.["transfer-encoding"];
+  if (encoding?.indexOf?.("chunked") !== -1) return false;
+
   const contentLength = headers?.["content-length"];
   if (!parseInt(contentLength, 10)) return true;
 
@@ -838,12 +841,15 @@ IncomingMessage.prototype = {
       return;
     }
 
-    const contentLength = this.headers["content-length"];
-    const length = contentLength ? parseInt(contentLength, 10) : 0;
-    if (length === 0) {
-      this[noBodySymbol] = true;
-      callback();
-      return;
+    const encoding = this.headers["transfer-encoding"];
+    if (encoding?.indexOf?.("chunked") === -1) {
+      const contentLength = this.headers["content-length"];
+      const length = contentLength ? parseInt(contentLength, 10) : 0;
+      if (length === 0) {
+        this[noBodySymbol] = true;
+        callback();
+        return;
+      }
     }
 
     callback();
@@ -975,7 +981,6 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
       } else {
         ({ done, value } = result);
       }
-
       if (self.destroyed || (aborted = self[abortedSymbol])) {
         break;
       }
@@ -1479,6 +1484,9 @@ class ClientRequest extends OutgoingMessage {
   #socketPath;
 
   #bodyChunks: Buffer[] | null = null;
+  #stream: ReadableStream | null = null;
+  #controller: ReadableStream | null = null;
+
   #fetchRequest;
   #signal: AbortSignal | null = null;
   [kAbortController]: AbortController | null = null;
@@ -1512,24 +1520,93 @@ class ClientRequest extends OutgoingMessage {
     return this.#agent;
   }
 
+  #createStream() {
+    if (!this.#stream) {
+      var self = this;
+
+      this.#stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          self.#controller = controller;
+          for (let chunk of self.#bodyChunks) {
+            if (chunk === null) {
+              controller.close();
+            } else {
+              controller.write(chunk);
+            }
+          }
+          self.#bodyChunks = null;
+        },
+      });
+      this.#startStream();
+    }
+  }
+
   _write(chunk, encoding, callback) {
-    if (!this.#bodyChunks) {
-      this.#bodyChunks = [chunk];
-      callback();
+    if (this.#controller) {
+      if (typeof chunk === "string") {
+        this.#controller.write(Buffer.from(chunk, encoding));
+      } else {
+        this.#controller.write(chunk);
+      }
+      process.nextTick(callback);
       return;
     }
+    if (!this.#bodyChunks) {
+      this.#bodyChunks = [chunk];
+      process.nextTick(callback);
+      return;
+    }
+
     this.#bodyChunks.push(chunk);
-    callback();
+    this.#createStream();
+    process.nextTick(callback);
   }
 
   _writev(chunks, callback) {
-    if (!this.#bodyChunks) {
-      this.#bodyChunks = chunks;
-      callback();
+    if (this.#controller) {
+      const allBuffers = chunks.allBuffers;
+
+      if (allBuffers) {
+        for (let i = 0; i < chunks.length; i++) {
+          this.#controller.write(chunks[i].chunk);
+        }
+      } else {
+        for (let i = 0; i < chunks.length; i++) {
+          this.#controller.write(Buffer.from(chunks[i].chunk, chunks[i].encoding));
+        }
+      }
+      process.nextTick(callback);
       return;
     }
-    this.#bodyChunks.push(...chunks);
-    callback();
+    const allBuffers = chunks.allBuffers;
+    if (this.#bodyChunks) {
+      if (allBuffers) {
+        for (let i = 0; i < chunks.length; i++) {
+          this.#bodyChunks.push(chunks[i].chunk);
+        }
+      } else {
+        for (let i = 0; i < chunks.length; i++) {
+          this.#bodyChunks.push(Buffer.from(chunks[i].chunk, chunks[i].encoding));
+        }
+      }
+    } else {
+      this.#bodyChunks = new Array(chunks.length);
+
+      if (allBuffers) {
+        for (let i = 0; i < chunks.length; i++) {
+          this.#bodyChunks[i] = chunks[i].chunk;
+        }
+      } else {
+        for (let i = 0; i < chunks.length; i++) {
+          this.#bodyChunks[i] = Buffer.from(chunks[i].chunk, chunks[i].encoding);
+        }
+      }
+    }
+    if (this.#bodyChunks.length > 1) {
+      this.#createStream();
+    }
+    process.nextTick(callback);
   }
 
   _destroy(err, callback) {
@@ -1545,26 +1622,12 @@ class ClientRequest extends OutgoingMessage {
     return this.#tls;
   }
 
-  _final(callback) {
-    this.#finished = true;
-    this[kAbortController] = new AbortController();
-    this[kAbortController].signal.addEventListener(
-      "abort",
-      () => {
-        this[kClearTimeout]?.();
-        if (this.destroyed) return;
-        this.emit("abort");
-        this.destroy();
-      },
-      { once: true },
-    );
-    if (this.#signal?.aborted) {
-      this[kAbortController].abort();
-    }
+  #startStream() {
+    if (this.#fetchRequest) return;
 
     var method = this.#method,
-      body = this.#bodyChunks?.length === 1 ? this.#bodyChunks[0] : Buffer.concat(this.#bodyChunks || []);
-
+      body =
+        this.#stream || (this.#bodyChunks?.length === 1 ? this.#bodyChunks[0] : Buffer.concat(this.#bodyChunks || []));
     let url: string;
     let proxy: string | undefined;
     const protocol = this.#protocol;
@@ -1594,7 +1657,7 @@ class ClientRequest extends OutgoingMessage {
         method,
         headers: this.getHeaders(),
         redirect: "manual",
-        signal: this[kAbortController].signal,
+        signal: this[kAbortController]?.signal,
         // Timeouts are handled via this.setTimeout.
         timeout: false,
         // Disable auto gzip/deflate
@@ -1660,9 +1723,38 @@ class ClientRequest extends OutgoingMessage {
     } catch (err) {
       if (!!$debug) globalReportError(err);
       this.emit("error", err);
-    } finally {
-      callback();
     }
+  }
+
+  _final(callback) {
+    this.#finished = true;
+    this[kAbortController] = new AbortController();
+    this[kAbortController].signal.addEventListener(
+      "abort",
+      () => {
+        this[kClearTimeout]?.();
+        if (this.destroyed) return;
+        this.emit("abort");
+        this.destroy();
+      },
+      { once: true },
+    );
+    if (this.#signal?.aborted) {
+      this[kAbortController].abort();
+    }
+
+    if (this.#controller) {
+      this.#controller.close();
+      callback();
+      return;
+    }
+    if (this.#bodyChunks?.length > 1) {
+      this.#bodyChunks?.push(null);
+    }
+
+    this.#startStream();
+
+    callback();
   }
 
   get aborted() {

@@ -1766,13 +1766,13 @@ pub const Subprocess = struct {
                     if (argv0 == null) {
                         var path_buf: bun.PathBuffer = undefined;
                         const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
-                            return globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
+                            return throwCommandNotFound(globalThis, arg0.slice());
                         };
                         argv0 = try allocator.dupeZ(u8, resolved);
                     } else {
                         var path_buf: bun.PathBuffer = undefined;
                         const resolved = Which.which(&path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
-                            return globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
+                            return throwCommandNotFound(globalThis, arg0.slice());
                         };
                         argv0 = try allocator.dupeZ(u8, resolved);
                     }
@@ -2312,6 +2312,15 @@ pub const Subprocess = struct {
         sync_value.put(globalThis, JSC.ZigString.static("resourceUsage"), resource_usage);
 
         return sync_value;
+    }
+
+    fn throwCommandNotFound(globalThis: *JSC.JSGlobalObject, command: []const u8) bun.JSError {
+        const message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory();
+        defer message.deref();
+        const err = message.toZigString().toErrorInstance(globalThis);
+        err.putZigString(globalThis, JSC.ZigString.static("code"), JSC.ZigString.init("ENOENT").toJS(globalThis));
+        err.putZigString(globalThis, JSC.ZigString.static("path"), JSC.ZigString.init(command).toJS(globalThis));
+        return globalThis.throwValue(err);
     }
 
     const node_cluster_binding = @import("./../../node/node_cluster_binding.zig");

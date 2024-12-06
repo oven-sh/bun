@@ -55,7 +55,7 @@ if(ENABLE_CODESIGN STREQUAL "ON" OR ENABLE_CODESIGN MATCHES "Darwin")
   if(NOT APPLE_CODESIGN_IDENTITY)
     message(FATAL_ERROR "Code signing is enabled, but no APPLE_CODESIGN_IDENTITY is set.\n"
       "To fix this, either:\n"
-      "  - Set ENABLE_APPLE_CODESIGN=OFF to disable code signing\n"
+      "  - Set ENABLE_CODESIGN=OFF to disable code signing\n"
       "  - Find your identity in your keychain and set APPLE_CODESIGN_IDENTITY to the identity's name\n"
     )
   endif()

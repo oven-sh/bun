@@ -823,7 +823,7 @@ install_llvm() {
 			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" -njammy
 			;;
 		debian-12*)
-			# Add LLVM repository for Debian 12 (bookworm)
+			# Add LLVM repository for Debian 12 (bookworm) specially
 			execute_sudo bash -c 'echo "deb http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-18 main" >> /etc/apt/sources.list.d/llvm.list'
 			execute_sudo bash -c 'echo "deb-src http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-18 main" >> /etc/apt/sources.list.d/llvm.list'
 

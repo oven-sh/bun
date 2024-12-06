@@ -7,6 +7,8 @@ import net from "net";
 import { join } from "path";
 import { gzipSync } from "zlib";
 import { Readable } from "stream";
+import { once } from "events";
+import type { AddressInfo } from "net";
 const tmp_dir = tmpdirSync();
 
 const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
@@ -2258,4 +2260,60 @@ describe("fetch should allow duplex", () => {
       await response.text();
     }).not.toThrow();
   });
+});
+
+it("should allow to follow redirect if connection is closed, abort should work even if the socket was closed before the redirect", async () => {
+  for (const type of ["normal", "delay"]) {
+    await using server = net.createServer(socket => {
+      let body = "";
+      socket.on("data", data => {
+        body += data.toString("utf8");
+
+        const headerEndIndex = body.indexOf("\r\n\r\n");
+        if (headerEndIndex !== -1) {
+          // headers received
+          const headers = body.split("\r\n\r\n")[0];
+          const path = headers.split("\r\n")[0].split(" ")[1];
+          if (path === "/redirect") {
+            socket.end(
+              "HTTP/1.1 308 Permanent Redirect\r\nCache-Control: public, max-age=0, must-revalidate\r\nContent-Type: text/plain\r\nLocation: /\r\nConnection: close\r\n\r\n",
+            );
+          } else {
+            if (type === "delay") {
+              setTimeout(() => {
+                if (!socket.destroyed)
+                  socket.end(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nHello Bun",
+                  );
+              }, 200);
+            } else {
+              socket.end(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nHello Bun",
+              );
+            }
+          }
+        }
+      });
+    });
+    await once(server.listen(0), "listening");
+
+    try {
+      const response = await fetch(`http://localhost:${(server.address() as AddressInfo).port}/redirect`, {
+        signal: AbortSignal.timeout(150),
+      });
+      if (type === "delay") {
+        console.error(response, type);
+        expect.unreachable();
+      } else {
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("Hello Bun");
+      }
+    } catch (err) {
+      if (type === "delay") {
+        expect((err as Error).name).toBe("TimeoutError");
+      } else {
+        expect.unreachable();
+      }
+    }
+  }
 });

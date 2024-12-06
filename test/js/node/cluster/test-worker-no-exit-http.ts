@@ -1,7 +1,15 @@
 const assert = require("assert");
 const cluster = require("cluster");
 const http = require("http");
-import { patchEmitter } from "./common";
+
+function patchEmitter(emitter: any, prefix: string) {
+  var oldEmit = emitter.emit;
+
+  emitter.emit = function () {
+    console.log([prefix, arguments[0]]);
+    oldEmit.apply(emitter, arguments);
+  };
+}
 
 let destroyed;
 let success;

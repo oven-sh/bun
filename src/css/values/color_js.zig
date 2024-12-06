@@ -58,11 +58,9 @@ const OutputColorFormat = enum {
     });
 };
 
-fn colorIntFromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue, comptime property: []const u8) ?i32 {
+fn colorIntFromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue, comptime property: []const u8) bun.JSError!i32 {
     if (input == .zero or input == .undefined or !input.isNumber()) {
-        globalThis.throwInvalidArgumentType("color", property, "integer");
-
-        return null;
+        return globalThis.throwInvalidArgumentType("color", property, "integer");
     }
 
     // CSS spec says to clamp values to their valid range so we'll respect that here
@@ -150,8 +148,7 @@ pub const Ansi256 = struct {
 pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const args = callFrame.argumentsAsArray(2);
     if (args[0].isUndefined()) {
-        globalThis.throwInvalidArgumentType("color", "input", "string, number, or object");
-        return .zero;
+        return globalThis.throwInvalidArgumentType("color", "input", "string, number, or object");
     }
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -165,8 +162,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
     const unresolved_format: OutputColorFormat = brk: {
         if (!args[1].isEmptyOrUndefinedOrNull()) {
             if (!args[1].isString()) {
-                globalThis.throwInvalidArgumentType("color", "format", "string");
-                return .zero;
+                return globalThis.throwInvalidArgumentType("color", "format", "string");
             }
 
             break :brk try args[1].toEnum(globalThis, "format", OutputColorFormat);
@@ -193,60 +189,26 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
         } else if (args[0].jsType().isArrayLike()) {
             switch (args[0].getLength(globalThis)) {
                 3 => {
-                    const r = colorIntFromJS(globalThis, args[0].getIndex(globalThis, 0), "[0]") orelse return .zero;
-                    if (globalThis.hasException()) {
-                        return .zero;
-                    }
-                    const g = colorIntFromJS(globalThis, args[0].getIndex(globalThis, 1), "[1]") orelse return .zero;
-                    if (globalThis.hasException()) {
-                        return .zero;
-                    }
-                    const b = colorIntFromJS(globalThis, args[0].getIndex(globalThis, 2), "[2]") orelse return .zero;
-                    if (globalThis.hasException()) {
-                        return .zero;
-                    }
+                    const r = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 0), "[0]");
+                    const g = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 1), "[1]");
+                    const b = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 2), "[2]");
                     break :brk .{ .result = css.CssColor{ .rgba = .{ .alpha = 255, .red = @intCast(r), .green = @intCast(g), .blue = @intCast(b) } } };
                 },
                 4 => {
-                    const r = colorIntFromJS(globalThis, args[0].getIndex(globalThis, 0), "[0]") orelse return .zero;
-                    if (globalThis.hasException()) {
-                        return .zero;
-                    }
-                    const g = colorIntFromJS(globalThis, args[0].getIndex(globalThis, 1), "[1]") orelse return .zero;
-                    if (globalThis.hasException()) {
-                        return .zero;
-                    }
-                    const b = colorIntFromJS(globalThis, args[0].getIndex(globalThis, 2), "[2]") orelse return .zero;
-                    if (globalThis.hasException()) {
-                        return .zero;
-                    }
-                    const a = colorIntFromJS(globalThis, args[0].getIndex(globalThis, 3), "[3]") orelse return .zero;
-                    if (globalThis.hasException()) {
-                        return .zero;
-                    }
+                    const r = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 0), "[0]");
+                    const g = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 1), "[1]");
+                    const b = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 2), "[2]");
+                    const a = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 3), "[3]");
                     break :brk .{ .result = css.CssColor{ .rgba = .{ .alpha = @intCast(a), .red = @intCast(r), .green = @intCast(g), .blue = @intCast(b) } } };
                 },
                 else => {
-                    globalThis.throw("Expected array length 3 or 4", .{});
-                    return .zero;
+                    return globalThis.throw("Expected array length 3 or 4", .{});
                 },
             }
         } else if (args[0].isObject()) {
-            const r = colorIntFromJS(globalThis, try args[0].get(globalThis, "r") orelse .zero, "r") orelse return .zero;
-
-            if (globalThis.hasException()) {
-                return .zero;
-            }
-            const g = colorIntFromJS(globalThis, try args[0].get(globalThis, "g") orelse .zero, "g") orelse return .zero;
-
-            if (globalThis.hasException()) {
-                return .zero;
-            }
-            const b = colorIntFromJS(globalThis, try args[0].get(globalThis, "b") orelse .zero, "b") orelse return .zero;
-
-            if (globalThis.hasException()) {
-                return .zero;
-            }
+            const r = try colorIntFromJS(globalThis, try args[0].get(globalThis, "r") orelse .zero, "r");
+            const g = try colorIntFromJS(globalThis, try args[0].get(globalThis, "g") orelse .zero, "g");
+            const b = try colorIntFromJS(globalThis, try args[0].get(globalThis, "b") orelse .zero, "b");
 
             const a: ?u8 = if (try args[0].getTruthy(globalThis, "a")) |a_value| brk2: {
                 if (a_value.isNumber()) {
@@ -283,8 +245,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                 return .null;
             }
 
-            globalThis.throw("color() failed to parse {s}", .{@tagName(err.basic().kind)});
-            return .zero;
+            return globalThis.throw("color() failed to parse {s}", .{@tagName(err.basic().kind)});
         },
         .result => |*result| {
             const format: OutputColorFormat = if (unresolved_format == .ansi) switch (bun.Output.Source.colorDepth()) {
@@ -470,8 +431,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
             );
 
             result.toCss(@TypeOf(writer), &printer) catch |err| {
-                globalThis.throw("color() internal error: {s}", .{@errorName(err)});
-                return .zero;
+                return globalThis.throw("color() internal error: {s}", .{@errorName(err)});
             };
 
             var out = bun.String.createUTF8(dest.items);

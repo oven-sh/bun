@@ -2559,8 +2559,7 @@ pub const Arguments = struct {
 
             if (defined_length and args.length > 0 and buffer.slice().len == 0) {
                 var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
-                ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
-                return error.JSError;
+                return ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
             }
 
             return args;
@@ -4772,8 +4771,8 @@ pub const NodeFS = struct {
 
                 break :brk switch (bun.sys.open(
                     path,
-                    bun.O.RDONLY | bun.O.NOCTTY,
-                    0,
+                    @intFromEnum(args.flag) | bun.O.NOCTTY,
+                    default_permission,
                 )) {
                     .err => |err| return .{
                         .err = err.withPath(if (args.path == .path) args.path.path.slice() else ""),
@@ -5552,7 +5551,7 @@ pub const NodeFS = struct {
                 .message = bun.String.init(buf),
                 .code = bun.String.init(@errorName(err)),
                 .path = bun.String.init(args.path.slice()),
-            }).toErrorInstance(args.global_this));
+            }).toErrorInstance(args.global_this)) catch {};
             return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
         };
         return Maybe(Return.Watch){ .result = watcher };

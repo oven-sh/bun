@@ -178,8 +178,7 @@ pub const HTMLRewriter = struct {
 
             if (out != .zero) {
                 if (out.toError()) |err| {
-                    global.throwValue(err);
-                    return .zero;
+                    return global.throwValue(err);
                 }
             }
 
@@ -1288,7 +1287,7 @@ pub const Comment = struct {
         var text = value.toSlice(global, bun.default_allocator);
         defer text.deinit();
         this.comment.?.setText(text.slice()) catch {
-            global.throwValue(throwLOLHTMLError(global));
+            global.throwValue(throwLOLHTMLError(global)) catch {};
             return false;
         };
 
@@ -1412,7 +1411,7 @@ pub const EndTag = struct {
         var text = value.toSlice(global, bun.default_allocator);
         defer text.deinit();
         this.end_tag.?.setName(text.slice()) catch {
-            global.throwValue(throwLOLHTMLError(global));
+            global.throwValue(throwLOLHTMLError(global)) catch {};
             return false;
         };
 
@@ -1697,7 +1696,7 @@ pub const Element = struct {
         defer text.deinit();
 
         this.element.?.setTagName(text.slice()) catch {
-            global.throwValue(throwLOLHTMLError(global));
+            global.throwValue(throwLOLHTMLError(global)) catch {};
             return false;
         };
 

@@ -343,11 +343,10 @@ pub const FDImpl = packed struct {
     pub fn toJS(value: FDImpl, global: *JSC.JSGlobalObject) JSValue {
         const fd = value.makeLibUVOwned() catch {
             _ = value.close();
-            global.throwValue((JSC.SystemError{
+            return global.throwValue((JSC.SystemError{
                 .message = bun.String.static("EMFILE, too many open files"),
                 .code = bun.String.static("EMFILE"),
-            }).toErrorInstance(global));
-            return .zero;
+            }).toErrorInstance(global)) catch .zero;
         };
         return JSValue.jsNumberFromInt32(fd.uv());
     }

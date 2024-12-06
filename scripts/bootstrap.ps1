@@ -1,6 +1,6 @@
-# Version: 4
-# A powershell script that installs the dependencies needed to build and test Bun.
-# This should work on Windows 10 or newer.
+# Version: 7
+# A script that installs the dependencies needed to build and test Bun.
+# This should work on Windows 10 or newer with PowerShell.
 
 # If this script does not work on your machine, please open an issue:
 # https://github.com/oven-sh/bun/issues
@@ -15,6 +15,9 @@ param (
   [Parameter(Mandatory = $false)]
   [switch]$Optimize = $CI
 )
+
+$ErrorActionPreference = "Stop"
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 function Execute-Command {
   $command = $args -join ' '
@@ -43,6 +46,47 @@ function Which {
   }
 }
 
+function Execute-Script {
+  param (
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$Path
+  )
+
+  $pwsh = Which pwsh powershell -Required
+  Execute-Command $pwsh $Path
+}
+
+function Download-File {
+  param (
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$Url,
+    [Parameter(Mandatory = $false)]
+    [string]$Name,
+    [Parameter(Mandatory = $false)]
+    [string]$Path
+  )
+
+  if (-not $Name) {
+    $Name = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetRandomFileName(), [System.IO.Path]::GetExtension($Url))
+  }
+
+  if (-not $Path) {
+    $Path = "$env:TEMP\$Name"
+  }
+
+  $client = New-Object System.Net.WebClient
+  for ($i = 0; $i -lt 10 -and -not (Test-Path $Path); $i++) {
+    try {
+      $client.DownloadFile($Url, $Path)
+    } catch {
+      Write-Warning "Failed to download $Url, retry $i..."
+      Start-Sleep -s $i
+    }
+  }
+
+  return $Path
+}
+
 function Install-Chocolatey {
   if (Which choco) {
     return
@@ -50,7 +94,8 @@ function Install-Chocolatey {
 
   Write-Output "Installing Chocolatey..."
   [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-  iex -Command ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+  $installScript = Download-File "https://community.chocolatey.org/install.ps1"
+  Execute-Script $installScript
   Refresh-Path
 }
 
@@ -96,8 +141,21 @@ function Add-To-Path {
   }
 
   Write-Output "Adding $absolutePath to PATH..."
-  [Environment]::SetEnvironmentVariable("Path", $newPath, "Machine")
+  [Environment]::SetEnvironmentVariable("Path", "$newPath", "Machine")
   Refresh-Path
+}
+
+function Set-Env {
+  param (
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$Name,
+    [Parameter(Mandatory = $true, Position = 1)]
+    [string]$Value
+  )
+
+  Write-Output "Setting environment variable $Name=$Value..."
+  [System.Environment]::SetEnvironmentVariable("$Name", "$Value", "Machine")
+  [System.Environment]::SetEnvironmentVariable("$Name", "$Value", "Process")
 }
 
 function Install-Package {
@@ -137,7 +195,7 @@ function Install-Package {
 
 function Install-Packages {
   foreach ($package in $args) {
-    Install-Package -Name $package
+    Install-Package $package
   }
 }
 
@@ -145,12 +203,13 @@ function Install-Common-Software {
   Install-Chocolatey
   Install-Pwsh
   Install-Git
-  Install-Packages curl 7zip
+  Install-Packages curl 7zip nssm
   Install-NodeJs
   Install-Bun
   Install-Cygwin
   if ($CI) {
-    Install-Tailscale
+    # FIXME: Installing tailscale causes the AWS metadata server to become unreachable
+    # Install-Tailscale
     Install-Buildkite
   }
 }
@@ -204,12 +263,13 @@ function Install-Buildkite {
 
   Write-Output "Installing Buildkite agent..."
   $env:buildkiteAgentToken = "xxx"
-  iex ((New-Object System.Net.WebClient).DownloadString("https://raw.githubusercontent.com/buildkite/agent/main/install.ps1"))
+  $installScript = Download-File "https://raw.githubusercontent.com/buildkite/agent/main/install.ps1"
+  Execute-Script $installScript
   Refresh-Path
 }
 
 function Install-Build-Essentials {
-  # Install-Visual-Studio
+  Install-Visual-Studio
   Install-Packages `
     cmake `
     make `
@@ -219,41 +279,42 @@ function Install-Build-Essentials {
     golang `
     nasm `
     ruby `
+    strawberryperl `
     mingw
   Install-Rust
   Install-Llvm
 }
 
 function Install-Visual-Studio {
-  $components = @(
-    "Microsoft.VisualStudio.Workload.NativeDesktop",
-    "Microsoft.VisualStudio.Component.Windows10SDK.18362",
-    "Microsoft.VisualStudio.Component.Windows11SDK.22000",
-    "Microsoft.VisualStudio.Component.Windows11Sdk.WindowsPerformanceToolkit",
-    "Microsoft.VisualStudio.Component.VC.ASAN", # C++ AddressSanitizer
-    "Microsoft.VisualStudio.Component.VC.ATL", # C++ ATL for latest v143 build tools (x86 & x64)
-    "Microsoft.VisualStudio.Component.VC.DiagnosticTools", # C++ Diagnostic Tools
-    "Microsoft.VisualStudio.Component.VC.CLI.Support", # C++/CLI support for v143 build tools (Latest)
-    "Microsoft.VisualStudio.Component.VC.CoreIde", # C++ core features
-    "Microsoft.VisualStudio.Component.VC.Redist.14.Latest" # C++ 2022 Redistributable Update
+  param (
+    [Parameter(Mandatory = $false)]
+    [string]$Edition = "community"
   )
 
-  $arch = (Get-WmiObject Win32_Processor).Architecture
-  if ($arch -eq 9) {
-    $components += @(
-      "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", # MSVC v143 build tools (x86 & x64)
-      "Microsoft.VisualStudio.Component.VC.Modules.x86.x64" # MSVC v143 C++ Modules for latest v143 build tools (x86 & x64)
-    )
-  } elseif ($arch -eq 5) {
-    $components += @(
-      "Microsoft.VisualStudio.Component.VC.Tools.ARM64", # MSVC v143 build tools (ARM64)
-      "Microsoft.VisualStudio.Component.UWP.VC.ARM64" # C++ Universal Windows Platform support for v143 build tools (ARM64/ARM64EC)
-    )
-  }
+  Write-Output "Downloading Visual Studio installer..."
+  $vsInstaller = Download-File "https://aka.ms/vs/17/release/vs_$Edition.exe"
 
-  $packageParameters = $components | ForEach-Object { "--add $_" }
-  Install-Package visualstudio2022community `
-    -ExtraArgs "--package-parameters '--add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --includeOptional'"
+  Write-Output "Installing Visual Studio..."
+  $vsInstallArgs = @(
+    "--passive",
+    "--norestart",
+    "--wait",
+    "--force",
+    "--locale en-US",
+    "--add Microsoft.VisualStudio.Workload.NativeDesktop",
+    "--includeRecommended"
+  )
+  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $vsInstaller
+  $startInfo.Arguments = $vsInstallArgs -join ' '
+  $startInfo.CreateNoWindow = $true
+  $process = New-Object System.Diagnostics.Process
+  $process.StartInfo = $startInfo
+  $process.Start()
+  $process.WaitForExit()
+  if ($process.ExitCode -ne 0) {
+    throw "Failed to install Visual Studio: code $($process.ExitCode)"
+  }
 }
 
 function Install-Rust {
@@ -261,18 +322,31 @@ function Install-Rust {
     return
   }
 
+  Write-Output "Installing Rustup..."
+  $rustupInit = Download-File "https://win.rustup.rs/" -Name "rustup-init.exe"
+
   Write-Output "Installing Rust..."
-  $rustupInit = "$env:TEMP\rustup-init.exe"
-  (New-Object System.Net.WebClient).DownloadFile("https://win.rustup.rs/", $rustupInit)
   Execute-Command $rustupInit -y
-  Add-To-Path "$env:USERPROFILE\.cargo\bin"
+
+  Write-Output "Moving Rust to $env:ProgramFiles..."
+  $rustPath = Join-Path $env:ProgramFiles "Rust"
+  if (-not (Test-Path $rustPath)) {
+    New-Item -Path $rustPath -ItemType Directory
+  }
+  Move-Item "$env:UserProfile\.cargo" "$rustPath\cargo" -Force
+  Move-Item "$env:UserProfile\.rustup" "$rustPath\rustup" -Force
+
+  Write-Output "Setting environment variables for Rust..."
+  Set-Env "CARGO_HOME" "$rustPath\cargo"
+  Set-Env "RUSTUP_HOME" "$rustPath\rustup"
+  Add-To-Path "$rustPath\cargo\bin"
 }
 
 function Install-Llvm {
   Install-Package llvm `
     -Command clang-cl `
     -Version "18.1.8"
-  Add-To-Path "C:\Program Files\LLVM\bin"
+  Add-To-Path "$env:ProgramFiles\LLVM\bin"
 }
 
 function Optimize-System {
@@ -280,6 +354,9 @@ function Optimize-System {
   Disable-Windows-Threat-Protection
   Disable-Windows-Services
   Disable-Power-Management
+}
+
+function Optimize-System-Needs-Reboot {
   Uninstall-Windows-Defender
 }
 
@@ -319,7 +396,7 @@ function Disable-Windows-Services {
 }
 
 function Disable-Power-Management {
-  Write-Output "Disabling power management features..."
+  Write-Output "Disabling Power Management..."
   powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c # High performance
   powercfg /change monitor-timeout-ac 0
   powercfg /change monitor-timeout-dc 0
@@ -329,7 +406,6 @@ function Disable-Power-Management {
   powercfg /change hibernate-timeout-dc 0
 }
 
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 if ($Optimize) {
   Optimize-System
 }
@@ -337,3 +413,6 @@ if ($Optimize) {
 Install-Common-Software
 Install-Build-Essentials
 
+if ($Optimize) {
+  Optimize-System-Needs-Reboot
+}

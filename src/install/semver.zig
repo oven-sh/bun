@@ -2657,8 +2657,7 @@ pub const SemverObject = struct {
 
         const arguments = callFrame.arguments_old(2).slice();
         if (arguments.len < 2) {
-            globalThis.throw("Expected two arguments", .{});
-            return .zero;
+            return globalThis.throw("Expected two arguments", .{});
         }
 
         const left_arg = arguments[0];
@@ -2679,13 +2678,11 @@ pub const SemverObject = struct {
         const right_result = Version.parse(SlicedString.init(right.slice(), right.slice()));
 
         if (!left_result.valid) {
-            globalThis.throw("Invalid SemVer: {s}\n", .{left.slice()});
-            return .zero;
+            return globalThis.throw("Invalid SemVer: {s}\n", .{left.slice()});
         }
 
         if (!right_result.valid) {
-            globalThis.throw("Invalid SemVer: {s}\n", .{right.slice()});
-            return .zero;
+            return globalThis.throw("Invalid SemVer: {s}\n", .{right.slice()});
         }
 
         const left_version = left_result.version.max();
@@ -2706,8 +2703,7 @@ pub const SemverObject = struct {
 
         const arguments = callFrame.arguments_old(2).slice();
         if (arguments.len < 2) {
-            globalThis.throw("Expected two arguments", .{});
-            return .zero;
+            return globalThis.throw("Expected two arguments", .{});
         }
 
         const left_arg = arguments[0];

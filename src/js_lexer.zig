@@ -273,6 +273,25 @@ fn NewLexer_(
             // }
         }
 
+        pub fn restore(this: *LexerType, original: *const LexerType) void {
+            const all_comments = this.all_comments;
+            const comments_to_preserve_before = this.comments_to_preserve_before;
+            const temp_buffer_u16 = this.temp_buffer_u16;
+            this.* = original.*;
+
+            // make sure pointers are valid
+            this.all_comments = all_comments;
+            this.comments_to_preserve_before = comments_to_preserve_before;
+            this.temp_buffer_u16 = temp_buffer_u16;
+
+            bun.debugAssert(all_comments.items.len >= original.all_comments.items.len);
+            bun.debugAssert(comments_to_preserve_before.items.len >= original.comments_to_preserve_before.items.len);
+            bun.debugAssert(temp_buffer_u16.items.len == 0 and original.temp_buffer_u16.items.len == 0);
+
+            this.all_comments.items.len = original.all_comments.items.len;
+            this.comments_to_preserve_before.items.len = original.comments_to_preserve_before.items.len;
+        }
+
         /// Look ahead at the next n codepoints without advancing the iterator.
         /// If fewer than n codepoints are available, then return the remainder of the string.
         fn peek(it: *LexerType, n: usize) string {
@@ -378,7 +397,7 @@ fn NewLexer_(
                                 // 1-3 digit octal
                                 var is_bad = false;
                                 var value: i64 = c2 - '0';
-                                var restore = iter;
+                                var prev = iter;
 
                                 _ = iterator.next(&iter) or {
                                     if (value == 0) {
@@ -395,7 +414,7 @@ fn NewLexer_(
                                 switch (c3) {
                                     '0'...'7' => {
                                         value = value * 8 + c3 - '0';
-                                        restore = iter;
+                                        prev = iter;
                                         _ = iterator.next(&iter) or return lexer.syntaxError();
 
                                         const c4 = iter.c;
@@ -405,14 +424,14 @@ fn NewLexer_(
                                                 if (temp < 256) {
                                                     value = temp;
                                                 } else {
-                                                    iter = restore;
+                                                    iter = prev;
                                                 }
                                             },
                                             '8', '9' => {
                                                 is_bad = true;
                                             },
                                             else => {
-                                                iter = restore;
+                                                iter = prev;
                                             },
                                         }
                                     },
@@ -420,7 +439,7 @@ fn NewLexer_(
                                         is_bad = true;
                                     },
                                     else => {
-                                        iter = restore;
+                                        iter = prev;
                                     },
                                 }
 
@@ -811,7 +830,7 @@ fn NewLexer_(
             return code_point;
         }
 
-        fn step(lexer: *LexerType) void {
+        pub fn step(lexer: *LexerType) void {
             lexer.code_point = lexer.nextCodepoint();
 
             // Track the approximate number of newlines in the file so we can preallocate

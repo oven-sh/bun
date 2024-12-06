@@ -72,12 +72,8 @@ Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t 
         signal->setHasActiveTimeoutTimer(false);
     };
 
-    if (milliseconds == 0) {
-        // immediately write to task queue
-        context.postTask(WTFMove(action));
-    } else {
-        context.postTaskOnTimeout(WTFMove(action), Seconds::fromMilliseconds(milliseconds));
-    }
+    // Act like setTimeout(0) and always tick the event loop.
+    context.postTaskOnTimeout(WTFMove(action), Seconds::fromMilliseconds(milliseconds == 0 ? 1 : milliseconds));
 
     return signal;
 }

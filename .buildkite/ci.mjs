@@ -390,7 +390,7 @@ function getBuildEnv(target) {
   return {
     CMAKE_BUILD_TYPE: release ? "Release" : profile === "debug" ? "Debug" : "RelWithDebInfo",
     ENABLE_BASELINE: baseline ? "ON" : "OFF",
-    ENABLE_CANARY: canary ? "ON" : "OFF",
+    ENABLE_CANARY: canary === false ? "OFF" : "ON",
     ENABLE_ASSERTIONS: release ? "OFF" : "ON",
     ENABLE_LOGS: release ? "OFF" : "ON",
     ABI: abi === "musl" ? "musl" : undefined,
@@ -466,7 +466,6 @@ function getBuildZigStep(platform) {
     cancel_on_build_failing: isMergeQueue(),
     env: {
       ...getBuildEnv(platform),
-      ENABLE_LLVM: "OFF",
       ENABLE_CODESIGN: "OFF",
     },
     command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,

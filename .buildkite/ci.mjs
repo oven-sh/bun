@@ -394,6 +394,7 @@ function getBuildEnv(target) {
     ENABLE_ASSERTIONS: release ? "OFF" : "ON",
     ENABLE_LOGS: release ? "OFF" : "ON",
     ABI: abi === "musl" ? "musl" : undefined,
+    LLVM_VERSION: "18.1.8",
   };
 }
 

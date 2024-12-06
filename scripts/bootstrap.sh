@@ -815,7 +815,41 @@ llvm_version() {
 install_llvm() {
 	case "$pm" in
 	apt)
-		install_packages "llvm-$(llvm_version)" "clang-$(llvm_version)" "lld-$(llvm_version)" "libllvm-$(llvm_version)"
+		bash="$(require bash)"
+		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
+		case "$distro-$release" in
+		ubuntu-24*)
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all -njammy
+			;;
+		*)
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)"
+			;;
+		esac
+
+		for f in "/usr/lib/llvm-$(llvm_version)/bin/"*; do
+			execute_sudo ln -sf "$f" "/usr/bin/"
+		done
+
+		execute_sudo ln -sf "/usr/bin/clang-$(llvm_version)" "/usr/bin/clang"
+		execute_sudo ln -sf "/usr/bin/clang++-$(llvm_version)" "/usr/bin/clang++"
+		execute_sudo ln -sf "/usr/bin/lld-$(llvm_version)" "/usr/bin/lld"
+		execute_sudo ln -sf "/usr/bin/lldb-$(llvm_version)" "/usr/bin/lldb"
+		execute_sudo ln -sf "/usr/bin/clangd-$(llvm_version)" "/usr/bin/clangd"
+		execute_sudo ln -sf "/usr/bin/llvm-ar-$(llvm_version)" "/usr/bin/llvm-ar"
+		execute_sudo ln -sf "/usr/bin/ld.lld" "/usr/bin/ld"
+		execute_sudo ln -sf "/usr/bin/clang" "/usr/bin/cc"
+		execute_sudo ln -sf "/usr/bin/clang" "/usr/bin/c89"
+		execute_sudo ln -sf "/usr/bin/clang" "/usr/bin/c99"
+		execute_sudo ln -sf "/usr/bin/clang++" "/usr/bin/c++"
+		execute_sudo ln -sf "/usr/bin/clang++" "/usr/bin/g++"
+		execute_sudo ln -sf "/usr/bin/llvm-ar" "/usr/bin/ar"
+		execute_sudo ln -sf "/usr/bin/clang" "/usr/bin/gcc"
+
+		append_to_profile "export CC=clang-$(llvm_version)"
+		append_to_profile "export CXX=clang++-$(llvm_version)"
+		append_to_profile "export AR=llvm-ar-$(llvm_version)"
+		append_to_profile "export RANLIB=llvm-ranlib-$(llvm_version)" 
+		append_to_profile "export LD=lld-$(llvm_version)"
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"

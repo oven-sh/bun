@@ -78,6 +78,7 @@ pub const JSBundler = struct {
         experimental_css: bool = false,
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        has_any_on_before_parse: bool = false,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -856,6 +857,25 @@ pub const JSBundler = struct {
             const plugin = JSBundlerPlugin__create(global, target);
             JSC.JSValue.fromCell(plugin).protect();
             return plugin;
+        }
+
+        extern fn JSBundlerPlugin__callOnBeforeParsePlugins(
+            *Plugin,
+            bun_context: *anyopaque,
+            namespace: *const String,
+            path: *const String,
+            on_before_parse_args: ?*anyopaque,
+            on_before_parse_result: ?*anyopaque,
+            should_continue: *i32,
+        ) i32;
+
+        pub fn callOnBeforeParsePlugins(this: *Plugin, ctx: *anyopaque, namespace: *const String, path: *const String, on_before_parse_args: ?*anyopaque, on_before_parse_result: ?*anyopaque, should_continue: *i32) i32 {
+            return JSBundlerPlugin__callOnBeforeParsePlugins(this, ctx, namespace, path, on_before_parse_args, on_before_parse_result, should_continue);
+        }
+
+        extern fn JSBundlerPlugin__hasOnBeforeParsePlugins(*Plugin) i32;
+        pub fn hasOnBeforeParsePlugins(this: *Plugin) bool {
+            return JSBundlerPlugin__hasOnBeforeParsePlugins(this) != 0;
         }
 
         extern fn JSBundlerPlugin__tombstone(*Plugin) void;

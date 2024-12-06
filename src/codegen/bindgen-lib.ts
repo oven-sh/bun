@@ -1,6 +1,6 @@
 // This is the public API for `bind.ts` files
 // It is aliased as `import {} from 'bindgen'`
-import { isType, dictionaryImpl, oneOfImpl, registerFunction, TypeImpl, TypeKind } from "./bindgen-lib-internal";
+import { isType, dictionaryImpl, oneOfImpl, registerFunction, TypeImpl, type TypeKind } from "./bindgen-lib-internal";
 
 export type Type<T, K extends TypeKind = TypeKind, Flags extends boolean | null = null> = {
   [isType]: true | [T, K, Flags];
@@ -87,7 +87,7 @@ export namespace t {
    *
    * **Note**: A DOMString value might include unmatched surrogate code points.
    * Use USVString if this is not desirable.
-   * 
+   *
    * https://webidl.spec.whatwg.org/#idl-DOMString
    */
   export const DOMString = builtinType<string>()("DOMString");
@@ -100,7 +100,7 @@ export namespace t {
    * use strings should instead be using DOMString, which does not make any
    * interpretations of the code units in the string. When in doubt, use
    * DOMString
-   * 
+   *
    * https://webidl.spec.whatwg.org/#idl-USVString
    */
   export const USVString = builtinType<string>()("USVString");
@@ -114,7 +114,7 @@ export namespace t {
    * encoding. Sequences or frozen arrays with octet or byte elements,
    * Uint8Array, or Int8Array should be used for holding 8-bit data rather than
    * ByteString.
-   * 
+   *
    * https://webidl.spec.whatwg.org/#idl-ByteString
    */
   export const ByteString = builtinType<string>()("ByteString");
@@ -148,7 +148,7 @@ export namespace t {
     return new TypeImpl("ref", name);
   }
 
-  /** 
+  /**
    * Reference an external class type that is not defined with `bindgen`,
    * from either WebCore, JavaScriptCore, or Bun.
    */

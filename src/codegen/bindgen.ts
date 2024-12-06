@@ -5,13 +5,8 @@
 // or `Generated::<basename>::*` in C++ from including `Generated<basename>.h`.
 import * as path from "node:path";
 import {
-  CAbiType,
   CodeWriter,
-  DictionaryField,
-  ReturnStrategy,
   TypeImpl,
-  TypeKind,
-  Variant,
   cAbiTypeInfo,
   cAbiTypeName,
   cap,
@@ -21,6 +16,11 @@ import {
   snake,
   src,
   str,
+  type CAbiType,
+  type DictionaryField,
+  type ReturnStrategy,
+  type TypeKind,
+  type Variant,
   typeHashToNamespace,
   typeHashToReachableType,
   zid,
@@ -62,7 +62,7 @@ function resolveVariantStrategies(variant: Variant) {
     );
   }
 
-  if (!variant.globalObjectArg) {
+  if (variant.globalObjectArg === undefined) {
     variant.globalObjectArg = "hidden";
   }
 
@@ -115,7 +115,6 @@ function emitCppCallToVariant(variant: Variant, dispatchFunctionName: string) {
           cpp.line(";");
         } else {
           assert(type.flags.optional);
-          throw new Error(`TODO: optional argument`);
         }
         cpp.dedent();
         cpp.line(`}`);
@@ -221,10 +220,15 @@ function getSimpleIdlType(type: TypeImpl): string | undefined {
     boolean: "WebCore::IDLBoolean",
     undefined: "WebCore::IDLUndefined",
     f64: "WebCore::IDLDouble",
-    // u32: 'WebCore::IDLUnsignedLong',
-    // i8: "WebCore::IDLByte",
-    // u8: "WebCore::IDLOctet",
     usize: "WebCore::IDLUnsignedLongLong",
+    u8: "WebCore::IDLOctet",
+    u16: "WebCore::IDLUnsignedShort",
+    u32: "WebCore::IDLUnsignedLong",
+    u64: "WebCore::IDLUnsignedLongLong",
+    i8: "WebCore::IDLByte",
+    i16: "WebCore::IDLShort",
+    i32: "WebCore::IDLLong",
+    i64: "WebCore::IDLLongLong",
   };
   let entry = map[type.kind];
   if (!entry) return;
@@ -279,7 +283,7 @@ function emitConvertValue(storageLocation: string, type: TypeImpl, jsValueRef: s
         break;
       }
       default:
-        throw new Error(`TODO: emitParseValue for Type ${type.kind}`);
+        throw new Error(`TODO: emitConvertValue for Type ${type.kind}`);
     }
   }
 }
@@ -444,6 +448,13 @@ function zigTypeNameInner(type: TypeImpl): string {
     case "zigVirtualMachine":
       return "*JSC.JSGlobalObject";
     default:
+      const cAbiType = type.canDirectlyMapToCAbi();
+      if (cAbiType) {
+        if (typeof cAbiType === "string") {
+          return cAbiType;
+        }
+        return cAbiType.name();
+      }
       throw new Error(`TODO: emitZigTypeName for Type ${type.kind}`);
   }
 }
@@ -656,7 +667,7 @@ for (const [filename, { functions, typedefs }] of files) {
       const args: string[] = [];
       const returnStrategy = vari.returnStrategy!;
 
-      assert(vari.globalObjectArg);
+      assert(vari.globalObjectArg !== undefined);
 
       let globalObjectArg = "";
       if (vari.globalObjectArg === "hidden") {

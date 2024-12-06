@@ -3,6 +3,7 @@ const JSC = bun.JSC;
 const JSHostFunctionType = JSC.JSHostFunctionType;
 
 const import_BunObject = @import("../../bun.js/api/BunObject.zig");
+const import_bindgen_test = @import("../../bun.js/bindgen_test.zig");
 
 pub const BunObject = struct {
     pub const jsBraces = @extern(*const JSHostFunctionType, .{ .name = "bindgen_BunObject_jsBraces" });
@@ -32,22 +33,29 @@ pub const BunObject = struct {
         count_ansi_escape_codes: bool,
     };
 };
+pub const bindgen_test = struct {
+    pub const jsRequiredAndOptionalArg = @extern(*const JSHostFunctionType, .{ .name = "bindgen_Bindgen_test_jsRequiredAndOptionalArg" });
+    
+    pub fn createRequiredAndOptionalArgCallback(global: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC.NewRuntimeFunction(global, JSC.ZigString.static("requiredAndOptionalArg"), 4, &jsRequiredAndOptionalArg, false, false);
+    }
+};
 
 const binding_internals = struct {
-    export fn bindgen_BunObject_dispatchBraces1(global: *JSC.JSGlobalObject, arg_global: *JSC.JSGlobalObject, arg_input: *const bun.String, arg_options: BunObject.BracesOptions) JSC.JSValue {
+    export fn bindgen_BunObject_dispatchBraces1(arg_global: *JSC.JSGlobalObject, arg_input: *const bun.String, arg_options: BunObject.BracesOptions) JSC.JSValue {
         if (!@hasDecl(import_BunObject, "braces"))
             @compileError("Missing binding declaration \"braces\" in \"BunObject.zig\"");
-        return JSC.toJSHostValue(global, import_BunObject.braces(
+        return JSC.toJSHostValue(arg_global, import_BunObject.braces(
             arg_global,
             arg_input.*,
             arg_options,
         ));
     }
-    export fn bindgen_BunObject_dispatchGc1(global: *JSC.JSGlobalObject, arg_vm: *JSC.JSGlobalObject, arg_force: bool, out: *usize) bool {
+    export fn bindgen_BunObject_dispatchGc1(global: *JSC.JSGlobalObject, arg_force: bool, out: *usize) bool {
         if (!@hasDecl(import_BunObject, "gc"))
             @compileError("Missing binding declaration \"gc\" in \"BunObject.zig\"");
         out.* = @as(bun.JSError!usize, import_BunObject.gc(
-            arg_vm.bunVM(),
+            global.bunVM(),
             arg_force,
         )) catch |err| switch(err) {
             error.JSError => return false,
@@ -67,13 +75,27 @@ const binding_internals = struct {
         };
         return true;
     }
-    export fn bindgen_BunObject_dispatchAdd1(global: *JSC.JSGlobalObject, arg_global: *JSC.JSGlobalObject, arg_a: usize, arg_b: usize, out: *usize) bool {
+    export fn bindgen_BunObject_dispatchAdd1(arg_global: *JSC.JSGlobalObject, arg_a: usize, arg_b: usize, out: *usize) bool {
         if (!@hasDecl(import_BunObject, "add"))
             @compileError("Missing binding declaration \"add\" in \"BunObject.zig\"");
         out.* = @as(bun.JSError!usize, import_BunObject.add(
             arg_global,
             arg_a,
             arg_b,
+        )) catch |err| switch(err) {
+            error.JSError => return false,
+            error.OutOfMemory => arg_global.throwOutOfMemory() catch return false,
+        };
+        return true;
+    }
+    export fn bindgen_Bindgen_test_dispatchRequiredAndOptionalArg1(global: *JSC.JSGlobalObject, arg_a: bool, arg_b: usize, arg_c: i32, arg_d: ?u8, out: *i32) bool {
+        if (!@hasDecl(import_bindgen_test, "requiredAndOptionalArg"))
+            @compileError("Missing binding declaration \"requiredAndOptionalArg\" in \"bindgen_test.zig\"");
+        out.* = @as(bun.JSError!i32, import_bindgen_test.requiredAndOptionalArg(
+            arg_a,
+            arg_b,
+            arg_c,
+            arg_d,
         )) catch |err| switch(err) {
             error.JSError => return false,
             error.OutOfMemory => global.throwOutOfMemory() catch return false,

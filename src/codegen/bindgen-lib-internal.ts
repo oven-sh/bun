@@ -397,14 +397,14 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         }
         break;
       case "usize":
-        // case "u8":
-        // case "u16":
-        // case "u32":
-        // case "u64":
-        // case "i8":
-        // case "i16":
-        // case "i32":
-        // case "i64":
+      case "u8":
+      case "u16":
+      case "u32":
+      case "u64":
+      case "i8":
+      case "i16":
+      case "i32":
+      case "i64":
         const range = cAbiIntegerLimits(this.kind);
         if (typeof value === "number") {
           if (value % 1 !== 0) {
@@ -453,8 +453,15 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         w.add(String(value));
         break;
       case "usize":
-        const str = String(value);
-        w.add(`${str}ULL`);
+      case "u8":
+      case "u16":
+      case "u32":
+      case "u64":
+      case "i8":
+      case "i16":
+      case "i32":
+      case "i64":
+        w.add(String(value));
         break;
       case "dictionary":
         const struct = this.structType();

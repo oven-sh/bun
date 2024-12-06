@@ -32,6 +32,7 @@ struct us_loop_t {
 
   uv_prepare_t *uv_pre;
   uv_check_t *uv_check;
+  uv_timer_t *uv_tick_with_timeout_timer;
 };
 
 // it is no longer valid to cast a pointer to us_poll_t to a pointer of

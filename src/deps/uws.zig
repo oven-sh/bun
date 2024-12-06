@@ -2307,8 +2307,6 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 pub const SocketTCP = NewSocketHandler(false);
 pub const SocketTLS = NewSocketHandler(true);
 
-
-
 pub const SocketContext = opaque {
     pub fn getNativeHandle(this: *SocketContext, comptime ssl: bool) *anyopaque {
         return us_socket_context_get_native_handle(@intFromBool(ssl), this).?;
@@ -2568,7 +2566,6 @@ pub const PosixLoop = extern struct {
 };
 
 extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
-
 
 pub const us_socket_context_options_t = extern struct {
     key_file_name: [*c]const u8 = null,
@@ -4198,6 +4195,7 @@ pub const WindowsLoop = extern struct {
     is_default: c_int,
     pre: *uv.uv_prepare_t,
     check: *uv.uv_check_t,
+    tick_with_timeout_timer: ?*uv.Timer = null,
 
     pub fn get() *WindowsLoop {
         return uws_get_loop_with_native(bun.windows.libuv.Loop.get());
@@ -4227,8 +4225,30 @@ pub const WindowsLoop = extern struct {
 
     pub const wake = wakeup;
 
-    pub fn tickWithTimeout(this: *WindowsLoop, _: ?*const bun.timespec) void {
+    fn timeoutTimer(this: *WindowsLoop) ?*uv.Timer {
+        return this.tick_with_timeout_timer orelse {
+            this.tick_with_timeout_timer = bun.create(bun.default_allocator, uv.Timer, std.mem.zeroes(uv.Timer));
+            this.tick_with_timeout_timer.?.init(this.uv_loop);
+            return this.tick_with_timeout_timer.?;
+        };
+    }
+
+    fn onTimeout(_: *uv.Timer) callconv(.C) void {}
+
+    pub fn tickWithTimeout(this: *WindowsLoop, timeout: ?*const bun.timespec) void {
+        var did_schedule_timeout_timer = false;
+        if (timeout) |t| {
+            if (this.timeoutTimer()) |timer| {
+                timer.start(t.ms(), 0, onTimeout);
+                timer.ref();
+                did_schedule_timeout_timer = true;
+            }
+        }
         us_loop_run(this);
+
+        if (did_schedule_timeout_timer) {
+            this.tick_with_timeout_timer.?.unref();
+        }
     }
 
     pub fn tickWithoutIdle(this: *WindowsLoop) void {

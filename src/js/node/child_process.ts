@@ -969,7 +969,7 @@ function normalizeSpawnArguments(file, args, options) {
   }
 
   const env = options.env || process.env;
-  const envPairs = [];
+  const envPairs = {};
 
   // // process.env.NODE_V8_COVERAGE always propagates, making it possible to
   // // collect coverage for programs that spawn with white-listed environment.
@@ -998,7 +998,7 @@ function normalizeSpawnArguments(file, args, options) {
     if (value !== undefined) {
       validateArgumentNullCheck(key, `options.env['${key}']`);
       validateArgumentNullCheck(value, `options.env['${key}']`);
-      ArrayPrototypePush.$call(envPairs, `${key}=${value}`);
+      envPairs[key] = value;
     }
   }
 

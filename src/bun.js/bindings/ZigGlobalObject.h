@@ -393,6 +393,10 @@ public:
     // When a napi module initializes on dlopen, we need to know what the value is
     mutable JSC::WriteBarrier<Unknown> m_pendingNapiModuleAndExports[2];
 
+    // This is the result of dlopen()ing a napi module.
+    // We will add it to the resulting napi value.
+    void* m_pendingNapiModuleDlopenHandle = nullptr;
+
     // The handle scope where all new NAPI values will be created. You must not pass any napi_values
     // back to a NAPI function without putting them in the handle scope, as the NAPI function may
     // move them off the stack which will cause them to get collected if not in the handle scope.

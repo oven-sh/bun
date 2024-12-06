@@ -2007,7 +2007,7 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 }
 
 pub fn toNTMaxPath(buf: []u8, utf8: []const u8) [:0]const u8 {
-    if (!std.fs.path.isAbsoluteWindows(utf8)) {
+    if (!std.fs.path.isAbsoluteWindows(utf8) or utf8.len <= 260) {
         @memcpy(buf[0..utf8.len], utf8);
         buf[utf8.len] = 0;
         return buf[0..utf8.len :0];

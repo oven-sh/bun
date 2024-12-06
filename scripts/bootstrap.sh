@@ -815,16 +815,7 @@ llvm_version() {
 install_llvm() {
 	case "$pm" in
 	apt)
-		bash="$(require bash)"
-		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
-		case "$distro-$release" in
-		ubuntu-24*)
-			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all -njammy
-			;;
-		*)
-			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
-			;;
-		esac
+		install_packages "llvm-$(llvm_version)" "clang-$(llvm_version)" "lld-$(llvm_version)" "libllvm-$(llvm_version)"
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"

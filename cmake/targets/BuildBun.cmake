@@ -870,12 +870,6 @@ if(LINUX)
       )
     endif()
 
-    if (ARCH STREQUAL "aarch64")
-      target_link_options(${bun} PUBLIC
-        -Wl,--wrap=__pthread_key_create
-      )
-    endif()
-
     target_link_options(${bun} PUBLIC
       -Wl,--wrap=cosf
       -Wl,--wrap=exp
@@ -898,6 +892,7 @@ if(LINUX)
       -Wl,--wrap=sem_init
       -Wl,--wrap=__libc_single_threaded
       -Wl,--wrap=__libc_start_main
+      -Wl,--wrap=__pthread_key_create
       -Wl,--wrap=_dl_find_object
       -Wl,--wrap=dladdr
       -Wl,--wrap=dlclose

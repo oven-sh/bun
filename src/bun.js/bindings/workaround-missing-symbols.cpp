@@ -139,7 +139,16 @@ __asm__(".symver sem_wait,sem_wait@GLIBC_2.2.5");
 __asm__(".symver __pthread_key_create,__pthread_key_create@GLIBC_2.2.5");
 
 #elif defined(__aarch64__)
+__asm__(".symver __libc_single_threaded,__libc_single_threaded@GLIBC_2.17");
+__asm__(".symver __libc_start_main,__libc_start_main@GLIBC_2.17");
+__asm__(".symver __pthread_key_create,__pthread_key_create@GLIBC_2.17");
+__asm__(".symver _dl_find_object,_dl_find_object@GLIBC_2.17");
 __asm__(".symver cosf,cosf@GLIBC_2.17");
+__asm__(".symver dladdr,dladdr@GLIBC_2.17");
+__asm__(".symver dlclose,dlclose@GLIBC_2.17");
+__asm__(".symver dlerror,dlerror@GLIBC_2.17");
+__asm__(".symver dlopen,dlopen@GLIBC_2.17");
+__asm__(".symver dlsym,dlsym@GLIBC_2.17");
 __asm__(".symver exp,exp@GLIBC_2.17");
 __asm__(".symver expf,expf@GLIBC_2.17");
 __asm__(".symver fmod,fmod@GLIBC_2.17");
@@ -151,44 +160,35 @@ __asm__(".symver log2f,log2f@GLIBC_2.17");
 __asm__(".symver logf,logf@GLIBC_2.17");
 __asm__(".symver pow,pow@GLIBC_2.17");
 __asm__(".symver powf,powf@GLIBC_2.17");
+__asm__(".symver pthread_attr_getstack,pthread_attr_getstack@GLIBC_2.17");
+__asm__(".symver pthread_attr_setguardsize,pthread_attr_setguardsize@GLIBC_2.17");
+__asm__(".symver pthread_attr_setstacksize,pthread_attr_setstacksize@GLIBC_2.17");
+__asm__(".symver pthread_create,pthread_create@GLIBC_2.17");
+__asm__(".symver pthread_detach,pthread_detach@GLIBC_2.17");
+__asm__(".symver pthread_getattr_np,pthread_getattr_np@GLIBC_2.17");
+__asm__(".symver pthread_getspecific,pthread_getspecific@GLIBC_2.17");
+__asm__(".symver pthread_join,pthread_join@GLIBC_2.17");
+__asm__(".symver pthread_key_create,pthread_key_create@GLIBC_2.17");
+__asm__(".symver pthread_key_delete,pthread_key_delete@GLIBC_2.17");
+__asm__(".symver pthread_kill,pthread_kill@GLIBC_2.17");
+__asm__(".symver pthread_mutex_trylock,pthread_mutex_trylock@GLIBC_2.17");
+__asm__(".symver pthread_mutexattr_destroy,pthread_mutexattr_destroy@GLIBC_2.17");
+__asm__(".symver pthread_mutexattr_init,pthread_mutexattr_init@GLIBC_2.17");
+__asm__(".symver pthread_mutexattr_settype,pthread_mutexattr_settype@GLIBC_2.17");
+__asm__(".symver pthread_once,pthread_once@GLIBC_2.17");
+__asm__(".symver pthread_rwlock_destroy,pthread_rwlock_destroy@GLIBC_2.17");
+__asm__(".symver pthread_rwlock_init,pthread_rwlock_init@GLIBC_2.17");
+__asm__(".symver pthread_rwlock_rdlock,pthread_rwlock_rdlock@GLIBC_2.17");
+__asm__(".symver pthread_rwlock_unlock,pthread_rwlock_unlock@GLIBC_2.17");
+__asm__(".symver pthread_rwlock_wrlock,pthread_rwlock_wrlock@GLIBC_2.17");
+__asm__(".symver pthread_setspecific,pthread_setspecific@GLIBC_2.17");
+__asm__(".symver pthread_sigmask,pthread_sigmask@GLIBC_2.17");
+__asm__(".symver sem_init,sem_init@GLIBC_2.17");
+__asm__(".symver sem_post,sem_post@GLIBC_2.17");
+__asm__(".symver sem_wait,sem_wait@GLIBC_2.17");
 __asm__(".symver sincosf,sincosf@GLIBC_2.17");
 __asm__(".symver sinf,sinf@GLIBC_2.17");
 __asm__(".symver tanf,tanf@GLIBC_2.17");
-__asm__(".symver pthread_sigmask,pthread_sigmask@GLIBC_2.17");
-__asm__(".symver __libc_start_main,__libc_start_main@GLIBC_2.17");
-__asm__(".symver dlsym,dlsym@GLIBC_2.17");
-__asm__(".symver dlopen,dlopen@GLIBC_2.17");
-__asm__(".symver pthread_detach,pthread_detach@GLIBC_2.17");
-__asm__(".symver pthread_attr_setstacksize,pthread_attr_setstacksize@GLIBC_2.17");
-__asm__(".symver pthread_attr_setguardsize,pthread_attr_setguardsize@GLIBC_2.17");
-__asm__(".symver pthread_create,pthread_create@GLIBC_2.17");
-__asm__(".symver pthread_join,pthread_join@GLIBC_2.17");
-__asm__(".symver dlclose,dlclose@GLIBC_2.17");
-__asm__(".symver dlerror,dlerror@GLIBC_2.17");
-__asm__(".symver pthread_key_create,pthread_key_create@GLIBC_2.17");
-__asm__(".symver pthread_key_delete,pthread_key_delete@GLIBC_2.17");
-__asm__(".symver pthread_setspecific,pthread_setspecific@GLIBC_2.17");
-__asm__(".symver pthread_mutex_trylock,pthread_mutex_trylock@GLIBC_2.17");
-__asm__(".symver pthread_once,pthread_once@GLIBC_2.17");
-__asm__(".symver pthread_getspecific,pthread_getspecific@GLIBC_2.17");
-__asm__(".symver dladdr,dladdr@GLIBC_2.17");
-__asm__(".symver pthread_getattr_np,pthread_getattr_np@GLIBC_2.17");
-__asm__(".symver pthread_attr_getstack,pthread_attr_getstack@GLIBC_2.17");
-__asm__(".symver __libc_single_threaded,__libc_single_threaded@GLIBC_2.17");
-__asm__(".symver pthread_kill,pthread_kill@GLIBC_2.17");
-__asm__(".symver sem_post,sem_post@GLIBC_2.17");
-__asm__(".symver sem_wait,sem_wait@GLIBC_2.17");
-__asm__(".symver sem_init,sem_init@GLIBC_2.17");
-__asm__(".symver pthread_rwlock_init,pthread_rwlock_init@GLIBC_2.17");
-__asm__(".symver pthread_rwlock_rdlock,pthread_rwlock_rdlock@GLIBC_2.17");
-__asm__(".symver pthread_rwlock_wrlock,pthread_rwlock_wrlock@GLIBC_2.17");
-__asm__(".symver pthread_rwlock_unlock,pthread_rwlock_unlock@GLIBC_2.17");
-__asm__(".symver pthread_rwlock_destroy,pthread_rwlock_destroy@GLIBC_2.17");
-__asm__(".symver pthread_mutexattr_init,pthread_mutexattr_init@GLIBC_2.17");
-__asm__(".symver pthread_mutexattr_settype,pthread_mutexattr_settype@GLIBC_2.17");
-__asm__(".symver pthread_mutexattr_destroy,pthread_mutexattr_destroy@GLIBC_2.17");
-__asm__(".symver _dl_find_object,_dl_find_object@GLIBC_2.17");
-__asm__(".symver __pthread_key_create,__pthread_key_create@GLIBC_2.17");
 
 #endif // aarch64
 
@@ -236,6 +236,7 @@ int BUN_WRAP_GLIBC_SYMBOL(pthread_getattr_np)(pthread_t, pthread_attr_t*);
 void* BUN_WRAP_GLIBC_SYMBOL(pthread_getspecific)(pthread_key_t);
 int BUN_WRAP_GLIBC_SYMBOL(pthread_join)(pthread_t, void**);
 int BUN_WRAP_GLIBC_SYMBOL(pthread_key_create)(pthread_key_t*, void (*)(void*));
+int BUN_WRAP_GLIBC_SYMBOL(__pthread_key_create)(pthread_key_t*, void (*)(void*));
 int BUN_WRAP_GLIBC_SYMBOL(pthread_key_delete)(pthread_key_t);
 int BUN_WRAP_GLIBC_SYMBOL(pthread_kill)(pthread_t, int);
 int BUN_WRAP_GLIBC_SYMBOL(pthread_mutex_trylock)(pthread_mutex_t*);
@@ -463,6 +464,11 @@ int __wrap_pthread_join(pthread_t thread, void** retval)
 int __wrap_pthread_key_create(pthread_key_t* key, void (*destructor)(void*))
 {
     return pthread_key_create(key, destructor);
+}
+
+int __wrap___pthread_key_create(pthread_key_t* key, void (*destructor)(void*))
+{
+    return __pthread_key_create(key, destructor);
 }
 
 int __wrap_pthread_key_delete(pthread_key_t key)

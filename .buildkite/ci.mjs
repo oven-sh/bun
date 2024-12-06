@@ -259,6 +259,7 @@ function getPriority() {
  * @property {string} instanceType
  * @property {number} cpuCount
  * @property {number} threadsPerCore
+ * @property {boolean} dryRun
  */
 
 /**
@@ -279,7 +280,7 @@ function getEc2Agent(platform, options) {
     // https://github.com/oven-sh/robobun/blob/d46c07e0ac5ac0f9ffe1012f0e98b59e1a0d387a/src/robobun.ts#L1707
     robobun: true,
     robobun2: true,
-    "image-name": getImageName(platform),
+    "image-name": getImageName(platform, dryRun),
     "instance-type": instanceType,
     "cpu-count": cpuCount,
     "threads-per-core": threadsPerCore,
@@ -291,7 +292,7 @@ function getEc2Agent(platform, options) {
  * @param {Platform} platform
  * @returns {string}
  */
-function getCppAgent(platform) {
+function getCppAgent(platform, dryRun) {
   const { os, arch } = platform;
 
   if (os === "darwin") {
@@ -306,6 +307,7 @@ function getCppAgent(platform) {
     instanceType: arch === "aarch64" ? "c8g.16xlarge" : "c7i.16xlarge",
     cpuCount: 32,
     threadsPerCore: 1,
+    dryRun,
   });
 }
 
@@ -313,7 +315,7 @@ function getCppAgent(platform) {
  * @param {Platform} platform
  * @returns {Agent}
  */
-function getZigAgent(platform) {
+function getZigAgent(platform, dryRun) {
   const { arch } = platform;
 
   return {
@@ -339,7 +341,7 @@ function getZigAgent(platform) {
  * @param {Platform} platform
  * @returns {Agent}
  */
-function getTestAgent(platform) {
+function getTestAgent(platform, dryRun) {
   const { os, arch } = platform;
 
   if (os === "darwin") {
@@ -357,6 +359,7 @@ function getTestAgent(platform) {
       instanceType: "c7i.2xlarge",
       cpuCount: 1,
       threadsPerCore: 1,
+      dryRun,
     });
   }
 
@@ -365,6 +368,7 @@ function getTestAgent(platform) {
       instanceType: "c8g.xlarge",
       cpuCount: 1,
       threadsPerCore: 1,
+      dryRun,
     });
   }
 
@@ -372,6 +376,7 @@ function getTestAgent(platform) {
     instanceType: "c7i.xlarge",
     cpuCount: 1,
     threadsPerCore: 1,
+    dryRun,
   });
 }
 
@@ -400,13 +405,14 @@ function getBuildEnv(target) {
 
 /**
  * @param {Platform} platform
+ * @param {boolean} dryRun
  * @returns {Step}
  */
-function getBuildVendorStep(platform) {
+function getBuildVendorStep(platform, dryRun) {
   return {
     key: `${getTargetKey(platform)}-build-vendor`,
     label: `${getTargetLabel(platform)} - build-vendor`,
-    agents: getCppAgent(platform),
+    agents: getCppAgent(platform, dryRun),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform),
@@ -416,13 +422,14 @@ function getBuildVendorStep(platform) {
 
 /**
  * @param {Platform} platform
+ * @param {boolean} dryRun
  * @returns {Step}
  */
-function getBuildCppStep(platform) {
+function getBuildCppStep(platform, dryRun) {
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
-    agents: getCppAgent(platform),
+    agents: getCppAgent(platform, dryRun),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {
@@ -453,12 +460,12 @@ function getBuildToolchain(target) {
  * @param {Platform} platform
  * @returns {Step}
  */
-function getBuildZigStep(platform) {
+function getBuildZigStep(platform, dryRun) {
   const toolchain = getBuildToolchain(platform);
   return {
     key: `${getTargetKey(platform)}-build-zig`,
     label: `${getTargetLabel(platform)} - build-zig`,
-    agents: getZigAgent(platform),
+    agents: getZigAgent(platform, dryRun),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform),
@@ -468,9 +475,10 @@ function getBuildZigStep(platform) {
 
 /**
  * @param {Platform} platform
+ * @param {boolean} dryRun
  * @returns {Step}
  */
-function getLinkBunStep(platform) {
+function getLinkBunStep(platform, dryRun) {
   return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
@@ -479,7 +487,7 @@ function getLinkBunStep(platform) {
       `${getTargetKey(platform)}-build-cpp`,
       `${getTargetKey(platform)}-build-zig`,
     ],
-    agents: getCppAgent(platform),
+    agents: getCppAgent(platform, dryRun),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {
@@ -492,13 +500,14 @@ function getLinkBunStep(platform) {
 
 /**
  * @param {Platform} platform
+ * @param {boolean} dryRun
  * @returns {Step}
  */
-function getBuildBunStep(platform) {
+function getBuildBunStep(platform, dryRun) {
   return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
-    agents: getCppAgent(platform),
+    agents: getCppAgent(platform, dryRun),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform),
@@ -511,6 +520,7 @@ function getBuildBunStep(platform) {
  * @property {string} [buildId]
  * @property {boolean} [unifiedTests]
  * @property {string[]} [testFiles]
+ * @property {boolean} [dryRun]
  */
 
 /**
@@ -520,7 +530,7 @@ function getBuildBunStep(platform) {
  */
 function getTestBunStep(platform, options = {}) {
   const { os } = platform;
-  const { buildId, unifiedTests, testFiles } = options;
+  const { buildId, unifiedTests, testFiles, dryRun } = options;
 
   const args = [`--step=${getTargetKey(platform)}-build-bun`];
   if (buildId) {
@@ -539,7 +549,7 @@ function getTestBunStep(platform, options = {}) {
     key: `${getPlatformKey(platform)}-test-bun`,
     label: `${getPlatformLabel(platform)} - test-bun`,
     depends_on: depends,
-    agents: getTestAgent(platform),
+    agents: getTestAgent(platform, dryRun),
     cancel_on_build_failing: isMergeQueue(),
     retry: getRetry(),
     soft_fail: isMainBranch() ? true : [{ exit_status: 2 }],
@@ -1043,12 +1053,12 @@ async function getPipeline(options = {}) {
               key: getTargetKey(target),
               group: getTargetLabel(target),
               steps: unifiedBuilds
-                ? [getBuildBunStep(target)]
+                ? [getBuildBunStep(target, !!buildImages)]
                 : [
-                    getBuildVendorStep(target),
-                    getBuildCppStep(target),
-                    getBuildZigStep(target),
-                    getLinkBunStep(target),
+                    getBuildVendorStep(target, !!buildImages),
+                    getBuildCppStep(target, !!buildImages),
+                    getBuildZigStep(target, !!buildImages),
+                    getLinkBunStep(target, !!buildImages),
                   ],
             },
             imagePlatform ? `${imageKey}-build-image` : undefined,
@@ -1059,13 +1069,14 @@ async function getPipeline(options = {}) {
 
   const { skipTests, forceTests, unifiedTests, testFiles } = options;
   if (!skipTests || forceTests) {
+    //
     steps.push(
       ...testPlatforms
         .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
         .map(target => ({
           key: getTargetKey(target),
           group: getTargetLabel(target),
-          steps: [getTestBunStep(target, { unifiedTests, testFiles, buildId })],
+          steps: [getTestBunStep(target, { unifiedTests, testFiles, buildId, dryRun: !!buildImages })],
         })),
     );
   }

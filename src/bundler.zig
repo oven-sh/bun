@@ -635,204 +635,6 @@ pub const Bundler = struct {
         empty: bool = false,
     };
 
-    pub fn buildWithResolveResult(
-        bundler: *Bundler,
-        resolve_result: _resolver.Result,
-        allocator: std.mem.Allocator,
-        loader: options.Loader,
-        comptime Writer: type,
-        writer: Writer,
-        comptime import_path_format: options.BundleOptions.ImportPathFormat,
-        file_descriptor: ?StoredFileDescriptorType,
-        filepath_hash: u32,
-        comptime WatcherType: type,
-        watcher: *WatcherType,
-        client_entry_point: ?*EntryPoints.ClientEntryPoint,
-        origin: URL,
-        comptime is_source_map: bool,
-        source_map_handler: ?js_printer.SourceMapHandler,
-    ) !BuildResolveResultPair {
-        if (resolve_result.is_external) {
-            return BuildResolveResultPair{
-                .written = 0,
-                .input_fd = null,
-            };
-        }
-
-        errdefer bundler.resetStore();
-
-        var file_path = (resolve_result.pathConst() orelse {
-            return BuildResolveResultPair{
-                .written = 0,
-                .input_fd = null,
-            };
-        }).*;
-
-        if (strings.indexOf(file_path.text, bundler.fs.top_level_dir)) |i| {
-            file_path.pretty = file_path.text[i + bundler.fs.top_level_dir.len ..];
-        } else if (!file_path.is_symlink) {
-            file_path.pretty = allocator.dupe(u8, bundler.fs.relativeTo(file_path.text)) catch unreachable;
-        }
-
-        const old_bundler_allocator = bundler.allocator;
-        bundler.allocator = allocator;
-        defer bundler.allocator = old_bundler_allocator;
-        const old_linker_allocator = bundler.linker.allocator;
-        defer bundler.linker.allocator = old_linker_allocator;
-        bundler.linker.allocator = allocator;
-
-        switch (loader) {
-            .css => {
-                const CSSBundlerHMR = Css.NewBundler(
-                    Writer,
-                    @TypeOf(&bundler.linker),
-                    @TypeOf(&bundler.resolver.caches.fs),
-                    WatcherType,
-                    @TypeOf(bundler.fs),
-                    true,
-                    import_path_format,
-                );
-
-                const CSSBundler = Css.NewBundler(
-                    Writer,
-                    @TypeOf(&bundler.linker),
-                    @TypeOf(&bundler.resolver.caches.fs),
-                    WatcherType,
-                    @TypeOf(bundler.fs),
-                    false,
-                    import_path_format,
-                );
-
-                const written = brk: {
-                    if (bundler.options.hot_module_reloading) {
-                        break :brk (try CSSBundlerHMR.bundle(
-                            file_path.text,
-                            bundler.fs,
-                            writer,
-                            watcher,
-                            &bundler.resolver.caches.fs,
-                            filepath_hash,
-                            file_descriptor,
-                            allocator,
-                            bundler.log,
-                            &bundler.linker,
-                            origin,
-                        )).written;
-                    } else {
-                        break :brk (try CSSBundler.bundle(
-                            file_path.text,
-                            bundler.fs,
-                            writer,
-                            watcher,
-                            &bundler.resolver.caches.fs,
-                            filepath_hash,
-                            file_descriptor,
-                            allocator,
-                            bundler.log,
-                            &bundler.linker,
-                            origin,
-                        )).written;
-                    }
-                };
-
-                return BuildResolveResultPair{
-                    .written = written,
-                    .input_fd = file_descriptor,
-                };
-            },
-            else => {
-                var result = bundler.parse(
-                    ParseOptions{
-                        .allocator = allocator,
-                        .path = file_path,
-                        .loader = loader,
-                        .dirname_fd = resolve_result.dirname_fd,
-                        .file_descriptor = file_descriptor,
-                        .file_hash = filepath_hash,
-                        .macro_remappings = bundler.options.macro_remap,
-                        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
-                        .jsx = resolve_result.jsx,
-                    },
-                    client_entry_point,
-                ) orelse {
-                    bundler.resetStore();
-                    return BuildResolveResultPair{
-                        .written = 0,
-                        .input_fd = null,
-                    };
-                };
-
-                if (result.empty) {
-                    return BuildResolveResultPair{ .written = 0, .input_fd = result.input_fd, .empty = true };
-                }
-
-                if (bundler.options.target.isBun()) {
-                    if (!bundler.options.transform_only) {
-                        try bundler.linker.link(file_path, &result, origin, import_path_format, false, true);
-                    }
-
-                    return BuildResolveResultPair{
-                        .written = switch (result.ast.exports_kind) {
-                            .esm => try bundler.printWithSourceMapMaybe(
-                                result.ast,
-                                &result.source,
-                                Writer,
-                                writer,
-                                .esm_ascii,
-                                is_source_map,
-                                source_map_handler,
-                                null,
-                            ),
-                            .cjs => try bundler.printWithSourceMapMaybe(
-                                result.ast,
-                                &result.source,
-                                Writer,
-                                writer,
-                                .cjs,
-                                is_source_map,
-                                source_map_handler,
-                                null,
-                            ),
-                            else => unreachable,
-                        },
-                        .input_fd = result.input_fd,
-                    };
-                }
-
-                if (!bundler.options.transform_only) {
-                    try bundler.linker.link(file_path, &result, origin, import_path_format, false, false);
-                }
-
-                return BuildResolveResultPair{
-                    .written = switch (result.ast.exports_kind) {
-                        .none, .esm => try bundler.printWithSourceMapMaybe(
-                            result.ast,
-                            &result.source,
-                            Writer,
-                            writer,
-                            .esm,
-                            is_source_map,
-                            source_map_handler,
-                            null,
-                        ),
-                        .cjs => try bundler.printWithSourceMapMaybe(
-                            result.ast,
-                            &result.source,
-                            Writer,
-                            writer,
-                            .cjs,
-                            is_source_map,
-                            source_map_handler,
-                            null,
-                        ),
-                        else => unreachable,
-                    },
-                    .input_fd = result.input_fd,
-                };
-            },
-        }
-    }
-
     pub fn buildWithResolveResultEager(
         bundler: *Bundler,
         resolve_result: _resolver.Result,
@@ -1329,16 +1131,16 @@ pub const Bundler = struct {
             return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
         }
 
-        if (loader != .wasm and source.contents.len == 0 and source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0) {
-            return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
-        }
-
         switch (loader) {
             .js,
             .jsx,
             .ts,
             .tsx,
             => {
+                if (source.contents.len == 0 or (source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0)) {
+                    return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
+                }
+
                 // wasm magic number
                 if (source.isWebAssembly()) {
                     return ParseResult{
@@ -1453,6 +1255,10 @@ pub const Bundler = struct {
             },
             // TODO: use lazy export AST
             inline .toml, .json => |kind| {
+                if (source.contents.len == 0 or (source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0)) {
+                    return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
+                }
+
                 var expr = if (kind == .json)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.

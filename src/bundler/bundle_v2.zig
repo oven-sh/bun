@@ -3587,6 +3587,10 @@ pub const ParseTask = struct {
     ) !JSAst {
         switch (loader) {
             .jsx, .tsx, .js, .ts => {
+                if (strings.isAllWhitespace(source.contents)) return switch (opts.module_type == .esm) {
+                    inline else => |as_undefined| try getEmptyAST(log, bundler, opts, allocator, source, if (as_undefined) E.Undefined else E.Object),
+                };
+
                 const trace = tracer(@src(), "ParseJS");
                 defer trace.end();
                 return if (try resolver.caches.js.parse(
@@ -3609,12 +3613,20 @@ pub const ParseTask = struct {
                 };
             },
             .json => {
+                if (strings.isAllWhitespace(source.contents)) return switch (opts.module_type == .esm) {
+                    inline else => |as_undefined| try getEmptyAST(log, bundler, opts, allocator, source, if (as_undefined) E.Undefined else E.Object),
+                };
+
                 const trace = tracer(@src(), "ParseJSON");
                 defer trace.end();
                 const root = (try resolver.caches.json.parsePackageJSON(log, source, allocator, false)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .toml => {
+                if (strings.isAllWhitespace(source.contents)) return switch (opts.module_type == .esm) {
+                    inline else => |as_undefined| try getEmptyAST(log, bundler, opts, allocator, source, if (as_undefined) E.Undefined else E.Object),
+                };
+
                 const trace = tracer(@src(), "ParseTOML");
                 defer trace.end();
                 const root = try TOML.parse(&source, log, allocator, false);
@@ -3724,6 +3736,8 @@ pub const ParseTask = struct {
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .css => {
+                if (strings.isAllWhitespace(source.contents)) return try getEmptyCSSAST(log, bundler, opts, allocator, source);
+
                 if (bundler.options.experimental_css) {
                     // const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                     // unique_key_for_additional_file.* = unique_key;
@@ -4224,9 +4238,7 @@ pub const ParseTask = struct {
         }
         step.* = .parse;
 
-        const is_empty = strings.isAllWhitespace(entry.contents);
-
-        const use_directive: UseDirective = if (!is_empty and bundler.options.server_components)
+        const use_directive: UseDirective = if (bundler.options.server_components)
             if (UseDirective.parse(entry.contents)) |use|
                 use
             else
@@ -4319,24 +4331,7 @@ pub const ParseTask = struct {
         task.jsx.parse = loader.isJSX();
 
         var unique_key_for_additional_file: []const u8 = "";
-        var ast: JSAst = if (!is_empty)
-            try getAST(log, bundler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file)
-        else switch (opts.module_type == .esm) {
-            inline else => |as_undefined| if (loader == .css and this.ctx.bundler.options.experimental_css) try getEmptyCSSAST(
-                log,
-                bundler,
-                opts,
-                allocator,
-                source,
-            ) else try getEmptyAST(
-                log,
-                bundler,
-                opts,
-                allocator,
-                source,
-                if (as_undefined) E.Undefined else E.Object,
-            ),
-        };
+        var ast: JSAst = try getAST(log, bundler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file);
 
         ast.target = target;
         if (ast.parts.len <= 1 and ast.css == null) {

@@ -1596,9 +1596,6 @@ pub const EventLoop = struct {
             const this = TimeoutTask.new(.{
                 .task = task,
             });
-            if (comptime Environment.isWindows) {
-                vm.timer.incrementTimerRef(1);
-            }
             this.event_loop_timer.set(vm, timeout);
         }
 
@@ -1606,9 +1603,6 @@ pub const EventLoop = struct {
             const task = this.task;
             this.destroy();
 
-            if (comptime Environment.isWindows) {
-                vm.timer.incrementTimerRef(-1);
-            }
             _ = vm.event_loop.runTask(task, vm.global, vm.jsc, vm);
         }
     };

@@ -192,7 +192,7 @@ async function runTests() {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
             args: [title],
-            timeout: spawnTimeout,
+            timeout: 10_000,
             env: {
               FORCE_COLOR: "0",
             },

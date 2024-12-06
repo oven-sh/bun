@@ -66,6 +66,7 @@
 #include "CommonJSModuleRecord.h"
 #include "wtf/text/ASCIIFastPath.h"
 #include "JavaScriptCore/WeakInlines.h"
+#include <JavaScriptCore/BuiltinNames.h>
 
 // #include <iostream>
 using namespace JSC;
@@ -1003,6 +1004,16 @@ extern "C" void napi_module_register(napi_module* mod)
         globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
         return;
     }
+
+    auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+
+    // TODO: think about the finalizer here
+    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr);
+
+    bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    ASSERT(success);
+
+    globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288
@@ -2541,7 +2552,8 @@ extern "C" napi_status napi_get_value_external(napi_env env, napi_value value,
         return napi_invalid_arg;
     }
 
-    auto* external = jsDynamicCast<Bun::NapiExternal*>(toJS(value));
+    JSValue jsval = toJS(value);
+    auto* external = jsDynamicCast<Bun::NapiExternal*>(jsval);
     if (UNLIKELY(!external)) {
         return napi_invalid_arg;
     }

@@ -355,13 +355,15 @@ Bun.build({
 
 {% /callout %}
 
-## Lifecycle callbacks
+## Lifecycle hooks
 
 Plugins can register callbacks to be run at various points in the lifecycle of a bundle:
 
 - [`onStart()`](#onstart): Run once the bundler has started a bundle
 - [`onResolve()`](#onresolve): Run before a module is resolved
 - [`onLoad()`](#onload): Run before a module is loaded.
+
+### Reference
 
 A rough overview of the types (please refer to Bun's `bun.d.ts` for the full type definitions):
 
@@ -603,3 +605,98 @@ plugin({
 ```
 
 Note that the `.defer()` function currently has the limitation that it can only be called once per `onLoad` callback.
+
+## Native plugins
+
+{% callout %}
+**NOTE** — This is an advanced and experiemental API recommended for plugin developers who are familiar with systems programming and the C ABI. Use with caution.
+{% /callout %}
+
+One of the reasons why Bun's bundler is so fast is that it is written in native code and leverages multi-threading to load and parse modules in parallel.
+
+However, one limitation of plugins written in JavaScript is that JavaScript itself is single-threaded.
+
+Native plugins are written as [NAPI](/docs/node-api) modules and can be run on multiple threads. This allows native plugins to run much faster than JavaScript plugins.
+
+In addition, native plugins can skip unnecessary work such as the UTF-8 -> UTF-16 conversion needed to pass strings to JavaScript.
+
+These are the following lifecycle hooks which are available to native plugins:
+
+- [`onBeforeParse()`](#onbeforeparse): Called on any thread before a file is parsed by Bun's bundler.
+
+### Creating a native plugin
+
+Native plugins are NAPI modules which expose lifecycle hooks as C ABI functions.
+
+To create a native plugin, you must export a C ABI function which matches the signature of the native lifecycle hook you want to implement.
+
+#### Example: Rust with napi-rs
+
+First initialize a napi project (see [here](https://napi.rs/docs/introduction/getting-started) for a more comprehensive guide).
+
+Then install Bun's official safe plugin wrapper crate:
+
+```bash
+cargo add bun-native-plugin
+```
+
+Now you can export an `extern "C" fn` which is the implementation of your plugin:
+
+```rust
+#[no_mangle]
+extern "C" fn on_before_parse_impl(
+  args: *const bun_native_plugin::sys::OnBeforeParseArguments,
+  result: *mut bun_native_plugin::sys::OnBeforeParseResult,
+) {
+  let args = unsafe { &*args };
+  let result = unsafe { &mut *result };
+
+  let mut handle = match bun_native_plugin::OnBeforeParse::from_raw(args, result) {
+    Ok(handle) => handle,
+    Err(_) => {
+      return;
+    }
+  };
+
+  let source_code = match handle.input_source_code() {
+    Ok(source_code) => source_code,
+    Err(_) => {
+      handle.log_error("Fetching source code failed!");
+      return;
+    }
+  };
+
+  let loader = handle.output_loader();
+  handle.set_output_source_code(source_code.replace("foo", "bar"), loader);
+```
+
+Use napi-rs to compile the plugin to a `.node` file, then you can `require()` it from JS and use it:
+
+```js
+await Bun.build({
+  entrypoints: ["index.ts"],
+  setup(build) {
+    const myNativePlugin = require("./path/to/plugin.node");
+
+    build.onBeforeParse(
+      { filter: /\.ts/ },
+      { napiModule: myNativePlugin, symbol: "on_before_parse_impl" },
+    );
+  },
+});
+```
+
+### `onBeforeParse`
+
+```ts
+onBeforeParse(
+  args: { filter: RegExp; namespace?: string },
+  callback: { napiModule: NapiModule; symbol: string; external?: unknown },
+): void;
+```
+
+This lifecycle callback is run immediately before a file is parsed by Bun's bundler.
+
+As input, it receives the file's contents and can optionally return new source code.
+
+This callback can be called from any thread and so the napi module implementation must be thread-safe.

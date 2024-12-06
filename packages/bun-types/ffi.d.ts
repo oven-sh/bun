@@ -566,17 +566,21 @@ declare module "bun:ffi" {
 
   type ToFFIType<T extends FFITypeOrString> = T extends FFIType ? T : T extends string ? FFITypeStringToType[T] : never;
 
+  const FFIFunctionCallableSymbol: unique symbol;
   type ConvertFns<Fns extends Symbols> = {
-    [K in keyof Fns]: (
-      ...args: Fns[K]["args"] extends infer A extends readonly FFITypeOrString[]
-        ? { [L in keyof A]: FFITypeToArgsType[ToFFIType<A[L]>] }
-        : // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-          [unknown] extends [Fns[K]["args"]]
-          ? []
-          : never
-    ) => [unknown] extends [Fns[K]["returns"]] // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-      ? undefined
-      : FFITypeToReturnsType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
+    [K in keyof Fns]: {
+      (
+        ...args: Fns[K]["args"] extends infer A extends readonly FFITypeOrString[]
+          ? { [L in keyof A]: FFITypeToArgsType[ToFFIType<A[L]>] }
+          : // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
+            [unknown] extends [Fns[K]["args"]]
+            ? []
+            : never
+      ): [unknown] extends [Fns[K]["returns"]] // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
+        ? undefined
+        : FFITypeToReturnsType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
+      __ffi_function_callable: typeof FFIFunctionCallableSymbol;
+    };
   };
 
   /**

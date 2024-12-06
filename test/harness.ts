@@ -5,7 +5,7 @@ import { readFile, readlink, writeFile } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
-import detect_libc from "detect-libc";
+import detectLibc from "detect-libc";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -19,7 +19,8 @@ export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
 export const isBuildKite = process.env.BUILDKITE === "true";
-export const libc_family = detect_libc.familySync();
+export const libcFamily = detectLibc.familySync() as "glibc" | "musl";
+export const isVerbose = process.env.DEBUG === "1";
 
 // Use these to mark a test as flaky or broken.
 // This will help us keep track of these tests.
@@ -143,7 +144,7 @@ export function hideFromStackTrace(block: CallableFunction) {
   });
 }
 
-type DirectoryTree = {
+export type DirectoryTree = {
   [name: string]:
     | string
     | Buffer
@@ -1372,7 +1373,7 @@ export function waitForFileToExist(path: string, interval: number) {
 export function libcPathForDlopen() {
   switch (process.platform) {
     case "linux":
-      switch (libc_family) {
+      switch (libcFamily) {
         case "glibc":
           return "libc.so.6";
         case "musl":

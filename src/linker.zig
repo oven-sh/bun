@@ -281,10 +281,6 @@ pub const Linker = struct {
                             continue;
                         }
 
-                        if (strings.hasSuffixComptime(import_record.path.text, ".css")) {
-                            import_record.tag = .css;
-                        }
-
                         // Resolve dynamic imports lazily for perf
                         if (import_record.kind == .dynamic) {
                             continue;

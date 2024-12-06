@@ -90,7 +90,7 @@ pub fn getNames(this: *const Router) ![]const string {
     return this.routes.list.items(.name);
 }
 
-const banned_dirs = [_]string{
+pub const banned_dirs = [_]string{
     "node_modules",
 };
 

@@ -3,7 +3,7 @@ import { ExtensionContext } from "vscode";
 export const GLOBAL_STATE_VERSION = 1;
 
 export type GlobalStateTypes = {
-  BUN_INSPECT_NOTIFY:
+  BUN_INSPECT_CONNECT_TO:
     | {
         type: "tcp";
         port: number;

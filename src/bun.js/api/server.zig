@@ -101,8 +101,7 @@ const BlobFileContentResult = struct {
                 const read = fs.readFileWithOptions(.{ .path = body.Blob.store.?.data.file.pathlike }, .sync, .null_terminated);
                 switch (read) {
                     .err => {
-                        global.throwValue(read.err.toJSC(global));
-                        return error.JSError;
+                        return global.throwValue(read.err.toJSC(global));
                     },
                     else => {
                         const str = read.result.null_terminated;
@@ -971,7 +970,7 @@ pub const ServerConfig = struct {
                     result.request_cert = if (request_cert.asBoolean()) 1 else 0;
                     any = true;
                 } else {
-                    return global.throw2("Expected requestCert to be a boolean", .{});
+                    return global.throw("Expected requestCert to be a boolean", .{});
                 }
             }
 
@@ -980,7 +979,7 @@ pub const ServerConfig = struct {
                     result.reject_unauthorized = if (reject_unauthorized.asBoolean()) 1 else 0;
                     any = true;
                 } else {
-                    return global.throw2("Expected rejectUnauthorized to be a boolean", .{});
+                    return global.throw("Expected rejectUnauthorized to be a boolean", .{});
                 }
             }
 
@@ -1137,7 +1136,7 @@ pub const ServerConfig = struct {
                         result.low_memory_mode = low_memory_mode.toBoolean();
                         any = true;
                     } else {
-                        return global.throw2("Expected lowMemoryMode to be a boolean", .{});
+                        return global.throw("Expected lowMemoryMode to be a boolean", .{});
                     }
                 }
             }
@@ -1950,8 +1949,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn renderMissingInvalidResponse(ctx: *RequestContext, value: JSC.JSValue) void {
-            var class_name = value.getClassInfoName() orelse bun.String.empty;
-            defer class_name.deref();
+            const class_name = value.getClassInfoName() orelse "";
 
             if (ctx.server) |server| {
                 const globalThis: *JSC.JSGlobalObject = server.globalThis;
@@ -1959,7 +1957,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 Output.enableBuffering();
                 var writer = Output.errorWriter();
 
-                if (class_name.eqlComptime("Response")) {
+                if (bun.strings.eqlComptime(class_name, "Response")) {
                     Output.errGeneric("Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.", .{});
                 } else if (value != .zero and !globalThis.hasException()) {
                     var formatter = JSC.ConsoleObject.Formatter{
@@ -2100,7 +2098,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const has_responded = resp.hasResponded();
             if (!has_responded) {
                 const original_state = ctx.defer_deinit_until_callback_completes;
-                var should_deinit_context = false;
+                var should_deinit_context = if (original_state) |defer_deinit| defer_deinit.* else false;
                 ctx.defer_deinit_until_callback_completes = &should_deinit_context;
                 ctx.runErrorHandler(
                     value,
@@ -2344,13 +2342,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return this.sendWritableBytesForCompleteResponseBuffer(this.response_buf_owned.items, write_offset, resp);
         }
 
-        pub fn create(this: *RequestContext, server: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+        pub fn create(this: *RequestContext, server: *ThisServer, req: *uws.Request, resp: *App.Response, should_deinit_context: ?*bool) void {
             this.* = .{
                 .allocator = server.allocator,
                 .resp = resp,
                 .req = req,
                 .method = HTTP.Method.which(req.method()) orelse .GET,
                 .server = server,
+                .defer_deinit_until_callback_completes = should_deinit_context,
             };
 
             ctxLog("create<d> ({*})<r>", .{this});
@@ -4442,6 +4441,7 @@ pub const ServerWebSocket = struct {
     handler: *WebSocketServer.Handler,
     this_value: JSValue = .zero,
     flags: Flags = .{},
+    signal: ?*JSC.AbortSignal = null,
 
     // We pack the per-socket data into this struct below
     const Flags = packed struct(u64) {
@@ -4723,17 +4723,35 @@ pub const ServerWebSocket = struct {
                 handler.active_connections -|= 1;
             }
         }
+        const signal = this.signal;
+        this.signal = null;
+
+        defer {
+            if (signal) |sig| {
+                sig.pendingActivityUnref();
+                sig.unref();
+            }
+        }
 
         const vm = handler.vm;
-        if (vm.isShuttingDown()) return;
+        if (vm.isShuttingDown()) {
+            return;
+        }
 
         if (!handler.onClose.isEmptyOrUndefinedOrNull()) {
             var str = ZigString.init(message);
             const globalObject = handler.globalObject;
             const loop = vm.eventLoop();
+
             loop.enter();
             defer loop.exit();
             str.markUTF8();
+            if (signal) |sig| {
+                if (!sig.aborted()) {
+                    sig.signal(handler.globalObject, .ConnectionClosed);
+                }
+            }
+
             _ = handler.onClose.call(
                 globalObject,
                 .undefined,
@@ -4743,6 +4761,15 @@ pub const ServerWebSocket = struct {
                 log("onClose error", .{});
                 handler.runErrorCallback(vm, globalObject, err);
             };
+        } else if (signal) |sig| {
+            const loop = vm.eventLoop();
+
+            loop.enter();
+            defer loop.exit();
+
+            if (!sig.aborted()) {
+                sig.signal(handler.globalObject, .ConnectionClosed);
+            }
         }
 
         this.this_value.unprotect();
@@ -4753,7 +4780,7 @@ pub const ServerWebSocket = struct {
     }
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*ServerWebSocket {
-        return globalObject.throw2("Cannot construct ServerWebSocket", .{});
+        return globalObject.throw("Cannot construct ServerWebSocket", .{});
     }
 
     pub fn finalize(this: *ServerWebSocket) void {
@@ -4769,8 +4796,7 @@ pub const ServerWebSocket = struct {
         const args = callframe.arguments_old(4);
         if (args.len < 1) {
             log("publish()", .{});
-            globalThis.throw("publish requires at least 1 argument", .{});
-            return .zero;
+            return globalThis.throw("publish requires at least 1 argument", .{});
         }
 
         const app = this.handler.app orelse {
@@ -4787,27 +4813,23 @@ pub const ServerWebSocket = struct {
 
         if (topic_value.isEmptyOrUndefinedOrNull() or !topic_value.isString()) {
             log("publish() topic invalid", .{});
-            globalThis.throw("publish requires a topic string", .{});
-            return .zero;
+            return globalThis.throw("publish requires a topic string", .{});
         }
 
         var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
         if (topic_slice.len == 0) {
-            globalThis.throw("publish requires a non-empty topic", .{});
-            return .zero;
+            return globalThis.throw("publish requires a non-empty topic", .{});
         }
 
         if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
-            globalThis.throw("publish expects compress to be a boolean", .{});
-            return .zero;
+            return globalThis.throw("publish expects compress to be a boolean", .{});
         }
 
         const compress = args.len > 1 and compress_value.toBoolean();
 
         if (message_value.isEmptyOrUndefinedOrNull()) {
-            globalThis.throw("publish requires a non-empty message", .{});
-            return .zero;
+            return globalThis.throw("publish requires a non-empty message", .{});
         }
 
         if (message_value.asArrayBuffer(globalThis)) |array_buffer| {
@@ -4855,8 +4877,7 @@ pub const ServerWebSocket = struct {
 
         if (args.len < 1) {
             log("publish()", .{});
-            globalThis.throw("publish requires at least 1 argument", .{});
-            return .zero;
+            return globalThis.throw("publish requires at least 1 argument", .{});
         }
 
         const app = this.handler.app orelse {
@@ -4873,23 +4894,20 @@ pub const ServerWebSocket = struct {
 
         if (topic_value.isEmptyOrUndefinedOrNull() or !topic_value.isString()) {
             log("publish() topic invalid", .{});
-            globalThis.throw("publishText requires a topic string", .{});
-            return .zero;
+            return globalThis.throw("publishText requires a topic string", .{});
         }
 
         var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
 
         if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
-            globalThis.throw("publishText expects compress to be a boolean", .{});
-            return .zero;
+            return globalThis.throw("publishText expects compress to be a boolean", .{});
         }
 
         const compress = args.len > 1 and compress_value.toBoolean();
 
         if (message_value.isEmptyOrUndefinedOrNull() or !message_value.isString()) {
-            globalThis.throw("publishText requires a non-empty message", .{});
-            return .zero;
+            return globalThis.throw("publishText requires a non-empty message", .{});
         }
 
         var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
@@ -4918,8 +4936,7 @@ pub const ServerWebSocket = struct {
 
         if (args.len < 1) {
             log("publishBinary()", .{});
-            globalThis.throw("publishBinary requires at least 1 argument", .{});
-            return .zero;
+            return globalThis.throw("publishBinary requires at least 1 argument", .{});
         }
 
         const app = this.handler.app orelse {
@@ -4935,32 +4952,27 @@ pub const ServerWebSocket = struct {
 
         if (topic_value.isEmptyOrUndefinedOrNull() or !topic_value.isString()) {
             log("publishBinary() topic invalid", .{});
-            globalThis.throw("publishBinary requires a topic string", .{});
-            return .zero;
+            return globalThis.throw("publishBinary requires a topic string", .{});
         }
 
         var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
         if (topic_slice.len == 0) {
-            globalThis.throw("publishBinary requires a non-empty topic", .{});
-            return .zero;
+            return globalThis.throw("publishBinary requires a non-empty topic", .{});
         }
 
         if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
-            globalThis.throw("publishBinary expects compress to be a boolean", .{});
-            return .zero;
+            return globalThis.throw("publishBinary expects compress to be a boolean", .{});
         }
 
         const compress = args.len > 1 and compress_value.toBoolean();
 
         if (message_value.isEmptyOrUndefinedOrNull()) {
-            globalThis.throw("publishBinary requires a non-empty message", .{});
-            return .zero;
+            return globalThis.throw("publishBinary requires a non-empty message", .{});
         }
 
         const array_buffer = message_value.asArrayBuffer(globalThis) orelse {
-            globalThis.throw("publishBinary expects an ArrayBufferView", .{});
-            return .zero;
+            return globalThis.throw("publishBinary expects an ArrayBufferView", .{});
         };
         const buffer = array_buffer.slice();
 
@@ -4993,8 +5005,7 @@ pub const ServerWebSocket = struct {
         var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
         if (topic_slice.len == 0) {
-            globalThis.throw("publishBinary requires a non-empty topic", .{});
-            return .zero;
+            return globalThis.throw("publishBinary requires a non-empty topic", .{});
         }
 
         const compress = true;
@@ -5033,8 +5044,7 @@ pub const ServerWebSocket = struct {
         var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
         if (topic_slice.len == 0) {
-            globalThis.throw("publishBinary requires a non-empty topic", .{});
-            return .zero;
+            return globalThis.throw("publishBinary requires a non-empty topic", .{});
         }
 
         const compress = true;
@@ -5093,8 +5103,7 @@ pub const ServerWebSocket = struct {
         const result = corker.result;
 
         if (result.isAnyError()) {
-            globalThis.throwValue(result);
-            return .zero;
+            return globalThis.throwValue(result);
         }
 
         return result;
@@ -5109,8 +5118,7 @@ pub const ServerWebSocket = struct {
 
         if (args.len < 1) {
             log("send()", .{});
-            globalThis.throw("send requires at least 1 argument", .{});
-            return .zero;
+            return globalThis.throw("send requires at least 1 argument", .{});
         }
 
         if (this.isClosed()) {
@@ -5122,15 +5130,13 @@ pub const ServerWebSocket = struct {
         const compress_value = args.ptr[1];
 
         if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
-            globalThis.throw("send expects compress to be a boolean", .{});
-            return .zero;
+            return globalThis.throw("send expects compress to be a boolean", .{});
         }
 
         const compress = args.len > 1 and compress_value.toBoolean();
 
         if (message_value.isEmptyOrUndefinedOrNull()) {
-            globalThis.throw("send requires a non-empty message", .{});
-            return .zero;
+            return globalThis.throw("send requires a non-empty message", .{});
         }
 
         if (message_value.asArrayBuffer(globalThis)) |buffer| {
@@ -5183,8 +5189,7 @@ pub const ServerWebSocket = struct {
 
         if (args.len < 1) {
             log("sendText()", .{});
-            globalThis.throw("sendText requires at least 1 argument", .{});
-            return .zero;
+            return globalThis.throw("sendText requires at least 1 argument", .{});
         }
 
         if (this.isClosed()) {
@@ -5196,15 +5201,13 @@ pub const ServerWebSocket = struct {
         const compress_value = args.ptr[1];
 
         if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
-            globalThis.throw("sendText expects compress to be a boolean", .{});
-            return .zero;
+            return globalThis.throw("sendText expects compress to be a boolean", .{});
         }
 
         const compress = args.len > 1 and compress_value.toBoolean();
 
         if (message_value.isEmptyOrUndefinedOrNull() or !message_value.isString()) {
-            globalThis.throw("sendText expects a string", .{});
-            return .zero;
+            return globalThis.throw("sendText expects a string", .{});
         }
 
         var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
@@ -5267,8 +5270,7 @@ pub const ServerWebSocket = struct {
 
         if (args.len < 1) {
             log("sendBinary()", .{});
-            globalThis.throw("sendBinary requires at least 1 argument", .{});
-            return .zero;
+            return globalThis.throw("sendBinary requires at least 1 argument", .{});
         }
 
         if (this.isClosed()) {
@@ -5280,15 +5282,13 @@ pub const ServerWebSocket = struct {
         const compress_value = args.ptr[1];
 
         if (!compress_value.isBoolean() and !compress_value.isUndefined() and compress_value != .zero) {
-            globalThis.throw("sendBinary expects compress to be a boolean", .{});
-            return .zero;
+            return globalThis.throw("sendBinary expects compress to be a boolean", .{});
         }
 
         const compress = args.len > 1 and compress_value.toBoolean();
 
         const buffer = message_value.asArrayBuffer(globalThis) orelse {
-            globalThis.throw("sendBinary requires an ArrayBufferView", .{});
-            return .zero;
+            return globalThis.throw("sendBinary requires an ArrayBufferView", .{});
         };
 
         switch (this.websocket().send(buffer.slice(), .binary, compress, true)) {
@@ -5536,11 +5536,7 @@ pub const ServerWebSocket = struct {
         };
     }
 
-    pub fn setBinaryType(
-        this: *ServerWebSocket,
-        globalThis: *JSC.JSGlobalObject,
-        value: JSC.JSValue,
-    ) callconv(.C) bool {
+    pub fn setBinaryType(this: *ServerWebSocket, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
         log("setBinaryType()", .{});
 
         const btype = JSC.BinaryType.fromJSValue(globalThis, value) catch return false;
@@ -5552,7 +5548,7 @@ pub const ServerWebSocket = struct {
                 return true;
             },
             else => {
-                globalThis.throw("binaryType must be either \"uint8array\" or \"arraybuffer\" or \"nodebuffer\"", .{});
+                globalThis.throw("binaryType must be either \"uint8array\" or \"arraybuffer\" or \"nodebuffer\"", .{}) catch {};
                 return false;
             },
         }
@@ -5578,8 +5574,7 @@ pub const ServerWebSocket = struct {
     ) bun.JSError!JSValue {
         const args = callframe.arguments_old(1);
         if (args.len < 1) {
-            globalThis.throw("subscribe requires at least 1 argument", .{});
-            return .zero;
+            return globalThis.throw("subscribe requires at least 1 argument", .{});
         }
 
         if (this.isClosed()) {
@@ -5602,8 +5597,7 @@ pub const ServerWebSocket = struct {
         }
 
         if (topic.len == 0) {
-            globalThis.throw("subscribe requires a non-empty topic name", .{});
-            return .zero;
+            return globalThis.throw("subscribe requires a non-empty topic name", .{});
         }
 
         return JSValue.jsBoolean(this.websocket().subscribe(topic.slice()));
@@ -5615,8 +5609,7 @@ pub const ServerWebSocket = struct {
     ) bun.JSError!JSValue {
         const args = callframe.arguments_old(1);
         if (args.len < 1) {
-            globalThis.throw("unsubscribe requires at least 1 argument", .{});
-            return .zero;
+            return globalThis.throw("unsubscribe requires at least 1 argument", .{});
         }
 
         if (this.isClosed()) {
@@ -5639,8 +5632,7 @@ pub const ServerWebSocket = struct {
         }
 
         if (topic.len == 0) {
-            globalThis.throw("unsubscribe requires a non-empty topic name", .{});
-            return .zero;
+            return globalThis.throw("unsubscribe requires a non-empty topic name", .{});
         }
 
         return JSValue.jsBoolean(this.websocket().unsubscribe(topic.slice()));
@@ -5652,8 +5644,7 @@ pub const ServerWebSocket = struct {
     ) bun.JSError!JSValue {
         const args = callframe.arguments_old(1);
         if (args.len < 1) {
-            globalThis.throw("isSubscribed requires at least 1 argument", .{});
-            return .zero;
+            return globalThis.throw("isSubscribed requires at least 1 argument", .{});
         }
 
         if (this.isClosed()) {
@@ -5676,8 +5667,7 @@ pub const ServerWebSocket = struct {
         }
 
         if (topic.len == 0) {
-            globalThis.throw("isSubscribed requires a non-empty topic name", .{});
-            return .zero;
+            return globalThis.throw("isSubscribed requires a non-empty topic name", .{});
         }
 
         return JSValue.jsBoolean(this.websocket().isSubscribed(topic.slice()));
@@ -5772,6 +5762,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSValue.jsNumber(0);
             }
 
+            if (this.config.websocket == null or this.app == null) {
+                return JSValue.jsNumber(0);
+            }
+
             return JSValue.jsNumber((this.app.?.numSubscribers(topic.slice())));
         }
 
@@ -5799,10 +5793,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 JSValue.jsNull();
         }
 
-        pub fn timeout(this: *ThisServer, request: *JSC.WebCore.Request, seconds: JSValue) JSC.JSValue {
+        pub fn timeout(this: *ThisServer, request: *JSC.WebCore.Request, seconds: JSValue) bun.JSError!JSC.JSValue {
             if (!seconds.isNumber()) {
-                this.globalThis.throw("timeout() requires a number", .{});
-                return .zero;
+                return this.globalThis.throw("timeout() requires a number", .{});
             }
             const value = seconds.to(c_uint);
             _ = request.request_context.setTimeout(value);
@@ -5813,7 +5806,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.config.idleTimeout = @truncate(@min(seconds, 255));
         }
 
-        pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue) JSValue {
+        pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue) bun.JSError!JSValue {
             if (this.config.websocket == null)
                 return JSValue.jsNumber(0);
 
@@ -5821,15 +5814,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             if (topic.len == 0) {
                 httplog("publish() topic invalid", .{});
-                globalThis.throw("publish requires a topic string", .{});
-                return .zero;
+                return globalThis.throw("publish requires a topic string", .{});
             }
 
             var topic_slice = topic.toSlice(bun.default_allocator);
             defer topic_slice.deinit();
             if (topic_slice.len == 0) {
-                globalThis.throw("publish requires a non-empty topic", .{});
-                return .zero;
+                return globalThis.throw("publish requires a non-empty topic", .{});
             }
 
             const compress = (compress_value orelse JSValue.jsBoolean(true)).toBoolean();
@@ -5871,7 +5862,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSValue.jsBoolean(false);
             }
 
-            var request = object.as(Request) orelse {
+            var request: *Request = object.as(Request) orelse {
                 return globalThis.throwInvalidArguments("upgrade requires a Request object", .{});
             };
 
@@ -6003,9 +5994,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             // obviously invalid pointer marks it as used
             upgrader.upgrade_context = @as(*uws.uws_socket_context_s, @ptrFromInt(std.math.maxInt(usize)));
-            // set the abort handler so we can receive onAbort to deref the context
-            upgrader.setAbortHandler();
-            // after upgrading we should not use the response anymore
+            const signal = upgrader.signal;
+
+            upgrader.signal = null;
             upgrader.resp = null;
             request.request_context = AnyRequestContext.Null;
             upgrader.request_weakref.deinit();
@@ -6014,6 +6005,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const ws = ServerWebSocket.new(.{
                 .handler = &this.config.websocket.?.handler,
                 .this_value = data_value,
+                .signal = signal,
             });
             data_value.ensureStillAlive();
 
@@ -6021,6 +6013,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             defer sec_websocket_protocol_str.deinit();
             var sec_websocket_extensions_str = sec_websocket_extensions.toSlice(bun.default_allocator);
             defer sec_websocket_extensions_str.deinit();
+
+            resp.clearAborted();
+            resp.clearOnData();
+            resp.clearOnWritable();
+            resp.clearTimeout();
+
+            upgrader.deref();
 
             resp.upgrade(
                 *ServerWebSocket,
@@ -6533,6 +6532,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     .arena = bake_options.arena.allocator(),
                     .root = bake_options.root,
                     .framework = bake_options.framework,
+                    .bundler_options = bake_options.bundler_options,
                     .vm = global.bunVM(),
                 });
             } else null;
@@ -6670,7 +6670,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             error_instance.ensureStillAlive();
-            globalThis.throwValue(error_instance);
+            globalThis.throwValue(error_instance) catch {};
         }
 
         pub fn onListen(this: *ThisServer, socket: ?*App.ListenSocket) void {
@@ -6795,10 +6795,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            const prepared = this.prepareJsRequestContext(req, resp) orelse return;
+            // Track this before we enter JavaScript.
+            var should_deinit_context = false;
+            const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context) orelse return;
             const ctx = prepared.ctx;
 
             bun.assert(this.config.onRequest != .zero);
+
             const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &.{
                 prepared.js_request,
                 this.thisObject,
@@ -6809,14 +6812,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 // uWS request will not live longer than this function
                 prepared.request_object.request_context.detachRequest();
             }
-            const original_state = ctx.defer_deinit_until_callback_completes;
-            var should_deinit_context = false;
-            ctx.defer_deinit_until_callback_completes = &should_deinit_context;
+
             ctx.onResponse(this, prepared.js_request, response_value);
-            ctx.defer_deinit_until_callback_completes = original_state;
 
             // Reference in the stack here in case it is not for whatever reason
             prepared.js_request.ensureStillAlive();
+
+            ctx.defer_deinit_until_callback_completes = null;
 
             if (should_deinit_context) {
                 ctx.deinit();
@@ -6842,7 +6844,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             extra_args: [arg_count]JSValue,
         ) void {
             const prepared: PreparedRequest = switch (req) {
-                .stack => |r| this.prepareJsRequestContext(r, resp) orelse return,
+                .stack => |r| this.prepareJsRequestContext(r, resp, null) orelse return,
                 .saved => |data| .{
                     .js_request = data.js_request.get() orelse @panic("Request was unexpectedly freed"),
                     .request_object = data.request,
@@ -6914,7 +6916,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
         };
 
-        pub fn prepareJsRequestContext(this: *ThisServer, req: *uws.Request, resp: *App.Response) ?PreparedRequest {
+        pub fn prepareJsRequestContext(this: *ThisServer, req: *uws.Request, resp: *App.Response, should_deinit_context: ?*bool) ?PreparedRequest {
             JSC.markBinding(@src());
             this.onPendingRequest();
             if (comptime Environment.isDebug) {
@@ -6936,7 +6938,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             const ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
-            ctx.create(this, req, resp);
+            ctx.create(this, req, resp, should_deinit_context);
             this.vm.jsc.reportExtraMemory(@sizeOf(RequestContext));
             const body = this.vm.initRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
@@ -7024,7 +7026,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.pending_requests += 1;
             req.setYield(false);
             var ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
-            ctx.create(this, req, resp);
+            var should_deinit_context = false;
+            ctx.create(this, req, resp, &should_deinit_context);
             var body = this.vm.initRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
@@ -7047,22 +7050,20 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             };
             const request_value = args[0];
             request_value.ensureStillAlive();
+
             const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args) catch |err|
                 this.globalThis.takeException(err);
             defer {
                 // uWS request will not live longer than this function
                 request_object.request_context.detachRequest();
             }
-
-            const original_state = ctx.defer_deinit_until_callback_completes;
-            var should_deinit_context = false;
-            ctx.defer_deinit_until_callback_completes = &should_deinit_context;
             ctx.onResponse(
                 this,
                 request_value,
                 response_value,
             );
-            ctx.defer_deinit_until_callback_completes = original_state;
+
+            ctx.defer_deinit_until_callback_completes = null;
 
             if (should_deinit_context) {
                 ctx.deinit();
@@ -7130,7 +7131,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 app = App.create(ssl_options) orelse {
                     if (!globalThis.hasException()) {
                         if (!throwSSLErrorIfNecessary(globalThis)) {
-                            globalThis.throw("Failed to create HTTP server", .{});
+                            globalThis.throw("Failed to create HTTP server", .{}) catch {};
                         }
                     }
 
@@ -7150,7 +7151,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         app.addServerNameWithOptions(server_name, ssl_options) catch {
                             if (!globalThis.hasException()) {
                                 if (!throwSSLErrorIfNecessary(globalThis)) {
-                                    globalThis.throw("Failed to add serverName: {s}", .{server_name});
+                                    globalThis.throw("Failed to add serverName: {s}", .{server_name}) catch {};
                                 }
                             }
 
@@ -7181,7 +7182,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             app.addServerNameWithOptions(sni_servername, sni_ssl_config.asUSockets()) catch {
                                 if (!globalThis.hasException()) {
                                     if (!throwSSLErrorIfNecessary(globalThis)) {
-                                        globalThis.throw("Failed to add serverName: {s}", .{sni_servername});
+                                        globalThis.throw("Failed to add serverName: {s}", .{sni_servername}) catch {};
                                     }
                                 }
 
@@ -7204,7 +7205,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             } else {
                 app = App.create(.{}) orelse {
                     if (!globalThis.hasException()) {
-                        globalThis.throw("Failed to create HTTP server", .{});
+                        globalThis.throw("Failed to create HTTP server", .{}) catch {};
                     }
                     this.deinit();
                     return;
@@ -7233,7 +7234,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     app.listenWithConfig(*ThisServer, this, onListen, .{
                         .port = tcp.port,
                         .host = host,
-                        .options = if (this.config.reuse_port) 0 else 1,
+                        // IPV6_ONLY is the default for bun, different from node it also set exclusive port in case reuse port is not set
+                        .options = (if (this.config.reuse_port) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_EXCLUSIVE_PORT) | uws.LIBUS_SOCKET_IPV6_ONLY,
                     });
                 },
 
@@ -7243,7 +7245,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         this,
                         onListen,
                         unix,
-                        if (this.config.reuse_port) 0 else 1,
+                        // IPV6_ONLY is the default for bun, different from node it also set exclusive port in case reuse port is not set
+                        (if (this.config.reuse_port) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_EXCLUSIVE_PORT) | uws.LIBUS_SOCKET_IPV6_ONLY,
                     );
                 },
             }
@@ -7385,19 +7388,16 @@ extern fn Bun__addInspector(bool, *anyopaque, *JSC.JSGlobalObject) void;
 
 const assert = bun.assert;
 
-pub export fn Server__setIdleTimeout(
-    server: JSC.JSValue,
-    seconds: JSC.JSValue,
-    globalThis: *JSC.JSGlobalObject,
-) void {
+pub export fn Server__setIdleTimeout(server: JSC.JSValue, seconds: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
+    Server__setIdleTimeout_(server, seconds, globalThis) catch return;
+}
+pub fn Server__setIdleTimeout_(server: JSC.JSValue, seconds: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
     if (!server.isObject()) {
-        globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
-        return;
+        return globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
     }
 
     if (!seconds.isNumber()) {
-        globalThis.throw("Failed to set timeout: The provided value is not of type 'number'.", .{});
-        return;
+        return globalThis.throw("Failed to set timeout: The provided value is not of type 'number'.", .{});
     }
     const value = seconds.to(c_uint);
     if (server.as(HTTPServer)) |this| {
@@ -7409,7 +7409,7 @@ pub export fn Server__setIdleTimeout(
     } else if (server.as(DebugHTTPSServer)) |this| {
         this.setIdleTimeout(value);
     } else {
-        globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
+        return globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
     }
 }
 
@@ -7423,7 +7423,7 @@ fn throwSSLErrorIfNecessary(globalThis: *JSC.JSGlobalObject) bool {
     const err_code = BoringSSL.ERR_get_error();
     if (err_code != 0) {
         defer BoringSSL.ERR_clear_error();
-        globalThis.throwValue(JSC.API.Bun.Crypto.createCryptoError(globalThis, err_code));
+        globalThis.throwValue(JSC.API.Bun.Crypto.createCryptoError(globalThis, err_code)) catch {};
         return true;
     }
 

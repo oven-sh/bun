@@ -1018,8 +1018,8 @@ pub const EventLoop = struct {
                 // special case: we return
                 return false;
             },
-            @field(Task.Tag, typeBaseName(@typeName(bun.bake.DevServer.HotReloadTask))) => {
-                const hmr_task: *bun.bake.DevServer.HotReloadTask = task.get(bun.bake.DevServer.HotReloadTask).?;
+            @field(Task.Tag, typeBaseName(@typeName(bun.bake.DevServer.HotReloadEvent))) => {
+                const hmr_task: *bun.bake.DevServer.HotReloadEvent = task.get(bun.bake.DevServer.HotReloadEvent).?;
                 hmr_task.run();
             },
             @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {

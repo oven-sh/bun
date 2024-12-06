@@ -50,6 +50,12 @@ var panic_mutex = std.Thread.Mutex{};
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
 
+threadlocal var inside_native_plugin: ?[*:0]const u8 = null;
+
+export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C) void {
+    inside_native_plugin = name;
+}
+
 /// This can be set by various parts of the codebase to indicate a broader
 /// action being taken. It is printed when a crash happens, which can help
 /// narrow down what the bug is. Example: "Crashed while parsing /path/to/file.js"
@@ -226,6 +232,18 @@ pub fn crashHandler(
 
                     writer.writeAll("=" ** 60 ++ "\n") catch std.posix.abort();
                     printMetadata(writer) catch std.posix.abort();
+
+                    if (inside_native_plugin) |name| {
+                        const native_plugin_name = name;
+                        const fmt =
+                            \\
+                            \\Bun has encountered a crash while running the <red><d>"{s}"<r> native plugin.
+                            \\
+                            \\This indicates either a bug in the native plugin or in Bun.
+                            \\
+                        ;
+                        writer.print(Output.prettyFmt(fmt, true), .{native_plugin_name}) catch std.posix.abort();
+                    }
                 } else {
                     if (Output.enable_ansi_colors) {
                         writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
@@ -308,7 +326,17 @@ pub fn crashHandler(
                         } else {
                             writer.writeAll(Output.prettyFmt(": ", true)) catch std.posix.abort();
                         }
-                        if (reason == .out_of_memory) {
+                        if (inside_native_plugin) |name| {
+                            const native_plugin_name = name;
+                            writer.print(Output.prettyFmt(
+                                \\Bun has encountered a crash while running the <red><d>"{s}"<r> native plugin.
+                                \\
+                                \\To send a redacted crash report to Bun's team,
+                                \\please file a GitHub issue using the link below:
+                                \\
+                                \\
+                            , true), .{native_plugin_name}) catch std.posix.abort();
+                        } else if (reason == .out_of_memory) {
                             writer.writeAll(
                                 \\Bun has ran out of memory.
                                 \\

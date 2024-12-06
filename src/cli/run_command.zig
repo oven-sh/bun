@@ -380,9 +380,8 @@ pub const RunCommand = struct {
                 if (signal.valid() and signal != .SIGINT and !silent) {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
-
-                    Global.raiseIgnoringPanicHandler(signal);
                 }
+                Global.raiseIgnoringPanicHandler(signal);
             },
 
             .err => |err| {
@@ -548,7 +547,7 @@ pub const RunCommand = struct {
                     },
 
                     .signaled => |signal| {
-                        if (!silent) {
+                        if (signal.valid() and signal != .SIGINT and !silent) {
                             Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to signal <b>{s}<r>", .{
                                 basenameOrBun(executable),
                                 signal.name() orelse "unknown",

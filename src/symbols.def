@@ -628,3 +628,4 @@ EXPORTS
   ?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z
   ?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ
   ?IsFunction@Value@v8@@QEBA_NXZ
+  ?FromJustIsNothing@api_internal@v8@@YAXXZ

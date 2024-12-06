@@ -2506,6 +2506,136 @@ pub const Expect = struct {
         expected_value.getClassName(globalThis, &expected_class);
         return this.throw(globalThis, signature, expected_fmt, .{ expected_class, result.toFmt(&formatter) });
     }
+    pub fn toMatchInlineSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+        // in jest, a failing inline snapshot does not block the rest from running
+        // not sure why - empty snapshots will autofill and with the `-u` flag none will fail
+
+        defer this.postMatch(globalThis);
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments_old(2);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        incrementExpectCallCounter();
+
+        const not = this.flags.not;
+        if (not) {
+            const signature = comptime getSignature("toMatchInlineSnapshot", "", true);
+            return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n", .{});
+        }
+
+        var has_expected = false;
+        var expected_string: ZigString = ZigString.Empty;
+        var property_matchers: ?JSValue = null;
+        switch (arguments.len) {
+            0 => {},
+            1 => {
+                if (arguments[0].isString()) {
+                    has_expected = true;
+                    arguments[0].toZigString(&expected_string, globalThis);
+                } else if (arguments[0].isObject()) {
+                    property_matchers = arguments[0];
+                } else {
+                    return this.throw(globalThis, "", "\n\nMatcher error: Expected first argument to be a string or object\n", .{});
+                }
+            },
+            else => {
+                if (!arguments[0].isObject()) {
+                    const signature = comptime getSignature("toMatchInlineSnapshot", "<green>properties<r><d>, <r>hint", false);
+                    return this.throw(globalThis, signature, "\n\nMatcher error: Expected <green>properties<r> must be an object\n", .{});
+                }
+
+                property_matchers = arguments[0];
+
+                if (arguments[1].isString()) {
+                    has_expected = true;
+                    arguments[1].toZigString(&expected_string, globalThis);
+                }
+            },
+        }
+
+        var expected = expected_string.toSlice(default_allocator);
+        defer expected.deinit();
+
+        const value: JSValue = try this.getValue(globalThis, thisValue, "toMatchInlineSnapshot", "<green>properties<r><d>, <r>hint");
+
+        if (!value.isObject() and property_matchers != null) {
+            const signature = comptime getSignature("toMatchInlineSnapshot", "<green>properties<r><d>, <r>hint", false);
+            return this.throw(globalThis, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n", .{});
+        }
+
+        if (property_matchers) |_prop_matchers| {
+            const prop_matchers = _prop_matchers;
+
+            if (!value.jestDeepMatch(prop_matchers, globalThis, true)) {
+                // TODO: print diff with properties from propertyMatchers
+                const signature = comptime getSignature("toMatchInlineSnapshot", "<green>propertyMatchers<r>", false);
+                const fmt = signature ++ "\n\nExpected <green>propertyMatchers<r> to match properties from received object" ++
+                    "\n\nReceived: {any}\n";
+
+                var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+                return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
+            }
+        }
+
+        const result: ?[]const u8 = if (has_expected) expected.byteSlice() else null;
+
+        const update = Jest.runner.?.snapshots.update_snapshots;
+        var needs_write = false;
+
+        var pretty_value: MutableString = MutableString.init(default_allocator, 0) catch unreachable;
+        value.jestSnapshotPrettyFormat(&pretty_value, globalThis) catch {
+            var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+            return globalThis.throw("Failed to pretty format value: {s}", .{value.toFmt(&formatter)});
+        };
+        defer pretty_value.deinit();
+
+        if (result) |saved_value| {
+            if (strings.eqlLong(pretty_value.slice(), saved_value, true)) {
+                Jest.runner.?.snapshots.passed += 1;
+                return .undefined;
+            } else if (update) {
+                needs_write = true;
+            } else {
+                Jest.runner.?.snapshots.failed += 1;
+                const signature = comptime getSignature("toMatchInlineSnapshot", "<green>expected<r>", false);
+                const fmt = signature ++ "\n\n{any}\n";
+                const diff_format = DiffFormatter{
+                    .received_string = pretty_value.slice(),
+                    .expected_string = saved_value,
+                    .globalThis = globalThis,
+                };
+
+                return globalThis.throwPretty(fmt, .{diff_format});
+            }
+        } else {
+            needs_write = true;
+        }
+
+        if (needs_write) {
+            if (this.testScope() == null) {
+                const signature = comptime getSignature("toMatchSnapshot", "", true);
+                return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
+            }
+
+            // 1. find the src loc of the snapshot
+            const srcloc = callFrame.getCallerSrcLoc(globalThis);
+
+            if (srcloc.source_file_id != this.testScope().?.describe.file_id) {
+                const signature = comptime getSignature("toMatchSnapshot", "", true);
+                return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot matchers must be called from the same file as the test\n", .{});
+            }
+
+            // 2. save to write later
+            try Jest.runner.?.snapshots.addInlineSnapshotToWrite(srcloc.source_file_id, .{
+                .line = srcloc.line,
+                .col = srcloc.column,
+                .value = pretty_value.toOwnedSlice(),
+                .has_matchers = property_matchers != null,
+            });
+        }
+
+        return .undefined;
+    }
     pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
@@ -2534,6 +2664,8 @@ pub const Expect = struct {
                     arguments[0].toZigString(&hint_string, globalThis);
                 } else if (arguments[0].isObject()) {
                     property_matchers = arguments[0];
+                } else {
+                    return this.throw(globalThis, "", "\n\nMatcher error: Expected first argument to be a string or object\n", .{});
                 }
             },
             else => {
@@ -2546,6 +2678,8 @@ pub const Expect = struct {
 
                 if (arguments[1].isString()) {
                     arguments[1].toZigString(&hint_string, globalThis);
+                } else {
+                    return this.throw(globalThis, "", "\n\nMatcher error: Expected second argument to be a string\n", .{});
                 }
             },
         }
@@ -2574,7 +2708,14 @@ pub const Expect = struct {
             }
         }
 
-        const result = Jest.runner.?.snapshots.getOrPut(this, value, hint.slice(), globalThis) catch |err| {
+        var pretty_value: MutableString = MutableString.init(default_allocator, 0) catch unreachable;
+        value.jestSnapshotPrettyFormat(&pretty_value, globalThis) catch {
+            var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+            return globalThis.throw("Failed to pretty format value: {s}", .{value.toFmt(&formatter)});
+        };
+        defer pretty_value.deinit();
+
+        const existing_value = Jest.runner.?.snapshots.getOrPut(this, pretty_value.slice(), hint.slice()) catch |err| {
             var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
             const test_file_path = Jest.runner.?.files.get(this.testScope().?.describe.file_id).source.path.text;
             return switch (err) {
@@ -2586,14 +2727,7 @@ pub const Expect = struct {
             };
         };
 
-        if (result) |saved_value| {
-            var pretty_value: MutableString = MutableString.init(default_allocator, 0) catch unreachable;
-            value.jestSnapshotPrettyFormat(&pretty_value, globalThis) catch {
-                var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
-                return globalThis.throw("Failed to pretty format value: {s}", .{value.toFmt(&formatter)});
-            };
-            defer pretty_value.deinit();
-
+        if (existing_value) |saved_value| {
             if (strings.eqlLong(pretty_value.slice(), saved_value, true)) {
                 Jest.runner.?.snapshots.passed += 1;
                 return .undefined;
@@ -4201,7 +4335,6 @@ pub const Expect = struct {
     pub const toHaveReturnedWith = notImplementedJSCFn;
     pub const toHaveLastReturnedWith = notImplementedJSCFn;
     pub const toHaveNthReturnedWith = notImplementedJSCFn;
-    pub const toMatchInlineSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingInlineSnapshot = notImplementedJSCFn;
 

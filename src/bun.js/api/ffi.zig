@@ -823,6 +823,7 @@ pub const FFI = struct {
                         bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
                         false,
                         true,
+                        function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
                     obj.put(globalThis, &str, cb);
@@ -1178,6 +1179,7 @@ pub const FFI = struct {
                         bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
                         false,
                         true,
+                        function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
                     obj.put(global, &str, cb);
@@ -1280,6 +1282,7 @@ pub const FFI = struct {
                         bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
                         false,
                         true,
+                        function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
 

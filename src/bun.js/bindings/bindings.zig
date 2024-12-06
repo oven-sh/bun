@@ -3509,7 +3509,7 @@ pub const JSGlobalObject = opaque {
         // when querying from JavaScript, 'func.len'
         comptime argument_count: u32,
     ) JSValue {
-        return NewRuntimeFunction(global, ZigString.static(display_name), argument_count, toJSHostFunction(function), false, false);
+        return NewRuntimeFunction(global, ZigString.static(display_name), argument_count, toJSHostFunction(function), false, false, null);
     }
 
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
@@ -4197,7 +4197,7 @@ pub const JSValue = enum(i64) {
         return cppFn("putRecord", .{ value, global, key, values_array, values_len });
     }
 
-    fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
+    pub fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
         @import("./headers.zig").JSC__JSValue__put(value, global, key, result);
     }
 
@@ -6175,13 +6175,14 @@ pub const JSValue = enum(i64) {
         return Bun__ProxyObject__getInternalField(this, field);
     }
 
-    extern fn JSC__JSValue__getClassInfoName(value: JSValue, out: *bun.String) bool;
+    extern fn JSC__JSValue__getClassInfoName(value: JSValue, out: *[*:0]const u8, len: *usize) bool;
 
     /// For native C++ classes extending JSCell, this retrieves s_info's name
-    pub fn getClassInfoName(this: JSValue) ?bun.String {
+    /// This is a readonly ASCII string.
+    pub fn getClassInfoName(this: JSValue) ?[:0]const u8 {
         if (!this.isCell()) return null;
-        var out: bun.String = bun.String.empty;
-        if (!JSC__JSValue__getClassInfoName(this, &out)) return null;
+        var out: [:0]const u8 = "";
+        if (!JSC__JSValue__getClassInfoName(this, &out.ptr, &out.len)) return null;
         return out;
     }
 };
@@ -6617,6 +6618,10 @@ pub const CallFrame = opaque {
         };
     }
 
+    pub fn arguments(self: *const CallFrame) []const JSValue {
+        // this presumably isn't allowed given that it doesn't exist
+        return self.argumentsPtr()[0..self.argumentsCount()];
+    }
     pub fn arguments_old(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const len = self.argumentsCount();
         const ptr = self.argumentsPtr();
@@ -6659,6 +6664,24 @@ pub const CallFrame = opaque {
             value[i] = call_frame.argument(i);
         }
         return value;
+    }
+
+    extern fn Bun__CallFrame__getCallerSrcLoc(*const CallFrame, *JSGlobalObject, *c_uint, *c_uint, *c_uint) void;
+    pub const CallerSrcLoc = struct {
+        source_file_id: c_uint,
+        line: c_uint,
+        column: c_uint,
+    };
+    pub fn getCallerSrcLoc(call_frame: *const CallFrame, globalThis: *JSGlobalObject) CallerSrcLoc {
+        var source_id: c_uint = undefined;
+        var line: c_uint = undefined;
+        var column: c_uint = undefined;
+        Bun__CallFrame__getCallerSrcLoc(call_frame, globalThis, &source_id, &line, &column);
+        return .{
+            .source_file_id = source_id,
+            .line = line,
+            .column = column,
+        };
     }
 };
 
@@ -6774,6 +6797,7 @@ const private = struct {
         functionPointer: JSHostFunctionPtr,
         strong: bool,
         add_ptr_field: bool,
+        inputFunctionPtr: ?*anyopaque,
     ) JSValue;
 
     pub extern fn Bun__untrackFFIFunction(
@@ -6793,9 +6817,9 @@ pub fn NewFunction(
     strong: bool,
 ) JSValue {
     if (@TypeOf(functionPointer) == JSC.JSHostFunctionType) {
-        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, strong, false);
+        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, strong, false, null);
     }
-    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false, null);
 }
 
 pub fn createCallback(
@@ -6807,7 +6831,7 @@ pub fn createCallback(
     if (@TypeOf(functionPointer) == JSC.JSHostFunctionType) {
         return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, false, false);
     }
-    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false, null);
 }
 
 pub fn NewRuntimeFunction(
@@ -6817,9 +6841,10 @@ pub fn NewRuntimeFunction(
     functionPointer: JSHostFunctionPtr,
     strong: bool,
     add_ptr_property: bool,
+    inputFunctionPtr: ?*anyopaque,
 ) JSValue {
     JSC.markBinding(@src());
-    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong, add_ptr_property);
+    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong, add_ptr_property, inputFunctionPtr);
 }
 
 pub fn getFunctionData(function: JSValue) ?*anyopaque {

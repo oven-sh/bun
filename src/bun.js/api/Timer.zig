@@ -936,7 +936,6 @@ pub const WTFTimer = struct {
 
     export fn WTFTimer__secondsUntilTimer(this: *const WTFTimer) f64 {
         if (this.event_loop_timer.state == .ACTIVE) {
-            // TODO increase precision
             const until = this.event_loop_timer.next.duration(&bun.timespec.now());
             const sec: f64, const nsec: f64 = .{ @floatFromInt(until.sec), @floatFromInt(until.nsec) };
             return sec + nsec / std.time.ns_per_s;

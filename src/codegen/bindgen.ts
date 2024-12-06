@@ -1,34 +1,35 @@
 // The binding generator to rule them all.
+// Converts binding definition files (.bind.ts) into C++ and Zig code.
+//
+// Generated bindings are available in `bun.generated.<basename>.*` in Zig,
+// or `Generated::<basename>::*` in C++ from including `Generated<basename>.h`.
 import * as path from "node:path";
-import * as fs from "node:fs";
 import {
+  CAbiType,
   CodeWriter,
   DictionaryField,
+  ReturnStrategy,
   TypeImpl,
   TypeKind,
   Variant,
   cAbiTypeInfo,
+  cAbiTypeName,
   cap,
   extDispatchVariant,
   extJsFunction,
   files,
-  typeHashToReachableType,
   snake,
   src,
   str,
   typeHashToNamespace,
+  typeHashToReachableType,
   zid,
-  ReturnStrategy,
-  cAbiTypeName,
 } from "./bindgen-lib-internal";
 import assert from "node:assert";
 import { argParse, writeIfNotChanged } from "./helpers";
 
 // arg parsing
-let { 
-  "codegen-root": codegenRoot,
-  debug,
-} = argParse(['codegen-root', 'debug']);
+let { "codegen-root": codegenRoot, debug } = argParse(["codegen-root", "debug"]);
 if (debug === "false" || debug === "0" || debug == "OFF") debug = false;
 if (!codegenRoot) {
   console.error("Missing --codegen-root=...");
@@ -61,18 +62,18 @@ function resolveVariantStrategies(variant: Variant) {
     );
   }
 
-  if (variant.globalObjectArg) {
+  if (!variant.globalObjectArg) {
     variant.globalObjectArg = "hidden";
   }
 
-  if (variant.ret.kind === 'any') {
-    variant.returnStrategy = { type: 'jsvalue' };
+  if (variant.ret.kind === "any") {
+    variant.returnStrategy = { type: "jsvalue" };
     return;
-  } 
+  }
   const abiType = variant.ret.canDirectlyMapToCAbi();
   if (abiType) {
     variant.returnStrategy = {
-      type: 'basic-out-param',
+      type: "basic-out-param",
       abiType,
     };
     return;
@@ -80,26 +81,65 @@ function resolveVariantStrategies(variant: Variant) {
 }
 
 function emitCppCallToVariant(variant: Variant, dispatchFunctionName: string) {
+  cpp.line(`auto& vm = JSC::getVM(global);`);
+  cpp.line(`auto throwScope = DECLARE_THROW_SCOPE(vm);`);
+  if (variant.minRequiredArgs > 0) {
+    cpp.line(`size_t argumentCount = callFrame->argumentCount();`);
+    cpp.line(`if (argumentCount < ${variant.minRequiredArgs}) {`);
+    cpp.line(`    return JSC::throwVMError(global, throwScope, createNotEnoughArgumentsError(global));`);
+    cpp.line(`}`);
+  }
+
   let i = 0;
   for (const arg of variant.args) {
-    if (!arg.type.isVirtualArgument()) {
-      cpp.line(`JSC::EnsureStillAliveScope arg${i} = callFrame->uncheckedArgument(${i});`);
-      emitDeclareConvertValue("arg" + cap(arg.name), arg.type, `arg${i}.value()`, 'declare');
+    const type = arg.type;
+    if (!type.isVirtualArgument()) {
+      const get = variant.minRequiredArgs > i ? "uncheckedArgument" : "argument";
+      cpp.line(`JSC::EnsureStillAliveScope arg${i} = callFrame->${get}(${i});`);
+
+      const storageLocation = "arg" + cap(arg.name);
+      const jsValueRef = `arg${i}.value()`;
+
+      const isOptional = type.flags.optional || "default" in type.flags;
+      if (isOptional) {
+        cpp.line(`${type.cppName()} ${storageLocation};`);
+        cpp.line(`if (!${jsValueRef}.isUndefinedOrNull()) {`);
+        cpp.indent();
+        emitConvertValue(storageLocation, arg.type, jsValueRef, "assign");
+        cpp.dedent();
+        cpp.line(`} else {`);
+        cpp.indent();
+        if ("default" in type.flags) {
+          cpp.add(`${storageLocation} = `);
+          type.emitCppDefaultValue(cpp);
+          cpp.line(";");
+        } else {
+          assert(type.flags.optional);
+          throw new Error(`TODO: optional argument`);
+        }
+        cpp.dedent();
+        cpp.line(`}`);
+      } else {
+        emitConvertValue(storageLocation, arg.type, jsValueRef, "declare");
+      }
+
       i += 1;
     }
   }
 
   const returnStrategy = variant.returnStrategy!;
   switch (returnStrategy.type) {
-    case 'jsvalue':
+    case "jsvalue":
       cpp.line(`return ${dispatchFunctionName}(`);
       break;
-    case 'basic-out-param':
+    case "basic-out-param":
       cpp.line(`${cAbiTypeName(returnStrategy.abiType)} out;`);
       cpp.line(`if (!${dispatchFunctionName}(`);
       break;
     default:
-      throw new Error(`TODO: emitCppCallToVariant for ${Bun.inspect(returnStrategy, { colors: Bun.enableANSIColors })}`);
+      throw new Error(
+        `TODO: emitCppCallToVariant for ${Bun.inspect(returnStrategy, { colors: Bun.enableANSIColors })}`,
+      );
   }
 
   let emittedFirstArgument = false;
@@ -110,12 +150,12 @@ function emitCppCallToVariant(variant: Variant, dispatchFunctionName: string) {
       emittedFirstArgument = true;
     }
   }
-  
+
   const totalArgs = variant.args.length;
   i = 0;
   cpp.indent();
 
-  if (variant.globalObjectArg === 'hidden') {
+  if (variant.globalObjectArg === "hidden") {
     addCommaAfterArgument();
     cpp.add("global");
   }
@@ -124,7 +164,7 @@ function emitCppCallToVariant(variant: Variant, dispatchFunctionName: string) {
     addCommaAfterArgument();
     i += 1;
     if (arg.type.isVirtualArgument()) {
-      switch(arg.type.kind) {
+      switch (arg.type.kind) {
         case "zigVirtualMachine":
         case "globalObject":
           cpp.add("global");
@@ -135,7 +175,7 @@ function emitCppCallToVariant(variant: Variant, dispatchFunctionName: string) {
     } else {
       const storageLocation = `arg${cap(arg.name)}`;
       const strategy = arg.loweringStrategy!;
-      switch(strategy.type) {
+      switch (strategy.type) {
         case "c-abi-pointer":
           cpp.add(`&${storageLocation}`);
           break;
@@ -149,14 +189,14 @@ function emitCppCallToVariant(variant: Variant, dispatchFunctionName: string) {
   }
 
   switch (returnStrategy.type) {
-    case 'jsvalue':
+    case "jsvalue":
       cpp.dedent();
-      if(totalArgs === 0) {
+      if (totalArgs === 0) {
         cpp.trimLastNewline();
       }
       cpp.line(");");
       break;
-    case 'basic-out-param':
+    case "basic-out-param":
       addCommaAfterArgument();
       cpp.add("&out");
       cpp.line();
@@ -164,56 +204,111 @@ function emitCppCallToVariant(variant: Variant, dispatchFunctionName: string) {
       cpp.line(")) {");
       cpp.line(`    return {};`);
       cpp.line("}");
-      const simpleType = simpleIdlTypes[variant.ret.kind];
+      const simpleType = getSimpleIdlType(variant.ret);
       assert(simpleType); // TODO:
       cpp.line(`return JSC::JSValue::encode(WebCore::toJS<${simpleType}>(*global, out));`);
       break;
     default:
-      throw new Error(`TODO: emitCppCallToVariant for ${Bun.inspect(returnStrategy, { colors: Bun.enableANSIColors })}`);
+      throw new Error(
+        `TODO: emitCppCallToVariant for ${Bun.inspect(returnStrategy, { colors: Bun.enableANSIColors })}`,
+      );
   }
 }
 
-const simpleIdlTypes: { [K in TypeKind]?: string } = {
-  boolean: "WebCore::IDLBoolean",
-  undefined: "WebCore::IDLUndefined",
-  f64: 'WebCore::IDLDouble',
-  // u32: 'WebCore::IDLUnsignedLong',
-  usize: 'WebCore::IDLUnsignedLongLong',
-};
+/** If a simple IDL type mapping exists, it also currently means there is a direct C ABI mapping */
+function getSimpleIdlType(type: TypeImpl): string | undefined {
+  const map: { [K in TypeKind]?: string } = {
+    boolean: "WebCore::IDLBoolean",
+    undefined: "WebCore::IDLUndefined",
+    f64: "WebCore::IDLDouble",
+    // u32: 'WebCore::IDLUnsignedLong',
+    // i8: "WebCore::IDLByte",
+    // u8: "WebCore::IDLOctet",
+    usize: "WebCore::IDLUnsignedLongLong",
+  };
+  let entry = map[type.kind];
+  if (!entry) return;
 
-function emitDeclareConvertValue(storageLocation: string, type: TypeImpl, jsValueRef: string, decl: "declare" | "assign") {
-  if(decl === 'declare') {
+  if (type.flags.range) {
+    const rangeAdaptor = {
+      "clamp": "WebCore::IDLClampAdaptor",
+      "enforce": "WebCore::IDLEnforceRangeAdaptor",
+    }[type.flags.range[0]];
+    assert(rangeAdaptor);
+    entry = `${rangeAdaptor}<${entry}>`;
+  }
+
+  return entry;
+}
+
+function emitConvertValue(storageLocation: string, type: TypeImpl, jsValueRef: string, decl: "declare" | "assign") {
+  if (decl === "declare") {
     cpp.add(`${type.cppName()} `);
   }
 
-  const simpleType = simpleIdlTypes[type.kind];
+  const simpleType = getSimpleIdlType(type);
   if (simpleType) {
     const cAbiType = type.canDirectlyMapToCAbi();
     assert(cAbiType);
     cpp.line(`${storageLocation} = WebCore::convert<${simpleType}>(*global, ${jsValueRef});`);
-    cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
-    return;
-  }
-  switch (type.kind) {
-    case 'any':
-      cpp.line(`${storageLocation} = JSC::JSValue::encode(${jsValueRef});`);
-      return;
-    case "USVString":
-    case "DOMString":
-    case "ByteString":
-      cpp.line(`${storageLocation} = Bun::toString(WebCore::convert<WebCore::IDL${type.kind}>(*global, ${jsValueRef}));`);
-      cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
-      return;
-    case "dictionary": {
-      cpp.line(`${storageLocation};`);
-      cpp.line(`if (!convert${type.cppName()}(&${storageLocation}, global, ${jsValueRef}))`);
-      cpp.indent();
-      cpp.line(`return {};`);
-      cpp.dedent();
-      return;
+
+    if (type.flags.range && type.flags.range[1] !== "abi") {
+      emitRangeModifierCheck(cAbiType, storageLocation, type.flags.range);
     }
-    default:
-      throw new Error(`TODO: emitParseValue for Type ${type.kind}`);
+
+    cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
+  } else {
+    switch (type.kind) {
+      case "any":
+        cpp.line(`${storageLocation} = JSC::JSValue::encode(${jsValueRef});`);
+        break;
+      case "USVString":
+      case "DOMString":
+      case "ByteString":
+        cpp.line(
+          `${storageLocation} = Bun::toString(WebCore::convert<WebCore::IDL${type.kind}>(*global, ${jsValueRef}));`,
+        );
+        cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
+        break;
+      case "dictionary": {
+        if (decl === "declare") cpp.line(`${storageLocation};`);
+        cpp.line(`if (!convert${type.cppName()}(&${storageLocation}, global, ${jsValueRef}))`);
+        cpp.indent();
+        cpp.line(`return {};`);
+        cpp.dedent();
+        break;
+      }
+      default:
+        throw new Error(`TODO: emitParseValue for Type ${type.kind}`);
+    }
+  }
+}
+
+/**
+ * The built in WebCore range adaptors do not support arbitrary ranges, but that
+ * is something we want to have. They aren't common, so they are just tacked
+ * onto the webkit one.
+ */
+function emitRangeModifierCheck(
+  cAbiType: CAbiType,
+  storageLocation: string,
+  range: ["clamp" | "enforce", bigint, bigint],
+) {
+  const [kind, min, max] = range;
+  if (kind === "clamp") {
+    cpp.line(`if (${storageLocation} < ${min}) ${storageLocation} = ${min};`);
+    cpp.line(`else if (${storageLocation} > ${max}) ${storageLocation} = ${max};`);
+  } else if (kind === "enforce") {
+    cpp.line(`if (${storageLocation} < ${min} || ${storageLocation} > ${max}) {`);
+    cpp.indent();
+    cpp.line(
+      `throwTypeError(global, throwScope, rangeErrorString<${cAbiTypeName(cAbiType)}>(${storageLocation}, ${min}, ${max}));`,
+    );
+    cpp.line(`return {};`);
+    cpp.dedent();
+    cpp.line(`}`);
+  } else {
+    throw new Error(`TODO: range modifier ${kind}`);
   }
 }
 
@@ -221,7 +316,9 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
   assert(type.kind === "dictionary");
   const fields = type.data as DictionaryField[];
 
-  cpp.line(`bool convert${type.cppName()}(${type.cppName()}* result, JSC::JSGlobalObject* global, JSC::JSValue value) {`);
+  cpp.line(
+    `bool convert${type.cppName()}(${type.cppName()}* result, JSC::JSGlobalObject* global, JSC::JSValue value) {`,
+  );
   cpp.indent();
 
   cpp.line(`auto& vm = JSC::getVM(global);`);
@@ -245,22 +342,24 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
     cpp.line(`}`);
     cpp.line(`if (!propValue.isUndefined()) {`);
     cpp.indent();
-    emitDeclareConvertValue(`result->${snake(key)}`, fieldType, "propValue", "assign");
+    emitConvertValue(`result->${key}`, fieldType, "propValue", "assign");
     cpp.dedent();
     cpp.line(`} else {`);
     cpp.indent();
     if (type.flags.required) {
       cpp.line(`throwTypeError(global, throwScope);`);
       cpp.line(`return false;`);
-    } else if ('default' in fieldType.flags) {
-      cpp.line(`result->${key} = ${fieldType.emitCppDefaultValue()};`);
+    } else if ("default" in fieldType.flags) {
+      cpp.add(`result->${key} = `);
+      fieldType.emitCppDefaultValue(cpp);
+      cpp.line(";");
     } else {
       throw new Error(`TODO: optional dictionary field`);
     }
     cpp.dedent();
     cpp.line(`}`);
   }
-  
+
   cpp.line(`return true;`);
   cpp.dedent();
   cpp.line(`}`);
@@ -302,7 +401,7 @@ function emitCppStruct(type: TypeImpl) {
   if (externLayout) {
     if (typeof externLayout === "string") {
       zig.line(`typedef ${externLayout} ${type.name()};`);
-      console.warn('should this really be done lol', type);
+      console.warn("should this really be done lol", type);
     } else {
       externLayout.emitCpp(cpp, type.name());
       cpp.line();
@@ -356,7 +455,9 @@ function returnStrategyCppType(strategy: ReturnStrategy): string {
     case "jsvalue":
       return "JSC::EncodedJSValue";
     default:
-      throw new Error(`TODO: returnStrategyCppType for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`);
+      throw new Error(
+        `TODO: returnStrategyCppType for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
+      );
   }
 }
 
@@ -367,7 +468,9 @@ function returnStrategyZigType(strategy: ReturnStrategy): string {
     case "jsvalue":
       return "JSC.JSValue";
     default:
-      throw new Error(`TODO: returnStrategyZigType for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`);
+      throw new Error(
+        `TODO: returnStrategyZigType for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
+      );
   }
 }
 
@@ -404,6 +507,7 @@ const zig = new CodeWriter();
 const zigInternal = new CodeWriter();
 const cpp = new CodeWriter();
 const headers = new Set<string>();
+
 zig.line('const bun = @import("root").bun;');
 zig.line("const JSC = bun.JSC;");
 zig.line("const JSHostFunctionType = JSC.JSHostFunctionType;\n");
@@ -411,6 +515,15 @@ zig.line("const JSHostFunctionType = JSC.JSHostFunctionType;\n");
 zigInternal.line();
 zigInternal.line("const binding_internals = struct {");
 zigInternal.indent();
+
+cpp.buffer +=
+  /* cpp */
+  `template<typename T>
+static String rangeErrorString(T value, T min, T max)
+{
+    return makeString("Value "_s, value, " is outside the range ["_s, min, ", "_s, max, ']');
+}
+`;
 
 headers.add("root.h");
 headers.add("IDLTypes.h");
@@ -460,8 +573,8 @@ for (const type of typeHashToReachableType.values()) {
   emitCppStruct(type);
 
   // Emit convert functions for compound types
-  switch(type.kind) {
-    case 'dictionary':
+  switch (type.kind) {
+    case "dictionary":
       emitConvertDictionaryFunction(type);
       break;
   }
@@ -485,8 +598,8 @@ for (const [filename, { functions, typedefs }] of files) {
       const args: string[] = [];
 
       let argNum = 0;
-      if (vari.globalObjectArg === 'hidden') {
-        args.push('JSC::JSGlobalObject*');
+      if (vari.globalObjectArg === "hidden") {
+        args.push("JSC::JSGlobalObject*");
       }
       for (const arg of vari.args) {
         argNum += 1;
@@ -503,13 +616,13 @@ for (const [filename, { functions, typedefs }] of files) {
               `TODO: C++ dispatch function for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
             );
         }
-      } 
+      }
       const returnStrategy = vari.returnStrategy!;
-      if (returnStrategy.type === 'basic-out-param') {
+      if (returnStrategy.type === "basic-out-param") {
         args.push(cAbiTypeName(returnStrategy.abiType) + "*");
       }
 
-      cpp.line(`extern "C" ${returnStrategyCppType(vari.returnStrategy!)} ${dispatchName}(${args.join(', ')});`);
+      cpp.line(`extern "C" ${returnStrategyCppType(vari.returnStrategy!)} ${dispatchName}(${args.join(", ")});`);
 
       variNum += 1;
     }
@@ -526,9 +639,6 @@ for (const [filename, { functions, typedefs }] of files) {
     );
     cpp.line(`{`);
     cpp.indent();
-    cpp.line(`auto& vm = JSC::getVM(global);`);
-    cpp.line(`auto throwScope = DECLARE_THROW_SCOPE(vm);`);
-
 
     if (fn.variants.length === 1) {
       emitCppCallToVariant(fn.variants[0], extDispatchVariant(namespaceVar, fn.name, 1));
@@ -546,17 +656,19 @@ for (const [filename, { functions, typedefs }] of files) {
       const args: string[] = [];
       const returnStrategy = vari.returnStrategy!;
 
-      let globalObjectArg = '';
-      if (vari.globalObjectArg === 'hidden') {
+      assert(vari.globalObjectArg);
+
+      let globalObjectArg = "";
+      if (vari.globalObjectArg === "hidden") {
         args.push(`global: *JSC.JSGlobalObject`);
-        globalObjectArg = 'global';
+        globalObjectArg = "global";
       }
       let argNum = 0;
       for (const arg of vari.args) {
         let argName = `arg_${snake(arg.name)}`;
         if (vari.globalObjectArg === argNum) {
-          if (arg.type.kind !== 'globalObject') {
-            argName = 'global';
+          if (arg.type.kind !== "globalObject") {
+            argName = "global";
           }
           globalObjectArg = argName;
         }
@@ -578,19 +690,25 @@ for (const [filename, { functions, typedefs }] of files) {
       }
       assert(globalObjectArg, `globalObjectArg not found from ${vari.globalObjectArg}`);
 
-      if (returnStrategy.type === 'basic-out-param') {
+      if (returnStrategy.type === "basic-out-param") {
         args.push(`out: *${zigTypeName(vari.ret)}`);
       }
-      
+
       zigInternal.line(`export fn ${zid(dispatchName)}(${args.join(", ")}) ${returnStrategyZigType(returnStrategy)} {`);
       zigInternal.indent();
-      switch(returnStrategy.type) {
-        case 'jsvalue':
-            zigInternal.add(`return JSC.toJSHostValue(${globalObjectArg}, `);
-            break;
-        case 'basic-out-param':
-            zigInternal.add(`out.* = @as(bun.JSError!${returnStrategy.abiType}, `);
-            break;
+
+      zigInternal.line(`if (!@hasDecl(import_${namespaceVar}, ${str(vari.impl)}))`);
+      zigInternal.line(
+        `    @compileError(${str(`Missing binding declaration "${vari.impl}" in "${path.basename(filename)}"`)});`,
+      );
+
+      switch (returnStrategy.type) {
+        case "jsvalue":
+          zigInternal.add(`return JSC.toJSHostValue(${globalObjectArg}, `);
+          break;
+        case "basic-out-param":
+          zigInternal.add(`out.* = @as(bun.JSError!${returnStrategy.abiType}, `);
+          break;
       }
 
       zigInternal.line(`${zid("import_" + namespaceVar)}.${vari.impl}(`);
@@ -607,7 +725,7 @@ for (const [filename, { functions, typedefs }] of files) {
               zigInternal.line(`${argName},`);
               break;
             default:
-              throw new Error('unexpected');
+              throw new Error("unexpected");
           }
           continue;
         }
@@ -621,26 +739,41 @@ for (const [filename, { functions, typedefs }] of files) {
             zigInternal.line(`${argName},`);
             break;
           default:
-            throw new Error(`TODO: zig dispatch function for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`);
+            throw new Error(
+              `TODO: zig dispatch function for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
+            );
         }
       }
       zigInternal.dedent();
-      switch(returnStrategy.type) {
-        case 'jsvalue':
-            zigInternal.line(`));`);
-            break;
-        case 'basic-out-param':
-            zigInternal.line(`)) catch |err| switch(err) {`);
-            zigInternal.line(`    error.JSError => return false,`);
-            zigInternal.line(`    error.OutOfMemory => ${globalObjectArg}.throwOutOfMemory() catch return false,`);
-            zigInternal.line(`};`);
-            zigInternal.line(`return true;`);
-            break;
+      switch (returnStrategy.type) {
+        case "jsvalue":
+          zigInternal.line(`));`);
+          break;
+        case "basic-out-param":
+          zigInternal.line(`)) catch |err| switch(err) {`);
+          zigInternal.line(`    error.JSError => return false,`);
+          zigInternal.line(`    error.OutOfMemory => ${globalObjectArg}.throwOutOfMemory() catch return false,`);
+          zigInternal.line(`};`);
+          zigInternal.line(`return true;`);
+          break;
       }
       zigInternal.dedent();
       zigInternal.line(`}`);
       variNum += 1;
     }
+  }
+  if (functions.length > 0) {
+    zig.line();
+  }
+  for (const fn of functions) {
+    // Wrapper to init JSValue
+    const wrapperName = zid("create" + cap(fn.name) + "Callback");
+    const minArgCount = fn.variants.reduce((acc, vari) => Math.min(acc, vari.args.length), Number.MAX_SAFE_INTEGER);
+    zig.line(`pub fn ${wrapperName}(global: *JSC.JSGlobalObject) JSC.JSValue {`);
+    zig.line(
+      `    return JSC.NewRuntimeFunction(global, JSC.ZigString.static(${str(fn.name)}), ${minArgCount}, &js${cap(fn.name)}, false, false);`,
+    );
+    zig.line(`}`);
   }
 
   if (typedefs.length > 0) {
@@ -663,7 +796,10 @@ zigInternal.line("        _ = &@field(binding_internals, decl.name);");
 zigInternal.line("    }");
 zigInternal.line("}");
 
-writeIfNotChanged(path.join(codegenRoot, "GeneratedBindings.cpp"), [...headers].map(name => `#include ${str(name)}\n`).join('') + '\n' + cpp.buffer);
+writeIfNotChanged(
+  path.join(codegenRoot, "GeneratedBindings.cpp"),
+  [...headers].map(name => `#include ${str(name)}\n`).join("") + "\n" + cpp.buffer,
+);
 writeIfNotChanged(path.join(src, "bun.js/bindings/GeneratedBindings.zig"), zig.buffer + zigInternal.buffer);
 
 // Headers
@@ -673,7 +809,7 @@ for (const [filename, { functions, typedefs }] of files) {
   header.line("#pragma once");
   header.line();
   header.line(`#include "root.h"`);
-  
+
   header.line(`namespace {`);
   header.line();
   for (const fn of functions) {

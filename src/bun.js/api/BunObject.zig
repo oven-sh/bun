@@ -4185,10 +4185,10 @@ pub fn stringWidth(str: bun.String, opts: gen.StringWidthOptions) usize {
     if (str.length() == 0)
         return 0;
 
-    if (opts.count_ansi_escapes)
-        return str.visibleWidth(opts.ambiguous_as_wide);
+    if (opts.count_ansi_escape_codes)
+        return str.visibleWidth(!opts.ambiguous_is_narrow);
 
-    return str.visibleWidthExcludeANSIColors(opts.ambiguous_as_wide);
+    return str.visibleWidthExcludeANSIColors(!opts.ambiguous_is_narrow);
 }
 
 /// EnvironmentVariables is runtime defined.

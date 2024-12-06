@@ -1,26 +1,42 @@
 {
-  "extends": "./tsconfig.base.json",
   "compilerOptions": {
+    // Enable latest features
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "allowJs": true,
+
+    // Bundler mode
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    // Best practices
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+
+    // Stricter type-checking
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noPropertyAccessFromIndexSignature": false,
+    "noImplicitAny": false,
+
+    // Enable decorators
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    // "skipLibCheck": true,
-    "allowJs": true
+
+    // Path remapping
+    "baseUrl": ".",
+    "paths": {
+      "bindgen": ["./src/codegen/bindgen-lib.ts"]
+    }
   },
-  "include": [".", "packages/bun-types/index.d.ts"],
-  "exclude": [
-    "src/test",
-    "src/js/out",
-    // "src/js/builtins",
-    "packages",
-    "bench",
-    "examples/*/*",
-    "build",
-    ".zig-cache",
-    "test",
-    "vendor",
-    "bun-webkit",
-    "src/api/demo",
-    "node_modules"
-  ],
-  "files": ["src/js/builtins.d.ts"]
+  // You can verify these two lists only include necessary files
+  // by running `tsc -p . --listFilesOnly`
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["node_modules", "WebKit", "deps"]
 }

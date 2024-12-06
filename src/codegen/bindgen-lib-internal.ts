@@ -1,6 +1,11 @@
+// While working on this file, it is important to have very rigorous errors
+// and checking on input data. The goal is to allow people not aware of
+// various footguns in JavaScript, C++, and the bindings generator to
+// always produce correct code, or bail with an error.
 import { expect } from "bun:test";
 import type { Type, t } from "./bindgen-lib";
 import * as path from "node:path";
+import assert from "node:assert";
 
 export const src = path.join(import.meta.dirname, "../");
 
@@ -10,9 +15,9 @@ export let allFunctions: Func[] = [];
 export let files = new Map<string, File>();
 /** A reachable type is one that is required for code generation */
 export let typeHashToReachableType = new Map<string, TypeImpl>();
-export let typeHashToExternStruct = new Map<string, ExternStruct>();
+export let typeHashToStruct = new Map<string, Struct>();
 export let typeHashToNamespace = new Map<string, string>();
-export let externStructHashToSelf = new Map<string, ExternStruct>();
+export let structHashToSelf = new Map<string, Struct>();
 
 /** String literal */
 export const str = (v: any) => JSON.stringify(v);
@@ -64,12 +69,15 @@ interface Flags {
   required?: boolean;
   nullable?: boolean;
   default?: any;
+  range?: ["clamp" | "enforce", bigint, bigint] | ["clamp" | "enforce", "abi", "abi"];
 }
 
 export interface DictionaryField {
   key: string;
   type: TypeImpl;
 }
+
+export declare const isType: unique symbol;
 
 /**
  * Implementation of the Type interface.  All types are immutable and hashable.
@@ -78,7 +86,7 @@ export interface DictionaryField {
  * generated struct type, the purpose of the flags are to inform receivers like
  * `t.dictionary` and `fn` to mark uses as optional or provide default values.
  */
-export class TypeImpl<K extends TypeKind = TypeKind> implements Type<any, any> {
+export class TypeImpl<K extends TypeKind = TypeKind> {
   kind: K;
   data: TypeData<K>;
   flags: Flags;
@@ -87,6 +95,8 @@ export class TypeImpl<K extends TypeKind = TypeKind> implements Type<any, any> {
   /** Access via .hash() */
   #hash: string | undefined = undefined;
   ownerFile: string;
+
+  declare [isType]: true;
 
   constructor(kind: K, data: TypeData<K>, flags: Flags = {}) {
     this.kind = kind;
@@ -163,9 +173,16 @@ export class TypeImpl<K extends TypeKind = TypeKind> implements Type<any, any> {
       case "strictBoolean":
         return "bool";
       case "f64":
-        return "f64";
+      case "i8":
+      case "i16":
+      case "i32":
+      case "i64":
+      case "u8":
+      case "u16":
+      case "u32":
+      case "u64":
       case "usize":
-        return "usize";
+        return kind;
       case "globalObject":
       case "zigVirtualMachine":
         return "*JSGlobalObject";
@@ -175,23 +192,18 @@ export class TypeImpl<K extends TypeKind = TypeKind> implements Type<any, any> {
         throw new Error("TODO");
       case "undefined":
         return "u0";
-      // classes
-      case "AbortSignal":
-      case "Blob":
-      case "BufferSource":
-      case "FormData":
-      case "ReadableStream":
-      case "URLSearchParams":
-        throw new Error("TODO");
       case "oneOf": // `union(enum)`
       case "UTF8String": // []const u8
       case "record": // undecided how to lower records
       case "sequence": // []const T
         return null;
+      case "externalClass":
+        throw new Error("TODO");
+        return "*anyopaque";
       case "dictionary": {
-        let existing = typeHashToExternStruct.get(this.hash());
+        let existing = typeHashToStruct.get(this.hash());
         if (existing) return existing;
-        existing = new ExternStruct();
+        existing = new Struct();
         for (const { key, type } of this.data as DictionaryField[]) {
           if (type.flags.optional && !("default" in type.flags)) {
             return null; // ?T
@@ -202,11 +214,11 @@ export class TypeImpl<K extends TypeKind = TypeKind> implements Type<any, any> {
           existing.add(key, repr);
         }
         existing.reorderForSmallestSize();
-        if(!externStructHashToSelf.has(existing.hash())) {
-          externStructHashToSelf.set(existing.hash(), existing);
+        if (!structHashToSelf.has(existing.hash())) {
+          structHashToSelf.set(existing.hash(), existing);
         }
         existing.assignName(this.name());
-        typeHashToExternStruct.set(this.hash(), existing);
+        typeHashToStruct.set(this.hash(), existing);
         return existing;
       }
       case "sequence": {
@@ -320,8 +332,60 @@ export class TypeImpl<K extends TypeKind = TypeKind> implements Type<any, any> {
     });
   }
 
+  clamp(min?: number | bigint, max?: number | bigint) {
+    return this.#rangeModifier(min, max, "clamp");
+  }
+
+  enforceRange(min?: number | bigint, max?: number | bigint) {
+    return this.#rangeModifier(min, max, "enforce");
+  }
+
+  #rangeModifier(min: undefined | number | bigint, max: undefined | number | bigint, kind: "clamp" | "enforce") {
+    if (this.flags.range) {
+      throw new Error("This type already has a range modifier set");
+    }
+
+    // cAbiIntegerLimits throws on non-integer types
+    const range = cAbiIntegerLimits(this.kind as CAbiType);
+    const abiMin = BigInt(range[0]);
+    const abiMax = BigInt(range[1]);
+    if (min === undefined) {
+      min = abiMin;
+      max = abiMax;
+    } else {
+      if (max === undefined) {
+        throw new Error("Expected min and max to be both set or both unset");
+      }
+      min = BigInt(min);
+      max = BigInt(max);
+
+      if (min < abiMin || min > abiMax) {
+        throw new Error(`Expected integer in range ${range}, got ${inspect(min)}`);
+      }
+      if (max < abiMin || max > abiMax) {
+        throw new Error(`Expected integer in range ${range}, got ${inspect(max)}`);
+      }
+      if (min > max) {
+        throw new Error(`Expected min <= max, got ${inspect(min)} > ${inspect(max)}`);
+      }
+    }
+
+    return new TypeImpl(this.kind, this.data, {
+      ...this.flags,
+      range: min === BigInt(range[0]) && max === BigInt(range[1]) ? [kind, "abi", "abi"] : [kind, min, max],
+    });
+  }
+
   assertDefaultIsValid(value: unknown) {
-    switch(this.kind) {
+    switch (this.kind) {
+      case "DOMString":
+      case "ByteString":
+      case "USVString":
+      case "UTF8String":
+        if (typeof value !== "string") {
+          throw new Error(`Expected string, got ${inspect(value)}`);
+        }
+        break;
       case "boolean":
         if (typeof value !== "boolean") {
           throw new Error(`Expected boolean, got ${inspect(value)}`);
@@ -330,6 +394,36 @@ export class TypeImpl<K extends TypeKind = TypeKind> implements Type<any, any> {
       case "f64":
         if (typeof value !== "number") {
           throw new Error(`Expected number, got ${inspect(value)}`);
+        }
+        break;
+      case "usize":
+        // case "u8":
+        // case "u16":
+        // case "u32":
+        // case "u64":
+        // case "i8":
+        // case "i16":
+        // case "i32":
+        // case "i64":
+        const range = cAbiIntegerLimits(this.kind);
+        if (typeof value === "number") {
+          if (value % 1 !== 0) {
+            throw new Error(`Expected integer, got ${inspect(value)}`);
+          }
+          if (value >= Number.MAX_SAFE_INTEGER || value <= Number.MIN_SAFE_INTEGER) {
+            throw new Error(
+              `Specify default ${this.kind} outside of max safe integer range as a BigInt to avoid precision loss`,
+            );
+          }
+          if (value < Number(range[0]) || value > Number(range[1])) {
+            throw new Error(`Expected integer in range ${range}, got ${inspect(value)}`);
+          }
+        } else if (typeof value === "bigint") {
+          if (value < BigInt(range[0]) || value > BigInt(range[1])) {
+            throw new Error(`Expected integer in range ${range}, got ${inspect(value)}`);
+          }
+        } else {
+          throw new Error(`Expected integer, got ${inspect(value)}`);
         }
         break;
       case "dictionary":
@@ -349,16 +443,52 @@ export class TypeImpl<K extends TypeKind = TypeKind> implements Type<any, any> {
     }
   }
 
-  emitCppDefaultValue() {
+  emitCppDefaultValue(w: CodeWriter) {
     const value = this.flags.default;
     switch (this.kind) {
       case "boolean":
-        return value ? "true" : "false";
-      case 'f64':
-        return String(value);
+        w.add(value ? "true" : "false");
+        break;
+      case "f64":
+        w.add(String(value));
+        break;
+      case "usize":
+        const str = String(value);
+        w.add(`${str}ULL`);
+        break;
+      case "dictionary":
+        const struct = this.structType();
+        w.line(`${this.cppName()} {`);
+        w.indent();
+        for (const { name } of struct.fields) {
+          w.add(`.${name} = `);
+          const type = this.data.find(f => f.key === name)!.type;
+          type.emitCppDefaultValue(w);
+          w.line(",");
+        }
+        w.dedent();
+        w.add(`}`);
+        break;
+      case "DOMString":
+      case "ByteString":
+      case "USVString":
+      case "UTF8String":
+        if (typeof value === "string") {
+          w.add("Bun::BunStringEmpty");
+        } else {
+          throw new Error(`TODO: non-empty string default`);
+        }
+        break;
       default:
-        throw new Error(`TODO: emit default value on type ${this.kind}`);
+        throw new Error(`TODO: set default value on type ${this.kind}`);
     }
+  }
+
+  structType() {
+    const direct = this.canDirectlyMapToCAbi();
+    assert(typeof direct !== "string");
+    if (direct) return direct;
+    throw new Error("TODO: generate non-extern struct for representing this data type");
   }
 
   default(def: any) {
@@ -398,8 +528,33 @@ export class TypeImpl<K extends TypeKind = TypeKind> implements Type<any, any> {
   }
 }
 
+function cAbiIntegerLimits(type: CAbiType) {
+  switch (type) {
+    case "u8":
+      return [0, 255];
+    case "u16":
+      return [0, 65535];
+    case "u32":
+      return [0, 4294967295];
+    case "u64":
+      return [0, 18446744073709551615n];
+    case "usize":
+      return [0, 18446744073709551615n];
+    case "i8":
+      return [-128, 127];
+    case "i16":
+      return [-32768, 32767];
+    case "i32":
+      return [-2147483648, 2147483647];
+    case "i64":
+      return [-9223372036854775808n, 9223372036854775807n];
+    default:
+      throw new Error(`Unexpected type ${type}`);
+  }
+}
+
 function inspect(value: any) {
-  return Bun.inspect(value, { colors:Bun.enableANSIColors });
+  return Bun.inspect(value, { colors: Bun.enableANSIColors });
 }
 
 export function oneOfImpl(types: TypeImpl[]): TypeImpl {
@@ -449,11 +604,11 @@ export interface Func {
 
 export interface Variant {
   impl: string;
-  /** Ordered record */
   args: Arg[];
   ret: TypeImpl;
   returnStrategy?: ReturnStrategy;
   globalObjectArg?: number | "hidden";
+  minRequiredArgs: number;
 }
 
 export interface Arg {
@@ -464,14 +619,12 @@ export interface Arg {
 }
 
 /**  */
-export type ArgStrategy =
-  | { type: "c-abi-pointer"; abiType: CAbiType }
-  | { type: "c-abi-value"; abiType: CAbiType };
+export type ArgStrategy = { type: "c-abi-pointer"; abiType: CAbiType } | { type: "c-abi-value"; abiType: CAbiType };
 
 /**
  * In addition to moving a payload over, an additional bit of information
  * crosses the ABI boundary indicating if the function threw an exception.
- * 
+ *
  * For simplicity, the possibility of any Zig binding returning an error/calling
  * `throw` is assumed and there isnt a way to disable the exception check.
  */
@@ -480,7 +633,7 @@ export type ReturnStrategy =
   | { type: "jsvalue" }
   // For primitives and simple structures where direct assignment into a
   // pointer is possible. function returns a boolean indicating success/error.
-  | { type: "basic-out-param"; abiType: CAbiType }
+  | { type: "basic-out-param"; abiType: CAbiType };
 
 export interface File {
   functions: Func[];
@@ -506,22 +659,21 @@ export function registerFunction(opts: any) {
   if ("variants" in opts) {
     let i = 1;
     for (const variant of opts.variants) {
+      const { minRequiredArgs } = validateVariant(variant);
       variants.push({
         ...variant,
         impl: opts.name + i,
+        minRequiredArgs,
       });
       i++;
     }
   } else {
+    const { minRequiredArgs } = validateVariant(opts);
     variants.push({
       impl: opts.name,
-      args: Object.entries(opts.args).map(([name, type]) => {
-        if (!(type instanceof TypeImpl)) {
-          throw new Error(`Expected argument type for ${name} to be a Type instance. Got ${Bun.inspect(type)}`);
-        }
-        return { name, type };
-      }),
+      args: Object.entries(opts.args).map(([name, type]) => ({ name, type })) as Arg[],
       ret: opts.ret,
+      minRequiredArgs,
     });
   }
 
@@ -533,6 +685,32 @@ export function registerFunction(opts: any) {
   };
   allFunctions.push(func);
   file.functions.push(func);
+}
+
+function validateVariant(variant: any) {
+  let minRequiredArgs = 0;
+  let seenOptionalArgument = false;
+  let i = 0;
+
+  for (const [name, type] of Object.entries(variant.args) as [string, TypeImpl][]) {
+    if (!(type instanceof TypeImpl)) {
+      throw new Error(`Expected type for argument ${name}, got ${inspect(type)}`);
+    }
+    i += 1;
+    if (type.isVirtualArgument()) {
+      continue;
+    }
+    if (!type.flags.optional && !("default" in type.flags)) {
+      if (seenOptionalArgument) {
+        throw new Error(`Required argument ${name} cannot follow an optional argument`);
+      }
+      minRequiredArgs++;
+    } else {
+      seenOptionalArgument = true;
+    }
+  }
+
+  return { minRequiredArgs };
 }
 
 function snapshotCallerLocation(): string {
@@ -551,7 +729,7 @@ function stackTraceFileName(line: string): string {
   return / \(((?:[A-Za-z]:)?.*?)[:)]/.exec(line)![1].replaceAll("\\", "/");
 }
 
-type CAbiType =
+export type CAbiType =
   | "*anyopaque"
   | "*JSGlobalObject"
   | "JSValue"
@@ -569,7 +747,7 @@ type CAbiType =
   | "i32"
   | "i64"
   | "f64"
-  | ExternStruct;
+  | Struct;
 
 export function cAbiTypeInfo(type: CAbiType): [size: number, align: number] {
   if (typeof type !== "string") {
@@ -609,33 +787,35 @@ export function cAbiTypeName(type: CAbiType) {
   if (typeof type !== "string") {
     return type.name();
   }
-  return ({
-    "*anyopaque": "void*",
-    "*JSGlobalObject": "JSC::JSGlobalObject*",
-    "JSValue": "JSValue",
-    "JSValue.MaybeException": "JSValue",
-    "bool": "bool",
-    "u8": "uint8_t",
-    "u16": "uint16_t",
-    "u32": "uint32_t",
-    "u64": "uint64_t",
-    "i8": "int8_t",
-    "i16": "int16_t",
-    "i32": "int32_t",
-    "i64": "int64_t",
-    "f64": "double",
-    'usize': 'size_t',
-    "bun.String": "BunString",
-    u0: 'void',
-  } satisfies Record<Extract<CAbiType, string>, string>)[type];
+  return (
+    {
+      "*anyopaque": "void*",
+      "*JSGlobalObject": "JSC::JSGlobalObject*",
+      "JSValue": "JSValue",
+      "JSValue.MaybeException": "JSValue",
+      "bool": "bool",
+      "u8": "uint8_t",
+      "u16": "uint16_t",
+      "u32": "uint32_t",
+      "u64": "uint64_t",
+      "i8": "int8_t",
+      "i16": "int16_t",
+      "i32": "int32_t",
+      "i64": "int64_t",
+      "f64": "double",
+      "usize": "size_t",
+      "bun.String": "BunString",
+      u0: "void",
+    } satisfies Record<Extract<CAbiType, string>, string>
+  )[type];
 }
 
 function alignForward(size: number, alignment: number) {
   return (size + alignment - 1) & ~(alignment - 1);
 }
 
-class ExternStruct {
-  fields: ExternStructField[] = [];
+class Struct {
+  fields: StructField[] = [];
   #hash?: string;
   #name?: string;
   namespace?: string;
@@ -665,15 +845,25 @@ class ExternStruct {
   }
 
   hash() {
-    return (this.#hash ??= String(Bun.hash(this.fields.map(f => f.type).join(","))));
+    return (this.#hash ??= String(
+      Bun.hash(
+        this.fields
+          .map(f => {
+            if (f.type instanceof Struct) {
+              return f.name + `:` + f.type.hash();
+            }
+            return f.name + `:` + f.type;
+          })
+          .join(","),
+      ),
+    ));
   }
 
   name() {
     if (this.#name) return this.#name;
     const hash = this.hash();
-    const existing = externStructHashToSelf.get(hash);
-    if (existing && existing !== this) 
-      return (this.#name = existing.name());
+    const existing = structHashToSelf.get(hash);
+    if (existing && existing !== this) return (this.#name = existing.name());
     return (this.#name = `anon_extern_struct_${hash}`);
   }
 
@@ -684,7 +874,7 @@ class ExternStruct {
   assignName(name: string) {
     if (this.#name) return;
     const hash = this.hash();
-    const existing = externStructHashToSelf.get(hash);
+    const existing = structHashToSelf.get(hash);
     if (existing && existing.#name) name = existing.#name;
     this.#name = name;
     if (existing) existing.#name = name;
@@ -716,7 +906,7 @@ class ExternStruct {
   }
 }
 
-export interface ExternStructField {
+export interface StructField {
   /** camel case */
   name: string;
   type: CAbiType;
@@ -743,7 +933,6 @@ export class CodeWriter {
   dedent() {
     this.level -= 1;
   }
-
 
   trimLastNewline() {
     this.buffer = this.buffer.trimEnd();

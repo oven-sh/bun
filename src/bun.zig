@@ -1281,7 +1281,7 @@ pub const SignalCode = enum(u8) {
         return @enumFromInt(std.mem.asBytes(&value)[0]);
     }
 
-    // This wrapper struct is lame, what if bun's color formatter was more versitile
+    // This wrapper struct is lame, what if bun's color formatter was more versatile
     const Fmt = struct {
         signal: SignalCode,
         enable_ansi_colors: bool,
@@ -2764,8 +2764,6 @@ pub const MakePath = struct {
                 @ptrCast(component.path))
             else
                 try w.sliceToPrefixedFileW(self.fd, component.path);
-            const is_last = it.peekNext() == null;
-            _ = is_last; // autofix
             var result = makeOpenDirAccessMaskW(self, sub_path_w.span().ptr, access_mask, .{
                 .no_follow = no_follow,
                 .create_disposition = w.FILE_OPEN_IF,

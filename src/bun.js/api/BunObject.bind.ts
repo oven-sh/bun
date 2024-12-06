@@ -1,4 +1,4 @@
-import { t, fn } from '../../codegen/bindgen-lib';
+import { t, fn } from "bindgen";
 
 export const BracesOptions = t.dictionary({
   tokenize: t.boolean.default(false),
@@ -6,7 +6,7 @@ export const BracesOptions = t.dictionary({
 });
 
 fn({
-  name: 'braces',
+  name: "braces",
   args: {
     global: t.globalObject,
     input: t.DOMString,
@@ -16,7 +16,7 @@ fn({
 });
 
 fn({
-  name: 'gc',
+  name: "gc",
   args: {
     vm: t.zigVirtualMachine,
     force: t.boolean.default(false),
@@ -30,10 +30,20 @@ export const StringWidthOptions = t.dictionary({
 });
 
 fn({
-  name: 'stringWidth',
+  name: "stringWidth",
   args: {
     str: t.DOMString.default(""),
     opts: StringWidthOptions.default({}),
+  },
+  ret: t.usize,
+});
+
+fn({
+  name: "add",
+  args: {
+    global: t.globalObject,
+    a: t.usize.enforceRange(32, 64),
+    b: t.usize.default(1),
   },
   ret: t.usize,
 });

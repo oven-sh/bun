@@ -1,5 +1,4 @@
 {
-  "include": [".", "../packages/bun-types/index.d.ts", "./testing-internals.d.ts"],
   "compilerOptions": {
     "lib": ["ESNext"],
     "module": "ESNext",
@@ -31,6 +30,6 @@
       "@faasjs/larger/*": ["js/bun/resolve/*/larger-index.js"]
     }
   },
-
+  "include": [".", "../packages/bun-types/index.d.ts", "./testing-internals.d.ts"],
   "exclude": ["bundler/fixtures", "snapshots", "js/deno"]
 }

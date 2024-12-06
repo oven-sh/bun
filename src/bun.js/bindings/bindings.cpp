@@ -1425,7 +1425,7 @@ bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globa
         }
 
         if (subsetProp.isObject() and prop.isObject()) {
-            // if this is called from inside an objectContaining asymmetric matcher, it should behave slighlty differently:
+            // if this is called from inside an objectContaining asymmetric matcher, it should behave slightly differently:
             // in such case, it expects exhaustive matching of any nested object properties, not just a subset,
             // and the user would need to opt-in to subset matching by using another nested objectContaining matcher
             if (enableAsymmetricMatchers && isMatchingObjectContaining) {
@@ -3201,7 +3201,7 @@ void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
     arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
 }
 
-// This implementation closely mimicks the one in JSC::JSPromise::resolve
+// This implementation closely mimics the one in JSC::JSPromise::resolve
 void JSC__JSPromise__resolveOnNextTick(JSC__JSPromise* promise, JSC__JSGlobalObject* lexicalGlobalObject,
     JSC__JSValue encoedValue)
 {
@@ -3222,7 +3222,7 @@ bool JSC__JSValue__isAnyError(JSC__JSValue JSValue0)
     return type == JSC::ErrorInstanceType;
 }
 
-// This implementation closely mimicks the one in JSC::JSPromise::reject
+// This implementation closely mimics the one in JSC::JSPromise::reject
 void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* promise, JSC__JSGlobalObject* lexicalGlobalObject,
     JSC__JSValue encoedValue, bool handled)
 {

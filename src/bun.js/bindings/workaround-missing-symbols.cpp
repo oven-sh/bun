@@ -139,7 +139,6 @@ __asm__(".symver sem_wait,sem_wait@GLIBC_2.2.5");
 __asm__(".symver __pthread_key_create,__pthread_key_create@GLIBC_2.2.5");
 
 #elif defined(__aarch64__)
-__asm__(".symver __libc_single_threaded,__libc_single_threaded@GLIBC_2.17");
 __asm__(".symver __libc_start_main,__libc_start_main@GLIBC_2.17");
 __asm__(".symver __pthread_key_create,__pthread_key_create@GLIBC_2.17");
 __asm__(".symver _dl_find_object,_dl_find_object@GLIBC_2.17");

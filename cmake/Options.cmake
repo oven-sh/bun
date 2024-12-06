@@ -20,7 +20,7 @@ else()
   setx(RELEASE OFF)
 endif()
 
-if(CMAKE_BUILD_TYPE MATCHES "Debug|RelWithDebInfo")
+if(CMAKE_BUILD_TYPE MATCHES "Debug")
   setx(DEBUG ON)
 else()
   setx(DEBUG OFF)

@@ -1,4 +1,4 @@
-import type { ServerWebSocket, Socket, WebSocketHandler, Server as WebSocketServer } from "bun";
+import type { Socket, ServerWebSocket, WebSocketHandler, Server as WebSocketServer } from "bun";
 const enum FramerState {
   WaitingForLength,
   WaitingForMessage,
@@ -239,6 +239,7 @@ class Debugger {
         fetch: this.#fetch.bind(this),
         websocket: this.#websocket,
       });
+
       this.#url!.hostname = server.hostname;
       this.#url!.port = `${server.port}`;
       return;
@@ -257,11 +258,11 @@ class Debugger {
   }
 
   #connectOverSocket(networkOptions) {
+    let backend;
     return Bun.connect<{ framer: SocketFramer; backend: Backend }>({
       ...networkOptions,
       socket: {
         open: socket => {
-          let backend: Backend;
           let framer: SocketFramer;
           const callback = (...messages: string[]) => {
             for (const message of messages) {
@@ -295,6 +296,14 @@ class Debugger {
           }
         },
       },
+    }).catch(err => {
+      // Force us to send a disconnect message
+      if (!backend) {
+        backend = this.#createBackend(false, () => {});
+        backend.close();
+      }
+
+      $debug("error:", err);
     });
   }
 
@@ -402,8 +411,43 @@ async function connectToUnixServer(
   send: (message: string) => void,
   close: () => void,
 ) {
+  // Windows uses TCP.
+  // POSIX uses Unix sockets.
+  //
+  // We use TCP on Windows because VSCode/Node doesn't seem to support Unix sockets very well.
+  //
+  // Unix sockets are preferred because there's less of a risk of conflicting
+  // with other tools or a port already being used + sometimes machines don't
+  // allow binding to TCP ports.
+  let connectionOptions;
+  if (unix.startsWith("unix:")) {
+    unix = unescapeUnixSocketUrl(unix);
+    if (unix.startsWith("unix://")) {
+      unix = unix.substring("unix://".length);
+    }
+    connectionOptions = { unix };
+  } else if (unix.startsWith("tcp:")) {
+    try {
+      const { hostname, port } = new URL(unix);
+      connectionOptions = {
+        hostname,
+        port: Number(port),
+      };
+    } catch (error) {
+      exit("Invalid tcp: URL:" + unix);
+      return;
+    }
+  } else if (unix.startsWith("/")) {
+    connectionOptions = { unix };
+  } else if (unix.startsWith("fd:")) {
+    connectionOptions = { fd: Number(unix.substring("fd:".length)) };
+  } else {
+    $debug("Invalid inspector URL:" + unix);
+    return;
+  }
+
   const socket = await Bun.connect<{ framer: SocketFramer; backend: Backend }>({
-    unix,
+    ...connectionOptions,
     socket: {
       open: socket => {
         const framer = new SocketFramer((message: string | string[]) => {
@@ -447,6 +491,12 @@ async function connectToUnixServer(
         }
       },
     },
+  }).catch(error => {
+    // Force it to close
+    const backendRaw = createBackend(executionContextId, true, (...messages: string[]) => {});
+    close.$call(backendRaw);
+
+    $debug("error:", error);
   });
 
   return socket;
@@ -571,7 +621,7 @@ function notify(options): void {
       },
       data: () => {}, // required or it errors
     },
-  }).finally(() => {
+  }).catch(() => {
     // Best-effort
   });
 }

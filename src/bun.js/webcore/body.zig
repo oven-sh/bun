@@ -158,6 +158,18 @@ pub const Body = struct {
 
             return false;
         }
+
+        pub fn isDisturbed2(this: *const PendingValue, globalObject: *JSC.JSGlobalObject) bool {
+            if (this.promise != null) {
+                return true;
+            }
+
+            if (this.readable.get()) |readable| {
+                return readable.isDisturbed(globalObject);
+            }
+
+            return false;
+        }
         pub fn isStreamingOrBuffering(this: *PendingValue) bool {
             return this.readable.held.has() or (this.promise != null and !this.promise.?.isEmptyOrUndefinedOrNull());
         }
@@ -576,7 +588,7 @@ pub const Body = struct {
                         .InternalBlob = .{
                             .bytes = std.ArrayList(u8){
                                 .items = bun.default_allocator.dupe(u8, bytes) catch {
-                                    return globalThis.vm().throwError2(globalThis, ZigString.static("Failed to clone ArrayBufferView").toErrorInstance(globalThis));
+                                    return globalThis.throwValue(ZigString.static("Failed to clone ArrayBufferView").toErrorInstance(globalThis));
                                 },
                                 .capacity = bytes.len,
                                 .allocator = bun.default_allocator,
@@ -611,7 +623,7 @@ pub const Body = struct {
 
             if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |readable| {
                 if (readable.isDisturbed(globalThis)) {
-                    return globalThis.throw2("ReadableStream has already been used", .{});
+                    return globalThis.throw("ReadableStream has already been used", .{});
                 }
 
                 switch (readable.ptr) {
@@ -1159,7 +1171,7 @@ pub fn BodyMixin(comptime Type: type) type {
         fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: JSC.WebCore.Lifetime) fn (*AnyBlob, *JSC.JSGlobalObject) JSC.JSValue {
             return struct {
                 fn wrap(this: *AnyBlob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-                    return Fn(this, globalObject, lifetime);
+                    return JSC.toJSHostValue(globalObject, Fn(this, globalObject, lifetime));
                 }
             }.wrap;
         }

@@ -281,7 +281,7 @@ pub const Jest = struct {
         return struct {
             pub fn appendGlobalFunctionCallback(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
                 const the_runner = runner orelse {
-                    return globalThis.throw2("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
+                    return globalThis.throw("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
                 };
 
                 const arguments = callframe.arguments_old(2);
@@ -291,12 +291,11 @@ pub const Jest = struct {
 
                 const function = arguments.ptr[0];
                 if (function.isEmptyOrUndefinedOrNull() or !function.isCallable(globalThis.vm())) {
-                    globalThis.throwInvalidArgumentType(name, "callback", "function");
-                    return error.JSError;
+                    return globalThis.throwInvalidArgumentType(name, "callback", "function");
                 }
 
                 if (function.getLength(globalThis) > 0) {
-                    return globalThis.throw2("done() callback is not implemented in global hooks yet. Please make your function take no arguments", .{});
+                    return globalThis.throw("done() callback is not implemented in global hooks yet. Please make your function take no arguments", .{});
                 }
 
                 function.protect();
@@ -527,16 +526,14 @@ pub const Jest = struct {
         const arguments = callframe.arguments_old(2).slice();
 
         if (arguments.len < 1 or !arguments[0].isString()) {
-            globalObject.throw("Bun.jest() expects a string filename", .{});
-            return .zero;
+            return globalObject.throw("Bun.jest() expects a string filename", .{});
         }
         var str = arguments[0].toSlice(globalObject, bun.default_allocator);
         defer str.deinit();
         const slice = str.slice();
 
         if (!std.fs.path.isAbsolute(slice)) {
-            globalObject.throw("Bun.jest() expects an absolute file path, got '{s}'", .{slice});
-            return .zero;
+            return globalObject.throw("Bun.jest() expects an absolute file path, got '{s}'", .{slice});
         }
 
         const filepath = Fs.FileSystem.instance.filename_store.append([]const u8, slice) catch unreachable;
@@ -549,8 +546,7 @@ pub const Jest = struct {
     fn jsSetDefaultTimeout(globalObject: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments_old(1).slice();
         if (arguments.len < 1 or !arguments[0].isNumber()) {
-            globalObject.throw("setTimeout() expects a number (milliseconds)", .{});
-            return .zero;
+            return globalObject.throw("setTimeout() expects a number (milliseconds)", .{});
         }
 
         const timeout_ms: u32 = @intCast(@max(arguments[0].coerce(i32, globalObject), 0));
@@ -902,8 +898,7 @@ pub const DescribeScope = struct {
 
                 const cb = arguments.ptr[0];
                 if (!cb.isObject() or !cb.isCallable(globalThis.vm())) {
-                    globalThis.throwInvalidArgumentType(@tagName(hook), "callback", "function");
-                    return error.JSError;
+                    return globalThis.throwInvalidArgumentType(@tagName(hook), "callback", "function");
                 }
 
                 cb.protect();
@@ -1234,12 +1229,10 @@ pub fn wrapTestFunction(comptime name: []const u8, comptime func: JSC.JSHostZigF
     return struct {
         pub fn wrapped(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
             if (Jest.runner == null) {
-                globalThis.throw("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
-                return .zero;
+                return globalThis.throw("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
             }
             if (globalThis.bunVM().is_in_preload) {
-                globalThis.throw("Cannot use " ++ name ++ "() outside of a test file.", .{});
-                return .zero;
+                return globalThis.throw("Cannot use " ++ name ++ "() outside of a test file.", .{});
             }
             return @call(bun.callmod_inline, func, .{ globalThis, callframe });
         }
@@ -1711,8 +1704,7 @@ inline fn createScope(
     const args = arguments.slice();
 
     if (args.len == 0) {
-        globalThis.throwPretty("{s} expects a description or function", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects a description or function", .{signature});
     }
 
     var description = args[0];
@@ -1726,8 +1718,7 @@ inline fn createScope(
 
     if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
         if (tag != .todo and tag != .skip) {
-            globalThis.throwPretty("{s} expects a function", .{signature});
-            return .zero;
+            return globalThis.throwPretty("{s} expects a function", .{signature});
         }
     }
 
@@ -1737,28 +1728,24 @@ inline fn createScope(
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
-                globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
             }
             timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
-                globalThis.throwPretty("{s} expects retry to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
             }
             // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
-                globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
             }
             // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
         }
     } else if (!options.isEmptyOrUndefinedOrNull()) {
-        globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
     }
 
     const parent = DescribeScope.active.?;
@@ -1858,13 +1845,12 @@ inline fn createIfScope(
     comptime signature: string,
     comptime Scope: type,
     comptime tag: Tag,
-) JSValue {
+) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(1);
     const args = arguments.slice();
 
     if (args.len == 0) {
-        globalThis.throwPretty("{s} expects a condition", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects a condition", .{signature});
     }
 
     const name = ZigString.static(property);
@@ -1981,8 +1967,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
     const args = arguments.slice();
 
     if (args.len < 2) {
-        globalThis.throwPretty("{s} a description and callback function", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} a description and callback function", .{signature});
     }
 
     var description = args[0];
@@ -1990,8 +1975,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
     var options = if (args.len > 2) args[2] else .zero;
 
     if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
-        globalThis.throwPretty("{s} expects a function", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects a function", .{signature});
     }
 
     var timeout_ms: u32 = std.math.maxInt(u32);
@@ -2000,28 +1984,24 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
-                globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
             }
             timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
-                globalThis.throwPretty("{s} expects retry to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
             }
             // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
-                globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
             }
             // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
         }
     } else if (!options.isEmptyOrUndefinedOrNull()) {
-        globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
     }
 
     const parent = DescribeScope.active.?;
@@ -2147,19 +2127,17 @@ inline fn createEach(
     comptime property: [:0]const u8,
     comptime signature: string,
     comptime is_test: bool,
-) JSValue {
+) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(1);
     const args = arguments.slice();
 
     if (args.len == 0) {
-        globalThis.throwPretty("{s} expects an array", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects an array", .{signature});
     }
 
     var array = args[0];
     if (array == .zero or !array.jsType().isArray()) {
-        globalThis.throwPretty("{s} expects an array", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects an array", .{signature});
     }
 
     const allocator = getAllocator(globalThis);

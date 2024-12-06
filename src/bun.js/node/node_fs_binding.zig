@@ -10,11 +10,7 @@ const FeatureFlags = bun.FeatureFlags;
 const Args = JSC.Node.NodeFS.Arguments;
 const d = JSC.d;
 
-const NodeFSFunction = fn (
-    this: *JSC.Node.NodeJSFS,
-    globalObject: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue;
+const NodeFSFunction = fn (this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue;
 
 const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
 
@@ -30,11 +26,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     _ = Result;
 
     const NodeBindingClosure = struct {
-        pub fn bind(
-            this: *JSC.Node.NodeJSFS,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSC.JSValue {
+        pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             var arguments = callframe.arguments_old(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
@@ -58,8 +50,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             );
             switch (result) {
                 .err => |err| {
-                    globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
-                    return .zero;
+                    return globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
                 },
                 .result => |*res| {
                     return globalObject.toJS(res, .temporary);
@@ -247,8 +238,7 @@ pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.
     }
 
     if (comptime !bun.Environment.isLinux) {
-        globalObject.throw("memfd_create is not implemented on this platform", .{});
-        return .zero;
+        return globalObject.throw("memfd_create is not implemented on this platform", .{});
     }
 
     const size = arguments.ptr[0].toInt64();
@@ -258,8 +248,7 @@ pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.
             return JSC.JSValue.jsNumber(fd.cast());
         },
         .err => |err| {
-            globalObject.throwValue(err.toJSC(globalObject));
-            return .zero;
+            return globalObject.throwValue(err.toJSC(globalObject));
         },
     }
 }

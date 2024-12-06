@@ -474,8 +474,7 @@ pub const json = struct {
         defer str.deref();
         const parse_result = JSValue.parse(str.toJS(globalObject), globalObject);
         if (parse_result.isAnyError()) {
-            globalObject.throwValue(parse_result);
-            return error.JSError;
+            return globalObject.throwValue(parse_result);
         }
 
         return parse_result;

@@ -2393,13 +2393,11 @@ pub const Query = struct {
         };
     };
 
-    const ParseError = error{OutOfMemory};
-
     pub fn parse(
         allocator: Allocator,
         input: string,
         sliced: SlicedString,
-    ) ParseError!Group {
+    ) bun.OOM!Group {
         var i: usize = 0;
         var list = Group{
             .allocator = allocator,
@@ -2659,8 +2657,7 @@ pub const SemverObject = struct {
 
         const arguments = callFrame.arguments_old(2).slice();
         if (arguments.len < 2) {
-            globalThis.throw("Expected two arguments", .{});
-            return .zero;
+            return globalThis.throw("Expected two arguments", .{});
         }
 
         const left_arg = arguments[0];
@@ -2681,13 +2678,11 @@ pub const SemverObject = struct {
         const right_result = Version.parse(SlicedString.init(right.slice(), right.slice()));
 
         if (!left_result.valid) {
-            globalThis.throw("Invalid SemVer: {s}\n", .{left.slice()});
-            return .zero;
+            return globalThis.throw("Invalid SemVer: {s}\n", .{left.slice()});
         }
 
         if (!right_result.valid) {
-            globalThis.throw("Invalid SemVer: {s}\n", .{right.slice()});
-            return .zero;
+            return globalThis.throw("Invalid SemVer: {s}\n", .{right.slice()});
         }
 
         const left_version = left_result.version.max();
@@ -2700,10 +2695,7 @@ pub const SemverObject = struct {
         };
     }
 
-    pub fn satisfies(
-        globalThis: *JSC.JSGlobalObject,
-        callFrame: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+    pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback = std.heap.stackFallback(512, arena.allocator());
@@ -2711,15 +2703,14 @@ pub const SemverObject = struct {
 
         const arguments = callFrame.arguments_old(2).slice();
         if (arguments.len < 2) {
-            globalThis.throw("Expected two arguments", .{});
-            return .zero;
+            return globalThis.throw("Expected two arguments", .{});
         }
 
         const left_arg = arguments[0];
         const right_arg = arguments[1];
 
-        const left_string = left_arg.toStringOrNull(globalThis) orelse return .false;
-        const right_string = right_arg.toStringOrNull(globalThis) orelse return .false;
+        const left_string = left_arg.toStringOrNull(globalThis) orelse return .zero;
+        const right_string = right_arg.toStringOrNull(globalThis) orelse return .zero;
 
         const left = left_string.toSlice(globalThis, allocator);
         defer left.deinit();
@@ -2736,18 +2727,11 @@ pub const SemverObject = struct {
 
         const left_version = left_result.version.min();
 
-        const right_group = Query.parse(
+        const right_group = try Query.parse(
             allocator,
             right.slice(),
             SlicedString.init(right.slice(), right.slice()),
-        ) catch |err| {
-            switch (err) {
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                },
-            }
-        };
+        );
         defer right_group.deinit();
 
         const right_version = right_group.getExactVersion();

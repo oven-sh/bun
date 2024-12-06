@@ -347,12 +347,11 @@ function getTestAgent(platform) {
     };
   }
 
-  // TODO: `dev-server-ssr-110.test.ts` and `next-build.test.ts` run out of memory
-  // at 8GB of memory, so use 16GB instead.
+  // TODO: `dev-server-ssr-110.test.ts` and `next-build.test.ts` run out of memory at 8GB of memory, so use 16GB instead.
   if (os === "windows") {
     return getEc2Agent(platform, {
       instanceType: "c7i.2xlarge",
-      cpuCount: 1,
+      cpuCount: 2,
       threadsPerCore: 1,
     });
   }
@@ -360,14 +359,14 @@ function getTestAgent(platform) {
   if (arch === "aarch64") {
     return getEc2Agent(platform, {
       instanceType: "c8g.xlarge",
-      cpuCount: 1,
+      cpuCount: 2,
       threadsPerCore: 1,
     });
   }
 
   return getEc2Agent(platform, {
     instanceType: "c7i.xlarge",
-    cpuCount: 1,
+    cpuCount: 2,
     threadsPerCore: 1,
   });
 }

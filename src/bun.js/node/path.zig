@@ -1446,7 +1446,7 @@ pub fn normalizePosixT(comptime T: type, path: []const T, buf: []T) []const T {
         bufOffset = bufSize;
         bufSize += 1;
         buf[bufOffset] = CHAR_FORWARD_SLASH;
-        normalizedPath[bufSize] = 0;
+        buf[bufSize] = 0;
         normalizedPath = buf[0..bufSize :0];
     }
 
@@ -1460,10 +1460,10 @@ pub fn normalizePosixT(comptime T: type, path: []const T, buf: []T) []const T {
         bun.copy(T, buf[bufOffset..bufSize], normalizedPath);
         // Prepend the separator.
         buf[0] = CHAR_FORWARD_SLASH;
-        normalizedPath[bufSize] = 0;
+        buf[bufSize] = 0;
         normalizedPath = buf[0..bufSize :0];
     }
-    return normalizedPath[0..bufSize :0];
+    return normalizedPath;
 }
 
 /// Based on Node v21.6.1 path.win32.normalize

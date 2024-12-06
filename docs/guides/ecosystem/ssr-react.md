@@ -2,11 +2,17 @@
 name: Server-side render (SSR) a React component
 ---
 
-To get started, install the canary version of `react` & `react-dom`:
+To get started, install `react` & `react-dom`:
 
 ```sh
 # Any package manager can be used
-$ bun add react@canary react-dom@canary
+$ bun add react react-dom
+```
+
+You may also install the types if using Typescript:
+
+```sh
+$ bun add @types/react @types/react-dom -d
 ```
 
 ---

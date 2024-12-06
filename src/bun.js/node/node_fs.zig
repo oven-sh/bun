@@ -3771,6 +3771,7 @@ pub const NodeFS = struct {
         _ = flavor;
         var buf: bun.OSPathBuffer = undefined;
         const path: bun.OSPathSliceZ = if (Environment.isWindows) blk: {
+            if (args.path.slice().len < 260) break :blk strings.toNTPath(&buf, args.path.slice());
             const path8 = strings.toNTMaxPath(&this.sync_error_buf, args.path.slice());
             strings.copyU8IntoU16(&buf, path8);
             buf[path8.len] = 0;

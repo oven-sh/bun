@@ -2051,7 +2051,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             if (Environment.allow_assert) {
                 switch (kind) {
                     .css => bun.assert(code.len == 0),
-                    .js => if (bun.strings.isAllWhitespace(code)) {
+                    .js => if (code.len == 0 or (code.len < 33 and std.mem.trimLeft(u8, code, "\n\r ").len == 0)) {
                         // Should at least contain the function wrapper
                         bun.Output.panic("Empty chunk is impossible: {s} {s}", .{
                             key,

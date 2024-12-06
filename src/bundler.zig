@@ -1137,10 +1137,6 @@ pub const Bundler = struct {
             .ts,
             .tsx,
             => {
-                if (source.contents.len == 0 or (source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0)) {
-                    return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
-                }
-
                 // wasm magic number
                 if (source.isWebAssembly()) {
                     return ParseResult{
@@ -1255,10 +1251,6 @@ pub const Bundler = struct {
             },
             // TODO: use lazy export AST
             inline .toml, .json => |kind| {
-                if (source.contents.len == 0 or (source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0)) {
-                    return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
-                }
-
                 var expr = if (kind == .json)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.

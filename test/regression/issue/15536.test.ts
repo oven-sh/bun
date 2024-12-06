@@ -62,14 +62,14 @@ test("empty js file", async () => {
       "empty.js": "",
     },
     "demo.js": `\
-const { outputs } = await Bun.build({
+const { logs } = await Bun.build({
     loader: {
         ".html": "text"
     },
     entrypoints: ["./demo/a.js"]
 });
 
-console.log(await outputs[0].text());`,
+console.log(logs.join("\\n"));`,
   });
   const result = Bun.spawnSync({
     cmd: [bunExe(), "demo.js"],
@@ -78,14 +78,10 @@ console.log(await outputs[0].text());`,
     stdio: ["inherit", "pipe", "inherit"],
   });
   expect(result.exitCode).toBe(0);
-  expect(result.stdout.toString().replaceAll(/\[parsetask\] ParseTask\(.+?, runtime\) callback\n/g, ""))
-    .toMatchInlineSnapshot(`
-"// demo/empty.js
-var empty_default = {};
-
-// demo/a.js
-console.log(empty_default);
-
+  expect(
+    result.stdout.toString().replaceAll(/\[parsetask\] ParseTask\(.+?, runtime\) callback\n/g, ""),
+  ).toMatchInlineSnapshot(`
+"BuildMessage: No matching export in "demo/empty.js" for import "default"
 "
 `);
 });

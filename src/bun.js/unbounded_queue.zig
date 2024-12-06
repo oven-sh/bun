@@ -30,7 +30,8 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
 
                 pub fn next(self: *Self.Batch.Iterator) ?*T {
                     if (self.batch.count == 0) return null;
-                    const front = self.batch.front orelse unreachable;
+                    bun.debugAssert(self.batch.front != null);
+                    const front = self.batch.front orelse return null;
                     self.batch.front = @field(front, next_name);
                     self.batch.count -= 1;
                     return front;

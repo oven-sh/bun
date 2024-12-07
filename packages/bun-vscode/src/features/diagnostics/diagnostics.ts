@@ -11,6 +11,7 @@ import {
 } from "../../../../bun-debug-adapter-protocol";
 import type { JSC } from "../../../../bun-inspector-protocol";
 import { typedGlobalState } from "../../global-state";
+import { getConfig } from "../../extension";
 
 const output = vscode.window.createOutputChannel("Bun - Diagnostics");
 
@@ -267,6 +268,8 @@ const description = new vscode.MarkdownString(
 export async function registerDiagnosticsSocket(context: vscode.ExtensionContext) {
   context.environmentVariableCollection.clear();
   context.environmentVariableCollection.description = description;
+
+  if (!getConfig("diagnosticsSocket.enabled")) return;
 
   const manager = await BunDiagnosticsManager.initialize(context);
 

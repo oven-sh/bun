@@ -279,8 +279,7 @@ pub const ArrayBuffer = extern struct {
                     }
                 },
                 .err => |err| {
-                    globalObject.throwValue(err.toJSC(globalObject));
-                    return .zero;
+                    return globalObject.throwValue(err.toJSC(globalObject)) catch .zero;
                 },
             }
         }
@@ -293,12 +292,11 @@ pub const ArrayBuffer = extern struct {
     extern fn ArrayBuffer__fromSharedMemfd(fd: i64, globalObject: *JSC.JSGlobalObject, byte_offset: usize, byte_length: usize, total_size: usize, JSC.JSValue.JSType) JSC.JSValue;
     pub const toArrayBufferFromSharedMemfd = ArrayBuffer__fromSharedMemfd;
 
-    pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         const stat = switch (bun.sys.fstat(fd)) {
             .err => |err| {
-                globalObject.throwValue(err.toJSC(globalObject));
                 _ = bun.sys.close(fd);
-                return .zero;
+                return globalObject.throwValue(err.toJSC(globalObject));
             },
             .result => |fstat| fstat,
         };
@@ -335,9 +333,7 @@ pub const ArrayBuffer = extern struct {
                 return JSBuffer__fromMmap(globalObject, buf.ptr, buf.len);
             },
             .err => |err| {
-                globalObject.throwValue(err.toJSC(globalObject));
-
-                return .zero;
+                return globalObject.throwValue(err.toJSC(globalObject));
             },
         }
     }
@@ -678,8 +674,7 @@ pub const MarkedArrayBuffer = struct {
         const obj = this.toJSObjectRef(globalObject, &exception);
 
         if (exception[0] != null) {
-            globalObject.throwValue(JSC.JSValue.c(exception[0]));
-            return .zero;
+            return globalObject.throwValue(JSC.JSValue.c(exception[0])) catch return .zero;
         }
 
         return JSC.JSValue.c(obj);

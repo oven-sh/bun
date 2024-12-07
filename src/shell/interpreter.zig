@@ -707,8 +707,7 @@ pub const ParsedShellScript = struct {
         const arguments_ = callframe.arguments_old(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const str_js = arguments.nextEat() orelse {
-            globalThis.throw("$`...`.cwd(): expected a string argument", .{});
-            return .zero;
+            return globalThis.throw("$`...`.cwd(): expected a string argument", .{});
         };
         const str = bun.String.fromJS(str_js, globalThis);
         this.cwd = str;
@@ -786,9 +785,7 @@ pub const ParsedShellScript = struct {
         }
         var jsobjs = std.ArrayList(JSValue).init(shargs.arena_allocator());
         var script = std.ArrayList(u8).init(shargs.arena_allocator());
-        if (!(try bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script))) {
-            return .undefined;
-        }
+        try bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script);
 
         var parser: ?bun.shell.Parser = null;
         var lex_result: ?shell.LexResult = null;
@@ -1176,13 +1173,13 @@ pub const Interpreter = struct {
         const arguments_ = callframe.arguments_old(3);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
-        const resolve = arguments.nextEat() orelse return globalThis.throw2("shell: expected 3 arguments, got 0", .{});
+        const resolve = arguments.nextEat() orelse return globalThis.throw("shell: expected 3 arguments, got 0", .{});
 
-        const reject = arguments.nextEat() orelse return globalThis.throw2("shell: expected 3 arguments, got 0", .{});
+        const reject = arguments.nextEat() orelse return globalThis.throw("shell: expected 3 arguments, got 0", .{});
 
-        const parsed_shell_script_js = arguments.nextEat() orelse return globalThis.throw2("shell: expected 3 arguments, got 0", .{});
+        const parsed_shell_script_js = arguments.nextEat() orelse return globalThis.throw("shell: expected 3 arguments, got 0", .{});
 
-        const parsed_shell_script = parsed_shell_script_js.as(ParsedShellScript) orelse return globalThis.throw2("shell: expected a ParsedShellScript", .{});
+        const parsed_shell_script = parsed_shell_script_js.as(ParsedShellScript) orelse return globalThis.throw("shell: expected a ParsedShellScript", .{});
 
         var shargs: *ShellArgs = undefined;
         var jsobjs: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(allocator);
@@ -1190,7 +1187,7 @@ pub const Interpreter = struct {
         var cwd: ?bun.String = null;
         var export_env: ?EnvMap = null;
 
-        if (parsed_shell_script.args == null) return globalThis.throw2("shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.", .{});
+        if (parsed_shell_script.args == null) return globalThis.throw("shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.", .{});
 
         parsed_shell_script.take(
             globalThis,
@@ -1765,8 +1762,7 @@ pub const Interpreter = struct {
         defer slice.deinit();
         switch (this.root_shell.changeCwd(this, slice.slice())) {
             .err => |e| {
-                globalThis.throwValue(e.toJSC(globalThis));
-                return .zero;
+                return globalThis.throwValue(e.toJSC(globalThis));
             },
             .result => {},
         }
@@ -4973,7 +4969,7 @@ pub const Interpreter = struct {
                             }
                         } else {
                             const jsval = this.base.interpreter.jsobjs[val.idx];
-                            global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)});
+                            global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)}) catch {}; // TODO: propagate
                             return;
                         }
                     },
@@ -5622,7 +5618,7 @@ pub const Interpreter = struct {
                         } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Body.Value)) |body| {
                             if ((node.redirect.stdout or node.redirect.stderr) and !(body.* == .Blob and !body.Blob.needsToReadFile())) {
                                 // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.
-                                cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{});
+                                cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{}) catch {};
                                 return .yield;
                             }
 
@@ -5650,7 +5646,7 @@ pub const Interpreter = struct {
                         } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
                             if ((node.redirect.stdout or node.redirect.stderr) and !blob.needsToReadFile()) {
                                 // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.
-                                cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{});
+                                cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{}) catch {};
                                 return .yield;
                             }
 
@@ -5668,7 +5664,7 @@ pub const Interpreter = struct {
                             }
                         } else {
                             const jsval = cmd.base.interpreter.jsobjs[val.idx];
-                            cmd.base.interpreter.event_loop.js.global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(globalObject)});
+                            cmd.base.interpreter.event_loop.js.global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(globalObject)}) catch {};
                             return .yield;
                         }
                     },

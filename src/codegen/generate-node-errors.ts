@@ -45,8 +45,8 @@ fn ErrorBuilder(comptime code: Error, comptime fmt: [:0]const u8, Args: type) ty
       args: Args,
 
       // Throw this error as a JS exception
-      pub inline fn throw(this: @This()) void {
-        code.throw(this.globalThis, fmt, this.args);
+      pub inline fn throw(this: @This()) bun.JSError {
+        return code.throw(this.globalThis, fmt, this.args);
       }
 
       /// Turn this into a JSValue
@@ -109,8 +109,8 @@ zig += `
     return toJS(this, globalThis, &message);
   }
 
-  pub fn throw(this: Error, globalThis: *JSC.JSGlobalObject, comptime fmt_str: [:0]const u8, args: anytype) void {
-    globalThis.throwValue(fmt(this, globalThis, fmt_str, args));
+  pub fn throw(this: Error, globalThis: *JSC.JSGlobalObject, comptime fmt_str: [:0]const u8, args: anytype) bun.JSError {
+    return globalThis.throwValue(fmt(this, globalThis, fmt_str, args));
   }
 
 };

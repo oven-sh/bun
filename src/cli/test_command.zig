@@ -1200,6 +1200,7 @@ pub const TestCommand = struct {
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
+        var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
         JSC.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
@@ -1220,6 +1221,7 @@ pub const TestCommand = struct {
                     .file_buf = &snapshot_file_buf,
                     .values = &snapshot_values,
                     .counts = &snapshot_counts,
+                    .inline_snapshots_to_write = &inline_snapshots_to_write,
                 },
             },
             .callback = undefined,
@@ -1381,6 +1383,7 @@ pub const TestCommand = struct {
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
 
+        const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
         var coverage = ctx.test_options.coverage;
 
@@ -1567,22 +1570,26 @@ pub const TestCommand = struct {
         }
 
         if (vm.hot_reload == .watch) {
-            vm.eventLoop().tickPossiblyForever();
-
-            while (true) {
-                while (vm.isEventLoopAlive()) {
-                    vm.tick();
-                    vm.eventLoop().autoTickActive();
-                }
-
-                vm.eventLoop().tickPossiblyForever();
-            }
+            vm.runWithAPILock(JSC.VirtualMachine, vm, runEventLoopForWatch);
         }
 
-        if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage)) {
+        if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage) or !write_snapshots_success) {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             Global.exit(reporter.jest.unhandled_errors_between_tests);
+        }
+    }
+
+    fn runEventLoopForWatch(vm: *JSC.VirtualMachine) void {
+        vm.eventLoop().tickPossiblyForever();
+
+        while (true) {
+            while (vm.isEventLoopAlive()) {
+                vm.tick();
+                vm.eventLoop().autoTickActive();
+            }
+
+            vm.eventLoop().tickPossiblyForever();
         }
     }
 

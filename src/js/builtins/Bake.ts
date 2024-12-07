@@ -52,8 +52,9 @@ export function renderRoutesForProdStatic(
     // Call the framework's rendering function
     const callback = renderStatic[type];
     $assert(callback != null && $isCallable(callback));
+    let client = clientEntryUrl[type];
     const results = await callback({
-      modules: [clientEntryUrl[type]],
+      modules: client ? [client] : [],
       modulepreload: [],
       styles: styles[i],
       layouts,
@@ -116,7 +117,7 @@ export function renderRoutesForProdStatic(
         [pageModule, ...layouts] = anyPromise ? await Promise.all(loaded) : loaded;
       } else {
         const id = fileList[0];
-        pageModule = loadedModules[id] ?? (loadedModules[id] = await import(allServerFiles[fileList[0]]));
+        pageModule = loadedModules[id] ?? (loadedModules[id] = await import(allServerFiles[id]));
         layouts = [];
       }
 

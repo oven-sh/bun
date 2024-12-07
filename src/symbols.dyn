@@ -215,6 +215,7 @@
     __ZN2v812api_internal13DisposeGlobalEPm;
     __ZNK2v88Function7GetNameEv;
     __ZNK2v85Value10IsFunctionEv;
+    __ZN2v812api_internal17FromJustIsNothingEv;
     _uv_os_getpid;
     _uv_os_getppid;
 };

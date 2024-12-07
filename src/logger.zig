@@ -1505,6 +1505,48 @@ pub const Source = struct {
             .column_count = column_number,
         };
     }
+    pub fn lineColToByteOffset(source_contents: []const u8, start_line: usize, start_col: usize, line: usize, col: usize) ?usize {
+        var iter_ = strings.CodepointIterator{
+            .bytes = source_contents,
+            .i = 0,
+        };
+        var iter = strings.CodepointIterator.Cursor{};
+
+        var line_count: usize = start_line;
+        var column_number: usize = start_col;
+
+        _ = iter_.next(&iter);
+        while (true) {
+            const c = iter.c;
+            if (!iter_.next(&iter)) break;
+            switch (c) {
+                '\n' => {
+                    column_number = 1;
+                    line_count += 1;
+                },
+
+                '\r' => {
+                    column_number = 1;
+                    line_count += 1;
+                    if (iter.c == '\n') {
+                        _ = iter_.next(&iter);
+                    }
+                },
+
+                0x2028, 0x2029 => {
+                    line_count += 1;
+                    column_number = 1;
+                },
+                else => {
+                    column_number += 1;
+                },
+            }
+
+            if (line_count == line and column_number == col) return iter.i;
+            if (line_count > line) return null;
+        }
+        return null;
+    }
 };
 
 pub fn rangeData(source: ?*const Source, r: Range, text: string) Data {

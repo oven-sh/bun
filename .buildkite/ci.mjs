@@ -1002,40 +1002,36 @@ async function getPipelineOptions() {
  * @returns {Step}
  */
 function getCreateNixAmisStep(options = {}) {
-  return {
-    key: "create-nix-amis",
-    group: getBuildkiteEmoji("nix"),
-    steps: [
-      {
-        key: "create-nix-ami-x64",
-        label: `${getBuildkiteEmoji("nix")} Create Nix AMI (x64)`,
-        command: ["node", "./scripts/create-nix-amis.mjs", "--arch=x64", "--ci"].join(" "),
-        agents: {
-          queue: "build-image",
-          arch: "x64",
-        },
-        env: {
-          DEBUG: "1",
-        },
-        retry: getRetry(),
-        timeout_in_minutes: 3 * 60,
+  return [
+    {
+      key: "create-nix-ami-x64",
+      label: `${getBuildkiteEmoji("nix")} Create Nix AMI (x64)`,
+      command: ["node", "./scripts/create-nix-amis.mjs", "--arch=x64", "--ci"].join(" "),
+      agents: {
+        queue: "build-image",
+        arch: "x64",
       },
-      {
-        key: "create-nix-ami-arm64",
-        label: `${getBuildkiteEmoji("nix")} Create Nix AMI (arm64)`,
-        command: ["node", "./scripts/create-nix-amis.mjs", "--arch=arm64", "--ci"].join(" "),
-        agents: {
-          queue: "build-image",
-          arch: "arm64",
-        },
-        env: {
-          DEBUG: "1",
-        },
-        retry: getRetry(),
-        timeout_in_minutes: 3 * 60,
+      env: {
+        DEBUG: "1",
       },
-    ],
-  };
+      retry: getRetry(),
+      timeout_in_minutes: 3 * 60,
+    },
+    {
+      key: "create-nix-ami-arm64",
+      label: `${getBuildkiteEmoji("nix")} Create Nix AMI (arm64)`,
+      command: ["node", "./scripts/create-nix-amis.mjs", "--arch=arm64", "--ci"].join(" "),
+      agents: {
+        queue: "build-image",
+        arch: "arm64",
+      },
+      env: {
+        DEBUG: "1",
+      },
+      retry: getRetry(),
+      timeout_in_minutes: 3 * 60,
+    },
+  ];
 }
 
 /**
@@ -1074,7 +1070,7 @@ async function getPipeline(options = {}) {
       key: "build-images",
       group: getBuildkiteEmoji("aws"),
       steps: [
-        getCreateNixAmisStep(),
+        ...getCreateNixAmisStep(),
         ...[...imagePlatforms.values()]
           .filter(platform => platform.distro !== "nix")
           .map(platform => getBuildImageStep(platform, !publishImages)),

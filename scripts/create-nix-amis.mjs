@@ -66,12 +66,20 @@ sudo apt-get update
 sudo apt-get install -y buildkite-agent
 
 echo "Setting up agent.mjs..."
-# Copy agent.mjs to the instance
+echo "Creating directory /usr/local/share/bun"
 sudo mkdir -p /usr/local/share/bun
+ls -la /usr/local/share/bun
+
+echo "Writing agent.mjs content:"
 sudo tee /usr/local/share/bun/agent.mjs > /dev/null << 'EOF'
 ${agentScript}
 EOF
 sudo chmod +x /usr/local/share/bun/agent.mjs
+
+echo "Verifying agent.mjs was written:"
+ls -la /usr/local/share/bun/agent.mjs
+echo "Content of agent.mjs:"
+cat /usr/local/share/bun/agent.mjs
 
 echo "Copying flake.nix to the instance..."
 sudo mkdir -p /var/lib/buildkite-agent/bun
@@ -148,7 +156,14 @@ sudo -i -u buildkite-agent bash << EOF
   nix flake update
 
   # Install and start the agent
-  nix develop .#ci-${flakeTarget} -c "/usr/local/share/bun/agent.mjs install start"
+  if [ -f "/usr/local/share/bun/agent.mjs" ]; then
+    echo "Found agent.mjs, executing..."
+    nix develop .#ci-${flakeTarget} -c bash -c "node /usr/local/share/bun/agent.mjs install start"
+  else
+    echo "ERROR: agent.mjs not found at /usr/local/share/bun/agent.mjs"
+    ls -la /usr/local/share/bun/
+    exit 1
+  fi
 EOF`;
 
   // Write user data to a temporary file
@@ -183,3 +198,4 @@ EOF`;
 }
 
 await main();
+ `

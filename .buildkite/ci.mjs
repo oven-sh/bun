@@ -1003,7 +1003,7 @@ async function getPipelineOptions() {
  */
 function getCreateNixAmisStep(platform) {
   return {
-    key: `${getImageKey(platform)}-build-image`,
+    key: `nix-${platform.arch}-build-image`,
     label: `${getBuildkiteEmoji("nix")} Create Nix AMI (${platform.arch})`,
     command: ["node", "./scripts/create-nix-amis.mjs", "--arch=" + platform.arch, "--ci"].join(" "),
     agents: {

@@ -328,12 +328,12 @@ pub fn build(b: *Build) !void {
         });
     }
 
-    // zig build enum-codegen
+    // zig build enum-extractor
     {
-        const step = b.step("enum-codegen", "Extract enum definitions");
+        const step = b.step("enum-extractor", "Extract enum definitions (invoked by a code generator)");
         const exe = b.addExecutable(.{
-            .name = "enum_codegen",
-            .root_source_file = b.path("./src/enum_codegen.zig"),
+            .name = "enum_extractor",
+            .root_source_file = b.path("./src/generated_enum_extractor.zig"),
             .target = b.graph.host,
             .optimize = .Debug,
         });

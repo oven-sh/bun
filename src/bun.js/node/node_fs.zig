@@ -5203,12 +5203,7 @@ pub const NodeFS = struct {
         if (Environment.isWindows) {
             var req: uv.fs_t = uv.fs_t.uninitialized;
             defer req.deinit();
-            const rc = uv.uv_fs_realpath(
-                bun.Async.Loop.get(),
-                &req,
-                args.path.sliceZ(&this.sync_error_buf).ptr,
-                null,
-            );
+            const rc = uv.uv_fs_realpath(bun.Async.Loop.get(), &req, args.path.sliceZ(&this.sync_error_buf).ptr, null);
 
             if (rc.errno()) |errno|
                 return .{ .err = Syscall.Error{
@@ -5463,7 +5458,8 @@ pub const NodeFS = struct {
     }
 
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime _: Flavor) Maybe(Return.Stat) {
-        return switch (Syscall.stat(args.path.sliceZ(&this.sync_error_buf))) {
+        const path = args.path.sliceZ(&this.sync_error_buf);
+        return switch (Syscall.stat(path)) {
             .result => |result| .{
                 .result = .{ .stats = Stats.init(result, args.big_int) },
             },
@@ -5471,7 +5467,7 @@ pub const NodeFS = struct {
                 if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                     return .{ .result = .{ .not_found = {} } };
                 }
-                break :brk .{ .err = err };
+                break :brk .{ .err = err.withPath(path) };
             },
         };
     }
@@ -5789,7 +5785,7 @@ pub const NodeFS = struct {
         defer _ = Syscall.close(fd);
 
         switch (this.mkdirRecursiveOSPath(dest, Arguments.Mkdir.DefaultMode, false)) {
-            .err => |err| return Maybe(Return.Cp){ .err = err },
+            .err => |err| return Maybe(Return.Cp){ .err = err.withPath(dest) },
             .result => {},
         }
 
@@ -6037,7 +6033,7 @@ pub const NodeFS = struct {
 
             const stat_: linux.Stat = switch (Syscall.fstat(src_fd)) {
                 .result => |result| result,
-                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+                .err => |err| return Maybe(Return.CopyFile){ .err = err.withFd(src_fd) },
             };
 
             if (!posix.S.ISREG(stat_.mode)) {
@@ -6185,7 +6181,7 @@ pub const NodeFS = struct {
                 return ret.success;
             } else {
                 const handle = switch (bun.sys.openatWindows(bun.invalid_fd, src, bun.O.RDONLY)) {
-                    .err => |err| return .{ .err = err },
+                    .err => |err| return .{ .err = err.withPath(src) },
                     .result => |src_fd| src_fd,
                 };
                 var wbuf: bun.WPathBuffer = undefined;

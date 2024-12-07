@@ -1053,7 +1053,9 @@ async function getPipeline(options = {}) {
       key: "build-images",
       group: getBuildkiteEmoji("aws"),
       steps: [
-        ...getCreateNixAmisStep(Array.from(imagePlatforms.values()).filter(platform => platform.distro === "nix")),
+        ...Array.from(imagePlatforms.values())
+          .filter(platform => platform.distro === "nix")
+          .map(getCreateNixAmisStep),
         ...[...imagePlatforms.values()]
           .filter(platform => platform.distro !== "nix")
           .map(platform => getBuildImageStep(platform, !publishImages)),

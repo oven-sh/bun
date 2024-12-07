@@ -616,26 +616,24 @@ ${userData}`;
   }
 
   // If user data is a shell script (doesn't start with #cloud-config),
-  // wrap it in a cloud-init script that runs after the default config
+  // use cloud-init's write_files and runcmd to run it
   if (!userData.trim().startsWith("#cloud-config")) {
-    return `#cloud-config
-${getCloudInit(cloudInit).replace("#cloud-config\n", "")}
+    const defaultConfig = getCloudInit(cloudInit);
+    return `${defaultConfig}
+write_files:
+  - path: /tmp/user-script.sh
+    permissions: '0755'
+    content: |
+${userData
+  .split("\n")
+  .map(line => `      ${line}`)
+  .join("\n")}
 runcmd:
-  - |
-    cat > /tmp/user-data.sh << 'EOFUSERDATA'
-${userData}
-EOFUSERDATA
-  - chmod +x /tmp/user-data.sh
-  - /tmp/user-data.sh
-`;
+  - /tmp/user-script.sh`;
   }
 
-  // If user data is cloud-init, merge it with default config
-  const defaultConfig = getCloudInit(cloudInit).replace("#cloud-config\n", "");
-  const customConfig = userData.replace("#cloud-config\n", "");
-  return `#cloud-config
-${defaultConfig}
-${customConfig}`;
+  // If user data is cloud-init, use it directly
+  return userData;
 }
 
 /**
@@ -645,7 +643,7 @@ ${customConfig}`;
 function getCloudInit(cloudInit) {
   const username = cloudInit["username"] || "root";
   const password = cloudInit["password"] || crypto.randomUUID();
-  const authorizedKeys = JSON.stringify(cloudInit["sshKeys"]?.map(({ publicKey }) => publicKey) || []);
+  const authorizedKeys = cloudInit["sshKeys"]?.map(({ publicKey }) => publicKey) || [];
 
   let sftpPath = "/usr/lib/openssh/sftp-server";
   switch (cloudInit["distro"]) {
@@ -668,22 +666,36 @@ function getCloudInit(cloudInit) {
 
   // https://cloudinit.readthedocs.io/en/stable/
   return `#cloud-config
-    write_files:
-      - path: /etc/ssh/sshd_config
-        content: |
-          PermitRootLogin yes
-          PasswordAuthentication no
-          PubkeyAuthentication yes
-          UsePAM yes
-          UseLogin yes
-          Subsystem sftp ${sftpPath}
-    chpasswd:
-      expire: false
-      list: ${JSON.stringify(users)}
-    disable_root: false
-    ssh_pwauth: true
-    ssh_authorized_keys: ${authorizedKeys}
-  `;
+users:
+  - name: ${username}
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+${authorizedKeys.map(key => `      - ${key}`).join("\n")}
+
+write_files:
+  - path: /etc/ssh/sshd_config
+    permissions: '0644'
+    owner: root:root
+    content: |
+      Port 22
+      Protocol 2
+      HostKey /etc/ssh/ssh_host_rsa_key
+      HostKey /etc/ssh/ssh_host_ecdsa_key
+      HostKey /etc/ssh/ssh_host_ed25519_key
+      SyslogFacility AUTHPRIV
+      PermitRootLogin yes
+      AuthorizedKeysFile .ssh/authorized_keys
+      PasswordAuthentication no
+      ChallengeResponseAuthentication no
+      GSSAPIAuthentication yes
+      GSSAPICleanupCredentials no
+      UsePAM yes
+      X11Forwarding yes
+      PrintMotd no
+      AcceptEnv LANG LC_*
+      Subsystem sftp ${sftpPath}
+`;
 }
 
 /**

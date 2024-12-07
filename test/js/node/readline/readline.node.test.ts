@@ -1330,28 +1330,42 @@ describe("readline.Interface", () => {
     assert.strictEqual(getStringWidth("\u0301\u200D\u200E"), 0);
   });
 
-  it("should not hang when stdint is closed", done => {
-    // const subprocess = Bun.spawn(["bun", "run", fixture("readline-stdin-immediate-close.ts")]);
-    var timeout: Timer | undefined;
-    const subprocess = Bun.spawn(["bun", "run", fixture("readline-stdin-immediate-close.ts")]);
-    // const subprocess = Bun.spawn(["bun", "run", "./fixtures/readline-stdin-immediate-close.ts"]);
+  const testForEventLoopHangs = (fixtureName: string) => async () => {
+    // race a timeout and the subprocess promise
+    const subprocess = Bun.spawn({
+      cmd: ["bun", "run", fixture(fixtureName)],
+    });
 
-    timeout = setTimeout(() => {
-      const error = new Error("readline did not close after 2.5s. This means stdint is keeping the event loop alive.");
-      subprocess.kill();
-      done(error);
-    }, 2_500);
+    const timeoutAfter = 2_500;
+    var _timer: Timer | undefined;
+    const timeout = new Promise((_, reject) => {
+      _timer = setTimeout(() => {
+        _timer = undefined;
+        resolve(); // we're gonna race these
+      }, timeoutAfter);
+    });
 
-    subprocess.exited
-      .then(() => {
-        clearTimeout(timeout);
-        done();
-      })
-      .catch(e => {
-        clearTimeout(timeout);
-        done(e);
-      });
-  });
+    await Promise.race([subprocess.exited, timeout]);
+    if (_timer) clearTimeout(_timer);
+    if (subprocess.exitCode == null) {
+      throw new Error("readline did not close after 2.5s. This means stdint is keeping the event loop alive.");
+    } else if (subprocess.exitCode !== 0) {
+      throw new Error(`subprocess exited with a non-zero code: ${subprocess.exitCode}`);
+    }
+  };
+
+  it(
+    "should not hang when stdin is immediately and synchronously closed",
+    testForEventLoopHangs("readline-stdin-immediate-close.ts"),
+  );
+  it(
+    "should not hang when an empty file is immediately and synchronously closed",
+    testForEventLoopHangs("readline-empty-file-immediate-close.ts"),
+  );
+  it(
+    "should not hang when a non-empty file is immediately and synchronously closed",
+    testForEventLoopHangs("readline-nonempty-file-immediate-close.ts"),
+  );
 
   // // Check if vt control chars are stripped
   // assert.strictEqual(stripVTControlCharacters('\u001b[31m> \u001b[39m'), '> ');

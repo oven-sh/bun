@@ -41,7 +41,7 @@ execute_sudo() {
 execute_as_user() {
 	if [ "$sudo" = "1" ] || [ "$can_sudo" = "1" ]; then
 		if [ -f "$(which sudo)" ]; then
-			execute sudo -n -u "$user" /bin/sh -c "$*"
+			execute sudo -H -n -u "$user" /bin/sh -c "$*"
 		elif [ -f "$(which doas)" ]; then
 			execute doas -u "$user" /bin/sh -c "$*"
 		elif [ -f "$(which su)" ]; then

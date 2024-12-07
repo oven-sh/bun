@@ -1039,45 +1039,35 @@ extern "C" napi_status napi_wrap(napi_env env,
 {
     NAPI_PREMABLE
 
-    JSValue value = toJS(js_object);
-    if (!value || value.isUndefinedOrNull()) {
-        return napi_object_expected;
-    }
-
     auto* globalObject = toJS(env);
-
-    NapiRef** refPtr = nullptr;
-    if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
-        refPtr = &val->napiRef;
-    } else if (auto* val = jsDynamicCast<NapiClass*>(value)) {
-        refPtr = &val->napiRef;
+    auto& vm = globalObject->vm();
+    JSValue jsc_value = toJS(js_object);
+    if (jsc_value.isEmpty()) {
+        return napi_invalid_arg;
     }
-
-    if (!refPtr) {
+    JSObject* jsc_object = jsc_value.getObject();
+    if (!jsc_object) {
         return napi_object_expected;
     }
 
-    if (*refPtr) {
-        // Calling napi_wrap() a second time on an object will return an error.
-        // To associate another native instance with the object, use
-        // napi_remove_wrap() first.
+    const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
+
+    if (jsc_object->hasOwnProperty(globalObject, propertyName)) {
+        // already wrapped
         return napi_invalid_arg;
     }
 
+    // create a new weak reference (refcount 0)
     auto* ref = new NapiRef(globalObject, 0);
+    ref->weakValueRef.set(jsc_value, weakValueHandleOwner(), ref);
 
-    ref->weakValueRef.set(value, weakValueHandleOwner(), ref);
+    ref->finalizer.finalize_cb = finalize_cb;
+    ref->finalizer.finalize_hint = finalize_hint;
+    ref->data = native_object;
 
-    if (finalize_cb) {
-        ref->finalizer.finalize_cb = finalize_cb;
-        ref->finalizer.finalize_hint = finalize_hint;
-    }
-
-    if (native_object) {
-        ref->data = native_object;
-    }
-
-    *refPtr = ref;
+    // wrap the ref in an external so that it can serve as a JSValue
+    auto* external = Bun::NapiExternal::create(globalObject->vm(), globalObject->NapiExternalStructure(), ref, nullptr, nullptr);
+    jsc_object->putDirect(vm, propertyName, JSValue(external));
 
     if (result) {
         *result = toNapi(ref);
@@ -1091,35 +1081,37 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
 {
     NAPI_PREMABLE
 
-    JSValue value = toJS(js_object);
-    if (!value || value.isUndefinedOrNull()) {
+    JSValue jsc_value = toJS(js_object);
+    if (jsc_value.isEmpty()) {
+        return napi_invalid_arg;
+    }
+    JSObject* jsc_object = jsc_value.getObject();
+    if (!js_object) {
         return napi_object_expected;
     }
 
-    NapiRef** refPtr = nullptr;
-    if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
-        refPtr = &val->napiRef;
-    } else if (auto* val = jsDynamicCast<NapiClass*>(value)) {
-        refPtr = &val->napiRef;
+    auto* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
+
+    if (!jsc_object->hasOwnProperty(globalObject, propertyName)) {
+        return napi_invalid_arg;
     }
 
-    if (!refPtr) {
-        return napi_object_expected;
-    }
+    JSValue contents_value = jsc_object->getDirect(vm, propertyName);
+    // asserting: we should not have stored anything but a NapiExternal here
+    auto* contents_external = jsCast<Bun::NapiExternal*>(contents_value);
+    auto* ref = static_cast<NapiRef*>(contents_external->value());
 
-    if (!(*refPtr)) {
-        // not sure if this should succeed or return an error
-        return napi_ok;
-    }
-
-    auto* ref = *refPtr;
-    *refPtr = nullptr;
-
+    jsc_object->deleteProperty(globalObject, propertyName);
     if (result) {
         *result = ref->data;
     }
-    delete ref;
+    ref->finalizer.finalize_cb = nullptr;
 
+    // don't delete the ref: if weak, it'll delete itself when the JS object is deleted;
+    // if strong, native addon needs to clean it up.
+    // the external is garbage collected.
     return napi_ok;
 }
 
@@ -1128,23 +1120,32 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
 {
     NAPI_PREMABLE
 
-    JSValue value = toJS(js_object);
-
-    if (!value.isObject()) {
-        return NAPI_OBJECT_EXPECTED;
+    JSValue jsc_value = toJS(js_object);
+    if (jsc_value.isEmpty()) {
+        return napi_invalid_arg;
+    }
+    JSObject* jsc_object = jsc_value.getObject();
+    if (!jsc_object) {
+        return napi_object_expected;
     }
 
-    NapiRef* ref = nullptr;
-    if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
-        ref = val->napiRef;
-    } else if (auto* val = jsDynamicCast<NapiClass*>(value)) {
-        ref = val->napiRef;
-    } else {
-        ASSERT(false);
+    auto* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
+
+    if (!jsc_object->hasOwnProperty(globalObject, propertyName)) {
+        // not wrapped
+        return napi_invalid_arg;
     }
 
-    if (ref && result) {
-        *result = ref ? ref->data : nullptr;
+    JSValue contents_value = jsc_object->getDirect(vm, propertyName);
+    // asserting: we should not have stored anything but a NapiExternal here
+    auto* contents_external = jsCast<Bun::NapiExternal*>(contents_value);
+    auto* ref = static_cast<NapiRef*>(contents_external->value());
+    ASSERT(ref);
+
+    if (result) {
+        *result = ref->data;
     }
 
     return napi_ok;

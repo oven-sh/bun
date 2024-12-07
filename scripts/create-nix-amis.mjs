@@ -24,7 +24,7 @@ async function main() {
   // Read the flake.nix content
   const flakeContent = await readFile("flake.nix");
 
-  // Create user data script that will set up our environment
+  // Create user data script
   const userData = `#!/bin/bash
 set -euxo pipefail
 
@@ -108,10 +108,9 @@ buildkite-agent soft nofile 1048576
 buildkite-agent hard nofile 1048576
 buildkite-agent soft nproc 1048576
 buildkite-agent hard nproc 1048576
-EOF
-`;
+EOF`;
 
-  // Use machine.mjs to create the AMI, but with Ubuntu as base
+  // Use machine.mjs to create the AMI with the user data
   await spawnSafe([
     "node",
     "./scripts/machine.mjs",
@@ -119,11 +118,11 @@ EOF
     `--os=linux`,
     `--arch=${architecture}`,
     `--distro=ubuntu`,
-    `--release=18.04`, // Ubuntu 18.04 has glibc 2.26
+    `--release=18.04`,
+    `--cloud=aws`,
+    `--ci`,
+    `--authorized-org=oven-sh`,
     `--user-data=${userData}`,
-    "--cloud=aws",
-    "--ci",
-    "--authorized-org=oven-sh",
   ]);
 }
 

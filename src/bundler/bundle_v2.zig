@@ -4067,6 +4067,8 @@ pub const ParseTask = struct {
             result.source_len = entry.contents.len;
             result.free_user_context = null;
             result.user_context = null;
+            const wrapper: *OnBeforeParseResultWrapper = @fieldParentPtr("impl", result);
+            wrapper.original_source = entry.contents;
             return 0;
         }
 
@@ -4076,8 +4078,12 @@ pub const ParseTask = struct {
             }
 
             const result = this.result orelse return 1;
+            // The first plugin to set the source wins.
+            // But, we must check that they actually modified it
+            // since fetching the source stores it inside `result.source_ptr`
             if (result.source_ptr != null) {
-                return 1;
+                const wrapper: *OnBeforeParseResultWrapper = @fieldParentPtr("impl", result);
+                return @intFromBool(result.source_ptr.? != wrapper.original_source.?.ptr);
             }
 
             return 0;

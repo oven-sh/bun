@@ -518,7 +518,7 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
         expect.unreachable();
       } catch (e) {
         expect(e.toString()).toContain(
-          "onBeforeParse `napiModule` must be a Napi module which exports the `BUN_PLUGIN_SYMBOL`",
+          "onBeforeParse `napiModule` must be a Napi module which exports the `BUN_PLUGIN_NAME` symbol.",
         );
       }
     }

@@ -67,7 +67,9 @@ export function runSetupFunction(
       isOnBeforeParse = true;
       // TODO: how to check if it a napi module here?
       if (!callback || !$isObject(callback) || !callback.$napiDlopenHandle) {
-        throw new TypeError("onBeforeParse `napiModule` must be a Napi module which exports the `BUN_PLUGIN_SYMBOL`");
+        throw new TypeError(
+          "onBeforeParse `napiModule` must be a Napi module which exports the `BUN_PLUGIN_NAME` symbol.",
+        );
       }
 
       if (typeof symbol !== "string") {

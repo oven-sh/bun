@@ -48,7 +48,25 @@ public:
 
     /// In native plugins, the regular expression could be called concurrently on multiple threads.
     /// Therefore, we need a mutex to synchronize access.
-    typedef std::pair<Yarr::RegularExpression, std::shared_ptr<std::mutex>> NativeFilterRegexp;
+    class NativeFilterRegexp {
+    public: 
+        Yarr::RegularExpression regex;
+        WTF::Lock lock {};
+
+
+        NativeFilterRegexp(Yarr::RegularExpression regex)
+            : regex(regex)
+        {
+        }
+
+        NativeFilterRegexp(NativeFilterRegexp&& other)
+            : regex(other.regex)
+            , lock()
+        {
+        }
+
+        bool match(JSC::VM& vm, const String& path);
+    };
 
     struct NativePluginCallback {
         JSBundlerPluginNativeOnBeforeParseCallback callback;

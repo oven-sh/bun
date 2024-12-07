@@ -75,8 +75,6 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
 
 static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, const BunString* namespaceStr, const BunString* path)
 {
-    constexpr bool usesPatternContextBuffer = false;
-
     if (list.fileNamespace.isEmpty() && list.namespaces.isEmpty())
         return false;
 
@@ -92,7 +90,6 @@ static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& li
     auto pathString = path->toWTFString(BunString::ZeroCopy);
 
     for (auto& filter : filters) {
-        Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
         if (filter.match(pathString) > -1) {
             return true;
         }
@@ -248,13 +245,13 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
             index = namespaces.size() - 1;
         }
 
-        Yarr::RegularExpression regex(
+        Yarr::RegularExpression&& regex = Yarr::RegularExpression(
             StringView(filter->pattern()),
             filter->flags());
 
-        NativeFilterRegexp nativeFilterRegexp = std::make_pair(regex, std::make_shared<std::mutex>());
+  
 
-        nsGroup->append(nativeFilterRegexp);
+        nsGroup->append(NativeFilterRegexp{ regex });
     }
 
     if (index == std::numeric_limits<unsigned>::max()) {
@@ -271,45 +268,50 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
     }
 }
 
+bool BundlerPlugin::NativeFilterRegexp::match(JSC::VM& vm, const String& path)
+{
+    WTF::Locker locker { lock };
+    constexpr bool usesPatternContextBuffer = false;
+    Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
+    return regex.match(path) != -1;
+}
+
 extern "C" void CrashHandler__setInsideNativePlugin(const char* plugin_name);
 
 int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, void* onBeforeParseArgs, void* onBeforeParseResult)
 {
     unsigned index = 0;
-    const auto* group = this->group(namespaceStr->toWTFString(BunString::ZeroCopy), index);
-    if (group == nullptr) {
+    auto* groupPtr = this->group(namespaceStr->toWTFString(BunString::ZeroCopy), index);
+    if (groupPtr == nullptr) {
         return -1;
     }
+    auto& filters = *groupPtr;
 
     const auto& callbacks = index == std::numeric_limits<unsigned>::max() ? this->fileCallbacks : this->namespaceCallbacks[index];
-    ASSERT_WITH_MESSAGE(callbacks.size() == group->size(), "Number of callbacks and filters must match");
+    ASSERT_WITH_MESSAGE(callbacks.size() == filters.size(), "Number of callbacks and filters must match");
     if (callbacks.isEmpty()) {
         return -1;
     }
 
     int count = 0;
-    constexpr bool usesPatternContextBuffer = false;
     const WTF::String& path = pathString->toWTFString(BunString::ZeroCopy);
     for (size_t i = 0, total = callbacks.size(); i < total && *shouldContinue; ++i) {
-        Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
 
         // Need to lock the mutex to access the regular expression
-        {
-            std::lock_guard<std::mutex> lock(*group->at(i).second);
-            if (group->at(i).first.match(path) > -1) {
-                Bun::NapiExternal* external = callbacks[i].external;
-                if (external) {
-                    ((OnBeforeParseArguments*)(onBeforeParseArgs))->external = external->value();
-                }
 
-                JSBundlerPluginNativeOnBeforeParseCallback callback = callbacks[i].callback;
-                const char* name = callbacks[i].name ? callbacks[i].name : "<unknown>";
-                CrashHandler__setInsideNativePlugin(name);
-                callback(onBeforeParseArgs, onBeforeParseResult);
-                CrashHandler__setInsideNativePlugin(nullptr);
+        if (filters[i].match(vm, path)) {
+          Bun::NapiExternal* external = callbacks[i].external;
+          if (external) {
+              ((OnBeforeParseArguments*)(onBeforeParseArgs))->external = external->value();
+          }
 
-                count++;
-            }
+          JSBundlerPluginNativeOnBeforeParseCallback callback = callbacks[i].callback;
+          const char* name = callbacks[i].name ? callbacks[i].name : "<unknown>";
+          CrashHandler__setInsideNativePlugin(name);
+          callback(onBeforeParseArgs, onBeforeParseResult);
+          CrashHandler__setInsideNativePlugin(nullptr);
+
+          count++;
         }
 
         if (OnBeforeParsePlugin__isDone(bunContextPtr)) {

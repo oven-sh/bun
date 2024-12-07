@@ -952,6 +952,7 @@ async function getPipelineOptions() {
       testPlatforms: testPlatformKeys?.length
         ? testPlatformKeys.map(key => testPlatformsMap.get(key))
         : Array.from(testPlatformsMap.values()),
+      dryRun: parseBoolean(options["dry-run"]),
     };
   }
 
@@ -979,6 +980,7 @@ async function getPipelineOptions() {
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     buildImages: parseOption(/\[(build images?)\]/i),
+    dryRun: parseOption(/\[(dry run)\]/i),
     publishImages: parseOption(/\[(publish images?)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
@@ -1025,7 +1027,8 @@ async function getPipeline(options = {}) {
     });
   }
 
-  const { skipBuilds, forceBuilds, unifiedBuilds } = options;
+  let { skipBuilds, forceBuilds, unifiedBuilds, dryRun } = options;
+  dryRun = dryRun || !!buildImages;
 
   /** @type {string | undefined} */
   let buildId;
@@ -1052,12 +1055,12 @@ async function getPipeline(options = {}) {
               key: getTargetKey(target),
               group: getTargetLabel(target),
               steps: unifiedBuilds
-                ? [getBuildBunStep(target, !!buildImages)]
+                ? [getBuildBunStep(target, dryRun)]
                 : [
-                    getBuildVendorStep(target, !!buildImages),
-                    getBuildCppStep(target, !!buildImages),
-                    getBuildZigStep(target, !!buildImages),
-                    getLinkBunStep(target, !!buildImages),
+                    getBuildVendorStep(target, dryRun),
+                    getBuildCppStep(target, dryRun),
+                    getBuildZigStep(target, dryRun),
+                    getLinkBunStep(target, dryRun),
                   ],
             },
             imagePlatform ? `${imageKey}-build-image` : undefined,

@@ -55,7 +55,7 @@ echo "Configuring Nix..."
 
 # Enable flakes
 sudo mkdir -p /etc/nix
-cat > /etc/nix/nix.conf << 'EOF'
+sudo cat > /etc/nix/nix.conf << 'EOF'
 experimental-features = nix-command flakes
 trusted-users = root buildkite-agent
 auto-optimise-store = true

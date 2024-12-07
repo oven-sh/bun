@@ -64,7 +64,7 @@ declare function add(a: number, b: number = 1): number;
 
 The code generator will provide `bun.gen.math.jsAdd`, which is the native function implementation. To pass to JavaScript, use `bun.gen.math.createAddCallback(global)`
 
-### Strings
+## Strings
 
 The type for receiving strings is one of [`t.DOMString`](https://webidl.spec.whatwg.org/#idl-DOMString), [`t.ByteString`](https://webidl.spec.whatwg.org/#idl-ByteString), and [`t.USVString`](https://webidl.spec.whatwg.org/#idl-USVString). These map directly to their WebIDL counterparts, and have slightly different conversion logic. Bindgen will pass BunString to native code in all cases.
 
@@ -78,7 +78,7 @@ TLDRs from WebIDL spec:
 - USVString will not contain invalid surrogate pairs, aka text that can be represented correctly in UTF-8.
 - DOMString is the loosest but also most recommended strategy.
 
-### Variants
+## Function Variants
 
 A `variants` can specify multiple variants (also known as overloads).
 
@@ -116,17 +116,49 @@ fn action2(a: bun.String) bun.String {
 }
 ```
 
-### `t.dictionary`
+## `t.dictionary`
 
 A `dictionary` is a definition for a JavaScript object, typically as a function inputs. For function outputs, it is usually a smarter idea to declare a class type to add functions and destructuring.
 
-### `t.oneOf`
+## Enumerations
+
+To use [WebIDL's enumeration](https://webidl.spec.whatwg.org/#idl-enums) type, use either:
+
+- `t.stringEnum`: Create and codegen a new enum type.
+- `t.zigEnum`: Derive a bindgen type off of an existing enum in the codebase.
+
+An example of `stringEnum` as used in `fmt.zig` / `bun:internal-for-testing`
+
+```ts
+export const Formatter = t.stringEnum(
+  "highlight-javascript",
+  "escape-powershell",
+);
+
+fn({
+  name: "fmtString",
+  args: {
+    global: t.globalObject,
+    code: t.UTF8String,
+    formatter: Formatter,
+  },
+  ret: t.DOMString,
+});
+```
+
+WebIDL strongly encourages using kebab case for enumeration values, to be consistent with existing Web APIs.
+
+### Deriving enums from Zig code
+
+TODO: zigEnum
+
+## `t.oneOf`
 
 A `oneOf` is a union between two or more types. It is represented by `union(enum)` in Zig.
 
 TODO:
 
-### Attributes
+## Attributes
 
 There are set of attributes that can be chained onto `t.*` types. On all types there are:
 
@@ -136,9 +168,11 @@ There are set of attributes that can be chained onto `t.*` types. On all types t
 
 When a value is optional, it is lowered to a Zig optional.
 
-Depending on the type, there are more attributes available. See the type definitions in auto-complete for more details. Note that one of the above three can only be applied at the end.
+Depending on the type, there are more attributes available. See the type definitions in auto-complete for more details. Note that one of the above three can only be applied, and they must be applied at the end.
 
-For example, integer types allow customizing the overflow behavior with `clamp` or `enforceRange`
+### Integer Attributes
+
+Integer types allow customizing the overflow behavior with `clamp` or `enforceRange`
 
 ```ts
 import { t, fn } from "bindgen";
@@ -160,8 +194,10 @@ fn({
 });
 ```
 
-### Callbacks
+## Callbacks
 
 TODO
 
-### Classes
+## Classes
+
+TODO

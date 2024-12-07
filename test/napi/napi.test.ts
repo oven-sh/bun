@@ -319,6 +319,16 @@ describe("napi", () => {
       checkSameOutput("test_type_tag", []);
     });
   });
+
+  describe("napi_wrap", () => {
+    it("accepts the right kinds of values", () => {
+      checkSameOutput("test_napi_wrap", []);
+    });
+
+    it("is shared between addons", () => {
+      checkSameOutput("test_napi_wrap_cross_addon", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

@@ -1,4 +1,5 @@
 const nativeTests = require("./build/Release/napitests.node");
+const secondAddon = require("./build/Release/second_addon.node");
 
 nativeTests.test_napi_class_constructor_handle_scope = () => {
   const NapiClass = nativeTests.get_class_with_constructor();
@@ -268,6 +269,33 @@ nativeTests.test_type_tag = () => {
   console.log("o1 matches o2:", nativeTests.check_tag(o1, 3, 4));
   console.log("o2 matches o1:", nativeTests.check_tag(o2, 1, 2));
   console.log("o2 matches o2:", nativeTests.check_tag(o2, 3, 4));
+};
+
+nativeTests.test_napi_wrap = () => {
+  const values = [{}, {}, 5, new Number(5), "abc", new String("abc"), null, Symbol("abc"), Symbol.for("abc")];
+  const wrapSuccess = Array(values.length).fill(false);
+  for (const [i, v] of values.entries()) {
+    wrapSuccess[i] = nativeTests.try_wrap(v, i + 1);
+    console.log(`${typeof v} did wrap: `, wrapSuccess[i]);
+  }
+
+  for (const [i, v] of values.entries()) {
+    if (wrapSuccess[i]) {
+      if (nativeTests.try_unwrap(v) !== i + 1) {
+        throw new Error("could not unwrap same value");
+      }
+    } else {
+      if (nativeTests.try_unwrap(v) !== undefined) {
+        throw new Error("value unwraps without being successfully wrapped");
+      }
+    }
+  }
+};
+
+nativeTests.test_napi_wrap_cross_addon = () => {
+  const wrapped = {};
+  console.log("tag succeeds:", nativeTests.try_wrap(wrapped, 42));
+  console.log("unwrapped from other addon", secondAddon.try_unwrap(wrapped));
 };
 
 module.exports = nativeTests;

@@ -1299,15 +1299,17 @@ declare module "bun:test" {
      * Asserts that a value matches the most recent inline snapshot.
      *
      * @example
+     * expect("Hello").toMatchInlineSnapshot();
      * expect("Hello").toMatchInlineSnapshot(`"Hello"`);
-     * @param value The latest snapshot value.
+     *
+     * @param value The latest automatically-updated snapshot value.
      */
     toMatchInlineSnapshot(value?: string): void;
     /**
      * Asserts that a value matches the most recent inline snapshot.
      *
      * @example
-     * expect("Hello").toMatchInlineSnapshot(`"Hello"`);
+     * expect({ c: new Date() }).toMatchInlineSnapshot({ c: expect.any(Date) });
      * expect({ c: new Date() }).toMatchInlineSnapshot({ c: expect.any(Date) }, `
      * {
      *   "v": Any<Date>,
@@ -1315,9 +1317,35 @@ declare module "bun:test" {
      * `);
      *
      * @param propertyMatchers Object containing properties to match against the value.
-     * @param hint Hint used to identify the snapshot in the snapshot file.
+     * @param value The latest automatically-updated snapshot value.
      */
     toMatchInlineSnapshot(propertyMatchers?: object, value?: string): void;
+    /**
+     * Asserts that a function throws an error matching the most recent snapshot.
+     *
+     * @example
+     * function fail() {
+     *   throw new Error("Oops!");
+     * }
+     * expect(fail).toThrowErrorMatchingSnapshot();
+     * expect(fail).toThrowErrorMatchingSnapshot("This one should say Oops!");
+     *
+     * @param value The latest automatically-updated snapshot value.
+     */
+    toThrowErrorMatchingSnapshot(hint?: string): void;
+    /**
+     * Asserts that a function throws an error matching the most recent snapshot.
+     *
+     * @example
+     * function fail() {
+     *   throw new Error("Oops!");
+     * }
+     * expect(fail).toThrowErrorMatchingInlineSnapshot();
+     * expect(fail).toThrowErrorMatchingInlineSnapshot(`"Oops!"`);
+     *
+     * @param value The latest automatically-updated snapshot value.
+     */
+    toThrowErrorMatchingInlineSnapshot(value?: string): void;
     /**
      * Asserts that an object matches a subset of properties.
      *

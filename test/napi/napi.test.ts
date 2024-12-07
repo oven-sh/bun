@@ -328,6 +328,10 @@ describe("napi", () => {
     it("is shared between addons", () => {
       checkSameOutput("test_napi_wrap_cross_addon", []);
     });
+
+    it("does not follow prototypes", () => {
+      checkSameOutput("test_napi_wrap_prototype", []);
+    });
   });
 });
 

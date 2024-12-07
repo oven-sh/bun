@@ -294,8 +294,14 @@ nativeTests.test_napi_wrap = () => {
 
 nativeTests.test_napi_wrap_cross_addon = () => {
   const wrapped = {};
-  console.log("tag succeeds:", nativeTests.try_wrap(wrapped, 42));
+  console.log("wrap succeeds:", nativeTests.try_wrap(wrapped, 42));
   console.log("unwrapped from other addon", secondAddon.try_unwrap(wrapped));
+};
+
+nativeTests.test_napi_wrap_prototype = () => {
+  class Foo {}
+  console.log("wrap prototype succeeds:", nativeTests.try_wrap(Foo.prototype, 42));
+  console.log("unwrap instance:", nativeTests.try_unwrap(new Foo()));
 };
 
 module.exports = nativeTests;

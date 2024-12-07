@@ -5,9 +5,15 @@ if(ENABLE_CODESIGN AND APPLE)
   find_command(VARIABLE CODESIGN_PROGRAM COMMAND codesign REQUIRED)
   find_command(VARIABLE DITTO_PROGRAM COMMAND ditto REQUIRED)
 
-  optionx(APPLE_CODESIGN_KEYCHAIN_PATH FILEPATH "Path to the keychain to use for code signing" DEFAULT ${BUILD_PATH}/apple-codesign-keychain.db)
-  optionx(APPLE_CODESIGN_KEYCHAIN_PASSWORD STRING "Password for the keychain" DEFAULT "" SECRET)
+  set(DEFAULT_APPLE_CODESIGN_KEYCHAIN_PATH ${BUILD_PATH}/apple-codesign-keychain.db)
+  optionx(APPLE_CODESIGN_KEYCHAIN_PATH FILEPATH "Path to the keychain to use for code signing" DEFAULT ${DEFAULT_APPLE_CODESIGN_KEYCHAIN_PATH})
   get_filename_component(APPLE_CODESIGN_KEYCHAIN_FILENAME ${APPLE_CODESIGN_KEYCHAIN_PATH} NAME)
+
+  if(APPLE_CODESIGN_KEYCHAIN_PATH STREQUAL "${DEFAULT_APPLE_CODESIGN_KEYCHAIN_PATH}")
+    set(APPLE_CODESIGN_KEYCHAIN_PASSWORD "")
+  else()
+    optionx(APPLE_CODESIGN_KEYCHAIN_PASSWORD STRING "Password for the keychain" DEFAULT "" SECRET)
+  endif()
 
   if(NOT EXISTS ${APPLE_CODESIGN_KEYCHAIN_PATH})
     execute_process(
@@ -54,14 +60,15 @@ if(ENABLE_CODESIGN AND APPLE)
     )
   endif()
 
+  set(DEFAULT_APPLE_CODESIGN_IDENTITY_PATH ${BUILD_PATH}/apple-codesign-identity.p12)
+  optionx(APPLE_CODESIGN_IDENTITY_PATH FILEPATH "Path to the code signing identity .p12 file" DEFAULT ${DEFAULT_APPLE_CODESIGN_IDENTITY_PATH})
   optionx(APPLE_CODESIGN_IDENTITY_BASE64 STRING "Base64-encoded code signing identity .p12 file" SECRET)
-  optionx(APPLE_CODESIGN_IDENTITY_PATH FILEPATH "Path to the code signing identity .p12 file")
 
   if(APPLE_CODESIGN_IDENTITY_BASE64)
     find_command(VARIABLE BASE64_PROGRAM COMMAND base64 REQUIRED)
-    setx(APPLE_CODESIGN_IDENTITY_PATH ${BUILD_PATH}/apple-codesign-identity.p12)
+
     execute_process(
-      COMMAND ${CMAKE_COMMAND} -E echo ${APPLE_CODESIGN_IDENTITY_BASE64} | ${BASE64_PROGRAM} --decode > ${APPLE_CODESIGN_IDENTITY_PATH}
+      COMMAND ${CMAKE_COMMAND} -E echo "${APPLE_CODESIGN_IDENTITY_BASE64}" | ${BASE64_PROGRAM} --decode > ${APPLE_CODESIGN_IDENTITY_PATH}
       OUTPUT_QUIET
       ERROR_VARIABLE DECODE_IDENTITY_ERROR
       ERROR_STRIP_TRAILING_WHITESPACE
@@ -87,15 +94,6 @@ if(ENABLE_CODESIGN AND APPLE)
   endif()
 
   if(NOT FIND_IDENTITY_OUTPUT MATCHES "${APPLE_CODESIGN_IDENTITY}")
-    if(NOT APPLE_CODESIGN_IDENTITY_BASE64 AND NOT APPLE_CODESIGN_IDENTITY_PATH)
-      message(FATAL_ERROR "Code signing is enabled, but no identity was found in your keychain.\n"
-        "To fix this, either:\n"
-        "  - Add the identity to your keychain by running 'security import [identity-path] -k [keychain-path] -T ${CODESIGN_PROGRAM}'\n"
-        "  - Set APPLE_CODESIGN_IDENTITY_PATH to the path of the .p12 file for the identity\n"
-        "  - Set APPLE_CODESIGN_IDENTITY_BASE64 to the base64-encoded .p12 file for the identity\n"
-      )
-    endif()
-
     execute_process(
       COMMAND ${SECURITY_PROGRAM} import ${APPLE_CODESIGN_IDENTITY_PATH} -k ${APPLE_CODESIGN_KEYCHAIN_PATH} -P "${APPLE_CODESIGN_IDENTITY_PASSWORD}" -T ${CODESIGN_PROGRAM}
       OUTPUT_QUIET
@@ -131,7 +129,12 @@ if(ENABLE_CODESIGN AND APPLE)
     endif()
 
     if(NOT FIND_IDENTITY_OUTPUT MATCHES "${APPLE_CODESIGN_IDENTITY}")
-      message(FATAL_ERROR "Failed to find identity ${APPLE_CODESIGN_IDENTITY}, but it was successfully imported?")
+      message(FATAL_ERROR "Code signing is enabled, but no identity was found in your keychain.\n"
+        "To fix this, either:\n"
+        "  - Add the identity to your keychain by running 'security import [identity-path] -k [keychain-path] -T ${CODESIGN_PROGRAM}'\n"
+        "  - Set APPLE_CODESIGN_IDENTITY_PATH to the path of the .p12 file for the identity\n"
+        "  - Set APPLE_CODESIGN_IDENTITY_BASE64 to the base64-encoded .p12 file for the identity\n"
+      )
     endif()
   endif()
 endif()

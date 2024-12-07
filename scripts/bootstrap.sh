@@ -87,7 +87,10 @@ fetch() {
 
 
 install_gcc13_ubuntu18() {
-    if ! [ "$distro" = "ubuntu" ] || ! [ "$release" = "18.04" ]; then
+    if ! [ "$distro" = "ubuntu" ]; then
+        return
+    fi
+    if ! { [ "$release" = "18.04" ] && [ "$arch" = "x64" ] || [ "$release" = "20.04" ] && [ "$arch" = "aarch64" ]; }; then
         return
     fi
 

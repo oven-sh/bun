@@ -42,3 +42,7 @@ if(CI)
 else()
   setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,random_seed,clang_index_store,gcno_cwd")
 endif()
+
+if (CI AND NOT APPLE)
+  set(ENABLE_CCACHE OFF)
+endif()

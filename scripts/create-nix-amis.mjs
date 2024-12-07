@@ -93,9 +93,9 @@ EOF
 echo "Setting up Nix environment and installing BuildKite agent..."
 cd /var/lib/buildkite-agent/bun
 # Initialize flake.lock with proper permissions
-sudo -u buildkite-agent -i nix flake update
+sudo -u buildkite-agent sh -c 'cd "$1" && nix flake update' -- /var/lib/buildkite-agent/bun
 # Now run the agent in the Nix environment
-sudo -u buildkite-agent -i nix develop .#ci-${flakeTarget} -c /usr/local/share/bun/agent.mjs install start`;
+sudo -u buildkite-agent sh -c 'cd "$1" && nix develop .#ci-${flakeTarget} -c /usr/local/share/bun/agent.mjs install start' -- /var/lib/buildkite-agent/bun`;
 
   // Write user data to a temporary file
   const userDataFile = mkdtemp("user-data-", "user-data.sh");

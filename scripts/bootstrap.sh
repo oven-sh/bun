@@ -118,20 +118,23 @@ install_gcc13_ubuntu18() {
         --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-13 \
         --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-13
 
+    # Get system triplet dynamically
+    triplet=$(gcc -dumpmachine | sed 's/-pc-/-/') # Remove -pc- if present
+    
     # Configure library paths for Ubuntu 18.04
-    execute_sudo mkdir -p /usr/lib/gcc/x86_64-linux-gnu/13
-    execute_sudo ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /usr/lib/gcc/x86_64-linux-gnu/13/
+    execute_sudo mkdir -p "/usr/lib/gcc/${triplet}/13"
+    execute_sudo ln -sf "/usr/lib/${triplet}/libstdc++.so.6" "/usr/lib/gcc/${triplet}/13/"
     
     # Update library paths configuration
-    execute_sudo sh -c 'echo "/usr/lib/gcc/x86_64-linux-gnu/13" > /etc/ld.so.conf.d/gcc-13.conf'
-    execute_sudo sh -c 'echo "/usr/lib/x86_64-linux-gnu" >> /etc/ld.so.conf.d/gcc-13.conf'
+    execute_sudo sh -c "echo '/usr/lib/gcc/${triplet}/13' > /etc/ld.so.conf.d/gcc-13.conf"
+    execute_sudo sh -c "echo '/usr/lib/${triplet}' >> /etc/ld.so.conf.d/gcc-13.conf"
     execute_sudo ldconfig
 
     # Set environment variables for the toolchain
-    append_to_profile 'export LD_LIBRARY_PATH="/usr/lib/gcc/x86_64-linux-gnu/13:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"'
-    append_to_profile 'export LIBRARY_PATH="/usr/lib/gcc/x86_64-linux-gnu/13:/usr/lib/x86_64-linux-gnu:$LIBRARY_PATH"'
-    append_to_profile 'export CPLUS_INCLUDE_PATH="/usr/include/c++/13:/usr/include/x86_64-linux-gnu/c++/13:$CPLUS_INCLUDE_PATH"'
-    append_to_profile 'export C_INCLUDE_PATH="/usr/lib/gcc/x86_64-linux-gnu/13/include:$C_INCLUDE_PATH"'
+    append_to_profile "export LD_LIBRARY_PATH=\"/usr/lib/gcc/${triplet}/13:/usr/lib/${triplet}:\$LD_LIBRARY_PATH\""
+    append_to_profile "export LIBRARY_PATH=\"/usr/lib/gcc/${triplet}/13:/usr/lib/${triplet}:\$LIBRARY_PATH\""
+    append_to_profile "export CPLUS_INCLUDE_PATH=\"/usr/include/c++/13:/usr/include/${triplet}/c++/13:\$CPLUS_INCLUDE_PATH\""
+    append_to_profile "export C_INCLUDE_PATH=\"/usr/lib/gcc/${triplet}/13/include:\$C_INCLUDE_PATH\""
 }
 
 download_file() {
@@ -741,6 +744,10 @@ install_bun() {
 
 	bash="$(require bash)"
 	script=$(download_file "https://bun.sh/install")
+	export BUN_INSTALL="$home/.bun"
+	rm -rf "$BUN_INSTALL"
+	mkdir -p "$BUN_INSTALL"
+	chown -R "$user:$group" "$BUN_INSTALL"
 
 	version="${1:-"latest"}"
 	case "$version" in
@@ -799,11 +806,13 @@ install_build_essentials() {
 	apt)
 
     # Install modern CMake for Ubuntu 18.04
-		if [ "$distro" = "ubuntu" ] && [ "$release" = "18.04" ]; then
+		if [ "$distro" = "ubuntu" ]; then
 				# Add Kitware's CMake repository
 				wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | execute_sudo tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null
-				execute_sudo apt-add-repository "deb https://apt.kitware.com/ubuntu/ bionic main"
+				execute_sudo apt-add-repository "deb https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main"
 				execute_sudo apt-get update
+
+				append_to_profile "export DEBIAN_FRONTEND=noninteractive"
 		fi
 
 		install_packages \

@@ -31,52 +31,40 @@ async function main() {
 
   // Create user data script
   const userData = `#!/bin/bash
-set -euo pipefail
+set -euxo pipefail
 
 echo "Setting up environment..."
 export DEBIAN_FRONTEND=noninteractive
-echo "export DEBIAN_FRONTEND=noninteractive" >> ~/.bashrc
 
 echo "Installing required packages..."
-
-# Install required packages
 sudo apt-get update -qq
 sudo apt-get install -y curl xz-utils git sudo --no-install-recommends
 
 echo "Installing Nix..."
-
-# Install Nix
-curl -L https://nixos.org/nix/install | sudo sh -s -- --daemon
-
-# Source Nix
-. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+sh <(curl -L https://nixos.org/nix/install) --daemon
 
 echo "Configuring Nix..."
+# Source Nix in this shell
+. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
 
 # Enable flakes
 sudo mkdir -p /etc/nix
-sudo cat > /etc/nix/nix.conf << 'EOF'
+sudo tee /etc/nix/nix.conf > /dev/null << 'EOF'
 experimental-features = nix-command flakes
 trusted-users = root buildkite-agent
 auto-optimise-store = true
 EOF
 
-# Create buildkite-agent user and group
-sudo useradd -m -s /bin/bash buildkite-agent
-sudo usermod -aG sudo buildkite-agent
-echo "buildkite-agent ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/buildkite-agent
-
 echo "Installing BuildKite agent..."
-
+# Install BuildKite agent
 sudo sh -c 'echo deb https://apt.buildkite.com/buildkite-agent stable main > /etc/apt/sources.list.d/buildkite-agent.list'
 sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 32A37959C2FA5C3C99EFBC32A79206696452D198
 sudo apt-get update
 sudo apt-get install -y buildkite-agent
 
 echo "Configuring BuildKite agent..."
-
 # Configure BuildKite agent
-sudo cat > /etc/buildkite-agent/buildkite-agent.cfg << 'EOF'
+sudo tee /etc/buildkite-agent/buildkite-agent.cfg > /dev/null << 'EOF'
 token="xxx"
 name="%hostname-%n"
 tags="queue=linux-nix,arch=${architecture}"
@@ -87,7 +75,7 @@ EOF
 
 echo "Copying flake.nix to the instance..."
 sudo mkdir -p /home/buildkite-agent/bun
-sudo cat > /home/buildkite-agent/bun/flake.nix << 'EOF'
+sudo tee /home/buildkite-agent/bun/flake.nix > /dev/null << 'EOF'
 ${flakeContent}
 EOF
 
@@ -96,7 +84,7 @@ sudo chown -R buildkite-agent:buildkite-agent /home/buildkite-agent/bun
 
 echo "Creating BuildKite hook to set up Nix environment..."
 sudo mkdir -p /etc/buildkite-agent/hooks
-sudo cat > /etc/buildkite-agent/hooks/environment << 'EOF'
+sudo tee /etc/buildkite-agent/hooks/environment > /dev/null << 'EOF'
 #!/bin/bash
 set -euo pipefail
 
@@ -114,10 +102,10 @@ EOF
 sudo chmod +x /etc/buildkite-agent/hooks/environment
 
 echo "Setting proper ownership for BuildKite directories..."
-chown -R buildkite-agent:buildkite-agent /etc/buildkite-agent /var/lib/buildkite-agent
+sudo chown -R buildkite-agent:buildkite-agent /etc/buildkite-agent /var/lib/buildkite-agent
 
 echo "Setting system limits for buildkite-agent..."
-sudo cat > /etc/security/limits.d/buildkite-agent.conf << 'EOF'
+sudo tee /etc/security/limits.d/buildkite-agent.conf > /dev/null << 'EOF'
 buildkite-agent soft nofile 1048576
 buildkite-agent hard nofile 1048576
 buildkite-agent soft nproc 1048576

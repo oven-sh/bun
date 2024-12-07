@@ -3587,6 +3587,10 @@ pub const ParseTask = struct {
     ) !JSAst {
         switch (loader) {
             .jsx, .tsx, .js, .ts => {
+                if (bun.strings.isSmallAndOnlyWhitespace(source.contents)) return switch (opts.module_type == .esm) {
+                    inline else => |as_undefined| try getEmptyAST(log, bundler, opts, allocator, source, if (as_undefined) E.Undefined else E.Object),
+                };
+
                 const trace = tracer(@src(), "ParseJS");
                 defer trace.end();
                 return if (try resolver.caches.js.parse(
@@ -3609,12 +3613,20 @@ pub const ParseTask = struct {
                 };
             },
             .json => {
+                if (strings.isSmallAndOnlyWhitespace(source.contents)) return switch (opts.module_type == .esm) {
+                    inline else => |as_undefined| try getEmptyAST(log, bundler, opts, allocator, source, if (as_undefined) E.Undefined else E.Object),
+                };
+
                 const trace = tracer(@src(), "ParseJSON");
                 defer trace.end();
                 const root = (try resolver.caches.json.parsePackageJSON(log, source, allocator, false)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .toml => {
+                if (strings.isSmallAndOnlyWhitespace(source.contents)) return switch (opts.module_type == .esm) {
+                    inline else => |as_undefined| try getEmptyAST(log, bundler, opts, allocator, source, if (as_undefined) E.Undefined else E.Object),
+                };
+
                 const trace = tracer(@src(), "ParseTOML");
                 defer trace.end();
                 const root = try TOML.parse(&source, log, allocator, false);

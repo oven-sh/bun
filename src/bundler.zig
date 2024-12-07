@@ -1137,6 +1137,10 @@ pub const Bundler = struct {
             .ts,
             .tsx,
             => {
+                if (bun.strings.isSmallAndOnlyWhitespace(source.contents)) {
+                    return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
+                }
+
                 // wasm magic number
                 if (source.isWebAssembly()) {
                     return ParseResult{
@@ -1251,6 +1255,10 @@ pub const Bundler = struct {
             },
             // TODO: use lazy export AST
             inline .toml, .json => |kind| {
+                if (bun.strings.isSmallAndOnlyWhitespace(source.contents)) {
+                    return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
+                }
+
                 var expr = if (kind == .json)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.

@@ -4930,6 +4930,10 @@ pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice)
     return slice[begin..end];
 }
 
+pub fn isSmallAndOnlyWhitespace(slice: string) bool {
+    return slice.len == 0 or (slice.len < 33 and std.mem.trimLeft(u8, slice, "\n\r ").len == 0);
+}
+
 pub const whitespace_chars = [_]u8{ ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff };
 
 pub fn lengthOfLeadingWhitespaceASCII(slice: string) usize {

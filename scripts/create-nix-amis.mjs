@@ -146,10 +146,9 @@ sudo -i -u buildkite-agent bash << EOF
 
   # Update flake lock and evaluate the environment
   nix flake update
-  nix develop .#ci-${flakeTarget} -c true
 
   # Install and start the agent
-  /usr/local/share/bun/agent.mjs install start
+  nix develop .#ci-${flakeTarget} -c "/usr/local/share/bun/agent.mjs install start"
 EOF`;
 
   // Write user data to a temporary file

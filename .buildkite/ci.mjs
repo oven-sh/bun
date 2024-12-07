@@ -104,9 +104,9 @@ function getTargetLabel(target) {
 const buildPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14" },
   { os: "darwin", arch: "x64", release: "14" },
-  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
-  { os: "linux", arch: "x64", distro: "ubuntu", release: "18.04" },
-  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "18.04" },
+  { os: "linux", arch: "aarch64", distro: "nix", release: "latest" },
+  { os: "linux", arch: "x64", distro: "nix", release: "latest" },
+  { os: "linux", arch: "x64", baseline: true, distro: "nix", release: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
@@ -290,16 +290,25 @@ function getEc2Agent(platform, options) {
 
 /**
  * @param {Platform} platform
- * @returns {string}
+ * @returns {Agent}
  */
 function getCppAgent(platform, dryRun) {
-  const { os, arch } = platform;
+  const { os, arch, distro } = platform;
 
   if (os === "darwin") {
     return {
       queue: `build-${os}`,
       os,
       arch,
+    };
+  }
+
+  if (distro === "nix") {
+    return {
+      queue: "linux-nix",
+      os: "linux",
+      arch,
+      nix: "true",
     };
   }
 
@@ -342,7 +351,7 @@ function getZigAgent(platform, dryRun) {
  * @returns {Agent}
  */
 function getTestAgent(platform, dryRun) {
-  const { os, arch } = platform;
+  const { os, arch, distro } = platform;
 
   if (os === "darwin") {
     return {
@@ -989,6 +998,47 @@ async function getPipelineOptions() {
 }
 
 /**
+ * @param {Record<string, string | undefined>} [options]
+ * @returns {Step}
+ */
+function getCreateNixAmisStep(options = {}) {
+  return {
+    key: "create-nix-amis",
+    group: getBuildkiteEmoji("nix"),
+    steps: [
+      {
+        key: "create-nix-ami-x64",
+        label: `${getBuildkiteEmoji("nix")} Create Nix AMI (x64)`,
+        command: ["node", "./scripts/create-nix-amis.mjs", "--arch=x64", "--ci"].join(" "),
+        agents: {
+          queue: "build-image",
+          arch: "x64",
+        },
+        env: {
+          DEBUG: "1",
+        },
+        retry: getRetry(),
+        timeout_in_minutes: 3 * 60,
+      },
+      {
+        key: "create-nix-ami-arm64",
+        label: `${getBuildkiteEmoji("nix")} Create Nix AMI (arm64)`,
+        command: ["node", "./scripts/create-nix-amis.mjs", "--arch=arm64", "--ci"].join(" "),
+        agents: {
+          queue: "build-image",
+          arch: "arm64",
+        },
+        env: {
+          DEBUG: "1",
+        },
+        retry: getRetry(),
+        timeout_in_minutes: 3 * 60,
+      },
+    ],
+  };
+}
+
+/**
  * @param {PipelineOptions} [options]
  * @returns {Promise<Pipeline | undefined>}
  */
@@ -1023,7 +1073,12 @@ async function getPipeline(options = {}) {
     steps.push({
       key: "build-images",
       group: getBuildkiteEmoji("aws"),
-      steps: [...imagePlatforms.values()].map(platform => getBuildImageStep(platform, !publishImages)),
+      steps: [
+        getCreateNixAmisStep(),
+        ...[...imagePlatforms.values()]
+          .filter(platform => platform.distro !== "nix")
+          .map(platform => getBuildImageStep(platform, !publishImages)),
+      ],
     });
   }
 

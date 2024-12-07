@@ -585,7 +585,7 @@ pub const Arguments = struct {
                 ctx.test_options.test_filter_regex = regex;
             }
             ctx.test_options.update_snapshots = args.flag("--update-snapshots");
-            ctx.test_options.run_todo = args.flag("--todo");
+            ctx.test_options.default_run_todo = args.flag("--todo");
             ctx.test_options.only = args.flag("--only");
         }
 
@@ -1376,7 +1376,7 @@ pub const Command = struct {
         default_timeout_ms: u32 = 5 * std.time.ms_per_s,
         update_snapshots: bool = false,
         repeat_count: u32 = 0,
-        run_todo: bool = false,
+        default_run_todo: bool = false,
         only: bool = false,
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},

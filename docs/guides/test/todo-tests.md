@@ -59,6 +59,8 @@ $ echo $?
 1 # this is the exit code of the previous command
 ```
 
+To mark a file to always run todo tests, use `import { test } from "bun:test" with { todo: true }` in the file.
+
 ---
 
 See also:

@@ -998,12 +998,15 @@ fn NewPrinter(
         fn printBunJestImportStatement(p: *Printer, import: S.Import) void {
             comptime bun.assert(is_bun_platform);
 
-            switch (p.options.module_type) {
-                .cjs => {
-                    printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(__filename)"), "globalThis.Bun.jest(__filename)");
+            const record = p.import_records[import.import_record_index];
+            switch (record.jest_run_todo) {
+                true => switch (p.options.module_type) {
+                    .cjs => printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(__filename, true)"), "globalThis.Bun.jest(__filename, true)"),
+                    else => printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path, true)"), "globalThis.Bun.jest(import.meta.path, true)"),
                 },
-                else => {
-                    printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path)"), "globalThis.Bun.jest(import.meta.path)");
+                false => switch (p.options.module_type) {
+                    .cjs => printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(__filename)"), "globalThis.Bun.jest(__filename)"),
+                    else => printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path)"), "globalThis.Bun.jest(import.meta.path)"),
                 },
             }
         }
@@ -1681,19 +1684,18 @@ fn NewPrinter(
                         return;
                     },
                     .bun_test => {
-                        if (record.kind == .dynamic) {
-                            if (module_type == .cjs) {
-                                p.print("Promise.resolve(globalThis.Bun.jest(__filename))");
-                            } else {
-                                p.print("Promise.resolve(globalThis.Bun.jest(import.meta.path))");
-                            }
-                        } else if (record.kind == .require) {
-                            if (module_type == .cjs) {
-                                p.print("globalThis.Bun.jest(__filename)");
-                            } else {
-                                p.print("globalThis.Bun.jest(import.meta.path)");
-                            }
+                        if (record.kind == .dynamic) p.print("Promise.resolve(");
+
+                        p.print("globalThis.Bun.jest(");
+                        switch (module_type) {
+                            .cjs => p.print("__filename"),
+                            else => p.print("import.meta.path"),
                         }
+                        if (record.jest_run_todo) p.print(", true");
+                        p.print(")");
+
+                        if (record.kind == .dynamic) p.print(")");
+
                         return;
                     },
                     else => {},

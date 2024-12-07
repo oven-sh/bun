@@ -8957,6 +8957,7 @@ fn NewParser_(
 
             stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
             p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
+            p.import_records.items[stmt.import_record_index].jest_run_todo = path.import_tag == .bun_test_todo;
 
             if (stmt.star_name_loc) |star| {
                 const name = p.loadNameFromRef(stmt.namespace_ref);
@@ -12164,6 +12165,7 @@ fn NewParser_(
                     type,
                     embed,
                     bunBakeGraph,
+                    todo,
                 };
 
                 var has_seen_embed_true = false;
@@ -12230,6 +12232,11 @@ fn NewParser_(
                                     path.import_tag = .bake_resolve_to_ssr_graph;
                                 } else {
                                     try p.lexer.addRangeError(p.lexer.range(), "'bunBakeGraph' can only be set to 'ssr'", .{}, true);
+                                }
+                            },
+                            .todo => {
+                                if (strings.eqlComptime(string_literal_text, "true")) {
+                                    path.import_tag = .bun_test_todo;
                                 }
                             },
                         }

@@ -158,6 +158,8 @@ pub const ImportRecord = struct {
     /// Used to prevent running resolve plugins multiple times for the same path
     print_namespace_in_path: bool = false,
 
+    jest_run_todo: bool = false,
+
     wrap_with_to_esm: bool = false,
     wrap_with_to_commonjs: bool = false,
 
@@ -174,6 +176,7 @@ pub const ImportRecord = struct {
         bun,
         /// An import to 'bun:test'
         bun_test,
+        bun_test_todo,
         /// A builtin module, such as `node:fs` or `bun:sqlite`
         builtin,
         /// An import to the internal runtime

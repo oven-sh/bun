@@ -142,6 +142,8 @@ sudo -i -u buildkite-agent bash << EOF
   set -euxo pipefail
   . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
 
+  cd /var/lib/buildkite-agent/bun
+
   # Update flake lock and evaluate the environment
   nix flake update
   nix develop .#ci-${flakeTarget} -c true

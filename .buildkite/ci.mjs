@@ -1001,37 +1001,20 @@ async function getPipelineOptions() {
  * @param {Record<string, string | undefined>} [options]
  * @returns {Step}
  */
-function getCreateNixAmisStep(options = {}) {
-  return [
-    {
-      key: "create-nix-ami-x64",
-      label: `${getBuildkiteEmoji("nix")} Create Nix AMI (x64)`,
-      command: ["node", "./scripts/create-nix-amis.mjs", "--arch=x64", "--ci"].join(" "),
-      agents: {
-        queue: "build-image",
-        arch: "x64",
-      },
-      env: {
-        DEBUG: "1",
-      },
-      retry: getRetry(),
-      timeout_in_minutes: 3 * 60,
+function getCreateNixAmisStep(platform) {
+  return {
+    key: `${getImageKey(platform)}-build-image`,
+    label: `${getBuildkiteEmoji("nix")} Create Nix AMI (${platform.arch})`,
+    command: ["node", "./scripts/create-nix-amis.mjs", "--arch=" + platform.arch, "--ci"].join(" "),
+    agents: {
+      queue: "build-image",
     },
-    {
-      key: "create-nix-ami-arm64",
-      label: `${getBuildkiteEmoji("nix")} Create Nix AMI (arm64)`,
-      command: ["node", "./scripts/create-nix-amis.mjs", "--arch=arm64", "--ci"].join(" "),
-      agents: {
-        queue: "build-image",
-        arch: "arm64",
-      },
-      env: {
-        DEBUG: "1",
-      },
-      retry: getRetry(),
-      timeout_in_minutes: 3 * 60,
+    env: {
+      DEBUG: "1",
     },
-  ];
+    retry: getRetry(),
+    timeout_in_minutes: 3 * 60,
+  };
 }
 
 /**
@@ -1070,7 +1053,7 @@ async function getPipeline(options = {}) {
       key: "build-images",
       group: getBuildkiteEmoji("aws"),
       steps: [
-        ...getCreateNixAmisStep(),
+        ...getCreateNixAmisStep(Array.from(imagePlatforms.values()).filter(platform => platform.distro === "nix")),
         ...[...imagePlatforms.values()]
           .filter(platform => platform.distro !== "nix")
           .map(platform => getBuildImageStep(platform, !publishImages)),

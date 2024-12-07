@@ -438,6 +438,7 @@ const aws = {
 
     const username = getUsernameForDistro(Name);
 
+    // Only include minimal cloud-init for SSH access
     let userData = getUserData({ ...options, username });
     if (os === "windows") {
       userData = `<powershell>${userData}</powershell><powershellArguments>-ExecutionPolicy Unrestricted -NoProfile -NonInteractive</powershellArguments><persist>true</persist>`;
@@ -492,7 +493,11 @@ const aws = {
       ["instance-market-options"]: marketOptions,
     });
 
-    return aws.toMachine(instance, { ...options, username, keyPath });
+    const machine = aws.toMachine(instance, { ...options, username, keyPath });
+
+    await setupUserData(machine, options);
+
+    return machine;
   },
 
   /**
@@ -518,6 +523,29 @@ const aws = {
         ?.map(({ privatePath }) => privatePath);
 
       return { hostname: PublicIpAddress, username, identityPaths };
+    };
+
+    const waitForSsh = async () => {
+      const connectOptions = await connect();
+      const { hostname, username, identityPaths } = connectOptions;
+
+      // Try to connect until it succeeds
+      for (let i = 0; i < 30; i++) {
+        try {
+          await spawnSshSafe({
+            hostname,
+            username,
+            identityPaths,
+            command: ["true"],
+          });
+          return;
+        } catch (error) {
+          if (i === 29) {
+            throw error;
+          }
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+      }
     };
 
     const spawn = async (command, options) => {
@@ -577,6 +605,7 @@ const aws = {
       attach,
       rdp,
       snapshot,
+      waitForSsh,
       close: terminate,
       [Symbol.asyncDispose]: terminate,
     };
@@ -600,40 +629,42 @@ export function getUserData(cloudInit) {
 
   // For Windows, use PowerShell script
   if (os === "windows") {
-    const defaultConfig = getWindowsStartupScript(cloudInit);
-    if (!userData) {
-      return defaultConfig;
-    }
-    // For Windows, append PowerShell scripts
-    return `${defaultConfig}
-
-${userData}`;
+    return getWindowsStartupScript(cloudInit);
   }
 
-  // For Linux, handle cloud-init and shell scripts
+  // For Linux, just set up SSH access
+  return getCloudInit(cloudInit);
+}
+
+/**
+ * @param {MachineOptions} options
+ * @returns {Promise<Machine>}
+ */
+async function setupUserData(machine, options) {
+  const { os, userData } = options;
   if (!userData) {
-    return getCloudInit(cloudInit);
+    return;
   }
 
-  // If user data is a shell script (doesn't start with #cloud-config),
-  // use cloud-init's write_files and runcmd to run it
-  if (!userData.trim().startsWith("#cloud-config")) {
-    const defaultConfig = getCloudInit(cloudInit);
-    return `${defaultConfig}
-write_files:
-  - path: /tmp/user-script.sh
-    permissions: '0755'
-    content: |
-${userData
-  .split("\n")
-  .map(line => `      ${line}`)
-  .join("\n")}
-runcmd:
-  - /tmp/user-script.sh`;
-  }
+  // Write user data to a temporary file
+  const tmpFile = mkdtemp("user-data-", os === "windows" ? "setup.ps1" : "setup.sh");
+  await writeFile(tmpFile, userData);
 
-  // If user data is cloud-init, use it directly
-  return userData;
+  try {
+    // Upload the script
+    const remotePath = os === "windows" ? "C:\\Windows\\Temp\\setup.ps1" : "/tmp/setup.sh";
+    await machine.upload(tmpFile, remotePath);
+
+    // Execute the script
+    if (os === "windows") {
+      await machine.spawnSafe(["powershell", remotePath], { stdio: "inherit" });
+    } else {
+      await machine.spawnSafe(["bash", remotePath], { stdio: "inherit" });
+    }
+  } finally {
+    // Clean up the temporary file
+    rm(tmpFile);
+  }
 }
 
 /**

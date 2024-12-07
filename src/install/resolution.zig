@@ -10,6 +10,9 @@ const strings = @import("../string_immutable.zig");
 const VersionedURL = @import("./versioned_url.zig").VersionedURL;
 const bun = @import("root").bun;
 const Path = bun.path;
+const JSON = bun.JSON;
+const OOM = bun.OOM;
+const Dependency = bun.install.Dependency;
 
 pub const Resolution = extern struct {
     tag: Tag = .uninitialized,
@@ -30,6 +33,70 @@ pub const Resolution = extern struct {
 
     pub fn canEnqueueInstallTask(this: *const Resolution) bool {
         return this.tag.canEnqueueInstallTask();
+    }
+
+    const FromTextLockfileError = OOM || error{
+        UnexpectedResolution,
+        InvalidSemver,
+    };
+
+    pub fn fromTextLockfile(res_str: string, string_buf: *String.Buf) FromTextLockfileError!Resolution {
+        if (strings.hasPrefixComptime(res_str, "root:")) {
+            return Resolution.init(.{ .root = {} });
+        }
+
+        if (strings.withoutPrefixIfPossibleComptime(res_str, "link:")) |link| {
+            return Resolution.init(.{ .symlink = try string_buf.append(link) });
+        }
+
+        if (strings.withoutPrefixIfPossibleComptime(res_str, "workspace:")) |workspace| {
+            return Resolution.init(.{ .workspace = try string_buf.append(workspace) });
+        }
+
+        return switch (Dependency.Version.Tag.infer(res_str)) {
+            .folder => Resolution.init(.{ .folder = try string_buf.append(res_str) }),
+            .git => Resolution.init(.{ .git = try Repository.parseAppendGit(res_str, string_buf) }),
+            .github => Resolution.init(.{ .gitlab = try Repository.parseAppendGithub(res_str, string_buf) }),
+            .tarball => {
+                if (Dependency.isRemoteTarball(res_str)) {
+                    return Resolution.init(.{ .remote_tarball = try string_buf.append(res_str) });
+                }
+
+                return Resolution.init(.{ .local_tarball = try string_buf.append(res_str) });
+            },
+            .npm => {
+                const version_literal = try string_buf.append(res_str);
+                const parsed = Semver.Version.parse(version_literal.sliced(string_buf.bytes.items));
+
+                if (!parsed.valid) {
+                    return error.UnexpectedResolution;
+                }
+
+                if (parsed.version.major == null or parsed.version.minor == null or parsed.version.patch == null) {
+                    return error.UnexpectedResolution;
+                }
+
+                return .{
+                    .tag = .npm,
+                    .value = .{
+                        .npm = .{
+                            .version = parsed.version.min(),
+
+                            // will fill this later
+                            .url = .{},
+                        },
+                    },
+                };
+            },
+
+            // covered above
+            .workspace => error.UnexpectedResolution,
+            .symlink => error.UnexpectedResolution,
+
+            // should not happen
+            .dist_tag => error.UnexpectedResolution,
+            .uninitialized => error.UnexpectedResolution,
+        };
     }
 
     pub fn order(

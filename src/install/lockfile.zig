@@ -897,8 +897,8 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
                             const len = switch (exact_versions) {
-                                false => std.fmt.count("^{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}),
-                                true => std.fmt.count("{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}),
+                                false => std.fmt.count("^{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}),
+                                true => std.fmt.count("{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}),
                             };
                             if (len >= String.max_inline_len) {
                                 string_builder.cap += len;
@@ -928,8 +928,8 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
                             const buf = switch (exact_versions) {
-                                false => std.fmt.bufPrint(&temp_buf, "^{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}) catch break,
-                                true => std.fmt.bufPrint(&temp_buf, "{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}) catch break,
+                                false => std.fmt.bufPrint(&temp_buf, "^{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}) catch break,
+                                true => std.fmt.bufPrint(&temp_buf, "{}", .{res.value.npm.version.fmt(old.buffers.string_bytes.items)}) catch break,
                             };
                             const external_version = string_builder.append(ExternalString, buf);
                             const sliced = external_version.value.sliced(old.buffers.string_bytes.items);
@@ -2140,7 +2140,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
         assert(FileSystem.instance_loaded);
     }
 
-    var timer = std.time.Timer.start() catch unreachable;
+    const timer = std.time.Timer.start() catch unreachable;
     const bytes = if (save_format == .text)
         TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this) catch |err| {
             switch (err) {
@@ -2161,7 +2161,8 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
         break :bytes bytes.items;
     };
     defer bun.default_allocator.free(bytes);
-    std.debug.print("time to write {s}: {}\n", .{ @tagName(save_format), bun.fmt.fmtDuration(timer.read()) });
+    _ = timer;
+    // std.debug.print("time to write {s}: {}\n", .{ @tagName(save_format), bun.fmt.fmtDuration(timer.read()) });
 
     var tmpname_buf: [512]u8 = undefined;
     var base64_bytes: [8]u8 = undefined;

@@ -106,6 +106,30 @@ pub const String = extern struct {
                 .hash = hash,
             };
         }
+
+        pub fn appendExternalWithHash(this: *Buf, str: string, hash: u64) OOM!ExternalString {
+            if (canInline(str)) {
+                return .{
+                    .value = initInline(str),
+                    .hash = hash,
+                };
+            }
+
+            const entry = try this.pool.getOrPut(hash);
+            if (entry.found_existing) {
+                return .{
+                    .value = entry.value_ptr.*,
+                    .hash = hash,
+                };
+            }
+
+            const new = try String.initAppend(&this.bytes, str);
+            entry.value_ptr.* = new;
+            return .{
+                .value = new,
+                .hash = hash,
+            };
+        }
     };
 
     pub const Tag = enum {

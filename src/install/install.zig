@@ -11178,7 +11178,7 @@ pub const PackageManager = struct {
             },
             .name_and_version => brk: {
                 const pkg_maybe_version_to_patch = argument;
-                const name, const version = Dependency.splitNameAndVersion(pkg_maybe_version_to_patch);
+                const name, const version = Dependency.splitNameAndMaybeVersion(pkg_maybe_version_to_patch);
                 const pkg_id, const folder = pkgInfoForNameAndVersion(manager.lockfile, &iterator, pkg_maybe_version_to_patch, name, version);
 
                 const pkg = manager.lockfile.packages.get(pkg_id);
@@ -11573,7 +11573,7 @@ pub const PackageManager = struct {
                 break :result .{ cache_dir, cache_dir_subpath, changes_dir, actual_package };
             },
             .name_and_version => brk: {
-                const name, const version = Dependency.splitNameAndVersion(argument);
+                const name, const version = Dependency.splitNameAndMaybeVersion(argument);
                 const pkg_id, const node_modules = pkgInfoForNameAndVersion(lockfile, &iterator, argument, name, version);
 
                 const changes_dir = bun.path.joinZBuf(pathbuf[0..], &[_][]const u8{
@@ -14016,7 +14016,8 @@ pub const PackageManager = struct {
         var needs_new_lockfile = load_result != .ok or
             (load_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.update_requests.len > 0);
 
-        manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or (load_result == .ok and load_result.ok.was_migrated);
+        manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or
+            (load_result == .ok and (load_result.ok.was_migrated or (load_result.ok.format == .binary and manager.options.save_text_lockfile)));
 
         // this defaults to false
         // but we force allowing updates to the lockfile when you do bun add

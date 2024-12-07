@@ -996,7 +996,7 @@ function getCreateNixAmisStep(platform) {
   return {
     key: `${getImageKey(platform)}-build-image`,
     label: `${getBuildkiteEmoji("nix")} Create Nix AMI (${platform.arch})`,
-    command: ["node", "./scripts/create-nix-amis.mjs", "--arch=" + platform.arch, "--ci"].join(" "),
+    command: ["node", "./scripts/create-nix-amis.mjs", "--arch=" + platform.arch, "--cloud=aws"].join(" "),
     agents: {
       queue: "build-image",
     },

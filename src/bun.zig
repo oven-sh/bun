@@ -11,7 +11,7 @@ const bun = @This();
 
 pub const Environment = @import("env.zig");
 
-pub const use_mimalloc = !Environment.isTest;
+pub const use_mimalloc = true;
 
 pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
@@ -115,10 +115,10 @@ pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
 pub const bun_js = @import("./bun_js.zig");
 
-pub const generated = @import("bun.js/bindings/GeneratedBindings.zig");
-
+/// All functions and interfaces provided from Bun's `bindgen` utility.
+pub const gen = @import("bun.js/bindings/GeneratedBindings.zig");
 comptime {
-    _ = &generated;
+    _ = &gen; // reference bindings
 }
 
 /// Copied from Zig std.trait

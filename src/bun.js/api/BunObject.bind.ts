@@ -37,13 +37,3 @@ fn({
   },
   ret: t.usize,
 });
-
-fn({
-  name: "add",
-  args: {
-    global: t.globalObject,
-    a: t.usize.enforceRange(32, 64),
-    b: t.usize.default(1),
-  },
-  ret: t.usize,
-});

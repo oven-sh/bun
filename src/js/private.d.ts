@@ -173,3 +173,4 @@ declare function $newZigFunction<T = (...args: any) => any>(
   symbol: string,
   argCount: number,
 ): T;
+declare function $bindgenFn<T ex>(

@@ -16,6 +16,7 @@ import {
   snake,
   src,
   str,
+  Struct,
   type CAbiType,
   type DictionaryField,
   type ReturnStrategy,
@@ -24,6 +25,9 @@ import {
   typeHashToNamespace,
   typeHashToReachableType,
   zid,
+  ArgStrategyChildItem,
+  inspect,
+  pascal,
 } from "./bindgen-lib-internal";
 import assert from "node:assert";
 import { argParse, writeIfNotChanged } from "./helpers";
@@ -36,16 +40,18 @@ if (!codegenRoot) {
   process.exit(1);
 }
 
-function resolveVariantStrategies(variant: Variant) {
+function resolveVariantStrategies(vari: Variant, name: string) {
   let argIndex = 0;
-  for (const arg of variant.args) {
-    if (arg.type.isVirtualArgument() && variant.globalObjectArg === undefined) {
-      variant.globalObjectArg = argIndex;
+  let communicationStruct: Struct | undefined;
+  for (const arg of vari.args) {
+    if (arg.type.isVirtualArgument() && vari.globalObjectArg === undefined) {
+      vari.globalObjectArg = argIndex;
     }
     argIndex += 1;
 
     // If `extern struct` can represent this type, that is the simplest way to cross the C-ABI boundary.
-    const abiType = arg.type.canDirectlyMapToCAbi();
+    const isNullable = (arg.type.flags.optional && !("default" in arg.type.flags)) || arg.type.flags.nullable;
+    const abiType = !isNullable && arg.type.canDirectlyMapToCAbi();
     if (abiType) {
       arg.loweringStrategy = {
         type: cAbiTypeInfo(abiType)[0] > 8 ? "c-abi-pointer" : "c-abi-value",
@@ -54,30 +60,69 @@ function resolveVariantStrategies(variant: Variant) {
       continue;
     }
 
-    // TODO: other strategies
-    throw new Error(
-      `TODO: resolve argument strategy for ${Bun.inspect(arg.type, {
-        colors: Bun.enableANSIColors,
-      })}`,
-    );
-  }
-
-  if (variant.globalObjectArg === undefined) {
-    variant.globalObjectArg = "hidden";
-  }
-
-  if (variant.ret.kind === "any") {
-    variant.returnStrategy = { type: "jsvalue" };
-    return;
-  }
-  const abiType = variant.ret.canDirectlyMapToCAbi();
-  if (abiType) {
-    variant.returnStrategy = {
-      type: "basic-out-param",
-      abiType,
+    communicationStruct ??= new Struct();
+    const prefix = `${arg.name}`;
+    const children = isNullable
+      ? resolveNullableArgumentStrategy(arg.type, prefix, communicationStruct)
+      : resolveComplexArgumentStrategy(arg.type, prefix, communicationStruct);
+    arg.loweringStrategy = {
+      type: "uses-communication-buffer",
+      prefix,
+      children,
     };
-    return;
   }
+
+  if (vari.globalObjectArg === undefined) {
+    vari.globalObjectArg = "hidden";
+  }
+
+  return_strategy: {
+    if (vari.ret.kind === "any") {
+      vari.returnStrategy = { type: "jsvalue" };
+      break return_strategy;
+    }
+    const abiType = vari.ret.canDirectlyMapToCAbi();
+    if (abiType) {
+      vari.returnStrategy = {
+        type: "basic-out-param",
+        abiType,
+      };
+      break return_strategy;
+    }
+  }
+
+  communicationStruct?.reorderForSmallestSize();
+  communicationStruct?.assignGeneratedName(name);
+  vari.communicationStruct = communicationStruct;
+}
+
+function resolveNullableArgumentStrategy(
+  type: TypeImpl,
+  prefix: string,
+  communicationStruct: Struct,
+): ArgStrategyChildItem[] {
+  assert((type.flags.optional && !("default" in type.flags)) || type.flags.nullable);
+  communicationStruct.add(`${prefix}Set`, "bool");
+  return resolveComplexArgumentStrategy(type, `${prefix}Value`, communicationStruct);
+}
+
+function resolveComplexArgumentStrategy(
+  type: TypeImpl,
+  prefix: string,
+  communicationStruct: Struct,
+): ArgStrategyChildItem[] {
+  const abiType = type.canDirectlyMapToCAbi();
+  if (abiType) {
+    communicationStruct.add(prefix, abiType);
+    return [
+      {
+        type: "c-abi-compatible",
+        abiType,
+      },
+    ];
+  }
+
+  throw new Error(`TODO: resolveComplexArgumentStrategy for ${type.kind}`);
 }
 
 function emitCppCallToVariant(variant: Variant, dispatchFunctionName: string) {
@@ -89,41 +134,75 @@ function emitCppCallToVariant(variant: Variant, dispatchFunctionName: string) {
     cpp.line(`    return JSC::throwVMError(global, throwScope, createNotEnoughArgumentsError(global));`);
     cpp.line(`}`);
   }
+  const communicationStruct = variant.communicationStruct;
+  if (communicationStruct) {
+    cpp.line(`${communicationStruct.name()} buf;`);
+    communicationStruct.emitCpp(cppInternal, communicationStruct.name());
+  }
 
   let i = 0;
   for (const arg of variant.args) {
     const type = arg.type;
-    if (!type.isVirtualArgument()) {
-      const get = variant.minRequiredArgs > i ? "uncheckedArgument" : "argument";
-      cpp.line(`JSC::EnsureStillAliveScope arg${i} = callFrame->${get}(${i});`);
+    if (type.isVirtualArgument()) continue;
 
-      const storageLocation = "arg" + cap(arg.name);
-      const jsValueRef = `arg${i}.value()`;
+    const strategy = arg.loweringStrategy!;
+    assert(strategy);
 
-      const isOptional = type.flags.optional || "default" in type.flags;
-      if (isOptional) {
+    const get = variant.minRequiredArgs > i ? "uncheckedArgument" : "argument";
+    cpp.line(`JSC::EnsureStillAliveScope arg${i} = callFrame->${get}(${i});`);
+
+    let storageLocation;
+    let needDeclare = true;
+    switch (strategy.type) {
+      case "c-abi-pointer":
+      case "c-abi-value":
+        storageLocation = "arg" + cap(arg.name);
+        break;
+      case "uses-communication-buffer":
+        storageLocation = `buf.${strategy.prefix}`;
+        needDeclare = false;
+        break;
+      default:
+        throw new Error(`TODO: emitCppCallToVariant for ${inspect(strategy)}`);
+    }
+
+    const jsValueRef = `arg${i}.value()`;
+
+    /** If JavaScript may pass null or undefined */
+    const isOptionalToUser = type.flags.nullable || type.flags.optional || "default" in type.flags;
+    /** If the final representation may include null */
+    const isNullable = type.flags.nullable || (type.flags.optional && !("default" in type.flags));
+
+    if (isOptionalToUser) {
+      if (needDeclare) {
         cpp.line(`${type.cppName()} ${storageLocation};`);
+      }
+      if (isNullable) {
+        assert(strategy.type === "uses-communication-buffer");
+        cpp.line(`if ((${storageLocation}Set = !${jsValueRef}.isUndefinedOrNull())) {`);
+        storageLocation = `${storageLocation}Value`;
+      } else {
         cpp.line(`if (!${jsValueRef}.isUndefinedOrNull()) {`);
-        cpp.indent();
-        emitConvertValue(storageLocation, arg.type, jsValueRef, "assign");
-        cpp.dedent();
+      }
+      cpp.indent();
+      emitConvertValue(storageLocation, arg.type, jsValueRef, "assign");
+      cpp.dedent();
+      if ("default" in type.flags) {
         cpp.line(`} else {`);
         cpp.indent();
-        if ("default" in type.flags) {
-          cpp.add(`${storageLocation} = `);
-          type.emitCppDefaultValue(cpp);
-          cpp.line(";");
-        } else {
-          assert(type.flags.optional);
-        }
+        cpp.add(`${storageLocation} = `);
+        type.emitCppDefaultValue(cpp);
+        cpp.line(";");
         cpp.dedent();
-        cpp.line(`}`);
       } else {
-        emitConvertValue(storageLocation, arg.type, jsValueRef, "declare");
+        assert(isNullable);
       }
-
-      i += 1;
+      cpp.line(`}`);
+    } else {
+      emitConvertValue(storageLocation, arg.type, jsValueRef, needDeclare ? "declare" : "assign");
     }
+
+    i += 1;
   }
 
   const returnStrategy = variant.returnStrategy!;
@@ -136,9 +215,7 @@ function emitCppCallToVariant(variant: Variant, dispatchFunctionName: string) {
       cpp.line(`if (!${dispatchFunctionName}(`);
       break;
     default:
-      throw new Error(
-        `TODO: emitCppCallToVariant for ${Bun.inspect(returnStrategy, { colors: Bun.enableANSIColors })}`,
-      );
+      throw new Error(`TODO: emitCppCallToVariant for ${inspect(returnStrategy)}`);
   }
 
   let emittedFirstArgument = false;
@@ -160,31 +237,40 @@ function emitCppCallToVariant(variant: Variant, dispatchFunctionName: string) {
   }
 
   for (const arg of variant.args) {
-    addCommaAfterArgument();
     i += 1;
     if (arg.type.isVirtualArgument()) {
       switch (arg.type.kind) {
         case "zigVirtualMachine":
         case "globalObject":
+          addCommaAfterArgument();
           cpp.add("global");
           break;
         default:
-          throw new Error(`TODO: emitCppCallToVariant for ${Bun.inspect(arg.type, { colors: Bun.enableANSIColors })}`);
+          throw new Error(`TODO: emitCppCallToVariant for ${inspect(arg.type)}`);
       }
     } else {
       const storageLocation = `arg${cap(arg.name)}`;
       const strategy = arg.loweringStrategy!;
       switch (strategy.type) {
         case "c-abi-pointer":
+          addCommaAfterArgument();
           cpp.add(`&${storageLocation}`);
           break;
         case "c-abi-value":
+          addCommaAfterArgument();
           cpp.add(`${storageLocation}`);
           break;
+        case "uses-communication-buffer":
+          break;
         default:
-          throw new Error(`TODO: emitCppCallToVariant for ${Bun.inspect(strategy, { colors: Bun.enableANSIColors })}`);
+          throw new Error(`TODO: emitCppCallToVariant for ${inspect(strategy)}`);
       }
     }
+  }
+
+  if (communicationStruct) {
+    addCommaAfterArgument();
+    cpp.add("&buf");
   }
 
   switch (returnStrategy.type) {
@@ -208,9 +294,7 @@ function emitCppCallToVariant(variant: Variant, dispatchFunctionName: string) {
       cpp.line(`return JSC::JSValue::encode(WebCore::toJS<${simpleType}>(*global, out));`);
       break;
     default:
-      throw new Error(
-        `TODO: emitCppCallToVariant for ${Bun.inspect(returnStrategy, { colors: Bun.enableANSIColors })}`,
-      );
+      throw new Error(`TODO: emitCppCallToVariant for ${inspect(returnStrategy)}`);
   }
 }
 
@@ -234,6 +318,8 @@ function getSimpleIdlType(type: TypeImpl): string | undefined {
   if (!entry) return;
 
   if (type.flags.range) {
+    // TODO: when enforceRange is used, a custom adaptor should be used instead
+    // of chaining both `WebCore::IDLEnforceRangeAdaptor` and custom logic.
     const rangeAdaptor = {
       "clamp": "WebCore::IDLClampAdaptor",
       "enforce": "WebCore::IDLEnforceRangeAdaptor",
@@ -485,7 +571,46 @@ function returnStrategyZigType(strategy: ReturnStrategy): string {
   }
 }
 
-// BEGIN
+function emitNullableZigDecoder(w: CodeWriter, prefix: string, type: TypeImpl, children: ArgStrategyChildItem[]) {
+  assert(children.length > 0);
+  const indent = children[0].type !== "c-abi-compatible";
+  w.add(`if (${prefix}_set)`);
+  if (indent) {
+    w.indent();
+  } else {
+    w.add(` `);
+  }
+  emitComplexZigDecoder(w, prefix + "_value", type, children);
+  if (indent) {
+    w.line();
+    w.dedent();
+  } else {
+    w.add(` `);
+  }
+  w.add(`else`);
+  if (indent) {
+    w.indent();
+  } else {
+    w.add(` `);
+  }
+  w.add(`null`);
+  if (indent) w.dedent();
+}
+
+function emitComplexZigDecoder(w: CodeWriter, prefix: string, type: TypeImpl, children: ArgStrategyChildItem[]) {
+  assert(children.length > 0);
+  if (children[0].type === "c-abi-compatible") {
+    w.add(`${prefix}`);
+    return;
+  }
+
+  switch (type.kind) {
+    default:
+      throw new Error(`TODO: emitComplexZigDecoder for Type ${type.kind}`);
+  }
+}
+
+// BEGIN MAIN CODE GENERATION
 
 // Search for all .bind.ts files
 const unsortedFiles = new Bun.Glob("**/*.bind.ts").scanSync({
@@ -517,6 +642,7 @@ for (const file of [...unsortedFiles].sort()) {
 const zig = new CodeWriter();
 const zigInternal = new CodeWriter();
 const cpp = new CodeWriter();
+const cppInternal = new CodeWriter();
 const headers = new Set<string>();
 
 zig.line('const bun = @import("root").bun;');
@@ -534,6 +660,7 @@ static String rangeErrorString(T value, T min, T max)
 {
     return makeString("Value "_s, value, " is outside the range ["_s, min, ", "_s, max, ']');
 }
+
 `;
 
 headers.add("root.h");
@@ -568,8 +695,6 @@ for (const [filename, { functions, typedefs }] of files) {
     typeHashToNamespace.set(td.type.hash(), varName);
   }
 
-  zig.line(`const import_${varName} = @import(${str(path.relative(src + "/bun.js", filename))});`);
-
   for (const fn of functions) {
     for (const vari of fn.variants) {
       for (const arg of vari.args) {
@@ -578,7 +703,6 @@ for (const [filename, { functions, typedefs }] of files) {
     }
   }
 }
-zig.line("");
 
 for (const type of typeHashToReachableType.values()) {
   emitCppStruct(type);
@@ -594,6 +718,9 @@ for (const type of typeHashToReachableType.values()) {
 for (const [filename, { functions, typedefs }] of files) {
   const namespaceVar = fileMap.get(filename)!;
   assert(namespaceVar);
+  zigInternal.line(`const import_${namespaceVar} = @import(${str(path.relative(src + "/bun.js", filename))});`);
+
+  zig.line(`/// Generated for src/${filename}`);
   zig.line(`pub const ${namespaceVar} = struct {`);
   zig.indent();
 
@@ -603,7 +730,10 @@ for (const [filename, { functions, typedefs }] of files) {
     // C++ forward declarations
     let variNum = 1;
     for (const vari of fn.variants) {
-      resolveVariantStrategies(vari);
+      resolveVariantStrategies(
+        vari,
+        `${pascal(namespaceVar)}${pascal(fn.name)}Arguments${fn.variants.length > 1 ? variNum : ""}`,
+      );
       const dispatchName = extDispatchVariant(namespaceVar, fn.name, variNum);
 
       const args: string[] = [];
@@ -622,11 +752,15 @@ for (const [filename, { functions, typedefs }] of files) {
           case "c-abi-value":
             args.push(arg.type.cppName());
             break;
+          case "uses-communication-buffer":
+            break;
           default:
-            throw new Error(
-              `TODO: C++ dispatch function for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
-            );
+            throw new Error(`TODO: C++ dispatch function for ${inspect(strategy)}`);
         }
+      }
+      const { communicationStruct } = vari;
+      if (communicationStruct) {
+        args.push(`${communicationStruct.name()}*`);
       }
       const returnStrategy = vari.returnStrategy!;
       if (returnStrategy.type === "basic-out-param") {
@@ -666,6 +800,11 @@ for (const [filename, { functions, typedefs }] of files) {
       const dispatchName = extDispatchVariant(namespaceVar, fn.name, variNum);
       const args: string[] = [];
       const returnStrategy = vari.returnStrategy!;
+      const { communicationStruct } = vari;
+      if (communicationStruct) {
+        zigInternal.add(`const ${communicationStruct.name()} = `);
+        communicationStruct.emitZig(zigInternal, "with-semi");
+      }
 
       assert(vari.globalObjectArg !== undefined);
 
@@ -693,13 +832,17 @@ for (const [filename, { functions, typedefs }] of files) {
           case "c-abi-value":
             args.push(`${argName}: ${zigTypeName(arg.type)}`);
             break;
+          case "uses-communication-buffer":
+            break;
           default:
-            throw new Error(
-              `TODO: zig dispatch function for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
-            );
+            throw new Error(`TODO: zig dispatch function for ${inspect(strategy)}`);
         }
       }
       assert(globalObjectArg, `globalObjectArg not found from ${vari.globalObjectArg}`);
+
+      if (communicationStruct) {
+        args.push(`buf: *${communicationStruct.name()}`);
+      }
 
       if (returnStrategy.type === "basic-out-param") {
         args.push(`out: *${zigTypeName(vari.ret)}`);
@@ -749,10 +892,16 @@ for (const [filename, { functions, typedefs }] of files) {
           case "c-abi-value":
             zigInternal.line(`${argName},`);
             break;
+          case "uses-communication-buffer":
+            const prefix = `buf.${snake(arg.name)}`;
+            const type = arg.type;
+            const isNullable = (type.flags.optional && !("default" in type.flags)) || type.flags.nullable;
+            if (isNullable) emitNullableZigDecoder(zigInternal, prefix, type, strategy.children);
+            else emitComplexZigDecoder(zigInternal, prefix, type, strategy.children);
+            zigInternal.line(`,`);
+            break;
           default:
-            throw new Error(
-              `TODO: zig dispatch function for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
-            );
+            throw new Error(`TODO: zig dispatch function for ${inspect(strategy satisfies never)}`);
         }
       }
       zigInternal.dedent();
@@ -761,7 +910,7 @@ for (const [filename, { functions, typedefs }] of files) {
           zigInternal.line(`));`);
           break;
         case "basic-out-param":
-          zigInternal.line(`)) catch |err| switch(err) {`);
+          zigInternal.line(`)) catch |err| switch (err) {`);
           zigInternal.line(`    error.JSError => return false,`);
           zigInternal.line(`    error.OutOfMemory => ${globalObjectArg}.throwOutOfMemory() catch return false,`);
           zigInternal.line(`};`);
@@ -782,7 +931,7 @@ for (const [filename, { functions, typedefs }] of files) {
     const minArgCount = fn.variants.reduce((acc, vari) => Math.min(acc, vari.args.length), Number.MAX_SAFE_INTEGER);
     zig.line(`pub fn ${wrapperName}(global: *JSC.JSGlobalObject) JSC.JSValue {`);
     zig.line(
-      `    return JSC.NewRuntimeFunction(global, JSC.ZigString.static(${str(fn.name)}), ${minArgCount}, &js${cap(fn.name)}, false, false);`,
+      `    return JSC.NewRuntimeFunction(global, JSC.ZigString.static(${str(fn.name)}), ${minArgCount}, js${cap(fn.name)}, false, false, null);`,
     );
     zig.line(`}`);
   }
@@ -796,20 +945,23 @@ for (const [filename, { functions, typedefs }] of files) {
 
   zig.dedent();
   zig.line(`};`);
+  zig.line();
 }
 
 zigInternal.dedent();
 zigInternal.line("};");
 zigInternal.line();
 zigInternal.line("comptime {");
-zigInternal.line("    for (@typeInfo(binding_internals).Struct.decls) |decl| {");
-zigInternal.line("        _ = &@field(binding_internals, decl.name);");
+zigInternal.line(`    if (bun.Environment.export_cpp_apis) {`);
+zigInternal.line("        for (@typeInfo(binding_internals).Struct.decls) |decl| {");
+zigInternal.line("            _ = &@field(binding_internals, decl.name);");
+zigInternal.line("        }");
 zigInternal.line("    }");
 zigInternal.line("}");
 
 writeIfNotChanged(
   path.join(codegenRoot, "GeneratedBindings.cpp"),
-  [...headers].map(name => `#include ${str(name)}\n`).join("") + "\n" + cpp.buffer,
+  [...headers].map(name => `#include ${str(name)}\n`).join("") + "\n" + cppInternal.buffer + "\n" + cpp.buffer,
 );
 writeIfNotChanged(path.join(src, "bun.js/bindings/GeneratedBindings.zig"), zig.buffer + zigInternal.buffer);
 

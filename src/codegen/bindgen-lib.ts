@@ -205,6 +205,10 @@ type FuncOptions = FuncMetadata &
 interface FuncMetadata {
   name: string;
   /**
+   * The namespace where the implementation is, by default it's in the root.
+   */
+  implNamespace?: string;
+  /**
    * TODO:
    * Automatically generate code to expose this function on a well-known object
    */

@@ -32,6 +32,11 @@ export const snake = (s: string) =>
     .slice(1)
     .replace(/([A-Z])/g, "_$1")
     .toLowerCase();
+/** Camel Case */
+export const camel = (s: string) =>
+  s[0].toLowerCase() + s.slice(1).replace(/_(\w)?/g, (_, letter) => letter?.toUpperCase() ?? "");
+/** Pascal Case */
+export const pascal = (s: string) => cap(camel(s));
 
 // Return symbol names of extern values (must be equivalent between C++ and Zig)
 
@@ -405,7 +410,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "i16":
       case "i32":
       case "i64":
-        const range = cAbiIntegerLimits(this.kind);
+        const range = this.flags.range?.slice(1) ?? cAbiIntegerLimits(this.kind);
         if (typeof value === "number") {
           if (value % 1 !== 0) {
             throw new Error(`Expected integer, got ${inspect(value)}`);
@@ -416,11 +421,11 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
             );
           }
           if (value < Number(range[0]) || value > Number(range[1])) {
-            throw new Error(`Expected integer in range ${range}, got ${inspect(value)}`);
+            throw new Error(`Expected integer in range [${range[0]}, ${range[1]}], got ${inspect(value)}`);
           }
         } else if (typeof value === "bigint") {
           if (value < BigInt(range[0]) || value > BigInt(range[1])) {
-            throw new Error(`Expected integer in range ${range}, got ${inspect(value)}`);
+            throw new Error(`Expected integer in range [${range[0]}, ${range[1]}], got ${inspect(value)}`);
           }
         } else {
           throw new Error(`Expected integer, got ${inspect(value)}`);
@@ -560,7 +565,7 @@ function cAbiIntegerLimits(type: CAbiType) {
   }
 }
 
-function inspect(value: any) {
+export function inspect(value: any) {
   return Bun.inspect(value, { colors: Bun.enableANSIColors });
 }
 
@@ -614,8 +619,10 @@ export interface Variant {
   args: Arg[];
   ret: TypeImpl;
   returnStrategy?: ReturnStrategy;
+  argStruct?: Struct;
   globalObjectArg?: number | "hidden";
   minRequiredArgs: number;
+  communicationStruct?: Struct;
 }
 
 export interface Arg {
@@ -625,9 +632,43 @@ export interface Arg {
   zigMappedName?: string;
 }
 
-/**  */
-export type ArgStrategy = { type: "c-abi-pointer"; abiType: CAbiType } | { type: "c-abi-value"; abiType: CAbiType };
+/**
+ * The strategy for moving arguments over the ABI boundary are computed before
+ * any code is generated so that the proper definitions can be easily made,
+ * while allow new special cases to be added.
+ */
+export type ArgStrategy =
+  // The argument is communicated as a C parameter
+  | { type: "c-abi-pointer"; abiType: CAbiType }
+  // The argument is communicated as a C parameter
+  | { type: "c-abi-value"; abiType: CAbiType }
+  // The data is added as a field on `.communicationStruct`
+  | {
+      type: "uses-communication-buffer";
+      /**
+       * Unique prefix for fields. For example, moving an optional over the ABI
+       * boundary uses two fields, `bool {prefix}_set` and `T {prefix}_value`.
+       */
+      prefix: string;
+      /**
+       * For compound complex types, such as `?union(enum) { a: u32, b:
+       * bun.String }`, the child item is assigned the prefix
+       * `{prefix_of_optional}_value`. The interpretation of this array depends
+       * on `arg.type.kind`.
+       */
+      children: ArgStrategyChildItem[];
+    };
 
+export type ArgStrategyChildItem =
+  | {
+      type: "c-abi-compatible";
+      abiType: CAbiType;
+    }
+  | {
+      type: "uses-communication-buffer";
+      prefix: string;
+      children: ArgStrategyChildItem[];
+    };
 /**
  * In addition to moving a payload over, an additional bit of information
  * crosses the ABI boundary indicating if the function threw an exception.
@@ -821,7 +862,7 @@ function alignForward(size: number, alignment: number) {
   return (size + alignment - 1) & ~(alignment - 1);
 }
 
-class Struct {
+export class Struct {
   fields: StructField[] = [];
   #hash?: string;
   #name?: string;
@@ -885,6 +926,11 @@ class Struct {
     if (existing && existing.#name) name = existing.#name;
     this.#name = name;
     if (existing) existing.#name = name;
+  }
+
+  assignGeneratedName(name: string) {
+    if (this.#name) return;
+    this.assignName(name);
   }
 
   add(name: string, cType: CAbiType) {

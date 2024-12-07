@@ -20,20 +20,20 @@ this one:
 Given a file implementing a simple function, such as `add`
 
 ```zig#src/bun.js/math.zig
-pub fn add(global: *JSC.JSGlobalObject, a: i32, b: i32) !u32 {
-    return std.math.add(u32, a, b) catch {
+pub fn add(global: *JSC.JSGlobalObject, a: i32, b: i32) !i32 {
+    return std.math.add(i32, a, b) catch {
         // Binding functions can return `error.OutOfMemory` and `error.JSError`.
         // Others like `error.Overflow` from `std.math.add` must be converted.
         // Remember to be descriptive.
-        global.throwPretty("Integer overflow while adding", .{});
-    }
+        return global.throwPretty("Integer overflow while adding", .{});
+    };
 }
 
 const gen = bun.gen.math; // "math" being this file's basename
 
-const bun = @import("root").bun;
-const JSCC = bun.JSC;
 const std = @import("std");
+const bun = @import("root").bun;
+const JSC = bun.JSC;
 ```
 
 Then describe the API schema using a `.bind.ts` function. The binding file goes next to the Zig file.

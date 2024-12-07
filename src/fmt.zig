@@ -1717,27 +1717,16 @@ fn escapePowershellImpl(str: []const u8, comptime f: []const u8, _: std.fmt.Form
     try writer.writeAll(remain);
 }
 
-pub const fmt_js_test_bindings = struct {
-    const Formatter = enum {
-        fmtJavaScript,
-        escapePowershell,
-    };
+pub const js_bindings = struct {
+    const gen = bun.gen.fmt;
 
     /// Internal function for testing in highlighter.test.ts
-    pub fn jsFunctionStringFormatter(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) bun.JSError!bun.JSC.JSValue {
-        const args = callframe.arguments_old(2);
-        if (args.len < 2) {
-            return globalThis.throwNotEnoughArguments("code", 1, 0);
-        }
-
-        const code = try args.ptr[0].toSliceOrNull(globalThis);
-        defer code.deinit();
+    pub fn formatString(global: *bun.JSC.JSGlobalObject, code: bun.String, formatter_id: gen.Formatter) bun.JSError!bun.JSC.JSValue {
 
         var buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
 
-        const formatter_id: Formatter = @enumFromInt(args.ptr[1].toInt32());
         switch (formatter_id) {
             .fmtJavaScript => {
                 const formatter = bun.fmt.fmtJavaScript(code.slice(), .{
@@ -1745,23 +1734,23 @@ pub const fmt_js_test_bindings = struct {
                     .check_for_unhighlighted_write = false,
                 });
                 std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
-                    return globalThis.throwError(err, "Error formatting");
+                    return global.throwError(err, "while formatting");
                 };
             },
             .escapePowershell => {
                 std.fmt.format(writer.writer(), "{}", .{escapePowershell(code.slice())}) catch |err| {
-                    return globalThis.throwError(err, "Error formatting");
+                    return global.throwError(err, "while formatting");
                 };
             },
         }
 
         writer.flush() catch |err| {
-            return globalThis.throwError(err, "Error formatting");
+            return global.throwError(err, "while formatting");
         };
 
         var str = bun.String.createUTF8(buffer.list.items);
         defer str.deref();
-        return str.toJS(globalThis);
+        return str.toJS(global);
     }
 };
 

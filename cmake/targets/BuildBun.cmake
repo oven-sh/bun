@@ -334,7 +334,7 @@ register_command(
     ${BUN_BAKE_RUNTIME_OUTPUTS}
 )
 
-set(BUN_BINDGEN_CODEGEN_SCRIPT ${CWD}/src/codegen/bindgen.ts)
+set(BUN_BINDGEN_SCRIPT ${CWD}/src/codegen/bindgen.ts)
 
 file(GLOB_RECURSE BUN_BINDGEN_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/**/*.bind.ts

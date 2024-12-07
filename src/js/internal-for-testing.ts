@@ -5,10 +5,7 @@
 // In a debug build, the import is always allowed.
 // It is disallowed in release builds unless run in Bun's CI.
 
-const fmtBinding = $newZigFunction("fmt.zig", "fmt_js_test_bindings.jsFunctionStringFormatter", 2) as (
-  code: string,
-  id: number,
-) => string;
+const fmtBinding = $bindgenFn("fmt.bind.ts", "fmtString");
 
 export const quickAndDirtyJavaScriptSyntaxHighlighter = (code: string) => fmtBinding(code, 0);
 export const escapePowershell = (code: string) => fmtBinding(code, 1);
@@ -146,4 +143,9 @@ export const frameworkRouterInternals = $zig("FrameworkRouter.zig", "JSFramework
   FrameworkRouter: {
     new (opts: any): any;
   };
+};
+
+export const bindgen = $zig("bindgen_test.zig", "getBindgenTestFunctions") as {
+  add: (a: any, b: any) => number;
+  requiredAndOptionalArg: (a: any, b?: any, c?: any, d?: any) => number;
 };

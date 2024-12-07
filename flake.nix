@@ -117,59 +117,35 @@
           # CI shells for different architectures
           ci-x64 = pkgs.mkShell {
             buildInputs = with pkgs; [
-              buildkite-agent
               # Include the x64 build environment tools
               buildEnvX64
             ];
 
             shellHook = ''
               echo "BuildKite CI environment initialized (x64)"
-              
-              # Set up BuildKite agent configuration if needed
-              if [ -z "$BUILDKITE_AGENT_TOKEN" ]; then
-                echo "Warning: BUILDKITE_AGENT_TOKEN is not set"
-              fi
-              
-              # Set BuildKite meta-data for architecture
-              export BUILDKITE_AGENT_META_DATA="architecture=x64,''${BUILDKITE_AGENT_META_DATA:-}"
             '';
           };
 
           ci-arm64 = pkgs.mkShell {
             buildInputs = with pkgs; [
-              buildkite-agent
               # Include the arm64 build environment tools
               buildEnvArm64
             ];
 
             shellHook = ''
               echo "BuildKite CI environment initialized (arm64)"
-              
-              # Set up BuildKite agent configuration if needed
-              if [ -z "$BUILDKITE_AGENT_TOKEN" ]; then
-                echo "Warning: BUILDKITE_AGENT_TOKEN is not set"
-              fi
-              
-              # Set BuildKite meta-data for architecture
-              export BUILDKITE_AGENT_META_DATA="architecture=arm64,''${BUILDKITE_AGENT_META_DATA:-}"
             '';
           };
 
           # Generic CI shell that defaults to x64
           ci = pkgs.mkShell {
             buildInputs = with pkgs; [
-              buildkite-agent
               # Include the x64 build environment tools by default
               buildEnvX64
             ];
 
             shellHook = ''
               echo "BuildKite CI environment initialized (default: x64)"
-              
-              # Set up BuildKite agent configuration if needed
-              if [ -z "$BUILDKITE_AGENT_TOKEN" ]; then
-                echo "Warning: BUILDKITE_AGENT_TOKEN is not set"
-              fi
             '';
           };
         };

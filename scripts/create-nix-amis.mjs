@@ -7,16 +7,20 @@ import { writeFile } from "node:fs/promises";
 
 async function main() {
   const {
-    values: { arch, ci },
+    values: { arch, cloud },
   } = parseArgs({
     options: {
       arch: { type: "string" },
-      ci: { type: "boolean" },
+      cloud: { type: "string" },
     },
   });
 
   if (!arch) {
     throw new Error("--arch is required");
+  }
+
+  if (!cloud) {
+    throw new Error("--cloud is required");
   }
 
   const architecture = parseArch(arch);
@@ -27,17 +31,27 @@ async function main() {
 
   // Create user data script
   const userData = `#!/bin/bash
-set -euxo pipefail
+set -euo pipefail
+
+echo "Setting up environment..."
+export DEBIAN_FRONTEND=noninteractive
+echo "export DEBIAN_FRONTEND=noninteractive" >> ~/.bashrc
+
+echo "Installing required packages..."
 
 # Install required packages
-apt-get update
-apt-get install -y curl xz-utils git sudo
+apt-get update -qq
+apt-get install -y curl xz-utils git sudo --no-install-recommends
+
+echo "Installing Nix..."
 
 # Install Nix
 curl -L https://nixos.org/nix/install | sh -s -- --daemon
 
 # Source Nix
 . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+
+echo "Configuring Nix..."
 
 # Enable flakes
 mkdir -p /etc/nix
@@ -52,20 +66,15 @@ useradd -m -s /bin/bash buildkite-agent
 usermod -aG sudo buildkite-agent
 echo "buildkite-agent ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/buildkite-agent
 
-# Copy flake.nix to the instance
-mkdir -p /home/buildkite-agent/bun
-cat > /home/buildkite-agent/bun/flake.nix << 'EOF'
-${flakeContent}
-EOF
-
-# Set ownership
-chown -R buildkite-agent:buildkite-agent /home/buildkite-agent/bun
+echo "Installing BuildKite agent..."
 
 # Install BuildKite agent
 sh -c 'echo deb https://apt.buildkite.com/buildkite-agent stable main > /etc/apt/sources.list.d/buildkite-agent.list'
 apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 32A37959C2FA5C3C99EFBC32A79206696452D198
 apt-get update
 apt-get install -y buildkite-agent
+
+echo "Configuring BuildKite agent..."
 
 # Configure BuildKite agent
 cat > /etc/buildkite-agent/buildkite-agent.cfg << 'EOF'
@@ -77,7 +86,16 @@ hooks-path="/etc/buildkite-agent/hooks"
 plugins-path="/etc/buildkite-agent/plugins"
 EOF
 
-# Create BuildKite hook to set up Nix environment
+echo "Copying flake.nix to the instance..."
+mkdir -p /home/buildkite-agent/bun
+cat > /home/buildkite-agent/bun/flake.nix << 'EOF'
+${flakeContent}
+EOF
+
+echo "Setting ownership..."
+chown -R buildkite-agent:buildkite-agent /home/buildkite-agent/bun
+
+echo "Creating BuildKite hook to set up Nix environment..."
 mkdir -p /etc/buildkite-agent/hooks
 cat > /etc/buildkite-agent/hooks/environment << 'EOF'
 #!/bin/bash
@@ -96,20 +114,20 @@ EOF
 
 chmod +x /etc/buildkite-agent/hooks/environment
 
-# Set proper ownership for BuildKite directories
+echo "Setting proper ownership for BuildKite directories..."
 chown -R buildkite-agent:buildkite-agent /etc/buildkite-agent /var/lib/buildkite-agent
 
-# Start BuildKite agent service
-systemctl enable buildkite-agent
-systemctl start buildkite-agent
-
-# Set system limits for buildkite-agent
+echo "Setting system limits for buildkite-agent..."
 cat > /etc/security/limits.d/buildkite-agent.conf << 'EOF'
 buildkite-agent soft nofile 1048576
 buildkite-agent hard nofile 1048576
 buildkite-agent soft nproc 1048576
 buildkite-agent hard nproc 1048576
-EOF`;
+EOF
+
+echo "Enabling and starting BuildKite agent service..."
+systemctl enable buildkite-agent
+systemctl start buildkite-agent`;
 
   // Write user data to a temporary file
   const userDataFile = mkdtemp("user-data-", "user-data.sh");
@@ -117,19 +135,24 @@ EOF`;
 
   try {
     // Use machine.mjs to create the AMI with the user data
-    await spawnSafe([
-      "node",
-      "./scripts/machine.mjs",
-      "publish-image",
-      `--os=linux`,
-      `--arch=${architecture}`,
-      `--distro=ubuntu`,
-      `--release=18.04`,
-      `--cloud=aws`,
-      `--ci`,
-      `--authorized-org=oven-sh`,
-      `--user-data=${userDataFile}`,
-    ]);
+    await spawnSafe(
+      [
+        "node",
+        "./scripts/machine.mjs",
+        "publish-image",
+        `--os=linux`,
+        `--arch=${architecture}`,
+        `--distro=ubuntu`,
+        `--release=18.04`,
+        `--cloud=${cloud}`,
+        `--ci`,
+        `--authorized-org=oven-sh`,
+        `--user-data=${userDataFile}`,
+      ],
+      {
+        stdio: "inherit",
+      },
+    );
   } finally {
     // Clean up the temporary file
     await rm(userDataFile);

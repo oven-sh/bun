@@ -242,7 +242,7 @@ export async function spawn(command, options = {}) {
     cwd: options["cwd"] ?? process.cwd(),
     timeout: options["timeout"] ?? undefined,
     env: options["env"] ?? undefined,
-    stdio: [stdin ? "pipe" : "ignore", "pipe", "pipe"],
+    stdio: stdin === "inherit" ? "inherit" : [stdin ? "pipe" : "ignore", "pipe", "pipe"],
     ...options,
   };
 
@@ -354,7 +354,7 @@ export function spawnSync(command, options = {}) {
     cwd: options["cwd"] ?? process.cwd(),
     timeout: options["timeout"] ?? undefined,
     env: options["env"] ?? undefined,
-    stdio: [typeof stdin === "undefined" ? "ignore" : "pipe", "pipe", "pipe"],
+    stdio: stdin === "inherit" ? "inherit" : [typeof stdin === "undefined" ? "ignore" : "pipe", "pipe", "pipe"],
     input: stdin,
     ...options,
   };
@@ -378,8 +378,8 @@ export function spawnSync(command, options = {}) {
   } else {
     exitCode = status ?? 1;
     signalCode = signal || undefined;
-    stdout = stdoutBuffer?.toString();
-    stderr = stderrBuffer?.toString();
+    stdout = stdoutBuffer?.toString?.() ?? "";
+    stderr = stderrBuffer?.toString?.() ?? "";
   }
 
   if (exitCode !== 0 && isWindows) {

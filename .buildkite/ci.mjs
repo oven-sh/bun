@@ -104,9 +104,9 @@ function getTargetLabel(target) {
 const buildPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14" },
   { os: "darwin", arch: "x64", release: "14" },
-  { os: "linux", arch: "aarch64", distro: "nix", release: "latest" },
-  { os: "linux", arch: "x64", distro: "nix", release: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "nix", release: "latest" },
+  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "18.04", nix: true },
+  { os: "linux", arch: "x64", distro: "ubuntu", release: "18.04", nix: true },
+  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", nix: true, release: "18.04" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
@@ -300,15 +300,6 @@ function getCppAgent(platform, dryRun) {
       queue: `build-${os}`,
       os,
       arch,
-    };
-  }
-
-  if (distro === "nix") {
-    return {
-      queue: "linux-nix",
-      os: "linux",
-      arch,
-      nix: "true",
     };
   }
 
@@ -1054,10 +1045,10 @@ async function getPipeline(options = {}) {
       group: getBuildkiteEmoji("aws"),
       steps: [
         ...Array.from(imagePlatforms.values())
-          .filter(platform => platform.distro === "nix")
+          .filter(platform => platform.nix)
           .map(getCreateNixAmisStep),
         ...[...imagePlatforms.values()]
-          .filter(platform => platform.distro !== "nix")
+          .filter(platform => !platform.nix)
           .map(platform => getBuildImageStep(platform, !publishImages)),
       ],
     });

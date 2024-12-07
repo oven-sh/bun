@@ -5,6 +5,11 @@ if(NOT ENABLE_CCACHE OR CACHE_STRATEGY STREQUAL "none")
   return()
 endif()
 
+if (CI AND NOT APPLE)
+  setenv(CCACHE_DISABLE 1)
+  return()
+endif()
+
 find_command(
   VARIABLE
     CCACHE_PROGRAM
@@ -41,8 +46,4 @@ if(CI)
   setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,clang_index_store,gcno_cwd,include_file_ctime,include_file_mtime")
 else()
   setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,random_seed,clang_index_store,gcno_cwd")
-endif()
-
-if (CI AND NOT APPLE)
-  set(ENABLE_CCACHE OFF)
 endif()

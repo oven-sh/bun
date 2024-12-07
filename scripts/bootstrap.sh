@@ -675,9 +675,9 @@ install_common_software() {
 
 	install_rosetta
 	install_nodejs
-	install_bun
 	install_tailscale
 	install_buildkite
+	install_bun
 }
 
 nodejs_version_exact() {

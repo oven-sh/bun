@@ -394,14 +394,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         return JSValue::encode(jsUndefined());
     }
 
-    JSC::EncodedJSValue (*napi_register_module_v1)(napi_env env, JSC::EncodedJSValue exports);
+    napi_value (*napi_register_module_v1)(napi_env env, napi_value exports);
 #if OS(WINDOWS)
 #define dlsym GetProcAddress
 #endif
 
     // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
     // (bun/src/env.zig:36) and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
-    napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(napi_env, JSC::EncodedJSValue)>(
+    napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(
         dlsym(handle, "napi_register_module_v1"));
 
     if (!napi_register_module_v1) {
@@ -442,7 +442,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     auto env = globalObject->makeNapiEnv(nmodule);
 
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
-    JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(env, exportsValue));
+    JSC::JSValue resultValue = JSValue::decode(reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env, reinterpret_cast<napi_value>(exportsValue))));
 
     RETURN_IF_EXCEPTION(scope, {});
 

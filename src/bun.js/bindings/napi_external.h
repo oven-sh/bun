@@ -46,6 +46,7 @@ public:
             JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
+    // env is needed only if a finalizer is passed, otherwise it may be null
     static NapiExternal* create(JSC::VM& vm, JSC::Structure* structure, void* value, void* finalizer_hint, napi_env env, void* finalizer)
     {
         NapiExternal* accessor = new (NotNull, JSC::allocateCell<NapiExternal>(vm)) NapiExternal(vm, structure);

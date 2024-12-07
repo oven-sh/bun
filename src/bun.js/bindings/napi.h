@@ -70,11 +70,6 @@ static inline JSValue toJS(napi_value val)
     return JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(val));
 }
 
-static inline Zig::GlobalObject* toJS(napi_env val)
-{
-    return val->globalObject();
-}
-
 static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObject)
 {
     if (val.isCell()) {

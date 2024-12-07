@@ -569,7 +569,7 @@ public:
 
     bool hasOverridenModuleResolveFilenameFunction = false;
 
-    WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
+    WTF::Vector<std::unique_ptr<napi_env__>, 0> m_napiEnvs;
     napi_env makeNapiEnv(const napi_module&);
     napi_env makeNapiEnvForFFI();
 

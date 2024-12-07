@@ -71,6 +71,7 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
 
 static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, const BunString* namespaceStr, const BunString* path)
 {
+
     if (list.fileNamespace.isEmpty() && list.namespaces.isEmpty())
         return false;
 

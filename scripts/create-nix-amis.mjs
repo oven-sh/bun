@@ -92,10 +92,42 @@ EOF
 
 echo "Setting up Nix environment and installing BuildKite agent..."
 cd /var/lib/buildkite-agent/bun
+
+# Set up the command hook to use Nix for command evaluation
+sudo mkdir -p /etc/buildkite-agent/hooks
+sudo tee /etc/buildkite-agent/hooks/command > /dev/null << 'EOF'
+#!/bin/bash
+set -euo pipefail
+
+# Source Nix
+. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+
+# Change to the build directory
+cd "$BUILDKITE_BUILD_DIR"
+
+# Use Nix to evaluate and run the command in the proper environment
+nix develop .#ci-${flakeTarget} -c eval "$BUILDKITE_COMMAND"
+EOF
+sudo chmod +x /etc/buildkite-agent/hooks/command
+
+# Set up the environment hook
+sudo tee /etc/buildkite-agent/hooks/environment > /dev/null << 'EOF'
+#!/bin/bash
+set -euo pipefail
+
+# Source Nix
+. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+
+# Add Nix to PATH
+export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+EOF
+sudo chmod +x /etc/buildkite-agent/hooks/environment
+
 # Initialize flake.lock with proper permissions
 sudo -u buildkite-agent sh -c '. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && cd "$1" && nix flake update' -- /var/lib/buildkite-agent/bun
-# Now run the agent in the Nix environment
-sudo -u buildkite-agent sh -c '. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && cd "$1" && nix develop .#ci-${flakeTarget} -c /usr/local/share/bun/agent.mjs install start' -- /var/lib/buildkite-agent/bun`;
+
+# Now start the agent
+sudo -u buildkite-agent sh -c '. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && cd "$1" && /usr/local/share/bun/agent.mjs install start' -- /var/lib/buildkite-agent/bun`;
 
   // Write user data to a temporary file
   const userDataFile = mkdtemp("user-data-", "user-data.sh");

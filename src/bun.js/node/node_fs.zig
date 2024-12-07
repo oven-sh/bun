@@ -3188,8 +3188,7 @@ pub const NodeFS = struct {
     pub const ReturnType = Return;
 
     pub fn access(this: *NodeFS, args: Arguments.Access, comptime _: Flavor) Maybe(Return.Access) {
-        const bufp = &this.sync_error_buf;
-        const path = if (Environment.isWindows) strings.toNTMaxPath(bufp, args.path.slice()) else args.path.sliceZ(bufp);
+        const path = args.path.sliceZ(&this.sync_error_buf);
         return Syscall.access(path, @intFromEnum(args.mode));
     }
 
@@ -3578,8 +3577,7 @@ pub const NodeFS = struct {
         _ = flavor;
         const Ret = Maybe(Return.Exists);
         const path = args.path orelse return Ret{ .result = false };
-        const bufp = &this.sync_error_buf;
-        const slice = if (Environment.isWindows) strings.toNTMaxPath(bufp, path.slice()) else path.sliceZ(bufp);
+        const slice = path.sliceZ(&this.sync_error_buf);
 
         // Use libuv access on windows
         if (Environment.isWindows) {
@@ -3748,11 +3746,10 @@ pub const NodeFS = struct {
     pub fn mkdirNonRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
         _ = flavor;
 
-        const bufp = &this.sync_error_buf;
-        const path = if (Environment.isWindows) strings.toNTMaxPath(bufp, args.path.slice()) else args.path.osPath(bufp);
+        const path = args.path.sliceZ(&this.sync_error_buf);
         return switch (Syscall.mkdir(path, args.mode)) {
             .result => Maybe(Return.Mkdir){ .result = .{ .none = {} } },
-            .err => |err| Maybe(Return.Mkdir){ .err = err.withPath((path)) },
+            .err => |err| Maybe(Return.Mkdir){ .err = err.withPath(path) },
         };
     }
 
@@ -3770,13 +3767,10 @@ pub const NodeFS = struct {
     pub fn mkdirRecursiveImpl(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor, comptime Ctx: type, ctx: Ctx) Maybe(Return.Mkdir) {
         _ = flavor;
         var buf: bun.OSPathBuffer = undefined;
-        const path: bun.OSPathSliceZ = if (Environment.isWindows) blk: {
-            if (args.path.slice().len < 260) break :blk strings.toNTPath(&buf, args.path.slice());
-            const path8 = strings.toNTMaxPath(&this.sync_error_buf, args.path.slice());
-            strings.copyU8IntoU16(&buf, path8);
-            buf[path8.len] = 0;
-            break :blk buf[0..path8.len :0];
-        } else args.path.osPath(&buf);
+        const path: bun.OSPathSliceZ = if (Environment.isWindows)
+            strings.toNTPath(&buf, args.path.slice())
+        else
+            args.path.osPath(&buf);
 
         // TODO: remove and make it always a comptime argument
         return switch (args.always_return_none) {
@@ -5209,9 +5203,12 @@ pub const NodeFS = struct {
         if (Environment.isWindows) {
             var req: uv.fs_t = uv.fs_t.uninitialized;
             defer req.deinit();
-            const bufp = &this.sync_error_buf;
-            const path = if (Environment.isWindows) strings.toNTMaxPath(bufp, args.path.slice()) else args.path.osPath(bufp);
-            const rc = uv.uv_fs_realpath(bun.Async.Loop.get(), &req, path, null);
+            const rc = uv.uv_fs_realpath(
+                bun.Async.Loop.get(),
+                &req,
+                args.path.sliceZ(&this.sync_error_buf).ptr,
+                null,
+            );
 
             if (rc.errno()) |errno|
                 return .{ .err = Syscall.Error{
@@ -5466,9 +5463,7 @@ pub const NodeFS = struct {
     }
 
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime _: Flavor) Maybe(Return.Stat) {
-        const bufp = &this.sync_error_buf;
-        const path = if (Environment.isWindows) strings.toNTMaxPath(bufp, args.path.slice()) else args.path.osPath(bufp);
-        return switch (Syscall.stat(path)) {
+        return switch (Syscall.stat(args.path.sliceZ(&this.sync_error_buf))) {
             .result => |result| .{
                 .result = .{ .stats = Stats.init(result, args.big_int) },
             },
@@ -5483,34 +5478,17 @@ pub const NodeFS = struct {
 
     pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime _: Flavor) Maybe(Return.Symlink) {
         var to_buf: bun.PathBuffer = undefined;
-        var link_type = args.link_type;
-
-        const target: [:0]u8 = args.old_path.sliceZWithForceCopy(&this.sync_error_buf, true);
-        const path = args.new_path.sliceZ(&to_buf);
 
         if (Environment.isWindows) {
+            const target: [:0]u8 = args.old_path.sliceZWithForceCopy(&this.sync_error_buf, true);
             // UV does not normalize slashes in symlink targets, but Node does
             // See https://github.com/oven-sh/bun/issues/8273
             bun.path.dangerouslyConvertPathToWindowsInPlace(u8, target);
 
-            blk: {
-                var target_abs_buf: bun.PathBuffer = undefined;
-                var target_abs_buf2: bun.PathBuffer = undefined;
-                const maybe_slice = JSC.Node.Path.resolveWindowsT(u8, &.{ path, "..", target }, &target_abs_buf, &target_abs_buf2);
-                if (maybe_slice == .err) break :blk;
-                const target_abs = maybe_slice.result;
-                const target_stat = switch (Syscall.stat(target_abs)) {
-                    .result => |result| result,
-                    .err => null,
-                };
-                if (link_type == .file and target_stat != null and std.os.linux.S.ISDIR(target_stat.?.mode)) {
-                    link_type = .dir;
-                }
-            }
             return Syscall.symlinkUV(
                 target,
-                path,
-                switch (link_type) {
+                args.new_path.sliceZ(&to_buf),
+                switch (args.link_type) {
                     .file => 0,
                     .dir => uv.UV_FS_SYMLINK_DIR,
                     .junction => uv.UV_FS_SYMLINK_JUNCTION,
@@ -5519,8 +5497,8 @@ pub const NodeFS = struct {
         }
 
         return Syscall.symlink(
-            target,
-            path,
+            args.old_path.sliceZ(&this.sync_error_buf),
+            args.new_path.sliceZ(&to_buf),
         );
     }
 

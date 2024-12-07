@@ -70,7 +70,12 @@ pub fn detectAndLoadOtherLockfile(
                 Output.prettyErrorln("Invalid NPM package-lock.json\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
                 Global.exit(1);
             }
-            return LoadResult{ .err = .{ .step = .migrating, .value = err } };
+            return LoadResult{ .err = .{
+                .step = .migrating,
+                .value = err,
+                .lockfile_path = "package-lock.json",
+                .format = .binary,
+            } };
         };
 
         if (migrate_result == .ok) {

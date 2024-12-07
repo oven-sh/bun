@@ -469,7 +469,6 @@ pub const Tree = struct {
         return struct {
             tree_id: Id,
             path_buf: bun.PathBuffer = undefined,
-            last_parent: Id = invalid_id,
 
             lockfile: *const Lockfile,
 

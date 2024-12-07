@@ -27,6 +27,7 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const LoadResult = BinaryLockfile.LoadResult;
 const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
+const invalid_package_id = Install.invalid_package_id;
 
 /// A property key in the `packages` field of the lockfile
 pub const PkgPath = struct {
@@ -173,6 +174,24 @@ pub const Stringifier = struct {
         const pkg_name_hashes: []PackageNameHash = pkgs.items(.name_hash);
         const pkg_metas: []BinaryLockfile.Package.Meta = pkgs.items(.meta);
 
+        var temp_buf: std.ArrayListUnmanaged(u8) = .{};
+        defer temp_buf.deinit(allocator);
+        const temp_writer = temp_buf.writer(allocator);
+
+        var found_trusted_dependencies: std.AutoHashMapUnmanaged(u64, String) = .{};
+        defer found_trusted_dependencies.deinit(allocator);
+        if (lockfile.trusted_dependencies) |trusted_dependencies| {
+            try found_trusted_dependencies.ensureTotalCapacity(allocator, @truncate(trusted_dependencies.count()));
+        }
+
+        var found_patched_dependencies: std.AutoHashMapUnmanaged(u64, struct { string, String }) = .{};
+        defer found_patched_dependencies.deinit(allocator);
+        try found_patched_dependencies.ensureTotalCapacity(allocator, @truncate(lockfile.patched_dependencies.count()));
+
+        var found_overrides: std.AutoHashMapUnmanaged(u64, struct { String, Dependency.Version }) = .{};
+        defer found_overrides.deinit(allocator);
+        try found_overrides.ensureTotalCapacity(allocator, @truncate(lockfile.overrides.map.count()));
+
         var _indent: u32 = 0;
         const indent = &_indent;
         try writer.writeAll("{\n");
@@ -219,14 +238,140 @@ pub const Stringifier = struct {
             try decIndent(writer, indent);
             try writer.writeAll("},\n");
 
+            var pkgs_iter = BinaryLockfile.Tree.Iterator(.pkg_path).init(lockfile);
+
+            // find trusted and patched dependencies. also overrides
+            while (pkgs_iter.next({})) |node| {
+                for (node.dependencies) |dep_id| {
+                    const pkg_id = resolution_buf[dep_id];
+                    if (pkg_id == invalid_package_id) continue;
+
+                    const pkg_name = pkg_names[pkg_id];
+                    const pkg_name_hash = pkg_name_hashes[pkg_id];
+                    const res = pkg_resolution[pkg_id];
+                    const dep = deps_buf[dep_id];
+
+                    if (lockfile.patched_dependencies.count() > 0) {
+                        try temp_writer.print("{s}@", .{pkg_name.slice(buf)});
+                        switch (res.tag) {
+                            .workspace => {
+                                if (lockfile.workspace_versions.get(pkg_name_hash)) |workspace_version| {
+                                    try temp_writer.print("{}", .{workspace_version.fmt(buf)});
+                                }
+                            },
+                            else => {
+                                try temp_writer.print("{}", .{res.fmt(buf, .posix)});
+                            },
+                        }
+                        defer temp_buf.clearRetainingCapacity();
+
+                        const name_and_version = temp_buf.items;
+                        const name_and_version_hash = String.Builder.stringHash(name_and_version);
+
+                        if (lockfile.patched_dependencies.get(name_and_version_hash)) |patch| {
+                            try found_patched_dependencies.put(allocator, name_and_version_hash, .{
+                                try allocator.dupe(u8, name_and_version),
+                                patch.path,
+                            });
+                        }
+                    }
+
+                    // intentionally not checking default trusted dependencies
+                    if (lockfile.trusted_dependencies) |trusted_dependencies| {
+                        if (trusted_dependencies.contains(@truncate(dep.name_hash))) {
+                            try found_trusted_dependencies.put(allocator, dep.name_hash, dep.name);
+                        }
+                    }
+
+                    if (lockfile.overrides.map.count() > 0) {
+                        if (lockfile.overrides.get(pkg_name_hash)) |version| {
+                            try found_overrides.put(allocator, pkg_name_hash, .{ pkg_name, version });
+                        }
+                    }
+                }
+            }
+
+            pkgs_iter.reset();
+
+            if (found_trusted_dependencies.count() > 0) {
+                try writeIndent(writer, indent);
+                try writer.writeAll(
+                    \\"trustedDependencies": [
+                    \\
+                );
+                indent.* += 1;
+                var values_iter = found_trusted_dependencies.valueIterator();
+                while (values_iter.next()) |dep_name| {
+                    try writeIndent(writer, indent);
+                    try writer.print(
+                        \\"{s}",
+                        \\
+                    , .{dep_name.slice(buf)});
+                }
+
+                try decIndent(writer, indent);
+                try writer.writeAll(
+                    \\],
+                    \\
+                );
+            }
+
+            if (found_patched_dependencies.count() > 0) {
+                try writeIndent(writer, indent);
+                try writer.writeAll(
+                    \\"patchedDependencies": {
+                    \\
+                );
+                indent.* += 1;
+                var values_iter = found_patched_dependencies.valueIterator();
+                while (values_iter.next()) |value| {
+                    const name_and_version, const patch_path = value.*;
+                    try writeIndent(writer, indent);
+                    try writer.print(
+                        \\"{s}": "{s}",
+                        \\
+                    , .{ name_and_version, patch_path.slice(buf) });
+                }
+
+                try decIndent(writer, indent);
+                try writer.writeAll(
+                    \\},
+                    \\
+                );
+            }
+
+            if (found_overrides.count() > 0) {
+                try writeIndent(writer, indent);
+                try writer.writeAll(
+                    \\"overrides": {
+                    \\
+                );
+                indent.* += 1;
+                var values_iter = found_overrides.valueIterator();
+                while (values_iter.next()) |value| {
+                    const name, const version = value.*;
+                    try writeIndent(writer, indent);
+                    try writer.print(
+                        \\"{s}": "{s}",
+                        \\
+                    , .{ name.slice(buf), version.literal.slice(buf) });
+                }
+
+                try decIndent(writer, indent);
+                try writer.writeAll(
+                    \\},
+                    \\
+                );
+            }
+
             try writeIndent(writer, indent);
             try writer.writeAll("\"packages\": {");
             var first = true;
-            var iter = BinaryLockfile.Tree.Iterator(.pkg_path).init(lockfile);
-
-            while (iter.next({})) |node| {
+            while (pkgs_iter.next({})) |node| {
                 for (node.dependencies) |dep_id| {
                     const pkg_id = resolution_buf[dep_id];
+                    if (pkg_id == invalid_package_id) continue;
+
                     const res = pkg_resolution[pkg_id];
                     switch (res.tag) {
                         .root, .npm, .folder, .local_tarball, .github, .git, .symlink, .workspace, .remote_tarball => {},
@@ -664,13 +809,12 @@ pub fn parseIntoBinaryLockfile(
             const name_hash = String.Builder.stringHash(name_str);
             const name = try string_buf.appendWithHash(name_str, name_hash);
 
-            // TODO(dylan-conway) also accept object
+            // TODO(dylan-conway) also accept object when supported
             if (!value.isString()) {
                 try log.addError(source, value.loc, "Expected a string");
                 return error.InvalidOverridesObject;
             }
 
-            // TODO(dylan-conway) maybe check for '$' and make sure it exists in dependencies
             const version_str = value.asString(allocator).?;
             const version_hash = String.Builder.stringHash(version_str);
             const version = try string_buf.appendWithHash(version_str, version_hash);
@@ -695,8 +839,6 @@ pub fn parseIntoBinaryLockfile(
 
             try overrides.map.put(allocator, name_hash, dep);
         }
-    } else if (root.get("resolutions")) |resolutions_expr| {
-        _ = resolutions_expr;
     }
 
     var workspace_paths: BinaryLockfile.NameHashMap = .{};
@@ -767,7 +909,13 @@ pub fn parseIntoBinaryLockfile(
     lockfile.workspace_versions = workspace_versions;
 
     if (root_pkg) |pkg| {
-        _ = pkg;
+        for (workspace_dependency_groups) |dependency_group| {
+            const group_name, const group_behavior = dependency_group;
+            _ = group_behavior;
+            if (pkg.get(group_name)) |deps| {
+                _ = deps;
+            }
+        }
     } else {
         try log.addError(source, workspaces.loc, "Expected root package");
         return error.InvalidWorkspaceObject;

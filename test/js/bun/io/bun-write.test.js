@@ -527,19 +527,90 @@ if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
     expect(await exited).toBe(0);
   }, 10000);
 }
-test("should stream with Response(req.body) #13237", async () => {
-  const tempdir = tempDirWithFiles("response and request", {
-    "response.txt": "",
+describe("Bun.write() with Response(ReadableStream)", () => {
+  it("should write Response(req.body) from HTTP request", async () => {
+    const tempdir = tempDirWithFiles("response and request", {
+      "response.txt": "",
+    });
+    const response_filename = join(tempdir, "response.txt");
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await Bun.write(response_filename, new Response(req.body));
+        return new Response("ok");
+      },
+    });
+    await fetch(server.url, { method: "POST", body: "Bun" });
+    expect(await Bun.file(response_filename).text()).toBe("Bun");
   });
-  const response_filename = join(tempdir, "response.txt");
-  using server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      await Bun.write(response_filename, new Response(req.body));
 
-      return new Response("ok");
-    },
+  it("should write Response(ReadableStream) from string chunks", async () => {
+    const tempdir = tempDirWithFiles("stream chunks", {
+      "output.txt": "",
+    });
+    const output_file = join(tempdir, "output.txt");
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue("Hello");
+        controller.enqueue(" ");
+        controller.enqueue("World");
+        controller.close();
+      },
+    });
+    await Bun.write(output_file, new Response(stream));
+    expect(await Bun.file(output_file).text()).toBe("Hello World");
   });
-  await fetch(server.url, { method: "POST", body: "Bun" });
-  expect(await Bun.file(response_filename).text()).toBe("Bun");
+
+  it("should write Response(ReadableStream) from string chunks with delay in pull", async () => {
+    const tempdir = tempDirWithFiles("stream chunks", {
+      "output.txt": "",
+    });
+    const output_file = join(tempdir, "output.txt");
+    const stream = new ReadableStream({
+      async pull(controller) {
+        await Bun.sleep(0);
+        controller.enqueue("Hello");
+        await Bun.sleep(0);
+        controller.enqueue(" ");
+        await Bun.sleep(0);
+        controller.enqueue("World");
+        controller.close();
+      },
+    });
+    await Bun.write(output_file, new Response(stream));
+    expect(await Bun.file(output_file).text()).toBe("Hello World");
+  });
+
+  it("should write Response(ReadableStream) from Uint8Array chunks", async () => {
+    const tempdir = tempDirWithFiles("binary chunks", {
+      "output.bin": "",
+    });
+    const output_file = join(tempdir, "output.bin");
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async pull(controller) {
+        await Bun.sleep(0);
+        controller.enqueue(encoder.encode("Binary"));
+        await Bun.sleep(0);
+        controller.enqueue(encoder.encode("Data"));
+        controller.close();
+      },
+    });
+    await Bun.write(output_file, new Response(stream));
+    expect(await Bun.file(output_file).text()).toBe("BinaryData");
+  });
+
+  it("should handle empty streams", async () => {
+    const tempdir = tempDirWithFiles("empty stream", {
+      "empty.txt": "",
+    });
+    const output_file = join(tempdir, "empty.txt");
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.close();
+      },
+    });
+    await Bun.write(output_file, new Response(stream));
+    expect(await Bun.file(output_file).text()).toBe("");
+  });
 });

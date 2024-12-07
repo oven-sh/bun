@@ -203,7 +203,7 @@ append_to_file_sudo() {
 
 append_to_profile() {
 	content="$1"
-	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
+	profiles=".profile"
 	for profile in $profiles; do
 		file="$home/$profile"
 		if [ "$ci" = "1" ] || [ -f "$file" ]; then
@@ -1052,7 +1052,7 @@ create_buildkite_user() {
 		execute_sudo chown -R "$user:$group" "$path"
 	done
 
-	buildkite_files="/var/run/buildkite-agent/buildkite-agent.pid"
+	buildkite_files="/var/run/buildkite-agent/buildkite-agent.pid /var/run/buildkite-agent/.profile"
 	for file in $buildkite_files; do
 		execute_sudo touch "$file"
 		execute_sudo chown "$user:$group" "$file"

@@ -527,7 +527,7 @@ if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
     expect(await exited).toBe(0);
   }, 10000);
 }
-https: test("should stream with Response(req.body) #13237", async () => {
+test("should stream with Response(req.body) #13237", async () => {
   const tempdir = tempDirWithFiles("response and request", {
     "response.txt": "",
   });

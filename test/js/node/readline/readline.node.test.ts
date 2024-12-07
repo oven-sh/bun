@@ -3,6 +3,7 @@ import { createTest } from "node-harness";
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
 import { PassThrough, Writable } from "node:stream";
+import path from "path";
 const { beforeEach, describe, it, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
 var {
@@ -15,6 +16,8 @@ var {
 // Helpers
 // ----------------------------------------------------------------------------
 
+/** Get an absolute path to a `readline` fixture. */
+const fixture = (name: string): string => path.resolve(import.meta.dirname, "fixtures", name);
 class TestWritable extends Writable {
   data;
   constructor() {
@@ -1325,6 +1328,29 @@ describe("readline.Interface", () => {
     // TODO(BridgeAR): This should have a width of 4.
     assert.strictEqual(getStringWidth("⓬⓪"), 2);
     assert.strictEqual(getStringWidth("\u0301\u200D\u200E"), 0);
+  });
+
+  it("should not hang when stdint is closed", done => {
+    // const subprocess = Bun.spawn(["bun", "run", fixture("readline-stdin-immediate-close.ts")]);
+    var timeout: Timer | undefined;
+    const subprocess = Bun.spawn(["bun", "run", fixture("readline-stdin-immediate-close.ts")]);
+    // const subprocess = Bun.spawn(["bun", "run", "./fixtures/readline-stdin-immediate-close.ts"]);
+
+    timeout = setTimeout(() => {
+      const error = new Error("readline did not close after 2.5s. This means stdint is keeping the event loop alive.");
+      subprocess.kill();
+      done(error);
+    }, 2_500);
+
+    subprocess.exited
+      .then(() => {
+        clearTimeout(timeout);
+        done();
+      })
+      .catch(e => {
+        clearTimeout(timeout);
+        done(e);
+      });
   });
 
   // // Check if vt control chars are stripped

@@ -120,11 +120,11 @@ install_gcc13_ubuntu18() {
 
     # Get system triplet dynamically
     triplet=$(gcc -dumpmachine | sed 's/-pc-/-/') # Remove -pc- if present
-    
+
     # Configure library paths for Ubuntu 18.04
     execute_sudo mkdir -p "/usr/lib/gcc/${triplet}/13"
     execute_sudo ln -sf "/usr/lib/${triplet}/libstdc++.so.6" "/usr/lib/gcc/${triplet}/13/"
-    
+
     # Update library paths configuration
     execute_sudo sh -c "echo '/usr/lib/gcc/${triplet}/13' > /etc/ld.so.conf.d/gcc-13.conf"
     execute_sudo sh -c "echo '/usr/lib/${triplet}' >> /etc/ld.so.conf.d/gcc-13.conf"
@@ -743,23 +743,40 @@ install_bun() {
 	esac
 
 	bash="$(require bash)"
-	script=$(download_file "https://bun.sh/install")
-	export BUN_INSTALL="$home/.bun"
-	rm -rf "$BUN_INSTALL"
-	mkdir -p "$BUN_INSTALL"
-	chown -R "$user:$group" "$BUN_INSTALL"
+	# script=$(download_file "https://bun.sh/install")
+	# export BUN_INSTALL="$home/.bun"
+	# rm -rf "$BUN_INSTALL"
+	# mkdir -p "$BUN_INSTALL"
+	# chown -R "$user:$group" "$BUN_INSTALL"
 
-	version="${1:-"latest"}"
-	case "$version" in
-	latest)
-		execute_as_user "$bash" "$script"
-		;;
-	*)
-		execute_as_user "$bash" "$script" -s "$version"
-		;;
-	esac
+	# version="${1:-"latest"}"
+	# case "$version" in
+	# latest)
+	# 	execute_as_user "$bash" "$script"
+	# 	;;
+	# *)
+	# 	execute_as_user "$bash" "$script" -s "$version"
+	# 	;;
+	# esac
 
-	move_to_bin "$home/.bun/bin/bun"
+	# move_to_bin "$home/.bun/bin/bun"
+
+	bunabi=""
+	if [ "$abi" = "musl" ]; then
+		bunabi="-musl"
+	fi
+	buntarget="bun-${os}-${arch}${bunabi}"
+	sudo chown -R $user:$group $home
+	curl -LO "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/${buntarget}.zip" --retry 5
+	unzip ${buntarget}.zip
+	sudo mkdir -p "$home/.bun/bin"
+	sudo mv ${buntarget}/bun "$home/.bun/bin"
+	sudo chmod +x $home/.bun/bin/bun
+	sudo chown -R $user:$group $home/.bun
+	# append_to_path "$home/.bun/bin"
+	echo "export PATH=\$PATH:$home/.bun/bin" | sudo tee $home/.profile
+
+
 	bun_path="$(which bun)"
 	bunx_path="$(dirname "$bun_path")/bunx"
 	execute_sudo ln -sf "$bun_path" "$bunx_path"

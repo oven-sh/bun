@@ -148,7 +148,7 @@ sudo -i -u buildkite-agent bash << EOF
 
   # Install and start the agent
   /usr/local/share/bun/agent.mjs install start
-EOF
+EOF`;
 
   // Write user data to a temporary file
   const userDataFile = mkdtemp("user-data-", "user-data.sh");

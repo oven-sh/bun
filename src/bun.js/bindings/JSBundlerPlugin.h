@@ -49,10 +49,9 @@ public:
     /// In native plugins, the regular expression could be called concurrently on multiple threads.
     /// Therefore, we need a mutex to synchronize access.
     class NativeFilterRegexp {
-    public: 
+    public:
         Yarr::RegularExpression regex;
         WTF::Lock lock {};
-
 
         NativeFilterRegexp(Yarr::RegularExpression regex)
             : regex(regex)

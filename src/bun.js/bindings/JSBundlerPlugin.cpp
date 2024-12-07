@@ -249,9 +249,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
             StringView(filter->pattern()),
             filter->flags());
 
-  
-
-        nsGroup->append(NativeFilterRegexp{ regex });
+        nsGroup->append(NativeFilterRegexp { regex });
     }
 
     if (index == std::numeric_limits<unsigned>::max()) {
@@ -300,18 +298,18 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
         // Need to lock the mutex to access the regular expression
 
         if (filters[i].match(vm, path)) {
-          Bun::NapiExternal* external = callbacks[i].external;
-          if (external) {
-              ((OnBeforeParseArguments*)(onBeforeParseArgs))->external = external->value();
-          }
+            Bun::NapiExternal* external = callbacks[i].external;
+            if (external) {
+                ((OnBeforeParseArguments*)(onBeforeParseArgs))->external = external->value();
+            }
 
-          JSBundlerPluginNativeOnBeforeParseCallback callback = callbacks[i].callback;
-          const char* name = callbacks[i].name ? callbacks[i].name : "<unknown>";
-          CrashHandler__setInsideNativePlugin(name);
-          callback(onBeforeParseArgs, onBeforeParseResult);
-          CrashHandler__setInsideNativePlugin(nullptr);
+            JSBundlerPluginNativeOnBeforeParseCallback callback = callbacks[i].callback;
+            const char* name = callbacks[i].name ? callbacks[i].name : "<unknown>";
+            CrashHandler__setInsideNativePlugin(name);
+            callback(onBeforeParseArgs, onBeforeParseResult);
+            CrashHandler__setInsideNativePlugin(nullptr);
 
-          count++;
+            count++;
         }
 
         if (OnBeforeParsePlugin__isDone(bunContextPtr)) {

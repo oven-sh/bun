@@ -27,10 +27,32 @@ async function main() {
   const flakeTarget = architecture === "arm64" ? "arm64" : "x64";
 
   // Read the agent.mjs content
-  const agentScript = await readFile("scripts/agent.mjs");
+  let agentScript, flakeContent, utilsContent;
+  try {
+    agentScript = await readFile(join(process.cwd(), "scripts", "agent.mjs"), "utf8");
+    console.log("Successfully read agent.mjs");
+  } catch (error) {
+    console.error("Failed to read agent.mjs:", error);
+    throw error;
+  }
 
   // Read the flake.nix content
-  const flakeContent = await readFile("flake.nix");
+  try {
+    flakeContent = await readFile(join(process.cwd(), "flake.nix"), "utf8");
+    console.log("Successfully read flake.nix");
+  } catch (error) {
+    console.error("Failed to read flake.nix:", error);
+    throw error;
+  }
+
+  // Read the utils.mjs content
+  try {
+    utilsContent = await readFile(join(process.cwd(), "scripts", "utils.mjs"), "utf8");
+    console.log("Successfully read utils.mjs");
+  } catch (error) {
+    console.error("Failed to read utils.mjs:", error);
+    throw error;
+  }
 
   // Create user data script
   const userData = `#!/bin/bash
@@ -75,6 +97,11 @@ sudo tee /usr/local/share/bun/agent.mjs > /dev/null << 'EOF'
 ${agentScript}
 EOF
 sudo chmod +x /usr/local/share/bun/agent.mjs
+
+echo "Writing utils.mjs content:"
+sudo tee /usr/local/share/bun/utils.mjs > /dev/null << 'EOF'
+${utilsContent}
+EOF
 
 echo "Verifying agent.mjs was written:"
 ls -la /usr/local/share/bun/agent.mjs

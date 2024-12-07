@@ -134,10 +134,26 @@ install_gcc13_ubuntu18() {
     execute_sudo ldconfig
 
     # Set environment variables for the toolchain
-    append_to_profile "export LD_LIBRARY_PATH=\"/usr/lib/gcc/${triplet}/13:/usr/lib/${triplet}:\$LD_LIBRARY_PATH\""
-    append_to_profile "export LIBRARY_PATH=\"/usr/lib/gcc/${triplet}/13:/usr/lib/${triplet}:\$LIBRARY_PATH\""
-    append_to_profile "export CPLUS_INCLUDE_PATH=\"/usr/include/c++/13:/usr/include/${triplet}/c++/13:\$CPLUS_INCLUDE_PATH\""
-    append_to_profile "export C_INCLUDE_PATH=\"/usr/lib/gcc/${triplet}/13/include:\$C_INCLUDE_PATH\""
+    # append_to_profile "export LD_LIBRARY_PATH=\"/usr/lib/gcc/${triplet}/13:/usr/lib/${triplet}:\$LD_LIBRARY_PATH\""
+    # append_to_profile "export LIBRARY_PATH=\"/usr/lib/gcc/${triplet}/13:/usr/lib/${triplet}:\$LIBRARY_PATH\""
+    # append_to_profile "export CPLUS_INCLUDE_PATH=\"/usr/include/c++/13:/usr/include/${triplet}/c++/13:\$CPLUS_INCLUDE_PATH\""
+    # append_to_profile "export C_INCLUDE_PATH=\"/usr/lib/gcc/${triplet}/13/include:\$C_INCLUDE_PATH\""
+
+    append_to_profile "CC=clang-$(llvm_version)"
+    append_to_profile "CXX=clang++-$(llvm_version)"
+    append_to_profile "AR=llvm-ar-$(llvm_version)"
+    append_to_profile "RANLIB=llvm-ranlib-$(llvm_version)"
+    append_to_profile "LD=lld-$(llvm_version)"
+    append_to_profile "LTO_FLAG=\"-flto=full -fwhole-program-vtables -fforce-emit-vtables\""
+    append_to_profile "LD_LIBRARY_PATH=/usr/lib/gcc/${triplet}/13:/usr/lib/${triplet}:\$LD_LIBRARY_PATH"
+    append_to_profile "LIBRARY_PATH=/usr/lib/gcc/${triplet}/13:/usr/lib/${triplet}:\$LIBRARY_PATH"
+    append_to_profile "CPLUS_INCLUDE_PATH=/usr/include/c++/13:/usr/include/${triplet}/c++/13:\$CPLUS_INCLUDE_PATH"
+    append_to_profile "C_INCLUDE_PATH=/usr/lib/gcc/${triplet}/13/include:\$C_INCLUDE_PATH"
+    append_to_profile "DEFAULT_CFLAGS=\"-mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1\""
+    append_to_profile "CFLAGS=\"\$DEFAULT_CFLAGS \$CFLAGS -stdlib=libstdc++\""
+    append_to_profile "CXXFLAGS=\"\$DEFAULT_CFLAGS \$CXXFLAGS -stdlib=libstdc++\""
+    append_to_profile "LDFLAGS=\"-fuse-ld=lld -L/usr/lib/gcc/x86_64-linux-gnu/13 -L/usr/lib/x86_64-linux-gnu\""
+
 }
 
 download_file() {
@@ -603,6 +619,24 @@ install_packages() {
 		;;
 	*)
 		error "Unsupported package manager: $pm"
+		;;
+	esac
+}
+
+clean_packagemanager() {
+	case "$pm" in
+	apt)
+		package_manager autoremove
+		package_manager clean
+		;;
+	apk)
+		package_manager cache clean
+		;;
+	brew)
+		package_manager cleanup
+		;;
+	dnf)
+		package_manager clean all
 		;;
 	esac
 }
@@ -1179,6 +1213,15 @@ install_chromium() {
 	esac
 }
 
+shrink_filesystem() {
+	clean_packagemanager
+}
+
+zero_free_space() {
+	sudo dd if=/dev/zero of=/zero bs=1M || true
+	execute_sudo rm -f /zero
+}
+
 main() {
 	check_features "$@"
 	check_operating_system
@@ -1190,6 +1233,8 @@ main() {
 	install_common_software
 	install_build_essentials
 	install_chromium
+	shrink_filesystem
+	zero_free_space
 }
 
 main "$@"

@@ -777,6 +777,7 @@ const docker = {
       spawnSafe: execSafe,
       upload,
       attach,
+      snapshot,
       close: kill,
       [Symbol.asyncDispose]: kill,
     };

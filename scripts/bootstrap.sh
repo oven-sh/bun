@@ -85,6 +85,55 @@ fetch() {
 	fi
 }
 
+
+install_gcc13_ubuntu18() {
+    if ! [ "$distro" = "ubuntu" ] || ! [ "$release" = "18.04" ]; then
+        return
+    fi
+
+    print "Installing GCC 13 toolchain for Ubuntu 18.04..."
+
+    # Add the Ubuntu Toolchain PPA
+    execute_sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+    execute_sudo apt-get update
+
+    # Install GCC 13 and related packages
+    install_packages \
+        gcc-13 \
+        g++-13 \
+        libgcc-13-dev \
+        libstdc++-13-dev \
+        libasan6 \
+        libubsan1 \
+        libatomic1 \
+        libtsan0 \
+        liblsan0 \
+        libgfortran5 \
+        libc6-dev
+
+    # Set up GCC 13 as the default compiler
+    execute_sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
+        --slave /usr/bin/g++ g++ /usr/bin/g++-13 \
+        --slave /usr/bin/gcc-ar gcc-ar /usr/bin/gcc-ar-13 \
+        --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-13 \
+        --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-13
+
+    # Configure library paths for Ubuntu 18.04
+    execute_sudo mkdir -p /usr/lib/gcc/x86_64-linux-gnu/13
+    execute_sudo ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /usr/lib/gcc/x86_64-linux-gnu/13/
+    
+    # Update library paths configuration
+    execute_sudo sh -c 'echo "/usr/lib/gcc/x86_64-linux-gnu/13" > /etc/ld.so.conf.d/gcc-13.conf'
+    execute_sudo sh -c 'echo "/usr/lib/x86_64-linux-gnu" >> /etc/ld.so.conf.d/gcc-13.conf'
+    execute_sudo ldconfig
+
+    # Set environment variables for the toolchain
+    append_to_profile 'export LD_LIBRARY_PATH="/usr/lib/gcc/x86_64-linux-gnu/13:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"'
+    append_to_profile 'export LIBRARY_PATH="/usr/lib/gcc/x86_64-linux-gnu/13:/usr/lib/x86_64-linux-gnu:$LIBRARY_PATH"'
+    append_to_profile 'export CPLUS_INCLUDE_PATH="/usr/include/c++/13:/usr/include/x86_64-linux-gnu/c++/13:$CPLUS_INCLUDE_PATH"'
+    append_to_profile 'export C_INCLUDE_PATH="/usr/lib/gcc/x86_64-linux-gnu/13/include:$C_INCLUDE_PATH"'
+}
+
 download_file() {
 	url="$1"
 	filename="${2:-$(basename "$url")}"
@@ -630,11 +679,7 @@ install_common_software() {
 
 nodejs_version_exact() {
 	# https://unofficial-builds.nodejs.org/download/release/
-	if ! [ "$abi" = "musl" ] && [ -n "$abi_version" ] && ! [ "$(compare_version "$abi_version" "2.27")" = "1" ]; then
-		print "16.9.1"
-	else
-		print "22.9.0"
-	fi
+	print "22.9.0"
 }
 
 nodejs_version() {
@@ -748,6 +793,15 @@ install_rosetta() {
 install_build_essentials() {
 	case "$pm" in
 	apt)
+
+    # Install modern CMake for Ubuntu 18.04
+		if [ "$distro" = "ubuntu" ] && [ "$release" = "18.04" ]; then
+				# Add Kitware's CMake repository
+				wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | execute_sudo tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null
+				execute_sudo apt-add-repository "deb https://apt.kitware.com/ubuntu/ bionic main"
+				execute_sudo apt-get update
+		fi
+
 		install_packages \
 			build-essential \
 			ninja-build \
@@ -796,6 +850,9 @@ install_build_essentials() {
 		libtool \
 		ruby \
 		perl
+
+	# Install GCC 13 specifically for Ubuntu 18.04
+	install_gcc13_ubuntu18
 
 	install_cmake
 	install_llvm

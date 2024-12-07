@@ -850,79 +850,9 @@ if(APPLE)
 endif()
 
 if(LINUX)
-  if(NOT ABI STREQUAL "musl")    
-    if(ARCH STREQUAL "x64")
-      target_link_options(${bun} PUBLIC
-        -Wl,--wrap=__isoc23_sscanf
-        -Wl,--wrap=__isoc23_strtol
-        -Wl,--wrap=__isoc23_strtoul
-        -Wl,--wrap=__isoc23_strtoull
-        -Wl,--wrap=__isoc23_vfscanf
-        -Wl,--wrap=__isoc23_vscanf
-        -Wl,--wrap=__isoc23_vsscanf
-        -Wl,--wrap=dlvsym
-        -Wl,--wrap=fcntl
-        -Wl,--wrap=getrandom
-        -Wl,--wrap=mknod
-        -Wl,--wrap=mknodat
-        -Wl,--wrap=pthread_sigmask
-        -Wl,--wrap=quick_exit
-      )
-    endif()
-
+  if(NOT ABI STREQUAL "musl")
     target_link_options(${bun} PUBLIC
-      -lpthread
-      -Wl,--wrap=cosf
-      -Wl,--wrap=exp
       -Wl,--wrap=expf
-      -Wl,--wrap=fmod
-      -Wl,--wrap=fmodf
-      -Wl,--wrap=log
-      -Wl,--wrap=log10f
-      -Wl,--wrap=log2
-      -Wl,--wrap=log2f
-      -Wl,--wrap=logf
-      -Wl,--wrap=pow
-      -Wl,--wrap=powf
-      -Wl,--wrap=sincosf
-      -Wl,--wrap=sinf
-      -Wl,--wrap=tanf
-      -Wl,--wrap=arc4random_buf
-      -Wl,--wrap=sem_post
-      -Wl,--wrap=sem_wait
-      -Wl,--wrap=sem_init
-      -Wl,--wrap=__libc_single_threaded
-      -Wl,--wrap=__libc_start_main
-      -Wl,--wrap=__pthread_key_create
-      -Wl,--wrap=_dl_find_object
-      -Wl,--wrap=dladdr
-      -Wl,--wrap=dlclose
-      -Wl,--wrap=dlerror
-      -Wl,--wrap=dlopen
-      -Wl,--wrap=dlsym
-      -Wl,--wrap=pthread_attr_getstack
-      -Wl,--wrap=pthread_attr_setguardsize
-      -Wl,--wrap=pthread_attr_setstacksize
-      -Wl,--wrap=pthread_create
-      -Wl,--wrap=pthread_detach
-      -Wl,--wrap=pthread_getattr_np
-      -Wl,--wrap=pthread_getspecific
-      -Wl,--wrap=pthread_join
-      -Wl,--wrap=pthread_key_create
-      -Wl,--wrap=pthread_key_delete
-      -Wl,--wrap=pthread_kill
-      -Wl,--wrap=pthread_mutex_trylock
-      -Wl,--wrap=pthread_mutexattr_destroy
-      -Wl,--wrap=pthread_mutexattr_init
-      -Wl,--wrap=pthread_mutexattr_settype
-      -Wl,--wrap=pthread_once
-      -Wl,--wrap=pthread_rwlock_destroy
-      -Wl,--wrap=pthread_rwlock_init
-      -Wl,--wrap=pthread_rwlock_rdlock
-      -Wl,--wrap=pthread_rwlock_unlock
-      -Wl,--wrap=pthread_rwlock_wrlock
-      -Wl,--wrap=pthread_setspecific
-      -Wl,--wrap=fcntl64
     )
   endif()
 

@@ -104,9 +104,9 @@ function getTargetLabel(target) {
 const buildPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14" },
   { os: "darwin", arch: "x64", release: "14" },
-  { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
-  { os: "linux", arch: "x64", distro: "debian", release: "12" },
-  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12" },
+  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "18.04" },
+  { os: "linux", arch: "x64", distro: "ubuntu", release: "18.04" },
+  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "18.04" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
@@ -399,7 +399,6 @@ function getBuildEnv(target) {
     ENABLE_ASSERTIONS: release ? "OFF" : "ON",
     ENABLE_LOGS: release ? "OFF" : "ON",
     ABI: abi === "musl" ? "musl" : undefined,
-    LLVM_VERSION: "18.1.8",
   };
 }
 

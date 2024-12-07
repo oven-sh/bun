@@ -172,26 +172,23 @@ EOF
 sudo chmod +x /etc/buildkite-agent/hooks/environment
 
 echo "Installing BuildKite agent service..."
-# Must run this inside of nix, from the buildkite-agent user because it has node installed.
-sudo -i -u buildkite-agent bash << EOF
-  set -euxo pipefail
-  . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
 
-  cd /var/lib/buildkite-agent/bun
+cd /var/lib/buildkite-agent/bun
 
-  # Update flake lock and evaluate the environment
-  nix flake update
+# Update flake lock and evaluate the environment
+nix flake update
 
-  # Install and start the agent
-  if [ -f "/usr/local/share/bun/agent.mjs" ]; then
-    echo "Found agent.mjs, executing..."
-    nix develop .#ci-${flakeTarget} -c bash -c "node /usr/local/share/bun/agent.mjs install start"
-  else
-    echo "ERROR: agent.mjs not found at /usr/local/share/bun/agent.mjs"
-    ls -la /usr/local/share/bun/
-    exit 1
-  fi
-EOF`;
+# Install and start the agent
+if [ -f "/usr/local/share/bun/agent.mjs" ]; then
+  echo "Found agent.mjs, executing..."
+  sudo nix develop .#ci-${flakeTarget} -c bash -c "node /usr/local/share/bun/agent.mjs install"
+else
+  echo "ERROR: agent.mjs not found at /usr/local/share/bun/agent.mjs"
+  ls -la /usr/local/share/bun/
+  exit 1
+fi
+`;
 
   // Write user data to a temporary file
   const userDataFile = mkdtemp("user-data-", "user-data.sh");

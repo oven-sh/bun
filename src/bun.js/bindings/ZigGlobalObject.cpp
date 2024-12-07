@@ -4371,6 +4371,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onResolveRequestStream;
     } else if (handler == Bun__FetchTasklet__onRejectRequestStream) {
         return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onRejectRequestStream;
+    } else if (handler == Bun__BlobToFileSink__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__BlobToFileSink__onResolveStream;
+    } else if (handler == Bun__BlobToFileSink__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__BlobToFileSink__onRejectStream;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

@@ -73,7 +73,7 @@ const NewReadFileHandler = @import("./blob/ReadFile.zig").NewReadFileHandler;
 const WriteFile = @import("./blob/WriteFile.zig").WriteFile;
 const ReadFile = @import("./blob/ReadFile.zig").ReadFile;
 const WriteFileWindows = @import("./blob/WriteFile.zig").WriteFileWindows;
-
+const FileSink = JSC.WebCore.FileSink;
 pub const Blob = struct {
     const bloblog = Output.scoped(.Blob, false);
 
@@ -1141,16 +1141,30 @@ pub const Blob = struct {
                         return JSC.JSPromise.rejectedPromiseValue(globalThis, err_ref.toJS(globalThis));
                     },
                     .Locked => {
-                        var task = bun.new(WriteFileWaitFromLockedValueTask, .{
-                            .globalThis = globalThis,
-                            .file_blob = destination_blob,
-                            .promise = JSC.JSPromise.Strong.init(globalThis),
-                            .mkdirp_if_not_exists = mkdirp_if_not_exists orelse true,
-                        });
+                        if ((response.body.value == .Locked and (response.body.value.Locked.action != .none or response.body.value.Locked.isDisturbed(Response, globalThis, data)))) {
+                            destination_blob.detach();
+                            return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.ERR_BODY_ALREADY_USED("Response body already used", .{}).toJS());
+                        }
+                        if (response.body.value.Locked.readable.get()) |stream| {
+                            if (stream.isDisturbed(globalThis)) {
+                                destination_blob.detach();
+                                return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.ERR_BODY_ALREADY_USED("Response body already used", .{}).toJS());
+                            }
 
-                        response.body.value.Locked.task = task;
-                        response.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
-                        return task.promise.value();
+                            return BlobToFileSink.consume(globalThis, destination_blob, stream);
+                        } else {
+                            // TODO: removing this using toReadableStream in a followup, fixing HTMLRewriter.transform will be needed.
+                            var task = bun.new(WriteFileWaitFromLockedValueTask, .{
+                                .globalThis = globalThis,
+                                .file_blob = destination_blob,
+                                .promise = JSC.JSPromise.Strong.init(globalThis),
+                                .mkdirp_if_not_exists = mkdirp_if_not_exists orelse true,
+                            });
+
+                            response.body.value.Locked.task = task;
+                            response.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
+                            return task.promise.value();
+                        }
                     },
                 }
             }
@@ -1172,17 +1186,29 @@ pub const Blob = struct {
                         return JSC.JSPromise.rejectedPromiseValue(globalThis, err_ref.toJS(globalThis));
                     },
                     .Locked => {
-                        var task = bun.new(WriteFileWaitFromLockedValueTask, .{
-                            .globalThis = globalThis,
-                            .file_blob = destination_blob,
-                            .promise = JSC.JSPromise.Strong.init(globalThis),
-                            .mkdirp_if_not_exists = mkdirp_if_not_exists orelse true,
-                        });
+                        if ((request.body.value == .Locked and (request.body.value.Locked.action != .none or request.body.value.Locked.isDisturbed(Request, globalThis, data)))) {
+                            destination_blob.detach();
+                            return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).toJS());
+                        }
+                        if (request.body.value.Locked.readable.get()) |stream| {
+                            if (stream.isDisturbed(globalThis)) {
+                                destination_blob.detach();
+                                return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.ERR_BODY_ALREADY_USED("Response body already used", .{}).toJS());
+                            }
 
-                        request.body.value.Locked.task = task;
-                        request.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
+                            return BlobToFileSink.consume(globalThis, destination_blob, stream);
+                        } else {
+                            var task = bun.new(WriteFileWaitFromLockedValueTask, .{
+                                .globalThis = globalThis,
+                                .file_blob = destination_blob,
+                                .promise = JSC.JSPromise.Strong.init(globalThis),
+                                .mkdirp_if_not_exists = mkdirp_if_not_exists orelse true,
+                            });
 
-                        return task.promise.value();
+                            request.body.value.Locked.task = task;
+                            request.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
+                            return task.promise.value();
+                        }
                     },
                 }
             }
@@ -4764,6 +4790,158 @@ pub const Blob = struct {
     }
 };
 
+pub const BlobToFileSink = struct {
+    blob: Blob,
+    sink: FileSink.JSSink,
+    stream: JSC.WebCore.ReadableStream.Strong,
+
+    pub usingnamespace bun.New(BlobToFileSink);
+
+    pub fn deinit(this: *@This()) void {
+        this.sink.sink.deref();
+        this.blob.detach();
+        this.stream.deinit();
+        this.destroy();
+    }
+
+    pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        var args = callframe.arguments_old(2);
+        var this: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+        this.deinit();
+
+        return JSValue.jsUndefined();
+    }
+
+    pub fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const args = callframe.arguments_old(2);
+        var this = args.ptr[args.len - 1].asPromisePtr(@This());
+        this.deinit();
+
+        return JSValue.jsUndefined();
+    }
+
+    pub const shim = JSC.Shimmer("Bun", "BlobToFileSink", @This());
+
+    pub const Export = shim.exportFunctions(.{
+        .onResolveStream = onResolveStream,
+        .onRejectStream = onRejectStream,
+    });
+    comptime {
+        const jsonResolveRequestStream = JSC.toJSHostFunction(onResolveStream);
+        @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+        const jsonRejectRequestStream = JSC.toJSHostFunction(onRejectStream);
+        @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+    }
+
+    pub fn consume(globalThis: *JSGlobalObject, destination_blob: Blob, stream: JSC.WebCore.ReadableStream) JSValue {
+        bun.assert(destination_blob.store != null);
+        if (destination_blob.store.?.data != .file) {
+            return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is read-only", .{}));
+        }
+        // lets do something similar to ReadableStream piping in a Bun.file(filename).writer()
+        var this = BlobToFileSink.new(.{
+            .blob = destination_blob,
+            .sink = .{
+                .sink = .{
+                    .event_loop_handle = JSC.EventLoopHandle.init(JSC.VirtualMachine.get().eventLoop()),
+                    .fd = bun.invalid_fd,
+                },
+            },
+            .stream = .{},
+        });
+        this.sink.sink.writer.setParent(&this.sink.sink);
+
+        const path = destination_blob.store.?.data.file.pathlike;
+
+        const input_path: JSC.WebCore.PathOrFileDescriptor = brk: {
+            if (path == .fd) {
+                break :brk .{ .fd = path.fd };
+            } else {
+                break :brk .{
+                    .path = ZigString.Slice.fromUTF8NeverFree(
+                        path.path.slice(),
+                    ).clone(
+                        globalThis.allocator(),
+                    ) catch bun.outOfMemory(),
+                };
+            }
+        };
+        defer input_path.deinit();
+
+        switch (this.sink.sink.start(.{
+            .FileSink = .{
+                .input_path = input_path,
+            },
+        })) {
+            .err => |err| {
+                this.deinit();
+
+                return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+            },
+            else => {},
+        }
+
+        var signal = &this.sink.sink.signal;
+
+        signal.* = FileSink.JSSink.SinkSignal.init(JSValue.zero);
+
+        // explicitly set it to a dead pointer
+        // we use this memory address to disable signals being sent
+        signal.clear();
+        bun.assert(signal.isDead());
+
+        // We are already corked!
+        const assignment_result: JSValue = FileSink.JSSink.assignToStream(
+            globalThis,
+            stream.value,
+            &this.sink,
+            @as(**anyopaque, @ptrCast(&signal.ptr)),
+        );
+
+        assignment_result.ensureStillAlive();
+        // assert that it was updated
+        bun.assert(!signal.isDead());
+
+        if (assignment_result.toError()) |err_value| {
+            this.deinit();
+
+            return JSC.JSPromise.rejectedPromiseValue(globalThis, err_value);
+        }
+
+        if (!assignment_result.isEmptyOrUndefinedOrNull()) {
+            globalThis.bunVM().drainMicrotasks();
+
+            assignment_result.ensureStillAlive();
+            // it returns a Promise when it goes through ReadableStreamDefaultReader
+            if (assignment_result.asAnyPromise()) |promise| {
+                switch (promise.status(globalThis.vm())) {
+                    .pending => {
+                        this.stream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis);
+                        assignment_result.then(
+                            globalThis,
+                            this,
+                            onResolveStream,
+                            onRejectStream,
+                        );
+                        return assignment_result;
+                    },
+                    .fulfilled, .rejected => {
+                        this.deinit();
+
+                        return assignment_result;
+                    },
+                }
+            } else {
+                // if is not a promise we treat it as Error
+                this.deinit();
+                return JSC.JSPromise.rejectedPromiseValue(globalThis, assignment_result);
+            }
+        }
+        this.deinit();
+
+        return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.ERR_BODY_ALREADY_USED("body already used", .{}).toJS());
+    }
+};
 pub const AnyBlob = union(enum) {
     Blob: Blob,
     // InlineBlob: InlineBlob,

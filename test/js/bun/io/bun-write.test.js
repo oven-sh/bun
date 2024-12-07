@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, gcTick, isWindows, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDirWithFiles, withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";
 import path, { join } from "path";
 const tmpbase = tmpdir() + path.sep;
@@ -527,3 +527,19 @@ if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
     expect(await exited).toBe(0);
   }, 10000);
 }
+https: test("should stream with Response(req.body) #13237", async () => {
+  const tempdir = tempDirWithFiles("response and request", {
+    "response.txt": "",
+  });
+  const response_filename = join(tempdir, "response.txt");
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      await Bun.write(response_filename, new Response(req.body));
+
+      return new Response("ok");
+    },
+  });
+  await fetch(server.url, { method: "POST", body: "Bun" });
+  expect(await Bun.file(response_filename).text()).toBe("Bun");
+});

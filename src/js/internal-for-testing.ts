@@ -7,8 +7,8 @@
 
 const fmtBinding = $bindgenFn("fmt.bind.ts", "fmtString");
 
-export const quickAndDirtyJavaScriptSyntaxHighlighter = (code: string) => fmtBinding(code, 0);
-export const escapePowershell = (code: string) => fmtBinding(code, 1);
+export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
+export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
 export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 

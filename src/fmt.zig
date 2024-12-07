@@ -1721,15 +1721,14 @@ pub const js_bindings = struct {
     const gen = bun.gen.fmt;
 
     /// Internal function for testing in highlighter.test.ts
-    pub fn formatString(global: *bun.JSC.JSGlobalObject, code: bun.String, formatter_id: gen.Formatter) bun.JSError!bun.JSC.JSValue {
-
+    pub fn fmtString(global: *bun.JSC.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
         var buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
 
         switch (formatter_id) {
-            .fmtJavaScript => {
-                const formatter = bun.fmt.fmtJavaScript(code.slice(), .{
+            .highlight_javascript => {
+                const formatter = bun.fmt.fmtJavaScript(code, .{
                     .enable_colors = true,
                     .check_for_unhighlighted_write = false,
                 });
@@ -1737,8 +1736,8 @@ pub const js_bindings = struct {
                     return global.throwError(err, "while formatting");
                 };
             },
-            .escapePowershell => {
-                std.fmt.format(writer.writer(), "{}", .{escapePowershell(code.slice())}) catch |err| {
+            .escape_powershell => {
+                std.fmt.format(writer.writer(), "{}", .{escapePowershell(code)}) catch |err| {
                     return global.throwError(err, "while formatting");
                 };
             },
@@ -1748,9 +1747,7 @@ pub const js_bindings = struct {
             return global.throwError(err, "while formatting");
         };
 
-        var str = bun.String.createUTF8(buffer.list.items);
-        defer str.deref();
-        return str.toJS(global);
+        return bun.String.createUTF8(buffer.list.items);
     }
 };
 

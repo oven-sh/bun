@@ -3,7 +3,7 @@
 // various footguns in JavaScript, C++, and the bindings generator to
 // always produce correct code, or bail with an error.
 import { expect } from "bun:test";
-import type { Type, t } from "./bindgen-lib";
+import type { FuncOptions, Type, t } from "./bindgen-lib";
 import * as path from "node:path";
 import assert from "node:assert";
 
@@ -31,10 +31,11 @@ export const snake = (s: string) =>
   s
     .slice(1)
     .replace(/([A-Z])/g, "_$1")
+    .replace(/-/g, "_")
     .toLowerCase();
 /** Camel Case */
 export const camel = (s: string) =>
-  s[0].toLowerCase() + s.slice(1).replace(/_(\w)?/g, (_, letter) => letter?.toUpperCase() ?? "");
+  s[0].toLowerCase() + s.slice(1).replace(/[_-](\w)?/g, (_, letter) => letter?.toUpperCase() ?? "");
 /** Pascal Case */
 export const pascal = (s: string) => cap(camel(s));
 
@@ -146,7 +147,10 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     return hash;
   }
 
-  lowersToStruct() {
+  /**
+   * If this type lowers to a named type (struct, union, enum)
+   */
+  lowersToNamedType() {
     switch (this.kind) {
       case "ref":
         throw new Error("TODO");
@@ -154,6 +158,8 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "record":
       case "oneOf":
       case "dictionary":
+      case "stringEnum":
+      case "zigEnum":
         return true;
       default:
         return false;
@@ -168,10 +174,9 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "any":
         return "JSValue";
       case "ByteString":
-        return "bun.String";
       case "DOMString":
-        return "bun.String";
       case "USVString":
+      case "UTF8String":
         return "bun.String";
       case "boolean":
         return "bool";
@@ -192,7 +197,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "zigVirtualMachine":
         return "*JSGlobalObject";
       case "stringEnum":
-        throw new Error("TODO");
+        return cAbiTypeForEnum(this.data.length);
       case "zigEnum":
         throw new Error("TODO");
       case "undefined":
@@ -245,14 +250,33 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     return (this.nameDeduplicated = `anon_${this.kind}_${hash}`);
   }
 
+  cppInternalName() {
+    const name = this.name();
+    const cAbiType = this.canDirectlyMapToCAbi();
+    const namespace = typeHashToNamespace.get(this.hash());
+    if (cAbiType) {
+      if (typeof cAbiType === "string") {
+        return cAbiType;
+      }
+    }
+    return namespace ? `${namespace}${name}` : name;
+  }
+
+  cppClassName() {
+    assert(this.lowersToNamedType());
+    const name = this.name();
+    const namespace = typeHashToNamespace.get(this.hash());
+    return namespace ? `${namespace}::${cap(name)}` : name;
+  }
+
   cppName() {
     const name = this.name();
     const cAbiType = this.canDirectlyMapToCAbi();
-    if (cAbiType) {
+    const namespace = typeHashToNamespace.get(this.hash());
+    if (cAbiType && typeof cAbiType === "string" && this.kind !== "zigEnum" && this.kind !== "stringEnum") {
       return cAbiTypeName(cAbiType);
     }
-    const namespace = typeHashToNamespace.get(this.hash());
-    return namespace ? `${namespace}${cap(name)}` : name;
+    return namespace ? `${namespace}::${cap(name)}` : name;
   }
 
   #generateName() {
@@ -275,7 +299,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
   }
 
   markReachable() {
-    if (!this.lowersToStruct()) return;
+    if (!this.lowersToNamedType()) return;
     const hash = this.hash();
     const existing = typeHashToReachableType.get(hash);
     this.nameDeduplicated ??= existing?.name() ?? `anon_${this.kind}_${hash}`;
@@ -565,6 +589,10 @@ function cAbiIntegerLimits(type: CAbiType) {
   }
 }
 
+export function cAbiTypeForEnum(length: number): CAbiType {
+  return ("u" + alignForward(length, 8)) as CAbiType;
+}
+
 export function inspect(value: any) {
   return Bun.inspect(value, { colors: Bun.enableANSIColors });
 }
@@ -609,6 +637,7 @@ export function dictionaryImpl(record: Record<string, TypeImpl>): TypeImpl {
 
 export interface Func {
   name: string;
+  zigPrefix: string;
   snapshot: string;
   zigFile: string;
   variants: Variant[];
@@ -693,7 +722,7 @@ export interface TypeDef {
   type: TypeImpl;
 }
 
-export function registerFunction(opts: any) {
+export function registerFunction(opts: FuncOptions) {
   const snapshot = snapshotCallerLocation();
   const filename = stackTraceFileName(snapshot);
   expect(filename).toEndWith(".bind.ts");
@@ -712,7 +741,7 @@ export function registerFunction(opts: any) {
         ...variant,
         impl: opts.name + i,
         minRequiredArgs,
-      });
+      } as unknown as Variant);
       i++;
     }
   } else {
@@ -720,13 +749,14 @@ export function registerFunction(opts: any) {
     variants.push({
       impl: opts.name,
       args: Object.entries(opts.args).map(([name, type]) => ({ name, type })) as Arg[],
-      ret: opts.ret,
+      ret: opts.ret as TypeImpl,
       minRequiredArgs,
     });
   }
 
   const func: Func = {
     name: opts.name,
+    zigPrefix: opts.implNamespace ? `${opts.implNamespace}.` : "",
     snapshot,
     zigFile,
     variants,
@@ -858,8 +888,8 @@ export function cAbiTypeName(type: CAbiType) {
   )[type];
 }
 
-function alignForward(size: number, alignment: number) {
-  return (size + alignment - 1) & ~(alignment - 1);
+export function alignForward(size: number, alignment: number) {
+  return Math.floor((size + alignment - 1) / alignment) * alignment;
 }
 
 export class Struct {

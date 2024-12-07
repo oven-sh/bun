@@ -15,7 +15,7 @@ fn({
   args: {
     a: t.boolean,
     b: t.usize.optional,
-    c: t.i32.enforceRange(0, 100).default(42),
+    c: t.i32.enforceRange(0, 10000).default(42),
     d: t.u8.optional,
   },
   ret: t.i32,

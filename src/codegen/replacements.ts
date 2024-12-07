@@ -148,6 +148,7 @@ export const function_replacements = [
   "$cpp",
   "$newCppFunction",
   "$isPromiseResolved",
+  "$bindgenFn",
 ];
 const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll("$", "")})`);
 
@@ -238,6 +239,28 @@ export function applyReplacements(src: string, length: number) {
         args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0, -1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStateFulfilled)`;
       }
       return [slice.slice(0, match.index) + args, inner.rest, true];
+    } else if (name === "bindgenFn") {
+      const inner = sliceSourceCode(rest, true);
+      let args;
+      try {
+        const str =
+          "[" +
+          inner.result
+            .slice(1, -1)
+            .replaceAll("'", '"')
+            .replace(/,[\s\n]*$/s, "") +
+          "]";
+        args = JSON.parse(str);
+      } catch {
+        throw new Error(`Call is not known at bundle-time: '$${name}${inner.result}'`);
+      }
+      if (args.length != 2 || typeof args[0] !== "string" || typeof args[1] !== "string") {
+        throw new Error(`$${name} takes two string arguments, but got '$${name}${inner.result}'`);
+      }
+
+      const id = registerNativeCall("bind", args[0], args[1], undefined);
+
+      return [slice.slice(0, match.index) + "__intrinsic__lazy(" + id + ")", inner.rest, true];
     } else {
       throw new Error("Unknown preprocessor macro " + name);
     }

@@ -327,6 +327,19 @@ pub fn build(b: *Build) !void {
             .{ .os = .windows, .arch = .x86_64 },
         });
     }
+
+    // zig build enum-codegen
+    {
+        const step = b.step("enum-codegen", "Extract enum definitions");
+        const exe = b.addExecutable(.{
+            .name = "enum_codegen",
+            .root_source_file = b.path("./src/enum_codegen.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        });
+        const run = b.addRunArtifact(exe);
+        step.dependOn(&run.step);
+    }
 }
 
 pub fn addMultiCheck(

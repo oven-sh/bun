@@ -37,8 +37,8 @@ export type Type<T, K extends TypeKind = TypeKind, Flags extends boolean | null 
       : {})
   : {});
 
-type AcceptedDictionaryTypeKind = Exclude<TypeKind, "globalObject" | "zigVirtualMachine">;
-type IntegerTypeKind = "usize" | "i32" | "i64" | "u32" | "u64" | "i8" | "u8" | "i16" | "u16";
+export type AcceptedDictionaryTypeKind = Exclude<TypeKind, "globalObject" | "zigVirtualMachine">;
+export type IntegerTypeKind = "usize" | "i32" | "i64" | "u32" | "u64" | "i8" | "u8" | "i16" | "u16";
 
 function builtinType<T>() {
   return <K extends TypeKind>(kind: K) => new TypeImpl(kind, undefined as any, {}) as Type<T, any> as Type<T, K>;
@@ -178,10 +178,7 @@ export namespace t {
     return dictionaryImpl(fields as Record<string, any>);
   }
 
-  export function zigEnum(file: string, impl: string): Type<string, "zigEnum"> {
-    return new TypeImpl("zigEnum", { file, impl });
-  }
-
+  /** Create an enum from a list of strings. */
   export function stringEnum<T extends string[]>(
     ...values: T
   ): Type<
@@ -190,11 +187,19 @@ export namespace t {
     }[number],
     "stringEnum"
   > {
-    return new TypeImpl("stringEnum", values);
+    return new TypeImpl("stringEnum", values.sort());
+  }
+
+  /**
+   * Equivalent to `stringEnum`, but using an enum sourced from the given Zig
+   * file. Use this to get an enum type that can have functions added.
+   */
+  export function zigEnum(file: string, impl: string): Type<string, "zigEnum"> {
+    return new TypeImpl("zigEnum", { file, impl });
   }
 }
 
-type FuncOptions = FuncMetadata &
+export type FuncOptions = FuncMetadata &
   (
     | {
         variants: FuncVariant[];
@@ -202,7 +207,7 @@ type FuncOptions = FuncMetadata &
     | FuncVariant
   );
 
-interface FuncMetadata {
+export interface FuncMetadata {
   name: string;
   /**
    * The namespace where the implementation is, by default it's in the root.
@@ -215,9 +220,9 @@ interface FuncMetadata {
   exposedOn?: ExposedOn;
 }
 
-type ExposedOn = "JSGlobalObject" | "BunObject";
+export type ExposedOn = "JSGlobalObject" | "BunObject";
 
-interface FuncVariant {
+export interface FuncVariant {
   /** Ordered record. Cannot include ".required" types since required is the default. */
   args: Record<string, Type<any, any, true | null>>;
   ret: Type<any>;

@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { bunEnv, bunExe } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
@@ -1333,7 +1334,8 @@ describe("readline.Interface", () => {
   const testForEventLoopHangs = (fixtureName: string) => async () => {
     // race a timeout and the subprocess promise
     const subprocess = Bun.spawn({
-      cmd: ["bun", "run", fixture(fixtureName)],
+      cmd: [bunExe(), "run", fixture(fixtureName)],
+      env: bunEnv,
     });
 
     const timeoutAfter = 2_500;

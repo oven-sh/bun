@@ -217,7 +217,7 @@
     __ZNK2v85Value10IsFunctionEv;
     __ZN2v812api_internal17FromJustIsNothingEv;
     __ZNK2v85Array6LengthEvl;
-    __ZNK2v810CpuProfile10GetEndTimeEv
+    __ZNK2v810CpuProfile10GetEndTimeEv;
     __ZNK2v810CpuProfile12GetStartTimeEv;
     __ZNK2v810CpuProfile14GetSampleStateEi;
     __ZNK2v810CpuProfile14GetTopDownRootEv;

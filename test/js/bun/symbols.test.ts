@@ -22,7 +22,7 @@ if (process.platform === "linux") {
         if (version.startsWith("2..")) {
           version = "2." + version.slice(3);
         }
-        if (semver.order(version, "2.27.0") >= 0) {
+        if (semver.order(version, "2.26.0") > 0) {
           errors.push({
             symbol: line.slice(line.lastIndexOf(")") + 1).trim(),
             "glibc version": version,

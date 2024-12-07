@@ -137,7 +137,18 @@ EOF
 sudo chmod +x /etc/buildkite-agent/hooks/environment
 
 echo "Installing BuildKite agent service..."
-sudo -u buildkite-agent /usr/local/share/bun/agent.mjs install start`;
+# Must run this inside of nix, from the buildkite-agent user because it has node installed.
+sudo -i -u buildkite-agent bash << EOF
+  set -euxo pipefail
+  . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+
+  # Update flake lock and evaluate the environment
+  nix flake update
+  nix develop .#ci-${flakeTarget} -c true
+
+  # Install and start the agent
+  /usr/local/share/bun/agent.mjs install start
+EOF
 
   // Write user data to a temporary file
   const userDataFile = mkdtemp("user-data-", "user-data.sh");

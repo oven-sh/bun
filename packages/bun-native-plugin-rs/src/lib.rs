@@ -636,22 +636,36 @@ impl<'a> OnBeforeParse<'a> {
 
     /// Log a message with the given level.
     pub fn log(&self, message: &str, level: BunLogLevel) {
-        let mut log_options = sys::BunLogOptions {
-            __struct_size: std::mem::size_of::<sys::BunLogOptions>(),
-            message_ptr: message.as_ptr(),
-            message_len: message.len(),
-            path_ptr: self.args_raw.path_ptr,
-            path_len: self.args_raw.path_len,
-            source_line_text_ptr: std::ptr::null(),
-            source_line_text_len: 0,
-            level: level as i8,
-            line: 0,
-            lineEnd: 0,
-            column: 0,
-            columnEnd: 0,
-        };
+        let mut log_options = log_from_message_and_level(
+            message,
+            level,
+            self.args_raw.path_ptr,
+            self.args_raw.path_len,
+        );
         unsafe {
             ((*self.result_raw).log.unwrap())(self.args_raw, &mut log_options);
         }
+    }
+}
+
+pub fn log_from_message_and_level(
+    message: &str,
+    level: BunLogLevel,
+    path: *const u8,
+    path_len: usize,
+) -> sys::BunLogOptions {
+    sys::BunLogOptions {
+        __struct_size: std::mem::size_of::<sys::BunLogOptions>(),
+        message_ptr: message.as_ptr(),
+        message_len: message.len(),
+        path_ptr: path as *const _,
+        path_len,
+        source_line_text_ptr: std::ptr::null(),
+        source_line_text_len: 0,
+        level: level as i8,
+        line: 0,
+        lineEnd: 0,
+        column: 0,
+        columnEnd: 0,
     }
 }

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { parseArgs } from "node:util";
-import { getBuildNumber, getSecret, isCI, parseArch, spawnSafe, startGroup, readFile } from "./utils.mjs";
+import { getBuildNumber, getSecret, isCI, parseArch, spawnSafe, startGroup, readFile, mkdtemp, rm } from "./utils.mjs";
 import { join } from "node:path";
+import { writeFile } from "node:fs/promises";
 
 async function main() {
   const {
@@ -110,20 +111,29 @@ buildkite-agent soft nproc 1048576
 buildkite-agent hard nproc 1048576
 EOF`;
 
-  // Use machine.mjs to create the AMI with the user data
-  await spawnSafe([
-    "node",
-    "./scripts/machine.mjs",
-    "publish-image",
-    `--os=linux`,
-    `--arch=${architecture}`,
-    `--distro=ubuntu`,
-    `--release=18.04`,
-    `--cloud=aws`,
-    `--ci`,
-    `--authorized-org=oven-sh`,
-    `--user-data=${userData}`,
-  ]);
+  // Write user data to a temporary file
+  const userDataFile = mkdtemp("user-data-", "user-data.sh");
+  await writeFile(userDataFile, userData);
+
+  try {
+    // Use machine.mjs to create the AMI with the user data
+    await spawnSafe([
+      "node",
+      "./scripts/machine.mjs",
+      "publish-image",
+      `--os=linux`,
+      `--arch=${architecture}`,
+      `--distro=ubuntu`,
+      `--release=18.04`,
+      `--cloud=aws`,
+      `--ci`,
+      `--authorized-org=oven-sh`,
+      `--user-data=${userDataFile}`,
+    ]);
+  } finally {
+    // Clean up the temporary file
+    await rm(userDataFile);
+  }
 }
 
 await main();

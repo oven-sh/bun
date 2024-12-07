@@ -24,6 +24,18 @@
           };
         };
 
+        # Function to create a derivation for downloading Bun binary
+        getBunBinary = arch: pkgs.fetchzip {
+          name = "bun-binary-${arch}";
+          url = if arch == "x64" 
+            then "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-${arch}.zip"
+            else "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-aarch64.zip";
+          stripRoot = false;
+          sha256 = if arch == "x64" 
+            then "sha256-e5OtTccoPG7xKQVvZiuvo3VSBC8mRteOj1d0GF+nEtk="
+            else "sha256-ph2lNX4o1Jd/zNSFH+1i/02j6jOFMAXH3ZPayAvFOTI=";  # We'll need to replace this with the actual arm64 hash
+        };
+
         # Function to create build environment for a specific architecture
         makeBuildEnv = arch: pkgs.buildEnv {
           name = "bun-build-tools-${arch}";
@@ -74,17 +86,10 @@
             zlib
             openssl
             libffi
-          ];
 
-          # Bun depends on itself to compile due to codegen scripts.
-          # Download a recent binary.
-          preFixup = ''
-            ${pkgs.curl}/bin/curl -L "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-${arch}.zip"
-            unzip $out/bun-linux-${arch}.zip
-            cp $out/bun-linux-${arch}/bun $out/bin/bun
-            chmod +x $out/bin/bun
-            rm -rf $out/bun-linux-${arch} $out/bun-linux-${arch}.zip
-          '';
+            # Include the Bun binary
+            (getBunBinary arch)
+          ];
 
           pathsToLink = [ "/bin" "/lib" "/lib64" "/include" "/share" "/etc/ssl" ];
           extraOutputsToInstall = [ "dev" "out" "bin" ];

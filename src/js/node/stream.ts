@@ -5390,7 +5390,9 @@ function createNativeStreamReadable(Readable) {
     }
 
     if (isClosed) {
-      nativeReadable.push(null);
+      ProcessNextTick(() => {
+        nativeReadable.push(null);
+      });
     }
 
     return view;

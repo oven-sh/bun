@@ -198,4 +198,3 @@ EOF`;
 }
 
 await main();
- `

@@ -1097,7 +1097,7 @@ if(NOT BUN_CPP_ONLY)
         ${BUILD_PATH}/${bunStripExe}
     )
 
-    if(APPLE AND ENABLE_APPLE_CODESIGN)
+    if(ENABLE_CODESIGN AND APPLE)
       register_command(
         TARGET
           ${bun}
@@ -1145,7 +1145,7 @@ if(NOT BUN_CPP_ONLY)
     )
   endif()
 
-  if(APPLE AND ENABLE_APPLE_CODESIGN)
+  if(ENABLE_CODESIGN AND APPLE)
     register_command(
       TARGET
         ${bun}
@@ -1250,7 +1250,7 @@ if(NOT BUN_CPP_ONLY)
         ${BUILD_PATH}/${bunPath}.zip
     )
 
-    if(APPLE AND ENABLE_APPLE_CODESIGN)
+    if(ENABLE_CODESIGN AND APPLE)
       register_command(
         TARGET
           ${bun}
@@ -1289,7 +1289,7 @@ if(NOT BUN_CPP_ONLY)
           ${BUILD_PATH}/${bunStripPath}.zip
       )
 
-      if(APPLE AND ENABLE_APPLE_CODESIGN)
+      if(ENABLE_CODESIGN AND APPLE)
         register_command(
           TARGET
             ${bun}

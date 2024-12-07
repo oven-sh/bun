@@ -3070,7 +3070,7 @@ pub const Package = extern struct {
             }
 
             switch (resolution_tag) {
-                .git, .github, .gitlab, .root => {
+                .git, .github, .root => {
                     const prepare_scripts = .{
                         "preprepare",
                         "prepare",

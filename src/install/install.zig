@@ -12623,7 +12623,7 @@ pub const PackageManager = struct {
             }
 
             switch (resolution_tag) {
-                .git, .github, .gitlab, .root => {
+                .git, .github, .root => {
                     inline for (Lockfile.Scripts.names) |script_name| {
                         count += @intFromBool(!@field(scripts, script_name).isEmpty());
                     }

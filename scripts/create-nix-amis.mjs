@@ -148,6 +148,7 @@ systemctl start buildkite-agent`;
         `--ci`,
         `--authorized-org=oven-sh`,
         `--user-data=${userDataFile}`,
+        "--no-bootstrap",
       ],
       {
         stdio: "inherit",

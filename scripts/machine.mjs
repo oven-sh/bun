@@ -598,22 +598,44 @@ const aws = {
 export function getUserData(cloudInit) {
   const { os, userData } = cloudInit;
 
-  let defaultConfig;
+  // For Windows, use PowerShell script
   if (os === "windows") {
-    defaultConfig = getWindowsStartupScript(cloudInit);
-  } else {
-    defaultConfig = getCloudInit(cloudInit);
-  }
-
-  // If no custom user data, return default config
-  if (!userData) {
-    return defaultConfig;
-  }
-
-  // Append custom user data after default config
-  return `${defaultConfig}
+    const defaultConfig = getWindowsStartupScript(cloudInit);
+    if (!userData) {
+      return defaultConfig;
+    }
+    // For Windows, append PowerShell scripts
+    return `${defaultConfig}
 
 ${userData}`;
+  }
+
+  // For Linux, handle cloud-init and shell scripts
+  if (!userData) {
+    return getCloudInit(cloudInit);
+  }
+
+  // If user data is a shell script (doesn't start with #cloud-config),
+  // wrap it in a cloud-init script that runs after the default config
+  if (!userData.trim().startsWith("#cloud-config")) {
+    return `#cloud-config
+${getCloudInit(cloudInit).replace("#cloud-config\n", "")}
+runcmd:
+  - |
+    cat > /tmp/user-data.sh << 'EOFUSERDATA'
+${userData}
+EOFUSERDATA
+  - chmod +x /tmp/user-data.sh
+  - /tmp/user-data.sh
+`;
+  }
+
+  // If user data is cloud-init, merge it with default config
+  const defaultConfig = getCloudInit(cloudInit).replace("#cloud-config\n", "");
+  const customConfig = userData.replace("#cloud-config\n", "");
+  return `#cloud-config
+${defaultConfig}
+${customConfig}`;
 }
 
 /**

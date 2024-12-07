@@ -76,8 +76,8 @@
             libffi
           ];
 
-         
-          # Download arm64 binary for linux arm64, x64 binary for linux x64
+          # Bun depends on itself to compile due to codegen scripts.
+          # Download a recent binary.
           preFixup = ''
             ${pkgs.curl}/bin/curl -L "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-${arch}.zip"
             unzip $out/bun-linux-${arch}.zip
@@ -106,14 +106,11 @@
         devShells = {
           default = pkgs.mkShell {
             buildInputs = with pkgs; [
-              packer
               awscli2
             ];
 
             shellHook = ''
-              echo "Bun build environment tools installed"
-              echo "To build AMIs, run: packer build -var 'arch=x64' packer.json"
-              echo "                or: packer build -var 'arch=arm64' packer.json"
+              echo "To compile a release build of Bun, run: bun build:release"
             '';
           };
 
@@ -134,7 +131,7 @@
               fi
               
               # Set BuildKite meta-data for architecture
-              export BUILDKITE_AGENT_META_DATA="architecture=x64,${BUILDKITE_AGENT_META_DATA:-}"
+              export BUILDKITE_AGENT_META_DATA="architecture=x64,''${BUILDKITE_AGENT_META_DATA:-}"
             '';
           };
 
@@ -154,7 +151,7 @@
               fi
               
               # Set BuildKite meta-data for architecture
-              export BUILDKITE_AGENT_META_DATA="architecture=arm64,${BUILDKITE_AGENT_META_DATA:-}"
+              export BUILDKITE_AGENT_META_DATA="architecture=arm64,''${BUILDKITE_AGENT_META_DATA:-}"
             '';
           };
 

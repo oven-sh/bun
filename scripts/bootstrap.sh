@@ -773,9 +773,8 @@ install_bun() {
 	sudo mv ${buntarget}/bun "$home/.bun/bin"
 	sudo chmod +x $home/.bun/bin/bun
 	sudo chown -R $user:$group $home/.bun
-	# append_to_path "$home/.bun/bin"
 	echo "export PATH=\$PATH:$home/.bun/bin" | sudo tee $home/.profile
-
+	export PATH=$PATH:$home/.bun/bin
 
 	bun_path="$(which bun)"
 	bunx_path="$(dirname "$bun_path")/bunx"

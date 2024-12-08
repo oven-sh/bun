@@ -1,9 +1,5 @@
 import { inspect } from "node:util";
-import {
-  isPrivileged,
-  spawnSafe,
-  which
-} from "./utils.mjs";
+import { isPrivileged, spawnSafe, which } from "./utils.mjs";
 
 /**
  * @link https://tart.run/

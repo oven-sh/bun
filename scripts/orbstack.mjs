@@ -1,5 +1,5 @@
 import { inspect } from "node:util";
-import { $, mkdtemp, rm, spawnSafe, writeFile, getUsernameForDistro } from "./utils.mjs";
+import { $, mkdtemp, rm, spawnSafe, writeFile, getUsernameForDistro, spawnSshSafe, setupUserData } from "./utils.mjs";
 import { getUserData } from "./machine.mjs";
 
 /**
@@ -78,6 +78,7 @@ export const orbstack = {
     let userDataPath;
     if (userData) {
       userDataPath = mkdtemp("orbstack-user-data-", "user-data.txt");
+      console.log("User data path:", userData);
       writeFile(userDataPath, userData);
       args.push(`--user-data=${userDataPath}`);
     }
@@ -139,7 +140,11 @@ export const orbstack = {
       userData,
     });
 
-    return this.toMachine(vm, options);
+    const machine = this.toMachine(vm, options);
+
+    await setupUserData(machine, options);
+
+    return machine;
   },
 
   /**

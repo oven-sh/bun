@@ -42,7 +42,7 @@
             url = olderBunVersion.${arch}.url;
             stripRoot = false;
             sha256 = olderBunVersion.${arch}.sha256;
-          }}/${olderBunVersion.${arch}.dir}/bun $out/bin/
+          }}/${olderBunVersion.${arch}.dir}/bun $out/bin/bun
           chmod +x $out/bin/bun
         '';
 

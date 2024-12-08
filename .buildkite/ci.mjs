@@ -992,11 +992,17 @@ async function getPipelineOptions() {
  * @param {Record<string, string | undefined>} [options]
  * @returns {Step}
  */
-function getCreateNixAmisStep(platform) {
+function getCreateNixAmisStep(platform, dryRun) {
   return {
     key: `${getImageKey(platform)}-build-image`,
     label: `${getBuildkiteEmoji("nix")} Create Nix AMI (${platform.arch})`,
-    command: ["node", "./scripts/create-nix-amis.mjs", "--arch=" + platform.arch, "--cloud=aws"].join(" "),
+    command: [
+      "node",
+      "./scripts/create-nix-amis.mjs",
+      "--release=" + (dryRun ? "create-image" : "publish-image"),
+      "--arch=" + platform.arch,
+      "--cloud=aws",
+    ].join(" "),
     agents: {
       queue: "build-image",
     },
@@ -1046,7 +1052,7 @@ async function getPipeline(options = {}) {
       steps: [
         ...Array.from(imagePlatforms.values())
           .filter(platform => platform.nix)
-          .map(getCreateNixAmisStep),
+          .map(platform => getCreateNixAmisStep(platform, !!publishImages)),
         ...[...imagePlatforms.values()]
           .filter(platform => !platform.nix)
           .map(platform => getBuildImageStep(platform, !publishImages)),

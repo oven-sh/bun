@@ -222,7 +222,6 @@ Environment=NIX_PATH=/nix/var/nix/profiles/per-user/root/channels
       "distro": getDistro(),
       "distro-version": getDistroVersion(),
       "cloud": cloud,
-      "nix": isNixInstalled() ? "true" : undefined,
     };
 
     if (cloud) {

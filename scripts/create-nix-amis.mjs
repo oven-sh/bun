@@ -7,11 +7,12 @@ import { writeFile } from "node:fs/promises";
 
 async function main() {
   const {
-    values: { arch, cloud },
+    values: { arch, cloud, release },
   } = parseArgs({
     options: {
       arch: { type: "string" },
       cloud: { type: "string" },
+      release: { type: "string" },
     },
   });
 
@@ -21,6 +22,10 @@ async function main() {
 
   if (!cloud) {
     throw new Error("--cloud is required");
+  }
+
+  if (!release) {
+    throw new Error("--release is required");
   }
 
   const architecture = parseArch(arch);
@@ -47,7 +52,34 @@ export DEBIAN_FRONTEND=noninteractive
 
 echo "Installing required packages..."
 sudo apt-get update -qq
-sudo apt-get install -y curl xz-utils git sudo --no-install-recommends
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y curl xz-utils git sudo nodejs --no-install-recommends
+
+echo "Creating buildkite-agent user..."
+sudo useradd -m -d /var/lib/buildkite-agent -s /bin/bash buildkite-agent
+
+echo "Creating required directories..."
+sudo mkdir -p /var/lib/buildkite-agent/bun
+sudo mkdir -p /var/cache/buildkite-agent
+sudo mkdir -p /var/log/buildkite-agent
+sudo mkdir -p /usr/local/share/bun
+sudo mkdir -p /etc/buildkite-agent/hooks
+
+# Copy the agent.mjs script
+sudo tee /usr/local/share/bun/agent.mjs > /dev/null << 'EOF'
+${agentScript}
+EOF
+
+sudo tee /usr/local/share/bun/utils.mjs > /dev/null << 'EOF'
+${utilsContent}
+EOF
+
+sudo chmod +x /usr/local/share/bun/agent.mjs
+
+# Copy flake.nix
+sudo tee /var/lib/buildkite-agent/bun/flake.nix > /dev/null << 'EOF'
+${flakeContent}
+EOF
 
 echo "Installing Nix..."
 sh <(curl -L https://nixos.org/nix/install) --daemon
@@ -64,59 +96,45 @@ trusted-users = root buildkite-agent
 auto-optimise-store = true
 EOF
 
+# Create systemd service for our agent
+sudo tee /etc/systemd/system/buildkite-agent.service > /dev/null << EOF
+[Unit]
+Description=Buildkite Agent
+After=network-online.target nix-daemon.service
+Wants=network-online.target nix-daemon.service
+
+[Service]
+Type=simple
+User=buildkite-agent
+Group=buildkite-agent
+Environment="HOME=/var/lib/buildkite-agent"
+Environment="USER=buildkite-agent"
+Environment="PATH=/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="NIX_PATH=/nix/var/nix/profiles/per-user/root/channels"
+ExecStart=/usr/bin/node /usr/local/share/bun/agent.mjs start
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+# Set max open files
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+curl -fsSL https://keys.openpgp.org/vks/v1/by-fingerprint/32A37959C2FA5C3C99EFBC32A79206696452D198 | sudo gpg --dearmor -o /usr/share/keyrings/buildkite-agent-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/buildkite-agent-archive-keyring.gpg] https://apt.buildkite.com/buildkite-agent stable main" | sudo tee /etc/apt/sources.list.d/buildkite-agent.list
+sudo apt-get update -qq
+sudo apt-get install -y buildkite-agent
+
 # Create required directories
 sudo mkdir -p /var/lib/buildkite-agent/bun
 sudo mkdir -p /var/cache/buildkite-agent
 sudo mkdir -p /var/log/buildkite-agent
 
-# Create a Nix expression for the buildkite service
-sudo mkdir -p /etc/buildkite-agent
-cat > /etc/buildkite-agent/service.nix << 'NIXEOF'
-{ pkgs ? import <nixpkgs> {} }:
-
-let
-  buildkite-agent = pkgs.buildkite-agent;
-  flakeTarget = if pkgs.stdenv.isAarch64 then "arm64" else "x64";
-in {
-  systemd.services.buildkite-agent = {
-    description = "Buildkite Agent";
-    after = [ "nix-daemon.service" "network-online.target" ];
-    wants = [ "nix-daemon.service" "network-online.target" ];
-    wantedBy = [ "multi-user.target" ];
-
-    environment = {
-      HOME = "/var/lib/buildkite-agent";
-      USER = "buildkite-agent";
-      NIX_PATH = "/nix/var/nix/profiles/per-user/root/channels";
-      PATH = "\${pkgs.lib.makeBinPath [ pkgs.bash pkgs.nix pkgs.nodejs_20 ]}";
-    };
-
-    serviceConfig = {
-      ExecStart = "/usr/local/share/bun/agent.mjs start";
-      User = "buildkite-agent";
-      Group = "buildkite-agent";
-      RestartSec = "5";
-      Restart = "always";
-      TimeoutStopSec = "20";
-    };
-  };
-
-  users.users.buildkite-agent = {
-    isSystemUser = true;
-    group = "buildkite-agent";
-    home = "/var/lib/buildkite-agent";
-    createHome = true;
-  };
-
-  users.groups.buildkite-agent = {};
-}
-NIXEOF
-
-# Install and configure buildkite-agent using Nix
-nix-env -if /etc/buildkite-agent/service.nix
-
 # Configure buildkite-agent
-cat > /etc/buildkite-agent/buildkite-agent.cfg << 'EOF'
+sudo tee /etc/buildkite-agent/buildkite-agent.cfg > /dev/null << 'EOF'
 name="%hostname-%n"
 tags="queue=build-linux,os=linux,arch=${architecture}"
 build-path=/var/lib/buildkite-agent/builds
@@ -128,7 +146,7 @@ EOF
 
 # Set up hooks
 sudo mkdir -p /etc/buildkite-agent/hooks
-cat > /etc/buildkite-agent/hooks/environment << 'EOF'
+sudo tee /etc/buildkite-agent/hooks/environment > /dev/null << 'EOF'
 #!/bin/bash
 . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
 export PATH="/nix/var/nix/profiles/default/bin:$PATH"
@@ -142,11 +160,6 @@ exec nix develop .#ci-${flakeTarget} --command bash -c "$BUILDKITE_COMMAND"
 EOF
 
 sudo chmod +x /etc/buildkite-agent/hooks/*
-
-# Copy flake.nix
-sudo tee /var/lib/buildkite-agent/bun/flake.nix > /dev/null << 'EOF'
-${flakeContent}
-EOF
 
 # Set system limits
 sudo tee /etc/security/limits.d/buildkite-agent.conf > /dev/null << 'EOF'
@@ -165,6 +178,9 @@ sudo chown -R buildkite-agent:buildkite-agent /etc/buildkite-agent
 # Enable and start service
 sudo systemctl daemon-reload
 sudo systemctl enable buildkite-agent
+
+cd /var/lib/buildkite-agent/bun
+sudo -u buildkite-agent bash -c "source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && nix develop .#ci-${flakeTarget} -c echo 'Build environment ready for ${release} - ${architecture}'"
 `;
 
   // Write user data to a temporary file
@@ -177,11 +193,12 @@ sudo systemctl enable buildkite-agent
       [
         "node",
         "./scripts/machine.mjs",
-        "create-image",
+        release,
         "--os=linux",
         `--arch=${architecture}`,
         "--distro=ubuntu",
-        "--release=18.04",
+        // Orbstack requires 20.04+.
+        "--release=" + (cloud === "orbstack" ? "20.04" : "18.04"),
         `--cloud=${cloud}`,
         "--ci",
         "--authorized-org=oven-sh",

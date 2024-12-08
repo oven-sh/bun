@@ -2919,7 +2919,10 @@ pub const PackageManager = struct {
                 },
             );
 
-            const json = json_result catch |err| return .{ .parse_err = err };
+            const json = json_result catch |err| {
+                _ = this.map.remove(path);
+                return .{ .parse_err = err };
+            };
 
             entry.value_ptr.* = .{
                 .root = json.root.deepClone(allocator) catch bun.outOfMemory(),

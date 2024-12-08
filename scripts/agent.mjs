@@ -20,6 +20,8 @@ import {
   getEnv,
   writeFile,
   spawnSafe,
+  spawn,
+  mkdir,
 } from "./utils.mjs";
 import { parseArgs } from "node:util";
 
@@ -49,16 +51,19 @@ async function doBuildkiteAgent(action) {
     const args = [realpathSync(process.argv[1]), "start"];
 
     if (isWindows) {
-      const serviceCommand = [
-        "New-Service",
-        "-Name",
-        "buildkite-agent",
-        "-StartupType",
-        "Automatic",
-        "-BinaryPathName",
-        `${escape(command)} ${escape(args.map(escape).join(" "))}`,
+      mkdir(logsPath);
+
+      const nssm = which("nssm", { required: true });
+      const nssmCommands = [
+        [nssm, "install", "buildkite-agent", command, ...args],
+        [nssm, "set", "buildkite-agent", "Start", "SERVICE_AUTO_START"],
+        [nssm, "set", "buildkite-agent", "AppDirectory", homePath],
+        [nssm, "set", "buildkite-agent", "AppStdout", agentLogPath],
+        [nssm, "set", "buildkite-agent", "AppStderr", agentLogPath],
       ];
-      await spawnSafe(["powershell", "-Command", serviceCommand.join(" ")], { stdio: "inherit" });
+      for (const command of nssmCommands) {
+        await spawnSafe(command, { stdio: "inherit" });
+      }
     }
 
     if (isOpenRc()) {
@@ -124,13 +129,21 @@ async function doBuildkiteAgent(action) {
       token = await getCloudMetadataTag("buildkite:token");
     }
 
+    if (!token) {
+      throw new Error(
+        "Buildkite token not found: either set BUILDKITE_AGENT_TOKEN or add a buildkite:token label to the instance",
+      );
+    }
+
     let shell;
     if (isWindows) {
-      const pwsh = which(["pwsh", "powershell"], { required: true });
-      shell = `${pwsh} -Command`;
+      // Command Prompt has a faster startup time than PowerShell.
+      // Also, it propogates the exit code of the command, which PowerShell does not.
+      const cmd = which("cmd", { required: true });
+      shell = `"${cmd}" /S /C`;
     } else {
-      const sh = which(["bash", "sh"], { required: true });
-      shell = `${sh} -c`;
+      const sh = which("sh", { required: true });
+      shell = `${sh} -e -c`;
     }
 
     const flags = ["enable-job-log-tmpfile", "no-feature-reporting"];

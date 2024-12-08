@@ -290,14 +290,6 @@ pub const UDPSocket = struct {
             .vm = vm,
         });
 
-        // also cleans up config
-        defer {
-            if (globalThis.hasException()) {
-                this.closed = true;
-                this.deinit();
-            }
-        }
-
         if (uws.udp.Socket.create(
             this.loop,
             onData,
@@ -309,13 +301,24 @@ pub const UDPSocket = struct {
         )) |socket| {
             this.socket = socket;
         } else {
+            this.closed = true;
+            this.deinit();
             return globalThis.throw("Failed to bind socket", .{});
+        }
+
+        errdefer {
+            this.socket.close();
+            this.deinit();
         }
 
         if (config.connect) |connect| {
             const ret = this.socket.connect(connect.address, connect.port);
             if (ret != 0) {
                 if (JSC.Maybe(void).errnoSys(ret, .connect)) |err| {
+                    return globalThis.throwValue(err.toJS(globalThis));
+                }
+
+                if (bun.c_ares.Error.initEAI(ret)) |err| {
                     return globalThis.throwValue(err.toJS(globalThis));
                 }
             }
@@ -645,7 +648,7 @@ pub const UDPSocket = struct {
         // finalize is only called when js_refcount reaches 0
         // js_refcount can only reach 0 when the socket is closed
         bun.assert(this.closed);
-
+        this.poll_ref.disable();
         this.config.deinit();
         this.destroy();
     }

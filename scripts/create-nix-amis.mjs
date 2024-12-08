@@ -186,7 +186,7 @@ ENVSETUP
 
   # Now run the wrapped command as root to handle systemd installation
   sudo bash /tmp/agent-install.sh
-  rm /tmp/agent-install.sh
+  sudo rm /tmp/agent-install.sh
 
   # Start the agent as the buildkite-agent user
   sudo -i -u buildkite-agent bash << EOF

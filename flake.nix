@@ -8,23 +8,21 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    olderBunVersion = {
-      default = {
-        x64 = {
-          url = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-x64.zip?nix=true";
-          sha256 = "sha256-e5OtTccoPG7xKQVvZiuvo3VSBC8mRteOj1d0GF+nEtk=";
-        };
-        arm64 = {
-          url = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-aarch64.zip?nix=true";
-          sha256 = "sha256-ph2lNX4o1Jd/zNSFH+1i/02j6jOFMAXH3ZPayAvFOTI=";
-        };
-      };
-    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, rust-overlay, olderBunVersion }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
     flake-utils.lib.eachDefaultSystem (system:
       let
+        olderBunVersion = {
+          x64 = {
+            url = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-x64.zip?nix=true";
+            sha256 = "sha256-e5OtTccoPG7xKQVvZiuvo3VSBC8mRteOj1d0GF+nEtk=";
+          };
+          arm64 = {
+            url = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-aarch64.zip?nix=true";
+            sha256 = "sha256-ph2lNX4o1Jd/zNSFH+1i/02j6jOFMAXH3ZPayAvFOTI=";
+          };
+        };
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
           inherit system overlays;
@@ -38,9 +36,9 @@
           mkdir -p $out/bin
           cp ${pkgs.fetchzip {
             name = "bun-binary-${arch}";
-            url = olderBunVersion.default.${arch}.url;
+            url = olderBunVersion.${arch}.url;
             stripRoot = false;
-            sha256 = olderBunVersion.default.${arch}.sha256;
+            sha256 = olderBunVersion.${arch}.sha256;
           }}/bun $out/bin/
           chmod +x $out/bin/bun
         '';

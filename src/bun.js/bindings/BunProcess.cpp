@@ -429,9 +429,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(globalObject, exportsValue));
 
     if (auto resultObject = resultValue.getObject()) {
+#if OS(DARWIN) || OS(LINUX)
         // If this is a native bundler plugin we want to store the handle from dlopen
         // as we are going to call `dlsym()` on it later to get the plugin implementation.
         const char** pointer_to_plugin_name = (const char**)dlsym(handle, "BUN_PLUGIN_NAME");
+#elif OS(WINDOWS)
+        const char** pointer_to_plugin_name = (const char**)GetProcAddressA(handle, "BUN_PLUGIN_NAME");
+#endif
         if (pointer_to_plugin_name) {
             // TODO: think about the finalizer here
             // currently we do not dealloc napi modules so we don't have to worry about it right now

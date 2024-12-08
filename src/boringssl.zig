@@ -1,4 +1,4 @@
-const boring = @import("./deps/boringssl.translated.zig");
+const boring = @import("./deps/boringssl/boringssl.translated.zig");
 pub usingnamespace boring;
 const std = @import("std");
 const bun = @import("root").bun;

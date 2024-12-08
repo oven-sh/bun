@@ -156,7 +156,6 @@ test/js/third_party/prisma/prisma/sqlite/dev.db-journal
 # Dependencies (before CMake)
 # These can be removed in the far future
 /src/bun.js/WebKit
-/src/deps/boringssl
 /src/deps/brotli
 /src/deps/c*ares
 /src/deps/libarchive

@@ -187,13 +187,6 @@ ENVSETUP
   # Now run the wrapped command as root to handle systemd installation
   sudo bash /tmp/agent-install.sh
   sudo rm /tmp/agent-install.sh
-
-  # Start the agent as the buildkite-agent user
-  sudo -i -u buildkite-agent bash << EOF
-    set -euxo pipefail
-    . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-    cd /var/lib/buildkite-agent/bun
-    nix develop .#ci-${flakeTarget} -c node /usr/local/share/bun/agent.mjs start
 EOF
 else
   echo "ERROR: agent.mjs not found at /usr/local/share/bun/agent.mjs"

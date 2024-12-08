@@ -590,7 +590,7 @@ pub const StandaloneModuleGraph = struct {
                 cleanup(zname, cloned_executable_fd);
                 Global.exit(1);
             }
-            var macho_file = bun.macho.MachoFile.init(bun.default_allocator, input_result.bytes.items) catch |err| {
+            var macho_file = bun.macho.MachoFile.init(bun.default_allocator, input_result.bytes.items, bytes.len) catch |err| {
                 Output.prettyErrorln("Error initializing standalone module graph: {}", .{err});
                 cleanup(zname, cloned_executable_fd);
                 Global.exit(1);

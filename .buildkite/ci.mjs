@@ -999,7 +999,7 @@ function getCreateNixAmisStep(platform, dryRun) {
     command: [
       "node",
       "./scripts/create-nix-amis.mjs",
-      "--release=" + (dryRun ? "create-image" : "publish-image"),
+      "--release=publish-image",
       "--arch=" + platform.arch,
       "--cloud=aws",
     ].join(" "),

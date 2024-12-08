@@ -94,6 +94,16 @@ sudo tee /etc/nix/nix.conf > /dev/null << 'EOF'
 experimental-features = nix-command flakes
 trusted-users = root buildkite-agent
 auto-optimise-store = true
+
+# Disable documentation to save space
+documentation.enable = false
+documentation.doc.enable = false
+documentation.man.enable = false
+documentation.info.enable = false
+
+# Global profile settings
+keep-derivations = true
+keep-outputs = true
 EOF
 
 # Create systemd service for our agent

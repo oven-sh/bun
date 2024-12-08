@@ -12,8 +12,8 @@ const strings = bun.strings;
 pub const MachoFile = struct {
     header: macho.mach_header_64,
     data: std.ArrayList(u8),
-    seg: macho.segment_command_64,
-    sec: macho.section_64,
+    segment: macho.segment_command_64,
+    section: macho.section_64,
     allocator: Allocator,
 
     const LoadCommand = struct {
@@ -26,16 +26,16 @@ pub const MachoFile = struct {
         var data = try std.ArrayList(u8).initCapacity(allocator, obj_file.len + blob_to_embed_length);
         try data.appendSlice(obj_file);
 
-        const header = @as(*const macho.mach_header_64, @alignCast(@ptrCast(data.items.ptr))).*;
+        const header: *const macho.mach_header_64 = @alignCast(@ptrCast(data.items.ptr));
 
         const self = try allocator.create(MachoFile);
         errdefer allocator.destroy(self);
 
         self.* = .{
-            .header = header,
+            .header = header.*,
             .data = data,
-            .seg = std.mem.zeroes(macho.segment_command_64),
-            .sec = std.mem.zeroes(macho.section_64),
+            .segment = std.mem.zeroes(macho.segment_command_64),
+            .section = std.mem.zeroes(macho.section_64),
             .allocator = allocator,
         };
 
@@ -82,16 +82,16 @@ pub const MachoFile = struct {
                                 original_vmaddr = sect.addr;
                                 original_data_end = original_fileoff + blob_alignment;
                                 original_segsize = sect.size;
-                                self.seg = command;
-                                self.sec = sect.*;
+                                self.segment = command;
+                                self.section = sect.*;
 
                                 // Update segment with proper sizes and alignment
-                                self.seg.vmsize = alignVmsize(aligned_size, blob_alignment);
-                                self.seg.filesize = aligned_size;
-                                self.seg.maxprot = macho.PROT.READ | macho.PROT.WRITE;
-                                self.seg.initprot = macho.PROT.READ | macho.PROT.WRITE;
+                                self.segment.vmsize = alignVmsize(aligned_size, blob_alignment);
+                                self.segment.filesize = aligned_size;
+                                self.segment.maxprot = macho.PROT.READ | macho.PROT.WRITE;
+                                self.segment.initprot = macho.PROT.READ | macho.PROT.WRITE;
 
-                                self.sec = .{
+                                self.section = .{
                                     .sectname = SECTNAME,
                                     .segname = SEGNAME_BUN,
                                     .addr = original_vmaddr,
@@ -106,9 +106,9 @@ pub const MachoFile = struct {
                                     .reserved3 = 0,
                                 };
                                 const entry_ptr: [*]u8 = @constCast(entry.data.ptr);
-                                const segment_command_ptr: *macho.segment_command_64 = @ptrCast(@constCast(@alignCast(&entry_ptr[0..@sizeOf(macho.segment_command_64)])));
-                                segment_command_ptr.* = self.seg;
-                                sect.* = self.sec;
+                                const segment_command_ptr: *align(1) macho.segment_command_64 = @ptrCast(@alignCast(entry_ptr));
+                                segment_command_ptr.* = self.segment;
+                                sect.* = self.section;
                                 break :outer;
                             }
                         }
@@ -161,32 +161,32 @@ pub const MachoFile = struct {
 
             switch (cmd.cmd) {
                 .SYMTAB => {
-                    var symtab: *macho.symtab_command = @ptrCast(@alignCast(cmd_ptr));
-                    if (symtab.symoff >= start_offset) {
+                    const symtab: *align(1) macho.symtab_command = @ptrCast(@alignCast(cmd_ptr));
+                    if (symtab.symoff > start_offset) {
                         symtab.symoff = @intCast(@as(i64, @intCast(symtab.symoff)) + size_diff);
                     }
-                    if (symtab.stroff >= start_offset) {
+                    if (symtab.stroff > start_offset) {
                         symtab.stroff = @intCast(@as(i64, @intCast(symtab.stroff)) + size_diff);
                     }
                 },
                 .DYSYMTAB => {
-                    var dysymtab: *macho.dysymtab_command = @ptrCast(@alignCast(cmd_ptr));
-                    if (dysymtab.tocoff >= start_offset) {
+                    const dysymtab: *align(1) macho.dysymtab_command = @ptrCast(@alignCast(cmd_ptr));
+                    if (dysymtab.tocoff > start_offset) {
                         dysymtab.tocoff = @intCast(@as(i64, @intCast(dysymtab.tocoff)) + size_diff);
                     }
-                    if (dysymtab.modtaboff >= start_offset) {
+                    if (dysymtab.modtaboff > start_offset) {
                         dysymtab.modtaboff = @intCast(@as(i64, @intCast(dysymtab.modtaboff)) + size_diff);
                     }
                     if (dysymtab.extrefsymoff > start_offset) {
                         dysymtab.extrefsymoff = @intCast(@as(i64, @intCast(dysymtab.extrefsymoff)) + size_diff);
                     }
-                    if (dysymtab.indirectsymoff >= start_offset) {
+                    if (dysymtab.indirectsymoff > start_offset) {
                         dysymtab.indirectsymoff = @intCast(@as(i64, @intCast(dysymtab.indirectsymoff)) + size_diff);
                     }
-                    if (dysymtab.extreloff >= start_offset) {
+                    if (dysymtab.extreloff > start_offset) {
                         dysymtab.extreloff = @intCast(@as(i64, @intCast(dysymtab.extreloff)) + size_diff);
                     }
-                    if (dysymtab.locreloff >= start_offset) {
+                    if (dysymtab.locreloff > start_offset) {
                         dysymtab.locreloff = @intCast(@as(i64, @intCast(dysymtab.locreloff)) + size_diff);
                     }
                 },
@@ -196,28 +196,37 @@ pub const MachoFile = struct {
                 .DYLIB_CODE_SIGN_DRS,
                 .LINKER_OPTIMIZATION_HINT,
                 .DYLD_EXPORTS_TRIE,
-                .DYLD_CHAINED_FIXUPS,
                 => {
-                    var linkedit: *macho.linkedit_data_command = @ptrCast(@alignCast(cmd_ptr));
-                    if (linkedit.dataoff >= start_offset) {
+                    var linkedit: *align(1) macho.linkedit_data_command = @ptrCast(@alignCast(cmd_ptr));
+                    if (linkedit.dataoff > start_offset) {
                         linkedit.dataoff = @intCast(@as(i64, @intCast(linkedit.dataoff)) + size_diff);
                     }
                 },
+                .DYLD_CHAINED_FIXUPS => {
+                    const fixups: *align(1) macho.linkedit_data_command = @ptrCast(@alignCast(cmd_ptr));
+                    const dataoff: i64 = @intCast(fixups.dataoff);
+                    const start_offset_i64: i64 = @intCast(start_offset);
+                    if (dataoff < start_offset_i64 + size_diff and dataoff + @as(i64, fixups.datasize) > start_offset_i64) {
+                        fixups.dataoff = @intCast(dataoff + size_diff);
+                    } else if (dataoff >= start_offset_i64) {
+                        fixups.dataoff = @intCast(@as(i64, fixups.dataoff) + size_diff);
+                    }
+                },
                 .DYLD_INFO, .DYLD_INFO_ONLY => {
-                    var dyld_info: *macho.dyld_info_command = @ptrCast(@alignCast(cmd_ptr));
-                    if (dyld_info.rebase_off >= start_offset) {
+                    const dyld_info: *align(1) macho.dyld_info_command = @ptrCast(@alignCast(cmd_ptr));
+                    if (dyld_info.rebase_off > start_offset) {
                         dyld_info.rebase_off = @intCast(@as(i64, @intCast(dyld_info.rebase_off)) + size_diff);
                     }
-                    if (dyld_info.bind_off >= start_offset) {
+                    if (dyld_info.bind_off > start_offset) {
                         dyld_info.bind_off = @intCast(@as(i64, @intCast(dyld_info.bind_off)) + size_diff);
                     }
-                    if (dyld_info.weak_bind_off >= start_offset) {
+                    if (dyld_info.weak_bind_off > start_offset) {
                         dyld_info.weak_bind_off = @intCast(@as(i64, @intCast(dyld_info.weak_bind_off)) + size_diff);
                     }
-                    if (dyld_info.lazy_bind_off >= start_offset) {
+                    if (dyld_info.lazy_bind_off > start_offset) {
                         dyld_info.lazy_bind_off = @intCast(@as(i64, @intCast(dyld_info.lazy_bind_off)) + size_diff);
                     }
-                    if (dyld_info.export_off >= start_offset) {
+                    if (dyld_info.export_off > start_offset) {
                         dyld_info.export_off = @intCast(@as(i64, @intCast(dyld_info.export_off)) + size_diff);
                     }
                 },
@@ -238,7 +247,7 @@ pub const MachoFile = struct {
     }
 
     pub fn buildAndSign(self: *MachoFile, writer: anytype) !void {
-        if (self.header.cputype == macho.CPU_TYPE_ARM64) {
+        if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.getRuntimeFeatureFlag("BUN_NO_CODESIGN_MACHO_BINARY")) {
             var data = std.ArrayList(u8).init(self.allocator);
             defer data.deinit();
             try self.build(data.writer());

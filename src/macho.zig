@@ -436,15 +436,29 @@ pub const MachoFile = struct {
             const id = "a.out\x00";
             const n_hashes = (self.sig_off + PAGE_SIZE - 1) / PAGE_SIZE;
 
-            // Calculate offsets and sizes
+            // Calculate offsets relative to start of CodeDirectory
             const super_blob_size = @sizeOf(SuperBlob);
             const blob_size = @sizeOf(Blob);
             const code_dir_size = @sizeOf(CodeDirectory);
-            const id_offset = super_blob_size + blob_size + code_dir_size;
+            const blob_offset = super_blob_size + blob_size;
+            const id_offset = code_dir_size;
             const hash_offset = id_offset + id.len;
-            const total_size = alignSize(hash_offset + n_hashes * 32, PAGE_SIZE);
+            const code_dir_content_size = code_dir_size + id.len + (n_hashes * 32);
+            const total_size = super_blob_size + blob_size + code_dir_content_size;
 
-            // Create the signature components
+            // Update code signature load command
+            var cs_cmd: *align(1) macho.linkedit_data_command = @ptrCast(@constCast(@alignCast(&self.data.items[self.cs_cmd_off..][0..@sizeOf(macho.linkedit_data_command)])));
+            cs_cmd.dataoff = @truncate(self.sig_off);
+            cs_cmd.datasize = @truncate(total_size);
+
+            // Update linkedit segment
+            const linkedit_end = self.sig_off + total_size;
+            const seg_sz = linkedit_end - self.linkedit_seg.fileoff;
+            var linkedit_seg: *align(1) macho.segment_command_64 = @ptrCast(@constCast(@alignCast(&self.data.items[self.linkedit_off..][0..@sizeOf(macho.segment_command_64)])));
+            linkedit_seg.filesize = seg_sz;
+            linkedit_seg.vmsize = alignSize(seg_sz, PAGE_SIZE);
+
+            // Build signature components
             const super_blob = SuperBlob{
                 .magic = @byteSwap(CSMAGIC_EMBEDDED_SIGNATURE),
                 .length = @byteSwap(@as(u32, @truncate(total_size))),
@@ -453,16 +467,16 @@ pub const MachoFile = struct {
 
             const blob = Blob{
                 .magic = @byteSwap(CSSLOT_CODEDIRECTORY),
-                .length = @byteSwap(@as(u32, @truncate(super_blob_size))),
+                .length = @byteSwap(@as(u32, @truncate(blob_offset))),
             };
 
             var code_dir = CodeDirectory.init();
             code_dir.magic = @byteSwap(CSMAGIC_CODEDIRECTORY);
-            code_dir.length = @byteSwap(@as(u32, @truncate(total_size - super_blob_size - blob_size)));
+            code_dir.length = @byteSwap(@as(u32, @truncate(code_dir_content_size)));
             code_dir.version = @byteSwap(@as(u32, 0x20400));
             code_dir.flags = @byteSwap(@as(u32, 0x20002));
-            code_dir.hash_offset = @byteSwap(@as(u32, @truncate(hash_offset - (super_blob_size + blob_size))));
-            code_dir.ident_offset = @byteSwap(@as(u32, @truncate(id_offset - (super_blob_size + blob_size))));
+            code_dir.hash_offset = @byteSwap(@as(u32, @truncate(hash_offset)));
+            code_dir.ident_offset = @byteSwap(@as(u32, @truncate(id_offset)));
             code_dir.n_code_slots = @byteSwap(@as(u32, @truncate(n_hashes)));
             code_dir.code_limit = @byteSwap(@as(u32, @truncate(self.sig_off)));
             code_dir.hash_size = 32;
@@ -472,6 +486,7 @@ pub const MachoFile = struct {
             code_dir.exec_seg_limit = @byteSwap(self.text_seg.filesize);
             code_dir.exec_seg_flags = @byteSwap(CS_EXECSEG_MAIN_BINARY);
 
+            // Write signature data
             var out = try std.ArrayList(u8).initCapacity(self.allocator, total_size);
             defer out.deinit();
 
@@ -480,24 +495,23 @@ pub const MachoFile = struct {
             try out.appendSlice(mem.asBytes(&code_dir));
             try out.appendSlice(id);
 
-            // Calculate page hashes, ensuring we don't read past the end
+            // Calculate page hashes
             var fileoff: usize = 0;
-            const bytes_to_hash = self.sig_off;
-            while (fileoff < bytes_to_hash) {
-                const remaining = bytes_to_hash - fileoff;
+            while (fileoff < self.sig_off) {
+                const remaining = self.sig_off - fileoff;
                 const n = @min(PAGE_SIZE, remaining);
                 const chunk = self.data.items[fileoff..][0..n];
                 var digest: bun.sha.SHA256.Digest = undefined;
                 bun.sha.SHA256.hash(chunk, &digest, null);
                 try out.appendSlice(&digest);
-                fileoff += n;
+                fileoff += PAGE_SIZE;
             }
 
-            // Update array size and copy signature
+            // Ensure space and write signature
             if (self.data.items.len < self.sig_off + total_size) {
                 try self.data.resize(self.sig_off + total_size);
             }
-            @memcpy(self.data.items[self.sig_off..][0..out.items.len], out.items);
+            @memcpy(self.data.items[self.sig_off..][0..total_size], out.items);
 
             try writer.writeAll(self.data.items);
         }

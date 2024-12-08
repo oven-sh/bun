@@ -52,7 +52,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 echo "Installing required packages..."
 sudo apt-get update -qq
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
 sudo apt-get install -y curl xz-utils git sudo nodejs --no-install-recommends
 
 echo "Creating buildkite-agent user..."

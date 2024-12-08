@@ -1,5 +1,5 @@
 {
-  description = "Bun build environment";
+  description = "Bun flake and build environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -7,6 +7,18 @@
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
+    };
+    olderBunVersion = {
+      "1.1.38" = {
+        x64 = {
+          url = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-x64.zip?nix=true";
+          sha256 = "sha256-e5OtTccoPG7xKQVvZiuvo3VSBC8mRteOj1d0GF+nEtk=";
+        };
+        arm64 = {
+          url = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-aarch64.zip?nix=true";
+          sha256 = "sha256-ph2lNX4o1Jd/zNSFH+1i/02j6jOFMAXH3ZPayAvFOTI=";
+        };
+      };
     };
   };
 
@@ -18,23 +30,20 @@
           inherit system overlays;
           config = {
             allowUnfree = true;
-            permittedInsecurePackages = [
-              "nodejs-16.20.2"
-            ];
           };
         };
 
         # Function to create a derivation for downloading Bun binary
-        getBunBinary = arch: pkgs.fetchzip {
-          name = "bun-binary-${arch}";
-          url = if arch == "x64" 
-            then "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-${arch}.zip"
-            else "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-aarch64.zip";
-          stripRoot = false;
-          sha256 = if arch == "x64" 
-            then "sha256-e5OtTccoPG7xKQVvZiuvo3VSBC8mRteOj1d0GF+nEtk="
-            else "sha256-ph2lNX4o1Jd/zNSFH+1i/02j6jOFMAXH3ZPayAvFOTI=";  # We'll need to replace this with the actual arm64 hash
-        };
+        getBunBinary = arch: pkgs.runCommand "bun-binary-${arch}" {} ''
+          mkdir -p $out/bin
+          cp ${pkgs.fetchzip {
+            name = "bun-binary-${arch}";
+            url = olderBunVersion.${bunBuildVersion}.${arch}.url;
+            stripRoot = false;
+            sha256 = olderBunVersion.${bunBuildVersion}.${arch}.sha256;
+          }}/bun $out/bin/
+          chmod +x $out/bin/bun
+        '';
 
         # Function to create build environment for a specific architecture
         makeBuildEnv = arch: pkgs.buildEnv {
@@ -100,22 +109,54 @@
         buildEnvX64 = makeBuildEnv "x64";
         buildEnvArm64 = makeBuildEnv "arm64";
 
+        # Function to build Bun for release
+        buildBun = arch: pkgs.stdenv.mkDerivation {
+          pname = "bun";
+          version = "latest";
+          
+          src = ./.;
+
+          nativeBuildInputs = [
+            (if arch == "x64" then buildEnvX64 else buildEnvArm64)
+          ];
+
+          buildPhase = ''
+            export HOME=$TMPDIR
+            bun build:release
+          '';
+
+          installPhase = ''
+            mkdir -p $out/bin
+            cp build/release/bun $out/bin/
+            chmod +x $out/bin/bun
+          '';
+
+          meta = with pkgs.lib; {
+            description = "Incredibly fast JavaScript runtime, bundler, transpiler and package manager";
+            homepage = "https://bun.sh";
+            license = licenses.mit;
+            platforms = platforms.linux;
+          };
+        };
+
       in
       {
         packages = {
           default = buildEnvX64;
-          x64 = buildEnvX64;
-          arm64 = buildEnvArm64;
+          build-x64 = buildEnvX64;
+          build-arm64 = buildEnvArm64;
+          x64 = buildBun "x64";
+          arm64 = buildBun "arm64";
         };
 
         devShells = {
           default = pkgs.mkShell {
             buildInputs = with pkgs; [
-              awscli2
             ];
 
             shellHook = ''
-              echo "To compile a release build of Bun, run: bun build:release"
+              echo "To compile a release build of Bun:\n  bun build:release"
+              echo "To compile a debug build of Bun:\n  bun build:debug"
             '';
           };
 
@@ -125,10 +166,6 @@
               # Include the x64 build environment tools
               buildEnvX64
             ];
-
-            shellHook = ''
-              echo "BuildKite CI environment initialized (x64)"
-            '';
           };
 
           ci-arm64 = pkgs.mkShell {
@@ -136,10 +173,6 @@
               # Include the arm64 build environment tools
               buildEnvArm64
             ];
-
-            shellHook = ''
-              echo "BuildKite CI environment initialized (arm64)"
-            '';
           };
 
           # Generic CI shell that defaults to x64
@@ -148,10 +181,6 @@
               # Include the x64 build environment tools by default
               buildEnvX64
             ];
-
-            shellHook = ''
-              echo "BuildKite CI environment initialized (default: x64)"
-            '';
           };
         };
       });

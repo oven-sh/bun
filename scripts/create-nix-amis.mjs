@@ -131,11 +131,21 @@ set -euxo pipefail
 cd /var/lib/buildkite-agent/bun
 
 # Source Nix
-. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+if ! . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh; then
+  echo "Failed to source Nix environment"
+  exit 1
+fi
 
 # Update flake lock and evaluate the environment
-nix flake update
-nix develop .#ci-${flakeTarget} -c true
+if ! nix flake update; then
+  echo "Failed to update flake"
+  exit 1
+fi
+
+if ! nix develop .#ci-${flakeTarget} -c true; then
+  echo "Failed to evaluate environment"
+  exit 1
+fi
 
 # Create a marker to indicate environment is ready
 touch .nix-env-ready
@@ -153,7 +163,7 @@ set -euo pipefail
 cd "\$BUILDKITE_BUILD_DIR"
 
 # Use Nix to evaluate and run the command in the proper environment
-nix develop .#ci-${flakeTarget} -c eval "\$BUILDKITE_COMMAND"
+nix develop .#ci-${flakeTarget} --command bash -c "\$BUILDKITE_COMMAND"
 EOF
 sudo chmod +x /etc/buildkite-agent/hooks/command
 

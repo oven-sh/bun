@@ -94,6 +94,49 @@ JSC::EncodedJSValue encodeKey(const std::optional<JSCryptoKey*> key)
     return key.has_value() ? JSC::JSValue::encode(key.value()) : EncodedJSValue {};
 }
 
+/**
+ * Get the Numeric Identifier (NID) of an `EVP_PKEY` storing an Eclyptic
+ * Curve (EC) key. On failure, throws a JS exception and returns `NID_undef`.
+ *
+ * * -1: not an EC key, or `key` is `nullptr`
+ * * -2: unable to identify EC curve
+ * * -3: key has an unknown curve
+ *
+ * @param globalObject global JS object. Used to throw exceptions.
+ * @param key Eclicptic Curve key. May be public/private/whatever.
+ * @return std::optional<int>
+ */
+int curveName(JSC::JSGlobalObject* globalObject, const EVP_PKEY* key)
+{
+    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    // NOTE: EVP_PKEY_get0_EC_KEY handles null pointers, returning null itself.
+    // NOTE: needs to live longer than ec_group, which stores a reference to
+    // data owned by this key.
+    EC_KEY* ec_key = EVP_PKEY_get0_EC_KEY(key);
+    if (UNLIKELY(ec_key == nullptr)) {
+
+        throwTypeError(globalObject, scope, "Invalid EC key"_s);
+        return NID_undef;
+    }
+
+    // note: borrowed data. do not free.
+    const EC_GROUP* ec_group = EC_KEY_get0_group(ec_key);
+    if (UNLIKELY(ec_group == nullptr)) {
+        EC_KEY_free(ec_key);
+        throwTypeError(globalObject, scope, "Invalid EC key"_s);
+        return NID_undef;
+    }
+
+    int curve_name = EC_GROUP_get_curve_name(ec_group);
+    EC_KEY_free(ec_key);
+    if (curve_name == NID_undef) {
+        throwTypeError(globalObject, scope, "Unable to identify EC curve"_s);
+        return NID_undef;
+    }
+
+    return curve_name;
+}
+
 static bool KeyObject__IsASN1Sequence(const unsigned char* data, size_t size,
     size_t* data_offset, size_t* data_size)
 {
@@ -527,19 +570,9 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * glo
             auto impl = result.releaseNonNull();
             return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
         } else if (pKeyID == EVP_PKEY_EC) {
-            EC_KEY* ec_key = EVP_PKEY_get1_EC_KEY(pkey.get());
-            if (UNLIKELY(ec_key == nullptr)) {
-                throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC private key"_s));
-                return {};
-            }
-            const EC_GROUP* ec_group = EC_KEY_get0_group(ec_key);
-            // Get the curve name
-            int curve_name = EC_GROUP_get_curve_name(ec_group);
-            if (curve_name == NID_undef) {
-                EC_KEY_free(ec_key);
-                throwException(globalObject, scope, createTypeError(globalObject, "Unable to identify EC curve"_s));
-                return {};
-            }
+            int curve_name = curveName(globalObject, pkey.get());
+            if (curve_name == NID_undef) return {}; // exception already thrown
+
             CryptoKeyEC::NamedCurve curve;
             if (curve_name == NID_X9_62_prime256v1)
                 curve = CryptoKeyEC::NamedCurve::P256;
@@ -548,11 +581,9 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * glo
             else if (curve_name == NID_secp521r1)
                 curve = CryptoKeyEC::NamedCurve::P521;
             else {
-                EC_KEY_free(ec_key);
                 throwException(globalObject, scope, createTypeError(globalObject, "Unsupported EC curve"_s));
                 return {};
             }
-            EC_KEY_free(ec_key);
             auto impl = CryptoKeyEC::create(CryptoAlgorithmIdentifier::ECDH, curve, CryptoKeyType::Private, WTFMove(pkey), true, CryptoKeyUsageSign);
             return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
         } else {
@@ -626,19 +657,9 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * glo
                 auto impl = result.releaseNonNull();
                 return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
             } else if (pKeyID == EVP_PKEY_EC) {
-                EC_KEY* ec_key = EVP_PKEY_get1_EC_KEY(pkey.get());
-                if (UNLIKELY(ec_key == nullptr)) {
-                    throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC private key"_s));
-                    return {};
-                }
-                const EC_GROUP* ec_group = EC_KEY_get0_group(ec_key);
-                // Get the curve name
-                int curve_name = EC_GROUP_get_curve_name(ec_group);
-                if (curve_name == NID_undef) {
-                    EC_KEY_free(ec_key);
-                    throwException(globalObject, scope, createTypeError(globalObject, "Unable to identify EC curve"_s));
-                    return {};
-                }
+                int curve_name = curveName(globalObject, pkey.get());
+                if (curve_name == NID_undef) return {}; // exception already thrown
+
                 CryptoKeyEC::NamedCurve curve;
                 if (curve_name == NID_X9_62_prime256v1)
                     curve = CryptoKeyEC::NamedCurve::P256;
@@ -647,7 +668,6 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * glo
                 else if (curve_name == NID_secp521r1)
                     curve = CryptoKeyEC::NamedCurve::P521;
                 else {
-                    EC_KEY_free(ec_key);
                     throwException(globalObject, scope, createTypeError(globalObject, "Unsupported EC curve"_s));
                     return {};
                 }
@@ -655,7 +675,6 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * glo
                 if (UNLIKELY(result == nullptr)) {
                     result = CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier::ECDSA, curve, Vector<uint8_t>(std::span { (uint8_t*)data, byteLength }), true, CryptoKeyUsageSign);
                 }
-                EC_KEY_free(ec_key);
                 if (UNLIKELY(result == nullptr)) {
                     throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC private key"_s));
                     return {};
@@ -672,19 +691,9 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * glo
             auto pKeyID = EVP_PKEY_id(pkey.get());
 
             if (pKeyID == EVP_PKEY_EC) {
-                EC_KEY* ec_key = EVP_PKEY_get1_EC_KEY(pkey.get());
-                if (UNLIKELY(ec_key == nullptr)) {
-                    throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC private key"_s));
-                    return {};
-                }
-                const EC_GROUP* ec_group = EC_KEY_get0_group(ec_key);
-                // Get the curve name
-                int curve_name = EC_GROUP_get_curve_name(ec_group);
-                if (curve_name == NID_undef) {
-                    EC_KEY_free(ec_key);
-                    throwException(globalObject, scope, createTypeError(globalObject, "Unable to identify EC curve"_s));
-                    return {};
-                }
+                int curve_name = curveName(globalObject, pkey.get());
+                if (curve_name == NID_undef) return {}; // exception already thrown
+
                 CryptoKeyEC::NamedCurve curve;
                 if (curve_name == NID_X9_62_prime256v1)
                     curve = CryptoKeyEC::NamedCurve::P256;
@@ -693,11 +702,9 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * glo
                 else if (curve_name == NID_secp521r1)
                     curve = CryptoKeyEC::NamedCurve::P521;
                 else {
-                    EC_KEY_free(ec_key);
                     throwException(globalObject, scope, createTypeError(globalObject, "Unsupported EC curve"_s));
                     return {};
                 }
-                EC_KEY_free(ec_key);
                 auto impl = CryptoKeyEC::create(CryptoAlgorithmIdentifier::ECDH, curve, CryptoKeyType::Private, WTFMove(pkey), true, CryptoKeyUsageSign);
                 return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
             } else {
@@ -820,20 +827,8 @@ static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObjec
         auto alg = pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSA_PSS : CryptoAlgorithmIdentifier::RSA_OAEP;
         return encodeKey(KeyObject__createRSAFromPrivate(globalObject, pkey, alg));
     } else if (pKeyID == EVP_PKEY_EC) {
-
-        EC_KEY* ec_key = EVP_PKEY_get0_EC_KEY(pkey); // do not inc reference count
-        if (UNLIKELY(ec_key == nullptr)) {
-            throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC key"_s));
-            return {};
-        }
-        const EC_GROUP* ec_group = EC_KEY_get0_group(ec_key);
-        EC_KEY_free(ec_key); // only used to get group
-        // Get the curve name
-        int curve_name = EC_GROUP_get_curve_name(ec_group);
-        if (curve_name == NID_undef) {
-            throwException(globalObject, scope, createTypeError(globalObject, "Unable to identify EC curve"_s));
-            return {};
-        }
+        int curve_name = curveName(globalObject, pkey);
+        if (curve_name == NID_undef) return {}; // exception already thrown
 
         CryptoKeyEC::NamedCurve curve;
         switch (curve_name) {
@@ -880,7 +875,6 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * glob
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (count < 1) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::throwTypeError(globalObject, scope, "createPublicKey requires 1 arguments"_s);
         return {};
     }
@@ -1100,24 +1094,10 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * glob
             auto impl = result.releaseNonNull();
             return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
         } else if (pKeyID == EVP_PKEY_EC) {
-            EC_KEY* ec_key = EVP_PKEY_get1_EC_KEY(pkey.get());
-            if (UNLIKELY(ec_key == nullptr)) {
-                if (pem.der_data) {
-                    OPENSSL_clear_free(pem.der_data, pem.der_len);
-                }
-                throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC public key"_s));
-                return {};
-            }
-            const EC_GROUP* ec_group = EC_KEY_get0_group(ec_key);
-            // Get the curve name
-            int curve_name = EC_GROUP_get_curve_name(ec_group);
+            int curve_name = curveName(globalObject, pkey.get());
             if (curve_name == NID_undef) {
-                if (pem.der_data) {
-                    OPENSSL_clear_free(pem.der_data, pem.der_len);
-                }
-                EC_KEY_free(ec_key);
-                throwException(globalObject, scope, createTypeError(globalObject, "Unable to identify EC curve"_s));
-                return {};
+                if (pem.der_data) OPENSSL_clear_free(pem.der_data, pem.der_len);
+                return {}; // exception already thrown
             }
             CryptoKeyEC::NamedCurve curve;
             if (curve_name == NID_X9_62_prime256v1)
@@ -1217,19 +1197,8 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * glob
                 auto impl = result.releaseNonNull();
                 return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
             } else if (pKeyID == EVP_PKEY_EC) {
-                EC_KEY* ec_key = EVP_PKEY_get1_EC_KEY(pkey.get());
-                if (UNLIKELY(ec_key == nullptr)) {
-                    throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC public key"_s));
-                    return {};
-                }
-                const EC_GROUP* ec_group = EC_KEY_get0_group(ec_key);
-                // Get the curve name
-                int curve_name = EC_GROUP_get_curve_name(ec_group);
-                if (curve_name == NID_undef) {
-                    EC_KEY_free(ec_key);
-                    throwException(globalObject, scope, createTypeError(globalObject, "Unable to identify EC curve"_s));
-                    return {};
-                }
+                int curve_name = curveName(globalObject, pkey.get());
+                if (curve_name == NID_undef) return {}; // exception already thrown.
                 CryptoKeyEC::NamedCurve curve;
                 if (curve_name == NID_X9_62_prime256v1)
                     curve = CryptoKeyEC::NamedCurve::P256;

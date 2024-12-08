@@ -9,7 +9,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     olderBunVersion = {
-      "1.1.38" = {
+      default = {
         x64 = {
           url = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-x64.zip?nix=true";
           sha256 = "sha256-e5OtTccoPG7xKQVvZiuvo3VSBC8mRteOj1d0GF+nEtk=";
@@ -38,9 +38,9 @@
           mkdir -p $out/bin
           cp ${pkgs.fetchzip {
             name = "bun-binary-${arch}";
-            url = olderBunVersion.${bunBuildVersion}.${arch}.url;
+            url = olderBunVersion.default.${arch}.url;
             stripRoot = false;
-            sha256 = olderBunVersion.${bunBuildVersion}.${arch}.sha256;
+            sha256 = olderBunVersion.default.${arch}.sha256;
           }}/bun $out/bin/
           chmod +x $out/bin/bun
         '';

@@ -203,7 +203,7 @@ fi`;
       [
         "node",
         "./scripts/machine.mjs",
-        "publish-image",
+        "create-image",
         `--os=linux`,
         `--arch=${architecture}`,
         `--distro=ubuntu`,

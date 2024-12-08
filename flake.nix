@@ -15,11 +15,11 @@
       let
         olderBunVersion = {
           x64 = {
-            url = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-x64.zip?nix=true";
+            url = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-x64.zip";
             sha256 = "sha256-e5OtTccoPG7xKQVvZiuvo3VSBC8mRteOj1d0GF+nEtk=";
           };
           arm64 = {
-            url = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-aarch64.zip?nix=true";
+            url = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-aarch64.zip";
             sha256 = "sha256-ph2lNX4o1Jd/zNSFH+1i/02j6jOFMAXH3ZPayAvFOTI=";
           };
         };
@@ -153,8 +153,10 @@
             ];
 
             shellHook = ''
-              echo "To compile a release build of Bun:\n  bun build:release"
-              echo "To compile a debug build of Bun:\n  bun build:debug"
+              echo "To compile a release build of Bun:"
+              echo "  bun build:release"
+              echo "To compile a debug build of Bun:"
+              echo "  bun build:debug"
             '';
           };
 

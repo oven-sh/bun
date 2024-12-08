@@ -714,7 +714,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * glo
     return {};
 }
 
-static std::optional<JSCryptoKey*> KeyObject__createRSAFromPrivate(JSC::JSGlobalObject* globalObject, EVP_PKEY* pkey, WebCore::CryptoAlgorithmIdentifier alg)
+static std::optional<JSCryptoKey*> KeyObject__createRSAFromPrivate(JSC::JSGlobalObject* globalObject, const EVP_PKEY* pkey, WebCore::CryptoAlgorithmIdentifier alg)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -737,7 +737,7 @@ static std::optional<JSCryptoKey*> KeyObject__createRSAFromPrivate(JSC::JSGlobal
     return JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl));
 }
 
-static std::optional<JSCryptoKey*> KeyObject__createECFromPrivate(JSC::JSGlobalObject* globalObject, EVP_PKEY* pkey, CryptoKeyEC::NamedCurve namedCurve, WebCore::CryptoAlgorithmIdentifier alg)
+static std::optional<JSCryptoKey*> KeyObject__createECFromPrivate(JSC::JSGlobalObject* globalObject, const EVP_PKEY* pkey, CryptoKeyEC::NamedCurve namedCurve, WebCore::CryptoAlgorithmIdentifier alg)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -810,12 +810,12 @@ static std::optional<JSCryptoKey*> KeyObject__createOKPFromPrivate(JSC::JSGlobal
     return JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl));
 }
 
-static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObject* globalObject, EVP_PKEY* pkey)
+static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObject* globalObject, const EVP_PKEY* pkey)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto pKeyID = EVP_PKEY_id(pkey);
+    int pKeyID = EVP_PKEY_id(pkey);
     if (pKeyID == EVP_PKEY_RSA || pKeyID == EVP_PKEY_RSA_PSS) {
         auto alg = pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSA_PSS : CryptoAlgorithmIdentifier::RSA_OAEP;
         return encodeKey(KeyObject__createRSAFromPrivate(globalObject, pkey, alg));
@@ -863,7 +863,8 @@ static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObjec
             throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key"_s));
             return {};
         }
-        return encodeKey(KeyObject__createOKPFromPrivate(globalObject, out, pKeyID == EVP_PKEY_ED25519 ? CryptoKeyOKP::NamedCurve::Ed25519 : CryptoKeyOKP::NamedCurve::X25519, CryptoAlgorithmIdentifier::Ed25519));
+        auto curve = pKeyID == EVP_PKEY_ED25519 ? CryptoKeyOKP::NamedCurve::Ed25519 : CryptoKeyOKP::NamedCurve::X25519;
+        return encodeKey(KeyObject__createOKPFromPrivate(globalObject, out, curve, CryptoAlgorithmIdentifier::Ed25519));
     } else {
         throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key type"_s));
         return {};

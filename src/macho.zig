@@ -185,7 +185,7 @@ pub const MachoFile = struct {
         // Only update offsets if the size actually changed
         if (size_diff != 0) {
             linkedit_seg.fileoff += @as(usize, @intCast(size_diff));
-            self.updateLoadCommandOffsets(original_fileoff, @intCast(size_diff), linkedit_seg.fileoff, linkedit_seg.filesize);
+            try self.updateLoadCommandOffsets(original_fileoff, @intCast(size_diff), linkedit_seg.fileoff, linkedit_seg.filesize);
         }
 
         if (code_sign_cmd) |cs| {
@@ -203,32 +203,50 @@ pub const MachoFile = struct {
     const Shifter = struct {
         start: u64,
         amount: u64,
-
+        linkedit_fileoff: u64,
         linkedit_filesize: u64,
 
-        fn do(value: u64, amount: u64, range_min: u64, range_max: u64) u64 {
-            if (value < range_min or value > (range_max + range_min)) {
-                return value;
+        fn do(value: u64, amount: u64, range_min: u64, range_max: u64) !u64 {
+            if (value == 0) return 0;
+            if (value < range_min) return error.OffsetOutOfRange;
+            if (value > range_max) return error.OffsetOutOfRange;
+
+            // Check for overflow
+            if (value > std.math.maxInt(u64) - amount) {
+                return error.OffsetOverflow;
             }
 
             return value + amount;
         }
 
-        pub fn shift(this: *const Shifter, value: anytype, comptime fields: []const []const u8) void {
+        pub fn shift(this: *const Shifter, value: anytype, comptime fields: []const []const u8) !void {
             inline for (fields) |field| {
-                @field(value, field) = @intCast(do(@field(value, field), this.amount, this.start, this.linkedit_filesize));
+                @field(value, field) = @intCast(try do(@field(value, field), this.amount, this.start, this.linkedit_fileoff + this.linkedit_filesize));
             }
         }
     };
 
     // Helper function to update load command offsets when resizing an existing section
-    fn updateLoadCommandOffsets(self: *MachoFile, previous_fileoff: u64, size_diff: u64, fileoff: u64, filesize: u64) void {
+    fn updateLoadCommandOffsets(self: *MachoFile, previous_fileoff: u64, size_diff: u64, new_linkedit_fileoff: u64, new_linkedit_filesize: u64) !void {
+        // Validate inputs
+        if (new_linkedit_fileoff < previous_fileoff) {
+            return error.InvalidLinkeditOffset;
+        }
+
+        const PAGE_SIZE: u64 = 1 << 12;
+
+        // Ensure all offsets are page-aligned
+        const aligned_previous = alignSize(previous_fileoff, PAGE_SIZE);
+        const aligned_linkedit = alignSize(new_linkedit_fileoff, PAGE_SIZE);
+
         var iter = self.iterator();
 
+        // Create shifter with validated parameters
         const shifter = Shifter{
-            .start = @min(previous_fileoff, fileoff),
+            .start = aligned_previous,
             .amount = size_diff,
-            .linkedit_filesize = filesize,
+            .linkedit_fileoff = aligned_linkedit,
+            .linkedit_filesize = new_linkedit_filesize,
         };
 
         while (iter.next()) |entry| {
@@ -239,14 +257,15 @@ pub const MachoFile = struct {
                 .SYMTAB => {
                     const symtab: *align(1) macho.symtab_command = @ptrCast(@alignCast(cmd_ptr));
 
-                    shifter.shift(symtab, &.{
+                    try shifter.shift(symtab, &.{
                         "symoff",
                         "stroff",
                     });
                 },
                 .DYSYMTAB => {
                     const dysymtab: *align(1) macho.dysymtab_command = @ptrCast(@alignCast(cmd_ptr));
-                    shifter.shift(dysymtab, &.{
+
+                    try shifter.shift(dysymtab, &.{
                         "tocoff",
                         "modtaboff",
                         "extrefsymoff",
@@ -263,14 +282,20 @@ pub const MachoFile = struct {
                 .LINKER_OPTIMIZATION_HINT,
                 .DYLD_EXPORTS_TRIE,
                 => {
-                    const fixups: *align(1) macho.linkedit_data_command = @ptrCast(@alignCast(cmd_ptr));
-                    shifter.shift(fixups, &.{
-                        "dataoff",
-                    });
+                    const linkedit_cmd: *align(1) macho.linkedit_data_command = @ptrCast(@alignCast(cmd_ptr));
+
+                    try shifter.shift(linkedit_cmd, &.{"dataoff"});
+
+                    // Special handling for code signature
+                    if (cmd.cmd == .CODE_SIGNATURE) {
+                        // Ensure code signature is at the end of LINKEDIT
+                        linkedit_cmd.dataoff = @intCast(new_linkedit_fileoff + new_linkedit_filesize - linkedit_cmd.datasize);
+                    }
                 },
                 .DYLD_INFO, .DYLD_INFO_ONLY => {
                     const dyld_info: *align(1) macho.dyld_info_command = @ptrCast(@alignCast(cmd_ptr));
-                    shifter.shift(dyld_info, &.{
+
+                    try shifter.shift(dyld_info, &.{
                         "rebase_off",
                         "bind_off",
                         "weak_bind_off",
@@ -278,7 +303,6 @@ pub const MachoFile = struct {
                         "export_off",
                     });
                 },
-
                 else => {},
             }
         }
@@ -404,59 +428,56 @@ pub const MachoFile = struct {
         pub fn sign(self: *MachoSigner, writer: anytype) !void {
             const PAGE_SIZE: usize = 1 << 12;
 
+            // Ensure signature offset is page-aligned
+            if (self.sig_off % PAGE_SIZE != 0) {
+                self.sig_off = alignSize(self.sig_off, PAGE_SIZE);
+            }
+
             const id = "a.out\x00";
-            // Calculate number of pages based on valid data size, not sig_off
-            const data_len = self.data.items.len;
-            const n_hashes = (data_len + PAGE_SIZE - 1) / PAGE_SIZE;
-            const id_off = @sizeOf(CodeDirectory);
-            const hash_off = id_off + id.len;
-            const c_dir_sz = hash_off + n_hashes * 32;
-            const total_sz = @sizeOf(SuperBlob) + @sizeOf(Blob) + c_dir_sz;
+            const n_hashes = (self.sig_off + PAGE_SIZE - 1) / PAGE_SIZE;
 
-            // Update code signature load command
-            var cs_cmd: *align(1) macho.linkedit_data_command = @ptrCast(@constCast(@alignCast(&self.data.items[self.cs_cmd_off..][0..@sizeOf(macho.linkedit_data_command)])));
-            cs_cmd.datasize = @truncate(total_sz);
+            // Calculate offsets and sizes
+            const super_blob_size = @sizeOf(SuperBlob);
+            const blob_size = @sizeOf(Blob);
+            const code_dir_size = @sizeOf(CodeDirectory);
+            const id_offset = super_blob_size + blob_size + code_dir_size;
+            const hash_offset = id_offset + id.len;
+            const total_size = alignSize(hash_offset + n_hashes * 32, PAGE_SIZE);
 
-            // Update linkedit segment size
-            const seg_sz = self.sig_off + total_sz - self.linkedit_seg.fileoff;
-            var linkedit_seg: *align(1) macho.segment_command_64 = @ptrCast(@constCast(@alignCast(&self.data.items[self.linkedit_off..][0..@sizeOf(macho.segment_command_64)])));
-            linkedit_seg.filesize = seg_sz;
-            linkedit_seg.vmsize = seg_sz;
-
-            // Build signature superblob header
-            const sb = SuperBlob{
+            // Create the signature components
+            const super_blob = SuperBlob{
                 .magic = @byteSwap(CSMAGIC_EMBEDDED_SIGNATURE),
-                .length = @byteSwap(@as(u32, @truncate(total_sz))),
+                .length = @byteSwap(@as(u32, @truncate(total_size))),
                 .count = @byteSwap(@as(u32, 1)),
             };
 
             const blob = Blob{
                 .magic = @byteSwap(CSSLOT_CODEDIRECTORY),
-                .length = @byteSwap(@as(u32, @intCast(c_dir_sz))),
+                .length = @byteSwap(@as(u32, @truncate(super_blob_size))),
             };
 
-            var c_dir = CodeDirectory.init();
-            c_dir.magic = @byteSwap(CSMAGIC_CODEDIRECTORY);
-            c_dir.length = @byteSwap(@as(u32, @truncate(c_dir_sz)));
-            c_dir.version = @byteSwap(@as(u32, 0x20400));
-            c_dir.flags = @byteSwap(@as(u32, 0x20002)); // adhoc | linkerSigned
-            c_dir.hash_offset = @byteSwap(@as(u32, @truncate(hash_off)));
-            c_dir.ident_offset = @byteSwap(@as(u32, @truncate(id_off)));
-            c_dir.n_code_slots = @byteSwap(@as(u32, @truncate(n_hashes)));
-            c_dir.code_limit = @byteSwap(@as(u32, @truncate(self.sig_off))); // Only hash up to signature
-            c_dir.hash_size = 32;
-            c_dir.hash_type = SEC_CODE_SIGNATURE_HASH_SHA256;
-            c_dir.page_size = 12;
-            c_dir.exec_seg_base = @byteSwap(self.text_seg.fileoff);
-            c_dir.exec_seg_limit = @byteSwap(self.text_seg.filesize);
-            c_dir.exec_seg_flags = @byteSwap(CS_EXECSEG_MAIN_BINARY);
+            var code_dir = CodeDirectory.init();
+            code_dir.magic = @byteSwap(CSMAGIC_CODEDIRECTORY);
+            code_dir.length = @byteSwap(@as(u32, @truncate(total_size - super_blob_size - blob_size)));
+            code_dir.version = @byteSwap(@as(u32, 0x20400));
+            code_dir.flags = @byteSwap(@as(u32, 0x20002));
+            code_dir.hash_offset = @byteSwap(@as(u32, @truncate(hash_offset - (super_blob_size + blob_size))));
+            code_dir.ident_offset = @byteSwap(@as(u32, @truncate(id_offset - (super_blob_size + blob_size))));
+            code_dir.n_code_slots = @byteSwap(@as(u32, @truncate(n_hashes)));
+            code_dir.code_limit = @byteSwap(@as(u32, @truncate(self.sig_off)));
+            code_dir.hash_size = 32;
+            code_dir.hash_type = SEC_CODE_SIGNATURE_HASH_SHA256;
+            code_dir.page_size = 12;
+            code_dir.exec_seg_base = @byteSwap(self.text_seg.fileoff);
+            code_dir.exec_seg_limit = @byteSwap(self.text_seg.filesize);
+            code_dir.exec_seg_flags = @byteSwap(CS_EXECSEG_MAIN_BINARY);
 
-            var out = try std.ArrayList(u8).initCapacity(self.allocator, total_sz);
+            var out = try std.ArrayList(u8).initCapacity(self.allocator, total_size);
             defer out.deinit();
 
-            try out.appendSlice(mem.asBytes(&sb));
+            try out.appendSlice(mem.asBytes(&super_blob));
             try out.appendSlice(mem.asBytes(&blob));
-            try out.appendSlice(mem.asBytes(&c_dir));
+            try out.appendSlice(mem.asBytes(&code_dir));
             try out.appendSlice(id);
 
             // Calculate page hashes, ensuring we don't read past the end
@@ -473,8 +494,8 @@ pub const MachoFile = struct {
             }
 
             // Update array size and copy signature
-            if (self.data.items.len < self.sig_off + total_sz) {
-                try self.data.resize(self.sig_off + total_sz);
+            if (self.data.items.len < self.sig_off + total_size) {
+                try self.data.resize(self.sig_off + total_size);
             }
             @memcpy(self.data.items[self.sig_off..][0..out.items.len], out.items);
 

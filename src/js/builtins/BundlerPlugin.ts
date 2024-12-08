@@ -46,6 +46,8 @@ interface PluginBuilderExt extends PluginBuilder {
   esbuild: any;
 }
 
+type BeforeOnParseExternal = unknown;
+
 export function runSetupFunction(
   this: BundlerPlugin,
   setup: Setup,
@@ -57,14 +59,31 @@ export function runSetupFunction(
   this.promises = promises;
   var onLoadPlugins = new Map<string, [RegExp, AnyFunction][]>();
   var onResolvePlugins = new Map<string, [RegExp, AnyFunction][]>();
+  var onBeforeParsePlugins = new Map<
+    string,
+    [RegExp, napiModule: unknown, symbol: string, external?: undefined | unknown][]
+  >();
 
-  function validate(filterObject: PluginConstraints, callback, map) {
+  function validate(filterObject: PluginConstraints, callback, map, symbol, external) {
     if (!filterObject || !$isObject(filterObject)) {
       throw new TypeError('Expected an object with "filter" RegExp');
     }
 
-    if (!callback || !$isCallable(callback)) {
-      throw new TypeError("callback must be a function");
+    let isOnBeforeParse = false;
+    if (map === onBeforeParsePlugins) {
+      isOnBeforeParse = true;
+      // TODO: how to check if it a napi module here?
+      if (!callback) {
+        throw new TypeError("onBeforeParse `napiModule` must be a Napi module");
+      }
+
+      if (typeof symbol !== "string") {
+        throw new TypeError("onBeforeParse `symbol` must be a string");
+      }
+    } else {
+      if (!callback || !$isCallable(callback)) {
+        throw new TypeError("lmao callback must be a function");
+      }
     }
 
     var { filter, namespace = "file" } = filterObject;
@@ -92,18 +111,25 @@ export function runSetupFunction(
     var callbacks = map.$get(namespace);
 
     if (!callbacks) {
-      map.$set(namespace, [[filter, callback]]);
+      map.$set(namespace, [isOnBeforeParse ? [filter, callback, symbol, external] : [filter, callback]]);
     } else {
-      $arrayPush(callbacks, [filter, callback]);
+      $arrayPush(callbacks, isOnBeforeParse ? [filter, callback, symbol, external] : [filter, callback]);
     }
   }
 
   function onLoad(filterObject, callback) {
-    validate(filterObject, callback, onLoadPlugins);
+    validate(filterObject, callback, onLoadPlugins, undefined, undefined);
   }
 
   function onResolve(filterObject, callback) {
-    validate(filterObject, callback, onResolvePlugins);
+    validate(filterObject, callback, onResolvePlugins, undefined, undefined);
+  }
+
+  function onBeforeParse(
+    filterObject,
+    { napiModule, external, symbol }: { napiModule: unknown; symbol: string; external?: undefined | unknown },
+  ) {
+    validate(filterObject, napiModule, onBeforeParsePlugins, symbol, external);
   }
 
   const self = this;
@@ -126,7 +152,8 @@ export function runSetupFunction(
 
   const processSetupResult = () => {
     var anyOnLoad = false,
-      anyOnResolve = false;
+      anyOnResolve = false,
+      anyOnBeforeParse = false;
 
     for (var [namespace, callbacks] of onLoadPlugins.entries()) {
       for (var [filter] of callbacks) {
@@ -139,6 +166,13 @@ export function runSetupFunction(
       for (var [filter] of callbacks) {
         this.addFilter(filter, namespace, 0);
         anyOnResolve = true;
+      }
+    }
+
+    for (let [namespace, callbacks] of onBeforeParsePlugins.entries()) {
+      for (let [filter, addon, symbol, external] of callbacks) {
+        this.onBeforeParse(filter, namespace, addon, symbol, external);
+        anyOnBeforeParse = true;
       }
     }
 
@@ -189,6 +223,7 @@ export function runSetupFunction(
     onEnd: notImplementedIssueFn(2771, "On-end callbacks"),
     onLoad,
     onResolve,
+    onBeforeParse,
     onStart,
     resolve: notImplementedIssueFn(2771, "build.resolve()"),
     module: () => {

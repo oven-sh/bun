@@ -3509,7 +3509,7 @@ pub const JSGlobalObject = opaque {
         // when querying from JavaScript, 'func.len'
         comptime argument_count: u32,
     ) JSValue {
-        return NewRuntimeFunction(global, ZigString.static(display_name), argument_count, toJSHostFunction(function), false, false);
+        return NewRuntimeFunction(global, ZigString.static(display_name), argument_count, toJSHostFunction(function), false, false, null);
     }
 
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
@@ -6618,6 +6618,10 @@ pub const CallFrame = opaque {
         };
     }
 
+    pub fn arguments(self: *const CallFrame) []const JSValue {
+        // this presumably isn't allowed given that it doesn't exist
+        return self.argumentsPtr()[0..self.argumentsCount()];
+    }
     pub fn arguments_old(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const len = self.argumentsCount();
         const ptr = self.argumentsPtr();
@@ -6660,6 +6664,24 @@ pub const CallFrame = opaque {
             value[i] = call_frame.argument(i);
         }
         return value;
+    }
+
+    extern fn Bun__CallFrame__getCallerSrcLoc(*const CallFrame, *JSGlobalObject, *bun.String, *c_uint, *c_uint) void;
+    pub const CallerSrcLoc = struct {
+        str: bun.String,
+        line: c_uint,
+        column: c_uint,
+    };
+    pub fn getCallerSrcLoc(call_frame: *const CallFrame, globalThis: *JSGlobalObject) CallerSrcLoc {
+        var str: bun.String = undefined;
+        var line: c_uint = undefined;
+        var column: c_uint = undefined;
+        Bun__CallFrame__getCallerSrcLoc(call_frame, globalThis, &str, &line, &column);
+        return .{
+            .str = str,
+            .line = line,
+            .column = column,
+        };
     }
 };
 
@@ -6775,6 +6797,7 @@ const private = struct {
         functionPointer: JSHostFunctionPtr,
         strong: bool,
         add_ptr_field: bool,
+        inputFunctionPtr: ?*anyopaque,
     ) JSValue;
 
     pub extern fn Bun__untrackFFIFunction(
@@ -6794,9 +6817,9 @@ pub fn NewFunction(
     strong: bool,
 ) JSValue {
     if (@TypeOf(functionPointer) == JSC.JSHostFunctionType) {
-        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, strong, false);
+        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, strong, false, null);
     }
-    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false, null);
 }
 
 pub fn createCallback(
@@ -6808,7 +6831,7 @@ pub fn createCallback(
     if (@TypeOf(functionPointer) == JSC.JSHostFunctionType) {
         return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, false, false);
     }
-    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false, null);
 }
 
 pub fn NewRuntimeFunction(
@@ -6818,9 +6841,10 @@ pub fn NewRuntimeFunction(
     functionPointer: JSHostFunctionPtr,
     strong: bool,
     add_ptr_property: bool,
+    inputFunctionPtr: ?*anyopaque,
 ) JSValue {
     JSC.markBinding(@src());
-    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong, add_ptr_property);
+    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong, add_ptr_property, inputFunctionPtr);
 }
 
 pub fn getFunctionData(function: JSValue) ?*anyopaque {

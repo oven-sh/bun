@@ -1232,7 +1232,6 @@ pub const JSFrameworkRouter = struct {
     pub fn finalize(this: *JSFrameworkRouter) void {
         this.files.deinit(bun.default_allocator);
         this.router.deinit(bun.default_allocator);
-        bun.default_allocator.free(this.router.types);
         for (this.stored_parse_errors.items) |i| bun.default_allocator.free(i.rel_path);
         this.stored_parse_errors.deinit(bun.default_allocator);
         bun.destroy(this);

@@ -121,7 +121,7 @@ Environment="HOME=/var/lib/buildkite-agent"
 Environment="USER=buildkite-agent"
 Environment="PATH=/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="NIX_PATH=/nix/var/nix/profiles/per-user/root/channels"
-ExecStart=/usr/bin/node /usr/local/share/bun/agent.mjs start
+ExecStart=nix develop /var/lib/buildkite-agent/bun#ci-${flakeTarget} --command bash -c "node /usr/local/share/bun/agent.mjs start"
 Restart=always
 RestartSec=5
 TimeoutStopSec=20

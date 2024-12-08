@@ -61,16 +61,12 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
 
     if (nsGroup == nullptr) {
         namespaces.append(namespaceString);
-        groups.append(Vector<Yarr::RegularExpression> {});
+        groups.append(Vector<FilterRegExp> {});
         nsGroup = &groups.last();
         index = namespaces.size() - 1;
     }
 
-    Yarr::RegularExpression regex(
-        StringView(filter->pattern()),
-        filter->flags());
-
-    nsGroup->append(WTFMove(regex));
+    nsGroup->append(FilterRegExp(filter->pattern(), filter->flags()));
 }
 
 static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, const BunString* namespaceStr, const BunString* path)
@@ -90,7 +86,7 @@ static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& li
     auto pathString = path->toWTFString(BunString::ZeroCopy);
 
     for (auto& filter : filters) {
-        if (filter.match(pathString) > -1) {
+        if (filter.match(vm, pathString)) {
             return true;
         }
     }
@@ -240,7 +236,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
 
         if (nsGroup == nullptr) {
             namespaces.append(namespaceString);
-            groups.append(Vector<NativeFilterRegexp> {});
+            groups.append(Vector<FilterRegExp> {});
             nsGroup = &groups.last();
             index = namespaces.size() - 1;
         }
@@ -249,7 +245,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
             StringView(filter->pattern()),
             filter->flags());
 
-        nsGroup->append(NativeFilterRegexp { regex });
+        nsGroup->append(FilterRegExp { regex });
     }
 
     if (index == std::numeric_limits<unsigned>::max()) {
@@ -266,7 +262,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
     }
 }
 
-bool BundlerPlugin::NativeFilterRegexp::match(JSC::VM& vm, const String& path)
+bool BundlerPlugin::FilterRegExp::match(JSC::VM& vm, const String& path)
 {
     WTF::Locker locker { lock };
     constexpr bool usesPatternContextBuffer = false;

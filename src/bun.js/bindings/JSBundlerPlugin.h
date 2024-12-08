@@ -18,14 +18,43 @@ using namespace JSC;
 
 class BundlerPlugin final {
 public:
+    /// In native plugins, the regular expression could be called concurrently on multiple threads.
+    /// Therefore, we need a mutex to synchronize access.
+    class FilterRegExp {
+    public:
+        Yarr::RegularExpression regex;
+        String m_pattern;
+        WTF::Lock lock {};
+
+        FilterRegExp(Yarr::RegularExpression regex)
+            : regex(regex)
+        {
+        }
+
+        FilterRegExp(FilterRegExp&& other)
+            : m_pattern(other.m_pattern)
+            , regex(other.regex)
+        {
+        }
+
+        FilterRegExp(const String& pattern, OptionSet<Yarr::Flags> flags)
+            // Ensure it's safe for cross-thread usage.
+            : m_pattern(pattern.isolatedCopy())
+            , regex(m_pattern, flags)
+        {
+        }
+
+        bool match(JSC::VM& vm, const String& path);
+    };
+
     class NamespaceList {
     public:
-        Vector<Yarr::RegularExpression> fileNamespace = {};
+        Vector<FilterRegExp> fileNamespace = {};
         Vector<String> namespaces = {};
-        Vector<Vector<Yarr::RegularExpression>> groups = {};
+        Vector<Vector<FilterRegExp>> groups = {};
         BunPluginTarget target { BunPluginTargetBun };
 
-        Vector<Yarr::RegularExpression>* group(const String& namespaceStr, unsigned& index)
+        Vector<FilterRegExp>* group(const String& namespaceStr, unsigned& index)
         {
             if (namespaceStr.isEmpty()) {
                 index = std::numeric_limits<unsigned>::max();
@@ -46,27 +75,6 @@ public:
         void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, unsigned& index);
     };
 
-    /// In native plugins, the regular expression could be called concurrently on multiple threads.
-    /// Therefore, we need a mutex to synchronize access.
-    class NativeFilterRegexp {
-    public:
-        Yarr::RegularExpression regex;
-        WTF::Lock lock {};
-
-        NativeFilterRegexp(Yarr::RegularExpression regex)
-            : regex(regex)
-        {
-        }
-
-        NativeFilterRegexp(NativeFilterRegexp&& other)
-            : regex(other.regex)
-            , lock()
-        {
-        }
-
-        bool match(JSC::VM& vm, const String& path);
-    };
-
     struct NativePluginCallback {
         JSBundlerPluginNativeOnBeforeParseCallback callback;
         Bun::NapiExternal* external;
@@ -82,9 +90,9 @@ public:
     public:
         using PerNamespaceCallbackList = Vector<NativePluginCallback>;
 
-        Vector<NativeFilterRegexp> fileNamespace = {};
+        Vector<FilterRegExp> fileNamespace = {};
         Vector<String> namespaces = {};
-        Vector<Vector<NativeFilterRegexp>> groups = {};
+        Vector<Vector<FilterRegExp>> groups = {};
         BunPluginTarget target { BunPluginTargetBun };
 
         PerNamespaceCallbackList fileCallbacks = {};
@@ -93,7 +101,7 @@ public:
         int call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, void* onBeforeParseArgs, void* onBeforeParseResult);
         void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, const char* name, NapiExternal* external);
 
-        Vector<NativeFilterRegexp>* group(const String& namespaceStr, unsigned& index)
+        Vector<FilterRegExp>* group(const String& namespaceStr, unsigned& index)
         {
             if (namespaceStr.isEmpty()) {
                 index = std::numeric_limits<unsigned>::max();

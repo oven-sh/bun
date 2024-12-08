@@ -187,7 +187,6 @@ ENVSETUP
   # Now run the wrapped command as root to handle systemd installation
   sudo bash /tmp/agent-install.sh
   sudo rm /tmp/agent-install.sh
-EOF
 else
   echo "ERROR: agent.mjs not found at /usr/local/share/bun/agent.mjs"
   ls -la /usr/local/share/bun/

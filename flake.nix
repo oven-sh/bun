@@ -15,10 +15,13 @@
       let
         olderBunVersion = {
           x64 = {
+            dir = "bun-linux-x64";
             url = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-x64.zip";
             sha256 = "sha256-e5OtTccoPG7xKQVvZiuvo3VSBC8mRteOj1d0GF+nEtk=";
+            
           };
           arm64 = {
+            dir = "bun-linux-aarch64";
             url = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-aarch64.zip";
             sha256 = "sha256-ph2lNX4o1Jd/zNSFH+1i/02j6jOFMAXH3ZPayAvFOTI=";
           };
@@ -39,7 +42,7 @@
             url = olderBunVersion.${arch}.url;
             stripRoot = false;
             sha256 = olderBunVersion.${arch}.sha256;
-          }}/bun $out/bin/
+          }}/${olderBunVersion.${arch}.dir}/bun $out/bin/
           chmod +x $out/bin/bun
         '';
 

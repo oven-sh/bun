@@ -37,6 +37,7 @@ JSNextTickQueue* JSNextTickQueue::create(VM& vm, Structure* structure)
     mod->finishCreation(vm);
     return mod;
 }
+
 Structure* JSNextTickQueue::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
@@ -47,10 +48,7 @@ JSNextTickQueue::JSNextTickQueue(VM& vm, Structure* structure)
 {
 }
 
-void JSNextTickQueue::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-}
+void JSNextTickQueue::finishCreation(VM& vm) { Base::finishCreation(vm); }
 
 template<typename Visitor>
 void JSNextTickQueue::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -69,9 +67,14 @@ JSNextTickQueue* JSNextTickQueue::create(JSC::JSGlobalObject* globalObject)
     return obj;
 }
 
+WriteBarrier<Unknown>& JSNextTickQueue::queueStatus() { return internalField(0); }
+// unused in native code. Included for completeness.
+WriteBarrier<Unknown>& JSNextTickQueue::queue() { return internalField(1); }
+WriteBarrier<Unknown>& JSNextTickQueue::drainFn() { return internalField(2); }
+
 bool JSNextTickQueue::isEmpty()
 {
-    return !internalField(0) || internalField(0).get().asNumber() == 0;
+    return !queueStatus() || queueStatus().get().asNumber() == 0;
 }
 
 void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -86,11 +89,11 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
         if (mustResetContext) {
             globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
         }
-        auto* drainFn = internalField(2).get().getObject();
+        JSC::JSObject* drainFn = this->drainFn().get().getObject();
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         MarkedArgumentBuffer drainArgs;
         JSC::call(globalObject, drainFn, drainArgs, "Failed to drain next tick queue"_s);
     }
 }
 
-}
+} // namespace Bun

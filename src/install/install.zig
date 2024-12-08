@@ -2842,8 +2842,13 @@ pub const PackageManager = struct {
             }
 
             const key = allocator.dupeZ(u8, path) catch bun.outOfMemory();
+            entry.key_ptr.* = key;
 
-            const source = bun.sys.File.toSource(key, allocator).unwrap() catch |err| return .{ .read_err = err };
+            const source = bun.sys.File.toSource(key, allocator).unwrap() catch |err| {
+                _ = this.map.remove(key);
+                allocator.free(key);
+                return .{ .read_err = err };
+            };
 
             if (comptime opts.init_reset_store)
                 initializeStore();
@@ -2859,6 +2864,9 @@ pub const PackageManager = struct {
                     .guess_indentation = opts.guess_indentation,
                 },
             ) catch |err| {
+                _ = this.map.remove(key);
+                allocator.free(source.contents);
+                allocator.free(key);
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 return .{ .parse_err = err };
             };
@@ -2868,8 +2876,6 @@ pub const PackageManager = struct {
                 .source = source,
                 .indentation = json.indentation,
             };
-
-            entry.key_ptr.* = key;
 
             return .{ .entry = entry.value_ptr };
         }

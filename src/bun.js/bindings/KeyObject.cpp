@@ -821,16 +821,16 @@ static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObjec
         return encodeKey(KeyObject__createRSAFromPrivate(globalObject, pkey, alg));
     } else if (pKeyID == EVP_PKEY_EC) {
 
-        EC_KEY* ec_key = EVP_PKEY_get1_EC_KEY(pkey);
+        EC_KEY* ec_key = EVP_PKEY_get0_EC_KEY(pkey); // do not inc reference count
         if (UNLIKELY(ec_key == nullptr)) {
             throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC key"_s));
             return {};
         }
         const EC_GROUP* ec_group = EC_KEY_get0_group(ec_key);
+        EC_KEY_free(ec_key); // only used to get group
         // Get the curve name
         int curve_name = EC_GROUP_get_curve_name(ec_group);
         if (curve_name == NID_undef) {
-            EC_KEY_free(ec_key);
             throwException(globalObject, scope, createTypeError(globalObject, "Unable to identify EC curve"_s));
             return {};
         }
@@ -847,12 +847,10 @@ static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObjec
             curve = CryptoKeyEC::NamedCurve::P521;
             break;
         default:
-            EC_KEY_free(ec_key);
             throwException(globalObject, scope, createTypeError(globalObject, "Unsupported EC curve"_s));
             return {};
         }
 
-        EC_KEY_free(ec_key);
         return encodeKey(KeyObject__createECFromPrivate(globalObject, pkey, curve, CryptoAlgorithmIdentifier::ECDSA));
     } else if (pKeyID == EVP_PKEY_ED25519 || pKeyID == EVP_PKEY_X25519) {
         size_t out_len = 0;

@@ -87,37 +87,37 @@ sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 32A37959C
 sudo apt-get update
 sudo apt-get install -y buildkite-agent
 
-echo "Setting up agent.mjs..."
-echo "Creating directory /usr/local/share/bun"
+# Create required directories with correct permissions
+echo "Setting up directories..."
 sudo mkdir -p /usr/local/share/bun
-ls -la /usr/local/share/bun
+sudo mkdir -p /var/lib/buildkite-agent/bun
+sudo mkdir -p /var/cache/buildkite-agent
+sudo mkdir -p /var/log/buildkite-agent
+sudo mkdir -p /etc/buildkite-agent/hooks
 
-echo "Writing agent.mjs content:"
-sudo tee /usr/local/share/bun/agent.mjs > /dev/null << 'EOF'
+# Set correct ownership
+sudo chown -R buildkite-agent:buildkite-agent /var/lib/buildkite-agent
+sudo chown -R buildkite-agent:buildkite-agent /var/cache/buildkite-agent
+sudo chown -R buildkite-agent:buildkite-agent /var/log/buildkite-agent
+sudo chown -R buildkite-agent:buildkite-agent /etc/buildkite-agent
+sudo chown -R buildkite-agent:buildkite-agent /usr/local/share/bun
+
+echo "Writing agent.mjs and utils.mjs..."
+sudo -u buildkite-agent tee /usr/local/share/bun/agent.mjs > /dev/null << 'EOF'
 ${agentScript}
 EOF
-sudo chmod +x /usr/local/share/bun/agent.mjs
-
-echo "Writing utils.mjs content:"
-sudo tee /usr/local/share/bun/utils.mjs > /dev/null << 'EOF'
+sudo -u buildkite-agent tee /usr/local/share/bun/utils.mjs > /dev/null << 'EOF'
 ${utilsContent}
 EOF
 
-echo "Verifying agent.mjs was written:"
-ls -la /usr/local/share/bun/agent.mjs
-echo "Content of agent.mjs:"
-cat /usr/local/share/bun/agent.mjs
+sudo chmod +x /usr/local/share/bun/agent.mjs
 
-echo "Copying flake.nix to the instance..."
-sudo mkdir -p /var/lib/buildkite-agent/bun
-sudo tee /var/lib/buildkite-agent/bun/flake.nix > /dev/null << 'EOF'
+echo "Copying flake.nix..."
+sudo -u buildkite-agent tee /var/lib/buildkite-agent/bun/flake.nix > /dev/null << 'EOF'
 ${flakeContent}
 EOF
 
-echo "Setting ownership..."
-sudo chown -R buildkite-agent:buildkite-agent /var/lib/buildkite-agent/bun
-
-echo "Setting system limits for buildkite-agent..."
+echo "Setting system limits..."
 sudo tee /etc/security/limits.d/buildkite-agent.conf > /dev/null << 'EOF'
 buildkite-agent soft nofile 1048576
 buildkite-agent hard nofile 1048576
@@ -125,8 +125,7 @@ buildkite-agent soft nproc 1048576
 buildkite-agent hard nproc 1048576
 EOF
 
-echo "Evaluating Nix environment..."
-# Switch to buildkite-agent user and evaluate the Nix environment
+echo "Setting up Nix environment..."
 sudo -i -u buildkite-agent bash << EOF
 set -euxo pipefail
 cd /var/lib/buildkite-agent/bun
@@ -143,8 +142,7 @@ touch .nix-env-ready
 EOF
 
 echo "Setting up hooks..."
-sudo mkdir -p /etc/buildkite-agent/hooks
-sudo tee /etc/buildkite-agent/hooks/command > /dev/null << 'EOF'
+sudo -u buildkite-agent tee /etc/buildkite-agent/hooks/command > /dev/null << 'EOF'
 #!/bin/bash
 set -euo pipefail
 
@@ -152,14 +150,14 @@ set -euo pipefail
 . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
 
 # Change to the build directory
-cd "$BUILDKITE_BUILD_DIR"
+cd "\$BUILDKITE_BUILD_DIR"
 
 # Use Nix to evaluate and run the command in the proper environment
-nix develop .#ci-${flakeTarget} -c eval "$BUILDKITE_COMMAND"
+nix develop .#ci-${flakeTarget} -c eval "\$BUILDKITE_COMMAND"
 EOF
 sudo chmod +x /etc/buildkite-agent/hooks/command
 
-sudo tee /etc/buildkite-agent/hooks/environment > /dev/null << 'EOF'
+sudo -u buildkite-agent tee /etc/buildkite-agent/hooks/environment > /dev/null << 'EOF'
 #!/bin/bash
 set -euo pipefail
 
@@ -167,28 +165,41 @@ set -euo pipefail
 . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
 
 # Add Nix to PATH
-export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+export PATH="/nix/var/nix/profiles/default/bin:\$PATH"
 EOF
 sudo chmod +x /etc/buildkite-agent/hooks/environment
 
 echo "Installing BuildKite agent service..."
-. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-
-cd /var/lib/buildkite-agent/bun
-
-# Update flake lock and evaluate the environment
-nix flake update
-
-# Install and start the agent
 if [ -f "/usr/local/share/bun/agent.mjs" ]; then
   echo "Found agent.mjs, executing..."
-  sudo nix develop .#ci-${flakeTarget} -c bash -c "node /usr/local/share/bun/agent.mjs install"
+  # First run nix-shell as buildkite-agent to get the environment
+  sudo -i -u buildkite-agent bash << 'ENVSETUP'
+    set -euxo pipefail
+    . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+    cd /var/lib/buildkite-agent/bun
+    # Instead of running install directly, create a wrapped command that we'll run as root
+    nix develop .#ci-${flakeTarget} -c bash -c 'echo "#!/bin/bash\nset -euxo pipefail\n\nexport PATH=\"\$PATH\"" > /tmp/agent-install.sh'
+    nix develop .#ci-${flakeTarget} -c bash -c 'echo "export NODE_PATH=\"\$NODE_PATH\"" >> /tmp/agent-install.sh'
+    nix develop .#ci-${flakeTarget} -c bash -c 'echo "node /usr/local/share/bun/agent.mjs install" >> /tmp/agent-install.sh'
+    chmod +x /tmp/agent-install.sh
+ENVSETUP
+
+  # Now run the wrapped command as root to handle systemd installation
+  sudo bash /tmp/agent-install.sh
+  rm /tmp/agent-install.sh
+
+  # Start the agent as the buildkite-agent user
+  sudo -i -u buildkite-agent bash << EOF
+    set -euxo pipefail
+    . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+    cd /var/lib/buildkite-agent/bun
+    nix develop .#ci-${flakeTarget} -c node /usr/local/share/bun/agent.mjs start
+EOF
 else
   echo "ERROR: agent.mjs not found at /usr/local/share/bun/agent.mjs"
   ls -la /usr/local/share/bun/
   exit 1
-fi
-`;
+fi`;
 
   // Write user data to a temporary file
   const userDataFile = mkdtemp("user-data-", "user-data.sh");

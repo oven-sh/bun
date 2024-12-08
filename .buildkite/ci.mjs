@@ -999,7 +999,7 @@ function getCreateNixAmisStep(platform, dryRun) {
     command: [
       "node",
       "./scripts/create-nix-amis.mjs",
-      "--release=publish-image",
+      "--release=" + (dryRun ? "create-image" : "publish-image"),
       "--arch=" + platform.arch,
       "--cloud=aws",
     ].join(" "),
@@ -1052,7 +1052,7 @@ async function getPipeline(options = {}) {
       steps: [
         ...Array.from(imagePlatforms.values())
           .filter(platform => platform.nix)
-          .map(platform => getCreateNixAmisStep(platform, !!publishImages)),
+          .map(platform => getCreateNixAmisStep(platform, !publishImages)),
         ...[...imagePlatforms.values()]
           .filter(platform => !platform.nix)
           .map(platform => getBuildImageStep(platform, !publishImages)),

@@ -393,8 +393,10 @@ pub const MachoFile = struct {
             }
 
             if (self.data.items.len < self.sig_off + sz) {
+                const old_len = self.data.items.len;
                 try self.data.resize(self.sig_off + sz);
-                @memset(self.data.items[self.data.items.len..][0..sz], 0);
+                // Zero the new space between old_len and new length
+                @memset(self.data.items[old_len..], 0);
             }
 
             @memcpy(self.data.items[self.sig_off..][0..out.items.len], out.items);

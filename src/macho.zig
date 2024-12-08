@@ -198,6 +198,8 @@ pub const MachoFile = struct {
             // Place signature at new end
             cs.dataoff = @intCast(new_linkedit_end);
         }
+
+        try self.validateSegments();
     }
 
     const Shifter = struct {
@@ -319,6 +321,22 @@ pub const MachoFile = struct {
         try writer.writeAll(self.data.items);
     }
 
+    fn validateSegments(self: *MachoFile) !void {
+        var iter = self.iterator();
+        var prev_end: u64 = 0;
+
+        while (iter.next()) |entry| {
+            const cmd = entry.hdr;
+            if (cmd.cmd == .SEGMENT_64) {
+                const seg = entry.cast(macho.segment_command_64).?;
+                if (seg.fileoff < prev_end) {
+                    return error.OverlappingSegments;
+                }
+                prev_end = seg.fileoff + seg.filesize;
+            }
+        }
+    }
+
     pub fn buildAndSign(self: *MachoFile, writer: anytype) !void {
         if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.getRuntimeFeatureFlag("BUN_NO_CODESIGN_MACHO_BINARY")) {
             var data = std.ArrayList(u8).init(self.allocator);
@@ -428,91 +446,94 @@ pub const MachoFile = struct {
         pub fn sign(self: *MachoSigner, writer: anytype) !void {
             const PAGE_SIZE: usize = 1 << 12;
 
-            // Ensure signature offset is page-aligned
-            if (self.sig_off % PAGE_SIZE != 0) {
-                self.sig_off = alignSize(self.sig_off, PAGE_SIZE);
-            }
+            // Calculate total binary pages before signature
+            const total_pages = (self.sig_off + PAGE_SIZE - 1) / PAGE_SIZE;
+            const aligned_sig_off = total_pages * PAGE_SIZE;
 
+            // Calculate base signature structure sizes
             const id = "a.out\x00";
-            const n_hashes = (self.sig_off + PAGE_SIZE - 1) / PAGE_SIZE;
-
-            // Calculate offsets relative to start of CodeDirectory
-            const super_blob_size = @sizeOf(SuperBlob);
-            const blob_size = @sizeOf(Blob);
-            const code_dir_size = @sizeOf(CodeDirectory);
-            const blob_offset = super_blob_size + blob_size;
-            const id_offset = code_dir_size;
+            const super_blob_header_size = @sizeOf(SuperBlob);
+            const blob_index_size = @sizeOf(BlobIndex);
+            const code_dir_header_size = @sizeOf(CodeDirectory);
+            const id_offset = code_dir_header_size;
             const hash_offset = id_offset + id.len;
-            const code_dir_content_size = code_dir_size + id.len + (n_hashes * 32);
-            const total_size = super_blob_size + blob_size + code_dir_content_size;
 
-            // Update code signature load command
-            var cs_cmd: *align(1) macho.linkedit_data_command = @ptrCast(@constCast(@alignCast(&self.data.items[self.cs_cmd_off..][0..@sizeOf(macho.linkedit_data_command)])));
-            cs_cmd.dataoff = @truncate(self.sig_off);
-            cs_cmd.datasize = @truncate(total_size);
+            // Calculate hash sizes
+            const hashes_size = total_pages * 32; // SHA256 = 32 bytes
+            const code_dir_length = hash_offset + hashes_size;
 
-            // Update linkedit segment
-            const linkedit_end = self.sig_off + total_size;
-            const seg_sz = linkedit_end - self.linkedit_seg.fileoff;
-            var linkedit_seg: *align(1) macho.segment_command_64 = @ptrCast(@constCast(@alignCast(&self.data.items[self.linkedit_off..][0..@sizeOf(macho.segment_command_64)])));
-            linkedit_seg.filesize = seg_sz;
-            linkedit_seg.vmsize = alignSize(seg_sz, PAGE_SIZE);
+            // Calculate total signature size
+            const sig_structure_size = super_blob_header_size + blob_index_size + code_dir_length;
+            const total_sig_size = alignSize(sig_structure_size, PAGE_SIZE);
 
-            // Build signature components
-            const super_blob = SuperBlob{
+            // Setup SuperBlob
+            var super_blob = SuperBlob{
                 .magic = @byteSwap(CSMAGIC_EMBEDDED_SIGNATURE),
-                .length = @byteSwap(@as(u32, @truncate(total_size))),
+                .length = @byteSwap(@as(u32, @truncate(sig_structure_size))),
                 .count = @byteSwap(@as(u32, 1)),
             };
 
-            const blob = Blob{
-                .magic = @byteSwap(CSSLOT_CODEDIRECTORY),
-                .length = @byteSwap(@as(u32, @truncate(blob_offset))),
+            // Setup BlobIndex
+            var blob_index = BlobIndex{
+                .type = @byteSwap(CSSLOT_CODEDIRECTORY),
+                .offset = @byteSwap(@as(u32, super_blob_header_size + blob_index_size)),
             };
 
-            var code_dir = CodeDirectory.init();
+            // Setup CodeDirectory
+            var code_dir = std.mem.zeroes(CodeDirectory);
             code_dir.magic = @byteSwap(CSMAGIC_CODEDIRECTORY);
-            code_dir.length = @byteSwap(@as(u32, @truncate(code_dir_content_size)));
+            code_dir.length = @byteSwap(@as(u32, @truncate(code_dir_length)));
             code_dir.version = @byteSwap(@as(u32, 0x20400));
             code_dir.flags = @byteSwap(@as(u32, 0x20002));
-            code_dir.hash_offset = @byteSwap(@as(u32, @truncate(hash_offset)));
-            code_dir.ident_offset = @byteSwap(@as(u32, @truncate(id_offset)));
-            code_dir.n_code_slots = @byteSwap(@as(u32, @truncate(n_hashes)));
-            code_dir.code_limit = @byteSwap(@as(u32, @truncate(self.sig_off)));
-            code_dir.hash_size = 32;
-            code_dir.hash_type = SEC_CODE_SIGNATURE_HASH_SHA256;
-            code_dir.page_size = 12;
-            code_dir.exec_seg_base = @byteSwap(self.text_seg.fileoff);
-            code_dir.exec_seg_limit = @byteSwap(self.text_seg.filesize);
-            code_dir.exec_seg_flags = @byteSwap(CS_EXECSEG_MAIN_BINARY);
+            code_dir.hashOffset = @byteSwap(@as(u32, @truncate(hash_offset)));
+            code_dir.identOffset = @byteSwap(@as(u32, @truncate(id_offset)));
+            code_dir.nSpecialSlots = 0;
+            code_dir.nCodeSlots = @byteSwap(@as(u32, @truncate(total_pages)));
+            code_dir.codeLimit = @byteSwap(@as(u32, @truncate(aligned_sig_off)));
+            code_dir.hashSize = 32;
+            code_dir.hashType = SEC_CODE_SIGNATURE_HASH_SHA256;
+            code_dir.pageSize = 12; // log2(4096)
 
-            // Write signature data
-            var out = try std.ArrayList(u8).initCapacity(self.allocator, total_size);
-            defer out.deinit();
+            // Get text segment info
+            const text_base = alignSize(self.text_seg.fileoff, PAGE_SIZE);
+            const text_limit = alignSize(self.text_seg.filesize, PAGE_SIZE);
+            code_dir.execSegBase = @byteSwap(@as(u64, text_base));
+            code_dir.execSegLimit = @byteSwap(@as(u64, text_limit));
+            code_dir.execSegFlags = @byteSwap(CS_EXECSEG_MAIN_BINARY);
 
-            try out.appendSlice(mem.asBytes(&super_blob));
-            try out.appendSlice(mem.asBytes(&blob));
-            try out.appendSlice(mem.asBytes(&code_dir));
-            try out.appendSlice(id);
+            // Ensure space for signature
+            try self.data.resize(aligned_sig_off + total_sig_size);
+            self.data.items.len = aligned_sig_off;
+            @memset(self.data.unusedCapacitySlice(), 0);
 
-            // Calculate page hashes
-            var fileoff: usize = 0;
-            while (fileoff < self.sig_off) {
-                const remaining = self.sig_off - fileoff;
-                const n = @min(PAGE_SIZE, remaining);
-                const chunk = self.data.items[fileoff..][0..n];
+            // Position writer at signature offset
+            var sig_writer = self.data.writer();
+
+            // Write signature components
+            try sig_writer.writeAll(mem.asBytes(&super_blob));
+            try sig_writer.writeAll(mem.asBytes(&blob_index));
+            try sig_writer.writeAll(mem.asBytes(&code_dir));
+            try sig_writer.writeAll(id);
+
+            // Hash and write pages
+            var remaining = self.data.items[0..aligned_sig_off];
+            while (remaining.len >= PAGE_SIZE) {
+                const page = remaining[0..PAGE_SIZE];
                 var digest: bun.sha.SHA256.Digest = undefined;
-                bun.sha.SHA256.hash(chunk, &digest, null);
-                try out.appendSlice(&digest);
-                fileoff += PAGE_SIZE;
+                bun.sha.SHA256.hash(page, &digest, null);
+                try sig_writer.writeAll(&digest);
+                remaining = remaining[PAGE_SIZE..];
             }
 
-            // Ensure space and write signature
-            if (self.data.items.len < self.sig_off + total_size) {
-                try self.data.resize(self.sig_off + total_size);
+            if (remaining.len > 0) {
+                var last_page = [_]u8{0} ** PAGE_SIZE;
+                @memcpy(last_page[0..remaining.len], remaining);
+                var digest: bun.sha.SHA256.Digest = undefined;
+                bun.sha.SHA256.hash(&last_page, &digest, null);
+                try sig_writer.writeAll(&digest);
             }
-            @memcpy(self.data.items[self.sig_off..][0..total_size], out.items);
 
+            // Write final binary
             try writer.writeAll(self.data.items);
         }
     };
@@ -527,13 +548,6 @@ fn alignVmsize(size: u64, page_size: u64) u64 {
     return alignSize(if (size > 0x4000) size else 0x4000, page_size);
 }
 
-fn shiftOffset(value: u64, amount: u64, range_min: u64, range_max: u64) u64 {
-    if (value < range_min or value > (range_max + range_min)) {
-        return value;
-    }
-    return value + amount;
-}
-
 const SEG_LINKEDIT = "__LINKEDIT";
 
 pub const utils = struct {
@@ -546,11 +560,6 @@ pub const utils = struct {
         if (data.len < 4) return false;
         return mem.readInt(u32, data[0..4], .little) == macho.MH_MAGIC_64;
     }
-
-    pub fn isPe(data: []const u8) bool {
-        if (data.len < 2) return false;
-        return mem.readInt(u16, data[0..2], .little) == 0x5a4d;
-    }
 };
 
 const CSMAGIC_CODEDIRECTORY: u32 = 0xfade0c02;
@@ -561,53 +570,5 @@ const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
 
 const SuperBlob = std.macho.SuperBlob;
 const Blob = std.macho.GenericBlob;
-
-const CodeDirectory = extern struct {
-    magic: u32,
-    length: u32,
-    version: u32,
-    flags: u32,
-    hash_offset: u32,
-    ident_offset: u32,
-    n_special_slots: u32,
-    n_code_slots: u32,
-    code_limit: u32,
-    hash_size: u8,
-    hash_type: u8,
-    _pad1: u8,
-    page_size: u8,
-    _pad2: u32,
-    scatter_offset: u32,
-    team_offset: u32,
-    _pad3: u32,
-    code_limit64: u64,
-    exec_seg_base: u64,
-    exec_seg_limit: u64,
-    exec_seg_flags: u64,
-
-    pub fn init() CodeDirectory {
-        return .{
-            .magic = 0,
-            .length = 0,
-            .version = 0,
-            .flags = 0,
-            .hash_offset = 0,
-            .ident_offset = 0,
-            .n_special_slots = 0,
-            .n_code_slots = 0,
-            .code_limit = 0,
-            .hash_size = 0,
-            .hash_type = 0,
-            ._pad1 = 0,
-            .page_size = 0,
-            ._pad2 = 0,
-            .scatter_offset = 0,
-            .team_offset = 0,
-            ._pad3 = 0,
-            .code_limit64 = 0,
-            .exec_seg_base = 0,
-            .exec_seg_limit = 0,
-            .exec_seg_flags = 0,
-        };
-    }
-};
+const CodeDirectory = std.macho.CodeDirectory;
+const BlobIndex = std.macho.BlobIndex;

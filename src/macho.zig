@@ -9,6 +9,7 @@ const bun = @import("root").bun;
 pub const SEGNAME_BUN = "__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
 pub const SECTNAME = "__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
 const strings = bun.strings;
+
 pub const MachoFile = struct {
     header: macho.mach_header_64,
     data: std.ArrayList(u8),
@@ -63,57 +64,69 @@ pub const MachoFile = struct {
         var original_vmaddr: u64 = 0;
         var original_data_end: u64 = 0;
         var original_segsize: u64 = blob_alignment;
+
+        // Use an index instead of a pointer to avoid issues with resizing the arraylist later.
+        var code_sign_cmd_idx: ?usize = null;
+        var linkedit_seg_idx: ?usize = null;
+
         var found_bun = false;
 
         var iter = self.iterator();
 
-        outer: while (iter.next()) |entry| {
+        while (iter.next()) |entry| {
             const cmd = entry.hdr;
-            if (@intFromEnum(cmd.cmd) == @intFromEnum(macho.LC.SEGMENT_64)) {
-                const command = entry.cast(macho.segment_command_64).?;
-                if (mem.eql(u8, command.segName(), "__BUN")) {
-                    if (command.nsects > 0) {
-                        const section_offset = @intFromPtr(entry.data.ptr) - @intFromPtr(self.data.items.ptr);
-                        const sections = @as([*]macho.section_64, @ptrCast(@alignCast(&self.data.items[section_offset + @sizeOf(macho.segment_command_64)])))[0..command.nsects];
-                        for (sections) |*sect| {
-                            if (mem.eql(u8, sect.sectName(), "__bun")) {
-                                found_bun = true;
-                                original_fileoff = sect.offset;
-                                original_vmaddr = sect.addr;
-                                original_data_end = original_fileoff + blob_alignment;
-                                original_segsize = sect.size;
-                                self.segment = command;
-                                self.section = sect.*;
+            switch (cmd.cmd) {
+                .SEGMENT_64 => {
+                    const command = entry.cast(macho.segment_command_64).?;
+                    if (strings.eqlComptime(command.segName(), "__BUN")) {
+                        if (command.nsects > 0) {
+                            const section_offset = @intFromPtr(entry.data.ptr) - @intFromPtr(self.data.items.ptr);
+                            const sections = @as([*]macho.section_64, @ptrCast(@alignCast(&self.data.items[section_offset + @sizeOf(macho.segment_command_64)])))[0..command.nsects];
+                            for (sections) |*sect| {
+                                if (strings.eqlComptime(sect.sectName(), "__bun")) {
+                                    found_bun = true;
+                                    original_fileoff = sect.offset;
+                                    original_vmaddr = sect.addr;
+                                    original_data_end = original_fileoff + blob_alignment;
+                                    original_segsize = sect.size;
+                                    self.segment = command;
+                                    self.section = sect.*;
 
-                                // Update segment with proper sizes and alignment
-                                self.segment.vmsize = alignVmsize(aligned_size, blob_alignment);
-                                self.segment.filesize = aligned_size;
-                                self.segment.maxprot = macho.PROT.READ | macho.PROT.WRITE;
-                                self.segment.initprot = macho.PROT.READ | macho.PROT.WRITE;
+                                    // Update segment with proper sizes and alignment
+                                    self.segment.vmsize = alignVmsize(aligned_size, blob_alignment);
+                                    self.segment.filesize = aligned_size;
+                                    self.segment.maxprot = macho.PROT.READ | macho.PROT.WRITE;
+                                    self.segment.initprot = macho.PROT.READ | macho.PROT.WRITE;
 
-                                self.section = .{
-                                    .sectname = SECTNAME,
-                                    .segname = SEGNAME_BUN,
-                                    .addr = original_vmaddr,
-                                    .size = @intCast(total_size),
-                                    .offset = @intCast(original_fileoff),
-                                    .@"align" = @intFromFloat(@log2(@as(f64, @floatFromInt(blob_alignment)))),
-                                    .reloff = 0,
-                                    .nreloc = 0,
-                                    .flags = macho.S_REGULAR | macho.S_ATTR_NO_DEAD_STRIP,
-                                    .reserved1 = 0,
-                                    .reserved2 = 0,
-                                    .reserved3 = 0,
-                                };
-                                const entry_ptr: [*]u8 = @constCast(entry.data.ptr);
-                                const segment_command_ptr: *align(1) macho.segment_command_64 = @ptrCast(@alignCast(entry_ptr));
-                                segment_command_ptr.* = self.segment;
-                                sect.* = self.section;
-                                break :outer;
+                                    self.section = .{
+                                        .sectname = SECTNAME,
+                                        .segname = SEGNAME_BUN,
+                                        .addr = original_vmaddr,
+                                        .size = @intCast(total_size),
+                                        .offset = @intCast(original_fileoff),
+                                        .@"align" = @intFromFloat(@log2(@as(f64, @floatFromInt(blob_alignment)))),
+                                        .reloff = 0,
+                                        .nreloc = 0,
+                                        .flags = macho.S_REGULAR | macho.S_ATTR_NO_DEAD_STRIP,
+                                        .reserved1 = 0,
+                                        .reserved2 = 0,
+                                        .reserved3 = 0,
+                                    };
+                                    const entry_ptr: [*]u8 = @constCast(entry.data.ptr);
+                                    const segment_command_ptr: *align(1) macho.segment_command_64 = @ptrCast(@alignCast(entry_ptr));
+                                    segment_command_ptr.* = self.segment;
+                                    sect.* = self.section;
+                                }
                             }
                         }
+                    } else if (strings.eqlComptime(command.segName(), SEG_LINKEDIT)) {
+                        linkedit_seg_idx = @intFromPtr(entry.data.ptr) - @intFromPtr(self.data.items.ptr);
                     }
-                }
+                },
+                .CODE_SIGNATURE => {
+                    code_sign_cmd_idx = @intFromPtr(entry.data.ptr) - @intFromPtr(self.data.items.ptr);
+                },
+                else => {},
             }
         }
 
@@ -124,12 +137,24 @@ pub const MachoFile = struct {
         // Calculate how much larger/smaller the section will be compared to its current size
         const size_diff = @as(i64, @intCast(aligned_size)) - @as(i64, @intCast(original_segsize));
 
-        // Only update offsets if the size actually changed
-        if (size_diff != 0) {
-            try self.updateLoadCommandOffsets(original_data_end, size_diff);
-        }
-
         try self.data.ensureUnusedCapacity(@intCast(size_diff));
+
+        const code_sign_cmd: ?*align(1) macho.linkedit_data_command =
+            if (code_sign_cmd_idx) |idx|
+            @as(*align(1) macho.linkedit_data_command, @ptrCast(@constCast(@alignCast(&self.data.items[idx]))))
+        else
+            null;
+        const linkedit_seg: *align(1) macho.segment_command_64 =
+            if (linkedit_seg_idx) |idx|
+            @as(*align(1) macho.segment_command_64, @ptrCast(@constCast(@alignCast(&self.data.items[idx]))))
+        else
+            return error.MissingLinkeditSegment;
+
+        // Handle code signature specially
+        var sig_data: ?[]u8 = null;
+        var sig_size: usize = 0;
+        defer if (sig_data) |sd| self.allocator.free(sd);
+
         const prev_data_slice = self.data.items[original_fileoff..];
         self.data.items.len += @as(usize, @intCast(size_diff));
 
@@ -149,11 +174,62 @@ pub const MachoFile = struct {
         // Lastly, we zero any of the padding that was added
         const padding_bytes = self.data.items[original_fileoff..][data.len + 4 .. aligned_size];
         @memset(padding_bytes, 0);
+
+        if (code_sign_cmd) |cs| {
+            sig_size = cs.datasize;
+            // Save existing signature if present
+            sig_data = try self.allocator.alloc(u8, sig_size);
+            @memcpy(sig_data.?, self.data.items[cs.dataoff..][0..sig_size]);
+        }
+
+        // Only update offsets if the size actually changed
+        if (size_diff != 0) {
+            linkedit_seg.fileoff += @as(usize, @intCast(size_diff));
+            self.updateLoadCommandOffsets(original_fileoff, @intCast(size_diff), linkedit_seg.fileoff, linkedit_seg.filesize);
+        }
+
+        if (code_sign_cmd) |cs| {
+            // Calculate new end of LINKEDIT excluding signature
+            var new_linkedit_end = linkedit_seg.fileoff + linkedit_seg.filesize;
+            if (sig_size > 0) {
+                new_linkedit_end -= sig_size;
+            }
+
+            // Place signature at new end
+            cs.dataoff = @intCast(new_linkedit_end);
+        }
     }
 
+    const Shifter = struct {
+        start: u64,
+        amount: u64,
+
+        linkedit_filesize: u64,
+
+        fn do(value: u64, amount: u64, range_min: u64, range_max: u64) u64 {
+            if (value < range_min or value > (range_max + range_min)) {
+                return value;
+            }
+
+            return value + amount;
+        }
+
+        pub fn shift(this: *const Shifter, value: anytype, comptime fields: []const []const u8) void {
+            inline for (fields) |field| {
+                @field(value, field) = @intCast(do(@field(value, field), this.amount, this.start, this.linkedit_filesize));
+            }
+        }
+    };
+
     // Helper function to update load command offsets when resizing an existing section
-    fn updateLoadCommandOffsets(self: *MachoFile, start_offset: u64, size_diff: i64) !void {
+    fn updateLoadCommandOffsets(self: *MachoFile, previous_fileoff: u64, size_diff: u64, fileoff: u64, filesize: u64) void {
         var iter = self.iterator();
+
+        const shifter = Shifter{
+            .start = @min(previous_fileoff, fileoff),
+            .amount = size_diff,
+            .linkedit_filesize = filesize,
+        };
 
         while (iter.next()) |entry| {
             const cmd = entry.hdr;
@@ -162,34 +238,24 @@ pub const MachoFile = struct {
             switch (cmd.cmd) {
                 .SYMTAB => {
                     const symtab: *align(1) macho.symtab_command = @ptrCast(@alignCast(cmd_ptr));
-                    if (symtab.symoff > start_offset) {
-                        symtab.symoff = @intCast(@as(i64, @intCast(symtab.symoff)) + size_diff);
-                    }
-                    if (symtab.stroff > start_offset) {
-                        symtab.stroff = @intCast(@as(i64, @intCast(symtab.stroff)) + size_diff);
-                    }
+
+                    shifter.shift(symtab, &.{
+                        "symoff",
+                        "stroff",
+                    });
                 },
                 .DYSYMTAB => {
                     const dysymtab: *align(1) macho.dysymtab_command = @ptrCast(@alignCast(cmd_ptr));
-                    if (dysymtab.tocoff > start_offset) {
-                        dysymtab.tocoff = @intCast(@as(i64, @intCast(dysymtab.tocoff)) + size_diff);
-                    }
-                    if (dysymtab.modtaboff > start_offset) {
-                        dysymtab.modtaboff = @intCast(@as(i64, @intCast(dysymtab.modtaboff)) + size_diff);
-                    }
-                    if (dysymtab.extrefsymoff > start_offset) {
-                        dysymtab.extrefsymoff = @intCast(@as(i64, @intCast(dysymtab.extrefsymoff)) + size_diff);
-                    }
-                    if (dysymtab.indirectsymoff > start_offset) {
-                        dysymtab.indirectsymoff = @intCast(@as(i64, @intCast(dysymtab.indirectsymoff)) + size_diff);
-                    }
-                    if (dysymtab.extreloff > start_offset) {
-                        dysymtab.extreloff = @intCast(@as(i64, @intCast(dysymtab.extreloff)) + size_diff);
-                    }
-                    if (dysymtab.locreloff > start_offset) {
-                        dysymtab.locreloff = @intCast(@as(i64, @intCast(dysymtab.locreloff)) + size_diff);
-                    }
+                    shifter.shift(dysymtab, &.{
+                        "tocoff",
+                        "modtaboff",
+                        "extrefsymoff",
+                        "indirectsymoff",
+                        "extreloff",
+                        "locreloff",
+                    });
                 },
+                .DYLD_CHAINED_FIXUPS,
                 .CODE_SIGNATURE,
                 .FUNCTION_STARTS,
                 .DATA_IN_CODE,
@@ -197,39 +263,22 @@ pub const MachoFile = struct {
                 .LINKER_OPTIMIZATION_HINT,
                 .DYLD_EXPORTS_TRIE,
                 => {
-                    var linkedit: *align(1) macho.linkedit_data_command = @ptrCast(@alignCast(cmd_ptr));
-                    if (linkedit.dataoff > start_offset) {
-                        linkedit.dataoff = @intCast(@as(i64, @intCast(linkedit.dataoff)) + size_diff);
-                    }
-                },
-                .DYLD_CHAINED_FIXUPS => {
                     const fixups: *align(1) macho.linkedit_data_command = @ptrCast(@alignCast(cmd_ptr));
-                    const dataoff: i64 = @intCast(fixups.dataoff);
-                    const start_offset_i64: i64 = @intCast(start_offset);
-                    if (dataoff < start_offset_i64 + size_diff and dataoff + @as(i64, fixups.datasize) > start_offset_i64) {
-                        fixups.dataoff = @intCast(dataoff + size_diff);
-                    } else if (dataoff >= start_offset_i64) {
-                        fixups.dataoff = @intCast(@as(i64, fixups.dataoff) + size_diff);
-                    }
+                    shifter.shift(fixups, &.{
+                        "dataoff",
+                    });
                 },
                 .DYLD_INFO, .DYLD_INFO_ONLY => {
                     const dyld_info: *align(1) macho.dyld_info_command = @ptrCast(@alignCast(cmd_ptr));
-                    if (dyld_info.rebase_off > start_offset) {
-                        dyld_info.rebase_off = @intCast(@as(i64, @intCast(dyld_info.rebase_off)) + size_diff);
-                    }
-                    if (dyld_info.bind_off > start_offset) {
-                        dyld_info.bind_off = @intCast(@as(i64, @intCast(dyld_info.bind_off)) + size_diff);
-                    }
-                    if (dyld_info.weak_bind_off > start_offset) {
-                        dyld_info.weak_bind_off = @intCast(@as(i64, @intCast(dyld_info.weak_bind_off)) + size_diff);
-                    }
-                    if (dyld_info.lazy_bind_off > start_offset) {
-                        dyld_info.lazy_bind_off = @intCast(@as(i64, @intCast(dyld_info.lazy_bind_off)) + size_diff);
-                    }
-                    if (dyld_info.export_off > start_offset) {
-                        dyld_info.export_off = @intCast(@as(i64, @intCast(dyld_info.export_off)) + size_diff);
-                    }
+                    shifter.shift(dyld_info, &.{
+                        "rebase_off",
+                        "bind_off",
+                        "weak_bind_off",
+                        "lazy_bind_off",
+                        "export_off",
+                    });
                 },
+
                 else => {},
             }
         }
@@ -289,6 +338,33 @@ pub const MachoFile = struct {
                 .buffer = obj[header_size..][0..header.sizeofcmds],
             };
 
+            // First pass: find segments to establish bounds
+            while (it.next()) |cmd| {
+                if (cmd.cmd() == .SEGMENT_64) {
+                    const seg = cmd.cast(macho.segment_command_64).?;
+
+                    // Store segment info
+                    if (strings.eqlComptime(seg.segName(), SEG_LINKEDIT)) {
+                        linkedit_seg = seg;
+                        linkedit_off = @intFromPtr(cmd.data.ptr) - @intFromPtr(obj.ptr);
+
+                        // Validate linkedit is after text
+                        if (linkedit_seg.fileoff < text_seg.fileoff + text_seg.filesize) {
+                            return error.InvalidLinkeditOffset;
+                        }
+                    } else if (strings.eqlComptime(seg.segName(), "__TEXT")) {
+                        text_seg = seg;
+                    }
+                }
+            }
+
+            // Reset iterator
+            it = macho.LoadCommandIterator{
+                .ncmds = header.ncmds,
+                .buffer = obj[header_size..][0..header.sizeofcmds],
+            };
+
+            // Second pass: find code signature
             while (it.next()) |cmd| {
                 switch (cmd.cmd()) {
                     .CODE_SIGNATURE => {
@@ -297,18 +373,12 @@ pub const MachoFile = struct {
                         sig_sz = cs.datasize;
                         cs_cmd_off = @intFromPtr(cmd.data.ptr) - @intFromPtr(obj.ptr);
                     },
-                    .SEGMENT_64 => {
-                        const seg = cmd.cast(macho.segment_command_64).?;
-
-                        if (strings.eqlComptime(seg.segName(), SEG_LINKEDIT)) {
-                            linkedit_off = @intFromPtr(cmd.data.ptr) - @intFromPtr(obj.ptr);
-                            linkedit_seg = seg;
-                        } else if (strings.eqlComptime(seg.segName(), "__TEXT")) {
-                            text_seg = seg;
-                        }
-                    },
                     else => {},
                 }
+            }
+
+            if (linkedit_off == 0 or sig_off == 0) {
+                return error.MissingRequiredSegment;
             }
 
             self.* = .{
@@ -335,51 +405,53 @@ pub const MachoFile = struct {
             const PAGE_SIZE: usize = 1 << 12;
 
             const id = "a.out\x00";
-            const n_hashes = (self.sig_off + PAGE_SIZE - 1) / PAGE_SIZE;
+            // Calculate number of pages based on valid data size, not sig_off
+            const data_len = self.data.items.len;
+            const n_hashes = (data_len + PAGE_SIZE - 1) / PAGE_SIZE;
             const id_off = @sizeOf(CodeDirectory);
             const hash_off = id_off + id.len;
             const c_dir_sz = hash_off + n_hashes * 32;
-            const sz = @sizeOf(SuperBlob) + @sizeOf(Blob) + c_dir_sz;
+            const total_sz = @sizeOf(SuperBlob) + @sizeOf(Blob) + c_dir_sz;
 
-            if (self.sig_sz != sz) {
-                // Update the load command
-                var cs_cmd: *macho.linkedit_data_command = @constCast(@alignCast(@ptrCast(&self.data.items[self.cs_cmd_off..][0..@sizeOf(macho.linkedit_data_command)])));
-                cs_cmd.datasize = @truncate(sz);
+            // Update code signature load command
+            var cs_cmd: *align(1) macho.linkedit_data_command = @ptrCast(@constCast(@alignCast(&self.data.items[self.cs_cmd_off..][0..@sizeOf(macho.linkedit_data_command)])));
+            cs_cmd.datasize = @truncate(total_sz);
 
-                // Update __LINKEDIT segment
-                const seg_sz = self.sig_off + sz - self.linkedit_seg.fileoff;
-                var linkedit_seg: *macho.segment_command_64 = @constCast(@alignCast(@ptrCast(&self.data.items[self.linkedit_off..][0..@sizeOf(macho.segment_command_64)])));
-                linkedit_seg.filesize = seg_sz;
-                linkedit_seg.vmsize = seg_sz;
-            }
+            // Update linkedit segment size
+            const seg_sz = self.sig_off + total_sz - self.linkedit_seg.fileoff;
+            var linkedit_seg: *align(1) macho.segment_command_64 = @ptrCast(@constCast(@alignCast(&self.data.items[self.linkedit_off..][0..@sizeOf(macho.segment_command_64)])));
+            linkedit_seg.filesize = seg_sz;
+            linkedit_seg.vmsize = seg_sz;
 
+            // Build signature superblob header
             const sb = SuperBlob{
                 .magic = @byteSwap(CSMAGIC_EMBEDDED_SIGNATURE),
-                .length = @byteSwap(@as(u32, @truncate(sz))),
+                .length = @byteSwap(@as(u32, @truncate(total_sz))),
                 .count = @byteSwap(@as(u32, 1)),
             };
+
             const blob = Blob{
                 .magic = @byteSwap(CSSLOT_CODEDIRECTORY),
-                .length = @byteSwap(@as(u32, @sizeOf(SuperBlob) + @sizeOf(Blob))),
+                .length = @byteSwap(@as(u32, @intCast(c_dir_sz))),
             };
 
             var c_dir = CodeDirectory.init();
             c_dir.magic = @byteSwap(CSMAGIC_CODEDIRECTORY);
-            c_dir.length = @byteSwap(@as(u32, @truncate(sz - (@sizeOf(SuperBlob) + @sizeOf(Blob)))));
+            c_dir.length = @byteSwap(@as(u32, @truncate(c_dir_sz)));
             c_dir.version = @byteSwap(@as(u32, 0x20400));
             c_dir.flags = @byteSwap(@as(u32, 0x20002)); // adhoc | linkerSigned
             c_dir.hash_offset = @byteSwap(@as(u32, @truncate(hash_off)));
             c_dir.ident_offset = @byteSwap(@as(u32, @truncate(id_off)));
             c_dir.n_code_slots = @byteSwap(@as(u32, @truncate(n_hashes)));
-            c_dir.code_limit = @byteSwap(@as(u32, @truncate(self.sig_off)));
-            c_dir.hash_size = 32; // SHA256 output size
+            c_dir.code_limit = @byteSwap(@as(u32, @truncate(self.sig_off))); // Only hash up to signature
+            c_dir.hash_size = 32;
             c_dir.hash_type = SEC_CODE_SIGNATURE_HASH_SHA256;
             c_dir.page_size = 12;
             c_dir.exec_seg_base = @byteSwap(self.text_seg.fileoff);
             c_dir.exec_seg_limit = @byteSwap(self.text_seg.filesize);
             c_dir.exec_seg_flags = @byteSwap(CS_EXECSEG_MAIN_BINARY);
 
-            var out = try std.ArrayList(u8).initCapacity(self.allocator, sz);
+            var out = try std.ArrayList(u8).initCapacity(self.allocator, total_sz);
             defer out.deinit();
 
             try out.appendSlice(mem.asBytes(&sb));
@@ -387,29 +459,24 @@ pub const MachoFile = struct {
             try out.appendSlice(mem.asBytes(&c_dir));
             try out.appendSlice(id);
 
+            // Calculate page hashes, ensuring we don't read past the end
             var fileoff: usize = 0;
-
-            while (fileoff < self.sig_off) {
-                var n = PAGE_SIZE;
-                if (fileoff + n > self.sig_off) {
-                    n = self.sig_off - fileoff;
-                }
-                const chunk = self.data.items[fileoff .. fileoff + n];
+            const bytes_to_hash = self.sig_off;
+            while (fileoff < bytes_to_hash) {
+                const remaining = bytes_to_hash - fileoff;
+                const n = @min(PAGE_SIZE, remaining);
+                const chunk = self.data.items[fileoff..][0..n];
                 var digest: bun.sha.SHA256.Digest = undefined;
                 bun.sha.SHA256.hash(chunk, &digest, null);
                 try out.appendSlice(&digest);
                 fileoff += n;
             }
 
-            if (self.data.items.len < self.sig_off + sz) {
-                const old_len = self.data.items.len;
-                try self.data.resize(self.sig_off + sz);
-                // Zero the new space between old_len and new length
-                @memset(self.data.items[old_len..], 0);
+            // Update array size and copy signature
+            if (self.data.items.len < self.sig_off + total_sz) {
+                try self.data.resize(self.sig_off + total_sz);
             }
-
             @memcpy(self.data.items[self.sig_off..][0..out.items.len], out.items);
-            try self.data.resize(self.sig_off + sz);
 
             try writer.writeAll(self.data.items);
         }

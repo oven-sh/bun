@@ -1210,11 +1210,11 @@ pub fn WindowsStreamingWriter(
             onWrite(this.parent, written, if (done) .drained else .pending);
 
             // process pending outgoing data if any
-            this.processSend();
-
-            // TODO: should we report writable?
-            if (onWritable) |onWritableFn| {
-                onWritableFn(this.parent);
+            if (!done and this.processSend()) {
+                // TODO: should we report writable?
+                if (onWritable) |onWritableFn| {
+                    onWritableFn(this.parent);
+                }
             }
         }
 
@@ -1237,19 +1237,20 @@ pub fn WindowsStreamingWriter(
         }
 
         /// this tries to send more data returning if we are writable or not after this
-        fn processSend(this: *WindowsWriter) void {
+        /// returns true if not closed, is unsafe to access this after this returns false
+        fn processSend(this: *WindowsWriter) bool {
             log("processSend", .{});
             if (this.current_payload.isNotEmpty()) {
                 // we have some pending async request, the next outgoing data will be processed after this finish
                 this.last_write_result = .{ .pending = 0 };
-                return;
+                return true;
             }
 
             const bytes = this.outgoing.slice();
             // nothing todo (we assume we are writable until we try to write something)
             if (bytes.len == 0) {
                 this.last_write_result = .{ .wrote = 0 };
-                return;
+                return true;
             }
 
             var pipe = this.source orelse {
@@ -1257,7 +1258,7 @@ pub fn WindowsStreamingWriter(
                 this.last_write_result = .{ .err = err };
                 onError(this.parent, err);
                 this.closeWithoutReporting();
-                return;
+                return false;
             };
 
             // current payload is empty we can just swap with outgoing
@@ -1277,7 +1278,7 @@ pub fn WindowsStreamingWriter(
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);
                         this.closeWithoutReporting();
-                        return;
+                        return false;
                     }
                 },
                 else => {
@@ -1287,11 +1288,12 @@ pub fn WindowsStreamingWriter(
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);
                         this.closeWithoutReporting();
-                        return;
+                        return false;
                     }
                 },
             }
             this.last_write_result = .{ .pending = 0 };
+            return true;
         }
 
         const WindowsWriter = @This();
@@ -1352,8 +1354,11 @@ pub fn WindowsStreamingWriter(
             if (had_buffered_data) {
                 return .{ .pending = 0 };
             }
-            this.processSend();
-            return this.last_write_result;
+            if (this.processSend()) {
+                return this.last_write_result;
+            } else {
+                return .{ .done = 0 };
+            }
         }
 
         pub fn writeUTF16(this: *WindowsWriter, buf: []const u16) WriteResult {
@@ -1376,8 +1381,11 @@ pub fn WindowsStreamingWriter(
                 return .{ .wrote = 0 };
             }
 
-            this.processSend();
-            return this.last_write_result;
+            if (this.processSend()) {
+                return this.last_write_result;
+            } else {
+                return .{ .wrote = 0 };
+            }
         }
 
         pub fn end(this: *WindowsWriter) void {

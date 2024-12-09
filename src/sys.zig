@@ -1319,6 +1319,21 @@ pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode
 }
 
 pub fn openA(file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    if (comptime Environment.isWindows) {
+        if (file_path.len > bun.MAX_PATH_BYTES) {
+            return .{
+                .err = .{
+                    .errno = @intFromEnum(bun.C.E.NAMETOOLONG),
+                    .syscall = .open,
+                },
+            };
+        }
+        var buffer: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+        @memcpy(buffer[0..file_path.len], file_path);
+        buffer[file_path.len] = 0;
+        return sys_uv.open(buffer[0..file_path.len :0], flags, perm);
+    }
+
     // this is what open() does anyway.
     return openatA(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);
 }
@@ -2787,6 +2802,17 @@ pub fn openNullDevice() Maybe(bun.FileDescriptor) {
 
 pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
+        if (Environment.isWindows) {
+            if (!fd.isValid()) {
+                // we cannot dupe an invalid fd
+                return .{
+                    .err = .{
+                        .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
+                        .syscall = .dup,
+                    },
+                };
+            }
+        }
         var target: windows.HANDLE = undefined;
         const process = kernel32.GetCurrentProcess();
         const out = kernel32.DuplicateHandle(

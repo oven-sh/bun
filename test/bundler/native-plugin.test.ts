@@ -6,10 +6,29 @@ import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bu
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { itBundled } from "bundler/expectBundled";
 
+declare class External {}
+
+/**
+ * @see test/bundler/native_plugin.cc
+ */
+interface TestNativeModule {
+  getFooCount(external: External): number;
+  getBarCount(external: External): number;
+  getBazCount(external: External): number;
+  getCompilationCtxFreedCount(external: External): number;
+  setThrowsErrors(external: External, throws: boolean): unknown;
+  setWillCrash(external: External, willCrash: boolean): unknown;
+  createExternal(): External;
+  $napiDlopenHandle: External;
+}
+
 describe("native-plugins", async () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";
+  const MODULE_NAME = "xXx123_foo_counter_321xXx";
+  let napiModule: TestNativeModule;
+  let external: External;
 
   beforeAll(async () => {
     const files = {
@@ -45,7 +64,7 @@ values;`,
       "binding.gyp": /* gyp */ `{
         "targets": [
           {
-            "target_name": "xXx123_foo_counter_321xXx",
+            "target_name": "${MODULE_NAME}",
             "sources": [ "plugin.cc" ],
             "include_dirs": [ "." ]
           }
@@ -56,14 +75,18 @@ values;`,
     tempdir = tempDirWithFiles("native-plugins", files);
     outdir = path.join(tempdir, "dist");
 
-    console.log("tempdir", tempdir);
-
     process.chdir(tempdir);
 
     await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
   });
 
+  beforeEach(() => {
+    napiModule = require(path.join(tempdir, `build/Release/${MODULE_NAME}.node`));
+    external = napiModule.createExternal();
+  });
+
   afterEach(async () => {
+    expect(outdir).not.toBeEmpty();
     await Bun.$`rm -rf ${outdir}`;
     process.chdir(cwd);
   });
@@ -71,15 +94,12 @@ values;`,
   it("works in a basic case", async () => {
     await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
 
-    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
-    const external = napiModule.createExternal();
-
     const result = await Bun.build({
       outdir,
       entrypoints: [path.join(tempdir, "index.ts")],
       plugins: [
         {
-          name: "xXx123_foo_counter_321xXx",
+          name: MODULE_NAME,
           setup(build) {
             build.onBeforeParse({ filter: /\.ts/ }, { napiModule, symbol: "plugin_impl", external });
 
@@ -122,15 +142,12 @@ values;`,
     await Bun.$`echo ${files.map(([fp]) => fp).join("\n")} >> index.ts`;
     await Bun.$`echo ${files.map(([, varname]) => `console.log(JSON.stringify(${varname}))`).join("\n")} >> index.ts`;
 
-    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
-    const external = napiModule.createExternal();
-
     const result = await Bun.build({
       outdir,
       entrypoints: [path.join(tempdir, "index.ts")],
       plugins: [
         {
-          name: "xXx123_foo_counter_321xXx",
+          name: MODULE_NAME,
           setup(build) {
             build.onBeforeParse({ filter: /\.ts/ }, { napiModule, symbol: "plugin_impl", external });
 
@@ -148,7 +165,6 @@ values;`,
     });
 
     if (!result.success) console.log(result);
-    console.log(result);
     expect(result.success).toBeTrue();
     const output = await Bun.$`${bunExe()} run dist/index.js`.cwd(tempdir).text();
     const outputJsons = output
@@ -185,15 +201,12 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     await Bun.$`echo ${files.map(([, varname]) => `console.log(JSON.stringify(${varname}))`).join("\n")} >> index.ts`;
     await Bun.$`echo '(() => values)();' >> index.ts`;
 
-    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
-    const external = napiModule.createExternal();
-
     const resultPromise = Bun.build({
       outdir,
       entrypoints: [path.join(tempdir, "index.ts")],
       plugins: [
         {
-          name: "xXx123_foo_counter_321xXx",
+          name: MODULE_NAME,
           setup(build) {
             build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl", external });
 
@@ -258,7 +271,7 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       entrypoints: [path.join(tempdir, "index.ts")],
       plugins: [
         {
-          name: "xXx123_foo_counter_321xXx",
+          name: MODULE_NAME,
           setup(build) {
             const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
             const external = undefined;
@@ -303,15 +316,15 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       `;
     await Bun.$`echo ${prelude} > index.ts`;
 
-    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
-    const external = napiModule.createExternal();
+    // const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    // const external = napiModule.createExternal();
 
     const resultPromise = Bun.build({
       outdir,
       entrypoints: [path.join(tempdir, "index.ts")],
       plugins: [
         {
-          name: "xXx123_foo_counter_321xXx",
+          name: MODULE_NAME,
           setup(build) {
             napiModule.setThrowsErrors(external, true);
 
@@ -353,15 +366,15 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       `;
     await Bun.$`echo ${prelude} > index.ts`;
 
-    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
-    const external = napiModule.createExternal();
+    // const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    // const external = napiModule.createExternal();
 
     const resultPromise = Bun.build({
       outdir,
       entrypoints: [path.join(tempdir, "index.ts")],
       plugins: [
         {
-          name: "xXx123_foo_counter_321xXx",
+          name: MODULE_NAME,
           setup(build) {
             build.onBeforeParse({ filter }, { napiModule, symbol: "incompatible_version_plugin_impl", external });
 
@@ -404,12 +417,13 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     import * as path from "path";
     const tempdir = process.env.BUN_TEST_TEMP_DIR;
     const filter = /\.ts/;
+    const MODULE_NAME = "xXx123_foo_counter_321xXx";
     const resultPromise = await Bun.build({
       outdir: "dist",
       entrypoints: [path.join(tempdir, "index.ts")],
       plugins: [
         {
-          name: "xXx123_foo_counter_321xXx",
+          name: MODULE_NAME,
           setup(build) {
     const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
     const external = napiModule.createExternal();
@@ -448,9 +462,6 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
   const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       `;
     await Bun.$`echo ${prelude} > index.ts`;
-
-    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
-    const external = napiModule.createExternal();
 
     const resultPromise = Bun.build({
       outdir,
@@ -503,8 +514,8 @@ console.log(JSON.stringify(json))
       `;
     await Bun.$`echo ${prelude} > index.ts`;
 
-    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
-    const external = napiModule.createExternal();
+    // const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    // const external = napiModule.createExternal();
 
     const resultPromise = Bun.build({
       outdir,
@@ -539,7 +550,7 @@ console.log(JSON.stringify(json))
 
     const result = await resultPromise;
 
-    if (result.success) console.log(result);
+    // if (result.success) console.log(result);
     expect(result.success).toBeTrue();
 
     const output = await Bun.$`${bunExe()} run dist/index.js`.cwd(tempdir).json();
@@ -608,7 +619,6 @@ console.log(JSON.stringify(json))
             name: "test",
             setup(build) {
               const ext = name.split(".").pop()!;
-              const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
 
               // Construct regexp to match the file extension
               const filter = new RegExp(`\\.${ext}$`);

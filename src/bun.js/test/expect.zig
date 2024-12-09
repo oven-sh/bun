@@ -2152,7 +2152,6 @@ pub const Expect = struct {
     pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
 
-        const vm = globalThis.bunVM();
         const thisValue = callFrame.this();
         const arguments = callFrame.argumentsAsArray(1);
 
@@ -2178,63 +2177,9 @@ pub const Expect = struct {
         };
         expected_value.ensureStillAlive();
 
-        const value: JSValue = try this.getValue(globalThis, thisValue, "toThrow", "<green>expected<r>");
-
         const not = this.flags.not;
 
-        var return_value_from_function: JSValue = .zero;
-        const result_: ?JSValue = brk: {
-            if (!value.jsType().isFunction()) {
-                if (this.flags.promise != .none) {
-                    break :brk value;
-                }
-
-                return globalThis.throw("Expected value must be a function", .{});
-            }
-
-            var return_value: JSValue = .zero;
-
-            // Drain existing unhandled rejections
-            vm.global.handleRejectedPromises();
-
-            var scope = vm.unhandledRejectionScope();
-            const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
-            vm.unhandled_pending_rejection_to_capture = &return_value;
-            vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
-            return_value_from_function = value.call(globalThis, .undefined, &.{}) catch |err| globalThis.takeException(err);
-            vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
-
-            vm.global.handleRejectedPromises();
-
-            if (return_value == .zero) {
-                return_value = return_value_from_function;
-            }
-
-            if (return_value.asAnyPromise()) |promise| {
-                vm.waitForPromise(promise);
-                scope.apply(vm);
-                switch (promise.unwrap(globalThis.vm(), .mark_handled)) {
-                    .fulfilled => {
-                        break :brk null;
-                    },
-                    .rejected => |rejected| {
-                        // since we know for sure it rejected, we should always return the error
-                        break :brk rejected.toError() orelse rejected;
-                    },
-                    .pending => unreachable,
-                }
-            }
-
-            if (return_value != return_value_from_function) {
-                if (return_value_from_function.asAnyPromise()) |existing| {
-                    existing.setHandled(globalThis.vm());
-                }
-            }
-
-            scope.apply(vm);
-
-            break :brk return_value.toError() orelse return_value_from_function.toError();
-        };
+        const result_, const return_value_from_function = try this.getValueAsToThrow(globalThis, try this.getValue(globalThis, thisValue, "toThrow", "<green>expected<r>"));
 
         const did_throw = result_ != null;
 
@@ -2506,6 +2451,289 @@ pub const Expect = struct {
         expected_value.getClassName(globalThis, &expected_class);
         return this.throw(globalThis, signature, expected_fmt, .{ expected_class, result.toFmt(&formatter) });
     }
+    fn getValueAsToThrow(this: *Expect, globalThis: *JSGlobalObject, value: JSValue) bun.JSError!struct { ?JSValue, JSValue } {
+        const vm = globalThis.bunVM();
+
+        var return_value_from_function: JSValue = .zero;
+
+        if (!value.jsType().isFunction()) {
+            if (this.flags.promise != .none) {
+                return .{ value, return_value_from_function };
+            }
+
+            return globalThis.throw("Expected value must be a function", .{});
+        }
+
+        var return_value: JSValue = .zero;
+
+        // Drain existing unhandled rejections
+        vm.global.handleRejectedPromises();
+
+        var scope = vm.unhandledRejectionScope();
+        const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
+        vm.unhandled_pending_rejection_to_capture = &return_value;
+        vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
+        return_value_from_function = value.call(globalThis, .undefined, &.{}) catch |err| globalThis.takeException(err);
+        vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
+
+        vm.global.handleRejectedPromises();
+
+        if (return_value == .zero) {
+            return_value = return_value_from_function;
+        }
+
+        if (return_value.asAnyPromise()) |promise| {
+            vm.waitForPromise(promise);
+            scope.apply(vm);
+            switch (promise.unwrap(globalThis.vm(), .mark_handled)) {
+                .fulfilled => {
+                    return .{ null, return_value_from_function };
+                },
+                .rejected => |rejected| {
+                    // since we know for sure it rejected, we should always return the error
+                    return .{ rejected.toError() orelse rejected, return_value_from_function };
+                },
+                .pending => unreachable,
+            }
+        }
+
+        if (return_value != return_value_from_function) {
+            if (return_value_from_function.asAnyPromise()) |existing| {
+                existing.setHandled(globalThis.vm());
+            }
+        }
+
+        scope.apply(vm);
+
+        return .{ return_value.toError() orelse return_value_from_function.toError(), return_value_from_function };
+    }
+    pub fn toThrowErrorMatchingSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+        defer this.postMatch(globalThis);
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments_old(2);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        incrementExpectCallCounter();
+
+        const not = this.flags.not;
+        if (not) {
+            const signature = comptime getSignature("toThrowErrorMatchingSnapshot", "", true);
+            return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n", .{});
+        }
+
+        if (this.testScope() == null) {
+            const signature = comptime getSignature("toThrowErrorMatchingSnapshot", "", true);
+            return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
+        }
+
+        var hint_string: ZigString = ZigString.Empty;
+        switch (arguments.len) {
+            0 => {},
+            1 => {
+                if (arguments[0].isString()) {
+                    arguments[0].toZigString(&hint_string, globalThis);
+                } else {
+                    return this.throw(globalThis, "", "\n\nMatcher error: Expected first argument to be a string\n", .{});
+                }
+            },
+            else => return this.throw(globalThis, "", "\n\nMatcher error: Expected zero or one arguments\n", .{}),
+        }
+
+        var hint = hint_string.toSlice(default_allocator);
+        defer hint.deinit();
+
+        const value: JSValue = try this.fnToErrStringOrUndefined(globalThis, try this.getValue(globalThis, thisValue, "toThrowErrorMatchingSnapshot", "<green>properties<r><d>, <r>hint"));
+
+        return this.snapshot(globalThis, value, null, hint.slice(), "toThrowErrorMatchingSnapshot");
+    }
+    fn fnToErrStringOrUndefined(this: *Expect, globalThis: *JSGlobalObject, value: JSValue) !JSValue {
+        const err_value, _ = try this.getValueAsToThrow(globalThis, value);
+
+        var err_value_res = err_value orelse JSValue.undefined;
+        if (err_value_res.isAnyError()) {
+            const message = try err_value_res.getTruthyComptime(globalThis, "message") orelse JSValue.undefined;
+            err_value_res = message;
+        } else {
+            err_value_res = JSValue.undefined;
+        }
+        return err_value_res;
+    }
+    pub fn toThrowErrorMatchingInlineSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+        defer this.postMatch(globalThis);
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments_old(2);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        incrementExpectCallCounter();
+
+        const not = this.flags.not;
+        if (not) {
+            const signature = comptime getSignature("toThrowErrorMatchingInlineSnapshot", "", true);
+            return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n", .{});
+        }
+
+        var has_expected = false;
+        var expected_string: ZigString = ZigString.Empty;
+        switch (arguments.len) {
+            0 => {},
+            1 => {
+                if (arguments[0].isString()) {
+                    has_expected = true;
+                    arguments[0].toZigString(&expected_string, globalThis);
+                } else {
+                    return this.throw(globalThis, "", "\n\nMatcher error: Expected first argument to be a string\n", .{});
+                }
+            },
+            else => return this.throw(globalThis, "", "\n\nMatcher error: Expected zero or one arguments\n", .{}),
+        }
+
+        var expected = expected_string.toSlice(default_allocator);
+        defer expected.deinit();
+
+        const expected_slice: ?[]const u8 = if (has_expected) expected.slice() else null;
+
+        const value: JSValue = try this.fnToErrStringOrUndefined(globalThis, try this.getValue(globalThis, thisValue, "toThrowErrorMatchingInlineSnapshot", "<green>properties<r><d>, <r>hint"));
+
+        return this.inlineSnapshot(globalThis, callFrame, value, null, expected_slice, "toThrowErrorMatchingInlineSnapshot");
+    }
+    pub fn toMatchInlineSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+        defer this.postMatch(globalThis);
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments_old(2);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        incrementExpectCallCounter();
+
+        const not = this.flags.not;
+        if (not) {
+            const signature = comptime getSignature("toMatchInlineSnapshot", "", true);
+            return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n", .{});
+        }
+
+        var has_expected = false;
+        var expected_string: ZigString = ZigString.Empty;
+        var property_matchers: ?JSValue = null;
+        switch (arguments.len) {
+            0 => {},
+            1 => {
+                if (arguments[0].isString()) {
+                    has_expected = true;
+                    arguments[0].toZigString(&expected_string, globalThis);
+                } else if (arguments[0].isObject()) {
+                    property_matchers = arguments[0];
+                } else {
+                    return this.throw(globalThis, "", "\n\nMatcher error: Expected first argument to be a string or object\n", .{});
+                }
+            },
+            else => {
+                if (!arguments[0].isObject()) {
+                    const signature = comptime getSignature("toMatchInlineSnapshot", "<green>properties<r><d>, <r>hint", false);
+                    return this.throw(globalThis, signature, "\n\nMatcher error: Expected <green>properties<r> must be an object\n", .{});
+                }
+
+                property_matchers = arguments[0];
+
+                if (arguments[1].isString()) {
+                    has_expected = true;
+                    arguments[1].toZigString(&expected_string, globalThis);
+                }
+            },
+        }
+
+        var expected = expected_string.toSlice(default_allocator);
+        defer expected.deinit();
+
+        const expected_slice: ?[]const u8 = if (has_expected) expected.slice() else null;
+
+        const value = try this.getValue(globalThis, thisValue, "toMatchInlineSnapshot", "<green>properties<r><d>, <r>hint");
+        return this.inlineSnapshot(globalThis, callFrame, value, property_matchers, expected_slice, "toMatchInlineSnapshot");
+    }
+    fn inlineSnapshot(
+        this: *Expect,
+        globalThis: *JSGlobalObject,
+        callFrame: *CallFrame,
+        value: JSValue,
+        property_matchers: ?JSValue,
+        result: ?[]const u8,
+        comptime fn_name: []const u8,
+    ) bun.JSError!JSValue {
+        // jest counts inline snapshots towards the snapshot counter for some reason
+        _ = Jest.runner.?.snapshots.addCount(this, "") catch |e| switch (e) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.NoTest => {},
+        };
+
+        const update = Jest.runner.?.snapshots.update_snapshots;
+        var needs_write = false;
+
+        var pretty_value: MutableString = try MutableString.init(default_allocator, 0);
+        defer pretty_value.deinit();
+        try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value, fn_name);
+
+        if (result) |saved_value| {
+            if (strings.eqlLong(pretty_value.slice(), saved_value, true)) {
+                Jest.runner.?.snapshots.passed += 1;
+                return .undefined;
+            } else if (update) {
+                Jest.runner.?.snapshots.passed += 1;
+                needs_write = true;
+            } else {
+                Jest.runner.?.snapshots.failed += 1;
+                const signature = comptime getSignature(fn_name, "<green>expected<r>", false);
+                const fmt = signature ++ "\n\n{any}\n";
+                const diff_format = DiffFormatter{
+                    .received_string = pretty_value.slice(),
+                    .expected_string = saved_value,
+                    .globalThis = globalThis,
+                };
+
+                return globalThis.throwPretty(fmt, .{diff_format});
+            }
+        } else {
+            needs_write = true;
+        }
+
+        if (needs_write) {
+            if (this.testScope() == null) {
+                const signature = comptime getSignature(fn_name, "", true);
+                return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
+            }
+
+            // 1. find the src loc of the snapshot
+            const srcloc = callFrame.getCallerSrcLoc(globalThis);
+            defer srcloc.str.deref();
+            const describe = this.testScope().?.describe;
+            const fget = Jest.runner.?.files.get(describe.file_id);
+
+            if (!srcloc.str.eqlUTF8(fget.source.path.text)) {
+                const signature = comptime getSignature(fn_name, "", true);
+                return this.throw(globalThis, signature,
+                    \\
+                    \\
+                    \\<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:
+                    \\  Expected to be called from file: <green>"{}"<r>
+                    \\  {s} called from file: <red>"{}"<r>
+                    \\
+                , .{
+                    std.zig.fmtEscapes(fget.source.path.text),
+                    fn_name,
+                    std.zig.fmtEscapes(srcloc.str.toUTF8(Jest.runner.?.snapshots.allocator).slice()),
+                });
+            }
+
+            // 2. save to write later
+            try Jest.runner.?.snapshots.addInlineSnapshotToWrite(describe.file_id, .{
+                .line = srcloc.line,
+                .col = srcloc.column,
+                .value = pretty_value.toOwnedSlice(),
+                .has_matchers = property_matchers != null,
+                .is_added = result == null,
+                .kind = fn_name,
+            });
+        }
+
+        return .undefined;
+    }
     pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
@@ -2534,6 +2762,8 @@ pub const Expect = struct {
                     arguments[0].toZigString(&hint_string, globalThis);
                 } else if (arguments[0].isObject()) {
                     property_matchers = arguments[0];
+                } else {
+                    return this.throw(globalThis, "", "\n\nMatcher error: Expected first argument to be a string or object\n", .{});
                 }
             },
             else => {
@@ -2546,6 +2776,8 @@ pub const Expect = struct {
 
                 if (arguments[1].isString()) {
                     arguments[1].toZigString(&hint_string, globalThis);
+                } else {
+                    return this.throw(globalThis, "", "\n\nMatcher error: Expected second argument to be a string\n", .{});
                 }
             },
         }
@@ -2555,17 +2787,20 @@ pub const Expect = struct {
 
         const value: JSValue = try this.getValue(globalThis, thisValue, "toMatchSnapshot", "<green>properties<r><d>, <r>hint");
 
-        if (!value.isObject() and property_matchers != null) {
-            const signature = comptime getSignature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
-            return this.throw(globalThis, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n", .{});
-        }
-
+        return this.snapshot(globalThis, value, property_matchers, hint.slice(), "toMatchSnapshot");
+    }
+    fn matchAndFmtSnapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, pretty_value: *MutableString, comptime fn_name: []const u8) bun.JSError!void {
         if (property_matchers) |_prop_matchers| {
+            if (!value.isObject()) {
+                const signature = comptime getSignature(fn_name, "<green>properties<r><d>, <r>hint", false);
+                return this.throw(globalThis, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n", .{});
+            }
+
             const prop_matchers = _prop_matchers;
 
             if (!value.jestDeepMatch(prop_matchers, globalThis, true)) {
                 // TODO: print diff with properties from propertyMatchers
-                const signature = comptime getSignature("toMatchSnapshot", "<green>propertyMatchers<r>", false);
+                const signature = comptime getSignature(fn_name, "<green>propertyMatchers<r>", false);
                 const fmt = signature ++ "\n\nExpected <green>propertyMatchers<r> to match properties from received object" ++
                     "\n\nReceived: {any}\n";
 
@@ -2574,7 +2809,17 @@ pub const Expect = struct {
             }
         }
 
-        const result = Jest.runner.?.snapshots.getOrPut(this, value, hint.slice(), globalThis) catch |err| {
+        value.jestSnapshotPrettyFormat(pretty_value, globalThis) catch {
+            var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+            return globalThis.throw("Failed to pretty format value: {s}", .{value.toFmt(&formatter)});
+        };
+    }
+    fn snapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, hint: []const u8, comptime fn_name: []const u8) bun.JSError!JSValue {
+        var pretty_value: MutableString = try MutableString.init(default_allocator, 0);
+        defer pretty_value.deinit();
+        try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value, fn_name);
+
+        const existing_value = Jest.runner.?.snapshots.getOrPut(this, pretty_value.slice(), hint) catch |err| {
             var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
             const test_file_path = Jest.runner.?.files.get(this.testScope().?.describe.file_id).source.path.text;
             return switch (err) {
@@ -2586,21 +2831,14 @@ pub const Expect = struct {
             };
         };
 
-        if (result) |saved_value| {
-            var pretty_value: MutableString = MutableString.init(default_allocator, 0) catch unreachable;
-            value.jestSnapshotPrettyFormat(&pretty_value, globalThis) catch {
-                var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
-                return globalThis.throw("Failed to pretty format value: {s}", .{value.toFmt(&formatter)});
-            };
-            defer pretty_value.deinit();
-
+        if (existing_value) |saved_value| {
             if (strings.eqlLong(pretty_value.slice(), saved_value, true)) {
                 Jest.runner.?.snapshots.passed += 1;
                 return .undefined;
             }
 
             Jest.runner.?.snapshots.failed += 1;
-            const signature = comptime getSignature("toMatchSnapshot", "<green>expected<r>", false);
+            const signature = comptime getSignature(fn_name, "<green>expected<r>", false);
             const fmt = signature ++ "\n\n{any}\n";
             const diff_format = DiffFormatter{
                 .received_string = pretty_value.slice(),
@@ -4201,9 +4439,6 @@ pub const Expect = struct {
     pub const toHaveReturnedWith = notImplementedJSCFn;
     pub const toHaveLastReturnedWith = notImplementedJSCFn;
     pub const toHaveNthReturnedWith = notImplementedJSCFn;
-    pub const toMatchInlineSnapshot = notImplementedJSCFn;
-    pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;
-    pub const toThrowErrorMatchingInlineSnapshot = notImplementedJSCFn;
 
     pub fn getStaticNot(globalThis: *JSGlobalObject, _: JSValue, _: JSValue) JSValue {
         return ExpectStatic.create(globalThis, .{ .not = true });

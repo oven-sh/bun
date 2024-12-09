@@ -597,7 +597,7 @@ describe("mkdirSync", () => {
         // @ts-expect-error
         { recursive: "lalala" },
       ),
-    ).toThrow("The \"recursive\" property must be of type boolean, got string");
+    ).toThrow('The "recursive" property must be of type boolean, got string');
   });
 });
 
@@ -1405,6 +1405,36 @@ describe("readFile", () => {
         resolve(true);
       });
     });
+  });
+
+  it("works with flags", async () => {
+    const mydir = tempDirWithFiles("fs-read", {});
+    console.log(mydir);
+
+    for (const [flag, code] of [
+      ["a", "EBADF"],
+      ["ax", "EBADF"],
+      ["a+", undefined],
+      ["as", "EBADF"],
+      ["as+", undefined],
+      ["r", "ENOENT"],
+      ["rs", "ENOENT"],
+      ["r+", "ENOENT"],
+      ["rs+", "ENOENT"],
+      ["w", "EBADF"],
+      ["wx", "EBADF"],
+      ["w+", undefined],
+      ["wx+", undefined],
+    ]) {
+      const name = flag!.replace("+", "_plus") + ".txt";
+      if (code == null) {
+        expect(readFileSync(mydir + "/" + name, { encoding: "utf8", flag })).toBe("");
+        expect(readFileSync(mydir + "/" + name, { encoding: "utf8" })).toBe("");
+      } else {
+        expect.toThrowWithCode(() => readFileSync(mydir + "/" + name, { encoding: "utf8", flag }), code);
+        expect.toThrowWithCode(() => readFileSync(mydir + "/" + name, { encoding: "utf8" }), "ENOENT");
+      }
+    }
   });
 });
 

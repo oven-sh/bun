@@ -123,6 +123,7 @@
 #include "JavaScriptCore/CustomGetterSetter.h"
 
 #include "ErrorStackFrame.h"
+#include "ErrorStackTrace.h"
 #include "ObjectBindings.h"
 
 #if OS(DARWIN)
@@ -6029,4 +6030,74 @@ CPP_DECL bool Bun__CallFrame__isFromBunMain(JSC::CallFrame* callFrame, JSC::VM* 
     if (source.isNull())
         return false;
     return source.string() == "builtin://bun/main"_s;
+}
+
+CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)
+{
+    JSC::VM& vm = globalObject->vm();
+    JSC::LineColumn lineColumn;
+    String sourceURL;
+
+    ZigStackFrame remappedFrame = {};
+
+    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        if (Zig::isImplementationVisibilityPrivate(visitor))
+            return WTF::IterationStatus::Continue;
+
+        if (visitor->hasLineAndColumnInfo()) {
+
+            lineColumn = visitor->computeLineAndColumn();
+
+            String sourceURLForFrame = visitor->sourceURL();
+
+            // Sometimes, the sourceURL is empty.
+            // For example, pages in Next.js.
+            if (sourceURLForFrame.isEmpty()) {
+
+                // hasLineAndColumnInfo() checks codeBlock(), so this is safe to access here.
+                const auto& source = visitor->codeBlock()->source();
+
+                // source.isNull() is true when the SourceProvider is a null pointer.
+                if (!source.isNull()) {
+                    auto* provider = source.provider();
+                    // I'm not 100% sure we should show sourceURLDirective here.
+                    if (!provider->sourceURLDirective().isEmpty()) {
+                        sourceURLForFrame = provider->sourceURLDirective();
+                    } else if (!provider->sourceURL().isEmpty()) {
+                        sourceURLForFrame = provider->sourceURL();
+                    } else {
+                        const auto& origin = provider->sourceOrigin();
+                        if (!origin.isNull()) {
+                            sourceURLForFrame = origin.string();
+                        }
+                    }
+                }
+            }
+
+            sourceURL = sourceURLForFrame;
+
+            return WTF::IterationStatus::Done;
+        }
+
+        return WTF::IterationStatus::Continue;
+    });
+
+    if (!sourceURL.isEmpty() and lineColumn.line > 0) {
+        OrdinalNumber originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
+        OrdinalNumber originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
+
+        remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
+        remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
+        remappedFrame.source_url = Bun::toStringRef(sourceURL);
+
+        Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+
+        sourceURL = remappedFrame.source_url.toWTFString();
+        lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
+        lineColumn.column = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.column_zero_based).oneBasedInt();
+    }
+
+    *outSourceURL = Bun::toStringRef(sourceURL);
+    *outLine = lineColumn.line;
+    *outColumn = lineColumn.column;
 }

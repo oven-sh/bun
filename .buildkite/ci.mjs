@@ -103,7 +103,6 @@ function getTargetLabel(target) {
  */
 const buildPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14" },
-  { os: "darwin", arch: "x64", release: "14" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
   { os: "linux", arch: "x64", distro: "debian", release: "11" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
@@ -120,8 +119,6 @@ const buildPlatforms = [
 const testPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
-  { os: "darwin", arch: "x64", release: "14", tier: "latest" },
-  { os: "darwin", arch: "x64", release: "13", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "11", tier: "previous" },
   { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },

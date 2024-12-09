@@ -597,6 +597,7 @@ console.log(JSON.stringify(json))
     it(`works with ${loader} loader`, async () => {
       const dependencyPath = path.join(tempdir, name);
       const sourcePath = path.join(tempdir, "index.ts");
+
       await Bun.$`echo ${contents} > ${dependencyPath}`;
       const source = /* ts */ `import foo from "./${name}";
       console.log(foo);`;
@@ -604,7 +605,7 @@ console.log(JSON.stringify(json))
 
       const result = await Bun.build({
         outdir,
-        entrypoints: [dependencyPath],
+        entrypoints: [sourcePath],
         plugins: [
           {
             name: "test",

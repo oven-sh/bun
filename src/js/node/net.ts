@@ -99,6 +99,15 @@ function finishSocket(hasError) {
   detachSocket(this);
   this.emit("close", hasError);
 }
+
+function destroyNT(self, err) {
+  self.destroy(err);
+}
+function destroyWhenAborted(err) {
+  if (!this.destroyed) {
+    this.destroy(err.target.reason);
+  }
+}
 // Provide a better error message when we call end() as a result
 // of the other side sending a FIN.  The standard 'write after end'
 // is overly vague, and makes it seem like the user's code is to blame.
@@ -243,6 +252,7 @@ const Socket = (function (InternalSocket) {
     static #End(socket) {
       const self = socket.data;
       if (!self) return;
+
       // we just reuse the same code but we can push null or enqueue right away
       Socket.#EmitEndNT(self);
     }
@@ -478,9 +488,12 @@ const Socket = (function (InternalSocket) {
           },
         };
       }
-
       if (signal) {
-        signal.addEventListener("abort", () => this.destroy());
+        if (signal.aborted) {
+          process.nextTick(destroyNT, this, signal.reason);
+        } else {
+          signal.addEventListener("abort", destroyWhenAborted.bind(this));
+        }
       }
     }
 
@@ -798,10 +811,20 @@ const Socket = (function (InternalSocket) {
       return this;
     }
 
+    end(...args) {
+      if (!this._readableState.endEmitted) {
+        this.secureConnecting = false;
+      }
+      return super.end(...args);
+    }
+
     _destroy(err, callback) {
       this.connecting = false;
-
       const { ending } = this._writableState;
+      if (!err && this.secureConnecting && !this.isServer) {
+        this.secureConnecting = false;
+        err = new ConnResetException("Client network socket disconnected before secure TLS connection was established");
+      }
       // lets make sure that the writable side is closed
       if (!ending) {
         // at this state destroyed will be true but we need to close the writable side
@@ -900,7 +923,15 @@ const Socket = (function (InternalSocket) {
     }
 
     resetAndDestroy() {
-      this._handle?.end();
+      if (this._handle) {
+        if (this.connecting) {
+          this.once("connect", () => this._handle?.terminate());
+        } else {
+          this._handle.terminate();
+        }
+      } else {
+        this.destroy($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
+      }
     }
 
     setKeepAlive(enable = false, initialDelayMsecs = 0) {
@@ -1171,6 +1202,9 @@ class Server extends EventEmitter {
     let backlog;
     let path;
     let exclusive = false;
+    let allowHalfOpen = false;
+    let reusePort = false;
+    let ipv6Only = false;
     //port is actually path
     if (typeof port === "string") {
       if (Number.isSafeInteger(hostname)) {
@@ -1200,12 +1234,14 @@ class Server extends EventEmitter {
         options.signal?.addEventListener("abort", () => this.close());
 
         hostname = options.host;
-        exclusive = options.exclusive === true;
+        exclusive = options.exclusive;
         path = options.path;
         port = options.port;
+        ipv6Only = options.ipv6Only;
+        allowHalfOpen = options.allowHalfOpen;
+        reusePort = options.reusePort;
 
         const isLinux = process.platform === "linux";
-
 
         if (!Number.isSafeInteger(port) || port < 0) {
           if (path) {
@@ -1277,6 +1313,9 @@ class Server extends EventEmitter {
         backlog,
         undefined,
         exclusive,
+        ipv6Only,
+        allowHalfOpen,
+        reusePort,
         undefined,
         undefined,
         path,
@@ -1291,12 +1330,15 @@ class Server extends EventEmitter {
     return this;
   }
 
-  [kRealListen](path, port, hostname, exclusive, tls, contexts, onListen) {
+  [kRealListen](path, port, hostname, exclusive, ipv6Only, allowHalfOpen, reusePort, tls, contexts, onListen) {
     if (path) {
       this._handle = Bun.listen({
         unix: path,
         tls,
-        allowHalfOpen: this[bunSocketServerOptions]?.allowHalfOpen || false,
+        allowHalfOpen: allowHalfOpen || this[bunSocketServerOptions]?.allowHalfOpen || false,
+        reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
+        ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
+        exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
         socket: SocketClass[bunSocketServerHandlers],
       });
     } else {
@@ -1305,7 +1347,10 @@ class Server extends EventEmitter {
         port,
         hostname,
         tls,
-        allowHalfOpen: this[bunSocketServerOptions]?.allowHalfOpen || false,
+        allowHalfOpen: allowHalfOpen || this[bunSocketServerOptions]?.allowHalfOpen || false,
+        reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
+        ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
+        exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
         socket: SocketClass[bunSocketServerHandlers],
       });
     }
@@ -1343,6 +1388,16 @@ function emitErrorAndCloseNextTick(self, error) {
   self.emit("error", error);
   self.emit("close");
 }
+class ConnResetException extends Error {
+  constructor(msg) {
+    super(msg);
+    this.code = "ECONNRESET";
+  }
+
+  get ["constructor"]() {
+    return Error;
+  }
+}
 
 function emitListeningNextTick(self, onListen) {
   if (typeof onListen === "function") {
@@ -1364,6 +1419,9 @@ function listenInCluster(
   backlog,
   fd,
   exclusive,
+  ipv6Only,
+  allowHalfOpen,
+  reusePort,
   flags,
   options,
   path,
@@ -1377,7 +1435,7 @@ function listenInCluster(
   if (cluster === undefined) cluster = require("node:cluster");
 
   if (cluster.isPrimary || exclusive) {
-    server[kRealListen](path, port, hostname, exclusive, tls, contexts, onListen);
+    server[kRealListen](path, port, hostname, exclusive, ipv6Only, allowHalfOpen, reusePort, tls, contexts, onListen);
     return;
   }
 
@@ -1395,7 +1453,7 @@ function listenInCluster(
     if (err) {
       throw new ExceptionWithHostPort(err, "bind", address, port);
     }
-    server[kRealListen](path, port, hostname, exclusive, tls, contexts, onListen);
+    server[kRealListen](path, port, hostname, exclusive, ipv6Only, allowHalfOpen, reusePort, tls, contexts, onListen);
   });
 }
 

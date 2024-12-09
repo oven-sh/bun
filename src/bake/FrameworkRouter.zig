@@ -1144,7 +1144,7 @@ pub const JSFrameworkRouter = struct {
                     }),
                 );
             }
-            return global.throwValue2(global.createAggregateErrorWithArray(
+            return global.throwValue(global.createAggregateErrorWithArray(
                 bun.String.static("Errors scanning routes"),
                 arr,
             ));
@@ -1232,7 +1232,6 @@ pub const JSFrameworkRouter = struct {
     pub fn finalize(this: *JSFrameworkRouter) void {
         this.files.deinit(bun.default_allocator);
         this.router.deinit(bun.default_allocator);
-        bun.default_allocator.free(this.router.types);
         for (this.stored_parse_errors.items) |i| bun.default_allocator.free(i.rel_path);
         this.stored_parse_errors.deinit(bun.default_allocator);
         bun.destroy(this);
@@ -1255,8 +1254,7 @@ pub const JSFrameworkRouter = struct {
         var log = TinyLog.empty;
         const parsed = style.parse(filepath.slice(), std.fs.path.extension(filepath.slice()), &log, true, alloc) catch |err| switch (err) {
             error.InvalidRoutePattern => {
-                global.throw("{s} ({d}:{d})", .{ log.msg.slice(), log.cursor_at, log.cursor_len });
-                return error.JSError;
+                return global.throw("{s} ({d}:{d})", .{ log.msg.slice(), log.cursor_at, log.cursor_len });
             },
             else => |e| return e,
         } orelse

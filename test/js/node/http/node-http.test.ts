@@ -2435,3 +2435,125 @@ it("should work when sending https.request with agent:false", async () => {
   await promise;
 });
 
+it("client should use chunked encoded if more than one write is called", async () => {
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+  // Bun.serve is used here until #15576 or similar fix is merged
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      if (req.headers.get("transfer-encoding") !== "chunked") {
+        return new Response("should be chunked encoding", { status: 500 });
+      }
+      return new Response(req.body);
+    },
+  });
+
+  // Options for the HTTP request
+  const options = {
+    hostname: "127.0.0.1", // Replace with the target server
+    port: server.port,
+    path: "/api/data",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  };
+
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  // Create the request
+  const req = http.request(options, res => {
+    if (res.statusCode !== 200) {
+      reject(new Error("Body should be chunked"));
+    }
+    const chunks = [];
+    // Collect the response data
+    res.on("data", chunk => {
+      chunks.push(chunk);
+    });
+
+    res.on("end", () => {
+      resolve(chunks);
+    });
+  });
+
+  // Handle errors
+  req.on("error", reject);
+
+  // Write chunks to the request body
+
+  for (let i = 0; i < 4; i++) {
+    req.write("chunk");
+    await sleep(50);
+    req.write(" ");
+    await sleep(50);
+  }
+  req.write("BUN!");
+  // End the request and signal no more data will be sent
+  req.end();
+
+  const chunks = await promise;
+  expect(chunks.length).toBeGreaterThan(1);
+  expect(chunks[chunks.length - 1]?.toString()).toEndWith("BUN!");
+  expect(Buffer.concat(chunks).toString()).toBe("chunk ".repeat(4) + "BUN!");
+});
+
+it("client should use content-length if only one write is called", async () => {
+  await using server = http.createServer((req, res) => {
+    if (req.headers["transfer-encoding"] === "chunked") {
+      return res.writeHead(500).end();
+    }
+    res.writeHead(200);
+    req.on("data", data => {
+      res.write(data);
+    });
+    req.on("end", () => {
+      res.end();
+    });
+  });
+
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  // Options for the HTTP request
+  const options = {
+    hostname: "127.0.0.1", // Replace with the target server
+    port: server.address().port,
+    path: "/api/data",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  };
+
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  // Create the request
+  const req = http.request(options, res => {
+    if (res.statusCode !== 200) {
+      reject(new Error("Body should not be chunked"));
+    }
+    const chunks = [];
+    // Collect the response data
+    res.on("data", chunk => {
+      chunks.push(chunk);
+    });
+
+    res.on("end", () => {
+      resolve(chunks);
+    });
+  });
+  // Handle errors
+  req.on("error", reject);
+  // Write chunks to the request body
+  req.write("Hello World BUN!");
+  // End the request and signal no more data will be sent
+  req.end();
+
+  const chunks = await promise;
+  expect(chunks.length).toBe(1);
+  expect(chunks[0]?.toString()).toBe("Hello World BUN!");
+  expect(Buffer.concat(chunks).toString()).toBe("Hello World BUN!");
+});

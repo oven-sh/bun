@@ -1439,6 +1439,7 @@ pub const EventLoop = struct {
         }
 
         this.processGCTimer();
+        this.processGCTimer();
         loop.tick();
 
         ctx.onAfterEventLoop();
@@ -2107,7 +2108,7 @@ pub const AnyEventLoop = union(enum) {
     ) void {
         switch (this.*) {
             .js => {
-                unreachable; // TODO:
+                bun.todoPanic(@src(), "AnyEventLoop.enqueueTaskConcurrent", .{});
                 // const TaskType = AnyTask.New(Context, Callback);
                 // @field(ctx, field) = TaskType.init(ctx);
                 // var concurrent = bun.default_allocator.create(ConcurrentTask) catch unreachable;

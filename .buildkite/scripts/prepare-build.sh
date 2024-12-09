@@ -8,4 +8,4 @@ function run_command() {
   { set +x; } 2>/dev/null
 }
 
-run_command node ".buildkite/ci.mjs"
+run_command node ".buildkite/ci.mjs" "$@"

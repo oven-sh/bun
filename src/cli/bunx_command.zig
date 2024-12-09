@@ -327,6 +327,12 @@ pub const BunxCommand = struct {
         this_bundler.env.map.put("npm_lifecycle_event", "bunx") catch unreachable;
         this_bundler.env.map.put("npm_lifecycle_script", package_name) catch unreachable;
 
+        if (strings.eqlComptime(package_name, "bun-repl")) {
+            this_bundler.env.map.remove("BUN_INSPECT_CONNECT_TO");
+            this_bundler.env.map.remove("BUN_INSPECT_NOTIFY");
+            this_bundler.env.map.remove("BUN_INSPECT");
+        }
+
         const ignore_cwd = this_bundler.env.get("BUN_WHICH_IGNORE_CWD") orelse "";
 
         if (ignore_cwd.len > 0) {

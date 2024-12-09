@@ -895,7 +895,7 @@ struct BlobHeader {
 } __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
 }
 
-extern "C" BlobHeader __attribute__((section(".data.bun"))) BUN_COMPILED_ELF = { 0, 0 };
+extern "C" BlobHeader __attribute__((section(".bun"), used)) BUN_COMPILED_ELF = { 0, 0 };
 
 extern "C" uint32_t* Bun__getStandaloneModuleGraphElfLength()
 {

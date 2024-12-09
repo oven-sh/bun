@@ -4120,3 +4120,4 @@ pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
 }
 
 pub const macho = @import("./macho.zig");
+pub const elf = @import("./elf.zig");

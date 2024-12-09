@@ -1050,9 +1050,13 @@ extern "C" napi_status napi_wrap(napi_env env,
         return napi_object_expected;
     }
 
+    // NapiPrototype has an inline field to store a napi_ref, so we use that if we can
+    auto* napi_instance = jsDynamicCast<NapiPrototype*>(jsc_object);
+
+    // TODO: is it worth avoiding this if napi_instance exists?
     const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
 
-    if (jsc_object->hasOwnProperty(globalObject, propertyName)) {
+    if ((napi_instance && napi_instance->napiRef) || (!napi_instance && jsc_object->hasOwnProperty(globalObject, propertyName))) {
         // already wrapped
         return napi_invalid_arg;
     }
@@ -1065,9 +1069,13 @@ extern "C" napi_status napi_wrap(napi_env env,
     ref->finalizer.finalize_hint = finalize_hint;
     ref->data = native_object;
 
-    // wrap the ref in an external so that it can serve as a JSValue
-    auto* external = Bun::NapiExternal::create(globalObject->vm(), globalObject->NapiExternalStructure(), ref, nullptr, nullptr);
-    jsc_object->putDirect(vm, propertyName, JSValue(external));
+    if (napi_instance) {
+        napi_instance->napiRef = ref;
+    } else {
+        // wrap the ref in an external so that it can serve as a JSValue
+        auto* external = Bun::NapiExternal::create(globalObject->vm(), globalObject->NapiExternalStructure(), ref, nullptr, nullptr);
+        jsc_object->putDirect(vm, propertyName, JSValue(external));
+    }
 
     if (result) {
         *result = toNapi(ref);
@@ -1089,21 +1097,33 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
     if (!js_object) {
         return napi_object_expected;
     }
+    auto* napi_instance = jsDynamicCast<NapiPrototype*>(jsc_object);
 
     auto* globalObject = toJS(env);
     auto& vm = globalObject->vm();
-    const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
+    NapiRef* ref = nullptr;
 
-    if (!jsc_object->hasOwnProperty(globalObject, propertyName)) {
-        return napi_invalid_arg;
+    if (napi_instance) {
+        ref = napi_instance->napiRef;
+        if (!ref) {
+            // not wrapped
+            return napi_invalid_arg;
+        }
+        napi_instance->napiRef = nullptr;
+    } else {
+        const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
+        if (!jsc_object->hasOwnProperty(globalObject, propertyName)) {
+            // not wrapped
+            return napi_invalid_arg;
+        }
+
+        JSValue contents_value = jsc_object->getDirect(vm, propertyName);
+        // asserting: we should not have stored anything but a NapiExternal here
+        auto* contents_external = jsCast<Bun::NapiExternal*>(contents_value);
+        ref = static_cast<NapiRef*>(contents_external->value());
+        jsc_object->deleteProperty(globalObject, propertyName);
     }
 
-    JSValue contents_value = jsc_object->getDirect(vm, propertyName);
-    // asserting: we should not have stored anything but a NapiExternal here
-    auto* contents_external = jsCast<Bun::NapiExternal*>(contents_value);
-    auto* ref = static_cast<NapiRef*>(contents_external->value());
-
-    jsc_object->deleteProperty(globalObject, propertyName);
     if (result) {
         *result = ref->data;
     }
@@ -1128,20 +1148,30 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
     if (!jsc_object) {
         return napi_object_expected;
     }
+    auto* napi_instance = jsDynamicCast<NapiPrototype*>(jsc_object);
 
     auto* globalObject = toJS(env);
     auto& vm = globalObject->vm();
     const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
+    NapiRef* ref = nullptr;
 
-    if (!jsc_object->hasOwnProperty(globalObject, propertyName)) {
-        // not wrapped
-        return napi_invalid_arg;
+    if (napi_instance) {
+        ref = napi_instance->napiRef;
+        if (!ref) {
+            // not wrapped
+            return napi_invalid_arg;
+        }
+    } else {
+        if (!jsc_object->hasOwnProperty(globalObject, propertyName)) {
+            // not wrapped
+            return napi_invalid_arg;
+        }
+
+        JSValue contents_value = jsc_object->getDirect(vm, propertyName);
+        // asserting: we should not have stored anything but a NapiExternal here
+        auto* contents_external = jsCast<Bun::NapiExternal*>(contents_value);
+        ref = static_cast<NapiRef*>(contents_external->value());
     }
-
-    JSValue contents_value = jsc_object->getDirect(vm, propertyName);
-    // asserting: we should not have stored anything but a NapiExternal here
-    auto* contents_external = jsCast<Bun::NapiExternal*>(contents_value);
-    auto* ref = static_cast<NapiRef*>(contents_external->value());
     ASSERT(ref);
 
     if (result) {

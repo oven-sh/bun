@@ -1059,13 +1059,12 @@ Napi::Object Init2(Napi::Env env, Napi::Object exports) {
 
 Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   // check that these symbols are defined
-  (void)static_cast<v8::Isolate *(*volatile)()>(&v8::Isolate::GetCurrent);
-  (void)static_cast<void (*volatile)(v8::Isolate *, void (*)(void *), void *)>(
-      &node::AddEnvironmentCleanupHook);
-  (void)static_cast<void (*volatile)(v8::Isolate *, void (*)(void *), void *)>(
-      &node::RemoveEnvironmentCleanupHook);
+  auto *isolate = v8::Isolate::GetCurrent();
 
   Napi::Object exports = Init2(env, exports1);
+
+  node::AddEnvironmentCleanupHook(isolate, [](void *) {}, isolate);
+  node::RemoveEnvironmentCleanupHook(isolate, [](void *) {}, isolate);
 
   exports.Set("test_issue_7685", Napi::Function::New(env, test_issue_7685));
   exports.Set("test_issue_11949", Napi::Function::New(env, test_issue_11949));

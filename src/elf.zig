@@ -83,6 +83,7 @@ pub fn embedBinaryData(allocator: Allocator, input_elf: []const u8, data_to_embe
 
     // Create output buffer with potentially increased size
     const output = try allocator.alloc(u8, input_elf.len + size_difference);
+
     errdefer allocator.free(output);
 
     // Copy everything up to the section that needs expansion
@@ -107,6 +108,16 @@ pub fn embedBinaryData(allocator: Allocator, input_elf: []const u8, data_to_embe
     // 1. Update section header for .bun
     const output_sections = @as([*]elf.Elf64_Shdr, @alignCast(@ptrCast(output.ptr + elf_header.e_shoff)))[0..elf_header.e_shnum];
 
+    // 2. Copy remaining sections and adjust their offsets
+    const current_offset = data_section.sh_offset + required_size;
+    const section_end = data_section.sh_offset + data_section.sh_size;
+
+    // Copy remaining file contents with adjusted offsets
+    @memcpy(
+        output[current_offset..][0..input_elf[section_end..].len],
+        input_elf[section_end..],
+    );
+
     // Find and update our section in the output buffer
     for (output_sections) |*section| {
         const name = mem.sliceTo(@as([*:0]const u8, @ptrCast(strtab_data.ptr + section.sh_name)), 0);
@@ -115,16 +126,6 @@ pub fn embedBinaryData(allocator: Allocator, input_elf: []const u8, data_to_embe
             break;
         }
     }
-
-    // 2. Copy remaining sections and adjust their offsets
-    const current_offset = data_section.sh_offset + required_size;
-    const section_end = data_section.sh_offset + data_section.sh_size;
-
-    // Copy remaining file contents with adjusted offsets
-    @memcpy(
-        output[current_offset..],
-        input_elf[section_end..],
-    );
 
     // 3. Update section headers that come after our modified section
     for (output_sections) |*section| {

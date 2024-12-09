@@ -1926,4 +1926,15 @@ comptime {
     v8_export_posix("_ZN2v89Int8Array9CheckCastEPNS_5ValueE");
     v8_export_posix("_ZN2v89Signature3NewEPNS_7IsolateENS_5LocalINS_16FunctionTemplateEEE");
     v8_export_posix("_ZN2v89Signature9CheckCastEPNS_4DataE");
+
+    v8_export_posix("_ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_");
+    v8_export_posix("_ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_");
+
+    v8_export_posix("_ZN2v88internal35IsolateFromNeverReadOnlySpaceObjectEm");
+    v8_export_posix("node_module_register");
+    v8_export_posix("node_api_create_external_string_latin1");
+    v8_export_posix("node_api_create_external_string_utf16");
+    v8_export_posix("node_api_create_syntax_error");
+    v8_export_posix("node_api_symbol_for");
+    v8_export_posix("node_api_throw_syntax_error");
 }

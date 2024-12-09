@@ -918,7 +918,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * glob
         }
         case CryptoKeyClass::OKP: {
             auto& impl = downcast<WebCore::CryptoKeyOKP>(wrapped);
-            encodeKey(KeyObject__createOKPFromPrivate(globalObject, impl.exportKey(), impl.namedCurve(), wrapped.algorithmIdentifier()));
+            return encodeKey(KeyObject__createOKPFromPrivate(globalObject, impl.exportKey(), impl.namedCurve(), wrapped.algorithmIdentifier()));
         }
         default: {
             JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type, expected private"_s);

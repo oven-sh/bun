@@ -34,9 +34,9 @@ async function main() {
   // Read the required files
   let agentScript, flakeContent, utilsContent;
   try {
-    agentScript = await readFile(join(process.cwd(), "scripts", "agent.mjs"), "utf8");
-    flakeContent = await readFile(join(process.cwd(), "flake.nix"), "utf8");
-    utilsContent = await readFile(join(process.cwd(), "scripts", "utils.mjs"), "utf8");
+    agentScript = readFile(join(process.cwd(), "scripts", "agent.mjs"), "utf8");
+    flakeContent = readFile(join(process.cwd(), "flake.nix"), "utf8");
+    utilsContent = readFile(join(process.cwd(), "scripts", "utils.mjs"), "utf8");
     console.log("Successfully read configuration files");
   } catch (error) {
     console.error("Failed to read configuration files:", error);
@@ -95,12 +95,6 @@ experimental-features = nix-command flakes
 trusted-users = root buildkite-agent
 auto-optimise-store = true
 
-# Disable documentation to save space
-documentation.enable = false
-documentation.doc.enable = false
-documentation.man.enable = false
-documentation.info.enable = false
-
 # Global profile settings
 keep-derivations = true
 keep-outputs = true
@@ -121,7 +115,7 @@ Environment="HOME=/var/lib/buildkite-agent"
 Environment="USER=buildkite-agent"
 Environment="PATH=/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="NIX_PATH=/nix/var/nix/profiles/per-user/root/channels"
-ExecStart=nix develop /var/lib/buildkite-agent/bun#ci-${flakeTarget} --command bash -c "node /usr/local/share/bun/agent.mjs start"
+ExecStart=/bin/sh -c 'exec /nix/var/nix/profiles/default/bin/nix develop /var/lib/buildkite-agent/bun#ci --command bash -c "node /usr/local/share/bun/agent.mjs start"'
 Restart=always
 RestartSec=5
 TimeoutStopSec=20
@@ -166,7 +160,7 @@ EOF
 sudo tee /etc/buildkite-agent/hooks/command > /dev/null << 'EOF'
 #!/bin/bash
 cd "$BUILDKITE_BUILD_DIR"
-exec nix develop .#ci-${flakeTarget} --command bash -c "$BUILDKITE_COMMAND"
+exec nix develop .#ci --command bash -c "$BUILDKITE_COMMAND"
 EOF
 
 sudo chmod +x /etc/buildkite-agent/hooks/*

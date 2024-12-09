@@ -2746,6 +2746,7 @@ const emojiMap = {
   alpine: ["🐧", "alpine"],
   aws: ["☁️", "aws"],
   amazonlinux: ["🐧", "aws"],
+  nix: ["🐧", "nix"],
   windows: ["🪟", "windows"],
   true: ["✅", "white_check_mark"],
   false: ["❌", "x"],

@@ -96,6 +96,7 @@ function getTargetLabel(target) {
  * @property {Distro} [distro]
  * @property {string} release
  * @property {Tier} [tier]
+ * @property {boolean} [nix]
  */
 
 /**
@@ -566,20 +567,29 @@ function getTestBunStep(platform, options = {}) {
  * @returns {Step}
  */
 function getBuildImageStep(platform, dryRun) {
-  const { os, arch, distro, release } = platform;
+  const { os, arch, distro, release, nix } = platform;
   const action = dryRun ? "create-image" : "publish-image";
-  const command = [
-    "node",
-    "./scripts/machine.mjs",
-    action,
-    `--os=${os}`,
-    `--arch=${arch}`,
-    distro && `--distro=${distro}`,
-    `--release=${release}`,
-    "--cloud=aws",
-    "--ci",
-    "--authorized-org=oven-sh",
-  ];
+
+  /** @type {string[]} */
+  let command;
+  if (nix) {
+    // TODO: move login into scripts/machine.mjs
+    command = ["node", "./scripts/create-nix-amis.mjs", `--release=${action}`, `--arch=${arch}`, "--cloud=aws"];
+  } else {
+    command = [
+      "node",
+      "./scripts/machine.mjs",
+      action,
+      `--os=${os}`,
+      `--arch=${arch}`,
+      distro && `--distro=${distro}`,
+      `--release=${release}`,
+      "--cloud=aws",
+      "--ci",
+      "--authorized-org=oven-sh",
+    ];
+  }
+
   return {
     key: `${getImageKey(platform)}-build-image`,
     label: `${getImageLabel(platform)} - build-image`,
@@ -989,32 +999,6 @@ async function getPipelineOptions() {
 }
 
 /**
- * @param {Record<string, string | undefined>} [options]
- * @returns {Step}
- */
-function getCreateNixAmisStep(platform, dryRun) {
-  return {
-    key: `${getImageKey(platform)}-build-image`,
-    label: `${getBuildkiteEmoji("nix")} Create Nix AMI (${platform.arch})`,
-    command: [
-      "node",
-      "./scripts/create-nix-amis.mjs",
-      "--release=" + (dryRun ? "create-image" : "publish-image"),
-      "--arch=" + platform.arch,
-      "--cloud=aws",
-    ].join(" "),
-    agents: {
-      queue: "build-image",
-    },
-    env: {
-      DEBUG: "1",
-    },
-    retry: getRetry(),
-    timeout_in_minutes: 3 * 60,
-  };
-}
-
-/**
  * @param {PipelineOptions} [options]
  * @returns {Promise<Pipeline | undefined>}
  */
@@ -1052,7 +1036,7 @@ async function getPipeline(options = {}) {
       steps: [
         ...Array.from(imagePlatforms.values())
           .filter(platform => platform.nix)
-          .map(platform => getCreateNixAmisStep(platform, !publishImages)),
+          .map(platform => getBuildNixImageStep(platform, !publishImages)),
         ...[...imagePlatforms.values()]
           .filter(platform => !platform.nix)
           .map(platform => getBuildImageStep(platform, !publishImages)),

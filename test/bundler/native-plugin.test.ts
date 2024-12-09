@@ -127,7 +127,7 @@ values;`,
 
     const result = await Bun.build({
       outdir,
-      entrypoints: [path.join(tempdir, "index.ts")],
+      entrypoints: [path.join(tempdir, entrypoint)],
       plugins: [
         {
           name: "xXx123_foo_counter_321xXx",
@@ -402,7 +402,7 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
 
     const build_code = /* ts */ `
     import * as path from "path";
-    const tempdir = process.env.BUN_TEST_TEMP_DIR;
+    const tempdir = process.env.BUN_TEST_TEMP_DIR ?? tmpdir;
     const filter = /\.ts/;
     const resultPromise = await Bun.build({
       outdir: "dist",
@@ -595,14 +595,16 @@ console.log(JSON.stringify(json))
 
   for (const { name, contents, loader } of additional_files) {
     it(`works with ${loader} loader`, async () => {
-      await Bun.$`echo ${contents} > ${name}`;
+      const dependencyPath = path.join(tempdir, name);
+      const sourcePath = path.join(tempdir, "index.ts");
+      await Bun.$`echo ${contents} > ${dependencyPath}`;
       const source = /* ts */ `import foo from "./${name}";
       console.log(foo);`;
-      await Bun.$`echo ${source} > index.ts`;
+      await Bun.$`echo ${source} > ${sourcePath}`;
 
       const result = await Bun.build({
         outdir,
-        entrypoints: [path.join(tempdir, "index.ts")],
+        entrypoints: [dependencyPath],
         plugins: [
           {
             name: "test",

@@ -107,7 +107,7 @@ const buildPlatforms = [
   { os: "darwin", arch: "x64", release: "14" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "18.04", nix: true },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "18.04", nix: true },
-  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", nix: true, release: "18.04" },
+  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "18.04", nix: true },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
@@ -1033,14 +1033,7 @@ async function getPipeline(options = {}) {
     steps.push({
       key: "build-images",
       group: getBuildkiteEmoji("aws"),
-      steps: [
-        ...Array.from(imagePlatforms.values())
-          .filter(platform => platform.nix)
-          .map(platform => getBuildNixImageStep(platform, !publishImages)),
-        ...[...imagePlatforms.values()]
-          .filter(platform => !platform.nix)
-          .map(platform => getBuildImageStep(platform, !publishImages)),
-      ],
+      steps: [...Array.from(imagePlatforms.values()).map(platform => getBuildImageStep(platform, !publishImages))],
     });
   }
 

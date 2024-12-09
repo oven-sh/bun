@@ -127,7 +127,7 @@ values;`,
 
     const result = await Bun.build({
       outdir,
-      entrypoints: [path.join(tempdir, entrypoint)],
+      entrypoints: [path.join(tempdir, "index.ts")],
       plugins: [
         {
           name: "xXx123_foo_counter_321xXx",

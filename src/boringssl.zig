@@ -1,11 +1,15 @@
-const boring = @import("./deps/boringssl/boringssl.translated.zig");
+// const BoringSSL = @import("./deps/boringssl.zig");
+const BoringSSL = @import("./deps/boringssl.zig");
+const boring = BoringSSL.Translated;
+// const X509 = BoringSSL.X509;
 pub usingnamespace boring;
+pub usingnamespace BoringSSL;
 const std = @import("std");
 const bun = @import("root").bun;
 const c_ares = @import("./deps/c_ares.zig");
 const strings = bun.strings;
 const builtin = @import("builtin");
-const X509 = @import("./bun.js/api/bun/x509.zig");
+const BunX509 = @import("./bun.js/api/bun/x509.zig");
 
 var loaded = false;
 pub fn load() void {
@@ -121,7 +125,7 @@ pub fn ip2String(ip: *boring.ASN1_OCTET_STRING, outIP: *[INET6_ADDRSTRLEN + 1]u8
 }
 
 pub fn checkX509ServerIdentity(
-    x509: *boring.X509,
+    x509: *BoringSSL.X509,
     hostname: []const u8,
 ) bool {
     // we check with native code if the cert is valid
@@ -169,7 +173,7 @@ pub fn checkX509ServerIdentity(
                                 var dnsNameSlice = dnsName.data[0..@as(usize, @intCast(dnsName.length))];
                                 // ignore empty dns names (should never happen)
                                 if (dnsNameSlice.len > 0) {
-                                    if (X509.isSafeAltName(dnsNameSlice, false)) {
+                                    if (BunX509.isSafeAltName(dnsNameSlice, false)) {
                                         if (dnsNameSlice[0] == '*') {
                                             dnsNameSlice = dnsNameSlice[1..dnsNameSlice.len];
                                             var host = hostname;

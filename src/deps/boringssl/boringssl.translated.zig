@@ -2,6 +2,7 @@ const std = @import("std");
 const bun = @import("root").bun;
 const C = @import("std").zig.c_builtins;
 const pthread_rwlock_t = if (bun.Environment.isPosix) @import("../../sync.zig").RwLock.pthread_rwlock_t else *anyopaque;
+const X509 = @import("./x509.zig").X509;
 const time_t = C.time_t;
 const va_list = C.va_list;
 const struct_timeval = C.struct_timeval;
@@ -154,8 +155,7 @@ pub const struct_X509_crl_st = opaque {};
 pub const X509_CRL = struct_X509_crl_st;
 pub const struct_X509_extension_st = opaque {};
 pub const X509_EXTENSION = struct_X509_extension_st;
-pub const struct_x509_st = opaque {};
-pub const X509 = struct_x509_st;
+// pub const X509 = struct_x509_st;
 pub const CRYPTO_refcount_t = u32;
 pub const struct_openssl_method_common_st = extern struct {
     references: c_int,
@@ -252,10 +252,10 @@ pub const struct_X509_info_st = extern struct {
     enc_data: [*c]u8,
 };
 pub const X509_INFO = struct_X509_info_st;
-pub const struct_X509_name_entry_st = opaque {};
-pub const X509_NAME_ENTRY = struct_X509_name_entry_st;
-pub const struct_X509_name_st = opaque {};
-pub const X509_NAME = struct_X509_name_st;
+// pub const struct_X509_name_entry_st = opaque {};
+// pub const X509_NAME_ENTRY = struct_X509_name_entry_st;
+// pub const struct_X509_name_st = opaque {};
+// pub const X509_NAME = struct_X509_name_st;
 pub const struct_X509_req_st = opaque {};
 pub const X509_REQ = struct_X509_req_st;
 pub const struct_X509_sig_st = opaque {};
@@ -315,6 +315,14 @@ pub const struct_cbb_st = extern struct {
     is_child: u8,
     u: union_unnamed_3,
 };
+/// Bytestrings are used for parsing and building TLS and ASN.1 messages.
+///
+/// A "CBS" (CRYPTO ByteString) represents a string of bytes in memory and
+/// provides utility functions for safely parsing length-prefixed structures
+/// like TLS and ASN.1 from it.
+///
+/// A "CBB" (CRYPTO ByteBuilder) is a memory buffer that grows as needed and
+/// provides utility functions for building length-prefixed messages.
 pub const struct_cbs_st = extern struct {
     data: [*c]const u8,
     len: usize,
@@ -2853,18 +2861,18 @@ pub extern const X509_it: ASN1_ITEM;
 pub extern fn X509_up_ref(x509: ?*X509) c_int;
 pub extern fn X509_chain_up_ref(chain: ?*struct_stack_st_X509) ?*struct_stack_st_X509;
 pub extern fn X509_dup(x509: ?*X509) ?*X509;
-pub extern fn X509_free(x509: ?*X509) void;
+// pub extern fn X509_free(x509: ?*X509) void;
 pub extern fn d2i_X509(out: [*c]?*X509, inp: *[*]const u8, len: c_long) ?*X509;
 pub extern fn X509_parse_from_buffer(buf: ?*CRYPTO_BUFFER) ?*X509;
 pub extern fn i2d_X509(x509: ?*X509, outp: ?*[*]u8) c_int;
-pub extern fn X509_get_version(x509: ?*const X509) c_long;
-pub extern fn X509_get0_serialNumber(x509: ?*const X509) [*c]const ASN1_INTEGER;
-pub extern fn X509_get0_notBefore(x509: ?*const X509) [*c]const ASN1_TIME;
-pub extern fn X509_get0_notAfter(x509: ?*const X509) [*c]const ASN1_TIME;
-pub extern fn X509_get_issuer_name(x509: ?*const X509) ?*X509_NAME;
-pub extern fn X509_get_subject_name(x509: ?*const X509) ?*X509_NAME;
-pub extern fn X509_get_X509_PUBKEY(x509: ?*const X509) ?*X509_PUBKEY;
-pub extern fn X509_get_pubkey(x509: ?*X509) [*c]EVP_PKEY;
+// pub extern fn X509_get_version(x509: ?*const X509) c_long;
+// pub extern fn X509_get0_serialNumber(x509: ?*const X509) [*c]const ASN1_INTEGER;
+// pub extern fn X509_get0_notBefore(x509: ?*const X509) [*c]const ASN1_TIME;
+// pub extern fn X509_get0_notAfter(x509: ?*const X509) [*c]const ASN1_TIME;
+// pub extern fn X509_get_issuer_name(x509: ?*const X509) ?X509.Name;
+// pub extern fn X509_get_subject_name(x509: ?*const X509) ?X509.Name;
+// pub extern fn X509_get_X509_PUBKEY(x509: ?*const X509) ?*X509_PUBKEY;
+// pub extern fn X509_get_pubkey(x509: ?*X509) [*c]EVP_PKEY;
 pub extern fn X509_get0_pubkey_bitstr(x509: ?*const X509) [*c]ASN1_BIT_STRING;
 pub extern fn X509_get0_uids(x509: ?*const X509, out_issuer_uid: [*c][*c]const ASN1_BIT_STRING, out_subject_uid: [*c][*c]const ASN1_BIT_STRING) void;
 pub const struct_stack_st_X509_EXTENSION = opaque {};
@@ -2878,15 +2886,15 @@ pub extern fn X509_get0_tbs_sigalg(x509: ?*const X509) [*c]const X509_ALGOR;
 pub extern fn X509_get0_signature(out_sig: [*c][*c]const ASN1_BIT_STRING, out_alg: [*c][*c]const X509_ALGOR, x509: ?*const X509) void;
 pub extern fn X509_get_signature_nid(x509: ?*const X509) c_int;
 pub extern fn i2d_X509_tbs(x509: ?*X509, outp: [*c][*c]u8) c_int;
-pub extern fn X509_new() ?*X509;
+// pub extern fn X509_new() ?*X509;
 pub extern fn X509_set_version(x509: ?*X509, version: c_long) c_int;
 pub extern fn X509_set_serialNumber(x509: ?*X509, serial: [*c]const ASN1_INTEGER) c_int;
 pub extern fn X509_set1_notBefore(x509: ?*X509, tm: [*c]const ASN1_TIME) c_int;
 pub extern fn X509_set1_notAfter(x509: ?*X509, tm: [*c]const ASN1_TIME) c_int;
 pub extern fn X509_getm_notBefore(x509: ?*X509) [*c]ASN1_TIME;
 pub extern fn X509_getm_notAfter(x: ?*X509) [*c]ASN1_TIME;
-pub extern fn X509_set_issuer_name(x509: ?*X509, name: ?*X509_NAME) c_int;
-pub extern fn X509_set_subject_name(x509: ?*X509, name: ?*X509_NAME) c_int;
+pub extern fn X509_set_issuer_name(x509: ?*X509, name: ?X509.Name) c_int;
+pub extern fn X509_set_subject_name(x509: ?*X509, name: ?X509.Name) c_int;
 pub extern fn X509_set_pubkey(x509: ?*X509, pkey: [*c]EVP_PKEY) c_int;
 pub extern fn X509_delete_ext(x: ?*X509, loc: c_int) ?*X509_EXTENSION;
 pub extern fn X509_add_ext(x: ?*X509, ex: ?*const X509_EXTENSION, loc: c_int) c_int;
@@ -2951,14 +2959,14 @@ pub const GENERAL_NAME = extern struct {
         rfc822Name: *ASN1_IA5STRING,
         dNSName: *ASN1_IA5STRING,
         x400Address: *ASN1_STRING,
-        directoryName: *X509_NAME,
+        directoryName: *X509.Name,
         //EDIPARTYNAME
         ediPartyName: *anyopaque,
         uniformResourceIdentifier: *ASN1_IA5STRING,
         iPAddress: *ASN1_OCTET_STRING,
         registeredID: *ASN1_OBJECT,
         ip: *ASN1_OCTET_STRING,
-        dirn: *X509_NAME,
+        dirn: *X509.Name,
         ia5: *ASN1_IA5STRING,
         rid: *ASN1_OBJECT,
         other: *ASN1_TYPE,
@@ -3137,7 +3145,7 @@ pub extern fn i2d_X509_CRL(crl: ?*X509_CRL, outp: [*c][*c]u8) c_int;
 pub extern fn X509_CRL_get_version(crl: ?*const X509_CRL) c_long;
 pub extern fn X509_CRL_get0_lastUpdate(crl: ?*const X509_CRL) [*c]const ASN1_TIME;
 pub extern fn X509_CRL_get0_nextUpdate(crl: ?*const X509_CRL) [*c]const ASN1_TIME;
-pub extern fn X509_CRL_get_issuer(crl: ?*const X509_CRL) ?*X509_NAME;
+pub extern fn X509_CRL_get_issuer(crl: ?*const X509_CRL) ?X509.Name;
 pub extern fn X509_CRL_get_REVOKED(crl: ?*X509_CRL) ?*struct_stack_st_X509_REVOKED;
 pub extern fn X509_CRL_get0_extensions(crl: ?*const X509_CRL) ?*const struct_stack_st_X509_EXTENSION;
 pub extern fn X509_CRL_get_ext_count(x: ?*const X509_CRL) c_int;
@@ -3150,7 +3158,7 @@ pub extern fn X509_CRL_get_signature_nid(crl: ?*const X509_CRL) c_int;
 pub extern fn i2d_X509_CRL_tbs(crl: ?*X509_CRL, outp: [*c][*c]u8) c_int;
 pub extern fn X509_CRL_new() ?*X509_CRL;
 pub extern fn X509_CRL_set_version(crl: ?*X509_CRL, version: c_long) c_int;
-pub extern fn X509_CRL_set_issuer_name(crl: ?*X509_CRL, name: ?*X509_NAME) c_int;
+pub extern fn X509_CRL_set_issuer_name(crl: ?*X509_CRL, name: ?X509.Name) c_int;
 pub extern fn X509_CRL_set1_lastUpdate(crl: ?*X509_CRL, tm: [*c]const ASN1_TIME) c_int;
 pub extern fn X509_CRL_set1_nextUpdate(crl: ?*X509_CRL, tm: [*c]const ASN1_TIME) c_int;
 pub extern fn X509_CRL_delete_ext(x: ?*X509_CRL, loc: c_int) ?*X509_EXTENSION;
@@ -3166,13 +3174,13 @@ pub extern fn X509_REQ_free(req: ?*X509_REQ) void;
 pub extern fn d2i_X509_REQ(out: [*c]?*X509_REQ, inp: [*c][*c]const u8, len: c_long) ?*X509_REQ;
 pub extern fn i2d_X509_REQ(req: ?*X509_REQ, outp: [*c][*c]u8) c_int;
 pub extern fn X509_REQ_get_version(req: ?*const X509_REQ) c_long;
-pub extern fn X509_REQ_get_subject_name(req: ?*const X509_REQ) ?*X509_NAME;
+pub extern fn X509_REQ_get_subject_name(req: ?*const X509_REQ) ?X509.Name;
 pub extern fn X509_REQ_get_pubkey(req: ?*X509_REQ) [*c]EVP_PKEY;
 pub extern fn X509_REQ_get0_signature(req: ?*const X509_REQ, out_sig: [*c][*c]const ASN1_BIT_STRING, out_alg: [*c][*c]const X509_ALGOR) void;
 pub extern fn X509_REQ_get_signature_nid(req: ?*const X509_REQ) c_int;
 pub extern fn X509_REQ_new() ?*X509_REQ;
 pub extern fn X509_REQ_set_version(req: ?*X509_REQ, version: c_long) c_int;
-pub extern fn X509_REQ_set_subject_name(req: ?*X509_REQ, name: ?*X509_NAME) c_int;
+pub extern fn X509_REQ_set_subject_name(req: ?*X509_REQ, name: ?X509.Name) c_int;
 pub extern fn X509_REQ_set_pubkey(req: ?*X509_REQ, pkey: [*c]EVP_PKEY) c_int;
 pub extern fn X509_REQ_sign(req: ?*X509_REQ, pkey: [*c]EVP_PKEY, md: ?*const EVP_MD) c_int;
 pub extern fn X509_REQ_sign_ctx(req: ?*X509_REQ, ctx: [*c]EVP_MD_CTX) c_int;
@@ -3180,25 +3188,25 @@ pub extern fn i2d_re_X509_REQ_tbs(req: ?*X509_REQ, outp: [*c][*c]u8) c_int;
 pub extern fn X509_REQ_set1_signature_algo(req: ?*X509_REQ, algo: [*c]const X509_ALGOR) c_int;
 pub extern fn X509_REQ_set1_signature_value(req: ?*X509_REQ, sig: [*c]const u8, sig_len: usize) c_int;
 pub const struct_stack_st_X509_NAME_ENTRY = opaque {};
-pub const sk_X509_NAME_ENTRY_free_func = ?*const fn (?*X509_NAME_ENTRY) callconv(.C) void;
-pub const sk_X509_NAME_ENTRY_copy_func = ?*const fn (?*X509_NAME_ENTRY) callconv(.C) ?*X509_NAME_ENTRY;
-pub const sk_X509_NAME_ENTRY_cmp_func = ?*const fn ([*c]?*const X509_NAME_ENTRY, [*c]?*const X509_NAME_ENTRY) callconv(.C) c_int;
+pub const sk_X509_NAME_ENTRY_free_func = ?*const fn (?X509.Name.Entry) callconv(.C) void;
+pub const sk_X509_NAME_ENTRY_copy_func = ?*const fn (?X509.Name.Entry) callconv(.C) ?X509.Name.Entry;
+pub const sk_X509_NAME_ENTRY_cmp_func = ?*const fn ([*c]?X509.Name.Entry, [*c]?X509.Name.Entry) callconv(.C) c_int;
 pub fn sk_X509_NAME_ENTRY_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     const free_func = arg_free_func;
     const ptr = arg_ptr;
-    @as(sk_X509_NAME_ENTRY_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*X509_NAME_ENTRY, @ptrCast(ptr)));
+    @as(sk_X509_NAME_ENTRY_free_func, @ptrCast(@alignCast(free_func))).?(@as(?X509.Name.Entry, @ptrCast(ptr)));
 }
 pub fn sk_X509_NAME_ENTRY_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
     const copy_func = arg_copy_func;
     const ptr = arg_ptr;
-    return @as(?*anyopaque, @ptrCast(@as(sk_X509_NAME_ENTRY_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?*X509_NAME_ENTRY, @ptrCast(ptr)))));
+    return @as(?*anyopaque, @ptrCast(@as(sk_X509_NAME_ENTRY_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?X509.Name.Entry, @ptrCast(ptr)))));
 }
 pub fn sk_X509_NAME_ENTRY_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
     const cmp_func = arg_cmp_func;
     const a = arg_a;
     const b = arg_b;
-    var a_ptr: ?*const X509_NAME_ENTRY = @as(?*const X509_NAME_ENTRY, @ptrCast(a.*));
-    var b_ptr: ?*const X509_NAME_ENTRY = @as(?*const X509_NAME_ENTRY, @ptrCast(b.*));
+    var a_ptr: ?X509.Name.Entry = @as(?X509.Name.Entry, @ptrCast(a.*));
+    var b_ptr: ?X509.Name.Entry = @as(?X509.Name.Entry, @ptrCast(b.*));
     return @as(sk_X509_NAME_ENTRY_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_X509_NAME_ENTRY_new(arg_comp: sk_X509_NAME_ENTRY_cmp_func) callconv(.C) ?*struct_stack_st_X509_NAME_ENTRY {
@@ -3216,16 +3224,16 @@ pub fn sk_X509_NAME_ENTRY_zero(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY) callco
     const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
-pub fn sk_X509_NAME_ENTRY_value(arg_sk: ?*const struct_stack_st_X509_NAME_ENTRY, arg_i: usize) callconv(.C) ?*X509_NAME_ENTRY {
+pub fn sk_X509_NAME_ENTRY_value(arg_sk: ?*const struct_stack_st_X509_NAME_ENTRY, arg_i: usize) callconv(.C) ?X509.Name.Entry {
     const sk = arg_sk;
     const i = arg_i;
-    return @as(?*X509_NAME_ENTRY, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
+    return @as(?X509.Name.Entry, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
-pub fn sk_X509_NAME_ENTRY_set(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_i: usize, arg_p: ?*X509_NAME_ENTRY) callconv(.C) ?*X509_NAME_ENTRY {
+pub fn sk_X509_NAME_ENTRY_set(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_i: usize, arg_p: ?X509.Name.Entry) callconv(.C) ?X509.Name.Entry {
     const sk = arg_sk;
     const i = arg_i;
     const p = arg_p;
-    return @as(?*X509_NAME_ENTRY, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
+    return @as(?X509.Name.Entry, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_NAME_ENTRY_free(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY) callconv(.C) void {
     const sk = arg_sk;
@@ -3236,40 +3244,40 @@ pub fn sk_X509_NAME_ENTRY_pop_free(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, ar
     const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_NAME_ENTRY_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
-pub fn sk_X509_NAME_ENTRY_insert(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_p: ?*X509_NAME_ENTRY, arg_where: usize) callconv(.C) usize {
+pub fn sk_X509_NAME_ENTRY_insert(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_p: ?X509.Name.Entry, arg_where: usize) callconv(.C) usize {
     const sk = arg_sk;
     const p = arg_p;
     const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
-pub fn sk_X509_NAME_ENTRY_delete(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_where: usize) callconv(.C) ?*X509_NAME_ENTRY {
+pub fn sk_X509_NAME_ENTRY_delete(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_where: usize) callconv(.C) ?X509.Name.Entry {
     const sk = arg_sk;
     const where = arg_where;
-    return @as(?*X509_NAME_ENTRY, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
+    return @as(?X509.Name.Entry, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
-pub fn sk_X509_NAME_ENTRY_delete_ptr(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_p: ?*const X509_NAME_ENTRY) callconv(.C) ?*X509_NAME_ENTRY {
+pub fn sk_X509_NAME_ENTRY_delete_ptr(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_p: ?X509.Name.Entry) callconv(.C) ?X509.Name.Entry {
     const sk = arg_sk;
     const p = arg_p;
-    return @as(?*X509_NAME_ENTRY, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
+    return @as(?X509.Name.Entry, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
-pub fn sk_X509_NAME_ENTRY_find(arg_sk: ?*const struct_stack_st_X509_NAME_ENTRY, arg_out_index: [*c]usize, arg_p: ?*const X509_NAME_ENTRY) callconv(.C) c_int {
+pub fn sk_X509_NAME_ENTRY_find(arg_sk: ?*const struct_stack_st_X509_NAME_ENTRY, arg_out_index: [*c]usize, arg_p: ?X509.Name.Entry) callconv(.C) c_int {
     const sk = arg_sk;
     const out_index = arg_out_index;
     const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_NAME_ENTRY_call_cmp_func);
 }
-pub fn sk_X509_NAME_ENTRY_shift(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY) callconv(.C) ?*X509_NAME_ENTRY {
+pub fn sk_X509_NAME_ENTRY_shift(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY) callconv(.C) ?X509.Name.Entry {
     const sk = arg_sk;
-    return @as(?*X509_NAME_ENTRY, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
+    return @as(?X509.Name.Entry, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
-pub fn sk_X509_NAME_ENTRY_push(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_p: ?*X509_NAME_ENTRY) callconv(.C) usize {
+pub fn sk_X509_NAME_ENTRY_push(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY, arg_p: ?X509.Name.Entry) callconv(.C) usize {
     const sk = arg_sk;
     const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
-pub fn sk_X509_NAME_ENTRY_pop(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY) callconv(.C) ?*X509_NAME_ENTRY {
+pub fn sk_X509_NAME_ENTRY_pop(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY) callconv(.C) ?X509.Name.Entry {
     const sk = arg_sk;
-    return @as(?*X509_NAME_ENTRY, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
+    return @as(?X509.Name.Entry, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_NAME_ENTRY_dup(arg_sk: ?*const struct_stack_st_X509_NAME_ENTRY) callconv(.C) ?*struct_stack_st_X509_NAME_ENTRY {
     const sk = arg_sk;
@@ -3295,25 +3303,25 @@ pub fn sk_X509_NAME_ENTRY_deep_copy(arg_sk: ?*const struct_stack_st_X509_NAME_EN
     return @as(?*struct_stack_st_X509_NAME_ENTRY, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_NAME_ENTRY_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_NAME_ENTRY_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub const struct_stack_st_X509_NAME = opaque {};
-pub const sk_X509_NAME_free_func = ?*const fn (?*X509_NAME) callconv(.C) void;
-pub const sk_X509_NAME_copy_func = ?*const fn (?*X509_NAME) callconv(.C) ?*X509_NAME;
-pub const sk_X509_NAME_cmp_func = ?*const fn ([*c]?*const X509_NAME, [*c]?*const X509_NAME) callconv(.C) c_int;
+pub const sk_X509_NAME_free_func = ?*const fn (?X509.Name) callconv(.C) void;
+pub const sk_X509_NAME_copy_func = ?*const fn (?X509.Name) callconv(.C) ?X509.Name;
+pub const sk_X509_NAME_cmp_func = ?*const fn ([*c]?*const X509.Name, [*c]?*const X509.Name) callconv(.C) c_int;
 pub fn sk_X509_NAME_call_free_func(arg_free_func: OPENSSL_sk_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     const free_func = arg_free_func;
     const ptr = arg_ptr;
-    @as(sk_X509_NAME_free_func, @ptrCast(@alignCast(free_func))).?(@as(?*X509_NAME, @ptrCast(ptr)));
+    @as(sk_X509_NAME_free_func, @ptrCast(@alignCast(free_func))).?(@as(?X509.Name, @ptrCast(ptr)));
 }
 pub fn sk_X509_NAME_call_copy_func(arg_copy_func: OPENSSL_sk_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
     const copy_func = arg_copy_func;
     const ptr = arg_ptr;
-    return @as(?*anyopaque, @ptrCast(@as(sk_X509_NAME_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?*X509_NAME, @ptrCast(ptr)))));
+    return @as(?*anyopaque, @ptrCast(@as(sk_X509_NAME_copy_func, @ptrCast(@alignCast(copy_func))).?(@as(?X509.Name, @ptrCast(ptr)))));
 }
 pub fn sk_X509_NAME_call_cmp_func(arg_cmp_func: OPENSSL_sk_cmp_func, arg_a: [*c]const ?*const anyopaque, arg_b: [*c]const ?*const anyopaque) callconv(.C) c_int {
     const cmp_func = arg_cmp_func;
     const a = arg_a;
     const b = arg_b;
-    var a_ptr: ?*const X509_NAME = @as(?*const X509_NAME, @ptrCast(a.*));
-    var b_ptr: ?*const X509_NAME = @as(?*const X509_NAME, @ptrCast(b.*));
+    var a_ptr: ?X509.Name = @as(?X509.Name, @ptrCast(a.*));
+    var b_ptr: ?X509.Name = @as(?X509.Name, @ptrCast(b.*));
     return @as(sk_X509_NAME_cmp_func, @ptrCast(@alignCast(cmp_func))).?(&a_ptr, &b_ptr);
 }
 pub fn sk_X509_NAME_new(arg_comp: sk_X509_NAME_cmp_func) callconv(.C) ?*struct_stack_st_X509_NAME {
@@ -3331,16 +3339,16 @@ pub fn sk_X509_NAME_zero(arg_sk: ?*struct_stack_st_X509_NAME) callconv(.C) void 
     const sk = arg_sk;
     sk_zero(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
-pub fn sk_X509_NAME_value(arg_sk: ?*const struct_stack_st_X509_NAME, arg_i: usize) callconv(.C) ?*X509_NAME {
+pub fn sk_X509_NAME_value(arg_sk: ?*const struct_stack_st_X509_NAME, arg_i: usize) callconv(.C) ?X509.Name {
     const sk = arg_sk;
     const i = arg_i;
-    return @as(?*X509_NAME, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
+    return @as(?X509.Name, @ptrCast(sk_value(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), i)));
 }
-pub fn sk_X509_NAME_set(arg_sk: ?*struct_stack_st_X509_NAME, arg_i: usize, arg_p: ?*X509_NAME) callconv(.C) ?*X509_NAME {
+pub fn sk_X509_NAME_set(arg_sk: ?*struct_stack_st_X509_NAME, arg_i: usize, arg_p: ?X509.Name) callconv(.C) ?X509.Name {
     const sk = arg_sk;
     const i = arg_i;
     const p = arg_p;
-    return @as(?*X509_NAME, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
+    return @as(?X509.Name, @ptrCast(sk_set(@as([*c]_STACK, @ptrCast(@alignCast(sk))), i, @as(?*anyopaque, @ptrCast(p)))));
 }
 pub fn sk_X509_NAME_free(arg_sk: ?*struct_stack_st_X509_NAME) callconv(.C) void {
     const sk = arg_sk;
@@ -3351,40 +3359,40 @@ pub fn sk_X509_NAME_pop_free(arg_sk: ?*struct_stack_st_X509_NAME, arg_free_func:
     const free_func = arg_free_func;
     sk_pop_free_ex(@as([*c]_STACK, @ptrCast(@alignCast(sk))), &sk_X509_NAME_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))));
 }
-pub fn sk_X509_NAME_insert(arg_sk: ?*struct_stack_st_X509_NAME, arg_p: ?*X509_NAME, arg_where: usize) callconv(.C) usize {
+pub fn sk_X509_NAME_insert(arg_sk: ?*struct_stack_st_X509_NAME, arg_p: ?X509.Name, arg_where: usize) callconv(.C) usize {
     const sk = arg_sk;
     const p = arg_p;
     const where = arg_where;
     return sk_insert(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)), where);
 }
-pub fn sk_X509_NAME_delete(arg_sk: ?*struct_stack_st_X509_NAME, arg_where: usize) callconv(.C) ?*X509_NAME {
+pub fn sk_X509_NAME_delete(arg_sk: ?*struct_stack_st_X509_NAME, arg_where: usize) callconv(.C) ?X509.Name {
     const sk = arg_sk;
     const where = arg_where;
-    return @as(?*X509_NAME, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
+    return @as(?X509.Name, @ptrCast(sk_delete(@as([*c]_STACK, @ptrCast(@alignCast(sk))), where)));
 }
-pub fn sk_X509_NAME_delete_ptr(arg_sk: ?*struct_stack_st_X509_NAME, arg_p: ?*const X509_NAME) callconv(.C) ?*X509_NAME {
+pub fn sk_X509_NAME_delete_ptr(arg_sk: ?*struct_stack_st_X509_NAME, arg_p: ?X509.Name) callconv(.C) ?X509.Name {
     const sk = arg_sk;
     const p = arg_p;
-    return @as(?*X509_NAME, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
+    return @as(?X509.Name, @ptrCast(sk_delete_ptr(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*const anyopaque, @ptrCast(p)))));
 }
-pub fn sk_X509_NAME_find(arg_sk: ?*const struct_stack_st_X509_NAME, arg_out_index: [*c]usize, arg_p: ?*const X509_NAME) callconv(.C) c_int {
+pub fn sk_X509_NAME_find(arg_sk: ?*const struct_stack_st_X509_NAME, arg_out_index: [*c]usize, arg_p: ?X509.Name) callconv(.C) c_int {
     const sk = arg_sk;
     const out_index = arg_out_index;
     const p = arg_p;
     return sk_find(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), out_index, @as(?*const anyopaque, @ptrCast(p)), &sk_X509_NAME_call_cmp_func);
 }
-pub fn sk_X509_NAME_shift(arg_sk: ?*struct_stack_st_X509_NAME) callconv(.C) ?*X509_NAME {
+pub fn sk_X509_NAME_shift(arg_sk: ?*struct_stack_st_X509_NAME) callconv(.C) ?X509.Name {
     const sk = arg_sk;
-    return @as(?*X509_NAME, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
+    return @as(?X509.Name, @ptrCast(sk_shift(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
-pub fn sk_X509_NAME_push(arg_sk: ?*struct_stack_st_X509_NAME, arg_p: ?*X509_NAME) callconv(.C) usize {
+pub fn sk_X509_NAME_push(arg_sk: ?*struct_stack_st_X509_NAME, arg_p: ?X509.Name) callconv(.C) usize {
     const sk = arg_sk;
     const p = arg_p;
     return sk_push(@as([*c]_STACK, @ptrCast(@alignCast(sk))), @as(?*anyopaque, @ptrCast(p)));
 }
-pub fn sk_X509_NAME_pop(arg_sk: ?*struct_stack_st_X509_NAME) callconv(.C) ?*X509_NAME {
+pub fn sk_X509_NAME_pop(arg_sk: ?*struct_stack_st_X509_NAME) callconv(.C) ?X509.Name {
     const sk = arg_sk;
-    return @as(?*X509_NAME, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
+    return @as(?X509.Name, @ptrCast(sk_pop(@as([*c]_STACK, @ptrCast(@alignCast(sk))))));
 }
 pub fn sk_X509_NAME_dup(arg_sk: ?*const struct_stack_st_X509_NAME) callconv(.C) ?*struct_stack_st_X509_NAME {
     const sk = arg_sk;
@@ -3410,36 +3418,36 @@ pub fn sk_X509_NAME_deep_copy(arg_sk: ?*const struct_stack_st_X509_NAME, arg_cop
     return @as(?*struct_stack_st_X509_NAME, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_NAME_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_NAME_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub extern const X509_NAME_it: ASN1_ITEM;
-pub extern fn X509_NAME_new() ?*X509_NAME;
-pub extern fn X509_NAME_free(name: ?*X509_NAME) void;
-pub extern fn d2i_X509_NAME(out: [*c]?*X509_NAME, inp: [*c][*c]const u8, len: c_long) ?*X509_NAME;
-pub extern fn i2d_X509_NAME(in: ?*X509_NAME, outp: [*c][*c]u8) c_int;
-pub extern fn X509_NAME_dup(name: ?*X509_NAME) ?*X509_NAME;
-pub extern fn X509_NAME_get0_der(name: ?*X509_NAME, out_der: [*c][*c]const u8, out_der_len: [*c]usize) c_int;
-pub extern fn X509_NAME_set(xn: [*c]?*X509_NAME, name: ?*X509_NAME) c_int;
-pub extern fn X509_NAME_entry_count(name: ?*const X509_NAME) c_int;
-pub extern fn X509_NAME_get_index_by_NID(name: ?*const X509_NAME, nid: c_int, lastpos: c_int) c_int;
-pub extern fn X509_NAME_get_index_by_OBJ(name: ?*const X509_NAME, obj: ?*const ASN1_OBJECT, lastpos: c_int) c_int;
-pub extern fn X509_NAME_get_entry(name: ?*const X509_NAME, loc: c_int) ?*X509_NAME_ENTRY;
-pub extern fn X509_NAME_delete_entry(name: ?*X509_NAME, loc: c_int) ?*X509_NAME_ENTRY;
-pub extern fn X509_NAME_add_entry(name: ?*X509_NAME, entry: ?*const X509_NAME_ENTRY, loc: c_int, set: c_int) c_int;
-pub extern fn X509_NAME_add_entry_by_OBJ(name: ?*X509_NAME, obj: ?*const ASN1_OBJECT, @"type": c_int, bytes: [*c]const u8, len: c_int, loc: c_int, set: c_int) c_int;
-pub extern fn X509_NAME_add_entry_by_NID(name: ?*X509_NAME, nid: c_int, @"type": c_int, bytes: [*c]const u8, len: c_int, loc: c_int, set: c_int) c_int;
-pub extern fn X509_NAME_add_entry_by_txt(name: ?*X509_NAME, field: [*c]const u8, @"type": c_int, bytes: [*c]const u8, len: c_int, loc: c_int, set: c_int) c_int;
+pub extern fn X509_NAME_new() ?X509.Name;
+pub extern fn X509_NAME_free(name: ?X509.Name) void;
+pub extern fn d2i_X509_NAME(out: [*c]?X509.Name, inp: [*c][*c]const u8, len: c_long) ?X509.Name;
+pub extern fn i2d_X509_NAME(in: ?X509.Name, outp: [*c][*c]u8) c_int;
+pub extern fn X509_NAME_dup(name: ?X509.Name) ?X509.Name;
+pub extern fn X509_NAME_get0_der(name: ?X509.Name, out_der: [*c][*c]const u8, out_der_len: [*c]usize) c_int;
+pub extern fn X509_NAME_set(xn: [*c]?X509.Name, name: ?X509.Name) c_int;
+pub extern fn X509_NAME_entry_count(name: ?X509.Name) c_int;
+pub extern fn X509_NAME_get_index_by_NID(name: ?X509.Name, nid: c_int, lastpos: c_int) c_int;
+pub extern fn X509_NAME_get_index_by_OBJ(name: ?X509.Name, obj: ?*const ASN1_OBJECT, lastpos: c_int) c_int;
+// pub extern fn X509_NAME_get_entry(name: ?X509.Name, loc: c_int) ?X509.Name.Entry;
+pub extern fn X509_NAME_delete_entry(name: ?X509.Name, loc: c_int) ?X509.Name.Entry;
+pub extern fn X509_NAME_add_entry(name: ?X509.Name, entry: ?X509.Name.Entry, loc: c_int, set: c_int) c_int;
+pub extern fn X509_NAME_add_entry_by_OBJ(name: ?X509.Name, obj: ?*const ASN1_OBJECT, @"type": c_int, bytes: [*c]const u8, len: c_int, loc: c_int, set: c_int) c_int;
+pub extern fn X509_NAME_add_entry_by_NID(name: ?X509.Name, nid: c_int, @"type": c_int, bytes: [*c]const u8, len: c_int, loc: c_int, set: c_int) c_int;
+pub extern fn X509_NAME_add_entry_by_txt(name: ?X509.Name, field: [*c]const u8, @"type": c_int, bytes: [*c]const u8, len: c_int, loc: c_int, set: c_int) c_int;
 pub extern const X509_NAME_ENTRY_it: ASN1_ITEM;
-pub extern fn X509_NAME_ENTRY_new() ?*X509_NAME_ENTRY;
-pub extern fn X509_NAME_ENTRY_free(entry: ?*X509_NAME_ENTRY) void;
-pub extern fn d2i_X509_NAME_ENTRY(out: [*c]?*X509_NAME_ENTRY, inp: [*c][*c]const u8, len: c_long) ?*X509_NAME_ENTRY;
-pub extern fn i2d_X509_NAME_ENTRY(in: ?*const X509_NAME_ENTRY, outp: [*c][*c]u8) c_int;
-pub extern fn X509_NAME_ENTRY_dup(entry: ?*const X509_NAME_ENTRY) ?*X509_NAME_ENTRY;
-pub extern fn X509_NAME_ENTRY_get_object(entry: ?*const X509_NAME_ENTRY) ?*ASN1_OBJECT;
-pub extern fn X509_NAME_ENTRY_set_object(entry: ?*X509_NAME_ENTRY, obj: ?*const ASN1_OBJECT) c_int;
-pub extern fn X509_NAME_ENTRY_get_data(entry: ?*const X509_NAME_ENTRY) [*c]ASN1_STRING;
-pub extern fn X509_NAME_ENTRY_set_data(entry: ?*X509_NAME_ENTRY, @"type": c_int, bytes: [*c]const u8, len: c_int) c_int;
-pub extern fn X509_NAME_ENTRY_set(entry: ?*const X509_NAME_ENTRY) c_int;
-pub extern fn X509_NAME_ENTRY_create_by_OBJ(out: [*c]?*X509_NAME_ENTRY, obj: ?*const ASN1_OBJECT, @"type": c_int, bytes: [*c]const u8, len: c_int) ?*X509_NAME_ENTRY;
-pub extern fn X509_NAME_ENTRY_create_by_NID(out: [*c]?*X509_NAME_ENTRY, nid: c_int, @"type": c_int, bytes: [*c]const u8, len: c_int) ?*X509_NAME_ENTRY;
-pub extern fn X509_NAME_ENTRY_create_by_txt(out: [*c]?*X509_NAME_ENTRY, field: [*c]const u8, @"type": c_int, bytes: [*c]const u8, len: c_int) ?*X509_NAME_ENTRY;
+pub extern fn X509_NAME_ENTRY_new() ?X509.Name.Entry;
+pub extern fn X509_NAME_ENTRY_free(entry: ?X509.Name.Entry) void;
+pub extern fn d2i_X509_NAME_ENTRY(out: [*c]?X509.Name.Entry, inp: [*c][*c]const u8, len: c_long) ?X509.Name.Entry;
+pub extern fn i2d_X509_NAME_ENTRY(in: ?X509.Name.Entry, outp: [*c][*c]u8) c_int;
+pub extern fn X509_NAME_ENTRY_dup(entry: ?X509.Name.Entry) ?X509.Name.Entry;
+// pub extern fn X509_NAME_ENTRY_get_object(entry: ?X509.Name.Entry) ?*ASN1_OBJECT;
+pub extern fn X509_NAME_ENTRY_set_object(entry: ?X509.Name.Entry, obj: ?*const ASN1_OBJECT) c_int;
+// pub extern fn X509_NAME_ENTRY_get_data(entry: ?X509.Name.Entry) [*c]ASN1_STRING;
+pub extern fn X509_NAME_ENTRY_set_data(entry: ?X509.Name.Entry, @"type": c_int, bytes: [*c]const u8, len: c_int) c_int;
+pub extern fn X509_NAME_ENTRY_set(entry: ?X509.Name.Entry) c_int;
+pub extern fn X509_NAME_ENTRY_create_by_OBJ(out: [*c]?X509.Name.Entry, obj: ?*const ASN1_OBJECT, @"type": c_int, bytes: [*c]const u8, len: c_int) ?X509.Name.Entry;
+pub extern fn X509_NAME_ENTRY_create_by_NID(out: [*c]?X509.Name.Entry, nid: c_int, @"type": c_int, bytes: [*c]const u8, len: c_int) ?X509.Name.Entry;
+pub extern fn X509_NAME_ENTRY_create_by_txt(out: [*c]?X509.Name.Entry, field: [*c]const u8, @"type": c_int, bytes: [*c]const u8, len: c_int) ?X509.Name.Entry;
 pub extern const X509_EXTENSION_it: ASN1_ITEM;
 pub extern fn X509_EXTENSION_new() ?*X509_EXTENSION;
 pub extern fn X509_EXTENSION_free(ex: ?*X509_EXTENSION) void;
@@ -3710,7 +3718,7 @@ pub extern fn X509_pubkey_digest(x509: ?*const X509, md: ?*const EVP_MD, out: [*
 pub extern fn X509_digest(x509: ?*const X509, md: ?*const EVP_MD, out: [*c]u8, out_len: [*c]c_uint) c_int;
 pub extern fn X509_CRL_digest(crl: ?*const X509_CRL, md: ?*const EVP_MD, out: [*c]u8, out_len: [*c]c_uint) c_int;
 pub extern fn X509_REQ_digest(req: ?*const X509_REQ, md: ?*const EVP_MD, out: [*c]u8, out_len: [*c]c_uint) c_int;
-pub extern fn X509_NAME_digest(name: ?*const X509_NAME, md: ?*const EVP_MD, out: [*c]u8, out_len: [*c]c_uint) c_int;
+pub extern fn X509_NAME_digest(name: ?X509.Name, md: ?*const EVP_MD, out: [*c]u8, out_len: [*c]c_uint) c_int;
 pub extern fn d2i_X509_bio(bp: [*c]BIO, x509: [*c]?*X509) ?*X509;
 pub extern fn d2i_X509_CRL_bio(bp: [*c]BIO, crl: [*c]?*X509_CRL) ?*X509_CRL;
 pub extern fn d2i_X509_REQ_bio(bp: [*c]BIO, req: [*c]?*X509_REQ) ?*X509_REQ;
@@ -3771,8 +3779,8 @@ pub extern fn i2d_PKCS8PrivateKeyInfo_bio(bp: [*c]BIO, key: [*c]EVP_PKEY) c_int;
 // pub extern fn i2d_PKCS8PrivateKeyInfo_fp(fp: [*c]FILE, key: [*c]EVP_PKEY) c_int;
 // pub extern fn i2d_PrivateKey_fp(fp: [*c]FILE, pkey: [*c]EVP_PKEY) c_int;
 // pub extern fn i2d_PUBKEY_fp(fp: [*c]FILE, pkey: [*c]EVP_PKEY) c_int;
-pub extern fn X509_NAME_get_text_by_OBJ(name: ?*const X509_NAME, obj: ?*const ASN1_OBJECT, buf: [*c]u8, len: c_int) c_int;
-pub extern fn X509_NAME_get_text_by_NID(name: ?*const X509_NAME, nid: c_int, buf: [*c]u8, len: c_int) c_int;
+pub extern fn X509_NAME_get_text_by_OBJ(name: ?X509.Name, obj: ?*const ASN1_OBJECT, buf: [*c]u8, len: c_int) c_int;
+pub extern fn X509_NAME_get_text_by_NID(name: ?X509.Name, nid: c_int, buf: [*c]u8, len: c_int) c_int;
 pub const struct_stack_st_X509_ATTRIBUTE = opaque {};
 pub const sk_X509_ATTRIBUTE_free_func = ?*const fn (?*X509_ATTRIBUTE) callconv(.C) void;
 pub const sk_X509_ATTRIBUTE_copy_func = ?*const fn (?*X509_ATTRIBUTE) callconv(.C) ?*X509_ATTRIBUTE;
@@ -4309,7 +4317,7 @@ pub extern fn i2d_NETSCAPE_SPKAC(a: [*c]const NETSCAPE_SPKAC, out: [*c][*c]u8) c
 pub extern const NETSCAPE_SPKAC_it: ASN1_ITEM;
 pub extern fn X509_INFO_new() [*c]X509_INFO;
 pub extern fn X509_INFO_free(a: [*c]X509_INFO) void;
-pub extern fn X509_NAME_oneline(a: ?*const X509_NAME, buf: [*c]u8, size: c_int) [*c]u8;
+pub extern fn X509_NAME_oneline(a: ?X509.Name, buf: [*c]u8, size: c_int) [*c]u8;
 pub extern fn ASN1_digest(i2d: ?*const i2d_of_void, @"type": ?*const EVP_MD, data: [*c]u8, md: [*c]u8, len: [*c]c_uint) c_int;
 pub extern fn ASN1_item_digest(it: ?*const ASN1_ITEM, @"type": ?*const EVP_MD, data: ?*anyopaque, md: [*c]u8, len: [*c]c_uint) c_int;
 pub extern fn ASN1_item_verify(it: ?*const ASN1_ITEM, algor1: [*c]const X509_ALGOR, signature: [*c]const ASN1_BIT_STRING, data: ?*anyopaque, pkey: [*c]EVP_PKEY) c_int;
@@ -4344,18 +4352,18 @@ pub extern fn X509_subject_name_hash(x: ?*X509) c_ulong;
 pub extern fn X509_issuer_name_hash_old(a: ?*X509) c_ulong;
 pub extern fn X509_subject_name_hash_old(x: ?*X509) c_ulong;
 pub extern fn X509_cmp(a: ?*const X509, b: ?*const X509) c_int;
-pub extern fn X509_NAME_cmp(a: ?*const X509_NAME, b: ?*const X509_NAME) c_int;
-pub extern fn X509_NAME_hash(x: ?*X509_NAME) c_ulong;
-pub extern fn X509_NAME_hash_old(x: ?*X509_NAME) c_ulong;
+pub extern fn X509_NAME_cmp(a: ?X509.Name, b: ?X509.Name) c_int;
+pub extern fn X509_NAME_hash(x: ?X509.Name) c_ulong;
+pub extern fn X509_NAME_hash_old(x: ?X509.Name) c_ulong;
 pub extern fn X509_CRL_cmp(a: ?*const X509_CRL, b: ?*const X509_CRL) c_int;
 pub extern fn X509_CRL_match(a: ?*const X509_CRL, b: ?*const X509_CRL) c_int;
 // pub extern fn X509_print_ex_fp(bp: [*c]FILE, x: ?*X509, nmflag: c_ulong, cflag: c_ulong) c_int;
 // pub extern fn X509_print_fp(bp: [*c]FILE, x: ?*X509) c_int;
 // pub extern fn X509_CRL_print_fp(bp: [*c]FILE, x: ?*X509_CRL) c_int;
 // pub extern fn X509_REQ_print_fp(bp: [*c]FILE, req: ?*X509_REQ) c_int;
-// pub extern fn X509_NAME_print_ex_fp(fp: [*c]FILE, nm: ?*const X509_NAME, indent: c_int, flags: c_ulong) c_int;
-pub extern fn X509_NAME_print(bp: [*c]BIO, name: ?*const X509_NAME, obase: c_int) c_int;
-pub extern fn X509_NAME_print_ex(out: [*c]BIO, nm: ?*const X509_NAME, indent: c_int, flags: c_ulong) c_int;
+// pub extern fn X509_NAME_print_ex_fp(fp: [*c]FILE, nm: ?X509.Name, indent: c_int, flags: c_ulong) c_int;
+pub extern fn X509_NAME_print(bp: [*c]BIO, name: ?X509.Name, obase: c_int) c_int;
+pub extern fn X509_NAME_print_ex(out: [*c]BIO, nm: ?X509.Name, indent: c_int, flags: c_ulong) c_int;
 pub extern fn X509_print_ex(bp: [*c]BIO, x: ?*X509, nmflag: c_ulong, cflag: c_ulong) c_int;
 pub extern fn X509_print(bp: [*c]BIO, x: ?*X509) c_int;
 pub extern fn X509_CRL_print(bp: [*c]BIO, x: ?*X509_CRL) c_int;
@@ -4762,7 +4770,6 @@ pub fn sk_X509_VERIFY_PARAM_deep_copy(arg_sk: ?*const struct_stack_st_X509_VERIF
     const free_func = arg_free_func;
     return @as(?*struct_stack_st_X509_VERIFY_PARAM, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_VERIFY_PARAM_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_VERIFY_PARAM_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
-pub extern fn X509_check_ca(x: ?*X509) c_int;
 pub const X509_STORE_CTX_verify_cb = ?*const fn (c_int, ?*X509_STORE_CTX) callconv(.C) c_int;
 pub const X509_STORE_CTX_verify_fn = ?*const fn (?*X509_STORE_CTX) callconv(.C) c_int;
 pub const X509_STORE_CTX_get_issuer_fn = ?*const fn ([*c]?*X509, ?*X509_STORE_CTX, ?*X509) callconv(.C) c_int;
@@ -4772,13 +4779,13 @@ pub const X509_STORE_CTX_get_crl_fn = ?*const fn (?*X509_STORE_CTX, [*c]?*X509_C
 pub const X509_STORE_CTX_check_crl_fn = ?*const fn (?*X509_STORE_CTX, ?*X509_CRL) callconv(.C) c_int;
 pub const X509_STORE_CTX_cert_crl_fn = ?*const fn (?*X509_STORE_CTX, ?*X509_CRL, ?*X509) callconv(.C) c_int;
 pub const X509_STORE_CTX_check_policy_fn = ?*const fn (?*X509_STORE_CTX) callconv(.C) c_int;
-pub const X509_STORE_CTX_lookup_certs_fn = ?*const fn (?*X509_STORE_CTX, ?*X509_NAME) callconv(.C) ?*struct_stack_st_X509;
-pub const X509_STORE_CTX_lookup_crls_fn = ?*const fn (?*X509_STORE_CTX, ?*X509_NAME) callconv(.C) ?*struct_stack_st_X509_CRL;
+pub const X509_STORE_CTX_lookup_certs_fn = ?*const fn (?*X509_STORE_CTX, ?X509.Name) callconv(.C) ?*struct_stack_st_X509;
+pub const X509_STORE_CTX_lookup_crls_fn = ?*const fn (?*X509_STORE_CTX, ?X509.Name) callconv(.C) ?*struct_stack_st_X509_CRL;
 pub const X509_STORE_CTX_cleanup_fn = ?*const fn (?*X509_STORE_CTX) callconv(.C) c_int;
 pub extern fn X509_STORE_set_depth(store: ?*X509_STORE, depth: c_int) c_int;
 pub extern fn X509_STORE_CTX_set_depth(ctx: ?*X509_STORE_CTX, depth: c_int) void;
-pub extern fn X509_OBJECT_idx_by_subject(h: ?*struct_stack_st_X509_OBJECT, @"type": c_int, name: ?*X509_NAME) c_int;
-pub extern fn X509_OBJECT_retrieve_by_subject(h: ?*struct_stack_st_X509_OBJECT, @"type": c_int, name: ?*X509_NAME) ?*X509_OBJECT;
+pub extern fn X509_OBJECT_idx_by_subject(h: ?*struct_stack_st_X509_OBJECT, @"type": c_int, name: ?X509.Name) c_int;
+pub extern fn X509_OBJECT_retrieve_by_subject(h: ?*struct_stack_st_X509_OBJECT, @"type": c_int, name: ?X509.Name) ?*X509_OBJECT;
 pub extern fn X509_OBJECT_retrieve_match(h: ?*struct_stack_st_X509_OBJECT, x: ?*X509_OBJECT) ?*X509_OBJECT;
 pub extern fn X509_OBJECT_up_ref_count(a: ?*X509_OBJECT) c_int;
 pub extern fn X509_OBJECT_free_contents(a: ?*X509_OBJECT) void;
@@ -4788,8 +4795,8 @@ pub extern fn X509_STORE_new() ?*X509_STORE;
 pub extern fn X509_STORE_up_ref(store: ?*X509_STORE) c_int;
 pub extern fn X509_STORE_free(v: ?*X509_STORE) void;
 pub extern fn X509_STORE_get0_objects(st: ?*X509_STORE) ?*struct_stack_st_X509_OBJECT;
-pub extern fn X509_STORE_get1_certs(st: ?*X509_STORE_CTX, nm: ?*X509_NAME) ?*struct_stack_st_X509;
-pub extern fn X509_STORE_get1_crls(st: ?*X509_STORE_CTX, nm: ?*X509_NAME) ?*struct_stack_st_X509_CRL;
+pub extern fn X509_STORE_get1_certs(st: ?*X509_STORE_CTX, nm: ?X509.Name) ?*struct_stack_st_X509;
+pub extern fn X509_STORE_get1_crls(st: ?*X509_STORE_CTX, nm: ?X509.Name) ?*struct_stack_st_X509_CRL;
 pub extern fn X509_STORE_set_flags(ctx: ?*X509_STORE, flags: c_ulong) c_int;
 pub extern fn X509_STORE_set_purpose(ctx: ?*X509_STORE, purpose: c_int) c_int;
 pub extern fn X509_STORE_set_trust(ctx: ?*X509_STORE, trust: c_int) c_int;
@@ -4833,7 +4840,7 @@ pub extern fn X509_LOOKUP_hash_dir() ?*X509_LOOKUP_METHOD;
 // pub extern fn X509_LOOKUP_file() ?*X509_LOOKUP_METHOD;
 pub extern fn X509_STORE_add_cert(ctx: ?*X509_STORE, x: ?*X509) c_int;
 pub extern fn X509_STORE_add_crl(ctx: ?*X509_STORE, x: ?*X509_CRL) c_int;
-pub extern fn X509_STORE_get_by_subject(vs: ?*X509_STORE_CTX, @"type": c_int, name: ?*X509_NAME, ret: ?*X509_OBJECT) c_int;
+pub extern fn X509_STORE_get_by_subject(vs: ?*X509_STORE_CTX, @"type": c_int, name: ?X509.Name, ret: ?*X509_OBJECT) c_int;
 pub extern fn X509_LOOKUP_ctrl(ctx: ?*X509_LOOKUP, cmd: c_int, argc: [*c]const u8, argl: c_long, ret: [*c][*c]u8) c_int;
 // pub extern fn X509_load_cert_file(ctx: ?*X509_LOOKUP, file: [*c]const u8, @"type": c_int) c_int;
 // pub extern fn X509_load_crl_file(ctx: ?*X509_LOOKUP, file: [*c]const u8, @"type": c_int) c_int;
@@ -4841,7 +4848,7 @@ pub extern fn X509_LOOKUP_ctrl(ctx: ?*X509_LOOKUP, cmd: c_int, argc: [*c]const u
 pub extern fn X509_LOOKUP_new(method: ?*X509_LOOKUP_METHOD) ?*X509_LOOKUP;
 pub extern fn X509_LOOKUP_free(ctx: ?*X509_LOOKUP) void;
 pub extern fn X509_LOOKUP_init(ctx: ?*X509_LOOKUP) c_int;
-pub extern fn X509_LOOKUP_by_subject(ctx: ?*X509_LOOKUP, @"type": c_int, name: ?*X509_NAME, ret: ?*X509_OBJECT) c_int;
+pub extern fn X509_LOOKUP_by_subject(ctx: ?*X509_LOOKUP, @"type": c_int, name: ?X509.Name, ret: ?*X509_OBJECT) c_int;
 pub extern fn X509_LOOKUP_shutdown(ctx: ?*X509_LOOKUP) c_int;
 // pub extern fn X509_STORE_load_locations(ctx: ?*X509_STORE, file: [*c]const u8, dir: [*c]const u8) c_int;
 pub extern fn X509_STORE_set_default_paths(ctx: ?*X509_STORE) c_int;
@@ -17227,9 +17234,9 @@ pub const X509_VERSION_3 = @as(c_int, 2);
 pub const X509_CRL_VERSION_1 = @as(c_int, 0);
 pub const X509_CRL_VERSION_2 = @as(c_int, 1);
 pub const X509_REQ_VERSION_1 = @as(c_int, 0);
-pub inline fn X509_extract_key(x: anytype) @TypeOf(X509_get_pubkey(x)) {
-    return X509_get_pubkey(x);
-}
+// pub inline fn X509_extract_key(x: anytype) @TypeOf(X509_get_pubkey(x)) {
+//     return X509_get_pubkey(x);
+// }
 pub inline fn X509_REQ_extract_key(a: anytype) @TypeOf(X509_REQ_get_pubkey(a)) {
     return X509_REQ_get_pubkey(a);
 }
@@ -18601,7 +18608,7 @@ pub const RIPEMD160state_st = struct_RIPEMD160state_st;
 pub const X509_VERIFY_PARAM_st = struct_X509_VERIFY_PARAM_st;
 pub const X509_crl_st = struct_X509_crl_st;
 pub const X509_extension_st = struct_X509_extension_st;
-pub const x509_st = struct_x509_st;
+// pub const x509_st = struct_x509_st;
 pub const openssl_method_common_st = struct_openssl_method_common_st;
 pub const rsa_meth_st = struct_rsa_meth_st;
 pub const stack_st_void = struct_stack_st_void;
@@ -18618,8 +18625,8 @@ pub const evp_cipher_st = struct_evp_cipher_st;
 pub const evp_cipher_info_st = struct_evp_cipher_info_st;
 pub const private_key_st = struct_private_key_st;
 pub const X509_info_st = struct_X509_info_st;
-pub const X509_name_entry_st = struct_X509_name_entry_st;
-pub const X509_name_st = struct_X509_name_st;
+// pub const X509_name_entry_st = struct_X509_name_entry_st;
+// pub const X509_name_st = struct_X509_name_st;
 pub const X509_req_st = struct_X509_req_st;
 pub const X509_sig_st = struct_X509_sig_st;
 pub const bignum_ctx = struct_bignum_ctx;

@@ -16,7 +16,7 @@ const Which = @import("../../../which.zig");
 const uws = bun.uws;
 const ZigString = JSC.ZigString;
 const BoringSSL = bun.BoringSSL;
-const X509 = @import("./x509.zig");
+const BunX509 = @import("./x509.zig");
 const Async = bun.Async;
 const uv = bun.windows.libuv;
 const H2FrameParser = @import("./h2_frame_parser.zig").H2FrameParser;
@@ -3172,13 +3172,13 @@ fn NewSocket(comptime ssl: bool) type {
                 if (this.handlers.is_server) {
                     const cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
                     if (cert) |x509| {
-                        return X509.toJS(x509, globalObject);
+                        return BunX509.toJS(x509, globalObject);
                     }
                 }
 
                 const cert_chain = BoringSSL.SSL_get_peer_cert_chain(ssl_ptr) orelse return JSValue.jsUndefined();
                 const cert = BoringSSL.sk_X509_value(cert_chain, 0) orelse return JSValue.jsUndefined();
-                return X509.toJS(cert, globalObject);
+                return BunX509.toJS(cert, globalObject);
             }
             var cert: ?*BoringSSL.X509 = null;
             if (this.handlers.is_server) {
@@ -3208,7 +3208,7 @@ fn NewSocket(comptime ssl: bool) type {
             const cert = BoringSSL.SSL_get_certificate(ssl_ptr);
 
             if (cert) |x509| {
-                return X509.toJS(x509, globalObject);
+                return BunX509.toJS(x509, globalObject);
             }
             return JSValue.jsUndefined();
         }

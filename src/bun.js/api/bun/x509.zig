@@ -1,3 +1,4 @@
+//! TODO (@DonIsaac) [replace with crypto.X509Certificate](https://github.com/oven-sh/bun/pull/15585).
 const BoringSSL = bun.BoringSSL;
 const bun = @import("root").bun;
 const ZigString = JSC.ZigString;
@@ -5,6 +6,7 @@ const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
+const X509 = @import("../../../deps/boringssl.zig").X509;
 
 fn x509GetNameObject(globalObject: *JSGlobalObject, name: ?*BoringSSL.X509_NAME) bun.JSError!JSValue {
     const cnt = BoringSSL.X509_NAME_entry_count(name);
@@ -434,17 +436,16 @@ fn toUpper(slice: []u8) void {
     }
 }
 
-pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) bun.JSError!JSValue {
+pub fn toJS(cert: *X509, globalObject: *JSGlobalObject) bun.JSError!JSValue {
     const bio = BoringSSL.BIO_new(BoringSSL.BIO_s_mem()) orelse {
         return globalObject.throw("Failed to create BIO", .{});
     };
     defer _ = BoringSSL.BIO_free(bio);
     var result = JSValue.createEmptyObject(globalObject, 8);
-    // X509_check_ca() returns a range of values. Only 1 means "is a CA"
-    const is_ca = BoringSSL.X509_check_ca(cert) == 1;
-    const subject = BoringSSL.X509_get_subject_name(cert);
+    const is_ca = cert.isCA();
+    const subject = cert.subject();
+    const issuer = cert.issuer();
     result.put(globalObject, ZigString.static("subject"), try x509GetNameObject(globalObject, subject));
-    const issuer = BoringSSL.X509_get_issuer_name(cert);
     result.put(globalObject, ZigString.static("issuer"), try x509GetNameObject(globalObject, issuer));
     result.put(globalObject, ZigString.static("subjectaltname"), x509GetSubjectAltNameString(globalObject, bio, cert));
     result.put(globalObject, ZigString.static("infoAccess"), x509GetInfoAccessString(globalObject, bio, cert));

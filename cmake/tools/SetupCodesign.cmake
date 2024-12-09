@@ -85,8 +85,6 @@ if(ENABLE_CODESIGN AND APPLE)
     endif()
   endif()
 
-  optionx(APPLE_CODESIGN_IDENTITY_PASSWORD STRING "Password for the code signing identity .p12 file" DEFAULT "" SECRET)
-
   execute_process(
     COMMAND ${SECURITY_PROGRAM} find-identity -v -p codesigning ${APPLE_CODESIGN_KEYCHAIN_PATH}
     COMMAND_ECHO STDOUT
@@ -99,6 +97,8 @@ if(ENABLE_CODESIGN AND APPLE)
   if(FIND_IDENTITY_ERROR)
     message(FATAL_ERROR "Failed to find identity ${APPLE_CODESIGN_IDENTITY} in keychain ${APPLE_CODESIGN_KEYCHAIN_FILENAME}: ${FIND_IDENTITY_ERROR}")
   endif()
+
+  optionx(APPLE_CODESIGN_IDENTITY_PASSWORD STRING "Password for the code signing identity .p12 file" DEFAULT "" SECRET)
 
   if(NOT FIND_IDENTITY_OUTPUT MATCHES "${APPLE_CODESIGN_IDENTITY}")
     execute_process(

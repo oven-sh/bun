@@ -1,7 +1,6 @@
 import { t, fn } from "bindgen";
 
-fn({
-  name: "add",
+export const add = fn({
   args: {
     global: t.globalObject,
     a: t.i32,
@@ -10,8 +9,7 @@ fn({
   ret: t.i32,
 });
 
-fn({
-  name: "requiredAndOptionalArg",
+export const requiredAndOptionalArg = fn({
   args: {
     a: t.boolean,
     b: t.usize.optional,

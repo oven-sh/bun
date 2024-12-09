@@ -1,6 +1,14 @@
 // This is the public API for `bind.ts` files
 // It is aliased as `import {} from 'bindgen'`
-import { isType, dictionaryImpl, oneOfImpl, registerFunction, TypeImpl, type TypeKind } from "./bindgen-lib-internal";
+import {
+  isType,
+  dictionaryImpl,
+  oneOfImpl,
+  registerFunction,
+  TypeImpl,
+  type TypeKind,
+  isFunc,
+} from "./bindgen-lib-internal";
 
 export type Type<T, K extends TypeKind = TypeKind, Flags extends boolean | null = null> = {
   [isType]: true | [T, K, Flags];
@@ -208,7 +216,6 @@ export type FuncOptions = FuncMetadata &
   );
 
 export interface FuncMetadata {
-  name: string;
   /**
    * The namespace where the implementation is, by default it's in the root.
    */
@@ -220,6 +227,8 @@ export interface FuncMetadata {
   exposedOn?: ExposedOn;
 }
 
+export type FuncReference = { [isFunc]: true };
+
 export type ExposedOn = "JSGlobalObject" | "BunObject";
 
 export interface FuncVariant {
@@ -229,5 +238,5 @@ export interface FuncVariant {
 }
 
 export function fn(opts: FuncOptions) {
-  return registerFunction(opts);
+  return registerFunction(opts) as FuncReference;
 }

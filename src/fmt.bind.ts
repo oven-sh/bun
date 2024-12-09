@@ -4,8 +4,7 @@ const implNamespace = "js_bindings";
 
 export const Formatter = t.stringEnum("highlight-javascript", "escape-powershell");
 
-fn({
-  name: "fmtString",
+export const fmtString = fn({
   implNamespace,
   args: {
     global: t.globalObject,

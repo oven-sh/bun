@@ -28,8 +28,9 @@ import {
   ArgStrategyChildItem,
   inspect,
   pascal,
-  cAbiTypeForEnum,
   alignForward,
+  isFunc,
+  Func,
 } from "./bindgen-lib-internal";
 import assert from "node:assert";
 import { argParse, writeIfNotChanged } from "./helpers";
@@ -382,7 +383,6 @@ function emitConvertValue(
 ) {
   if (decl === "declare") {
     addHeaderForType(type);
-    cpp.add(`${type.cppName()} `);
   }
 
   const simpleType = getSimpleIdlType(type);
@@ -402,6 +402,10 @@ function emitConvertValue(
       }
     }
 
+    if (decl === "declare") {
+      cpp.add(`${type.cppName()} `);
+    }
+
     let exceptionHandler = exceptionHandlerBody
       ? `, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { ${exceptionHandlerBody} }`
       : "";
@@ -414,25 +418,41 @@ function emitConvertValue(
     cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
   } else {
     switch (type.kind) {
-      case "any":
+      case "any": {
+        if (decl === "declare") {
+          cpp.add(`${type.cppName()} `);
+        }
         cpp.line(`${storageLocation} = JSC::JSValue::encode(${jsValueRef});`);
         break;
+      }
       case "USVString":
       case "DOMString":
-      case "ByteString":
-        cpp.line(
-          `${storageLocation} = Bun::toString(WebCore::convert<WebCore::IDL${type.kind}>(*global, ${jsValueRef}));`,
-        );
+      case "ByteString": {
+        const temp = cpp.nextTemporaryName("wtfString");
+        cpp.line(`WTF::String ${temp} = WebCore::convert<WebCore::IDL${type.kind}>(*global, ${jsValueRef});`);
         cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
+
+        if (decl === "declare") {
+          cpp.add(`${type.cppName()} `);
+        }
+        cpp.line(`${storageLocation} = Bun::toString(${temp});`);
         break;
-      case "UTF8String":
-        cpp.line(
-          `${storageLocation} = Bun::toString(WebCore::convert<WebCore::IDLDOMString>(*global, ${jsValueRef}));`,
-        );
+      }
+      case "UTF8String": {
+        const temp = cpp.nextTemporaryName("wtfString");
+        cpp.line(`WTF::String ${temp} = WebCore::convert<WebCore::IDLDOMString>(*global, ${jsValueRef});`);
         cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
+
+        if (decl === "declare") {
+          cpp.add(`${type.cppName()} `);
+        }
+        cpp.line(`${storageLocation} = Bun::toString(${temp});`);
         break;
+      }
       case "dictionary": {
-        if (decl === "declare") cpp.line(`${storageLocation};`);
+        if (decl === "declare") {
+          cpp.line(`${type.cppName()} ${storageLocation};`);
+        }
         cpp.line(`if (!convert${type.cppInternalName()}(&${storageLocation}, global, ${jsValueRef}))`);
         cpp.indent();
         cpp.line(`return {};`);
@@ -507,7 +527,10 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
     cpp.line(`if (isNullOrUndefined) {`);
     cpp.line(`    propValue = JSC::jsUndefined();`);
     cpp.line(`} else {`);
-    cpp.line(`    propValue = object->get(global, JSC::Identifier::fromString(vm, ${str(key)}_s));`);
+    headers.add("ObjectBindings.h");
+    cpp.line(
+      `    propValue = Bun::getIfPropertyExistsPrototypePollutionMitigation(vm, global, object, JSC::Identifier::fromString(vm, ${str(key)}_s));`,
+    );
     cpp.line(`    RETURN_IF_EXCEPTION(throwScope, false);`);
     cpp.line(`}`);
     cpp.line(`if (!propValue.isUndefined()) {`);
@@ -791,22 +814,37 @@ const unsortedFiles = new Bun.Glob("**/*.bind.ts").scanSync({
   cwd: src,
 });
 // Sort for deterministic output
-for (const file of [...unsortedFiles].sort()) {
-  const exports = import.meta.require(file);
+for (const fileName of [...unsortedFiles].sort()) {
+  const zigFile = path.relative(src, fileName.replace(/\.bind\.ts$/, ".zig"));
+  let file = files.get(zigFile);
+  if (!file) {
+    file = { functions: [], typedefs: [] };
+    files.set(zigFile, file);
+  }
+
+  const exports = import.meta.require(fileName);
 
   // Mark all exported TypeImpl as reachable
-  const zigFile = path.relative(src, file.replace(/\.bind\.ts$/, ".zig"));
-  for (const [key, value] of Object.entries(exports)) {
+  for (let [key, value] of Object.entries(exports)) {
+    if (value == null || typeof value !== "object") continue;
+
     if (value instanceof TypeImpl) {
-      const file = files.get(zigFile);
       value.assignName(key);
       value.markReachable();
-      const td = { name: key, type: value };
-      if (!file) {
-        files.set(zigFile, { functions: [], typedefs: [td] });
-      } else {
-        file.typedefs.push(td);
-      }
+      file.typedefs.push({ name: key, type: value });
+    }
+
+    if (value[isFunc]) {
+      const func = value as Func;
+      func.name = key;
+    }
+  }
+
+  for (const fn of file.functions) {
+    if (fn.name === "") {
+      const err = new Error(`This function definition needs to be exported`);
+      err.stack = `Error: ${err.message}\n${fn.snapshot}`;
+      throw err;
     }
   }
 }
@@ -856,8 +894,6 @@ const fileMap = new Map<string, string>();
 const fileNames = new Set<string>();
 
 for (const [filename, { functions, typedefs }] of files) {
-  if (functions.length === 0) continue;
-
   const basename = path.basename(filename, ".zig");
   let varName = basename;
   if (fileNames.has(varName)) {
@@ -865,6 +901,8 @@ for (const [filename, { functions, typedefs }] of files) {
   }
   fileNames.add(varName);
   fileMap.set(filename, varName);
+
+  if (functions.length === 0) continue;
 
   for (const td of typedefs) {
     typeHashToNamespace.set(td.type.hash(), varName);
@@ -895,7 +933,7 @@ for (const type of typeHashToReachableType.values()) {
 
 for (const [filename, { functions, typedefs }] of files) {
   const namespaceVar = fileMap.get(filename)!;
-  assert(namespaceVar);
+  assert(namespaceVar, `namespaceVar not found for ${filename}, ${inspect(fileMap)}`);
   zigInternal.line(`const import_${namespaceVar} = @import(${str(path.relative(src + "/bun.js", filename))});`);
 
   zig.line(`/// Generated for "src/${filename}"`);
@@ -964,6 +1002,7 @@ for (const [filename, { functions, typedefs }] of files) {
     );
     cpp.line(`{`);
     cpp.indent();
+    cpp.resetTemporaries();
 
     if (fn.variants.length === 1) {
       emitCppCallToVariant(fn.name, fn.variants[0], extDispatchVariant(namespaceVar, fn.name, 1));
@@ -1033,10 +1072,10 @@ for (const [filename, { functions, typedefs }] of files) {
       zigInternal.indent();
 
       zigInternal.line(
-        `if (!@hasDecl(import_${namespaceVar}${fn.zigPrefix.length > 0 ? "." + fn.zigPrefix.slice(0, -1) : ""}, ${str(vari.impl)}))`,
+        `if (!@hasDecl(import_${namespaceVar}${fn.zigPrefix.length > 0 ? "." + fn.zigPrefix.slice(0, -1) : ""}, ${str(fn.name + vari.suffix)}))`,
       );
       zigInternal.line(
-        `    @compileError(${str(`Missing binding declaration "${fn.zigPrefix}${vari.impl}" in "${path.basename(filename)}"`)});`,
+        `    @compileError(${str(`Missing binding declaration "${fn.zigPrefix}${fn.name + vari.suffix}" in "${path.basename(filename)}"`)});`,
       );
 
       for (const arg of vari.args) {
@@ -1055,7 +1094,7 @@ for (const [filename, { functions, typedefs }] of files) {
           break;
       }
 
-      zigInternal.line(`${zid("import_" + namespaceVar)}.${fn.zigPrefix}${vari.impl}(`);
+      zigInternal.line(`${zid("import_" + namespaceVar)}.${fn.zigPrefix}${fn.name + vari.suffix}(`);
       zigInternal.indent();
       for (const arg of vari.args) {
         const argName = arg.zigMappedName!;

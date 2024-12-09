@@ -229,7 +229,6 @@ pub extern fn JSC__JSValue__bigIntSum(arg0: *bindings.JSGlobalObject, arg1: JSC_
 pub extern fn JSC__JSValue__getClassName(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getErrorsProperty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__getIfPropertyExistsFromPath(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSValue__getIfPropertyExistsImpl(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]const u8, arg3: u32) JSC__JSValue;
 pub extern fn JSC__JSValue__getLengthIfPropertyExistsInternal(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) f64;
 pub extern fn JSC__JSValue__getNameProperty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getPrototype(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;

@@ -41,8 +41,7 @@ Then describe the API schema using a `.bind.ts` function. The binding file goes 
 ```ts#src/bun.js/math.bind.ts
 import { t, fn } from 'bindgen';
 
-fn({
-  name: 'add',
+export const add = fn({
   args: {
     global: t.globalObject,
     a: t.i32,
@@ -85,8 +84,7 @@ A `variants` can specify multiple variants (also known as overloads).
 ```ts#src/bun.js/math.bind.ts
 import { t, fn } from 'bindgen';
 
-fn({
-  name: 'action',
+export const action = fn({
   variants: [
     {
       args: {
@@ -135,8 +133,7 @@ export const Formatter = t.stringEnum(
   "escape-powershell",
 );
 
-fn({
-  name: "fmtString",
+export const fmtString = fn({
   args: {
     global: t.globalObject,
     code: t.UTF8String,
@@ -177,8 +174,7 @@ Integer types allow customizing the overflow behavior with `clamp` or `enforceRa
 ```ts
 import { t, fn } from "bindgen";
 
-fn({
-  name: "add",
+export const add = fn({
   args: {
     global: t.globalObject,
     // enforce in i32 range

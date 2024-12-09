@@ -280,7 +280,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
   }
 
   #generateName() {
-    return `anon_${this.ownerFile}_${this.hash()}`;
+    return `bindgen_${this.ownerFile}_${this.hash()}`;
   }
 
   /**
@@ -635,7 +635,10 @@ export function dictionaryImpl(record: Record<string, TypeImpl>): TypeImpl {
   return new TypeImpl("dictionary", out);
 }
 
+export const isFunc = Symbol("isFunc");
+
 export interface Func {
+  [isFunc]: true;
   name: string;
   zigPrefix: string;
   snapshot: string;
@@ -644,7 +647,7 @@ export interface Func {
 }
 
 export interface Variant {
-  impl: string;
+  suffix: string;
   args: Arg[];
   ret: TypeImpl;
   returnStrategy?: ReturnStrategy;
@@ -739,7 +742,7 @@ export function registerFunction(opts: FuncOptions) {
       const { minRequiredArgs } = validateVariant(variant);
       variants.push({
         ...variant,
-        impl: opts.name + i,
+        suffix: `${i}`,
         minRequiredArgs,
       } as unknown as Variant);
       i++;
@@ -747,7 +750,7 @@ export function registerFunction(opts: FuncOptions) {
   } else {
     const { minRequiredArgs } = validateVariant(opts);
     variants.push({
-      impl: opts.name,
+      suffix: "",
       args: Object.entries(opts.args).map(([name, type]) => ({ name, type })) as Arg[],
       ret: opts.ret as TypeImpl,
       minRequiredArgs,
@@ -755,7 +758,8 @@ export function registerFunction(opts: FuncOptions) {
   }
 
   const func: Func = {
-    name: opts.name,
+    [isFunc]: true,
+    name: "",
     zigPrefix: opts.implNamespace ? `${opts.implNamespace}.` : "",
     snapshot,
     zigFile,
@@ -763,6 +767,7 @@ export function registerFunction(opts: FuncOptions) {
   };
   allFunctions.push(func);
   file.functions.push(func);
+  return func;
 }
 
 function validateVariant(variant: any) {
@@ -1001,6 +1006,8 @@ export class CodeWriter {
   level = 0;
   buffer = "";
 
+  temporaries = new Set<string>();
+
   line(s?: string) {
     this.add((s ?? "") + "\n");
   }
@@ -1019,5 +1026,20 @@ export class CodeWriter {
 
   trimLastNewline() {
     this.buffer = this.buffer.trimEnd();
+  }
+
+  resetTemporaries() {
+    this.temporaries.clear();
+  }
+
+  nextTemporaryName(label: string) {
+    let i = 0;
+    let name = `${label}_${i}`;
+    while (this.temporaries.has(name)) {
+      i++;
+      name = `${label}_${i}`;
+    }
+    this.temporaries.add(name);
+    return name;
   }
 }

@@ -5,8 +5,7 @@ export const BracesOptions = t.dictionary({
   parse: t.boolean.default(false),
 });
 
-fn({
-  name: "braces",
+export const braces = fn({
   args: {
     global: t.globalObject,
     input: t.DOMString,
@@ -15,8 +14,7 @@ fn({
   ret: t.any,
 });
 
-fn({
-  name: "gc",
+export const gc = fn({
   args: {
     vm: t.zigVirtualMachine,
     force: t.boolean.default(false),
@@ -29,8 +27,7 @@ export const StringWidthOptions = t.dictionary({
   ambiguousIsNarrow: t.boolean.default(false),
 });
 
-fn({
-  name: "stringWidth",
+export const stringWidth = fn({
   args: {
     str: t.DOMString.default(""),
     opts: StringWidthOptions.default({}),

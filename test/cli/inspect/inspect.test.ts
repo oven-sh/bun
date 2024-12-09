@@ -1,8 +1,9 @@
 import { Subprocess, spawn } from "bun";
-import { afterEach, expect, test, describe, beforeAll } from "bun:test";
+import { afterEach, expect, test, describe, beforeAll, afterAll } from "bun:test";
 import { bunEnv, bunExe, isPosix, randomPort, tempDirWithFiles, tmpdirSync } from "harness";
 import { WebSocket } from "ws";
 import { join } from "node:path";
+import fs from "fs";
 let inspectee: Subprocess;
 import { SocketFramer } from "./socket-framer";
 import { JUnitReporter, InspectorSession, connect } from "./junit-reporter";
@@ -304,8 +305,14 @@ describe("unix domain socket without websocket", () => {
   let randomSocketPath: () => string;
 
   beforeAll(() => {
-    tempdir = tmpdirSync("unix-domain-socket");
+    // Create .tmp in root repo directory to avoid long paths on Windows
+    tempdir = ".tmp";
+    fs.mkdirSync(tempdir, { recursive: true });
     randomSocketPath = randomSocketPathFn(tempdir);
+  });
+
+  afterAll(() => {
+    fs.rmdirSync(tempdir, { recursive: true });
   });
 
   if (isPosix) {

@@ -402,7 +402,7 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
 
     const build_code = /* ts */ `
     import * as path from "path";
-    const tempdir = process.env.BUN_TEST_TEMP_DIR ?? tmpdir;
+    const tempdir = process.env.BUN_TEST_TEMP_DIR;
     const filter = /\.ts/;
     const resultPromise = await Bun.build({
       outdir: "dist",
@@ -563,22 +563,26 @@ console.log(JSON.stringify(json))
     },
     {
       name: "index.js",
-      contents: /* ts */ `console.log('HELLO FRIENDS')`,
+      contents: /* ts */ `console.log('HELLO FRIENDS');
+export default {}`,
       loader: "js",
     },
     {
       name: "index.ts",
-      contents: /* ts */ `console.log('HELLO FRIENDS')`,
+      contents: /* ts */ `console.log('HELLO FRIENDS');
+export default {}`,
       loader: "ts",
     },
     {
       name: "lmao.jsx",
-      contents: /* ts */ `console.log('HELLO FRIENDS')`,
+      contents: /* ts */ `console.log('HELLO FRIENDS');
+export default {}`,
       loader: "jsx",
     },
     {
       name: "lmao.tsx",
-      contents: /* ts */ `console.log('HELLO FRIENDS')`,
+      contents: /* ts */ `console.log('HELLO FRIENDS');
+export default {}`,
       loader: "tsx",
     },
     {
@@ -621,6 +625,7 @@ console.log(JSON.stringify(json))
         ],
       });
 
+      if (!result.success) console.log(result);
       expect(result.success).toBeTrue();
     });
   }

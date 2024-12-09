@@ -1,4 +1,5 @@
 const nativeTests = require("./build/Release/napitests.node");
+const secondAddon = require("./build/Release/second_addon.node");
 
 nativeTests.test_napi_class_constructor_handle_scope = () => {
   const NapiClass = nativeTests.get_class_with_constructor();
@@ -268,6 +269,21 @@ nativeTests.test_type_tag = () => {
   console.log("o1 matches o2:", nativeTests.check_tag(o1, 3, 4));
   console.log("o2 matches o1:", nativeTests.check_tag(o2, 1, 2));
   console.log("o2 matches o2:", nativeTests.check_tag(o2, 3, 4));
+};
+
+nativeTests.test_instance_data = () => {
+  const first_data = Math.floor(Math.random() * 1e9) + 1337;
+  const results = [];
+
+  results.push(nativeTests.get_instance_data() === null);
+  results.push(nativeTests.set_instance_data(first_data) === undefined);
+  results.push(nativeTests.get_instance_data() === first_data);
+  results.push(secondAddon.get_instance_data() === 42);
+  results.push(secondAddon.get_instance_data() !== nativeTests.get_instance_data());
+
+  console.log(results.join(" "));
+
+  nativeTests.reset_instance_data();
 };
 
 module.exports = nativeTests;

@@ -319,6 +319,12 @@ describe("napi", () => {
       checkSameOutput("test_type_tag", []);
     });
   });
+
+  describe("instance data", () => {
+    it("works with multiple envs", () => {
+      checkSameOutput("test_instance_data", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

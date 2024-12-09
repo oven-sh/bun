@@ -2550,7 +2550,6 @@ extern "C" napi_status napi_get_value_external(napi_env env, napi_value value,
     return napi_ok;
 }
 
-// TODO: make this per addon instead of globally shared for ALL addons
 extern "C" napi_status napi_get_instance_data(napi_env env,
     void** data)
 {

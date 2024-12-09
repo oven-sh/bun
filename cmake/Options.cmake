@@ -10,7 +10,6 @@ optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
 
 if(BUILDKITE)
   optionx(BUILDKITE_COMMIT STRING "The commit hash")
-  optionx(BUILDKITE_MESSAGE STRING "The commit message")
 endif()
 
 optionx(CMAKE_BUILD_TYPE "Debug|Release|RelWithDebInfo|MinSizeRel" "The build type to use" REQUIRED)
@@ -21,7 +20,7 @@ else()
   setx(RELEASE OFF)
 endif()
 
-if(CMAKE_BUILD_TYPE MATCHES "Debug|RelWithDebInfo")
+if(CMAKE_BUILD_TYPE MATCHES "Debug")
   setx(DEBUG ON)
 else()
   setx(DEBUG OFF)
@@ -49,6 +48,16 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
+if(LINUX)
+  if(EXISTS "/etc/alpine-release")
+    set(DEFAULT_ABI "musl")
+  else()
+    set(DEFAULT_ABI "gnu")
+  endif()
+
+  optionx(ABI "musl|gnu" "The ABI to use (e.g. musl, gnu)" DEFAULT ${DEFAULT_ABI})
+endif()
+
 if(ARCH STREQUAL "x64")
   optionx(ENABLE_BASELINE BOOL "If baseline features should be used for older CPUs (e.g. disables AVX, AVX2)" DEFAULT OFF)
 endif()
@@ -56,14 +65,7 @@ endif()
 optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEBUG})
 optionx(ENABLE_ASSERTIONS BOOL "If debug assertions should be enabled" DEFAULT ${DEBUG})
 
-if(BUILDKITE_MESSAGE AND BUILDKITE_MESSAGE MATCHES "\\[release build\\]")
-  message(STATUS "Switched to release build, since commit message contains: \"[release build]\"")
-  set(DEFAULT_CANARY OFF)
-else()
-  set(DEFAULT_CANARY ON)
-endif()
-
-optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ${DEFAULT_CANARY})
+optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ON)
 
 if(ENABLE_CANARY AND BUILDKITE)
   execute_process(
@@ -108,7 +110,7 @@ else()
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET
   )
-  if(NOT DEFAULT_REVISION)
+  if(NOT DEFAULT_REVISION AND NOT DEFINED ENV{GIT_SHA} AND NOT DEFINED ENV{GITHUB_SHA})
     set(DEFAULT_REVISION "unknown")
   endif()
 endif()
@@ -138,7 +140,7 @@ if(CMAKE_HOST_LINUX AND NOT WIN32 AND NOT APPLE)
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET
   )
-  if(LINUX_DISTRO MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux\"|NAME=\"openSUSE Tumbleweed\"")
+  if(LINUX_DISTRO MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux( ARM)?\"|NAME=\"openSUSE Tumbleweed\"")
     set(DEFAULT_STATIC_LIBATOMIC OFF)
   endif()
 endif()
@@ -156,4 +158,3 @@ optionx(USE_WEBKIT_ICU BOOL "Use the ICU libraries from WebKit" DEFAULT ${DEFAUL
 optionx(ERROR_LIMIT STRING "Maximum number of errors to show when compiling C++ code" DEFAULT "100")
 
 list(APPEND CMAKE_ARGS -DCMAKE_EXPORT_COMPILE_COMMANDS=ON)
-

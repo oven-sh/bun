@@ -395,11 +395,9 @@ pub const Target = enum {
         .{ "node", .node },
     });
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Target {
-        if (!value.jsType().isStringLike()) {
-            JSC.throwInvalidArguments("target must be a string", .{}, global, exception);
-
-            return null;
+    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!?Target {
+        if (!value.isString()) {
+            return global.throwInvalidArguments("target must be a string", .{});
         }
         return Map.fromJS(global, value);
     }
@@ -612,17 +610,15 @@ pub const Format = enum {
         .{ "internal_bake_dev", .internal_bake_dev },
     });
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Format {
+    pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue) bun.JSError!?Format {
         if (format.isUndefinedOrNull()) return null;
 
-        if (!format.jsType().isStringLike()) {
-            JSC.throwInvalidArguments("format must be a string", .{}, global, exception);
-            return null;
+        if (!format.isString()) {
+            return global.throwInvalidArguments("format must be a string", .{});
         }
 
         return Map.fromJS(global, format) orelse {
-            JSC.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{}, global, exception);
-            return null;
+            return global.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{});
         };
     }
 
@@ -660,7 +656,6 @@ pub const Loader = enum(u8) {
         if (experimental_css) {
             return switch (this) {
                 .file,
-                .css,
                 .napi,
                 .sqlite,
                 .sqlite_embedded,
@@ -731,12 +726,11 @@ pub const Loader = enum(u8) {
         return stdin_name.get(this);
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, loader: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Loader {
+    pub fn fromJS(global: *JSC.JSGlobalObject, loader: JSC.JSValue) bun.JSError!?Loader {
         if (loader.isUndefinedOrNull()) return null;
 
-        if (!loader.jsType().isStringLike()) {
-            JSC.throwInvalidArguments("loader must be a string", .{}, global, exception);
-            return null;
+        if (!loader.isString()) {
+            return global.throwInvalidArguments("loader must be a string", .{});
         }
 
         var zig_str = JSC.ZigString.init("");
@@ -744,8 +738,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            JSC.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, bunsh, or json", .{}, global, exception);
-            return null;
+            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, bunsh, or json", .{});
         };
     }
 
@@ -1461,6 +1454,7 @@ pub const BundleOptions = struct {
     tsconfig_override: ?string = null,
     target: Target = Target.browser,
     main_fields: []const string = Target.DefaultMainFields.get(Target.browser),
+    /// TODO: remove this in favor accessing bundler.log
     log: *logger.Log,
     external: ExternalModules = ExternalModules{},
     entry_points: []const string,
@@ -1719,6 +1713,11 @@ pub const BundleOptions = struct {
         }
 
         opts.conditions = try ESMConditions.init(allocator, opts.target.defaultConditions());
+
+        if (bun.FeatureFlags.breaking_changes_1_2) {
+            // This is currently done in DevServer by default, but not in Bun.build
+            @compileError("if (!production) { add \"development\" condition }");
+        }
 
         if (transform.conditions.len > 0) {
             opts.conditions.appendSlice(transform.conditions) catch bun.outOfMemory();
@@ -2072,42 +2071,58 @@ pub const OutputFile = struct {
     }
 
     /// Given the `--outdir` as root_dir, this will return the relative path to display in terminal
-    pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u8) ![]const u8 {
+    pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, longest_common_path: []const u8) ![]const u8 {
         switch (f.value) {
             .saved => {
                 var rel_path = f.dest_path;
-                if (f.dest_path.len > root_dir_path.len) {
-                    rel_path = resolve_path.relative(root_dir_path, f.dest_path);
+                if (f.dest_path.len > longest_common_path.len) {
+                    rel_path = resolve_path.relative(longest_common_path, f.dest_path);
                 }
                 return rel_path;
             },
             .buffer => |value| {
                 var rel_path = f.dest_path;
-                if (f.dest_path.len > root_dir_path.len) {
-                    rel_path = resolve_path.relative(root_dir_path, f.dest_path);
+
+                if (f.dest_path.len > longest_common_path.len) {
+                    rel_path = resolve_path.relative(longest_common_path, f.dest_path);
                     if (std.fs.path.dirname(rel_path)) |parent| {
-                        if (parent.len > root_dir_path.len) {
+                        if (parent.len > longest_common_path.len) {
                             try root_dir.makePath(parent);
                         }
                     }
                 }
 
-                var path_buf: bun.PathBuffer = undefined;
-                _ = try JSC.Node.NodeFS.writeFileWithPathBuffer(&path_buf, .{
-                    .data = .{ .buffer = .{
-                        .buffer = .{
-                            .ptr = @constCast(value.bytes.ptr),
-                            .len = value.bytes.len,
-                            .byte_len = value.bytes.len,
+                var handled_file_not_found = false;
+                while (true) {
+                    var path_buf: bun.PathBuffer = undefined;
+                    JSC.Node.NodeFS.writeFileWithPathBuffer(&path_buf, .{
+                        .data = .{ .buffer = .{
+                            .buffer = .{
+                                .ptr = @constCast(value.bytes.ptr),
+                                .len = value.bytes.len,
+                                .byte_len = value.bytes.len,
+                            },
+                        } },
+                        .encoding = .buffer,
+                        .mode = if (f.is_executable) 0o755 else 0o644,
+                        .dirfd = bun.toFD(root_dir.fd),
+                        .file = .{ .path = .{
+                            .string = JSC.PathString.init(rel_path),
+                        } },
+                    }).unwrap() catch |err| switch (err) {
+                        error.FileNotFound, error.ENOENT => {
+                            if (handled_file_not_found) return err;
+                            handled_file_not_found = true;
+                            try root_dir.makePath(
+                                std.fs.path.dirname(rel_path) orelse
+                                    return err,
+                            );
+                            continue;
                         },
-                    } },
-                    .encoding = .buffer,
-                    .mode = if (f.is_executable) 0o755 else 0o644,
-                    .dirfd = bun.toFD(root_dir.fd),
-                    .file = .{ .path = .{
-                        .string = JSC.PathString.init(rel_path),
-                    } },
-                }).unwrap();
+                        else => return err,
+                    };
+                    break;
+                }
 
                 return rel_path;
             },

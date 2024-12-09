@@ -45,8 +45,8 @@ fn ErrorBuilder(comptime code: Error, comptime fmt: [:0]const u8, Args: type) ty
       args: Args,
 
       // Throw this error as a JS exception
-      pub inline fn throw(this: @This()) void {
-        code.throw(this.globalThis, fmt, this.args);
+      pub inline fn throw(this: @This()) bun.JSError {
+        return code.throw(this.globalThis, fmt, this.args);
       }
 
       /// Turn this into a JSValue
@@ -88,10 +88,10 @@ listHeader += `
 `;
 
 zig += `
- 
+
 
   extern fn Bun__createErrorWithCode(globalThis: *JSC.JSGlobalObject, code: Error, message: *bun.String) JSC.JSValue;
-  
+
   /// Creates an Error object with the given error code.
   /// Derefs the message string.
   pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject, message: *bun.String) JSC.JSValue {
@@ -109,8 +109,8 @@ zig += `
     return toJS(this, globalThis, &message);
   }
 
-  pub fn throw(this: Error, globalThis: *JSC.JSGlobalObject, comptime fmt_str: [:0]const u8, args: anytype) void {
-    globalThis.throwValue(fmt(this, globalThis, fmt_str, args)); 
+  pub fn throw(this: Error, globalThis: *JSC.JSGlobalObject, comptime fmt_str: [:0]const u8, args: anytype) bun.JSError {
+    return globalThis.throwValue(fmt(this, globalThis, fmt_str, args));
   }
 
 };

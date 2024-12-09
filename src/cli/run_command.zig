@@ -194,7 +194,6 @@ pub const RunCommand = struct {
                     delimiter = 0;
                 },
 
-                // do we need to escape?
                 ' ' => {
                     delimiter = ' ';
                 },
@@ -236,24 +235,6 @@ pub const RunCommand = struct {
 
                     delimiter = 0;
                 },
-                // TODO: handle escape sequences properly
-                // https://github.com/oven-sh/bun/issues/53
-                '\\' => {
-                    delimiter = 0;
-
-                    if (entry_i + 1 < script.len) {
-                        switch (script[entry_i + 1]) {
-                            '"', '\'' => {
-                                entry_i += 1;
-                                continue;
-                            },
-                            '\\' => {
-                                entry_i += 1;
-                            },
-                            else => {},
-                        }
-                    }
-                },
                 else => {
                     delimiter = 0;
                 },
@@ -278,6 +259,8 @@ pub const RunCommand = struct {
         use_system_shell: bool,
     ) !void {
         const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
+        env.map.put("npm_lifecycle_event", name) catch unreachable;
+        env.map.put("npm_lifecycle_script", original_script) catch unreachable;
 
         var copy_script_capacity: usize = original_script.len;
         for (passthrough) |part| copy_script_capacity += 1 + part.len;
@@ -397,9 +380,8 @@ pub const RunCommand = struct {
                 if (signal.valid() and signal != .SIGINT and !silent) {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
-
-                    Global.raiseIgnoringPanicHandler(signal);
                 }
+                Global.raiseIgnoringPanicHandler(signal);
             },
 
             .err => |err| {
@@ -565,7 +547,7 @@ pub const RunCommand = struct {
                     },
 
                     .signaled => |signal| {
-                        if (!silent) {
+                        if (signal.valid() and signal != .SIGINT and !silent) {
                             Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to signal <b>{s}<r>", .{
                                 basenameOrBun(executable),
                                 signal.name() orelse "unknown",
@@ -889,6 +871,14 @@ pub const RunCommand = struct {
             if (package_json.version.len > 0) {
                 if (this_bundler.env.map.get(NpmArgs.package_version) == null) {
                     this_bundler.env.map.put(NpmArgs.package_version, package_json.version) catch unreachable;
+                }
+            }
+
+            if (package_json.config) |config| {
+                try this_bundler.env.map.ensureUnusedCapacity(config.count());
+                for (config.keys(), config.values()) |k, v| {
+                    const key = try bun.strings.concat(bun.default_allocator, &.{ "npm_package_config_", k });
+                    this_bundler.env.map.putAssumeCapacity(key, v);
                 }
             }
         }
@@ -1403,7 +1393,7 @@ pub const RunCommand = struct {
         var this_bundler: bundler.Bundler = undefined;
         const root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors, false);
         try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
-        this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
+        this_bundler.env.map.put("npm_command", "run-script") catch unreachable;
 
         if (script_name_to_search.len == 0) {
             // naked "bun run"
@@ -1440,17 +1430,19 @@ pub const RunCommand = struct {
                         );
                     }
 
-                    try runPackageScriptForeground(
-                        ctx,
-                        ctx.allocator,
-                        script_content,
-                        script_name_to_search,
-                        this_bundler.fs.top_level_dir,
-                        this_bundler.env,
-                        passthrough,
-                        ctx.debug.silent,
-                        ctx.debug.use_system_shell,
-                    );
+                    {
+                        try runPackageScriptForeground(
+                            ctx,
+                            ctx.allocator,
+                            script_content,
+                            script_name_to_search,
+                            this_bundler.fs.top_level_dir,
+                            this_bundler.env,
+                            passthrough,
+                            ctx.debug.silent,
+                            ctx.debug.use_system_shell,
+                        );
+                    }
 
                     temp_script_buffer[0.."post".len].* = "post".*;
 

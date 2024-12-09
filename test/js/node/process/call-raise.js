@@ -1,10 +1,10 @@
 import { dlopen } from "bun:ffi";
+import { libcPathForDlopen } from "harness";
 
 var lazyRaise;
 export function raise(signal) {
   if (!lazyRaise) {
-    const suffix = process.platform === "darwin" ? "dylib" : "so.6";
-    lazyRaise = dlopen(`libc.${suffix}`, {
+    lazyRaise = dlopen(libcPathForDlopen(), {
       raise: {
         args: ["int"],
         returns: "int",

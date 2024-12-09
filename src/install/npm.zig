@@ -275,7 +275,7 @@ pub const Registry = struct {
             return name[1..];
         }
 
-        pub fn fromAPI(name: string, registry_: Api.NpmRegistry, allocator: std.mem.Allocator, env: *DotEnv.Loader) !Scope {
+        pub fn fromAPI(name: string, registry_: Api.NpmRegistry, allocator: std.mem.Allocator, env: *DotEnv.Loader) OOM!Scope {
             var registry = registry_;
 
             // Support $ENV_VAR for registry URLs
@@ -652,8 +652,8 @@ pub const OperatingSystem = enum(u16) {
     }
 
     const JSC = bun.JSC;
-    pub fn jsFunctionOperatingSystemIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-        const args = callframe.arguments(1);
+    pub fn jsFunctionOperatingSystemIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const args = callframe.arguments_old(1);
         var operating_system = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
@@ -694,8 +694,8 @@ pub const Libc = enum(u8) {
     pub const current: Libc = @intFromEnum(glibc);
 
     const JSC = bun.JSC;
-    pub fn jsFunctionLibcIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-        const args = callframe.arguments(1);
+    pub fn jsFunctionLibcIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const args = callframe.arguments_old(1);
         var libc = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
@@ -769,8 +769,8 @@ pub const Architecture = enum(u16) {
     }
 
     const JSC = bun.JSC;
-    pub fn jsFunctionArchitectureIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-        const args = callframe.arguments(1);
+    pub fn jsFunctionArchitectureIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const args = callframe.arguments_old(1);
         var architecture = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
@@ -1031,7 +1031,7 @@ pub const PackageManifest = struct {
             // This needs many more call sites, doesn't have much impact on this location.
             var realpath_buf: bun.PathBuffer = undefined;
             const path_to_use_for_opening_file = if (Environment.isWindows)
-                bun.path.joinAbsStringBufZ(PackageManager.instance.temp_dir_path, &realpath_buf, &.{ PackageManager.instance.temp_dir_path, tmp_path }, .auto)
+                bun.path.joinAbsStringBufZ(PackageManager.get().temp_dir_path, &realpath_buf, &.{ PackageManager.get().temp_dir_path, tmp_path }, .auto)
             else
                 tmp_path;
 
@@ -1084,7 +1084,7 @@ pub const PackageManifest = struct {
                 var did_close = false;
                 errdefer if (!did_close) file.close();
 
-                const cache_dir_abs = PackageManager.instance.cache_directory_path;
+                const cache_dir_abs = PackageManager.get().cache_directory_path;
                 const cache_path_abs = bun.path.joinAbsStringBufZ(cache_dir_abs, &realpath2_buf, &.{ cache_dir_abs, outpath }, .auto);
                 file.close();
                 did_close = true;
@@ -1172,7 +1172,7 @@ pub const PackageManifest = struct {
             });
 
             const batch = bun.ThreadPool.Batch.from(&task.task);
-            PackageManager.instance.thread_pool.schedule(batch);
+            PackageManager.get().thread_pool.schedule(batch);
         }
 
         fn manifestFileName(buf: []u8, file_id: u64, scope: *const Registry.Scope) ![:0]const u8 {
@@ -1283,11 +1283,10 @@ pub const PackageManifest = struct {
             return obj;
         }
 
-        pub fn jsParseManifest(global: *JSGlobalObject, callFrame: *CallFrame) JSValue {
-            const args = callFrame.arguments(2).slice();
+        pub fn jsParseManifest(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+            const args = callFrame.arguments_old(2).slice();
             if (args.len < 2 or !args[0].isString() or !args[1].isString()) {
-                global.throw("expected manifest filename and registry string arguments", .{});
-                return .zero;
+                return global.throw("expected manifest filename and registry string arguments", .{});
             }
 
             const manifest_filename_str = args[0].toBunString(global);
@@ -1303,8 +1302,7 @@ pub const PackageManifest = struct {
             defer registry.deinit();
 
             const manifest_file = std.fs.openFileAbsolute(manifest_filename.slice(), .{}) catch |err| {
-                global.throw("failed to open manifest file \"{s}\": {s}", .{ manifest_filename.slice(), @errorName(err) });
-                return .zero;
+                return global.throw("failed to open manifest file \"{s}\": {s}", .{ manifest_filename.slice(), @errorName(err) });
             };
             defer manifest_file.close();
 
@@ -1320,13 +1318,11 @@ pub const PackageManifest = struct {
             };
 
             const maybe_package_manifest = Serializer.loadByFile(bun.default_allocator, &scope, File.from(manifest_file)) catch |err| {
-                global.throw("failed to load manifest file: {s}", .{@errorName(err)});
-                return .zero;
+                return global.throw("failed to load manifest file: {s}", .{@errorName(err)});
             };
 
             const package_manifest: PackageManifest = maybe_package_manifest orelse {
-                global.throw("manifest is invalid ", .{});
-                return .zero;
+                return global.throw("manifest is invalid ", .{});
             };
 
             var buf: std.ArrayListUnmanaged(u8) = .{};
@@ -1334,22 +1330,13 @@ pub const PackageManifest = struct {
 
             // TODO: we can add more information. for now just versions is fine
 
-            writer.print("{{\"name\":\"{s}\",\"versions\":[", .{package_manifest.name()}) catch {
-                global.throwOutOfMemory();
-                return .zero;
-            };
+            try writer.print("{{\"name\":\"{s}\",\"versions\":[", .{package_manifest.name()});
 
             for (package_manifest.versions, 0..) |version, i| {
                 if (i == package_manifest.versions.len - 1)
-                    writer.print("\"{}\"]}}", .{version.fmt(package_manifest.string_buf)}) catch {
-                        global.throwOutOfMemory();
-                        return .zero;
-                    }
+                    try writer.print("\"{}\"]}}", .{version.fmt(package_manifest.string_buf)})
                 else
-                    writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)}) catch {
-                        global.throwOutOfMemory();
-                        return .zero;
-                    };
+                    try writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)});
             }
 
             var result = bun.String.fromUTF8(buf.items);

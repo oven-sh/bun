@@ -10,11 +10,7 @@ const FeatureFlags = bun.FeatureFlags;
 const Args = JSC.Node.NodeFS.Arguments;
 const d = JSC.d;
 
-const NodeFSFunction = fn (
-    this: *JSC.Node.NodeJSFS,
-    globalObject: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) JSC.JSValue;
+const NodeFSFunction = fn (this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue;
 
 const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
 
@@ -30,35 +26,21 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     _ = Result;
 
     const NodeBindingClosure = struct {
-        pub fn bind(
-            this: *JSC.Node.NodeJSFS,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) JSC.JSValue {
-            var exceptionref: JSC.C.JSValueRef = null;
-
-            var arguments = callframe.arguments(8);
+        pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            var arguments = callframe.arguments_old(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
             defer slice.deinit();
 
             const args = if (comptime Arguments != void)
-                (Arguments.fromJS(globalObject, &slice, &exceptionref) orelse {
-                    // we might've already thrown
-                    if (exceptionref != null)
-                        globalObject.throwValue(JSC.JSValue.c(exceptionref));
-                    return .zero;
-                })
+                (try Arguments.fromJS(globalObject, &slice))
             else
                 Arguments{};
             defer {
                 if (comptime Arguments != void and @hasDecl(Arguments, "deinit")) args.deinit();
             }
 
-            const exception1 = JSC.JSValue.c(exceptionref);
-
-            if (exception1 != .zero) {
-                globalObject.throwValue(exception1);
+            if (globalObject.hasException()) {
                 return .zero;
             }
             var result = Function(
@@ -68,8 +50,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             );
             switch (result) {
                 .err => |err| {
-                    globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
-                    return .zero;
+                    return globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
                 },
                 .result => |*res| {
                     return globalObject.toJS(res, .temporary);
@@ -89,33 +70,23 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     comptime if (function.params.len != 3) @compileError("Expected 3 arguments");
     const Arguments = comptime function.params[1].type.?;
     const NodeBindingClosure = struct {
-        pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-            var arguments = callframe.arguments(8);
+        pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            var arguments = callframe.arguments_old(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
             slice.will_be_async = true;
-            var exceptionref: JSC.C.JSValueRef = null;
             const args = if (comptime Arguments != void)
-                (Arguments.fromJS(globalObject, &slice, &exceptionref) orelse {
-                    // we might've already thrown
-                    if (exceptionref != null)
-                        globalObject.throwValue(JSC.JSValue.c(exceptionref));
+                (Arguments.fromJS(globalObject, &slice) catch {
                     slice.deinit();
                     return .zero;
                 })
             else
                 Arguments{};
 
-            const exception1 = JSC.JSValue.c(exceptionref);
-
-            if (exception1 != .zero) {
-                globalObject.throwValue(exception1);
-
+            if (globalObject.hasException()) {
                 slice.deinit();
                 return .zero;
             }
-
-            // TODO: handle globalObject.throwValue
 
             const Task = @field(JSC.Node.Async, @tagName(FunctionEnum));
             if (comptime FunctionEnum == .cp) {
@@ -139,11 +110,6 @@ pub const NodeJSFS = struct {
 
     pub usingnamespace JSC.Codegen.JSNodeJSFS;
     pub usingnamespace bun.New(@This());
-
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*@This() {
-        globalObject.throw("Not a constructor", .{});
-        return null;
-    }
 
     pub fn finalize(this: *JSC.Node.NodeJSFS) void {
         if (this.node_fs.vm) |vm| {
@@ -259,22 +225,20 @@ pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     const module = NodeJSFS.new(.{});
 
     const vm = globalObject.bunVM();
-    if (vm.standalone_module_graph != null)
-        module.node_fs.vm = vm;
+    module.node_fs.vm = vm;
 
     return module.toJS(globalObject);
 }
 
-pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
-    const arguments = callFrame.arguments(1);
+pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const arguments = callFrame.arguments_old(1);
 
     if (arguments.len < 1) {
         return .undefined;
     }
 
     if (comptime !bun.Environment.isLinux) {
-        globalObject.throw("memfd_create is not implemented on this platform", .{});
-        return .zero;
+        return globalObject.throw("memfd_create is not implemented on this platform", .{});
     }
 
     const size = arguments.ptr[0].toInt64();
@@ -284,8 +248,7 @@ pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.
             return JSC.JSValue.jsNumber(fd.cast());
         },
         .err => |err| {
-            globalObject.throwValue(err.toJSC(globalObject));
-            return .zero;
+            return globalObject.throwValue(err.toJSC(globalObject));
         },
     }
 }

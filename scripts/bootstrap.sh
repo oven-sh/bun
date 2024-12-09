@@ -1,4 +1,5 @@
 #!/bin/sh
+# Version: 7
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -7,11 +8,10 @@
 # https://github.com/oven-sh/bun/issues
 
 # If you need to make a change to this script, such as upgrading a dependency,
-# increment the version number to indicate that a new image should be built.
+# increment the version comment to indicate that a new image should be built.
 # Otherwise, the existing image will be retroactively updated.
-v="3"
+
 pid=$$
-script="$(realpath "$0")"
 
 print() {
 	echo "$@"
@@ -24,26 +24,39 @@ error() {
 }
 
 execute() {
-  print "$ $@" >&2
-  if ! "$@"; then
-    error "Command failed: $@"
-  fi
+	print "$ $@" >&2
+	if ! "$@"; then
+		error "Command failed: $@"
+	fi
 }
 
 execute_sudo() {
-	if [ "$sudo" = "1" ]; then
+	if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then
 		execute "$@"
 	else
-		execute sudo "$@"
+		execute sudo -n "$@"
 	fi
 }
 
-execute_non_root() {
-	if [ "$sudo" = "1" ]; then
-		execute sudo -u "$user" "$@"
+execute_as_user() {
+	if [ "$sudo" = "1" ] || [ "$can_sudo" = "1" ]; then
+		if [ -f "$(which sudo)" ]; then
+			execute sudo -n -u "$user" /bin/sh -c "$*"
+		elif [ -f "$(which doas)" ]; then
+			execute doas -u "$user" /bin/sh -c "$*"
+		elif [ -f "$(which su)" ]; then
+			execute su -s /bin/sh "$user" -c "$*"
+		else
+			execute /bin/sh -c "$*"
+		fi
 	else
-		execute "$@"
+		execute /bin/sh -c "$*"
 	fi
+}
+
+grant_to_user() {
+	path="$1"
+	execute_sudo chown -R "$user:$group" "$path"
 }
 
 which() {
@@ -73,12 +86,16 @@ fetch() {
 }
 
 download_file() {
-  url="$1"
-  filename="${2:-$(basename "$url")}"
-  path="$(mktemp -d)/$filename"
+	url="$1"
+	filename="${2:-$(basename "$url")}"
+	tmp="$(execute mktemp -d)"
+	execute chmod 755 "$tmp"
 
-  fetch "$url" > "$path"
-  print "$path"
+	path="$tmp/$filename"
+	fetch "$url" >"$path"
+	execute chmod 644 "$path"
+
+	print "$path"
 }
 
 compare_version() {
@@ -95,14 +112,39 @@ append_to_file() {
 	file="$1"
 	content="$2"
 
-	if ! [ -f "$file" ]; then
-		execute mkdir -p "$(dirname "$file")"
-		execute touch "$file"
+	file_needs_sudo="0"
+	if [ -f "$file" ]; then
+		if ! [ -r "$file" ] || ! [ -w "$file" ]; then
+			file_needs_sudo="1"
+		fi
+	else
+		execute_as_user mkdir -p "$(dirname "$file")"
+		execute_as_user touch "$file"
 	fi
 
 	echo "$content" | while read -r line; do
 		if ! grep -q "$line" "$file"; then
-			echo "$line" >> "$file"
+			if [ "$file_needs_sudo" = "1" ]; then
+				execute_sudo sh -c "echo '$line' >> '$file'"
+			else
+				echo "$line" >>"$file"
+			fi
+		fi
+	done
+}
+
+append_to_file_sudo() {
+	file="$1"
+	content="$2"
+
+	if ! [ -f "$file" ]; then
+		execute_sudo mkdir -p "$(dirname "$file")"
+		execute_sudo touch "$file"
+	fi
+
+	echo "$content" | while read -r line; do
+		if ! grep -q "$line" "$file"; then
+			echo "$line" | execute_sudo tee "$file" >/dev/null
 		fi
 	done
 }
@@ -111,7 +153,7 @@ append_to_profile() {
 	content="$1"
 	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
 	for profile in $profiles; do
-		file="$HOME/$profile"
+		file="$home/$profile"
 		if [ "$ci" = "1" ] || [ -f "$file" ]; then
 			append_to_file "$file" "$content"
 		fi
@@ -128,153 +170,329 @@ append_to_path() {
 	export PATH="$path:$PATH"
 }
 
-check_system() {
+move_to_bin() {
+	exe_path="$1"
+	if ! [ -f "$exe_path" ]; then
+		error "Could not find executable: \"$exe_path\""
+	fi
+
+	usr_paths="/usr/bin /usr/local/bin"
+	for usr_path in $usr_paths; do
+		if [ -d "$usr_path" ] && [ -w "$usr_path" ]; then
+			break
+		fi
+	done
+
+	grant_to_user "$exe_path"
+	execute_sudo mv -f "$exe_path" "$usr_path/$(basename "$exe_path")"
+}
+
+check_features() {
+	print "Checking features..."
+
+	case "$CI" in
+	true | 1)
+		ci=1
+		print "CI: enabled"
+		;;
+	esac
+
+	case "$@" in
+	*--ci*)
+		ci=1
+		print "CI: enabled"
+		;;
+	esac
+}
+
+check_operating_system() {
+	print "Checking operating system..."
 	uname="$(require uname)"
 
-	os="$($uname -s)"
+	os="$("$uname" -s)"
 	case "$os" in
 	Linux*) os="linux" ;;
 	Darwin*) os="darwin" ;;
 	*) error "Unsupported operating system: $os" ;;
 	esac
+	print "Operating System: $os"
 
-	arch="$($uname -m)"
+	arch="$("$uname" -m)"
 	case "$arch" in
 	x86_64 | x64 | amd64) arch="x64" ;;
 	aarch64 | arm64) arch="aarch64" ;;
 	*) error "Unsupported architecture: $arch" ;;
 	esac
+	print "Architecture: $arch"
 
-	kernel="$(uname -r)"
+	kernel="$("$uname" -r)"
+	print "Kernel: $kernel"
 
-	if [ "$os" = "darwin" ]; then
+	case "$os" in
+	linux)
+		if [ -f "/etc/alpine-release" ]; then
+			distro="alpine"
+			abi="musl"
+			alpine="$(cat /etc/alpine-release)"
+			if [ "$alpine" ~ "_" ]; then
+				release="$(echo "$alpine" | cut -d_ -f1)-edge"
+			else
+				release="$alpine"
+			fi
+		elif [ -f "/etc/os-release" ]; then
+			. /etc/os-release
+			if [ -n "$ID" ]; then
+				distro="$ID"
+			fi
+			if [ -n "$VERSION_ID" ]; then
+				release="$VERSION_ID"
+			fi
+		fi
+		;;
+	darwin)
 		sw_vers="$(which sw_vers)"
 		if [ -f "$sw_vers" ]; then
-			distro="$($sw_vers -productName)"
-			release="$($sw_vers -productVersion)"
+			distro="$("$sw_vers" -productName)"
+			release="$("$sw_vers" -productVersion)"
 		fi
-
-		if [ "$arch" = "x64" ]; then
+		case "$arch" in
+		x64)
 			sysctl="$(which sysctl)"
-			if [ -f "$sysctl" ] && [ "$($sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
+			if [ -f "$sysctl" ] && [ "$("$sysctl" -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
 				arch="aarch64"
 				rosetta="1"
+				print "Rosetta: enabled"
 			fi
+			;;
+		esac
+		;;
+	esac
+
+	if [ -n "$distro" ]; then
+		print "Distribution: $distro $release"
+	fi
+
+	case "$os" in
+	linux)
+		ldd="$(which ldd)"
+		if [ -f "$ldd" ]; then
+			ldd_version="$($ldd --version 2>&1)"
+			abi_version="$(echo "$ldd_version" | grep -o -E '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1)"
+			case "$ldd_version" in
+			*musl*)
+				abi="musl"
+				;;
+			*GNU* | *GLIBC*)
+				abi="gnu"
+				;;
+			esac
+		fi
+
+		if [ -n "$abi" ]; then
+			print "ABI: $abi $abi_version"
+		fi
+		;;
+	esac
+}
+
+check_inside_docker() {
+	if ! [ "$os" = "linux" ]; then
+		return
+	fi
+	print "Checking if inside Docker..."
+
+	if [ -f "/.dockerenv" ]; then
+		docker=1
+	else
+		if [ -f "/proc/1/cgroup" ]; then
+			case "$(cat /proc/1/cgroup)" in
+			*/docker/*)
+				docker=1
+				;;
+			esac
+		fi
+
+		if [ -f "/proc/self/mountinfo" ]; then
+			case "$(cat /proc/self/mountinfo)" in
+			*/docker/*)
+				docker=1
+				;;
+			esac
 		fi
 	fi
 
-	if [ "$os" = "linux" ] && [ -f /etc/os-release ]; then
-		. /etc/os-release
-		if [ -n "$ID" ]; then
-			distro="$ID"
-		fi
-		if [ -n "$VERSION_ID" ]; then
-			release="$VERSION_ID"
-		fi
+	if [ "$docker" = "1" ]; then
+		print "Docker: enabled"
 	fi
+}
 
-	if [ "$os" = "linux" ]; then
-		rpm="$(which rpm)"
-		if [ -f "$rpm" ]; then
-			glibc="$($rpm -q glibc --queryformat '%{VERSION}\n')"
-		else
-			ldd="$(which ldd)"
-			awk="$(which awk)"
-			if [ -f "$ldd" ] && [ -f "$awk" ]; then
-				glibc="$($ldd --version | $awk 'NR==1{print $NF}')"
-			fi
+check_package_manager() {
+	print "Checking package manager..."
+
+	case "$os" in
+	darwin)
+		if ! [ -f "$(which brew)" ]; then
+			install_brew
 		fi
-	fi
-
-	if [ "$os" = "darwin" ]; then
-		brew="$(which brew)"
 		pm="brew"
-	fi
-
-	if [ "$os" = "linux" ]; then
-		apt="$(which apt-get)"
-		if [ -f "$apt" ]; then
+		;;
+	linux)
+		if [ -f "$(which apt)" ]; then
 			pm="apt"
+		elif [ -f "$(which dnf)" ]; then
+			pm="dnf"
+		elif [ -f "$(which yum)" ]; then
+			pm="yum"
+		elif [ -f "$(which apk)" ]; then
+			pm="apk"
 		else
-			dnf="$(which dnf)"
-			if [ -f "$dnf" ]; then
-				pm="dnf"
-			else
-        yum="$(which yum)"
-        if [ -f "$yum" ]; then
-          pm="yum"
-        fi
-			fi
+			error "No package manager found. (apt, dnf, yum, apk)"
 		fi
+		;;
+	esac
+	print "Package manager: $pm"
 
-		if [ -z "$pm" ]; then
-			error "No package manager found. (apt, dnf, yum)"
-		fi
-	fi
+	print "Updating package manager..."
+	case "$pm" in
+	apt)
+		export DEBIAN_FRONTEND=noninteractive
+		package_manager update -y
+		;;
+	apk)
+		package_manager update
+		;;
+	esac
+}
+
+check_user() {
+	print "Checking user..."
 
 	if [ -n "$SUDO_USER" ]; then
 		user="$SUDO_USER"
 	else
-		whoami="$(which whoami)"
-		if [ -f "$whoami" ]; then
-			user="$($whoami)"
-		else
-			error "Could not determine the current user, set \$USER."
-		fi
+		id="$(require id)"
+		user="$("$id" -un)"
+		group="$("$id" -gn)"
 	fi
+	if [ -z "$user" ]; then
+		error "Could not determine user"
+	fi
+	print "User: $user"
+	print "Group: $group"
+
+	home="$(execute_as_user echo '~')"
+	if [ -z "$home" ] || [ "$home" = "~" ]; then
+		error "Could not determine home directory for user: $user"
+	fi
+	print "Home: $home"
 
 	id="$(which id)"
 	if [ -f "$id" ] && [ "$($id -u)" = "0" ]; then
 		sudo=1
+		print "Sudo: enabled"
+	elif [ -f "$(which sudo)" ] && [ "$(sudo -n echo 1 2>/dev/null)" = "1" ]; then
+		can_sudo=1
+		print "Sudo: can be used"
+	fi
+}
+
+check_ulimit() {
+	if ! [ "$ci" = "1" ]; then
+		return
 	fi
 
-	if [ "$CI" = "true" ]; then
-		ci=1
+	print "Checking ulimits..."
+	systemd_conf="/etc/systemd/system.conf"
+	if [ -f "$systemd_conf" ]; then
+		limits_conf="/etc/security/limits.d/99-unlimited.conf"
+		if ! [ -f "$limits_conf" ]; then
+			execute_sudo mkdir -p "$(dirname "$limits_conf")"
+			execute_sudo touch "$limits_conf"
+		fi
 	fi
 
-	print "System information:"
-	if [ -n "$distro" ]; then
-		print "| Distro: $distro $release"
+	limits="core data fsize memlock nofile rss stack cpu nproc as locks sigpending msgqueue"
+	for limit in $limits; do
+		limit_upper="$(echo "$limit" | tr '[:lower:]' '[:upper:]')"
+
+		limit_value="unlimited"
+		case "$limit" in
+		nofile | nproc)
+			limit_value="1048576"
+			;;
+		esac
+
+		if [ -f "$limits_conf" ]; then
+			limit_users="root *"
+			for limit_user in $limit_users; do
+				append_to_file "$limits_conf" "$limit_user soft $limit $limit_value"
+				append_to_file "$limits_conf" "$limit_user hard $limit $limit_value"
+			done
+		fi
+
+		if [ -f "$systemd_conf" ]; then
+			append_to_file "$systemd_conf" "DefaultLimit$limit_upper=$limit_value"
+		fi
+	done
+
+	rc_conf="/etc/rc.conf"
+	if [ -f "$rc_conf" ]; then
+		rc_ulimit=""
+		limit_flags="c d e f i l m n q r s t u v x"
+		for limit_flag in $limit_flags; do
+			limit_value="unlimited"
+			case "$limit_flag" in
+			n | u)
+				limit_value="1048576"
+				;;
+			esac
+			rc_ulimit="$rc_ulimit -$limit_flag $limit_value"
+		done
+		append_to_file "$rc_conf" "rc_ulimit=\"$rc_ulimit\""
 	fi
-	print "| Operating system: $os"
-	print "| Architecture: $arch"
-	if [ -n "$rosetta" ]; then
-		print "| Rosetta: true"
-	fi
-	if [ -n "$glibc" ]; then
-		print "| Glibc: $glibc"
-	fi
-	print "| Package manager: $pm"
-	print "| User: $user"
-	if [ -n "$sudo" ]; then
-		print "| Sudo: true"
-	fi
-	if [ -n "$ci" ]; then
-		print "| CI: true"
+
+	pam_confs="/etc/pam.d/common-session /etc/pam.d/common-session-noninteractive"
+	for pam_conf in $pam_confs; do
+		if [ -f "$pam_conf" ]; then
+			append_to_file "$pam_conf" "session optional pam_limits.so"
+		fi
+	done
+
+	systemctl="$(which systemctl)"
+	if [ -f "$systemctl" ]; then
+		execute_sudo "$systemctl" daemon-reload
 	fi
 }
 
 package_manager() {
 	case "$pm" in
-	apt) DEBIAN_FRONTEND=noninteractive \
-		execute "$apt" "$@" ;;
-	dnf) execute dnf "$@" ;;
-	yum) execute "$yum" "$@" ;;
-	brew)
-    if ! [ -f "$(which brew)" ]; then
-      install_brew
-    fi
-    execute_non_root brew "$@"
-    ;;
-	*) error "Unsupported package manager: $pm" ;;
-	esac
-}
-
-update_packages() {
-	case "$pm" in
 	apt)
-    package_manager update
-    ;;
+		execute_sudo apt "$@"
+		;;
+	dnf)
+		case "$distro" in
+		rhel)
+			execute_sudo dnf \
+				--disableplugin=subscription-manager \
+				"$@"
+			;;
+		*)
+			execute_sudo dnf "$@"
+			;;
+		esac
+		;;
+	yum)
+		execute_sudo yum "$@"
+		;;
+	apk)
+		execute_sudo apk "$@"
+		;;
+	brew)
+		execute_as_user brew "$@"
+		;;
+	*)
+		error "Unsupported package manager: $pm"
+		;;
 	esac
 }
 
@@ -295,17 +513,38 @@ check_package() {
 install_packages() {
 	case "$pm" in
 	apt)
-		package_manager install --yes --no-install-recommends "$@"
+		package_manager install \
+			--yes \
+			--no-install-recommends \
+			"$@"
 		;;
 	dnf)
-    package_manager install --assumeyes --nodocs --noautoremove --allowerasing "$@"
+		package_manager install \
+			--assumeyes \
+			--nodocs \
+			--noautoremove \
+			--allowerasing \
+			"$@"
 		;;
 	yum)
 		package_manager install -y "$@"
 		;;
 	brew)
-		package_manager install --force --formula "$@"
-    package_manager link --force --overwrite "$@"
+		package_manager install \
+			--force \
+			--formula \
+			"$@"
+		package_manager link \
+			--force \
+			--overwrite \
+			"$@"
+		;;
+	apk)
+		package_manager add \
+			--no-cache \
+			--no-interactive \
+			--no-progress \
+			"$@"
 		;;
 	*)
 		error "Unsupported package manager: $pm"
@@ -313,24 +552,12 @@ install_packages() {
 	esac
 }
 
-get_version() {
-  command="$1"
-  path="$(which "$command")"
-  
-  if [ -f "$path" ]; then
-    case "$command" in
-      go | zig) "$path" version ;;
-      *) "$path" --version ;;
-    esac
-  else
-    print "not found"
-  fi
-}
-
 install_brew() {
-  bash="$(require bash)"
-  script=$(download_file "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh")
-	NONINTERACTIVE=1 execute_non_root "$bash" "$script"
+	print "Installing Homebrew..."
+
+	bash="$(require bash)"
+	script=$(download_file "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh")
+	NONINTERACTIVE=1 execute_as_user "$bash" "$script"
 
 	case "$arch" in
 	x64)
@@ -352,71 +579,158 @@ install_brew() {
 
 install_common_software() {
 	case "$pm" in
-	apt) install_packages \
-		apt-transport-https \
-		software-properties-common
-    ;;
-	dnf) install_packages \
-		dnf-plugins-core \
-		tar
-    ;;
+	apt)
+		install_packages \
+			apt-transport-https \
+			software-properties-common
+		;;
+	dnf)
+		install_packages \
+			dnf-plugins-core
+		;;
 	esac
+
+	case "$distro" in
+	amzn)
+		install_packages \
+			tar
+		;;
+	rhel)
+		rhel_version="$(execute rpm -E %rhel)"
+		install_packages \
+			"https://dl.fedoraproject.org/pub/epel/epel-release-latest-$rhel_version.noarch.rpm"
+		;;
+	centos)
+		install_packages \
+			epel-release
+		;;
+	esac
+
+	crb="$(which crb)"
+	if [ -f "$crb" ]; then
+		execute "$crb" enable
+	fi
 
 	install_packages \
 		bash \
 		ca-certificates \
 		curl \
-		jq \
 		htop \
 		gnupg \
 		git \
 		unzip \
-		wget \
-		zip
+		wget
 
 	install_rosetta
 	install_nodejs
 	install_bun
+	install_tailscale
+	install_buildkite
+}
+
+nodejs_version_exact() {
+	# https://unofficial-builds.nodejs.org/download/release/
+	if ! [ "$abi" = "musl" ] && [ -n "$abi_version" ] && ! [ "$(compare_version "$abi_version" "2.27")" = "1" ]; then
+		print "16.9.1"
+	else
+		print "22.9.0"
+	fi
+}
+
+nodejs_version() {
+	echo "$(nodejs_version_exact)" | cut -d. -f1
 }
 
 install_nodejs() {
-	version="${1:-"22"}"
-
-	if ! [ "$(compare_version "$glibc" "2.27")" = "1" ]; then
-		version="16"
-	fi
-
 	case "$pm" in
 	dnf | yum)
-    bash="$(require bash)"
-    script=$(download_file "https://rpm.nodesource.com/setup_$version.x")
-    execute "$bash" "$script"
+		bash="$(require bash)"
+		script=$(download_file "https://rpm.nodesource.com/setup_$(nodejs_version).x")
+		execute_sudo "$bash" "$script"
 		;;
 	apt)
-    bash="$(require bash)"
-    script=$(download_file "https://deb.nodesource.com/setup_$version.x")
-    execute "$bash" "$script"
+		bash="$(require bash)"
+		script="$(download_file "https://deb.nodesource.com/setup_$(nodejs_version).x")"
+		execute_sudo "$bash" "$script"
 		;;
 	esac
 
-	install_packages nodejs
+	case "$pm" in
+	apk)
+		install_packages nodejs npm
+		;;
+	*)
+		install_packages nodejs
+		;;
+	esac
+
+	# Some distros do not install the node headers by default.
+	# These are needed for certain FFI tests, such as: `cc.test.ts`
+	case "$distro" in
+	alpine | amzn)
+		install_nodejs_headers
+		;;
+	esac
+}
+
+install_nodejs_headers() {
+	headers_tar="$(download_file "https://nodejs.org/download/release/v$(nodejs_version_exact)/node-v$(nodejs_version_exact)-headers.tar.gz")"
+	headers_dir="$(dirname "$headers_tar")"
+	execute tar -xzf "$headers_tar" -C "$headers_dir"
+	headers_include="$headers_dir/node-v$(nodejs_version_exact)/include"
+	execute_sudo cp -R "$headers_include/" "/usr"
 }
 
 install_bun() {
-  bash="$(require bash)"
-  script=$(download_file "https://bun.sh/install")
-
-  version="${1:-"latest"}"
-	case "$version" in
-	latest)
-    execute "$bash" "$script"
-		;;
-	*)
-    execute "$bash" "$script" -s "$version"
+	case "$pm" in
+	apk)
+		install_packages \
+			libgcc \
+			libstdc++
 		;;
 	esac
 
-	append_to_path "$HOME/.bun/bin"
+	bash="$(require bash)"
+	script=$(download_file "https://bun.sh/install")
+
+	version="${1:-"latest"}"
+	case "$version" in
+	latest)
+		execute_as_user "$bash" "$script"
+		;;
+	*)
+		execute_as_user "$bash" "$script" -s "$version"
+		;;
+	esac
+
+	move_to_bin "$home/.bun/bin/bun"
+	bun_path="$(which bun)"
+	bunx_path="$(dirname "$bun_path")/bunx"
+	execute_sudo ln -sf "$bun_path" "$bunx_path"
+}
+
+install_cmake() {
+	case "$os-$pm" in
+	darwin-* | linux-apk)
+		install_packages cmake
+		;;
+	linux-*)
+		sh="$(require sh)"
+		cmake_version="3.30.5"
+		case "$arch" in
+		x64)
+			cmake_url="https://github.com/Kitware/CMake/releases/download/v$cmake_version/cmake-$cmake_version-linux-x86_64.sh"
+			;;
+		aarch64)
+			cmake_url="https://github.com/Kitware/CMake/releases/download/v$cmake_version/cmake-$cmake_version-linux-aarch64.sh"
+			;;
+		esac
+		cmake_script=$(download_file "$cmake_url")
+		execute_sudo "$sh" "$cmake_script" \
+			--skip-license \
+			--prefix=/usr
+		;;
+	esac
 }
 
 install_rosetta() {
@@ -433,31 +747,57 @@ install_rosetta() {
 
 install_build_essentials() {
 	case "$pm" in
-	apt) install_packages \
-		build-essential \
-		ninja-build \
-		xz-utils
-    ;;
-	dnf | yum) install_packages \
-		ninja-build \
-		gcc-c++ \
-		xz
-    ;;
-	brew) install_packages \
-		ninja
-    ;;
+	apt)
+		install_packages \
+			build-essential \
+			ninja-build \
+			xz-utils \
+			pkg-config \
+			golang
+		;;
+	dnf | yum)
+		install_packages \
+			gcc-c++ \
+			xz \
+			pkg-config \
+			golang
+		case "$distro" in
+		rhel) ;;
+		*)
+			install_packages ninja-build
+			;;
+		esac
+		;;
+	brew)
+		install_packages \
+			ninja \
+			pkg-config \
+			golang
+		;;
+	apk)
+		install_packages \
+			build-base \
+			linux-headers \
+			ninja \
+			go \
+			xz
+		;;
+	esac
+
+	case "$distro-$pm" in
+	amzn-dnf)
+		package_manager groupinstall -y "Development Tools"
+		;;
 	esac
 
 	install_packages \
 		make \
-		cmake \
-		pkg-config \
 		python3 \
 		libtool \
 		ruby \
-		perl \
-		golang
+		perl
 
+	install_cmake
 	install_llvm
 	install_ccache
 	install_rust
@@ -465,174 +805,228 @@ install_build_essentials() {
 }
 
 llvm_version_exact() {
-  case "$os" in
-  linux)
-    print "16.0.6"
-    ;;
-  darwin | windows)
-    print "18.1.8"
-    ;;
-  esac
+	case "$os-$abi" in
+	darwin-* | windows-* | linux-musl)
+		print "18.1.8"
+		;;
+	linux-*)
+		print "16.0.6"
+		;;
+	esac
 }
 
 llvm_version() {
-  echo "$(llvm_version_exact)" | cut -d. -f1
+	echo "$(llvm_version_exact)" | cut -d. -f1
 }
 
 install_llvm() {
 	case "$pm" in
 	apt)
-    bash="$(require bash)"
-    script=$(download_file "https://apt.llvm.org/llvm.sh")
-		execute "$bash" "$script" "$(llvm_version)" all
+		bash="$(require bash)"
+		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
+		case "$distro-$release" in
+		ubuntu-24*)
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all -njammy
+			;;
+		*)
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+			;;
+		esac
 		;;
-  brew)
-    install_packages "llvm@$(llvm_version)"
-    ;;
+	brew)
+		install_packages "llvm@$(llvm_version)"
+		;;
+	apk)
+		install_packages \
+			"llvm$(llvm_version)" \
+			"clang$(llvm_version)" \
+			"scudo-malloc" \
+			--repository "http://dl-cdn.alpinelinux.org/alpine/edge/main"
+		install_packages \
+			"lld$(llvm_version)" \
+			--repository "http://dl-cdn.alpinelinux.org/alpine/edge/community"
+		;;
 	esac
 }
 
 install_ccache() {
-  case "$pm" in
-  apt | brew)
-    install_packages ccache
-    ;;
-  esac
+	case "$pm" in
+	apt | apk | brew)
+		install_packages ccache
+		;;
+	esac
 }
 
 install_rust() {
-  sh="$(require sh)"
-  script=$(download_file "https://sh.rustup.rs")
-  execute "$sh" "$script" -y
-	append_to_path "$HOME/.cargo/bin"
+	case "$pm" in
+	apk)
+		install_packages \
+			rust \
+			cargo
+		;;
+	*)
+		sh="$(require sh)"
+		script=$(download_file "https://sh.rustup.rs")
+		execute_as_user "$sh" "$script" -y
+		;;
+	esac
 }
 
 install_docker() {
 	case "$pm" in
 	brew)
-    if ! [ -d "/Applications/Docker.app" ]; then
-		  package_manager install docker --cask
-    fi
+		if ! [ -d "/Applications/Docker.app" ]; then
+			package_manager install docker --cask
+		fi
 		;;
 	*)
-    case "$distro-$release" in
-    amzn-2 | amzn-1)
-      execute amazon-linux-extras install docker
-      ;;
-    amzn-*)
-      install_packages docker
-      ;;
-    *)
-      sh="$(require sh)"
-      script=$(download_file "https://get.docker.com")
-      execute "$sh" "$script"
-		  ;;
-    esac
-    ;;
+		case "$distro-$release" in
+		amzn-2 | amzn-1)
+			execute_sudo amazon-linux-extras install docker
+			;;
+		amzn-* | alpine-*)
+			install_packages docker
+			;;
+		*)
+			sh="$(require sh)"
+			script=$(download_file "https://get.docker.com")
+			execute "$sh" "$script"
+			;;
+		esac
+		;;
 	esac
 
-  systemctl="$(which systemctl)"
-  if [ -f "$systemctl" ]; then
-    execute "$systemctl" enable docker
-  fi
+	systemctl="$(which systemctl)"
+	if [ -f "$systemctl" ]; then
+		execute_sudo "$systemctl" enable docker
+	fi
+
+	getent="$(which getent)"
+	if [ -n "$("$getent" group docker)" ]; then
+		usermod="$(which usermod)"
+		if [ -f "$usermod" ]; then
+			execute_sudo "$usermod" -aG docker "$user"
+		fi
+	fi
 }
 
-install_ci_dependencies() {
+install_tailscale() {
+	if [ "$docker" = "1" ]; then
+		return
+	fi
+
+	case "$os" in
+	linux)
+		sh="$(require sh)"
+		tailscale_script=$(download_file "https://tailscale.com/install.sh")
+		execute "$sh" "$tailscale_script"
+		;;
+	darwin)
+		install_packages go
+		execute_as_user go install tailscale.com/cmd/tailscale{,d}@latest
+		append_to_path "$home/go/bin"
+		;;
+	esac
+}
+
+create_buildkite_user() {
+	if ! [ "$ci" = "1" ] || ! [ "$os" = "linux" ]; then
+		return
+	fi
+
+	print "Creating Buildkite user..."
+	user="buildkite-agent"
+	group="$user"
+	home="/var/lib/buildkite-agent"
+
+	case "$distro" in
+	amzn)
+		install_packages \
+			shadow-utils \
+			util-linux
+		;;
+	esac
+
+	if [ -z "$(getent passwd "$user")" ]; then
+		case "$distro" in
+		alpine)
+			execute_sudo addgroup \
+				--system "$group"
+			execute_sudo adduser "$user" \
+				--system \
+				--ingroup "$group" \
+				--shell "$(require sh)" \
+				--home "$home" \
+				--disabled-password
+			;;
+		*)
+			execute_sudo useradd "$user" \
+				--system \
+				--shell "$(require sh)" \
+				--no-create-home \
+				--home-dir "$home"
+			;;
+		esac
+	fi
+
+	if [ -n "$(getent group docker)" ]; then
+		execute_sudo usermod -aG docker "$user"
+	fi
+
+	buildkite_paths="$home /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /var/run/buildkite-agent/buildkite-agent.sock"
+	for path in $buildkite_paths; do
+		execute_sudo mkdir -p "$path"
+		execute_sudo chown -R "$user:$group" "$path"
+	done
+
+	buildkite_files="/var/run/buildkite-agent/buildkite-agent.pid"
+	for file in $buildkite_files; do
+		execute_sudo touch "$file"
+		execute_sudo chown "$user:$group" "$file"
+	done
+}
+
+install_buildkite() {
 	if ! [ "$ci" = "1" ]; then
 		return
 	fi
 
-	install_tailscale
-	install_buildkite
-}
-
-install_tailscale() {
-	case "$os" in
-	linux)
-    sh="$(require sh)"
-    script=$(download_file "https://tailscale.com/install.sh")
-    execute "$sh" "$script"
+	buildkite_version="3.87.0"
+	case "$os-$arch" in
+	linux-aarch64)
+		buildkite_filename="buildkite-agent-linux-arm64-$buildkite_version.tar.gz"
 		;;
-	darwin)
-		install_packages go
-		execute_non_root go install tailscale.com/cmd/tailscale{,d}@latest
-		append_to_path "$HOME/go/bin"
+	linux-x64)
+		buildkite_filename="buildkite-agent-linux-amd64-$buildkite_version.tar.gz"
+		;;
+	darwin-aarch64)
+		buildkite_filename="buildkite-agent-darwin-arm64-$buildkite_version.tar.gz"
+		;;
+	darwin-x64)
+		buildkite_filename="buildkite-agent-darwin-amd64-$buildkite_version.tar.gz"
 		;;
 	esac
+	buildkite_url="https://github.com/buildkite/agent/releases/download/v$buildkite_version/$buildkite_filename"
+	buildkite_filepath="$(download_file "$buildkite_url" "$buildkite_filename")"
+	buildkite_tmpdir="$(dirname "$buildkite_filepath")"
+
+	execute tar -xzf "$buildkite_filepath" -C "$buildkite_tmpdir"
+	move_to_bin "$buildkite_tmpdir/buildkite-agent"
+	execute rm -rf "$buildkite_tmpdir"
 }
 
-install_buildkite() {
-	home_dir="/var/lib/buildkite-agent"
-	config_dir="/etc/buildkite-agent"
-	config_file="$config_dir/buildkite-agent.cfg"
-
-	if ! [ -d "$home_dir" ]; then
-		execute_sudo mkdir -p "$home_dir"
-	fi
-
-	if ! [ -d "$config_dir" ]; then
-		execute_sudo mkdir -p "$config_dir"
-	fi
-
-	case "$os" in
-	linux)
-		getent="$(require getent)"
-		if [ -z "$("$getent" passwd buildkite-agent)" ]; then
-			useradd="$(require useradd)"
-			execute "$useradd" buildkite-agent \
-				--system \
-				--no-create-home \
-				--home-dir "$home_dir"
-		fi
-
-		if [ -n "$("$getent" group docker)" ]; then
-			usermod="$(require usermod)"
-			execute "$usermod" -aG docker buildkite-agent
-		fi
-
-		execute chown -R buildkite-agent:buildkite-agent "$home_dir"
-		execute chown -R buildkite-agent:buildkite-agent "$config_dir"
-		;;
-	darwin)
-		execute_sudo chown -R "$user:admin" "$home_dir"
-		execute_sudo chown -R "$user:admin" "$config_dir"
-		;;
-	esac
-
-	if ! [ -f "$config_file" ]; then
-		cat <<EOF >"$config_file"
-# This is generated by scripts/bootstrap.sh
-# https://buildkite.com/docs/agent/v3/configuration
-
-name="%hostname-%random"
-tags="v=$v,os=$os,arch=$arch,distro=$distro,release=$release,kernel=$kernel,glibc=$glibc"
-
-build-path="$home_dir/builds"
-git-mirrors-path="$home_dir/git"
-job-log-path="$home_dir/logs"
-plugins-path="$config_dir/plugins"
-hooks-path="$config_dir/hooks"
-
-no-ssh-keyscan=true
-cancel-grace-period=3600000 # 1 hour
-enable-job-log-tmpfile=true
-experiment="normalised-upload-paths,resolve-commit-after-checkout,agent-api"
-EOF
-	fi
-
-	bash="$(require bash)"
-	script=$(download_file "https://raw.githubusercontent.com/buildkite/agent/main/install.sh")
-	execute "$bash" "$script"
-
-	out_dir="$HOME/.buildkite-agent"
-	execute_sudo mv -f "$out_dir/bin/buildkite-agent" "/usr/local/bin/buildkite-agent"
-	execute rm -rf "$out_dir"
-}
-
-install_chrome_dependencies() {
+install_chromium() {
 	# https://github.com/puppeteer/puppeteer/blob/main/docs/troubleshooting.md#chrome-doesnt-launch-on-linux
 	# https://github.com/puppeteer/puppeteer/blob/main/docs/troubleshooting.md#running-puppeteer-in-the-cloud
 	case "$pm" in
+	apk)
+		install_packages \
+			chromium \
+      nss \
+      freetype \
+      harfbuzz \
+      ttf-freefont
+		;;
 	apt)
 		install_packages \
 			fonts-liberation \
@@ -700,15 +1094,26 @@ install_chrome_dependencies() {
 			xorg-x11-utils
 		;;
 	esac
+
+	case "$distro" in
+	amzn)
+		install_packages \
+			mesa-libgbm
+		;;
+	esac
 }
 
 main() {
-  check_system
-  update_packages
-  install_common_software
-  install_build_essentials
-  install_chrome_dependencies
-  install_ci_dependencies
+	check_features "$@"
+	check_operating_system
+	check_inside_docker
+	check_user
+	check_ulimit
+	check_package_manager
+	create_buildkite_user
+	install_common_software
+	install_build_essentials
+	install_chromium
 }
 
-main
+main "$@"

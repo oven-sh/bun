@@ -5,6 +5,7 @@ import { readFile, readlink, writeFile } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
+import detectLibc from "detect-libc";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -18,6 +19,8 @@ export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
 export const isBuildKite = process.env.BUILDKITE === "true";
+export const libcFamily = detectLibc.familySync() as "glibc" | "musl";
+export const isVerbose = process.env.DEBUG === "1";
 
 // Use these to mark a test as flaky or broken.
 // This will help us keep track of these tests.
@@ -37,6 +40,7 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
+  BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
 };
 
 if (isWindows) {
@@ -140,7 +144,7 @@ export function hideFromStackTrace(block: CallableFunction) {
   });
 }
 
-type DirectoryTree = {
+export type DirectoryTree = {
   [name: string]:
     | string
     | Buffer
@@ -1364,4 +1368,38 @@ export function waitForFileToExist(path: string, interval: number) {
   while (!fs.existsSync(path)) {
     sleepSync(interval);
   }
+}
+
+export function libcPathForDlopen() {
+  switch (process.platform) {
+    case "linux":
+      switch (libcFamily) {
+        case "glibc":
+          return "libc.so.6";
+        case "musl":
+          return "/usr/lib/libc.so";
+      }
+    case "darwin":
+      return "libc.dylib";
+    default:
+      throw new Error("TODO");
+  }
+}
+
+export function cwdScope(cwd: string) {
+  const original = process.cwd();
+  process.chdir(cwd);
+  return {
+    [Symbol.dispose]() {
+      process.chdir(original);
+    },
+  };
+}
+
+export function rmScope(path: string) {
+  return {
+    [Symbol.dispose]() {
+      fs.rmSync(path, { recursive: true, force: true });
+    },
+  };
 }

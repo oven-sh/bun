@@ -1,6 +1,12 @@
 import { join, resolve } from "path";
 
-const classes = ["ArrayBufferSink", "FileSink", "HTTPResponseSink", "HTTPSResponseSink"];
+const classes = [
+  "ArrayBufferSink",
+  "FileSink",
+  "HTTPResponseSink",
+  "HTTPSResponseSink",
+  "FetchTaskletChunkedRequestSink",
+];
 
 function names(name) {
   return {

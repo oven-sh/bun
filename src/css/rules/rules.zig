@@ -37,6 +37,8 @@ pub const scope = @import("./scope.zig");
 pub const media = @import("./media.zig");
 pub const starting_style = @import("./starting_style.zig");
 
+pub const tailwind = @import("./tailwind.zig");
+
 const debug = bun.Output.scoped(.CSS_MINIFY, false);
 
 pub fn CssRule(comptime Rule: type) type {

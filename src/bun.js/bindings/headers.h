@@ -1,11 +1,5 @@
 // clang-format off
-//-- GENERATED FILE. Do not edit --
-//
-//   To regenerate this file, run:
-//   
-//      make headers
-// 
-//-- GENERATED FILE. Do not edit --
+// This file used to be generated but now in hard coded.
 #pragma once
 
 #include <stddef.h>
@@ -323,7 +317,7 @@ CPP_DECL bool JSC__JSValue__deepEquals(JSC__JSValue JSValue0, JSC__JSValue JSVal
 CPP_DECL bool JSC__JSValue__deepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, bool arg3);
 CPP_DECL bool JSC__JSValue__eqlCell(JSC__JSValue JSValue0, JSC__JSCell* arg1);
 CPP_DECL bool JSC__JSValue__eqlValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
-CPP_DECL JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
+CPP_DECL JSC__JSValue JSC__JSValue__fastGet(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
 CPP_DECL JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
 CPP_DECL void JSC__JSValue__forEach(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__VM* arg0, JSC__JSGlobalObject* arg1, void* arg2, JSC__JSValue JSValue3));
 CPP_DECL void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, ZigString* arg2, JSC__JSValue JSValue3, bool arg4, bool arg5));
@@ -394,7 +388,6 @@ CPP_DECL bool JSC__JSValue__stringIncludes(JSC__JSValue JSValue0, JSC__JSGlobalO
 CPP_DECL JSC__JSValue JSC__JSValue__symbolFor(JSC__JSGlobalObject* arg0, ZigString* arg1);
 CPP_DECL bool JSC__JSValue__symbolKeyFor(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2);
 CPP_DECL bool JSC__JSValue__toBoolean(JSC__JSValue JSValue0);
-CPP_DECL bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue JSC__JSValue__toError_(JSC__JSValue JSValue0);
 CPP_DECL int32_t JSC__JSValue__toInt32(JSC__JSValue JSValue0);
 CPP_DECL int64_t JSC__JSValue__toInt64(JSC__JSValue JSValue0);
@@ -693,6 +686,25 @@ ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(FileSink__write);
 
 #endif
+CPP_DECL JSC__JSValue FetchTaskletChunkedRequestSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
+CPP_DECL JSC__JSValue FetchTaskletChunkedRequestSink__createObject(JSC__JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
+CPP_DECL void FetchTaskletChunkedRequestSink__detachPtr(JSC__JSValue JSValue0);
+CPP_DECL void* FetchTaskletChunkedRequestSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
+CPP_DECL void FetchTaskletChunkedRequestSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
+CPP_DECL void FetchTaskletChunkedRequestSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSValue JSValue2);
+
+#ifdef __cplusplus
+
+ZIG_DECL JSC__JSValue FetchTaskletChunkedRequestSink__close(JSC__JSGlobalObject* arg0, void* arg1);
+BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__construct);
+BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__end);
+ZIG_DECL JSC__JSValue SYSV_ABI SYSV_ABI FetchTaskletChunkedRequestSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL void FetchTaskletChunkedRequestSink__finalize(void* arg0);
+BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__flush);
+BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__start);
+ZIG_DECL void FetchTaskletChunkedRequestSink__updateRef(void* arg0, bool arg1);
+BUN_DECLARE_HOST_FUNCTION(FetchTaskletChunkedRequestSink__write);
+#endif
 
 #ifdef __cplusplus
 
@@ -852,5 +864,8 @@ CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter *arg
 
 BUN_DECLARE_HOST_FUNCTION(Bun__onResolveEntryPointResult);
 BUN_DECLARE_HOST_FUNCTION(Bun__onRejectEntryPointResult);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onResolveRequestStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onRejectRequestStream);
 
 #endif

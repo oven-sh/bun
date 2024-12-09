@@ -167,6 +167,7 @@ export interface BundlerTestInput {
   format?: "esm" | "cjs" | "iife" | "internal_bake_dev";
   globalName?: string;
   ignoreDCEAnnotations?: boolean;
+  bytecode?: boolean;
   emitDCEAnnotations?: boolean;
   inject?: string[];
   jsx?: {
@@ -380,7 +381,7 @@ export interface BundlerTestRef {
   options: BundlerTestInput;
 }
 
-interface ErrorMeta {
+export interface ErrorMeta {
   file: string;
   error: string;
   line?: string;
@@ -399,6 +400,10 @@ function expectBundled(
   dryRun = false,
   ignoreFilter = false,
 ): Promise<BundlerTestRef> | BundlerTestRef {
+  if (!new Error().stack!.includes('test/bundler/')) {
+    throw new Error(`All bundler tests must be placed in ./test/bundler/ so that regressions can be quickly detected locally via the 'bun test bundler' command`);
+  }
+
   var { expect, it, test } = testForFile(currentFile ?? callerSourceOrigin());
   if (!ignoreFilter && FILTER && !filterMatches(id)) return testRef(id, opts);
 
@@ -574,7 +579,9 @@ function expectBundled(
     const entryPaths = entryPoints.map(file => path.join(root, file));
 
     if (external) {
-      external = external.map(x => (typeof x !== "string" ? x : x.replace(/\{\{root\}\}/g, root)));
+      external = external.map(x =>
+        typeof x !== "string" ? x : x.replaceAll("{{root}}", root.replaceAll("\\", "\\\\")),
+      );
     }
 
     if (generateOutput === false) outputPaths = [];
@@ -625,7 +632,9 @@ function expectBundled(
       const filename = path.join(root, file);
       mkdirSync(path.dirname(filename), { recursive: true });
       const formattedContents =
-        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+        typeof contents === "string"
+          ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\"))
+          : contents;
       writeFileSync(filename, formattedContents);
     }
 
@@ -718,6 +727,7 @@ function expectBundled(
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
+              experimentalCss && "--experimental-css",
               external && external.map(x => `--external:${x}`),
               packages && ["--packages", packages],
               conditions && `--conditions=${conditions.join(",")}`,
@@ -1016,6 +1026,7 @@ function expectBundled(
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,
+          experimentalCss,
           drop,
         } as BuildConfig;
 
@@ -1131,6 +1142,7 @@ for (const [key, blob] of build.outputs) {
 
             return testRef(id, opts);
           }
+
           throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
         } else if (expectedErrors && expectedErrors.length > 0) {
           throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
@@ -1347,7 +1359,9 @@ for (const [key, blob] of build.outputs) {
     for (const [file, contents] of Object.entries(runtimeFiles ?? {})) {
       mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
       const formattedContents =
-        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+        typeof contents === "string"
+          ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\"))
+          : contents;
       writeFileSync(path.join(root, file), formattedContents);
     }
 
@@ -1562,7 +1576,7 @@ for (const [key, blob] of build.outputs) {
           let result = out!.toUnixString().trim();
 
           // no idea why this logs. ¯\_(ツ)_/¯
-          result = result.replace(`[EventLoop] enqueueTaskConcurrent(RuntimeTranspilerStore)\n`, "");
+          result = result.replace(/\[Event_?Loop\] enqueueTaskConcurrent\(RuntimeTranspilerStore\)\n/gi, "");
 
           if (typeof expected === "string") {
             expected = dedent(expected).trim();
@@ -1604,7 +1618,7 @@ for (const [key, blob] of build.outputs) {
     return testRef(id, opts);
   })();
 }
-let anyOnly = false;
+
 /** Shorthand for test and expectBundled. See `expectBundled` for what this does.
  */
 export function itBundled(
@@ -1670,12 +1684,6 @@ function formatError(err: ErrorMeta) {
 
 function filterMatches(id: string) {
   return FILTER === id || FILTER + "Dev" === id || FILTER + "Prod" === id;
-}
-
-interface SourceMapDecodedLocation {
-  line: number;
-  column: number;
-  source: string;
 }
 
 interface SourceMap {

@@ -558,26 +558,38 @@ function spawnSync(file, args, options) {
     }
   }
 
-  const {
-    stdout = null,
-    stderr = null,
-    success,
-    exitCode,
-  } = Bun.spawnSync({
-    cmd: options.args,
-    env: options.env || undefined,
-    cwd: options.cwd || undefined,
-    stdio: bunStdio,
-    windowsVerbatimArguments: options.windowsVerbatimArguments,
-    windowsHide: options.windowsHide,
-  });
+  var error;
+  try {
+    var {
+      stdout = null,
+      stderr = null,
+      success,
+      exitCode,
+      signalCode,
+    } = Bun.spawnSync({
+      cmd: options.args,
+      env: options.env || undefined,
+      cwd: options.cwd || undefined,
+      stdio: bunStdio,
+      windowsVerbatimArguments: options.windowsVerbatimArguments,
+      windowsHide: options.windowsHide,
+    });
+  } catch (err) {
+    error = err;
+    stdout = null;
+    stderr = null;
+  }
 
   const result = {
-    signal: null,
+    signal: signalCode ?? null,
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     output: [null, stdout, stderr],
   };
+
+  if (error) {
+    result.error = error;
+  }
 
   if (stdout && encoding && encoding !== "buffer") {
     result.output[1] = result.output[1]?.toString(encoding);
@@ -590,8 +602,11 @@ function spawnSync(file, args, options) {
   result.stdout = result.output[1];
   result.stderr = result.output[2];
 
-  if (!success) {
+  if (!success && error == null) {
     result.error = new SystemError(result.output[2], options.file, "spawnSync", -1, result.status);
+  }
+
+  if (result.error) {
     result.error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
   }
 

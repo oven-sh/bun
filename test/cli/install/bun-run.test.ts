@@ -476,6 +476,75 @@ it("--ignore-dce-annotations ignores DCE annotations", () => {
   expect(stdout.toString()).toBe("Hello, world!\n");
 });
 
+it("$npm_command is accurate", async () => {
+  await writeFile(
+    join(run_dir, "package.json"),
+    `{
+      "scripts": {
+        "sample": "echo $npm_command",
+      },
+    }
+    `,
+  );
+  const p = spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: run_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p.exited).toBe(0);
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_command\n`);
+  expect(await new Response(p.stdout).text()).toBe(`run-script\n`);
+});
+
+it("$npm_lifecycle_event is accurate", async () => {
+  await writeFile(
+    join(run_dir, "package.json"),
+    `{
+      "scripts": {
+        "presample": "echo $npm_lifecycle_event",
+        "sample": "echo $npm_lifecycle_event",
+        "postsample": "echo $npm_lifecycle_event",
+      },
+    }
+    `,
+  );
+  const p = spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: run_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p.exited).toBe(0);
+  // prettier-ignore
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_lifecycle_event\n$ echo $npm_lifecycle_event\n$ echo $npm_lifecycle_event\n`,);
+  expect(await new Response(p.stdout).text()).toBe(`presample\nsample\npostsample\n`);
+});
+
+it("$npm_package_config_* works", async () => {
+  await writeFile(
+    join(run_dir, "package.json"),
+    `{
+      "config": {
+        "foo": "bar"
+      },
+      "scripts": {
+        "sample": "echo $npm_package_config_foo",
+      },
+    }
+    `,
+  );
+  const p = spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: run_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p.exited).toBe(0);
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_package_config_foo\n`);
+  expect(await new Response(p.stdout).text()).toBe(`bar\n`);
+});
+
 it("should pass arguments correctly in scripts", async () => {
   const dir = tempDirWithFiles("test", {
     "package.json": JSON.stringify({
@@ -518,6 +587,26 @@ it("should pass arguments correctly in scripts", async () => {
         .sort()
         .join("\n"),
     );
+    expect(exitCode).toBe(0);
+  }
+});
+
+it("should run with bun instead of npm even with leading spaces", async () => {
+  const dir = tempDirWithFiles("test", {
+    "package.json": JSON.stringify({
+      workspaces: ["a", "b"],
+      scripts: { "root_script": "   npm run other_script    ", "other_script": "   echo hi    " },
+    }),
+  });
+  {
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "run", "root_script"],
+      cwd: dir,
+      env: bunEnv,
+    });
+
+    expect(stderr.toString()).toBe("$    bun run other_script    \n$    echo hi    \n");
+    expect(stdout.toString()).toEndWith("hi\n");
     expect(exitCode).toBe(0);
   }
 });

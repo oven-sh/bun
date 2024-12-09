@@ -286,7 +286,7 @@ pub const Parser = struct {
                 const c = val[i];
                 if (esc) {
                     switch (c) {
-                        '\\' => try unesc.appendSlice(&[_]u8{ '\\', '\\' }),
+                        '\\' => try unesc.appendSlice(&[_]u8{'\\'}),
                         ';', '#', '$' => try unesc.append(c),
                         '.' => {
                             if (comptime usage == .section) {
@@ -512,7 +512,7 @@ pub const IniTestingAPIs = struct {
     pub fn loadNpmrcFromJS(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const arg = callframe.argument(0);
         const npmrc_contents = arg.toBunString(globalThis);
         defer npmrc_contents.deref();
@@ -536,15 +536,15 @@ pub const IniTestingAPIs = struct {
             }).init(globalThis, envjs);
             defer object_iter.deinit();
 
-            envmap.ensureTotalCapacity(object_iter.len) catch return globalThis.throwOutOfMemoryValue();
+            try envmap.ensureTotalCapacity(object_iter.len);
 
             while (object_iter.next()) |key| {
-                const keyslice = key.toOwnedSlice(allocator) catch return globalThis.throwOutOfMemoryValue();
+                const keyslice = try key.toOwnedSlice(allocator);
                 var value = object_iter.value;
                 if (value == .undefined) continue;
 
                 const value_str = value.getZigString(globalThis);
-                const slice = value_str.toOwnedSlice(allocator) catch return globalThis.throwOutOfMemoryValue();
+                const slice = try value_str.toOwnedSlice(allocator);
 
                 envmap.put(keyslice, .{
                     .value = slice,
@@ -552,29 +552,32 @@ pub const IniTestingAPIs = struct {
                 }) catch return globalThis.throwOutOfMemoryValue();
             }
 
-            const map = allocator.create(bun.DotEnv.Map) catch return globalThis.throwOutOfMemoryValue();
+            const map = try allocator.create(bun.DotEnv.Map);
             map.* = .{
                 .map = envmap,
             };
 
             const env = bun.DotEnv.Loader.init(map, allocator);
-            const envstable = allocator.create(bun.DotEnv.Loader) catch return globalThis.throwOutOfMemoryValue();
+            const envstable = try allocator.create(bun.DotEnv.Loader);
             envstable.* = env;
             break :brk envstable;
         };
 
-        const install = allocator.create(bun.Schema.Api.BunInstall) catch return globalThis.throwOutOfMemoryValue();
+        const install = try allocator.create(bun.Schema.Api.BunInstall);
         install.* = std.mem.zeroes(bun.Schema.Api.BunInstall);
-        loadNpmrc(allocator, install, env, ".npmrc", &log, &source) catch {
+        var configs = std.ArrayList(ConfigIterator.Item).init(allocator);
+        defer configs.deinit();
+        loadNpmrc(allocator, install, env, ".npmrc", &log, &source, &configs) catch {
             return log.toJS(globalThis, allocator, "error");
         };
 
-        var obj = JSC.JSValue.createEmptyObject(globalThis, 3);
-        obj.protect();
-        defer obj.unprotect();
-
         const default_registry_url, const default_registry_token, const default_registry_username, const default_registry_password = brk: {
-            const default_registry = install.default_registry orelse break :brk .{ bun.String.static(Registry.default_url[0..]), bun.String.empty, bun.String.empty, bun.String.empty };
+            const default_registry = install.default_registry orelse break :brk .{
+                bun.String.static(Registry.default_url[0..]),
+                bun.String.empty,
+                bun.String.empty,
+                bun.String.empty,
+            };
 
             break :brk .{
                 bun.String.fromBytes(default_registry.url),
@@ -590,35 +593,16 @@ pub const IniTestingAPIs = struct {
             default_registry_password.deref();
         }
 
-        obj.put(
-            globalThis,
-            bun.String.static("default_registry_url"),
-            default_registry_url.toJS(globalThis),
-        );
-        obj.put(
-            globalThis,
-            bun.String.static("default_registry_token"),
-            default_registry_token.toJS(globalThis),
-        );
-        obj.put(
-            globalThis,
-            bun.String.static("default_registry_username"),
-            default_registry_username.toJS(globalThis),
-        );
-        obj.put(
-            globalThis,
-            bun.String.static("default_registry_password"),
-            default_registry_password.toJS(globalThis),
-        );
-
-        return obj;
+        return globalThis.createObjectFromStruct(.{
+            .default_registry_url = default_registry_url.toJS(globalThis),
+            .default_registry_token = default_registry_token.toJS(globalThis),
+            .default_registry_username = default_registry_username.toJS(globalThis),
+            .default_registry_password = default_registry_password.toJS(globalThis),
+        }).toJS();
     }
 
-    pub fn parse(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        const arguments_ = callframe.arguments(1);
+    pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        const arguments_ = callframe.arguments_old(1);
         const arguments = arguments_.slice();
 
         const jsstr = arguments[0];
@@ -630,15 +614,10 @@ pub const IniTestingAPIs = struct {
         var parser = Parser.init(bun.default_allocator, "<src>", utf8str.slice(), globalThis.bunVM().bundler.env);
         defer parser.deinit();
 
-        parser.parse(parser.arena.allocator()) catch |err| {
-            switch (err) {
-                error.OutOfMemory => return globalThis.throwOutOfMemoryValue(),
-            }
-        };
+        try parser.parse(parser.arena.allocator());
 
-        return parser.out.toJS(bun.default_allocator, globalThis, .{ .decode_escape_sequences = true }) catch |e| {
-            globalThis.throwError(e, "failed to turn AST into JS");
-            return .undefined;
+        return parser.out.toJS(bun.default_allocator, globalThis) catch |e| {
+            return globalThis.throwError(e, "failed to turn AST into JS");
         };
     }
 };
@@ -660,7 +639,6 @@ pub const ToStringFormatter = struct {
             .e_number => try writer.print("{d}", .{this.d.e_number.value}),
             .e_string => try writer.print("{s}", .{this.d.e_string.data}),
             .e_null => try writer.print("null", .{}),
-            .e_utf8_string => try writer.print("{s}", .{this.d.e_utf8_string.data}),
 
             else => |tag| if (bun.Environment.isDebug) {
                 Output.panic("Unexpected AST node: {s}", .{@tagName(tag)});
@@ -725,6 +703,16 @@ pub const ConfigIterator = struct {
             }
         };
 
+        /// Duplicate ConfigIterator.Item
+        pub fn dupe(this: *const Item, allocator: Allocator) OOM!?Item {
+            return .{
+                .registry_url = try allocator.dupe(u8, this.registry_url),
+                .optname = this.optname,
+                .value = try allocator.dupe(u8, this.value),
+                .loc = this.loc,
+            };
+        }
+
         /// Duplicate the value, decoding it if it is base64 encoded.
         pub fn dupeValueDecoded(
             this: *const Item,
@@ -756,6 +744,11 @@ pub const ConfigIterator = struct {
 
         pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             try writer.print("//{s}:{s}={s}", .{ this.registry_url, @tagName(this.optname), this.value });
+        }
+
+        pub fn deinit(self: *const Item, allocator: Allocator) void {
+            allocator.free(self.registry_url);
+            allocator.free(self.value);
         }
     };
 
@@ -862,36 +855,49 @@ pub const ScopeIterator = struct {
     }
 };
 
-pub fn loadNpmrcFromFile(
+pub fn loadNpmrcConfig(
     allocator: std.mem.Allocator,
     install: *bun.Schema.Api.BunInstall,
     env: *bun.DotEnv.Loader,
     auto_loaded: bool,
-    npmrc_path: [:0]const u8,
+    npmrc_paths: []const [:0]const u8,
 ) void {
     var log = bun.logger.Log.init(allocator);
     defer log.deinit();
 
-    const source = bun.sys.File.toSource(npmrc_path, allocator).unwrap() catch |err| {
-        if (auto_loaded) return;
-        Output.err(err, "failed to read .npmrc: \"{s}\"", .{npmrc_path});
-        Global.crash();
-    };
-    defer allocator.free(source.contents);
-
-    loadNpmrc(allocator, install, env, npmrc_path, &log, &source) catch |err| {
-        switch (err) {
-            error.OutOfMemory => bun.outOfMemory(),
+    // npmrc registry configurations are shared between all npmrc files
+    // so we need to collect them as we go for the final registry map
+    // to be created at the end.
+    var configs = std.ArrayList(ConfigIterator.Item).init(allocator);
+    defer {
+        for (configs.items) |item| {
+            item.deinit(allocator);
         }
-    };
-    if (log.hasErrors()) {
-        if (log.errors == 1)
-            Output.warn("Encountered an error while reading <b>.npmrc<r>:\n\n", .{})
-        else
-            Output.warn("Encountered errors while reading <b>.npmrc<r>:\n\n", .{});
-        Output.flush();
+        configs.deinit();
     }
-    log.print(Output.errorWriter()) catch {};
+
+    for (npmrc_paths) |npmrc_path| {
+        const source = bun.sys.File.toSource(npmrc_path, allocator).unwrap() catch |err| {
+            if (auto_loaded) continue;
+            Output.err(err, "failed to read .npmrc: \"{s}\"", .{npmrc_path});
+            Global.crash();
+        };
+        defer allocator.free(source.contents);
+
+        loadNpmrc(allocator, install, env, npmrc_path, &log, &source, &configs) catch |err| {
+            switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+            }
+        };
+        if (log.hasErrors()) {
+            if (log.errors == 1)
+                Output.warn("Encountered an error while reading <b>{s}<r>:\n\n", .{npmrc_path})
+            else
+                Output.warn("Encountered errors while reading <b>{s}<r>:\n\n", .{npmrc_path});
+            Output.flush();
+        }
+        log.print(Output.errorWriter()) catch {};
+    }
 }
 
 pub fn loadNpmrc(
@@ -901,11 +907,11 @@ pub fn loadNpmrc(
     npmrc_path: [:0]const u8,
     log: *bun.logger.Log,
     source: *const bun.logger.Source,
+    configs: *std.ArrayList(ConfigIterator.Item),
 ) OOM!void {
     var parser = bun.ini.Parser.init(allocator, npmrc_path, source.contents, env);
     defer parser.deinit();
     try parser.parse(parser.arena.allocator());
-
     // Need to be very, very careful here with strings.
     // They are allocated in the Parser's arena, which of course gets
     // deinitialized at the end of the scope.
@@ -1008,7 +1014,7 @@ pub fn loadNpmrc(
     // Process registry configuration
     out: {
         const count = brk: {
-            var count: usize = 0;
+            var count: usize = configs.items.len;
             for (parser.out.data.e_object.properties.slice()) |prop| {
                 if (prop.key) |keyexpr| {
                     if (keyexpr.asUtf8StringLiteral()) |key| {
@@ -1092,20 +1098,52 @@ pub fn loadNpmrc(
                     },
                     else => {},
                 }
-                const conf_item_url = bun.URL.parse(conf_item.registry_url);
+                if (try conf_item_.dupe(allocator)) |x| try configs.append(x);
+            }
+        }
 
-                if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host))) {
-                    const v: *bun.Schema.Api.NpmRegistry = brk: {
-                        if (install.default_registry) |*r| break :brk r;
-                        install.default_registry = bun.Schema.Api.NpmRegistry{
-                            .password = "",
-                            .token = "",
-                            .username = "",
-                            .url = Registry.default_url,
-                        };
-                        break :brk &install.default_registry.?;
+        for (configs.items) |conf_item| {
+            const conf_item_url = bun.URL.parse(conf_item.registry_url);
+
+            if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host))) {
+                const v: *bun.Schema.Api.NpmRegistry = brk: {
+                    if (install.default_registry) |*r| break :brk r;
+                    install.default_registry = bun.Schema.Api.NpmRegistry{
+                        .password = "",
+                        .token = "",
+                        .username = "",
+                        .url = Registry.default_url,
                     };
+                    break :brk &install.default_registry.?;
+                };
 
+                switch (conf_item.optname) {
+                    ._authToken => {
+                        if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;
+                    },
+                    .username => {
+                        if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.username = x;
+                    },
+                    ._password => {
+                        if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.password = x;
+                    },
+                    ._auth => {
+                        try @"handle _auth"(allocator, v, &conf_item, log, source);
+                    },
+                    .email, .certfile, .keyfile => unreachable,
+                }
+                continue;
+            }
+
+            for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
+                const url = url_map.get(k.*) orelse unreachable;
+
+                if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.host), bun.strings.withoutTrailingSlash(conf_item_url.host))) {
+                    if (conf_item_url.hostname.len > 0) {
+                        if (!std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.hostname), bun.strings.withoutTrailingSlash(conf_item_url.hostname))) {
+                            continue;
+                        }
+                    }
                     switch (conf_item.optname) {
                         ._authToken => {
                             if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;
@@ -1121,36 +1159,8 @@ pub fn loadNpmrc(
                         },
                         .email, .certfile, .keyfile => unreachable,
                     }
+                    // We have to keep going as it could match multiple scopes
                     continue;
-                }
-
-                for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
-                    const url = url_map.get(k.*) orelse unreachable;
-
-                    if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.host), bun.strings.withoutTrailingSlash(conf_item_url.host))) {
-                        if (conf_item_url.hostname.len > 0) {
-                            if (!std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.hostname), bun.strings.withoutTrailingSlash(conf_item_url.hostname))) {
-                                continue;
-                            }
-                        }
-                        switch (conf_item.optname) {
-                            ._authToken => {
-                                if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;
-                            },
-                            .username => {
-                                if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.username = x;
-                            },
-                            ._password => {
-                                if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.password = x;
-                            },
-                            ._auth => {
-                                try @"handle _auth"(allocator, v, &conf_item, log, source);
-                            },
-                            .email, .certfile, .keyfile => unreachable,
-                        }
-                        // We have to keep going as it could match multiple scopes
-                        continue;
-                    }
                 }
             }
         }

@@ -483,7 +483,8 @@ pub const Task = TaggedPointerUnion(.{
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
     ServerAllConnectionsClosedTask,
-    bun.bake.DevServer.HotReloadTask,
+    bun.bake.DevServer.HotReloadEvent,
+    bun.bundle_v2.DeferredBatchTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -1011,7 +1012,7 @@ pub const EventLoop = struct {
                 },
                 .ThreadSafeFunction => {
                     var transform_task: *ThreadSafeFunction = task.as(ThreadSafeFunction);
-                    transform_task.call();
+                    transform_task.onDispatch();
                 },
                 @field(Task.Tag, @typeName(ReadFileTask)) => {
                     var transform_task: *ReadFileTask = task.get(ReadFileTask).?;
@@ -1035,8 +1036,8 @@ pub const EventLoop = struct {
                     // special case: we return
                     return 0;
                 },
-                @field(Task.Tag, typeBaseName(@typeName(bun.bake.DevServer.HotReloadTask))) => {
-                    const hmr_task: *bun.bake.DevServer.HotReloadTask = task.get(bun.bake.DevServer.HotReloadTask).?;
+                @field(Task.Tag, typeBaseName(@typeName(bun.bake.DevServer.HotReloadEvent))) => {
+                    const hmr_task: *bun.bake.DevServer.HotReloadEvent = task.get(bun.bake.DevServer.HotReloadEvent).?;
                     hmr_task.run();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
@@ -1251,6 +1252,10 @@ pub const EventLoop = struct {
                     var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
                     any.runFromJSThread(virtual_machine);
                 },
+                @field(Task.Tag, typeBaseName(@typeName(bun.bundle_v2.DeferredBatchTask))) => {
+                    var any: *bun.bundle_v2.DeferredBatchTask = task.get(bun.bundle_v2.DeferredBatchTask).?;
+                    any.runOnJSThread();
+                },
 
                 else => {
                     bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
@@ -1434,6 +1439,7 @@ pub const EventLoop = struct {
         }
 
         this.processGCTimer();
+        this.processGCTimer();
         loop.tick();
 
         ctx.onAfterEventLoop();
@@ -1482,38 +1488,36 @@ pub const EventLoop = struct {
 
     pub fn tick(this: *EventLoop) void {
         JSC.markBinding(@src());
-        {
-            this.entered_event_loop_count += 1;
-            this.debug.enter();
-            defer {
-                this.entered_event_loop_count -= 1;
-                this.debug.exit();
-            }
-
-            const ctx = this.virtual_machine;
-            this.tickConcurrent();
-            this.processGCTimer();
-
-            const global = ctx.global;
-            const global_vm = ctx.jsc;
-
-            while (true) {
-                while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
-                    this.tickConcurrent();
-                } else {
-                    this.drainMicrotasksWithGlobal(global, global_vm);
-                    this.tickConcurrent();
-                    if (this.tasks.count > 0) continue;
-                }
-                break;
-            }
-
-            while (this.tickWithCount(ctx) > 0) {
-                this.tickConcurrent();
-            }
-
-            this.global.handleRejectedPromises();
+        this.entered_event_loop_count += 1;
+        this.debug.enter();
+        defer {
+            this.entered_event_loop_count -= 1;
+            this.debug.exit();
         }
+
+        const ctx = this.virtual_machine;
+        this.tickConcurrent();
+        this.processGCTimer();
+
+        const global = ctx.global;
+        const global_vm = ctx.jsc;
+
+        while (true) {
+            while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
+                this.tickConcurrent();
+            } else {
+                this.drainMicrotasksWithGlobal(global, global_vm);
+                this.tickConcurrent();
+                if (this.tasks.count > 0) continue;
+            }
+            break;
+        }
+
+        while (this.tickWithCount(ctx) > 0) {
+            this.tickConcurrent();
+        }
+
+        this.global.handleRejectedPromises();
     }
 
     pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
@@ -2023,13 +2027,6 @@ pub const AnyEventLoop = union(enum) {
 
     pub const Task = AnyTaskWithExtraContext;
 
-    pub fn fromJSC(
-        this: *AnyEventLoop,
-        jsc: *EventLoop,
-    ) void {
-        this.* = .{ .js = jsc };
-    }
-
     pub fn wakeup(this: *AnyEventLoop) void {
         this.loop().wakeup();
     }
@@ -2111,7 +2108,7 @@ pub const AnyEventLoop = union(enum) {
     ) void {
         switch (this.*) {
             .js => {
-                unreachable; // TODO:
+                bun.todoPanic(@src(), "AnyEventLoop.enqueueTaskConcurrent", .{});
                 // const TaskType = AnyTask.New(Context, Callback);
                 // @field(ctx, field) = TaskType.init(ctx);
                 // var concurrent = bun.default_allocator.create(ConcurrentTask) catch unreachable;

@@ -18,6 +18,11 @@
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
+#include "JavaScriptCore/ScriptCallStackFactory.h"
+#include "JavaScriptCore/ConsoleMessage.h"
+#include "JavaScriptCore/InspectorConsoleAgent.h"
+#include "JavaScriptCore/JSGlobalObjectDebuggable.h"
+#include <JavaScriptCore/StackFrame.h>
 #include <sys/stat.h>
 #include "ConsoleObject.h"
 #include <JavaScriptCore/GetterSetter.h>
@@ -26,7 +31,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "wtf-bindings.h"
-
+#include <webcore/SerializedScriptValue.h>
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/OrdinalNumber.h"
@@ -35,6 +40,7 @@
 #include "ErrorCode.h"
 
 #include "napi_handle_scope.h"
+#include "napi_external.h"
 
 #ifndef WIN32
 #include <errno.h>
@@ -58,7 +64,10 @@ typedef int mode_t;
 #include "ProcessBindingNatives.h"
 
 #if OS(LINUX)
+#include <features.h>
+#ifdef __GNU_LIBRARY__
 #include <gnu/libc-version.h>
+#endif
 #endif
 
 #pragma mark - Node.js Process
@@ -111,7 +120,6 @@ JSC_DECLARE_CUSTOM_GETTER(Process_getPID);
 JSC_DECLARE_CUSTOM_GETTER(Process_getPPID);
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*));
-static bool processIsExiting = false;
 
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
@@ -232,7 +240,7 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
-
+    static bool processIsExiting = false;
     if (processIsExiting)
         return;
     processIsExiting = true;
@@ -270,6 +278,8 @@ extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
+
+extern "C" size_t Bun__process_dlopen_count;
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
@@ -350,6 +360,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
 #endif
 
+    globalObject->m_pendingNapiModuleDlopenHandle = handle;
+
+    Bun__process_dlopen_count++;
+
     if (!handle) {
 #if OS(WINDOWS)
         DWORD errorId = GetLastError();
@@ -414,10 +428,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
     JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(globalObject, exportsValue));
 
+    // TODO: think about the finalizer here
+    // currently we do not dealloc napi modules so we don't have to worry about it right now
+    auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr);
+    bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    ASSERT(success);
+
     RETURN_IF_EXCEPTION(scope, {});
 
     globalObject->m_pendingNapiModuleAndExports[0].clear();
     globalObject->m_pendingNapiModuleAndExports[1].clear();
+    globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288
@@ -649,45 +671,51 @@ struct SignalHandleValue {
 };
 static HashMap<int, SignalHandleValue>* signalToContextIdsMap = nullptr;
 
-static const NeverDestroyed<String> signalNames[] = {
-    MAKE_STATIC_STRING_IMPL("SIGHUP"),
-    MAKE_STATIC_STRING_IMPL("SIGINT"),
-    MAKE_STATIC_STRING_IMPL("SIGQUIT"),
-    MAKE_STATIC_STRING_IMPL("SIGILL"),
-    MAKE_STATIC_STRING_IMPL("SIGTRAP"),
-    MAKE_STATIC_STRING_IMPL("SIGABRT"),
-    MAKE_STATIC_STRING_IMPL("SIGIOT"),
-    MAKE_STATIC_STRING_IMPL("SIGBUS"),
-    MAKE_STATIC_STRING_IMPL("SIGFPE"),
-    MAKE_STATIC_STRING_IMPL("SIGKILL"),
-    MAKE_STATIC_STRING_IMPL("SIGUSR1"),
-    MAKE_STATIC_STRING_IMPL("SIGSEGV"),
-    MAKE_STATIC_STRING_IMPL("SIGUSR2"),
-    MAKE_STATIC_STRING_IMPL("SIGPIPE"),
-    MAKE_STATIC_STRING_IMPL("SIGALRM"),
-    MAKE_STATIC_STRING_IMPL("SIGTERM"),
-    MAKE_STATIC_STRING_IMPL("SIGCHLD"),
-    MAKE_STATIC_STRING_IMPL("SIGCONT"),
-    MAKE_STATIC_STRING_IMPL("SIGSTOP"),
-    MAKE_STATIC_STRING_IMPL("SIGTSTP"),
-    MAKE_STATIC_STRING_IMPL("SIGTTIN"),
-    MAKE_STATIC_STRING_IMPL("SIGTTOU"),
-    MAKE_STATIC_STRING_IMPL("SIGURG"),
-    MAKE_STATIC_STRING_IMPL("SIGXCPU"),
-    MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
-    MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
-    MAKE_STATIC_STRING_IMPL("SIGPROF"),
-    MAKE_STATIC_STRING_IMPL("SIGWINCH"),
-    MAKE_STATIC_STRING_IMPL("SIGIO"),
-    MAKE_STATIC_STRING_IMPL("SIGINFO"),
-    MAKE_STATIC_STRING_IMPL("SIGSYS"),
-};
+static const NeverDestroyed<String>* getSignalNames()
+{
+    static const NeverDestroyed<String> signalNames[] = {
+        MAKE_STATIC_STRING_IMPL("SIGHUP"),
+        MAKE_STATIC_STRING_IMPL("SIGINT"),
+        MAKE_STATIC_STRING_IMPL("SIGQUIT"),
+        MAKE_STATIC_STRING_IMPL("SIGILL"),
+        MAKE_STATIC_STRING_IMPL("SIGTRAP"),
+        MAKE_STATIC_STRING_IMPL("SIGABRT"),
+        MAKE_STATIC_STRING_IMPL("SIGIOT"),
+        MAKE_STATIC_STRING_IMPL("SIGBUS"),
+        MAKE_STATIC_STRING_IMPL("SIGFPE"),
+        MAKE_STATIC_STRING_IMPL("SIGKILL"),
+        MAKE_STATIC_STRING_IMPL("SIGUSR1"),
+        MAKE_STATIC_STRING_IMPL("SIGSEGV"),
+        MAKE_STATIC_STRING_IMPL("SIGUSR2"),
+        MAKE_STATIC_STRING_IMPL("SIGPIPE"),
+        MAKE_STATIC_STRING_IMPL("SIGALRM"),
+        MAKE_STATIC_STRING_IMPL("SIGTERM"),
+        MAKE_STATIC_STRING_IMPL("SIGCHLD"),
+        MAKE_STATIC_STRING_IMPL("SIGCONT"),
+        MAKE_STATIC_STRING_IMPL("SIGSTOP"),
+        MAKE_STATIC_STRING_IMPL("SIGTSTP"),
+        MAKE_STATIC_STRING_IMPL("SIGTTIN"),
+        MAKE_STATIC_STRING_IMPL("SIGTTOU"),
+        MAKE_STATIC_STRING_IMPL("SIGURG"),
+        MAKE_STATIC_STRING_IMPL("SIGXCPU"),
+        MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
+        MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
+        MAKE_STATIC_STRING_IMPL("SIGPROF"),
+        MAKE_STATIC_STRING_IMPL("SIGWINCH"),
+        MAKE_STATIC_STRING_IMPL("SIGIO"),
+        MAKE_STATIC_STRING_IMPL("SIGINFO"),
+        MAKE_STATIC_STRING_IMPL("SIGSYS"),
+    };
+
+    return signalNames;
+}
 
 static void loadSignalNumberMap()
 {
 
     static std::once_flag signalNameToNumberMapOnceFlag;
     std::call_once(signalNameToNumberMapOnceFlag, [] {
+        auto signalNames = getSignalNames();
         signalNameToNumberMap = new HashMap<String, int>();
         signalNameToNumberMap->reserveInitialCapacity(31);
 #if OS(WINDOWS)
@@ -814,12 +842,7 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
         MarkedArgumentBuffer args;
         args.append(jsString(globalObject->vm(), signalNameIdentifier.string()));
         args.append(jsNumber(signalNumber));
-        // TODO(@paperdave): add an ASSERT(isMainThread());
-        // This should be true on posix if I understand sigaction right
-        // On Windows it should be true if the uv_signal is created on the main thread's loop
-        //
-        // I would like to assert this because if that assumption is not true,
-        // this call will probably cause very confusing bugs.
+
         process->wrapped().emitForBindings(signalNameIdentifier, args);
     });
 };
@@ -925,6 +948,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         loadSignalNumberMap();
         static std::once_flag signalNumberToNameMapOnceFlag;
         std::call_once(signalNumberToNameMapOnceFlag, [] {
+            auto signalNames = getSignalNames();
             signalNumberToNameMap = new HashMap<int, String>();
             signalNumberToNameMap->reserveInitialCapacity(31);
             signalNumberToNameMap->add(SIGHUP, signalNames[0]);
@@ -1573,8 +1597,11 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         }
 
 #if OS(LINUX)
+#ifdef __GNU_LIBRARY__
         header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionCompiler"_s), JSC::jsString(vm, makeString(__GLIBC__, '.', __GLIBC_MINOR__)), 0);
         header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionRuntime"_s), JSC::jsString(vm, String::fromUTF8(gnu_get_libc_version()), 0));
+#else
+#endif
 #endif
 
         header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);

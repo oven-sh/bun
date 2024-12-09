@@ -93,4 +93,13 @@ error: Hello World`,
       },
     },
   });
+  itBundled("bun/unicode comment", {
+    target: "bun",
+    files: {
+      "/a.ts": /* js */ `
+        /* æ */
+      `,
+    },
+    run: { stdout: "" },
+  });
 });

@@ -272,7 +272,7 @@ nativeTests.test_type_tag = () => {
 };
 
 nativeTests.test_instance_data = () => {
-  const first_data = Math.floor(Math.random() * 1e9) + 1337;
+  const first_data = 1337;
   const results = [];
 
   results.push(nativeTests.get_instance_data() === null);

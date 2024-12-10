@@ -1517,7 +1517,7 @@ pub fn parseIntoBinaryLockfile(
                 try lockfile.buffers.trees.append(
                     allocator,
                     .{
-                        ._dependency_id = tree.dep_id,
+                        .dependency_id = tree.dep_id,
                         .id = tree_id,
                         .parent = tree.parent_id,
                         .dependencies = .{

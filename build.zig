@@ -330,15 +330,15 @@ pub fn build(b: *Build) !void {
 
     // zig build enum-extractor
     {
-        const step = b.step("enum-extractor", "Extract enum definitions (invoked by a code generator)");
-        const exe = b.addExecutable(.{
-            .name = "enum_extractor",
-            .root_source_file = b.path("./src/generated_enum_extractor.zig"),
-            .target = b.graph.host,
-            .optimize = .Debug,
-        });
-        const run = b.addRunArtifact(exe);
-        step.dependOn(&run.step);
+        // const step = b.step("enum-extractor", "Extract enum definitions (invoked by a code generator)");
+        // const exe = b.addExecutable(.{
+        //     .name = "enum_extractor",
+        //     .root_source_file = b.path("./src/generated_enum_extractor.zig"),
+        //     .target = b.graph.host,
+        //     .optimize = .Debug,
+        // });
+        // const run = b.addRunArtifact(exe);
+        // step.dependOn(&run.step);
     }
 }
 

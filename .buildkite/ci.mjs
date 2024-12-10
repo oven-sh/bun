@@ -18,6 +18,7 @@ import {
   isBuildkite,
   isBuildManual,
   isFork,
+  isMacOS,
   isMainBranch,
   isMergeQueue,
   parseBoolean,
@@ -533,7 +534,7 @@ function getTestBunStep(platform, options = {}) {
   }
 
   const depends = [];
-  if (dryRun) {
+  if (dryRun && !isMacOS) {
     depends.push(`${getImageKey(platform)}-build-image`);
   }
   if (!buildId) {

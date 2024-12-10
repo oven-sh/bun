@@ -2564,7 +2564,7 @@ pub const VirtualMachine = struct {
             } else {
                 return error.ModuleNotFound;
             }
-        } else if (ModuleLoader.is_allowed_to_use_internal_testing_apis) {
+        } else if (ModuleLoader.is_allowed_to_use_internal_testing_apis or Environment.isDebug) {
             if (JSC.internal_modules.get(specifier) != null) {
                 ret.result = null;
                 ret.path = specifier;

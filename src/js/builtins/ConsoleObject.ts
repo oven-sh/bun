@@ -298,8 +298,9 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     }
 
     if (typeof colorMode !== "boolean" && colorMode !== "auto") {
-      // throw new ERR_INVALID_ARG_VALUE("colorMode", colorMode);
-      throw new TypeError("colorMode must be a boolean or 'auto'");
+      throw $ERR_INVALID_ARG_VALUE(
+        "The argument 'colorMode' must be one of: 'auto', true, false. Received " + inspect(colorMode),
+      );
     }
 
     if (groupIndentation !== undefined) {
@@ -311,6 +312,11 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
       if (inspectOptions.colors !== undefined && options.colorMode !== undefined) {
         // throw new ERR_INCOMPATIBLE_OPTION_PAIR("options.inspectOptions.color", "colorMode");
+        const err = new TypeError(
+          'Option "options.inspectOptions.color" cannot be used in combination with option "colorMode"',
+        );
+        err.code = "ERR_INCOMPATIBLE_OPTION_PAIR";
+        throw err;
       }
       optionsMap.set(this, inspectOptions);
     }
@@ -472,7 +478,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       value: function (stream) {
         let color = this[kColorMode];
         if (color === "auto") {
-          if (process.env.FORCE_COLOR !== undefined) {
+          if (process.env[["FORCE_", "COLOR"].join("")] !== undefined) {
             color = Bun.enableANSIColors;
           } else {
             color = stream.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true);

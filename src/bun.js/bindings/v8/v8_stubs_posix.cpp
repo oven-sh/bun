@@ -1,1930 +1,1933 @@
 #include "v8.h"
 
+#define V8_WEAK_STUB(name) \
+    __attribute__((weak)) void* name(void) { V8_UNIMPLEMENTED(); }
+
 #if OS(LINUX) || OS(MACOS)
 extern "C" {
-__attribute__((weak)) void* _ZNK2v810CpuProfile10GetEndTimeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810CpuProfile12GetStartTimeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810CpuProfile14GetSampleStateEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810CpuProfile14GetTopDownRootEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810CpuProfile15GetSamplesCountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810CpuProfile18GetSampleTimestampEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810CpuProfile22GetSampleEmbedderStateEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810CpuProfile8GetTitleEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810CpuProfile9GetSampleEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810CpuProfile9SerializeEPNS_12OutputStreamENS0_19SerializationFormatE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810FixedArray3GetENS_5LocalINS_7ContextEEEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810FixedArray6LengthEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810StackFrame11GetLocationEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810StackFrame11GetScriptIdEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810StackFrame13GetScriptNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810StackFrame13IsConstructorEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810StackFrame15GetFunctionNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810StackFrame15GetScriptSourceEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810StackFrame16IsUserJavaScriptEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810StackFrame24GetScriptNameOrSourceURLEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810StackFrame25GetScriptSourceMappingURLEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810StackFrame6IsEvalEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810StackFrame6IsWasmEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810StackTrace13GetFrameCountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v810StackTrace8GetFrameEPNS_7IsolateEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v811ArrayBuffer10ByteLengthEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v811ArrayBuffer11WasDetachedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v811ArrayBuffer12IsDetachableEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v811ArrayBuffer13MaxByteLengthEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v811ArrayBuffer27IsResizableByUserJavaScriptEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v811ArrayBuffer4DataEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v811StartupData13CanBeRehashedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v811StartupData7IsValidEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812BackingStore10ByteLengthEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812BackingStore13MaxByteLengthEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812BackingStore27IsResizableByUserJavaScriptEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812BackingStore4DataEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812BackingStore8IsSharedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812BigIntObject7ValueOfEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812HeapSnapshot11GetNodeByIdEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812HeapSnapshot13GetNodesCountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812HeapSnapshot24GetMaxSnapshotJSObjectIdEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812HeapSnapshot7GetNodeEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812HeapSnapshot7GetRootEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812HeapSnapshot9SerializeEPNS_12OutputStreamENS0_19SerializationFormatE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812NumberObject7ValueOfEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812ScriptOrigin24VerifyHostDefinedOptionsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812StringObject7ValueOfEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812SymbolObject7ValueOfEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v812api_internal14StackAllocatedILb1EE13VerifyOnStackEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813BooleanObject7ValueOfEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813CFunctionInfo12ArgumentInfoEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813HeapGraphEdge11GetFromNodeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813HeapGraphEdge7GetNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813HeapGraphEdge7GetTypeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813HeapGraphEdge9GetToNodeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813HeapGraphNode14GetShallowSizeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813HeapGraphNode16GetChildrenCountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813HeapGraphNode5GetIdEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813HeapGraphNode7GetNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813HeapGraphNode7GetTypeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813HeapGraphNode8GetChildEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813ModuleRequest12GetSpecifierEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813ModuleRequest15GetSourceOffsetEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813ModuleRequest19GetImportAttributesEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v813UnboundScript5GetIdEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode11GetHitCountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode11GetScriptIdEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode12GetLineTicksEPNS0_8LineTickEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode13GetDeoptInfosEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode13GetLineNumberEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode13GetSourceTypeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode15GetColumnNumberEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode15GetFunctionNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode15GetHitLineCountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode16GetBailoutReasonEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode16GetChildrenCountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode18GetFunctionNameStrEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode21GetScriptResourceNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode24GetScriptResourceNameStrEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode25IsScriptSharedCrossOriginEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode8GetChildEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode9GetNodeIdEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814CpuProfileNode9GetParentEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814ObjectTemplate10IsCodeLikeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814ObjectTemplate16IsImmutableProtoEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814ObjectTemplate18InternalFieldCountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814PrimitiveArray6LengthEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814ScriptCompiler20ConsumeCodeCacheTask29ShouldMergeWithExistingScriptEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v814SourceLocation8ToStringB5cxx11Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v815ArrayBufferView9HasBufferEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v816FunctionTemplate26IsLeafTemplateForApiObjectENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v817SharedArrayBuffer10ByteLengthEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v817SharedArrayBuffer13MaxByteLengthEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v817SharedArrayBuffer4DataEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v817ValueDeserializer20GetWireFormatVersionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v818PropertyDescriptor10enumerableEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v818PropertyDescriptor12configurableEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v818PropertyDescriptor12has_writableEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v818PropertyDescriptor14has_enumerableEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v818PropertyDescriptor16has_configurableEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v818PropertyDescriptor3getEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v818PropertyDescriptor3setEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v818PropertyDescriptor5valueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v818PropertyDescriptor7has_getEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v818PropertyDescriptor7has_setEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v818PropertyDescriptor8writableEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v818PropertyDescriptor9has_valueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v819CpuProfilingOptions18raw_filter_contextEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v819TracedReferenceBase10CheckValueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v821FastApiTypedArrayBase13ValidateIndexEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v83Map4SizeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v83Map7AsArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v83Set4SizeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v83Set7AsArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84Data12IsFixedArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84Data16IsObjectTemplateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84Data18IsFunctionTemplateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84Data7IsValueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84Data8IsModuleEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84Data9IsContextEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84Data9IsPrivateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84Date11ToISOStringEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84Date7ValueOfEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base15RegionAllocator5PrintERSo(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base15RegionAllocator6Region5PrintERSo(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base20BoundedPageAllocator4sizeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base20BoundedPageAllocator5beginEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base4Time10ToTimespecEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base4Time8ToJsTimeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base4Time9ToTimevalEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base5debug10StackTrace14OutputToStreamEPSo(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base5debug10StackTrace5PrintEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base5debug10StackTrace8ToStringB5cxx11Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base5debug10StackTrace9AddressesEPm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base6Bignum11ToHexStringEPci(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base6Bignum7BigitAtEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base6Bignum9IsClampedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base9TimeDelta10InSecondsFEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base9TimeDelta10ToTimespecEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base9TimeDelta13InNanosecondsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base9TimeDelta14InMicrosecondsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base9TimeDelta14InMillisecondsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base9TimeDelta15InMillisecondsFEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base9TimeDelta23InMillisecondsRoundedUpEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base9TimeDelta6InDaysEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base9TimeDelta7InHoursEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base9TimeDelta9InMinutesEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v84base9TimeDelta9InSecondsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Array6LengthEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Int325ValueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Proxy9IsRevokedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value10FullIsNullEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value10FullIsTrueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value10Int32ValueENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value10IsDataViewEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value10IsExternalEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value10IsFunctionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value10IsWasmNullEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value11FullIsFalseEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value11IsInt8ArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value11NumberValueENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value11ToPrimitiveENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value11Uint32ValueENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value12BooleanValueEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value12FullIsStringEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value12IntegerValueENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value12IsInt16ArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value12IsInt32ArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value12IsTypedArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value12IsUint8ArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value12StrictEqualsENS_5LocalIS0_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value12ToArrayIndexENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value13IsArrayBufferEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value13IsMapIteratorEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value13IsNativeErrorEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value13IsSetIteratorEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value13IsUint16ArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value13IsUint32ArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value14IsBigIntObjectEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value14IsFloat16ArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value14IsFloat32ArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value14IsFloat64ArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value14IsNumberObjectEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value14IsStringObjectEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value14IsSymbolObjectEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value14ToDetailStringENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value15FullIsUndefinedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value15IsAsyncFunctionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value15IsBigInt64ArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value15IsBooleanObjectEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value16IsBigUint64ArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value17IsArgumentsObjectEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value17IsArrayBufferViewEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value17IsGeneratorObjectEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value18IsWasmMemoryObjectEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value18IsWasmModuleObjectEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value19IsGeneratorFunctionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value19IsSharedArrayBufferEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value19IsUint8ClampedArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value23IsModuleNamespaceObjectEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value5IsMapEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value5IsSetEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value6EqualsENS_5LocalINS_7ContextEEENS1_IS0_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value6IsDateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value6IsNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value7IsArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value7IsInt32Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value7IsProxyEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value7ToInt32ENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value8IsBigIntEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value8IsNumberEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value8IsObjectEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value8IsRegExpEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value8IsSymbolEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value8IsUint32Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value8ToBigIntENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value8ToNumberENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value8ToObjectENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value8ToStringENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value8ToUint32ENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value9IsBooleanEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value9IsPromiseEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value9IsWeakMapEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value9IsWeakRefEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value9IsWeakSetEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value9SameValueENS_5LocalIS0_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value9ToBooleanEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value9ToIntegerENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85Value9ToNumericENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug10WasmScript10CodeOffsetEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug10WasmScript12NumFunctionsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug10WasmScript16GetFunctionRangeEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug10WasmScript18ExternalSymbolsURLEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug10WasmScript18GetDebugSymbolTypeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug10WasmScript20NumImportedFunctionsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug10WasmScript21GetContainingFunctionEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug12ScriptSource12WasmBytecodeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug12ScriptSource14JavaScriptCodeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug12ScriptSource4SizeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug12ScriptSource6LengthEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug15WasmValueObject4typeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script10GetIsolateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script10IsEmbeddedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script11StartColumnEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script11WasCompiledEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script13GetSha256HashEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script13OriginOptionsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script13SetBreakpointENS_5LocalINS_6StringEEEPNS0_8LocationEPi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script15GetSourceOffsetERKNS0_8LocationENS1_19GetSourceOffsetModeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script15SetScriptSourceENS_5LocalINS_6StringEEEbbPNS0_14LiveEditResultE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script16SourceMappingURLEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script17GetSourceLocationEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script22GetPossibleBreakpointsERKNS0_8LocationES4_bPSt6vectorINS0_13BreakLocationESaIS6_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script28SetInstrumentationBreakpointEPi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script2IdEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script4NameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script6IsWasmEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script6SourceEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script7EndLineEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script8IsModuleEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script9ContextIdEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script9EndColumnEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script9SourceURLEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug6Script9StartLineEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage10ScriptData13FunctionCountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage10ScriptData15GetFunctionDataEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage10ScriptData9GetScriptEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage11ScriptCountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage12FunctionData10BlockCountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage12FunctionData11StartOffsetEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage12FunctionData12GetBlockDataEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage12FunctionData16HasBlockCoverageEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage12FunctionData4NameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage12FunctionData5CountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage12FunctionData9EndOffsetEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage13GetScriptDataEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage9BlockData11StartOffsetEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage9BlockData5CountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Coverage9BlockData9EndOffsetEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Location13GetLineNumberEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Location15GetColumnNumberEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v85debug8Location7IsEmptyEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86BigInt10Int64ValueEPb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86BigInt11Uint64ValueEPb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86BigInt12ToWordsArrayEPiS1_Pm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86BigInt9WordCountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Module12GetExceptionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Module12IsGraphAsyncEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Module15GetIdentityHashEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Module17GetModuleRequestsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Module17IsSyntheticModuleEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Module18IsSourceTextModuleEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Module22SourceOffsetToLocationEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Module8ScriptIdEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Module9GetStatusEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Number5ValueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Object10IsCallableEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Object10IsCodeLikeEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Object12IsApiWrapperEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Object13IsConstructorEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Object14IsUndetectableEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Object18InternalFieldCountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Object25HasNamedLookupInterceptorEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Object27HasIndexedLookupInterceptorEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86RegExp8GetFlagsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86RegExp9GetSourceEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Script23GetProducedCompileHintsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String10IsExternalEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String10Utf8LengthEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String12StringEqualsENS_5LocalIS0_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String12WriteOneByteEPNS_7IsolateEPhiii(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String15CanMakeExternalENS0_8EncodingE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String17IsExternalOneByteEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String17IsExternalTwoByteEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String19ContainsOnlyOneByteEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String22ExternalStringResource25CheckCachedDataInvariantsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String28VerifyExternalStringResourceEPNS0_22ExternalStringResourceE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String29ExternalOneByteStringResource25CheckCachedDataInvariantsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String29GetExternalStringResourceSlowEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String32GetExternalOneByteStringResourceEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String32VerifyExternalStringResourceBaseEPNS0_26ExternalStringResourceBaseENS0_8EncodingE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String33GetExternalStringResourceBaseSlowEPNS0_8EncodingE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String5WriteEPNS_7IsolateEPtiii(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String6LengthEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String9IsOneByteEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86String9WriteUtf8EPNS_7IsolateEPciPii(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Symbol11DescriptionEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v86Uint325ValueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Boolean5ValueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Context34IsCodeGenerationFromStringsAllowedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87CppHeap18wrapper_descriptorEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Integer5ValueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Isolate10GetCppHeapEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Isolate19GetMicrotasksPolicyEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Isolate9IsCurrentEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message10ErrorLevelEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message10GetIsolateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message12GetEndColumnENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message12GetEndColumnEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message13GetLineNumberENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message13GetSourceLineENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message13GetStackTraceEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message14GetEndPositionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message14GetStartColumnENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message14GetStartColumnEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message15GetScriptOriginEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message16GetStartPositionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message19IsSharedCrossOriginEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message20GetWasmFunctionIndexEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message21GetScriptResourceNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message3GetEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message8IsOpaqueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Message9GetSourceENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Private4NameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87Promise10HasHandlerEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87sampler11AtomicGuard10is_successEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v87tracing11TracedValue19AppendAsTraceFormatEPNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88External5ValueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88Function11NewInstanceENS_5LocalINS_7ContextEEEiPNS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88Function12GetDebugNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88Function15GetInferredNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88Function15GetScriptOriginEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88Function16GetBoundFunctionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88Function16GetUnboundScriptEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88Function19GetScriptLineNumberEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88Function21GetScriptColumnNumberEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88Function22GetScriptStartPositionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88Function26Experimental_IsNopFunctionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88Function29NewInstanceWithSideEffectTypeENS_5LocalINS_7ContextEEEiPNS1_INS_5ValueEEENS_14SideEffectTypeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88Function7GetNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88Function8ScriptIdEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88TryCatch10StackTraceENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88TryCatch11CanContinueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88TryCatch13HasTerminatedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88TryCatch7MessageEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88TryCatch9ExceptionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88TryCatch9HasCaughtEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZNK2v88TryCatch9IsVerboseEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810CpuProfile6DeleteEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810FixedArray9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810Int16Array3NewENS_5LocalINS_11ArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810Int16Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810Int16Array9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810Int32Array3NewENS_5LocalINS_11ArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810Int32Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810Int32Array9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810NewContextEPNS_7IsolateEPNS_22ExtensionConfigurationENS_10MaybeLocalINS_14ObjectTemplateEEENS4_INS_5ValueEEEmNS_8internal33DeserializeEmbedderFieldsCallbackEPNS_14MicrotaskQueueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810StackTrace17CurrentStackTraceEPNS_7IsolateEiNS0_17StackTraceOptionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810StackTrace28CurrentScriptNameOrSourceURLEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810TypedArray6LengthEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810TypedArray9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810Uint8Array3NewENS_5LocalINS_11ArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810Uint8Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v810Uint8Array9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811ArrayBuffer12SetDetachKeyENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811ArrayBuffer15GetBackingStoreEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811ArrayBuffer15NewBackingStoreEPNS_7IsolateEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811ArrayBuffer15NewBackingStoreEPvmPFvS1_mS1_ES1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811ArrayBuffer24NewResizableBackingStoreEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811ArrayBuffer3NewEPNS_7IsolateESt10shared_ptrINS_12BackingStoreEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811ArrayBuffer3NewEPNS_7IsolateEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811ArrayBuffer6DetachENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811ArrayBuffer6DetachEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811ArrayBuffer9Allocator10ReallocateEPvmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811ArrayBuffer9Allocator19NewDefaultAllocatorEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811ArrayBuffer9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler13StopProfilingENS_5LocalINS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEENS_19CpuProfilingOptionsESt10unique_ptrINS_24DiscardedSamplesDelegateESt14default_deleteIS6_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler19SetSamplingIntervalEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler21SetUsePreciseSamplingEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler38UseDetailedSourcePositionsForProfilingEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler3NewEPNS_7IsolateENS_22CpuProfilingNamingModeENS_23CpuProfilingLoggingModeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler4StopEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler5StartENS_19CpuProfilingOptionsESt10unique_ptrINS_24DiscardedSamplesDelegateESt14default_deleteIS3_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler5StartENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler5StartENS_5LocalINS_6StringEEENS_19CpuProfilingOptionsESt10unique_ptrINS_24DiscardedSamplesDelegateESt14default_deleteIS6_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler5StartENS_5LocalINS_6StringEEEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811CpuProfiler7DisposeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811HandleScope10InitializeEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811HandleScope15NumberOfHandlesEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811HandleScopeC1EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811HandleScopeC2EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811HandleScopeD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811HandleScopeD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811HandleScopedaEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811HandleScopedlEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811HandleScopenaEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811HandleScopenwEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811Uint16Array3NewENS_5LocalINS_11ArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811Uint16Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811Uint16Array9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811Uint32Array3NewENS_5LocalINS_11ArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811Uint32Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v811Uint32Array9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812BackingStore10ReallocateEPNS_7IsolateESt10unique_ptrIS0_St14default_deleteIS0_EEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812BackingStore12EmptyDeleterEPvmS1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812BackingStoreD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812BackingStoreD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812BigIntObject3NewEPNS_7IsolateEl(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812BigIntObject9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812Float16Array3NewENS_5LocalINS_11ArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812Float16Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812Float16Array9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812Float32Array3NewENS_5LocalINS_11ArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812Float32Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812Float32Array9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812Float64Array3NewENS_5LocalINS_11ArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812Float64Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812Float64Array9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler11GetObjectIdENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler11GetObjectIdEPv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler12GetHeapStatsEPNS_12OutputStreamEPl(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler12QueryObjectsENS_5LocalINS_7ContextEEEPNS_20QueryObjectPredicateEPSt6vectorINS_6GlobalINS_6ObjectEEESaIS9_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler14ClearObjectIdsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler14FindObjectByIdEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler15GetHeapSnapshotEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler16GetSnapshotCountEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler16TakeHeapSnapshotEPNS_15ActivityControlEPNS0_18ObjectNameResolverEbb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler16TakeHeapSnapshotERKNS0_19HeapSnapshotOptionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler20GetAllocationProfileEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler22DeleteAllHeapSnapshotsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler23StopTrackingHeapObjectsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler24StartTrackingHeapObjectsEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler24StopSamplingHeapProfilerEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler26SetGetDetachednessCallbackEPFNS_13EmbedderGraph4Node12DetachednessEPNS_7IsolateERKNS_5LocalINS_5ValueEEEtPvESB_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler29AddBuildEmbedderGraphCallbackEPFvPNS_7IsolateEPNS_13EmbedderGraphEPvES5_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapProfiler32RemoveBuildEmbedderGraphCallbackEPFvPNS_7IsolateEPNS_13EmbedderGraphEPvES5_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812HeapSnapshot6DeleteEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812NumberObject3NewEPNS_7IsolateEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812NumberObject9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812StringObject3NewEPNS_7IsolateENS_5LocalINS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812StringObject9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812SymbolObject3NewEPNS_7IsolateENS_5LocalINS_6SymbolEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812SymbolObject9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812api_internal10EternalizeEPNS_7IsolateEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812api_internal12ToLocalEmptyEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812api_internal13DisposeGlobalEPm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812api_internal17FromJustIsNothingEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812api_internal19CopyGlobalReferenceEPm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812api_internal19MoveGlobalReferenceEPPmS2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812api_internal22AnnotateStrongRetainerEPmPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812api_internal24InternalFieldOutOfBoundsEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812api_internal8MakeWeakEPPm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812api_internal8MakeWeakEPmPvPFvRKNS_16WeakCallbackInfoIvEEENS_16WeakCallbackTypeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v812api_internal9ClearWeakEPm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813BigInt64Array3NewENS_5LocalINS_11ArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813BigInt64Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813BigInt64Array9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813BooleanObject3NewEPNS_7IsolateEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813BooleanObject9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813CFunctionInfoC1ERKNS_9CTypeInfoEjPS2_NS0_19Int64RepresentationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813CFunctionInfoC2ERKNS_9CTypeInfoEjPS2_NS0_19Int64RepresentationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813ModuleRequest9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813RegisterStateC1ERKS0_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813RegisterStateC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813RegisterStateC2ERKS0_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813RegisterStateC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813RegisterStateD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813RegisterStateD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813RegisterStateaSERKS0_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813UnboundScript12GetSourceURLEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813UnboundScript13GetLineNumberEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813UnboundScript13GetScriptNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813UnboundScript15GetColumnNumberEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813UnboundScript19GetSourceMappingURLEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813UnboundScript20BindToCurrentContextEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813WasmStreaming15OnBytesReceivedEPKhm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813WasmStreaming22SetCompiledModuleBytesEPKhm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813WasmStreaming39SetMoreFunctionsCanBeSerializedCallbackESt8functionIFvNS_18CompiledWasmModuleEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813WasmStreaming5AbortENS_10MaybeLocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813WasmStreaming6FinishEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813WasmStreaming6SetUrlEPKcm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813WasmStreaming6UnpackEPNS_7IsolateENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813WasmStreamingC1ESt10unique_ptrINS0_17WasmStreamingImplESt14default_deleteIS2_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813WasmStreamingC2ESt10unique_ptrINS0_17WasmStreamingImplESt14default_deleteIS2_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813WasmStreamingD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v813WasmStreamingD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814BigUint64Array3NewENS_5LocalINS_11ArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814BigUint64Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814BigUint64Array9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814HeapStatisticsC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814HeapStatisticsC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814MicrotaskQueue3NewEPNS_7IsolateENS_16MicrotasksPolicyE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ObjectTemplate10SetHandlerERKNS_33NamedPropertyHandlerConfigurationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ObjectTemplate10SetHandlerERKNS_35IndexedPropertyHandlerConfigurationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ObjectTemplate11NewInstanceENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ObjectTemplate11SetAccessorENS_5LocalINS_4NameEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS3_NS1_IS5_EERKNS4_IvEEESB_NS_17PropertyAttributeENS_14SideEffectTypeESI_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ObjectTemplate11SetAccessorENS_5LocalINS_6StringEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS3_NS1_IS5_EERKNS4_IvEEESB_NS_17PropertyAttributeENS_14SideEffectTypeESI_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ObjectTemplate11SetCodeLikeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ObjectTemplate17SetImmutableProtoEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ObjectTemplate18MarkAsUndetectableEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ObjectTemplate21SetInternalFieldCountEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ObjectTemplate22SetAccessCheckCallbackEPFbNS_5LocalINS_7ContextEEENS1_INS_6ObjectEEENS1_INS_5ValueEEEES7_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ObjectTemplate24SetCallAsFunctionHandlerEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS2_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ObjectTemplate32SetAccessCheckCallbackAndHandlerEPFbNS_5LocalINS_7ContextEEENS1_INS_6ObjectEEENS1_INS_5ValueEEEERKNS_33NamedPropertyHandlerConfigurationERKNS_35IndexedPropertyHandlerConfigurationES7_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ObjectTemplate3NewEPNS_7IsolateENS_5LocalINS_16FunctionTemplateEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ObjectTemplate9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814PrimitiveArray3GetEPNS_7IsolateEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814PrimitiveArray3NewEPNS_7IsolateEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814PrimitiveArray3SetEPNS_7IsolateEiNS_5LocalINS_9PrimitiveEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814PrimitiveArray9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler10CachedData18CompatibilityCheckEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler10CachedDataC1EPKhiNS1_12BufferPolicyE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler10CachedDataC2EPKhiNS1_12BufferPolicyE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler10CachedDataD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler10CachedDataD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler13CompileModuleENS_5LocalINS_7ContextEEEPNS0_14StreamedSourceENS1_INS_6StringEEERKNS_12ScriptOriginE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler13CompileModuleEPNS_7IsolateEPNS0_6SourceENS0_14CompileOptionsENS0_13NoCacheReasonE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler14StartStreamingEPNS_7IsolateEPNS0_14StreamedSourceENS_10ScriptTypeENS0_14CompileOptionsEPFbiPvES7_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler14StreamedSourceC1ESt10unique_ptrINS0_20ExternalSourceStreamESt14default_deleteIS3_EENS1_8EncodingE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler14StreamedSourceC2ESt10unique_ptrINS0_20ExternalSourceStreamESt14default_deleteIS3_EENS1_8EncodingE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler14StreamedSourceD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler14StreamedSourceD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler15CompileFunctionENS_5LocalINS_7ContextEEEPNS0_6SourceEmPNS1_INS_6StringEEEmPNS1_INS_6ObjectEEENS0_14CompileOptionsENS0_13NoCacheReasonE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler15CreateCodeCacheENS_5LocalINS_13UnboundScriptEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler15CreateCodeCacheENS_5LocalINS_19UnboundModuleScriptEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler19ScriptStreamingTask3RunEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler20CachedDataVersionTagEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler20CompileUnboundScriptEPNS_7IsolateEPNS0_6SourceENS0_14CompileOptionsENS0_13NoCacheReasonE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler20ConsumeCodeCacheTask19SourceTextAvailableEPNS_7IsolateENS_5LocalINS_6StringEEERKNS_12ScriptOriginE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler20ConsumeCodeCacheTask23MergeWithExistingScriptEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler20ConsumeCodeCacheTask3RunEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler20ConsumeCodeCacheTaskC1ESt10unique_ptrINS_8internal25BackgroundDeserializeTaskESt14default_deleteIS4_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler20ConsumeCodeCacheTaskC2ESt10unique_ptrINS_8internal25BackgroundDeserializeTaskESt14default_deleteIS4_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler20ConsumeCodeCacheTaskD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler20ConsumeCodeCacheTaskD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler22CompileUnboundInternalEPNS_7IsolateEPNS0_6SourceENS0_14CompileOptionsENS0_13NoCacheReasonE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler23CompileFunctionInternalENS_5LocalINS_7ContextEEEPNS0_6SourceEmPNS1_INS_6StringEEEmPNS1_INS_6ObjectEEENS0_14CompileOptionsENS0_13NoCacheReasonEPNS1_INS_14ScriptOrModuleEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler23StartConsumingCodeCacheEPNS_7IsolateESt10unique_ptrINS0_10CachedDataESt14default_deleteIS4_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler26CreateCodeCacheForFunctionENS_5LocalINS_8FunctionEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler7CompileENS_5LocalINS_7ContextEEEPNS0_14StreamedSourceENS1_INS_6StringEEERKNS_12ScriptOriginE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptCompiler7CompileENS_5LocalINS_7ContextEEEPNS0_6SourceENS0_14CompileOptionsENS0_13NoCacheReasonE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptOrModule15GetResourceNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v814ScriptOrModule18HostDefinedOptionsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ArrayBufferView10ByteLengthEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ArrayBufferView10ByteOffsetEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ArrayBufferView12CopyContentsEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ArrayBufferView6BufferEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ArrayBufferView9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815MicrotasksScope15GetCurrentDepthEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815MicrotasksScope17PerformCheckpointEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815MicrotasksScope19IsRunningMicrotasksEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815MicrotasksScopeC1ENS_5LocalINS_7ContextEEENS0_4TypeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815MicrotasksScopeC1EPNS_7IsolateENS0_4TypeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815MicrotasksScopeC1EPNS_7IsolateEPNS_14MicrotaskQueueENS0_4TypeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815MicrotasksScopeC2ENS_5LocalINS_7ContextEEENS0_4TypeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815MicrotasksScopeC2EPNS_7IsolateENS0_4TypeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815MicrotasksScopeC2EPNS_7IsolateEPNS_14MicrotaskQueueENS0_4TypeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815MicrotasksScopeD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815MicrotasksScopeD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SealHandleScopeC1EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SealHandleScopeC2EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SealHandleScopeD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SealHandleScopeD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreator10AddContextENS_5LocalINS_7ContextEEENS_31SerializeInternalFieldsCallbackENS_28SerializeContextDataCallbackE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreator10CreateBlobENS0_20FunctionCodeHandlingE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreator10GetIsolateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreator17SetDefaultContextENS_5LocalINS_7ContextEEENS_31SerializeInternalFieldsCallbackENS_28SerializeContextDataCallbackE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreator7AddDataENS_5LocalINS_7ContextEEEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreator7AddDataEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreatorC1EPKlPKNS_11StartupDataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreatorC1EPNS_7IsolateEPKlPKNS_11StartupDataEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreatorC1EPNS_7IsolateERKNS1_12CreateParamsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreatorC1ERKNS_7Isolate12CreateParamsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreatorC2EPKlPKNS_11StartupDataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreatorC2EPNS_7IsolateEPKlPKNS_11StartupDataEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreatorC2EPNS_7IsolateERKNS1_12CreateParamsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreatorC2ERKNS_7Isolate12CreateParamsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreatorD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815SnapshotCreatorD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer10WriteValueENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer11WriteDoubleEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer11WriteHeaderEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer11WriteUint32Ej(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer11WriteUint64Em(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer13WriteRawBytesEPKvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer19TransferArrayBufferEjNS_5LocalINS_11ArrayBufferEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer37SetTreatArrayBufferViewsAsHostObjectsEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer7ReleaseEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer8Delegate12IsHostObjectEPNS_7IsolateENS_5LocalINS_6ObjectEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer8Delegate15WriteHostObjectEPNS_7IsolateENS_5LocalINS_6ObjectEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer8Delegate16FreeBufferMemoryEPv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer8Delegate19HasCustomHostObjectEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer8Delegate22GetSharedArrayBufferIdEPNS_7IsolateENS_5LocalINS_17SharedArrayBufferEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer8Delegate22ReallocateBufferMemoryEPvmPm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer8Delegate23GetWasmModuleTransferIdEPNS_7IsolateENS_5LocalINS_16WasmModuleObjectEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializer8Delegate24AdoptSharedValueConveyorEPNS_7IsolateEONS_19SharedValueConveyorE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializerC1EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializerC1EPNS_7IsolateEPNS0_8DelegateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializerC2EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializerC2EPNS_7IsolateEPNS0_8DelegateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializerD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v815ValueSerializerD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816CodeEventHandler6EnableEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816CodeEventHandler7DisableEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816CodeEventHandlerC1EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816CodeEventHandlerC2EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816CodeEventHandlerD0Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816CodeEventHandlerD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816CodeEventHandlerD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate11GetFunctionENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate11HasInstanceENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate12NewWithCacheEPNS_7IsolateEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalINS_7PrivateEEENSA_IS4_EENSA_INS_9SignatureEEEiNS_14SideEffectTypeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate12SetClassNameENS_5LocalINS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate14SetCallHandlerEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS2_EENS_14SideEffectTypeERKNS_10MemorySpanIKNS_9CFunctionEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate15RemovePrototypeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate16InstanceTemplateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate17NewRemoteInstanceEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate17PrototypeTemplateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate17ReadOnlyPrototypeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate20SetAcceptAnyReceiverEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate25NewWithCFunctionOverloadsEPNS_7IsolateEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS4_EENSA_INS_9SignatureEEEiNS_19ConstructorBehaviorENS_14SideEffectTypeERKNS_10MemorySpanIKNS_9CFunctionEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate28SetPrototypeProviderTemplateENS_5LocalIS0_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate3NewEPNS_7IsolateEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS4_EENSA_INS_9SignatureEEEiNS_19ConstructorBehaviorENS_14SideEffectTypeEPKNS_9CFunctionEttt(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate7InheritENS_5LocalIS0_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816FunctionTemplate9SetLengthEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816TypecheckWitness6UpdateENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816TypecheckWitnessC1EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816TypecheckWitnessC2EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816WasmMemoryObject6BufferEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816WasmMemoryObject9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816WasmModuleObject17GetCompiledModuleEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816WasmModuleObject18FromCompiledModuleEPNS_7IsolateERKNS_18CompiledWasmModuleE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816WasmModuleObject7CompileEPNS_7IsolateENS_10MemorySpanIKhEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v816WasmModuleObject9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817RegisterExtensionESt10unique_ptrINS_9ExtensionESt14default_deleteIS1_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817SharedArrayBuffer15GetBackingStoreEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817SharedArrayBuffer15NewBackingStoreEPNS_7IsolateEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817SharedArrayBuffer15NewBackingStoreEPvmPFvS1_mS1_ES1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817SharedArrayBuffer3NewEPNS_7IsolateESt10shared_ptrINS_12BackingStoreEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817SharedArrayBuffer3NewEPNS_7IsolateEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817SharedArrayBuffer9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817Uint8ClampedArray3NewENS_5LocalINS_11ArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817Uint8ClampedArray3NewENS_5LocalINS_17SharedArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817Uint8ClampedArray9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializer10ReadDoubleEPd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializer10ReadHeaderENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializer10ReadUint32EPj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializer10ReadUint64EPm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializer12ReadRawBytesEmPPKv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializer19TransferArrayBufferEjNS_5LocalINS_11ArrayBufferEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializer25TransferSharedArrayBufferEjNS_5LocalINS_17SharedArrayBufferEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializer27SetSupportsLegacyWireFormatEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializer8Delegate14ReadHostObjectEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializer8Delegate19GetWasmModuleFromIdEPNS_7IsolateEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializer8Delegate22GetSharedValueConveyorEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializer8Delegate26GetSharedArrayBufferFromIdEPNS_7IsolateEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializer9ReadValueENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializerC1EPNS_7IsolateEPKhm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializerC1EPNS_7IsolateEPKhmPNS0_8DelegateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializerC2EPNS_7IsolateEPKhm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializerC2EPNS_7IsolateEPKhmPNS0_8DelegateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializerD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v817ValueDeserializerD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818CompiledWasmModule15GetWireBytesRefEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818CompiledWasmModule9SerializeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818CompiledWasmModuleC1ESt10shared_ptrINS_8internal4wasm12NativeModuleEEPKcm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818CompiledWasmModuleC2ESt10shared_ptrINS_8internal4wasm12NativeModuleEEPKcm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818DictionaryTemplate11NewInstanceENS_5LocalINS_7ContextEEENS_10MemorySpanINS_10MaybeLocalINS_5ValueEEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818DictionaryTemplate3NewEPNS_7IsolateENS_10MemorySpanIKSt17basic_string_viewIcSt11char_traitsIcEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818DictionaryTemplate9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818EmbedderStateScopeC1EPNS_7IsolateENS_5LocalINS_7ContextEEENS_16EmbedderStateTagE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818EmbedderStateScopeC2EPNS_7IsolateENS_5LocalINS_7ContextEEENS_16EmbedderStateTagE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818EmbedderStateScopeD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818EmbedderStateScopeD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818HeapCodeStatisticsC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818HeapCodeStatisticsC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818PropertyDescriptor14set_enumerableEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818PropertyDescriptor16set_configurableEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818PropertyDescriptorC1ENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818PropertyDescriptorC1ENS_5LocalINS_5ValueEEES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818PropertyDescriptorC1ENS_5LocalINS_5ValueEEEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818PropertyDescriptorC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818PropertyDescriptorC2ENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818PropertyDescriptorC2ENS_5LocalINS_5ValueEEES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818PropertyDescriptorC2ENS_5LocalINS_5ValueEEEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818PropertyDescriptorC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818PropertyDescriptorD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v818PropertyDescriptorD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819CpuProfilingOptionsC1ENS_16CpuProfilingModeEjiNS_10MaybeLocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819CpuProfilingOptionsC2ENS_16CpuProfilingModeEjiNS_10MaybeLocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819HeapSpaceStatisticsC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819HeapSpaceStatisticsC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819RegisteredExtension13UnregisterAllEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819RegisteredExtension8RegisterESt10unique_ptrINS_9ExtensionESt14default_deleteIS2_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819RegisteredExtensionC1ESt10unique_ptrINS_9ExtensionESt14default_deleteIS2_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819RegisteredExtensionC2ESt10unique_ptrINS_9ExtensionESt14default_deleteIS2_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819ResourceConstraints17ConfigureDefaultsEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819ResourceConstraints29ConfigureDefaultsFromHeapSizeEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819SharedValueConveyorC1EOS0_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819SharedValueConveyorC1EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819SharedValueConveyorC2EOS0_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819SharedValueConveyorC2EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819SharedValueConveyorD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819SharedValueConveyorD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819SharedValueConveyoraSEOS0_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819UnboundModuleScript12GetSourceURLEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v819UnboundModuleScript19GetSourceMappingURLEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v820HeapObjectStatisticsC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v820HeapObjectStatisticsC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v821MeasureMemoryDelegate7DefaultEPNS_7IsolateENS_5LocalINS_7ContextEEENS3_INS_7Promise8ResolverEEENS_17MeasureMemoryModeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v822SharedMemoryStatisticsC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v822SharedMemoryStatisticsC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v823ThreadIsolatedAllocator37SetDefaultPermissionsForSignalHandlerEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v824EscapableHandleScopeBase10EscapeSlotEPm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v824EscapableHandleScopeBaseC1EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v824EscapableHandleScopeBaseC2EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v829TryHandleWebAssemblyTrapPosixEiP9siginfo_tPv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V810GetVersionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V810InitializeEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V813InitializeICUEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V815DisposePlatformEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V816SetEntropySourceEPFbPhmE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V818InitializePlatformEPNS_8PlatformE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V818SetFlagsFromStringEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V818SetFlagsFromStringEPKcm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V819SetSnapshotDataBlobEPNS_11StartupDataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V821SetDcheckErrorHandlerEPFvPKciS2_E(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V823SetFlagsFromCommandLineEPiPPcb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V825GetSharedMemoryStatisticsEPNS_22SharedMemoryStatisticsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V827SetFatalMemoryErrorCallbackEPFvPKcRKNS_10OOMDetailsEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V828EnableWebAssemblyTrapHandlerEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V828InitializeICUDefaultLocationEPKcS2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V829InitializeExternalStartupDataEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V832SetReturnAddressLocationResolverEPFmmE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V837InitializeExternalStartupDataFromFileEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v82V87DisposeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v835TryToCopyAndConvertArrayToCppBufferILj196608EiEEbNS_5LocalINS_5ArrayEEEPT0_j(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v835TryToCopyAndConvertArrayToCppBufferILj262144EjEEbNS_5LocalINS_5ArrayEEEPT0_j(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v835TryToCopyAndConvertArrayToCppBufferILj458752EfEEbNS_5LocalINS_5ArrayEEEPT0_j(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v835TryToCopyAndConvertArrayToCppBufferILj524288EdEEbNS_5LocalINS_5ArrayEEEPT0_j(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v837GetCalleeSavedRegistersFromEntryFrameEPvPNS_13RegisterStateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v83Map3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v83Map3HasENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v83Map3NewEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v83Map5ClearEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v83Map9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v83Set3AddENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v83Set3HasENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v83Set3NewEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v83Set5ClearEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v83Set6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v83Set9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84Date3NewENS_5LocalINS_7ContextEEEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84Date9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84JSON5ParseENS_5LocalINS_7ContextEEENS1_INS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84JSON9StringifyENS_5LocalINS_7ContextEEENS1_INS_5ValueEEENS1_INS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84LoadEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84Name15GetIdentityHashEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84Name9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base10BignumDtoaEdNS0_14BignumDtoaModeEiNS0_6VectorIcEEPiS4_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base11SharedMutex10LockSharedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base11SharedMutex12UnlockSharedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base11SharedMutex13LockExclusiveEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base11SharedMutex13TryLockSharedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base11SharedMutex15UnlockExclusiveEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base11SharedMutex16TryLockExclusiveEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base11SharedMutexC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base11SharedMutexC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base11SharedMutexD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base11SharedMutexD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base11ThreadTicks11IsSupportedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base11ThreadTicks3NowEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base12CallOnceImplEPSt6atomicIhESt8functionIFvvEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base12MemoryRegion12FromMapsLineEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13DoubleToAsciiEdNS0_8DtoaModeEiNS0_6VectorIcEEPiS4_S4_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13FastFixedDtoaEdiNS0_6VectorIcEEPiS3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13PageAllocator11RemapSharedEPvS2_m(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13PageAllocator12ReleasePagesEPvmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13PageAllocator13AllocatePagesEPvmmNS_13PageAllocator10PermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13PageAllocator13DecommitPagesEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13PageAllocator13RecommitPagesEPvmNS_13PageAllocator10PermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13PageAllocator14SetPermissionsEPvmNS_13PageAllocator10PermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13PageAllocator17GetRandomMmapAddrEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13PageAllocator17SetRandomMmapSeedEl(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13PageAllocator18DiscardSystemPagesEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13PageAllocator19AllocateSharedPagesEmPKv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13PageAllocator22CanAllocateSharedPagesEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13PageAllocator9FreePagesEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13PageAllocatorC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base13PageAllocatorC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base14RecursiveMutex4LockEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base14RecursiveMutex6UnlockEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base14RecursiveMutex7TryLockEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base14RecursiveMutexC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base14RecursiveMutexC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base14RecursiveMutexD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base14RecursiveMutexD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocator10FindRegionEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocator10TrimRegionEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocator11CheckRegionEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocator14AllocateRegionEPNS0_21RandomNumberGeneratorEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocator14AllocateRegionEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocator14AllocateRegionEmmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocator16AllocateRegionAtEmmNS1_11RegionStateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocator17FreeListAddRegionEPNS1_6RegionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocator18FreeListFindRegionEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocator20FreeListRemoveRegionEPNS1_6RegionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocator21AllocateAlignedRegionEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocator5MergeESt23_Rb_tree_const_iteratorIPNS1_6RegionEES5_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocator5SplitEPNS1_6RegionEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocator6IsFreeEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocatorC1Emmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocatorC2Emmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocatorD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15RegionAllocatorD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base15VLQBase64DecodeEPKcmPm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base16PowersOfTenCache32GetCachedPowerForDecimalExponentEiPNS0_5DiyFpEPi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base16PowersOfTenCache36GetCachedPowerForBinaryExponentRangeEiiPNS0_5DiyFpEPi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17ConditionVariable4WaitEPNS0_5MutexE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17ConditionVariable7WaitForEPNS0_5MutexERKNS0_9TimeDeltaE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17ConditionVariable9NotifyAllEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17ConditionVariable9NotifyOneEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17ConditionVariableC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17ConditionVariableC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17ConditionVariableD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17ConditionVariableD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17PrintCheckOperandIPKaEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS7_E5valuesrNS0_19has_output_operatorIS7_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES7_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17PrintCheckOperandIPKcEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS7_E5valuesrNS0_19has_output_operatorIS7_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES7_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17PrintCheckOperandIPKhEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS7_E5valuesrNS0_19has_output_operatorIS7_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES7_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17PrintCheckOperandIPaEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS6_E5valuesrNS0_19has_output_operatorIS6_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES6_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17PrintCheckOperandIPcEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS6_E5valuesrNS0_19has_output_operatorIS6_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES6_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17PrintCheckOperandIPhEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS6_E5valuesrNS0_19has_output_operatorIS6_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES6_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17PrintCheckOperandIaEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS5_E5valuesrNS0_19has_output_operatorIS5_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES5_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17PrintCheckOperandIcEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS5_E5valuesrNS0_19has_output_operatorIS5_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES5_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17PrintCheckOperandIhEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS5_E5valuesrNS0_19has_output_operatorIS5_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES5_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base17SetDcheckFunctionEPFvPKciS2_E(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base18ContextualVariableINS_8internal19StackAllocatedCheckEKbE11ExportedTopEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base18ContextualVariableINS_8internal8compiler10turboshaft12PipelineDataES5_E11ExportedTopEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base18PosixTimezoneCache21DaylightSavingsOffsetEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base18SetPrintStackTraceEPFvvE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace12FreeSubspaceEPNS0_22VirtualAddressSubspaceE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace13AllocatePagesEmmmNS_15PagePermissionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace13DecommitPagesEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace13RecommitPagesEmmNS_15PagePermissionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace13SetRandomSeedEl(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace15FreeGuardRegionEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace15FreeSharedPagesEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace16AllocateSubspaceEmmmNS_15PagePermissionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace17RandomPageAddressEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace18DiscardSystemPagesEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace18SetPagePermissionsEmmNS_15PagePermissionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace19AllocateGuardRegionEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace19AllocateSharedPagesEmmNS_15PagePermissionsElm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace20CanAllocateSubspacesEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpace9FreePagesEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpaceC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base19VirtualAddressSpaceC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base20BoundedPageAllocator12ReleasePagesEPvmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base20BoundedPageAllocator13AllocatePagesEPvmmNS_13PageAllocator10PermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base20BoundedPageAllocator13DecommitPagesEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base20BoundedPageAllocator13RecommitPagesEPvmNS_13PageAllocator10PermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base20BoundedPageAllocator14SetPermissionsEPvmNS_13PageAllocator10PermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base20BoundedPageAllocator15AllocatePagesAtEmmNS_13PageAllocator10PermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base20BoundedPageAllocator18DiscardSystemPagesEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base20BoundedPageAllocator29ReserveForSharedMemoryMappingEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base20BoundedPageAllocator9FreePagesEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base20BoundedPageAllocatorC1EPNS_13PageAllocatorEmmmNS0_22PageInitializationModeENS0_15PageFreeingModeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base20BoundedPageAllocatorC2EPNS_13PageAllocatorEmmmNS0_22PageInitializationModeENS0_15PageFreeingModeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21PosixInitializeCommonENS0_9AbortModeEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21PosixMemoryMappedFileD0Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21PosixMemoryMappedFileD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21PosixMemoryMappedFileD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21RandomNumberGenerator10NextDoubleEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21RandomNumberGenerator10NextSampleEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21RandomNumberGenerator11MurmurHash3Em(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21RandomNumberGenerator14NextSampleSlowEmmRKSt13unordered_setImSt4hashImESt8equal_toImESaImEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21RandomNumberGenerator16SetEntropySourceEPFbPhmE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21RandomNumberGenerator4NextEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21RandomNumberGenerator7NextIntEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21RandomNumberGenerator7SetSeedEl(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21RandomNumberGenerator9NextBytesEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21RandomNumberGenerator9NextInt64Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21RandomNumberGeneratorC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base21RandomNumberGeneratorC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspace12FreeSubspaceEPS1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspace13AllocatePagesEmmmNS_15PagePermissionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspace13DecommitPagesEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspace13RecommitPagesEmmNS_15PagePermissionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspace13SetRandomSeedEl(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspace15FreeGuardRegionEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspace15FreeSharedPagesEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspace16AllocateSubspaceEmmmNS_15PagePermissionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspace17RandomPageAddressEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspace18DiscardSystemPagesEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspace18SetPagePermissionsEmmNS_15PagePermissionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspace19AllocateGuardRegionEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspace19AllocateSharedPagesEmmNS_15PagePermissionsElm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspace9FreePagesEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspaceC1ENS0_23AddressSpaceReservationEPNS0_23VirtualAddressSpaceBaseENS_15PagePermissionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspaceC2ENS0_23AddressSpaceReservationEPNS0_23VirtualAddressSpaceBaseENS_15PagePermissionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspaceD0Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspaceD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base22VirtualAddressSubspaceD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base23AddressSpaceReservation10FreeSharedEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base23AddressSpaceReservation13DecommitPagesEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base23AddressSpaceReservation13RecommitPagesEPvmNS0_2OS16MemoryPermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base23AddressSpaceReservation14AllocateSharedEPvmNS0_2OS16MemoryPermissionElm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base23AddressSpaceReservation14SetPermissionsEPvmNS0_2OS16MemoryPermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base23AddressSpaceReservation18DiscardSystemPagesEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base23AddressSpaceReservation18FreeSubReservationES1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base23AddressSpaceReservation20CreateSubReservationEPvmNS0_2OS16MemoryPermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base23AddressSpaceReservation4FreeEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base23AddressSpaceReservation8AllocateEPvmNS0_2OS16MemoryPermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base25GetSharedLibraryAddressesEP8_IO_FILE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base25PosixDefaultTimezoneCache13LocalTimezoneEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base25PosixDefaultTimezoneCache15LocalTimeOffsetEdb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base27charToDigitDecodeForTestingEh(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS10DebugBreakEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS10FreeSharedEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS10InitializeENS0_9AbortModeEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS10PrintErrorEPKcz(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS10RemapPagesEPKvmPvNS1_16MemoryPermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS11ExitProcessEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS11GetUserTimeEPjS2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS11RemapSharedEPvS2_m(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS11VPrintErrorEPKcSt9__va_list(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS12GetLastErrorEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS13DecommitPagesEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS13RecommitPagesEPvmNS1_16MemoryPermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS14AllocateSharedEPvmNS1_16MemoryPermissionElm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS14AllocateSharedEmNS1_16MemoryPermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS14CommitPageSizeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS14HasLazyCommitsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS14SetPermissionsEPvmNS1_16MemoryPermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS15SetDataReadOnlyEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS16AllocatePageSizeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS16MemoryMappedFile4openEPKcNS2_8FileModeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS16MemoryMappedFile6createEPKcmPv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS17GetGCFakeMMapFileEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS17GetRandomMmapAddrEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS17OpenTemporaryFileEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS17SetRandomMmapSeedEl(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS17TimeCurrentMillisEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS18DirectorySeparatorEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS18DiscardSystemPagesEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS18GetCurrentThreadIdEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS18SignalCodeMovingGCEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS19CreateTimezoneCacheEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS19GetCurrentProcessIdEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS20GetPeakMemoryUsageKbEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS20isDirectorySeparatorEc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS22AdjustSchedulingParamsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS22CanReserveAddressSpaceEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS24ActivationFrameAlignmentEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS25DestroySharedMemoryHandleEl(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS25GetFreeMemoryRangesWithinEmmmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS25GetSharedLibraryAddressesEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS27FreeAddressSpaceReservationENS0_23AddressSpaceReservationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS29CreateAddressSpaceReservationEPvmmNS1_16MemoryPermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS34CreateSharedMemoryHandleForTestingEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS4FreeEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS5AbortEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS5FOpenEPKcS3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS5PrintEPKcz(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS5SleepENS0_9TimeDeltaE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS6FPrintEP8_IO_FILEPKcz(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS6RemoveEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS6VPrintEPKcSt9__va_list(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS7ReleaseEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS7StrNCpyEPciPKcm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS7VFPrintEP8_IO_FILEPKcSt9__va_list(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS8AllocateEPvmmNS1_16MemoryPermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS8SNPrintFEPciPKcz(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base2OS9VSNPrintFEPciPKcSt9__va_list(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base33GetProtectionFromMemoryPermissionENS0_2OS16MemoryPermissionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base3CPUC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base3CPUC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4Time10FromJsTimeEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4Time11FromTimevalE7timeval(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4Time12FromTimespecE8timespec(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4Time17NowFromSystemTimeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4Time3NowEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4bits11SignedDiv32Eii(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4bits11SignedDiv64Ell(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4bits11SignedMod32Eii(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4bits11SignedMod64Ell(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4bits15SignedMulHigh32Eii(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4bits15SignedMulHigh64Ell(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4bits17UnsignedMulHigh32Ejj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4bits17UnsignedMulHigh64Emm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4bits20SignedSaturatedAdd64Ell(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4bits20SignedSaturatedSub64Ell(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base4bits21SignedMulHighAndAdd32Eiii(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5DiyFp8MultiplyERKS1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5Mutex4LockEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5Mutex6UnlockEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5Mutex7TryLockEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5MutexC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5MutexC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5MutexD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5MutexD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5Stack13GetStackStartEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5Stack22GetStackStartUncheckedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5Stack23GetCurrentStackPositionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5Stack29ObtainCurrentThreadStackStartEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5debug10StackTraceC1EPKPKvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5debug10StackTraceC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5debug10StackTraceC2EPKPKvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5debug10StackTraceC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5debug10StackTraceD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5debug10StackTraceD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5debug22DisableSignalStackDumpEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5debug27EnableInProcessStackDumpingEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base5debug8internal6itoa_rElPcmim(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum11PlusCompareERKS1_S3_S3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum12AssignBignumERKS1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum12AssignUInt16Et(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum12AssignUInt64Em(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum13SubtractTimesERKS1_i(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum14SubtractBignumERKS1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum15AssignHexStringENS0_6VectorIKcEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum15BigitsShiftLeftEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum16MultiplyByUInt32Ej(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum16MultiplyByUInt64Em(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum17AssignPowerUInt16Eti(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum19AssignDecimalStringENS0_6VectorIKcEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum20MultiplyByPowerOfTenEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum21DivideModuloIntBignumERKS1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum4ZeroEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum5AlignERKS1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum5ClampEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum6SquareEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum7CompareERKS1_S3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum9AddBignumERKS1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum9AddUInt64Em(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Bignum9ShiftLeftEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6BignumC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6BignumC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6StrtodENS0_6VectorIKcEEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Thread14GetThreadLocalEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Thread14SetThreadLocalEiPv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Thread20CreateThreadLocalKeyEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Thread20DeleteThreadLocalKeyEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Thread4JoinEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Thread5StartEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6Thread8set_nameEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6ThreadC1ERKNS1_7OptionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6ThreadC2ERKNS1_7OptionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6ThreadD0Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6ThreadD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base6ThreadD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7StrNCpyENS0_6VectorIcEEPKcm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7SysInfo15AddressSpaceEndEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7SysInfo18NumberOfProcessorsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7SysInfo21AmountOfVirtualMemoryEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7SysInfo22AmountOfPhysicalMemoryEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7543cosEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7543expEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7543logEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7543powEdd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7543sinEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7543tanEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7544acosEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7544asinEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7544atanEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7544cbrtEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7544coshEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7544log2Ed(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7544sinhEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7544tanhEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7545acoshEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7545asinhEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7545atan2Edd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7545atanhEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7545expm1Ed(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7545log10Ed(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base7ieee7545log1pEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base8FastDtoaEdNS0_12FastDtoaModeEiNS0_6VectorIcEEPiS4_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base8FatalOOMENS0_7OOMTypeEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base8IsSubsetENS_15PagePermissionsES1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base8SNPrintFENS0_6VectorIcEEPKcz(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base9Semaphore4WaitEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base9Semaphore6SignalEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base9Semaphore7WaitForERKNS0_9TimeDeltaE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base9SemaphoreC1Ei(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base9SemaphoreC2Ei(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base9SemaphoreD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base9SemaphoreD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base9TimeDelta12FromTimespecE8timespec(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base9TimeTicks16IsHighResolutionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base9TimeTicks3NowEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84base9VSNPrintFENS0_6VectorIcEEPKcSt9__va_list(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v84baselsERSoRKNS0_4TimeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Array3NewEPNS_7IsolateEPNS_5LocalINS_5ValueEEEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Array3NewEPNS_7IsolateEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Array7IterateENS_5LocalINS_7ContextEEEPFNS0_14CallbackResultEjNS1_INS_5ValueEEEPvES7_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Array9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Int329CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Proxy10GetHandlerEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Proxy3NewENS_5LocalINS_7ContextEEENS1_INS_6ObjectEEES5_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Proxy6RevokeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Proxy9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Proxy9GetTargetEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Utils16ReportApiFailureEPKcS2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Utils16ReportOOMFailureEPNS_8internal7IsolateEPKcRKNS_10OOMDetailsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Value10InstanceOfENS_5LocalINS_7ContextEEENS1_INS_6ObjectEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Value6TypeOfEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85Value9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug10GetBuiltinEPNS_7IsolateENS0_7BuiltinE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug10WasmScript11DisassembleEPNS0_20DisassemblyCollectorEPSt6vectorIiSaIiEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug10WasmScript15GetFunctionHashEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug10WasmScript4CastEPNS0_6ScriptE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug11DisassembleENS_4base6VectorIKhEEPNS0_20DisassemblyCollectorEPSt6vectorIiSaIiEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug11PrepareStepEPNS_7IsolateENS0_10StepActionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug12AccessorPair14IsAccessorPairENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug12AccessorPair6getterEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug12AccessorPair6setterEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug12AccessorPair9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug12GetContextIdENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug12GetInspectorEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug12SetContextIdENS_5LocalINS_7ContextEEEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug12SetInspectorEPNS_7IsolateEPN12v8_inspector11V8InspectorE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug13BreakRightNowEPNS_7IsolateENS_4base7EnumSetINS0_11BreakReasonEiEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug13ClearSteppingEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug13ScopeIterator17CreateForFunctionEPNS_7IsolateENS_5LocalINS_8FunctionEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug13ScopeIterator24CreateForGeneratorObjectEPNS_7IsolateENS_5LocalINS_6ObjectEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug14CallFunctionOnENS_5LocalINS_7ContextEEENS1_INS_8FunctionEEENS1_INS_5ValueEEEiPNS_6GlobalIS6_EEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug14EphemeronTable3GetEPNS_7IsolateENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug14EphemeronTable3NewEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug14EphemeronTable3SetEPNS_7IsolateENS_5LocalINS_5ValueEEES6_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug14EvaluateGlobalEPNS_7IsolateENS_5LocalINS_6StringEEENS0_18EvaluateGlobalModeEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug14GetDebuggingIdENS_5LocalINS_8FunctionEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug14SetReturnValueEPNS_7IsolateENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug15CanBreakProgramEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug15GeneratorObject11IsSuspendedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug15GeneratorObject17SuspendedLocationEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug15GeneratorObject4CastENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug15GeneratorObject6ScriptEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug15GeneratorObject8FunctionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug15WasmValueObject17IsWasmValueObjectENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug15WasmValueObject9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug16GetLoadedScriptsEPNS_7IsolateERSt6vectorINS_6GlobalINS0_6ScriptEEESaIS6_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug16PropertyIterator6CreateENS_5LocalINS_7ContextEEENS2_INS_6ObjectEEEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug16RemoveBreakpointEPNS_7IsolateEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug16SetDebugDelegateEPNS_7IsolateEPNS0_13DebugDelegateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug17DisableBreakScopeC1EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug17DisableBreakScopeC2EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug17DisableBreakScopeD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug17DisableBreakScopeD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug17GetPrivateMembersENS_5LocalINS_7ContextEEENS1_INS_6ObjectEEEiPNS_11LocalVectorINS_5ValueEEES9_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug18EstimatedValueSizeEPNS_7IsolateENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug18GetCreationContextENS_5LocalINS_6ObjectEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug18GetCurrentPlatformEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug18GetDateDescriptionENS_5LocalINS_4DateEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug18GetNextRandomInt64EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug18SetConsoleDelegateEPNS_7IsolateEPNS0_15ConsoleDelegateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug18StackTraceIterator6CreateEPNS_7IsolateEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug19PrepareRestartFrameEPNS_7IsolateEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug20ConsoleCallArgumentsC1EPNS_8internal7IsolateERKNS2_16BuiltinArgumentsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug20ConsoleCallArgumentsC1ERKNS_20FunctionCallbackInfoINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug20ConsoleCallArgumentsC2EPNS_8internal7IsolateERKNS2_16BuiltinArgumentsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug20ConsoleCallArgumentsC2ERKNS_20FunctionCallbackInfoINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug20GetBigIntDescriptionEPNS_7IsolateENS_5LocalINS_6BigIntEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug20GetBigIntStringValueEPNS_7IsolateENS_5LocalINS_6BigIntEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug20SetBreakPointsActiveEPNS_7IsolateEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug20SetTerminateOnResumeEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug21GetInternalPropertiesEPNS_7IsolateENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug21GetMessageFromPromiseENS_5LocalINS_7PromiseEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug21SetAsyncEventDelegateEPNS_7IsolateEPNS0_18AsyncEventDelegateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug21SetFunctionBreakpointENS_5LocalINS_8FunctionEEENS1_INS_6StringEEEPi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug22ChangeBreakOnExceptionEPNS_7IsolateENS0_19ExceptionBreakStateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug22CompileInspectorScriptEPNS_7IsolateENS_5LocalINS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug22ForceGarbageCollectionEPNS_7IsolateEN5cppgc18EmbedderStackStateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug22GetFunctionDescriptionENS_5LocalINS_8FunctionEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug23GlobalLexicalScopeNamesENS_5LocalINS_7ContextEEEPSt6vectorINS_6GlobalINS_6StringEEESaIS7_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug23PostponeInterruptsScopeC1EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug23PostponeInterruptsScopeC2EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug23PostponeInterruptsScopeD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug23PostponeInterruptsScopeD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug24EnterDebuggingForIsolateEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug24LeaveDebuggingForIsolateEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug25ResetBlackboxedStateCacheEPNS_7IsolateENS_5LocalINS0_6ScriptEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug26CreateMessageFromExceptionEPNS_7IsolateENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug26SetBreakOnNextFunctionCallEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug28ClearBreakOnNextFunctionCallEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug29NotifyDebuggerPausedEventSentEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug37RecordAsyncStackTaggingCreateTaskCallEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug6Script20RemoveWasmBreakpointEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug8Coverage10ScriptDataC1EmSt10shared_ptrINS_8internal8CoverageEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug8Coverage10ScriptDataC2EmSt10shared_ptrINS_8internal8CoverageEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug8Coverage10SelectModeEPNS_7IsolateENS0_12CoverageModeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug8Coverage14CollectPreciseEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug8Coverage17CollectBestEffortEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug8LocationC1Eii(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug8LocationC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug8LocationC2Eii(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v85debug8LocationC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86BigInt12NewFromWordsENS_5LocalINS_7ContextEEEiiPKm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86BigInt15NewFromUnsignedEPNS_7IsolateEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86BigInt3NewEPNS_7IsolateEl(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86BigInt9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Locker10InitializeEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Locker8IsLockedEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86LockerD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86LockerD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Module17InstantiateModuleENS_5LocalINS_7ContextEEEPFNS_10MaybeLocalIS0_EES3_NS1_INS_6StringEEENS1_INS_10FixedArrayEEENS1_IS0_EEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Module18GetModuleNamespaceEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Module21CreateSyntheticModuleEPNS_7IsolateENS_5LocalINS_6StringEEERKNS_10MemorySpanIKS5_EEPFNS_10MaybeLocalINS_5ValueEEENS3_INS_7ContextEEENS3_IS0_EEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Module22GetUnboundModuleScriptEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Module24SetSyntheticModuleExportEPNS_7IsolateENS_5LocalINS_6StringEEENS3_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Module31GetStalledTopLevelAwaitMessagesEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Module8EvaluateENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Module9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Number3NewEPNS_7IsolateEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Number9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object10GetIsolateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object10GetPrivateENS_5LocalINS_7ContextEEENS1_INS_7PrivateEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object10HasPrivateENS_5LocalINS_7ContextEEENS1_INS_7PrivateEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object10SetPrivateENS_5LocalINS_7ContextEEENS1_INS_7PrivateEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object11SetAccessorENS_5LocalINS_7ContextEEENS1_INS_4NameEEEPFvS5_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS5_NS1_IS7_EERKNS6_IvEEENS_10MaybeLocalIS7_EENS_13AccessControlENS_17PropertyAttributeENS_14SideEffectTypeESN_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object12GetPrototypeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object12SetPrototypeENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object13DeletePrivateENS_5LocalINS_7ContextEEENS1_INS_7PrivateEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object14CallAsFunctionENS_5LocalINS_7ContextEEENS1_INS_5ValueEEEiPS5_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object14DefinePropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEERNS_18PropertyDescriptorE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object14HasOwnPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object14HasOwnPropertyENS_5LocalINS_7ContextEEEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object14PreviewEntriesEPb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object15GetIdentityHashEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object16GetPropertyNamesENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object16GetPropertyNamesENS_5LocalINS_7ContextEEENS_17KeyCollectionModeENS_14PropertyFilterENS_11IndexFilterENS_17KeyConversionModeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object16SetInternalFieldEiNS_5LocalINS_4DataEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object17CallAsConstructorENS_5LocalINS_7ContextEEEiPNS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object17DefineOwnPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEENS1_INS_5ValueEEENS_17PropertyAttributeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object17SetIntegrityLevelENS_5LocalINS_7ContextEEENS_14IntegrityLevelE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object18CreateDataPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object18CreateDataPropertyENS_5LocalINS_7ContextEEEjNS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object18GetConstructorNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object18GetCreationContextEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object19GetOwnPropertyNamesENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object19GetOwnPropertyNamesENS_5LocalINS_7ContextEEENS_14PropertyFilterENS_17KeyConversionModeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object19ObjectProtoToStringENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object19SetAccessorPropertyENS_5LocalINS_4NameEEENS1_INS_8FunctionEEES5_NS_17PropertyAttributeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object19SetLazyDataPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEEPFvS5_RKNS_20PropertyCallbackInfoINS_5ValueEEEENS1_IS7_EENS_17PropertyAttributeENS_14SideEffectTypeESF_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object20GetRealNamedPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object20HasRealNamedPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object20SlowGetInternalFieldEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object21GetPropertyAttributesENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object21SetNativeDataPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEEPFvS5_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS5_NS1_IS7_EERKNS6_IvEEESD_NS_17PropertyAttributeENS_14SideEffectTypeESK_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object22HasRealIndexedPropertyENS_5LocalINS_7ContextEEEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object24GetOwnPropertyDescriptorENS_5LocalINS_7ContextEEENS1_INS_4NameEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object25GetCreationContextCheckedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object28FindInstanceInPrototypeChainENS_5LocalINS_16FunctionTemplateEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object28HasRealNamedCallbackPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object30GetRealNamedPropertyAttributesENS_5LocalINS_7ContextEEENS1_INS_4NameEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object32SetAlignedPointerInInternalFieldEiPv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object33SetAlignedPointerInInternalFieldsEiPiPPv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object36GetRealNamedPropertyInPrototypeChainENS_5LocalINS_7ContextEEENS1_INS_4NameEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object38SlowGetAlignedPointerFromInternalFieldEPNS_7IsolateEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object38SlowGetAlignedPointerFromInternalFieldEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object3GetENS_5LocalINS_7ContextEEEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object3HasENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object3HasENS_5LocalINS_7ContextEEEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object3NewEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object3NewEPNS_7IsolateENS_5LocalINS_5ValueEEEPNS3_INS_4NameEEEPS5_m(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object3SetENS_5LocalINS_7ContextEEEjNS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object46GetRealNamedPropertyAttributesInPrototypeChainENS_5LocalINS_7ContextEEENS1_INS_4NameEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object50GetAlignedPointerFromEmbedderDataInCreationContextEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object5CloneEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object6DeleteENS_5LocalINS_7ContextEEEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Object9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86RegExp21NewWithBacktrackLimitENS_5LocalINS_7ContextEEENS1_INS_6StringEEENS0_5FlagsEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86RegExp3NewENS_5LocalINS_7ContextEEENS1_INS_6StringEEENS0_5FlagsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86RegExp4ExecENS_5LocalINS_7ContextEEENS1_INS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86RegExp9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Script15GetResourceNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Script16GetUnboundScriptEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Script3RunENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Script3RunENS_5LocalINS_7ContextEEENS1_INS_4DataEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Script7CompileENS_5LocalINS_7ContextEEENS1_INS_6StringEEEPNS_12ScriptOriginE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String11NewFromUtf8EPNS_7IsolateEPKcNS_13NewStringTypeEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String12MakeExternalEPNS0_22ExternalStringResourceE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String12MakeExternalEPNS0_29ExternalOneByteStringResourceE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String14NewFromOneByteEPNS_7IsolateEPKhNS_13NewStringTypeEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String14NewFromTwoByteEPNS_7IsolateEPKtNS_13NewStringTypeEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String18NewExternalOneByteEPNS_7IsolateEPNS0_29ExternalOneByteStringResourceE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String18NewExternalTwoByteEPNS_7IsolateEPNS0_22ExternalStringResourceE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String18NewFromUtf8LiteralEPNS_7IsolateEPKcNS_13NewStringTypeEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String22ExternalStringResource15UpdateDataCacheEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String29ExternalOneByteStringResource15UpdateDataCacheEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String5ValueC1EPNS_7IsolateENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String5ValueC2EPNS_7IsolateENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String5ValueD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String5ValueD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String6ConcatEPNS_7IsolateENS_5LocalIS0_EES4_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String9Utf8ValueC1EPNS_7IsolateENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String9Utf8ValueC2EPNS_7IsolateENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String9Utf8ValueD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86String9Utf8ValueD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol10GetReplaceEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol11GetIteratorEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol14GetHasInstanceEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol14GetToPrimitiveEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol14GetToStringTagEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol14GetUnscopablesEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol16GetAsyncIteratorEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol21GetIsConcatSpreadableEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol3ForEPNS_7IsolateENS_5LocalINS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol3NewEPNS_7IsolateENS_5LocalINS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol6ForApiEPNS_7IsolateENS_5LocalINS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol8GetMatchEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol8GetSplitEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Symbol9GetSearchEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86Uint329CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint10RightShiftENS0_8RWDigitsENS0_6DigitsEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint10RightShiftENS0_8RWDigitsENS0_6DigitsEmRKNS0_15RightShiftStateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint11AsUintN_NegENS0_8RWDigitsENS0_6DigitsEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint11AsUintN_PosENS0_8RWDigitsENS0_6DigitsEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint11SubtractOneENS0_8RWDigitsENS0_6DigitsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl10FromStringENS0_8RWDigitsEPNS0_21FromStringAccumulatorE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl11MultiplyFFTENS0_8RWDigitsENS0_6DigitsES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl12DivideSingleENS0_8RWDigitsEPmNS0_6DigitsEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl12InvertNewtonENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl12ToStringImplEPcPiNS0_6DigitsEibb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl13DivideBarrettENS0_8RWDigitsES2_NS0_6DigitsES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl13DivideBarrettENS0_8RWDigitsES2_NS0_6DigitsES3_S3_S2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl13KaratsubaMainENS0_8RWDigitsENS0_6DigitsES3_S2_i(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl14InvertBasecaseENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl14KaratsubaChunkENS0_8RWDigitsENS0_6DigitsES3_S2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl14KaratsubaStartENS0_8RWDigitsENS0_6DigitsES3_S2_i(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl14MultiplySingleENS0_8RWDigitsENS0_6DigitsEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl15FromStringLargeENS0_8RWDigitsEPNS0_21FromStringAccumulatorE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl16DivideSchoolbookENS0_8RWDigitsES2_NS0_6DigitsES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl16MultiplyToomCookENS0_8RWDigitsENS0_6DigitsES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl17FromStringClassicENS0_8RWDigitsEPNS0_21FromStringAccumulatorE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl17MultiplyKaratsubaENS0_8RWDigitsENS0_6DigitsES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl18MultiplySchoolbookENS0_8RWDigitsENS0_6DigitsES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl20get_and_clear_statusEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl21DivideBurnikelZieglerENS0_8RWDigitsES2_NS0_6DigitsES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl24FromStringBasePowerOfTwoENS0_8RWDigitsEPNS0_21FromStringAccumulatorE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl6DivideENS0_8RWDigitsENS0_6DigitsES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl6InvertENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl6ModuloENS0_8RWDigitsENS0_6DigitsES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl8MultiplyENS0_8RWDigitsENS0_6DigitsES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl8ToStringEPcPiNS0_6DigitsEib(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImpl9Toom3MainENS0_8RWDigitsENS0_6DigitsES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImplC1EPNS0_8PlatformE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImplC2EPNS0_8PlatformE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImplD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint13ProcessorImplD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint14SubtractSignedENS0_8RWDigitsENS0_6DigitsEbS2_b(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint16BitwiseOr_NegNegENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint16BitwiseOr_PosNegENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint16BitwiseOr_PosPosENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint17AddAndReturnCarryENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint17BitwiseAnd_NegNegENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint17BitwiseAnd_PosNegENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint17BitwiseAnd_PosPosENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint17BitwiseXor_NegNegENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint17BitwiseXor_PosNegENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint17BitwiseXor_PosPosENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint18AsIntNResultLengthENS0_6DigitsEbi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint18ProductGreaterThanEmmmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint18SubAndReturnBorrowENS0_8RWDigitsENS0_6DigitsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint20AddAndReturnOverflowENS0_8RWDigitsENS0_6DigitsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint20ToStringResultLengthENS0_6DigitsEib(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint23RightShift_ResultLengthENS0_6DigitsEbmPNS0_15RightShiftStateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint23SubtractAndReturnBorrowENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint24AsUintN_Pos_ResultLengthENS0_6DigitsEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint3AddENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint6AddOneENS0_8RWDigitsENS0_6DigitsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint6AsIntNENS0_8RWDigitsENS0_6DigitsEbi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint8SubtractENS0_8RWDigitsENS0_6DigitsES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint9AddSignedENS0_8RWDigitsENS0_6DigitsEbS2_b(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint9LeftShiftENS0_8RWDigitsENS0_6DigitsEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint9LeftShiftENS0_8RWDigitsENS0_6DigitsEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint9Processor10FromStringENS0_8RWDigitsEPNS0_21FromStringAccumulatorE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint9Processor3NewEPNS0_8PlatformE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint9Processor6DivideENS0_8RWDigitsENS0_6DigitsES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint9Processor6ModuloENS0_8RWDigitsENS0_6DigitsES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint9Processor7DestroyEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint9Processor8MultiplyENS0_8RWDigitsENS0_6DigitsES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v86bigint9Processor8ToStringEPcPiNS0_6DigitsEib(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Boolean9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context10DeepFreezeEPNS0_18DeepFreezeDelegateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context10GetIsolateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context12DetachGlobalEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context12FromSnapshotEPNS_7IsolateEmNS_33DeserializeInternalFieldsCallbackEPNS_22ExtensionConfigurationENS_10MaybeLocalINS_5ValueEEEPNS_14MicrotaskQueueENS_30DeserializeContextDataCallbackE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context15SetEmbedderDataEiNS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context15SetPromiseHooksENS_5LocalINS_8FunctionEEES3_S3_S3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context16GetSecurityTokenEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context16NewRemoteContextEPNS_7IsolateENS_5LocalINS_14ObjectTemplateEEENS_10MaybeLocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context16SetSecurityTokenENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context17GetMicrotaskQueueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context17SetMicrotaskQueueEPNS_14MicrotaskQueueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context19SlowGetEmbedderDataEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context20BackupIncumbentScopeC1ENS_5LocalIS0_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context20BackupIncumbentScopeC2ENS_5LocalIS0_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context20BackupIncumbentScopeD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context20BackupIncumbentScopeD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context22GetExtrasBindingObjectEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context23GetDataFromSnapshotOnceEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context23SetAbortScriptExecutionEPFvPNS_7IsolateENS_5LocalIS0_EEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context23UseDefaultSecurityTokenEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context24HasTemplateLiteralObjectENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context29GetNumberOfEmbedderDataFieldsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context30AllowCodeGenerationFromStringsEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context31SetAlignedPointerInEmbedderDataEiPv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context36SetErrorMessageForWasmCodeGenerationENS_5LocalINS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context37SlowGetAlignedPointerFromEmbedderDataEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context3NewEPNS_7IsolateEPNS_22ExtensionConfigurationENS_10MaybeLocalINS_14ObjectTemplateEEENS5_INS_5ValueEEENS_33DeserializeInternalFieldsCallbackEPNS_14MicrotaskQueueENS_30DeserializeContextDataCallbackE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context43SetErrorMessageForCodeGenerationFromStringsENS_5LocalINS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context4ExitEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context5EnterEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context6GlobalEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Context9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87CppHeap13GetHeapHandleEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87CppHeap17CollectStatisticsEN5cppgc14HeapStatistics11DetailLevelE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87CppHeap19GetAllocationHandleEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87CppHeap24CollectGarbageForTestingEN5cppgc18EmbedderStackStateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87CppHeap36CollectCustomSpaceStatisticsAtLastGCESt6vectorIN5cppgc16CustomSpaceIndexESaIS3_EESt10unique_ptrINS_29CustomSpaceStatisticsReceiverESt14default_deleteIS7_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87CppHeap41CollectGarbageInYoungGenerationForTestingEN5cppgc18EmbedderStackStateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87CppHeap42EnableDetachedGarbageCollectionsForTestingEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87CppHeap6CreateEPNS_8PlatformERKNS_19CppHeapCreateParamsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87CppHeap9TerminateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Integer15NewFromUnsignedEPNS_7IsolateEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Integer3NewEPNS_7IsolateEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Integer9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate10GetCurrentEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate10InitializeEPS0_RKNS0_12CreateParamsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate10ThrowErrorENS_5LocalINS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate11SetRAILModeENS_8RAILModeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate12CreateParamsC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate12CreateParamsC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate12CreateParamsD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate12CreateParamsD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate12GetCodeRangeEPPvPm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate13AttachCppHeapEPNS_7CppHeapE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate13CopyCodePagesEmPNS_11MemoryRangeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate13DetachCppHeapEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate13MeasureMemoryESt10unique_ptrINS_21MeasureMemoryDelegateESt14default_deleteIS2_EENS_22MeasureMemoryExecutionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate13SetStackLimitEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate13TryGetCurrentEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate14GetStackSampleERKNS_13RegisterStateEPPvmPNS_10SampleInfoE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate14SetEventLoggerEPFvPKciE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate14SetPromiseHookEPFvNS_15PromiseHookTypeENS_5LocalINS_7PromiseEEENS2_INS_5ValueEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate14ThrowExceptionENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate15GetHeapProfilerEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate15GetJSEntryStubsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate16ClearKeptObjectsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate16EnqueueMicrotaskENS_5LocalINS_8FunctionEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate16EnqueueMicrotaskEPFvPvES1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate16RequestInterruptEPFvPS0_PvES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate17DumpAndResetStatsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate17GetCurrentContextEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate17GetHeapStatisticsEPNS_14HeapStatisticsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate18AddMessageListenerEPFvNS_5LocalINS_7MessageEEENS1_INS_5ValueEEEES5_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate18NumberOfHeapSpacesEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate18SetCounterFunctionEPFPiPKcE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate18SetMetricsRecorderERKSt10shared_ptrINS_7metrics8RecorderEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate18SetOOMErrorHandlerEPFvPKcRKNS_10OOMDetailsEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate18TerminateExecutionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate19GetIncumbentContextEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate19SetAllowAtomicsWaitEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate19SetBatterySaverModeEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate19SetMicrotasksPolicyENS_16MicrotasksPolicyE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate19UpdateLoadStartTimeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate20GetEmbeddedCodeRangeEPPKvPm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate20SetFatalErrorHandlerEPFvPKcS2_E(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate21AddGCEpilogueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate21AddGCEpilogueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_S2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate21AddGCPrologueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate21AddGCPrologueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_S2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate21AtomicsWaitWakeHandle4WakeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate21ClearCachesForTestingEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate21LowMemoryNotificationEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate21SetUseCounterCallbackEPFvPS0_NS0_17UseCounterFeatureEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate21SetWasmModuleCallbackEPFbRKNS_20FunctionCallbackInfoINS_5ValueEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate22GetHeapSpaceStatisticsEPNS_19HeapSpaceStatisticsEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate22IsExecutionTerminatingEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate22RemoveMessageListenersEPFvNS_5LocalINS_7MessageEEENS1_INS_5ValueEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate22SetAddCrashKeyCallbackEPFvNS_10CrashKeyIdERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate22SetAtomicsWaitCallbackEPFvNS0_16AtomicsWaitEventENS_5LocalINS_17SharedArrayBufferEEEmldPNS0_21AtomicsWaitWakeHandleEPvES7_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate22SetJitCodeEventHandlerENS_19JitCodeEventOptionsEPFvPKNS_12JitCodeEventEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate22VisitExternalResourcesEPNS_23ExternalResourceVisitorE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate23GetArrayBufferAllocatorEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate23GetDataFromSnapshotOnceEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate23SetEmbedderRootsHandlerEPNS_20EmbedderRootsHandlerE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate23SetWasmInstanceCallbackEPFbRKNS_20FunctionCallbackInfoINS_5ValueEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate24AddCallCompletedCallbackEPFvPS0_E(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate24AddNearHeapLimitCallbackEPFmPvmmES1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate24CancelTerminateExecutionEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate24IdleNotificationDeadlineEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate24RemoveGCEpilogueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate24RemoveGCEpilogueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate24RemoveGCPrologueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate24RemoveGCPrologueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate24RestoreOriginalHeapLimitEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate24SetPromiseRejectCallbackEPFvNS_20PromiseRejectMessageEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate24SetWasmStreamingCallbackEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate25HasPendingBackgroundTasksEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate26InstallConditionalFeaturesENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate26MemoryPressureNotificationENS_19MemoryPressureLevelE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate26PerformMicrotaskCheckpointEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate26SetCreateHistogramFunctionEPFPvPKciimE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate26SetWasmJSPIEnabledCallbackEPFbNS_5LocalINS_7ContextEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate27ContextDisposedNotificationEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate27RemoveCallCompletedCallbackEPFvPS0_E(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate27RemoveNearHeapLimitCallbackEPFmPvmmEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate28AddBeforeCallEnteredCallbackEPFvPS0_E(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate28GetEnteredOrMicrotaskContextEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate28SetPrepareStackTraceCallbackEPFNS_10MaybeLocalINS_5ValueEEENS_5LocalINS_7ContextEEENS4_IS2_EENS4_INS_5ArrayEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate28SetWasmLoadSourceMapCallbackEPFNS_5LocalINS_6StringEEEPS0_PKcE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate29AllowJavascriptExecutionScopeC1EPS0_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate29AllowJavascriptExecutionScopeC2EPS0_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate29AllowJavascriptExecutionScopeD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate29AllowJavascriptExecutionScopeD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate29DiscardThreadSpecificMetadataEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate29IncreaseHeapLimitForDebuggingEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate29SetAddHistogramSampleFunctionEPFvPviE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate30AddMicrotasksCompletedCallbackEPFvPS0_PvES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate30NumberOfTrackedHeapObjectTypesEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate31GetHeapObjectStatisticsAtLastGCEPNS_20HeapObjectStatisticsEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate31IsolateInBackgroundNotificationEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate31IsolateInForegroundNotificationEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate31RemoveBeforeCallEnteredCallbackEPFvPS0_E(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate31SuppressMicrotaskExecutionScopeC1EPS0_PNS_14MicrotaskQueueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate31SuppressMicrotaskExecutionScopeC2EPS0_PNS_14MicrotaskQueueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate31SuppressMicrotaskExecutionScopeD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate31SuppressMicrotaskExecutionScopeD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate32AddMessageListenerWithErrorLevelEPFvNS_5LocalINS_7MessageEEENS1_INS_5ValueEEEEiS5_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate32DisallowJavascriptExecutionScopeC1EPS0_NS1_9OnFailureE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate32DisallowJavascriptExecutionScopeC2EPS0_NS1_9OnFailureE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate32DisallowJavascriptExecutionScopeD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate32DisallowJavascriptExecutionScopeD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate32GetHeapCodeAndMetadataStatisticsEPNS_18HeapCodeStatisticsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate32IsHeapLimitIncreasedForDebuggingEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate33RemoveMicrotasksCompletedCallbackEPFvPS0_PvES2_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate34RequestGarbageCollectionForTestingENS0_21GarbageCollectionTypeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate34RequestGarbageCollectionForTestingENS0_21GarbageCollectionTypeEN5cppgc18EmbedderStackStateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate34SetAllowWasmCodeGenerationCallbackEPFbNS_5LocalINS_7ContextEEENS1_INS_6StringEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate34SetWasmAsyncResolvePromiseCallbackEPFvPS0_NS_5LocalINS_7ContextEEENS2_INS_7Promise8ResolverEEENS2_INS_5ValueEEENS_16WasmAsyncSuccessEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate35SetAbortOnUncaughtExceptionCallbackEPFbPS0_E(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate36AutomaticallyRestoreInitialHeapLimitEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate36GetContinuationPreservedEmbedderDataEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate36ReportExternalAllocationLimitReachedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate36SetContinuationPreservedEmbedderDataENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate36SetFailedAccessCheckCallbackFunctionEPFvNS_5LocalINS_6ObjectEEENS_10AccessTypeENS1_INS_5ValueEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate37AdjustAmountOfExternalAllocatedMemoryEl(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate37LocaleConfigurationChangeNotificationEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate37SetWasmImportedStringsEnabledCallbackEPFbNS_5LocalINS_7ContextEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate38SetHostImportModuleDynamicallyCallbackEPFNS_10MaybeLocalINS_7PromiseEEENS_5LocalINS_7ContextEEENS4_INS_4DataEEENS4_INS_5ValueEEENS4_INS_6StringEEENS4_INS_10FixedArrayEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate39DateTimeConfigurationChangeNotificationENS0_17TimeZoneDetectionE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate39SetHostCreateShadowRealmContextCallbackEPFNS_10MaybeLocalINS_7ContextEEENS_5LocalIS2_EEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate3NewERKNS0_12CreateParamsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate41SetCaptureStackTraceForUncaughtExceptionsEbiNS_10StackTrace17StackTraceOptionsE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate41SetHostInitializeImportMetaObjectCallbackEPFvNS_5LocalINS_7ContextEEENS1_INS_6ModuleEEENS1_INS_6ObjectEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate42SetModifyCodeGenerationFromStringsCallbackEPFNS_37ModifyCodeGenerationFromStringsResultENS_5LocalINS_7ContextEEENS2_INS_5ValueEEEbE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate45SetJavaScriptCompileHintsMagicEnabledCallbackEPFbNS_5LocalINS_7ContextEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate46SetGetExternallyAllocatedMemoryInBytesCallbackEPFmvE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate46SetSharedArrayBufferConstructorEnabledCallbackEPFbNS_5LocalINS_7ContextEEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate4ExitEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate5EnterEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate6IsDeadEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate7DisposeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate7IsInUseEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate7SetIdleEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate8AllocateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Isolate9InContextEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Message22PrintCurrentStackTraceEPNS_7IsolateERSo(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Numeric9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Private3NewEPNS_7IsolateENS_5LocalINS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Private6ForApiEPNS_7IsolateENS_5LocalINS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Private9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Promise12MarkAsSilentEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Promise13MarkAsHandledEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Promise4ThenENS_5LocalINS_7ContextEEENS1_INS_8FunctionEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Promise4ThenENS_5LocalINS_7ContextEEENS1_INS_8FunctionEEES5_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Promise5CatchENS_5LocalINS_7ContextEEENS1_INS_8FunctionEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Promise5StateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Promise6ResultEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Promise8Resolver10GetPromiseEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Promise8Resolver3NewENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Promise8Resolver6RejectENS_5LocalINS_7ContextEEENS2_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Promise8Resolver7ResolveENS_5LocalINS_7ContextEEENS2_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Promise8Resolver9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87Promise9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87metrics13LongTaskStats3GetEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87metrics8Recorder10GetContextEPNS_7IsolateENS1_9ContextIdE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87metrics8Recorder12GetContextIdENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler11AtomicGuardC1EPSt6atomicIbEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler11AtomicGuardC2EPSt6atomicIbEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler11AtomicGuardD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler11AtomicGuardD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler13SignalHandler17FillRegisterStateEPvPNS_13RegisterStateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler13SignalHandler20HandleProfilerSignalEiP9siginfo_tPv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler14SamplerManager10AddSamplerEPNS0_7SamplerE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler14SamplerManager13RemoveSamplerEPNS0_7SamplerE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler14SamplerManager8DoSampleERKNS_13RegisterStateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler14SamplerManager8instanceEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler7Sampler4StopEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler7Sampler5StartEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler7Sampler8DoSampleEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler7SamplerC1EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler7SamplerC2EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler7SamplerD0Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler7SamplerD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87sampler7SamplerD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue10BeginArrayEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue10BeginArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue10SetBooleanEPKcb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue10SetIntegerEPKci(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue10WriteCommaEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue12AppendDoubleEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue12AppendStringEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue13AppendBooleanEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue13AppendIntegerEi(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue13EndDictionaryEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue15BeginDictionaryEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue15BeginDictionaryEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue6CreateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue8EndArrayEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue8SetValueEPKcPS1_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue9SetDoubleEPKcd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue9SetStringEPKcS3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValue9WriteNameEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValueC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValueC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValueD0Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValueD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing11TracedValueD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing23TracingCategoryObserver14OnTraceEnabledEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing23TracingCategoryObserver15OnTraceDisabledEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing23TracingCategoryObserver5SetUpEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v87tracing23TracingCategoryObserver8TearDownEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88DataView3NewENS_5LocalINS_11ArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88DataView3NewENS_5LocalINS_17SharedArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88DataView9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88External3NewEPNS_7IsolateEPv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88External9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Function21FunctionProtoToStringENS_5LocalINS_7ContextEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Function3NewENS_5LocalINS_7ContextEEEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS1_IS5_EEiNS_19ConstructorBehaviorENS_14SideEffectTypeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Function4CallENS_5LocalINS_7ContextEEENS1_INS_5ValueEEEiPS5_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Function7SetNameENS_5LocalINS_6StringEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Function9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Platform21SystemClockTimeMillisEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Template10SetPrivateENS_5LocalINS_7PrivateEEENS1_INS_4DataEEENS_17PropertyAttributeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Template19SetAccessorPropertyENS_5LocalINS_4NameEEENS1_INS_16FunctionTemplateEEES5_NS_17PropertyAttributeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Template19SetLazyDataPropertyENS_5LocalINS_4NameEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEENS1_IS5_EENS_17PropertyAttributeENS_14SideEffectTypeESD_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Template21SetNativeDataPropertyENS_5LocalINS_4NameEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS3_NS1_IS5_EERKNS4_IvEEESB_NS_17PropertyAttributeENS_13AccessControlENS_14SideEffectTypeESJ_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Template21SetNativeDataPropertyENS_5LocalINS_4NameEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS3_NS1_IS5_EERKNS4_IvEEESB_NS_17PropertyAttributeENS_14SideEffectTypeESI_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Template21SetNativeDataPropertyENS_5LocalINS_6StringEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS3_NS1_IS5_EERKNS4_IvEEESB_NS_17PropertyAttributeENS_13AccessControlENS_14SideEffectTypeESJ_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Template21SetNativeDataPropertyENS_5LocalINS_6StringEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS3_NS1_IS5_EERKNS4_IvEEESB_NS_17PropertyAttributeENS_14SideEffectTypeESI_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Template24SetIntrinsicDataPropertyENS_5LocalINS_4NameEEENS_9IntrinsicENS_17PropertyAttributeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Template3SetENS_5LocalINS_4NameEEENS1_INS_4DataEEENS_17PropertyAttributeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88TryCatch10SetVerboseEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88TryCatch10StackTraceENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88TryCatch13ResetInternalEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88TryCatch17SetCaptureMessageEb(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88TryCatch5ResetEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88TryCatch7ReThrowEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88TryCatchC1EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88TryCatchC2EPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88TryCatchD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88TryCatchD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88TryCatchdaEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88TryCatchdlEPvm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88TryCatchnaEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88TryCatchnwEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Unlocker10InitializeEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88UnlockerD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88UnlockerD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Unwinder17TryUnwindV8FramesERKNS_12JSEntryStubsEmPKNS_11MemoryRangeEPNS_13RegisterStateEPKv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88Unwinder8PCIsInV8EmPKNS_11MemoryRangeEPv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform12RunIdleTasksEPNS_8PlatformEPNS_7IsolateEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobState10DidRunTaskEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobState11JobDelegate9GetTaskIdEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobState11JobDelegateD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobState11JobDelegateD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobState13AcquireTaskIdEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobState13CancelAndWaitEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobState13ReleaseTaskIdEh(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobState14UpdatePriorityENS_12TaskPriorityE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobState15CanRunFirstTaskEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobState15CancelAndDetachEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobState18CallOnWorkerThreadENS_12TaskPriorityESt10unique_ptrINS_4TaskESt14default_deleteIS4_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobState25NotifyConcurrencyIncreaseEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobState4JoinEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobState8IsActiveEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobStateC1EPNS_8PlatformESt10unique_ptrINS_7JobTaskESt14default_deleteIS5_EENS_12TaskPriorityEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobStateC2EPNS_8PlatformESt10unique_ptrINS_7JobTaskESt14default_deleteIS5_EENS_12TaskPriorityEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobStateD0Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobStateD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultJobStateD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform12RunIdleTasksEPNS_7IsolateEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform13CreateJobImplENS_12TaskPriorityESt10unique_ptrINS_7JobTaskESt14default_deleteIS4_EERKNS_14SourceLocationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform15PumpMessageLoopEPNS_7IsolateENS0_19MessageLoopBehaviorE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform16GetPageAllocatorEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform16IdleTasksEnabledEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform20GetStackTracePrinterEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform20GetTracingControllerEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform20SetTracingControllerESt10unique_ptrINS_17TracingControllerESt14default_deleteIS3_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform21NotifyIsolateShutdownEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform21NumberOfWorkerThreadsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform22CurrentClockTimeMillisEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform23GetForegroundTaskRunnerEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform25SetTimeFunctionForTestingEPFdvE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform26GetThreadIsolatedAllocatorEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform26PostTaskOnWorkerThreadImplENS_12TaskPriorityESt10unique_ptrINS_4TaskESt14default_deleteIS4_EERKNS_14SourceLocationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform27MonotonicallyIncreasingTimeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform33PostDelayedTaskOnWorkerThreadImplENS_12TaskPriorityESt10unique_ptrINS_4TaskESt14default_deleteIS4_EEdRKNS_14SourceLocationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatform37EnsureBackgroundTaskRunnerInitializedEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatformC1EiNS0_15IdleTaskSupportESt10unique_ptrINS_17TracingControllerESt14default_deleteIS4_EENS0_12PriorityModeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatformC2EiNS0_15IdleTaskSupportESt10unique_ptrINS_17TracingControllerESt14default_deleteIS4_EENS0_12PriorityModeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatformD0Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatformD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15DefaultPlatformD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform15PumpMessageLoopEPNS_8PlatformEPNS_7IsolateENS0_19MessageLoopBehaviorE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DefaultJobHandle14UpdatePriorityENS_12TaskPriorityE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DefaultJobHandle15CancelAndDetachEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DefaultJobHandle4JoinEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DefaultJobHandle6CancelEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DefaultJobHandle8IsActiveEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DefaultJobHandleC1ESt10shared_ptrINS0_15DefaultJobStateEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DefaultJobHandleC2ESt10shared_ptrINS0_15DefaultJobStateEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DefaultJobHandleD0Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DefaultJobHandleD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DefaultJobHandleD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DelayedTaskQueue10TryGetNextEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DelayedTaskQueue13AppendDelayedESt10unique_ptrINS_4TaskESt14default_deleteIS3_EEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DelayedTaskQueue23PopTaskFromDelayedQueueEd(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DelayedTaskQueue27MonotonicallyIncreasingTimeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DelayedTaskQueue6AppendESt10unique_ptrINS_4TaskESt14default_deleteIS3_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DelayedTaskQueue9TerminateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DelayedTaskQueueC1EPFdvE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DelayedTaskQueueC2EPFdvE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DelayedTaskQueueD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform16DelayedTaskQueueD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform18NewDefaultPlatformEiNS0_15IdleTaskSupportENS0_21InProcessStackDumpingESt10unique_ptrINS_17TracingControllerESt14default_deleteIS4_EENS0_12PriorityModeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform19NewDefaultJobHandleEPNS_8PlatformENS_12TaskPriorityESt10unique_ptrINS_7JobTaskESt14default_deleteIS5_EEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform21NotifyIsolateShutdownEPNS_8PlatformEPNS_7IsolateE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner12PostTaskImplESt10unique_ptrINS_4TaskESt14default_deleteIS3_EERKNS_14SourceLocationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner12RunTaskScopeC1ESt10shared_ptrIS1_E(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner12RunTaskScopeC2ESt10shared_ptrIS1_E(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner12RunTaskScopeD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner12RunTaskScopeD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner14PostTaskLockedESt10unique_ptrINS_4TaskESt14default_deleteIS3_EENS1_11NestabilityERKNS_4base9LockGuardINS8_5MutexELNS8_12NullBehaviorE0EEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner16IdleTasksEnabledEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner16PopTaskFromQueueENS0_19MessageLoopBehaviorE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner16PostIdleTaskImplESt10unique_ptrINS_8IdleTaskESt14default_deleteIS3_EERKNS_14SourceLocationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner17WaitForTaskLockedERKNS_4base9LockGuardINS2_5MutexELNS2_12NullBehaviorE0EEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner19PostDelayedTaskImplESt10unique_ptrINS_4TaskESt14default_deleteIS3_EEdRKNS_14SourceLocationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner20PopTaskFromIdleQueueEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner21PostDelayedTaskLockedESt10unique_ptrINS_4TaskESt14default_deleteIS3_EEdNS1_11NestabilityERKNS_4base9LockGuardINS8_5MutexELNS8_12NullBehaviorE0EEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner23MoveExpiredDelayedTasksERKNS_4base9LockGuardINS2_5MutexELNS2_12NullBehaviorE0EEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner23PostNonNestableTaskImplESt10unique_ptrINS_4TaskESt14default_deleteIS3_EERKNS_14SourceLocationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner27MonotonicallyIncreasingTimeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner29PopTaskFromDelayedQueueLockedERKNS_4base9LockGuardINS2_5MutexELNS2_12NullBehaviorE0EEEPNS1_11NestabilityE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner30PostNonNestableDelayedTaskImplESt10unique_ptrINS_4TaskESt14default_deleteIS3_EEdRKNS_14SourceLocationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunner9TerminateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunnerC1ENS0_15IdleTaskSupportEPFdvE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform27DefaultForegroundTaskRunnerC2ENS0_15IdleTaskSupportEPFdvE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultThreadIsolatedAllocator4FreeEPv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultThreadIsolatedAllocator8AllocateEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultThreadIsolatedAllocatorC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultThreadIsolatedAllocatorC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultThreadIsolatedAllocatorD0Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultThreadIsolatedAllocatorD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultThreadIsolatedAllocatorD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunner12PostTaskImplESt10unique_ptrINS_4TaskESt14default_deleteIS3_EERKNS_14SourceLocationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunner12WorkerThread3RunEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunner12WorkerThread6NotifyEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunner12WorkerThreadC1EPS1_NS_4base6Thread8PriorityE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunner12WorkerThreadC2EPS1_NS_4base6Thread8PriorityE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunner12WorkerThreadD0Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunner12WorkerThreadD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunner12WorkerThreadD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunner16IdleTasksEnabledEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunner16PostIdleTaskImplESt10unique_ptrINS_8IdleTaskESt14default_deleteIS3_EERKNS_14SourceLocationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunner19PostDelayedTaskImplESt10unique_ptrINS_4TaskESt14default_deleteIS3_EEdRKNS_14SourceLocationE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunner27MonotonicallyIncreasingTimeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunner9TerminateEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunnerC1EjPFdvENS_4base6Thread8PriorityE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunnerC2EjPFdvENS_4base6Thread8PriorityE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunnerD0Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunnerD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform30DefaultWorkerThreadsTaskRunnerD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform32NewSingleThreadedDefaultPlatformENS0_15IdleTaskSupportENS0_21InProcessStackDumpingESt10unique_ptrINS_17TracingControllerESt14default_deleteIS4_EE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing11TraceBuffer27CreateTraceBufferRingBufferEmPNS1_11TraceWriterE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing11TraceConfig19AddIncludedCategoryEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing11TraceConfig24CreateDefaultTraceConfigEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing11TraceObject10InitializeEcPKhPKcS6_mmiPS6_S4_PKmPSt10unique_ptrINS_24ConvertableToTraceFormatESt14default_deleteISB_EEjll(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing11TraceObject14UpdateDurationEll(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing11TraceObject20InitializeForTestingEcPKhPKcS6_mmiPS6_S4_PKmPSt10unique_ptrINS_24ConvertableToTraceFormatESt14default_deleteISB_EEjiillmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing11TraceObjectD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing11TraceObjectD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing11TraceWriter21CreateJSONTraceWriterERSo(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing11TraceWriter21CreateJSONTraceWriterERSoRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing15JSONTraceWriter14AppendArgValueEPNS_24ConvertableToTraceFormatE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing15JSONTraceWriter14AppendArgValueEhNS1_11TraceObject8ArgValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing15JSONTraceWriter16AppendTraceEventEPNS1_11TraceObjectE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing15JSONTraceWriter5FlushEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing15JSONTraceWriterC1ERSo(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing15JSONTraceWriterC1ERSoRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing15JSONTraceWriterC2ERSo(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing15JSONTraceWriterC2ERSoRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing15JSONTraceWriterD0Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing15JSONTraceWriterD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing15JSONTraceWriterD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing16TraceBufferChunk13AddTraceEventEPm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing16TraceBufferChunk5ResetEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing16TraceBufferChunkC1Ej(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing16TraceBufferChunkC2Ej(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingController10InitializeEPNS1_11TraceBufferE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingController11StopTracingEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingController12StartTracingEPNS1_11TraceConfigE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingController13AddTraceEventEcPKhPKcS6_mmiPS6_S4_PKmPSt10unique_ptrINS_24ConvertableToTraceFormatESt14default_deleteISB_EEj(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingController20GetCategoryGroupNameEPKh(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingController21AddTraceStateObserverEPNS_17TracingController18TraceStateObserverE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingController23GetCategoryGroupEnabledEPKc(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingController24RemoveTraceStateObserverEPNS_17TracingController18TraceStateObserverE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingController24UpdateTraceEventDurationEPKhPKcm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingController26AddTraceEventWithTimestampEcPKhPKcS6_mmiPS6_S4_PKmPSt10unique_ptrINS_24ConvertableToTraceFormatESt14default_deleteISB_EEjl(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingController28CurrentTimestampMicrosecondsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingController30UpdateCategoryGroupEnabledFlagEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingController31CurrentCpuTimestampMicrosecondsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingController31UpdateCategoryGroupEnabledFlagsEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingControllerC1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingControllerC2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingControllerD0Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingControllerD1Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing17TracingControllerD2Ev(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing21TraceBufferRingBuffer13AddTraceEventEPm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing21TraceBufferRingBuffer16GetEventByHandleEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing21TraceBufferRingBuffer5FlushEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing21TraceBufferRingBufferC1EmPNS1_11TraceWriterE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v88platform7tracing21TraceBufferRingBufferC2EmPNS1_11TraceWriterE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89CFunctionC1EPKvPKNS_13CFunctionInfoE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89CFunctionC2EPKvPKNS_13CFunctionInfoE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89CodeEvent10GetCommentEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89CodeEvent11GetCodeSizeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89CodeEvent11GetCodeTypeEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89CodeEvent13GetScriptLineEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89CodeEvent13GetScriptNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89CodeEvent15GetFunctionNameEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89CodeEvent15GetScriptColumnEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89CodeEvent19GetCodeStartAddressEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89CodeEvent20GetCodeEventTypeNameENS_13CodeEventTypeE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89CodeEvent27GetPreviousCodeStartAddressEv(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Exception10RangeErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Exception11SyntaxErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Exception13CreateMessageEPNS_7IsolateENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Exception13GetStackTraceENS_5LocalINS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Exception13WasmLinkErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Exception14ReferenceErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Exception16WasmCompileErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Exception16WasmRuntimeErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Exception5ErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Exception9TypeErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89ExtensionC1EPKcS2_iPS2_i(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89ExtensionC2EPKcS2_iPS2_i(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Int8Array3NewENS_5LocalINS_11ArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Int8Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Int8Array9CheckCastEPNS_5ValueE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Signature3NewEPNS_7IsolateENS_5LocalINS_16FunctionTemplateEEE(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN2v89Signature9CheckCastEPNS_4DataE(void) { V8_UNIMPLEMENTED(); }
+V8_WEAK_STUB(_ZNK2v810CpuProfile10GetEndTimeEv);
+V8_WEAK_STUB(_ZNK2v810CpuProfile12GetStartTimeEv);
+V8_WEAK_STUB(_ZNK2v810CpuProfile14GetSampleStateEi);
+V8_WEAK_STUB(_ZNK2v810CpuProfile14GetTopDownRootEv);
+V8_WEAK_STUB(_ZNK2v810CpuProfile15GetSamplesCountEv);
+V8_WEAK_STUB(_ZNK2v810CpuProfile18GetSampleTimestampEi);
+V8_WEAK_STUB(_ZNK2v810CpuProfile22GetSampleEmbedderStateEi);
+V8_WEAK_STUB(_ZNK2v810CpuProfile8GetTitleEv);
+V8_WEAK_STUB(_ZNK2v810CpuProfile9GetSampleEi);
+V8_WEAK_STUB(_ZNK2v810CpuProfile9SerializeEPNS_12OutputStreamENS0_19SerializationFormatE);
+V8_WEAK_STUB(_ZNK2v810FixedArray3GetENS_5LocalINS_7ContextEEEi);
+V8_WEAK_STUB(_ZNK2v810FixedArray6LengthEv);
+V8_WEAK_STUB(_ZNK2v810StackFrame11GetLocationEv);
+V8_WEAK_STUB(_ZNK2v810StackFrame11GetScriptIdEv);
+V8_WEAK_STUB(_ZNK2v810StackFrame13GetScriptNameEv);
+V8_WEAK_STUB(_ZNK2v810StackFrame13IsConstructorEv);
+V8_WEAK_STUB(_ZNK2v810StackFrame15GetFunctionNameEv);
+V8_WEAK_STUB(_ZNK2v810StackFrame15GetScriptSourceEv);
+V8_WEAK_STUB(_ZNK2v810StackFrame16IsUserJavaScriptEv);
+V8_WEAK_STUB(_ZNK2v810StackFrame24GetScriptNameOrSourceURLEv);
+V8_WEAK_STUB(_ZNK2v810StackFrame25GetScriptSourceMappingURLEv);
+V8_WEAK_STUB(_ZNK2v810StackFrame6IsEvalEv);
+V8_WEAK_STUB(_ZNK2v810StackFrame6IsWasmEv);
+V8_WEAK_STUB(_ZNK2v810StackTrace13GetFrameCountEv);
+V8_WEAK_STUB(_ZNK2v810StackTrace8GetFrameEPNS_7IsolateEj);
+V8_WEAK_STUB(_ZNK2v811ArrayBuffer10ByteLengthEv);
+V8_WEAK_STUB(_ZNK2v811ArrayBuffer11WasDetachedEv);
+V8_WEAK_STUB(_ZNK2v811ArrayBuffer12IsDetachableEv);
+V8_WEAK_STUB(_ZNK2v811ArrayBuffer13MaxByteLengthEv);
+V8_WEAK_STUB(_ZNK2v811ArrayBuffer27IsResizableByUserJavaScriptEv);
+V8_WEAK_STUB(_ZNK2v811ArrayBuffer4DataEv);
+V8_WEAK_STUB(_ZNK2v811StartupData13CanBeRehashedEv);
+V8_WEAK_STUB(_ZNK2v811StartupData7IsValidEv);
+V8_WEAK_STUB(_ZNK2v812BackingStore10ByteLengthEv);
+V8_WEAK_STUB(_ZNK2v812BackingStore13MaxByteLengthEv);
+V8_WEAK_STUB(_ZNK2v812BackingStore27IsResizableByUserJavaScriptEv);
+V8_WEAK_STUB(_ZNK2v812BackingStore4DataEv);
+V8_WEAK_STUB(_ZNK2v812BackingStore8IsSharedEv);
+V8_WEAK_STUB(_ZNK2v812BigIntObject7ValueOfEv);
+V8_WEAK_STUB(_ZNK2v812HeapSnapshot11GetNodeByIdEj);
+V8_WEAK_STUB(_ZNK2v812HeapSnapshot13GetNodesCountEv);
+V8_WEAK_STUB(_ZNK2v812HeapSnapshot24GetMaxSnapshotJSObjectIdEv);
+V8_WEAK_STUB(_ZNK2v812HeapSnapshot7GetNodeEi);
+V8_WEAK_STUB(_ZNK2v812HeapSnapshot7GetRootEv);
+V8_WEAK_STUB(_ZNK2v812HeapSnapshot9SerializeEPNS_12OutputStreamENS0_19SerializationFormatE);
+V8_WEAK_STUB(_ZNK2v812NumberObject7ValueOfEv);
+V8_WEAK_STUB(_ZNK2v812ScriptOrigin24VerifyHostDefinedOptionsEv);
+V8_WEAK_STUB(_ZNK2v812StringObject7ValueOfEv);
+V8_WEAK_STUB(_ZNK2v812SymbolObject7ValueOfEv);
+V8_WEAK_STUB(_ZNK2v812api_internal14StackAllocatedILb1EE13VerifyOnStackEv);
+V8_WEAK_STUB(_ZNK2v813BooleanObject7ValueOfEv);
+V8_WEAK_STUB(_ZNK2v813CFunctionInfo12ArgumentInfoEj);
+V8_WEAK_STUB(_ZNK2v813HeapGraphEdge11GetFromNodeEv);
+V8_WEAK_STUB(_ZNK2v813HeapGraphEdge7GetNameEv);
+V8_WEAK_STUB(_ZNK2v813HeapGraphEdge7GetTypeEv);
+V8_WEAK_STUB(_ZNK2v813HeapGraphEdge9GetToNodeEv);
+V8_WEAK_STUB(_ZNK2v813HeapGraphNode14GetShallowSizeEv);
+V8_WEAK_STUB(_ZNK2v813HeapGraphNode16GetChildrenCountEv);
+V8_WEAK_STUB(_ZNK2v813HeapGraphNode5GetIdEv);
+V8_WEAK_STUB(_ZNK2v813HeapGraphNode7GetNameEv);
+V8_WEAK_STUB(_ZNK2v813HeapGraphNode7GetTypeEv);
+V8_WEAK_STUB(_ZNK2v813HeapGraphNode8GetChildEi);
+V8_WEAK_STUB(_ZNK2v813ModuleRequest12GetSpecifierEv);
+V8_WEAK_STUB(_ZNK2v813ModuleRequest15GetSourceOffsetEv);
+V8_WEAK_STUB(_ZNK2v813ModuleRequest19GetImportAttributesEv);
+V8_WEAK_STUB(_ZNK2v813UnboundScript5GetIdEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode11GetHitCountEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode11GetScriptIdEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode12GetLineTicksEPNS0_8LineTickEj);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode13GetDeoptInfosEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode13GetLineNumberEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode13GetSourceTypeEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode15GetColumnNumberEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode15GetFunctionNameEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode15GetHitLineCountEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode16GetBailoutReasonEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode16GetChildrenCountEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode18GetFunctionNameStrEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode21GetScriptResourceNameEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode24GetScriptResourceNameStrEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode25IsScriptSharedCrossOriginEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode8GetChildEi);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode9GetNodeIdEv);
+V8_WEAK_STUB(_ZNK2v814CpuProfileNode9GetParentEv);
+V8_WEAK_STUB(_ZNK2v814ObjectTemplate10IsCodeLikeEv);
+V8_WEAK_STUB(_ZNK2v814ObjectTemplate16IsImmutableProtoEv);
+V8_WEAK_STUB(_ZNK2v814ObjectTemplate18InternalFieldCountEv);
+V8_WEAK_STUB(_ZNK2v814PrimitiveArray6LengthEv);
+V8_WEAK_STUB(_ZNK2v814ScriptCompiler20ConsumeCodeCacheTask29ShouldMergeWithExistingScriptEv);
+V8_WEAK_STUB(_ZNK2v814SourceLocation8ToStringB5cxx11Ev);
+V8_WEAK_STUB(_ZNK2v815ArrayBufferView9HasBufferEv);
+V8_WEAK_STUB(_ZNK2v816FunctionTemplate26IsLeafTemplateForApiObjectENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZNK2v817SharedArrayBuffer10ByteLengthEv);
+V8_WEAK_STUB(_ZNK2v817SharedArrayBuffer13MaxByteLengthEv);
+V8_WEAK_STUB(_ZNK2v817SharedArrayBuffer4DataEv);
+V8_WEAK_STUB(_ZNK2v817ValueDeserializer20GetWireFormatVersionEv);
+V8_WEAK_STUB(_ZNK2v818PropertyDescriptor10enumerableEv);
+V8_WEAK_STUB(_ZNK2v818PropertyDescriptor12configurableEv);
+V8_WEAK_STUB(_ZNK2v818PropertyDescriptor12has_writableEv);
+V8_WEAK_STUB(_ZNK2v818PropertyDescriptor14has_enumerableEv);
+V8_WEAK_STUB(_ZNK2v818PropertyDescriptor16has_configurableEv);
+V8_WEAK_STUB(_ZNK2v818PropertyDescriptor3getEv);
+V8_WEAK_STUB(_ZNK2v818PropertyDescriptor3setEv);
+V8_WEAK_STUB(_ZNK2v818PropertyDescriptor5valueEv);
+V8_WEAK_STUB(_ZNK2v818PropertyDescriptor7has_getEv);
+V8_WEAK_STUB(_ZNK2v818PropertyDescriptor7has_setEv);
+V8_WEAK_STUB(_ZNK2v818PropertyDescriptor8writableEv);
+V8_WEAK_STUB(_ZNK2v818PropertyDescriptor9has_valueEv);
+V8_WEAK_STUB(_ZNK2v819CpuProfilingOptions18raw_filter_contextEv);
+V8_WEAK_STUB(_ZNK2v819TracedReferenceBase10CheckValueEv);
+V8_WEAK_STUB(_ZNK2v821FastApiTypedArrayBase13ValidateIndexEm);
+V8_WEAK_STUB(_ZNK2v83Map4SizeEv);
+V8_WEAK_STUB(_ZNK2v83Map7AsArrayEv);
+V8_WEAK_STUB(_ZNK2v83Set4SizeEv);
+V8_WEAK_STUB(_ZNK2v83Set7AsArrayEv);
+V8_WEAK_STUB(_ZNK2v84Data12IsFixedArrayEv);
+V8_WEAK_STUB(_ZNK2v84Data16IsObjectTemplateEv);
+V8_WEAK_STUB(_ZNK2v84Data18IsFunctionTemplateEv);
+V8_WEAK_STUB(_ZNK2v84Data7IsValueEv);
+V8_WEAK_STUB(_ZNK2v84Data8IsModuleEv);
+V8_WEAK_STUB(_ZNK2v84Data9IsContextEv);
+V8_WEAK_STUB(_ZNK2v84Data9IsPrivateEv);
+V8_WEAK_STUB(_ZNK2v84Date11ToISOStringEv);
+V8_WEAK_STUB(_ZNK2v84Date7ValueOfEv);
+V8_WEAK_STUB(_ZNK2v84base15RegionAllocator5PrintERSo);
+V8_WEAK_STUB(_ZNK2v84base15RegionAllocator6Region5PrintERSo);
+V8_WEAK_STUB(_ZNK2v84base20BoundedPageAllocator4sizeEv);
+V8_WEAK_STUB(_ZNK2v84base20BoundedPageAllocator5beginEv);
+V8_WEAK_STUB(_ZNK2v84base4Time10ToTimespecEv);
+V8_WEAK_STUB(_ZNK2v84base4Time8ToJsTimeEv);
+V8_WEAK_STUB(_ZNK2v84base4Time9ToTimevalEv);
+V8_WEAK_STUB(_ZNK2v84base5debug10StackTrace14OutputToStreamEPSo);
+V8_WEAK_STUB(_ZNK2v84base5debug10StackTrace5PrintEv);
+V8_WEAK_STUB(_ZNK2v84base5debug10StackTrace8ToStringB5cxx11Ev);
+V8_WEAK_STUB(_ZNK2v84base5debug10StackTrace9AddressesEPm);
+V8_WEAK_STUB(_ZNK2v84base6Bignum11ToHexStringEPci);
+V8_WEAK_STUB(_ZNK2v84base6Bignum7BigitAtEi);
+V8_WEAK_STUB(_ZNK2v84base6Bignum9IsClampedEv);
+V8_WEAK_STUB(_ZNK2v84base9TimeDelta10InSecondsFEv);
+V8_WEAK_STUB(_ZNK2v84base9TimeDelta10ToTimespecEv);
+V8_WEAK_STUB(_ZNK2v84base9TimeDelta13InNanosecondsEv);
+V8_WEAK_STUB(_ZNK2v84base9TimeDelta14InMicrosecondsEv);
+V8_WEAK_STUB(_ZNK2v84base9TimeDelta14InMillisecondsEv);
+V8_WEAK_STUB(_ZNK2v84base9TimeDelta15InMillisecondsFEv);
+V8_WEAK_STUB(_ZNK2v84base9TimeDelta23InMillisecondsRoundedUpEv);
+V8_WEAK_STUB(_ZNK2v84base9TimeDelta6InDaysEv);
+V8_WEAK_STUB(_ZNK2v84base9TimeDelta7InHoursEv);
+V8_WEAK_STUB(_ZNK2v84base9TimeDelta9InMinutesEv);
+V8_WEAK_STUB(_ZNK2v84base9TimeDelta9InSecondsEv);
+V8_WEAK_STUB(_ZNK2v85Array6LengthEv);
+V8_WEAK_STUB(_ZNK2v85Int325ValueEv);
+V8_WEAK_STUB(_ZNK2v85Proxy9IsRevokedEv);
+V8_WEAK_STUB(_ZNK2v85Value10FullIsNullEv);
+V8_WEAK_STUB(_ZNK2v85Value10FullIsTrueEv);
+V8_WEAK_STUB(_ZNK2v85Value10Int32ValueENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85Value10IsDataViewEv);
+V8_WEAK_STUB(_ZNK2v85Value10IsExternalEv);
+V8_WEAK_STUB(_ZNK2v85Value10IsFunctionEv);
+V8_WEAK_STUB(_ZNK2v85Value10IsWasmNullEv);
+V8_WEAK_STUB(_ZNK2v85Value11FullIsFalseEv);
+V8_WEAK_STUB(_ZNK2v85Value11IsInt8ArrayEv);
+V8_WEAK_STUB(_ZNK2v85Value11NumberValueENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85Value11ToPrimitiveENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85Value11Uint32ValueENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85Value12BooleanValueEPNS_7IsolateE);
+V8_WEAK_STUB(_ZNK2v85Value12FullIsStringEv);
+V8_WEAK_STUB(_ZNK2v85Value12IntegerValueENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85Value12IsInt16ArrayEv);
+V8_WEAK_STUB(_ZNK2v85Value12IsInt32ArrayEv);
+V8_WEAK_STUB(_ZNK2v85Value12IsTypedArrayEv);
+V8_WEAK_STUB(_ZNK2v85Value12IsUint8ArrayEv);
+V8_WEAK_STUB(_ZNK2v85Value12StrictEqualsENS_5LocalIS0_EE);
+V8_WEAK_STUB(_ZNK2v85Value12ToArrayIndexENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85Value13IsArrayBufferEv);
+V8_WEAK_STUB(_ZNK2v85Value13IsMapIteratorEv);
+V8_WEAK_STUB(_ZNK2v85Value13IsNativeErrorEv);
+V8_WEAK_STUB(_ZNK2v85Value13IsSetIteratorEv);
+V8_WEAK_STUB(_ZNK2v85Value13IsUint16ArrayEv);
+V8_WEAK_STUB(_ZNK2v85Value13IsUint32ArrayEv);
+V8_WEAK_STUB(_ZNK2v85Value14IsBigIntObjectEv);
+V8_WEAK_STUB(_ZNK2v85Value14IsFloat16ArrayEv);
+V8_WEAK_STUB(_ZNK2v85Value14IsFloat32ArrayEv);
+V8_WEAK_STUB(_ZNK2v85Value14IsFloat64ArrayEv);
+V8_WEAK_STUB(_ZNK2v85Value14IsNumberObjectEv);
+V8_WEAK_STUB(_ZNK2v85Value14IsStringObjectEv);
+V8_WEAK_STUB(_ZNK2v85Value14IsSymbolObjectEv);
+V8_WEAK_STUB(_ZNK2v85Value14ToDetailStringENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85Value15FullIsUndefinedEv);
+V8_WEAK_STUB(_ZNK2v85Value15IsAsyncFunctionEv);
+V8_WEAK_STUB(_ZNK2v85Value15IsBigInt64ArrayEv);
+V8_WEAK_STUB(_ZNK2v85Value15IsBooleanObjectEv);
+V8_WEAK_STUB(_ZNK2v85Value16IsBigUint64ArrayEv);
+V8_WEAK_STUB(_ZNK2v85Value17IsArgumentsObjectEv);
+V8_WEAK_STUB(_ZNK2v85Value17IsArrayBufferViewEv);
+V8_WEAK_STUB(_ZNK2v85Value17IsGeneratorObjectEv);
+V8_WEAK_STUB(_ZNK2v85Value18IsWasmMemoryObjectEv);
+V8_WEAK_STUB(_ZNK2v85Value18IsWasmModuleObjectEv);
+V8_WEAK_STUB(_ZNK2v85Value19IsGeneratorFunctionEv);
+V8_WEAK_STUB(_ZNK2v85Value19IsSharedArrayBufferEv);
+V8_WEAK_STUB(_ZNK2v85Value19IsUint8ClampedArrayEv);
+V8_WEAK_STUB(_ZNK2v85Value23IsModuleNamespaceObjectEv);
+V8_WEAK_STUB(_ZNK2v85Value5IsMapEv);
+V8_WEAK_STUB(_ZNK2v85Value5IsSetEv);
+V8_WEAK_STUB(_ZNK2v85Value6EqualsENS_5LocalINS_7ContextEEENS1_IS0_EE);
+V8_WEAK_STUB(_ZNK2v85Value6IsDateEv);
+V8_WEAK_STUB(_ZNK2v85Value6IsNameEv);
+V8_WEAK_STUB(_ZNK2v85Value7IsArrayEv);
+V8_WEAK_STUB(_ZNK2v85Value7IsInt32Ev);
+V8_WEAK_STUB(_ZNK2v85Value7IsProxyEv);
+V8_WEAK_STUB(_ZNK2v85Value7ToInt32ENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85Value8IsBigIntEv);
+V8_WEAK_STUB(_ZNK2v85Value8IsNumberEv);
+V8_WEAK_STUB(_ZNK2v85Value8IsObjectEv);
+V8_WEAK_STUB(_ZNK2v85Value8IsRegExpEv);
+V8_WEAK_STUB(_ZNK2v85Value8IsSymbolEv);
+V8_WEAK_STUB(_ZNK2v85Value8IsUint32Ev);
+V8_WEAK_STUB(_ZNK2v85Value8ToBigIntENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85Value8ToNumberENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85Value8ToObjectENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85Value8ToStringENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85Value8ToUint32ENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85Value9IsBooleanEv);
+V8_WEAK_STUB(_ZNK2v85Value9IsPromiseEv);
+V8_WEAK_STUB(_ZNK2v85Value9IsWeakMapEv);
+V8_WEAK_STUB(_ZNK2v85Value9IsWeakRefEv);
+V8_WEAK_STUB(_ZNK2v85Value9IsWeakSetEv);
+V8_WEAK_STUB(_ZNK2v85Value9SameValueENS_5LocalIS0_EE);
+V8_WEAK_STUB(_ZNK2v85Value9ToBooleanEPNS_7IsolateE);
+V8_WEAK_STUB(_ZNK2v85Value9ToIntegerENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85Value9ToNumericENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v85debug10WasmScript10CodeOffsetEv);
+V8_WEAK_STUB(_ZNK2v85debug10WasmScript12NumFunctionsEv);
+V8_WEAK_STUB(_ZNK2v85debug10WasmScript16GetFunctionRangeEi);
+V8_WEAK_STUB(_ZNK2v85debug10WasmScript18ExternalSymbolsURLEv);
+V8_WEAK_STUB(_ZNK2v85debug10WasmScript18GetDebugSymbolTypeEv);
+V8_WEAK_STUB(_ZNK2v85debug10WasmScript20NumImportedFunctionsEv);
+V8_WEAK_STUB(_ZNK2v85debug10WasmScript21GetContainingFunctionEi);
+V8_WEAK_STUB(_ZNK2v85debug12ScriptSource12WasmBytecodeEv);
+V8_WEAK_STUB(_ZNK2v85debug12ScriptSource14JavaScriptCodeEv);
+V8_WEAK_STUB(_ZNK2v85debug12ScriptSource4SizeEv);
+V8_WEAK_STUB(_ZNK2v85debug12ScriptSource6LengthEv);
+V8_WEAK_STUB(_ZNK2v85debug15WasmValueObject4typeEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script10GetIsolateEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script10IsEmbeddedEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script11StartColumnEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script11WasCompiledEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script13GetSha256HashEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script13OriginOptionsEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script13SetBreakpointENS_5LocalINS_6StringEEEPNS0_8LocationEPi);
+V8_WEAK_STUB(_ZNK2v85debug6Script15GetSourceOffsetERKNS0_8LocationENS1_19GetSourceOffsetModeE);
+V8_WEAK_STUB(_ZNK2v85debug6Script15SetScriptSourceENS_5LocalINS_6StringEEEbbPNS0_14LiveEditResultE);
+V8_WEAK_STUB(_ZNK2v85debug6Script16SourceMappingURLEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script17GetSourceLocationEi);
+V8_WEAK_STUB(_ZNK2v85debug6Script22GetPossibleBreakpointsERKNS0_8LocationES4_bPSt6vectorINS0_13BreakLocationESaIS6_EE);
+V8_WEAK_STUB(_ZNK2v85debug6Script28SetInstrumentationBreakpointEPi);
+V8_WEAK_STUB(_ZNK2v85debug6Script2IdEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script4NameEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script6IsWasmEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script6SourceEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script7EndLineEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script8IsModuleEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script9ContextIdEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script9EndColumnEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script9SourceURLEv);
+V8_WEAK_STUB(_ZNK2v85debug6Script9StartLineEv);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage10ScriptData13FunctionCountEv);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage10ScriptData15GetFunctionDataEm);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage10ScriptData9GetScriptEv);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage11ScriptCountEv);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage12FunctionData10BlockCountEv);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage12FunctionData11StartOffsetEv);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage12FunctionData12GetBlockDataEm);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage12FunctionData16HasBlockCoverageEv);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage12FunctionData4NameEv);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage12FunctionData5CountEv);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage12FunctionData9EndOffsetEv);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage13GetScriptDataEm);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage9BlockData11StartOffsetEv);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage9BlockData5CountEv);
+V8_WEAK_STUB(_ZNK2v85debug8Coverage9BlockData9EndOffsetEv);
+V8_WEAK_STUB(_ZNK2v85debug8Location13GetLineNumberEv);
+V8_WEAK_STUB(_ZNK2v85debug8Location15GetColumnNumberEv);
+V8_WEAK_STUB(_ZNK2v85debug8Location7IsEmptyEv);
+V8_WEAK_STUB(_ZNK2v86BigInt10Int64ValueEPb);
+V8_WEAK_STUB(_ZNK2v86BigInt11Uint64ValueEPb);
+V8_WEAK_STUB(_ZNK2v86BigInt12ToWordsArrayEPiS1_Pm);
+V8_WEAK_STUB(_ZNK2v86BigInt9WordCountEv);
+V8_WEAK_STUB(_ZNK2v86Module12GetExceptionEv);
+V8_WEAK_STUB(_ZNK2v86Module12IsGraphAsyncEv);
+V8_WEAK_STUB(_ZNK2v86Module15GetIdentityHashEv);
+V8_WEAK_STUB(_ZNK2v86Module17GetModuleRequestsEv);
+V8_WEAK_STUB(_ZNK2v86Module17IsSyntheticModuleEv);
+V8_WEAK_STUB(_ZNK2v86Module18IsSourceTextModuleEv);
+V8_WEAK_STUB(_ZNK2v86Module22SourceOffsetToLocationEi);
+V8_WEAK_STUB(_ZNK2v86Module8ScriptIdEv);
+V8_WEAK_STUB(_ZNK2v86Module9GetStatusEv);
+V8_WEAK_STUB(_ZNK2v86Number5ValueEv);
+V8_WEAK_STUB(_ZNK2v86Object10IsCallableEv);
+V8_WEAK_STUB(_ZNK2v86Object10IsCodeLikeEPNS_7IsolateE);
+V8_WEAK_STUB(_ZNK2v86Object12IsApiWrapperEv);
+V8_WEAK_STUB(_ZNK2v86Object13IsConstructorEv);
+V8_WEAK_STUB(_ZNK2v86Object14IsUndetectableEv);
+V8_WEAK_STUB(_ZNK2v86Object18InternalFieldCountEv);
+V8_WEAK_STUB(_ZNK2v86Object25HasNamedLookupInterceptorEv);
+V8_WEAK_STUB(_ZNK2v86Object27HasIndexedLookupInterceptorEv);
+V8_WEAK_STUB(_ZNK2v86RegExp8GetFlagsEv);
+V8_WEAK_STUB(_ZNK2v86RegExp9GetSourceEv);
+V8_WEAK_STUB(_ZNK2v86Script23GetProducedCompileHintsEv);
+V8_WEAK_STUB(_ZNK2v86String10IsExternalEv);
+V8_WEAK_STUB(_ZNK2v86String10Utf8LengthEPNS_7IsolateE);
+V8_WEAK_STUB(_ZNK2v86String12StringEqualsENS_5LocalIS0_EE);
+V8_WEAK_STUB(_ZNK2v86String12WriteOneByteEPNS_7IsolateEPhiii);
+V8_WEAK_STUB(_ZNK2v86String15CanMakeExternalENS0_8EncodingE);
+V8_WEAK_STUB(_ZNK2v86String17IsExternalOneByteEv);
+V8_WEAK_STUB(_ZNK2v86String17IsExternalTwoByteEv);
+V8_WEAK_STUB(_ZNK2v86String19ContainsOnlyOneByteEv);
+V8_WEAK_STUB(_ZNK2v86String22ExternalStringResource25CheckCachedDataInvariantsEv);
+V8_WEAK_STUB(_ZNK2v86String28VerifyExternalStringResourceEPNS0_22ExternalStringResourceE);
+V8_WEAK_STUB(_ZNK2v86String29ExternalOneByteStringResource25CheckCachedDataInvariantsEv);
+V8_WEAK_STUB(_ZNK2v86String29GetExternalStringResourceSlowEv);
+V8_WEAK_STUB(_ZNK2v86String32GetExternalOneByteStringResourceEv);
+V8_WEAK_STUB(_ZNK2v86String32VerifyExternalStringResourceBaseEPNS0_26ExternalStringResourceBaseENS0_8EncodingE);
+V8_WEAK_STUB(_ZNK2v86String33GetExternalStringResourceBaseSlowEPNS0_8EncodingE);
+V8_WEAK_STUB(_ZNK2v86String5WriteEPNS_7IsolateEPtiii);
+V8_WEAK_STUB(_ZNK2v86String6LengthEv);
+V8_WEAK_STUB(_ZNK2v86String9IsOneByteEv);
+V8_WEAK_STUB(_ZNK2v86String9WriteUtf8EPNS_7IsolateEPciPii);
+V8_WEAK_STUB(_ZNK2v86Symbol11DescriptionEPNS_7IsolateE);
+V8_WEAK_STUB(_ZNK2v86Uint325ValueEv);
+V8_WEAK_STUB(_ZNK2v87Boolean5ValueEv);
+V8_WEAK_STUB(_ZNK2v87Context34IsCodeGenerationFromStringsAllowedEv);
+V8_WEAK_STUB(_ZNK2v87CppHeap18wrapper_descriptorEv);
+V8_WEAK_STUB(_ZNK2v87Integer5ValueEv);
+V8_WEAK_STUB(_ZNK2v87Isolate10GetCppHeapEv);
+V8_WEAK_STUB(_ZNK2v87Isolate19GetMicrotasksPolicyEv);
+V8_WEAK_STUB(_ZNK2v87Isolate9IsCurrentEv);
+V8_WEAK_STUB(_ZNK2v87Message10ErrorLevelEv);
+V8_WEAK_STUB(_ZNK2v87Message10GetIsolateEv);
+V8_WEAK_STUB(_ZNK2v87Message12GetEndColumnENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v87Message12GetEndColumnEv);
+V8_WEAK_STUB(_ZNK2v87Message13GetLineNumberENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v87Message13GetSourceLineENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v87Message13GetStackTraceEv);
+V8_WEAK_STUB(_ZNK2v87Message14GetEndPositionEv);
+V8_WEAK_STUB(_ZNK2v87Message14GetStartColumnENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v87Message14GetStartColumnEv);
+V8_WEAK_STUB(_ZNK2v87Message15GetScriptOriginEv);
+V8_WEAK_STUB(_ZNK2v87Message16GetStartPositionEv);
+V8_WEAK_STUB(_ZNK2v87Message19IsSharedCrossOriginEv);
+V8_WEAK_STUB(_ZNK2v87Message20GetWasmFunctionIndexEv);
+V8_WEAK_STUB(_ZNK2v87Message21GetScriptResourceNameEv);
+V8_WEAK_STUB(_ZNK2v87Message3GetEv);
+V8_WEAK_STUB(_ZNK2v87Message8IsOpaqueEv);
+V8_WEAK_STUB(_ZNK2v87Message9GetSourceENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v87Private4NameEv);
+V8_WEAK_STUB(_ZNK2v87Promise10HasHandlerEv);
+V8_WEAK_STUB(_ZNK2v87sampler11AtomicGuard10is_successEv);
+V8_WEAK_STUB(_ZNK2v87tracing11TracedValue19AppendAsTraceFormatEPNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE);
+V8_WEAK_STUB(_ZNK2v88External5ValueEv);
+V8_WEAK_STUB(_ZNK2v88Function11NewInstanceENS_5LocalINS_7ContextEEEiPNS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZNK2v88Function12GetDebugNameEv);
+V8_WEAK_STUB(_ZNK2v88Function15GetInferredNameEv);
+V8_WEAK_STUB(_ZNK2v88Function15GetScriptOriginEv);
+V8_WEAK_STUB(_ZNK2v88Function16GetBoundFunctionEv);
+V8_WEAK_STUB(_ZNK2v88Function16GetUnboundScriptEv);
+V8_WEAK_STUB(_ZNK2v88Function19GetScriptLineNumberEv);
+V8_WEAK_STUB(_ZNK2v88Function21GetScriptColumnNumberEv);
+V8_WEAK_STUB(_ZNK2v88Function22GetScriptStartPositionEv);
+V8_WEAK_STUB(_ZNK2v88Function26Experimental_IsNopFunctionEv);
+V8_WEAK_STUB(_ZNK2v88Function29NewInstanceWithSideEffectTypeENS_5LocalINS_7ContextEEEiPNS1_INS_5ValueEEENS_14SideEffectTypeE);
+V8_WEAK_STUB(_ZNK2v88Function7GetNameEv);
+V8_WEAK_STUB(_ZNK2v88Function8ScriptIdEv);
+V8_WEAK_STUB(_ZNK2v88TryCatch10StackTraceENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZNK2v88TryCatch11CanContinueEv);
+V8_WEAK_STUB(_ZNK2v88TryCatch13HasTerminatedEv);
+V8_WEAK_STUB(_ZNK2v88TryCatch7MessageEv);
+V8_WEAK_STUB(_ZNK2v88TryCatch9ExceptionEv);
+V8_WEAK_STUB(_ZNK2v88TryCatch9HasCaughtEv);
+V8_WEAK_STUB(_ZNK2v88TryCatch9IsVerboseEv);
+V8_WEAK_STUB(_ZN2v810CpuProfile6DeleteEv);
+V8_WEAK_STUB(_ZN2v810FixedArray9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v810Int16Array3NewENS_5LocalINS_11ArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v810Int16Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v810Int16Array9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v810Int32Array3NewENS_5LocalINS_11ArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v810Int32Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v810Int32Array9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v810NewContextEPNS_7IsolateEPNS_22ExtensionConfigurationENS_10MaybeLocalINS_14ObjectTemplateEEENS4_INS_5ValueEEEmNS_8internal33DeserializeEmbedderFieldsCallbackEPNS_14MicrotaskQueueE);
+V8_WEAK_STUB(_ZN2v810StackTrace17CurrentStackTraceEPNS_7IsolateEiNS0_17StackTraceOptionsE);
+V8_WEAK_STUB(_ZN2v810StackTrace28CurrentScriptNameOrSourceURLEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v810TypedArray6LengthEv);
+V8_WEAK_STUB(_ZN2v810TypedArray9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v810Uint8Array3NewENS_5LocalINS_11ArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v810Uint8Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v810Uint8Array9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v811ArrayBuffer12SetDetachKeyENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v811ArrayBuffer15GetBackingStoreEv);
+V8_WEAK_STUB(_ZN2v811ArrayBuffer15NewBackingStoreEPNS_7IsolateEm);
+V8_WEAK_STUB(_ZN2v811ArrayBuffer15NewBackingStoreEPvmPFvS1_mS1_ES1_);
+V8_WEAK_STUB(_ZN2v811ArrayBuffer24NewResizableBackingStoreEmm);
+V8_WEAK_STUB(_ZN2v811ArrayBuffer3NewEPNS_7IsolateESt10shared_ptrINS_12BackingStoreEE);
+V8_WEAK_STUB(_ZN2v811ArrayBuffer3NewEPNS_7IsolateEm);
+V8_WEAK_STUB(_ZN2v811ArrayBuffer6DetachENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v811ArrayBuffer6DetachEv);
+V8_WEAK_STUB(_ZN2v811ArrayBuffer9Allocator10ReallocateEPvmm);
+V8_WEAK_STUB(_ZN2v811ArrayBuffer9Allocator19NewDefaultAllocatorEv);
+V8_WEAK_STUB(_ZN2v811ArrayBuffer9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v811CpuProfiler13StopProfilingENS_5LocalINS_6StringEEE);
+V8_WEAK_STUB(_ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj);
+V8_WEAK_STUB(_ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEENS_19CpuProfilingOptionsESt10unique_ptrINS_24DiscardedSamplesDelegateESt14default_deleteIS6_EE);
+V8_WEAK_STUB(_ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEEb);
+V8_WEAK_STUB(_ZN2v811CpuProfiler19SetSamplingIntervalEi);
+V8_WEAK_STUB(_ZN2v811CpuProfiler21SetUsePreciseSamplingEb);
+V8_WEAK_STUB(_ZN2v811CpuProfiler38UseDetailedSourcePositionsForProfilingEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v811CpuProfiler3NewEPNS_7IsolateENS_22CpuProfilingNamingModeENS_23CpuProfilingLoggingModeE);
+V8_WEAK_STUB(_ZN2v811CpuProfiler4StopEj);
+V8_WEAK_STUB(_ZN2v811CpuProfiler5StartENS_19CpuProfilingOptionsESt10unique_ptrINS_24DiscardedSamplesDelegateESt14default_deleteIS3_EE);
+V8_WEAK_STUB(_ZN2v811CpuProfiler5StartENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj);
+V8_WEAK_STUB(_ZN2v811CpuProfiler5StartENS_5LocalINS_6StringEEENS_19CpuProfilingOptionsESt10unique_ptrINS_24DiscardedSamplesDelegateESt14default_deleteIS6_EE);
+V8_WEAK_STUB(_ZN2v811CpuProfiler5StartENS_5LocalINS_6StringEEEb);
+V8_WEAK_STUB(_ZN2v811CpuProfiler7DisposeEv);
+V8_WEAK_STUB(_ZN2v811HandleScope10InitializeEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm);
+V8_WEAK_STUB(_ZN2v811HandleScope15NumberOfHandlesEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v811HandleScopeC1EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v811HandleScopeC2EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v811HandleScopeD1Ev);
+V8_WEAK_STUB(_ZN2v811HandleScopeD2Ev);
+V8_WEAK_STUB(_ZN2v811HandleScopedaEPvm);
+V8_WEAK_STUB(_ZN2v811HandleScopedlEPvm);
+V8_WEAK_STUB(_ZN2v811HandleScopenaEm);
+V8_WEAK_STUB(_ZN2v811HandleScopenwEm);
+V8_WEAK_STUB(_ZN2v811Uint16Array3NewENS_5LocalINS_11ArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v811Uint16Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v811Uint16Array9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v811Uint32Array3NewENS_5LocalINS_11ArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v811Uint32Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v811Uint32Array9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v812BackingStore10ReallocateEPNS_7IsolateESt10unique_ptrIS0_St14default_deleteIS0_EEm);
+V8_WEAK_STUB(_ZN2v812BackingStore12EmptyDeleterEPvmS1_);
+V8_WEAK_STUB(_ZN2v812BackingStoreD1Ev);
+V8_WEAK_STUB(_ZN2v812BackingStoreD2Ev);
+V8_WEAK_STUB(_ZN2v812BigIntObject3NewEPNS_7IsolateEl);
+V8_WEAK_STUB(_ZN2v812BigIntObject9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v812Float16Array3NewENS_5LocalINS_11ArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v812Float16Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v812Float16Array9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v812Float32Array3NewENS_5LocalINS_11ArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v812Float32Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v812Float32Array9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v812Float64Array3NewENS_5LocalINS_11ArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v812Float64Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v812Float64Array9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v812HeapProfiler11GetObjectIdENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v812HeapProfiler11GetObjectIdEPv);
+V8_WEAK_STUB(_ZN2v812HeapProfiler12GetHeapStatsEPNS_12OutputStreamEPl);
+V8_WEAK_STUB(_ZN2v812HeapProfiler12QueryObjectsENS_5LocalINS_7ContextEEEPNS_20QueryObjectPredicateEPSt6vectorINS_6GlobalINS_6ObjectEEESaIS9_EE);
+V8_WEAK_STUB(_ZN2v812HeapProfiler14ClearObjectIdsEv);
+V8_WEAK_STUB(_ZN2v812HeapProfiler14FindObjectByIdEj);
+V8_WEAK_STUB(_ZN2v812HeapProfiler15GetHeapSnapshotEi);
+V8_WEAK_STUB(_ZN2v812HeapProfiler16GetSnapshotCountEv);
+V8_WEAK_STUB(_ZN2v812HeapProfiler16TakeHeapSnapshotEPNS_15ActivityControlEPNS0_18ObjectNameResolverEbb);
+V8_WEAK_STUB(_ZN2v812HeapProfiler16TakeHeapSnapshotERKNS0_19HeapSnapshotOptionsE);
+V8_WEAK_STUB(_ZN2v812HeapProfiler20GetAllocationProfileEv);
+V8_WEAK_STUB(_ZN2v812HeapProfiler22DeleteAllHeapSnapshotsEv);
+V8_WEAK_STUB(_ZN2v812HeapProfiler23StopTrackingHeapObjectsEv);
+V8_WEAK_STUB(_ZN2v812HeapProfiler24StartTrackingHeapObjectsEb);
+V8_WEAK_STUB(_ZN2v812HeapProfiler24StopSamplingHeapProfilerEv);
+V8_WEAK_STUB(_ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE);
+V8_WEAK_STUB(_ZN2v812HeapProfiler26SetGetDetachednessCallbackEPFNS_13EmbedderGraph4Node12DetachednessEPNS_7IsolateERKNS_5LocalINS_5ValueEEEtPvESB_);
+V8_WEAK_STUB(_ZN2v812HeapProfiler29AddBuildEmbedderGraphCallbackEPFvPNS_7IsolateEPNS_13EmbedderGraphEPvES5_);
+V8_WEAK_STUB(_ZN2v812HeapProfiler32RemoveBuildEmbedderGraphCallbackEPFvPNS_7IsolateEPNS_13EmbedderGraphEPvES5_);
+V8_WEAK_STUB(_ZN2v812HeapSnapshot6DeleteEv);
+V8_WEAK_STUB(_ZN2v812NumberObject3NewEPNS_7IsolateEd);
+V8_WEAK_STUB(_ZN2v812NumberObject9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v812StringObject3NewEPNS_7IsolateENS_5LocalINS_6StringEEE);
+V8_WEAK_STUB(_ZN2v812StringObject9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v812SymbolObject3NewEPNS_7IsolateENS_5LocalINS_6SymbolEEE);
+V8_WEAK_STUB(_ZN2v812SymbolObject9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v812api_internal10EternalizeEPNS_7IsolateEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v812api_internal12ToLocalEmptyEv);
+V8_WEAK_STUB(_ZN2v812api_internal13DisposeGlobalEPm);
+V8_WEAK_STUB(_ZN2v812api_internal17FromJustIsNothingEv);
+V8_WEAK_STUB(_ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm);
+V8_WEAK_STUB(_ZN2v812api_internal19CopyGlobalReferenceEPm);
+V8_WEAK_STUB(_ZN2v812api_internal19MoveGlobalReferenceEPPmS2_);
+V8_WEAK_STUB(_ZN2v812api_internal22AnnotateStrongRetainerEPmPKc);
+V8_WEAK_STUB(_ZN2v812api_internal24InternalFieldOutOfBoundsEi);
+V8_WEAK_STUB(_ZN2v812api_internal8MakeWeakEPPm);
+V8_WEAK_STUB(_ZN2v812api_internal8MakeWeakEPmPvPFvRKNS_16WeakCallbackInfoIvEEENS_16WeakCallbackTypeE);
+V8_WEAK_STUB(_ZN2v812api_internal9ClearWeakEPm);
+V8_WEAK_STUB(_ZN2v813BigInt64Array3NewENS_5LocalINS_11ArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v813BigInt64Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v813BigInt64Array9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v813BooleanObject3NewEPNS_7IsolateEb);
+V8_WEAK_STUB(_ZN2v813BooleanObject9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v813CFunctionInfoC1ERKNS_9CTypeInfoEjPS2_NS0_19Int64RepresentationE);
+V8_WEAK_STUB(_ZN2v813CFunctionInfoC2ERKNS_9CTypeInfoEjPS2_NS0_19Int64RepresentationE);
+V8_WEAK_STUB(_ZN2v813ModuleRequest9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v813RegisterStateC1ERKS0_);
+V8_WEAK_STUB(_ZN2v813RegisterStateC1Ev);
+V8_WEAK_STUB(_ZN2v813RegisterStateC2ERKS0_);
+V8_WEAK_STUB(_ZN2v813RegisterStateC2Ev);
+V8_WEAK_STUB(_ZN2v813RegisterStateD1Ev);
+V8_WEAK_STUB(_ZN2v813RegisterStateD2Ev);
+V8_WEAK_STUB(_ZN2v813RegisterStateaSERKS0_);
+V8_WEAK_STUB(_ZN2v813UnboundScript12GetSourceURLEv);
+V8_WEAK_STUB(_ZN2v813UnboundScript13GetLineNumberEi);
+V8_WEAK_STUB(_ZN2v813UnboundScript13GetScriptNameEv);
+V8_WEAK_STUB(_ZN2v813UnboundScript15GetColumnNumberEi);
+V8_WEAK_STUB(_ZN2v813UnboundScript19GetSourceMappingURLEv);
+V8_WEAK_STUB(_ZN2v813UnboundScript20BindToCurrentContextEv);
+V8_WEAK_STUB(_ZN2v813WasmStreaming15OnBytesReceivedEPKhm);
+V8_WEAK_STUB(_ZN2v813WasmStreaming22SetCompiledModuleBytesEPKhm);
+V8_WEAK_STUB(_ZN2v813WasmStreaming39SetMoreFunctionsCanBeSerializedCallbackESt8functionIFvNS_18CompiledWasmModuleEEE);
+V8_WEAK_STUB(_ZN2v813WasmStreaming5AbortENS_10MaybeLocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v813WasmStreaming6FinishEb);
+V8_WEAK_STUB(_ZN2v813WasmStreaming6SetUrlEPKcm);
+V8_WEAK_STUB(_ZN2v813WasmStreaming6UnpackEPNS_7IsolateENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v813WasmStreamingC1ESt10unique_ptrINS0_17WasmStreamingImplESt14default_deleteIS2_EE);
+V8_WEAK_STUB(_ZN2v813WasmStreamingC2ESt10unique_ptrINS0_17WasmStreamingImplESt14default_deleteIS2_EE);
+V8_WEAK_STUB(_ZN2v813WasmStreamingD1Ev);
+V8_WEAK_STUB(_ZN2v813WasmStreamingD2Ev);
+V8_WEAK_STUB(_ZN2v814BigUint64Array3NewENS_5LocalINS_11ArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v814BigUint64Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v814BigUint64Array9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v814HeapStatisticsC1Ev);
+V8_WEAK_STUB(_ZN2v814HeapStatisticsC2Ev);
+V8_WEAK_STUB(_ZN2v814MicrotaskQueue3NewEPNS_7IsolateENS_16MicrotasksPolicyE);
+V8_WEAK_STUB(_ZN2v814ObjectTemplate10SetHandlerERKNS_33NamedPropertyHandlerConfigurationE);
+V8_WEAK_STUB(_ZN2v814ObjectTemplate10SetHandlerERKNS_35IndexedPropertyHandlerConfigurationE);
+V8_WEAK_STUB(_ZN2v814ObjectTemplate11NewInstanceENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v814ObjectTemplate11SetAccessorENS_5LocalINS_4NameEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS3_NS1_IS5_EERKNS4_IvEEESB_NS_17PropertyAttributeENS_14SideEffectTypeESI_);
+V8_WEAK_STUB(_ZN2v814ObjectTemplate11SetAccessorENS_5LocalINS_6StringEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS3_NS1_IS5_EERKNS4_IvEEESB_NS_17PropertyAttributeENS_14SideEffectTypeESI_);
+V8_WEAK_STUB(_ZN2v814ObjectTemplate11SetCodeLikeEv);
+V8_WEAK_STUB(_ZN2v814ObjectTemplate17SetImmutableProtoEv);
+V8_WEAK_STUB(_ZN2v814ObjectTemplate18MarkAsUndetectableEv);
+V8_WEAK_STUB(_ZN2v814ObjectTemplate21SetInternalFieldCountEi);
+V8_WEAK_STUB(_ZN2v814ObjectTemplate22SetAccessCheckCallbackEPFbNS_5LocalINS_7ContextEEENS1_INS_6ObjectEEENS1_INS_5ValueEEEES7_);
+V8_WEAK_STUB(_ZN2v814ObjectTemplate24SetCallAsFunctionHandlerEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS2_EE);
+V8_WEAK_STUB(_ZN2v814ObjectTemplate32SetAccessCheckCallbackAndHandlerEPFbNS_5LocalINS_7ContextEEENS1_INS_6ObjectEEENS1_INS_5ValueEEEERKNS_33NamedPropertyHandlerConfigurationERKNS_35IndexedPropertyHandlerConfigurationES7_);
+V8_WEAK_STUB(_ZN2v814ObjectTemplate3NewEPNS_7IsolateENS_5LocalINS_16FunctionTemplateEEE);
+V8_WEAK_STUB(_ZN2v814ObjectTemplate9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v814PrimitiveArray3GetEPNS_7IsolateEi);
+V8_WEAK_STUB(_ZN2v814PrimitiveArray3NewEPNS_7IsolateEi);
+V8_WEAK_STUB(_ZN2v814PrimitiveArray3SetEPNS_7IsolateEiNS_5LocalINS_9PrimitiveEEE);
+V8_WEAK_STUB(_ZN2v814PrimitiveArray9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler10CachedData18CompatibilityCheckEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler10CachedDataC1EPKhiNS1_12BufferPolicyE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler10CachedDataC2EPKhiNS1_12BufferPolicyE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler10CachedDataD1Ev);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler10CachedDataD2Ev);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler13CompileModuleENS_5LocalINS_7ContextEEEPNS0_14StreamedSourceENS1_INS_6StringEEERKNS_12ScriptOriginE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler13CompileModuleEPNS_7IsolateEPNS0_6SourceENS0_14CompileOptionsENS0_13NoCacheReasonE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler14StartStreamingEPNS_7IsolateEPNS0_14StreamedSourceENS_10ScriptTypeENS0_14CompileOptionsEPFbiPvES7_);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler14StreamedSourceC1ESt10unique_ptrINS0_20ExternalSourceStreamESt14default_deleteIS3_EENS1_8EncodingE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler14StreamedSourceC2ESt10unique_ptrINS0_20ExternalSourceStreamESt14default_deleteIS3_EENS1_8EncodingE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler14StreamedSourceD1Ev);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler14StreamedSourceD2Ev);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler15CompileFunctionENS_5LocalINS_7ContextEEEPNS0_6SourceEmPNS1_INS_6StringEEEmPNS1_INS_6ObjectEEENS0_14CompileOptionsENS0_13NoCacheReasonE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler15CreateCodeCacheENS_5LocalINS_13UnboundScriptEEE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler15CreateCodeCacheENS_5LocalINS_19UnboundModuleScriptEEE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler19ScriptStreamingTask3RunEv);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler20CachedDataVersionTagEv);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler20CompileUnboundScriptEPNS_7IsolateEPNS0_6SourceENS0_14CompileOptionsENS0_13NoCacheReasonE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler20ConsumeCodeCacheTask19SourceTextAvailableEPNS_7IsolateENS_5LocalINS_6StringEEERKNS_12ScriptOriginE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler20ConsumeCodeCacheTask23MergeWithExistingScriptEv);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler20ConsumeCodeCacheTask3RunEv);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler20ConsumeCodeCacheTaskC1ESt10unique_ptrINS_8internal25BackgroundDeserializeTaskESt14default_deleteIS4_EE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler20ConsumeCodeCacheTaskC2ESt10unique_ptrINS_8internal25BackgroundDeserializeTaskESt14default_deleteIS4_EE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler20ConsumeCodeCacheTaskD1Ev);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler20ConsumeCodeCacheTaskD2Ev);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler22CompileUnboundInternalEPNS_7IsolateEPNS0_6SourceENS0_14CompileOptionsENS0_13NoCacheReasonE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler23CompileFunctionInternalENS_5LocalINS_7ContextEEEPNS0_6SourceEmPNS1_INS_6StringEEEmPNS1_INS_6ObjectEEENS0_14CompileOptionsENS0_13NoCacheReasonEPNS1_INS_14ScriptOrModuleEEE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler23StartConsumingCodeCacheEPNS_7IsolateESt10unique_ptrINS0_10CachedDataESt14default_deleteIS4_EE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler26CreateCodeCacheForFunctionENS_5LocalINS_8FunctionEEE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler7CompileENS_5LocalINS_7ContextEEEPNS0_14StreamedSourceENS1_INS_6StringEEERKNS_12ScriptOriginE);
+V8_WEAK_STUB(_ZN2v814ScriptCompiler7CompileENS_5LocalINS_7ContextEEEPNS0_6SourceENS0_14CompileOptionsENS0_13NoCacheReasonE);
+V8_WEAK_STUB(_ZN2v814ScriptOrModule15GetResourceNameEv);
+V8_WEAK_STUB(_ZN2v814ScriptOrModule18HostDefinedOptionsEv);
+V8_WEAK_STUB(_ZN2v815ArrayBufferView10ByteLengthEv);
+V8_WEAK_STUB(_ZN2v815ArrayBufferView10ByteOffsetEv);
+V8_WEAK_STUB(_ZN2v815ArrayBufferView12CopyContentsEPvm);
+V8_WEAK_STUB(_ZN2v815ArrayBufferView6BufferEv);
+V8_WEAK_STUB(_ZN2v815ArrayBufferView9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v815MicrotasksScope15GetCurrentDepthEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v815MicrotasksScope17PerformCheckpointEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v815MicrotasksScope19IsRunningMicrotasksEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v815MicrotasksScopeC1ENS_5LocalINS_7ContextEEENS0_4TypeE);
+V8_WEAK_STUB(_ZN2v815MicrotasksScopeC1EPNS_7IsolateENS0_4TypeE);
+V8_WEAK_STUB(_ZN2v815MicrotasksScopeC1EPNS_7IsolateEPNS_14MicrotaskQueueENS0_4TypeE);
+V8_WEAK_STUB(_ZN2v815MicrotasksScopeC2ENS_5LocalINS_7ContextEEENS0_4TypeE);
+V8_WEAK_STUB(_ZN2v815MicrotasksScopeC2EPNS_7IsolateENS0_4TypeE);
+V8_WEAK_STUB(_ZN2v815MicrotasksScopeC2EPNS_7IsolateEPNS_14MicrotaskQueueENS0_4TypeE);
+V8_WEAK_STUB(_ZN2v815MicrotasksScopeD1Ev);
+V8_WEAK_STUB(_ZN2v815MicrotasksScopeD2Ev);
+V8_WEAK_STUB(_ZN2v815SealHandleScopeC1EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v815SealHandleScopeC2EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v815SealHandleScopeD1Ev);
+V8_WEAK_STUB(_ZN2v815SealHandleScopeD2Ev);
+V8_WEAK_STUB(_ZN2v815SnapshotCreator10AddContextENS_5LocalINS_7ContextEEENS_31SerializeInternalFieldsCallbackENS_28SerializeContextDataCallbackE);
+V8_WEAK_STUB(_ZN2v815SnapshotCreator10CreateBlobENS0_20FunctionCodeHandlingE);
+V8_WEAK_STUB(_ZN2v815SnapshotCreator10GetIsolateEv);
+V8_WEAK_STUB(_ZN2v815SnapshotCreator17SetDefaultContextENS_5LocalINS_7ContextEEENS_31SerializeInternalFieldsCallbackENS_28SerializeContextDataCallbackE);
+V8_WEAK_STUB(_ZN2v815SnapshotCreator7AddDataENS_5LocalINS_7ContextEEEm);
+V8_WEAK_STUB(_ZN2v815SnapshotCreator7AddDataEm);
+V8_WEAK_STUB(_ZN2v815SnapshotCreatorC1EPKlPKNS_11StartupDataE);
+V8_WEAK_STUB(_ZN2v815SnapshotCreatorC1EPNS_7IsolateEPKlPKNS_11StartupDataEb);
+V8_WEAK_STUB(_ZN2v815SnapshotCreatorC1EPNS_7IsolateERKNS1_12CreateParamsE);
+V8_WEAK_STUB(_ZN2v815SnapshotCreatorC1ERKNS_7Isolate12CreateParamsE);
+V8_WEAK_STUB(_ZN2v815SnapshotCreatorC2EPKlPKNS_11StartupDataE);
+V8_WEAK_STUB(_ZN2v815SnapshotCreatorC2EPNS_7IsolateEPKlPKNS_11StartupDataEb);
+V8_WEAK_STUB(_ZN2v815SnapshotCreatorC2EPNS_7IsolateERKNS1_12CreateParamsE);
+V8_WEAK_STUB(_ZN2v815SnapshotCreatorC2ERKNS_7Isolate12CreateParamsE);
+V8_WEAK_STUB(_ZN2v815SnapshotCreatorD1Ev);
+V8_WEAK_STUB(_ZN2v815SnapshotCreatorD2Ev);
+V8_WEAK_STUB(_ZN2v815ValueSerializer10WriteValueENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v815ValueSerializer11WriteDoubleEd);
+V8_WEAK_STUB(_ZN2v815ValueSerializer11WriteHeaderEv);
+V8_WEAK_STUB(_ZN2v815ValueSerializer11WriteUint32Ej);
+V8_WEAK_STUB(_ZN2v815ValueSerializer11WriteUint64Em);
+V8_WEAK_STUB(_ZN2v815ValueSerializer13WriteRawBytesEPKvm);
+V8_WEAK_STUB(_ZN2v815ValueSerializer19TransferArrayBufferEjNS_5LocalINS_11ArrayBufferEEE);
+V8_WEAK_STUB(_ZN2v815ValueSerializer37SetTreatArrayBufferViewsAsHostObjectsEb);
+V8_WEAK_STUB(_ZN2v815ValueSerializer7ReleaseEv);
+V8_WEAK_STUB(_ZN2v815ValueSerializer8Delegate12IsHostObjectEPNS_7IsolateENS_5LocalINS_6ObjectEEE);
+V8_WEAK_STUB(_ZN2v815ValueSerializer8Delegate15WriteHostObjectEPNS_7IsolateENS_5LocalINS_6ObjectEEE);
+V8_WEAK_STUB(_ZN2v815ValueSerializer8Delegate16FreeBufferMemoryEPv);
+V8_WEAK_STUB(_ZN2v815ValueSerializer8Delegate19HasCustomHostObjectEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v815ValueSerializer8Delegate22GetSharedArrayBufferIdEPNS_7IsolateENS_5LocalINS_17SharedArrayBufferEEE);
+V8_WEAK_STUB(_ZN2v815ValueSerializer8Delegate22ReallocateBufferMemoryEPvmPm);
+V8_WEAK_STUB(_ZN2v815ValueSerializer8Delegate23GetWasmModuleTransferIdEPNS_7IsolateENS_5LocalINS_16WasmModuleObjectEEE);
+V8_WEAK_STUB(_ZN2v815ValueSerializer8Delegate24AdoptSharedValueConveyorEPNS_7IsolateEONS_19SharedValueConveyorE);
+V8_WEAK_STUB(_ZN2v815ValueSerializerC1EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v815ValueSerializerC1EPNS_7IsolateEPNS0_8DelegateE);
+V8_WEAK_STUB(_ZN2v815ValueSerializerC2EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v815ValueSerializerC2EPNS_7IsolateEPNS0_8DelegateE);
+V8_WEAK_STUB(_ZN2v815ValueSerializerD1Ev);
+V8_WEAK_STUB(_ZN2v815ValueSerializerD2Ev);
+V8_WEAK_STUB(_ZN2v816CodeEventHandler6EnableEv);
+V8_WEAK_STUB(_ZN2v816CodeEventHandler7DisableEv);
+V8_WEAK_STUB(_ZN2v816CodeEventHandlerC1EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v816CodeEventHandlerC2EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v816CodeEventHandlerD0Ev);
+V8_WEAK_STUB(_ZN2v816CodeEventHandlerD1Ev);
+V8_WEAK_STUB(_ZN2v816CodeEventHandlerD2Ev);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate11GetFunctionENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate11HasInstanceENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate12NewWithCacheEPNS_7IsolateEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalINS_7PrivateEEENSA_IS4_EENSA_INS_9SignatureEEEiNS_14SideEffectTypeE);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate12SetClassNameENS_5LocalINS_6StringEEE);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate14SetCallHandlerEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS2_EENS_14SideEffectTypeERKNS_10MemorySpanIKNS_9CFunctionEEE);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate15RemovePrototypeEv);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate16InstanceTemplateEv);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate17NewRemoteInstanceEv);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate17PrototypeTemplateEv);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate17ReadOnlyPrototypeEv);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate20SetAcceptAnyReceiverEb);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate25NewWithCFunctionOverloadsEPNS_7IsolateEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS4_EENSA_INS_9SignatureEEEiNS_19ConstructorBehaviorENS_14SideEffectTypeERKNS_10MemorySpanIKNS_9CFunctionEEE);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate28SetPrototypeProviderTemplateENS_5LocalIS0_EE);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate3NewEPNS_7IsolateEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS4_EENSA_INS_9SignatureEEEiNS_19ConstructorBehaviorENS_14SideEffectTypeEPKNS_9CFunctionEttt);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate7InheritENS_5LocalIS0_EE);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v816FunctionTemplate9SetLengthEi);
+V8_WEAK_STUB(_ZN2v816TypecheckWitness6UpdateENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v816TypecheckWitnessC1EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v816TypecheckWitnessC2EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v816WasmMemoryObject6BufferEv);
+V8_WEAK_STUB(_ZN2v816WasmMemoryObject9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v816WasmModuleObject17GetCompiledModuleEv);
+V8_WEAK_STUB(_ZN2v816WasmModuleObject18FromCompiledModuleEPNS_7IsolateERKNS_18CompiledWasmModuleE);
+V8_WEAK_STUB(_ZN2v816WasmModuleObject7CompileEPNS_7IsolateENS_10MemorySpanIKhEE);
+V8_WEAK_STUB(_ZN2v816WasmModuleObject9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v817RegisterExtensionESt10unique_ptrINS_9ExtensionESt14default_deleteIS1_EE);
+V8_WEAK_STUB(_ZN2v817SharedArrayBuffer15GetBackingStoreEv);
+V8_WEAK_STUB(_ZN2v817SharedArrayBuffer15NewBackingStoreEPNS_7IsolateEm);
+V8_WEAK_STUB(_ZN2v817SharedArrayBuffer15NewBackingStoreEPvmPFvS1_mS1_ES1_);
+V8_WEAK_STUB(_ZN2v817SharedArrayBuffer3NewEPNS_7IsolateESt10shared_ptrINS_12BackingStoreEE);
+V8_WEAK_STUB(_ZN2v817SharedArrayBuffer3NewEPNS_7IsolateEm);
+V8_WEAK_STUB(_ZN2v817SharedArrayBuffer9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v817Uint8ClampedArray3NewENS_5LocalINS_11ArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v817Uint8ClampedArray3NewENS_5LocalINS_17SharedArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v817Uint8ClampedArray9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v817ValueDeserializer10ReadDoubleEPd);
+V8_WEAK_STUB(_ZN2v817ValueDeserializer10ReadHeaderENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v817ValueDeserializer10ReadUint32EPj);
+V8_WEAK_STUB(_ZN2v817ValueDeserializer10ReadUint64EPm);
+V8_WEAK_STUB(_ZN2v817ValueDeserializer12ReadRawBytesEmPPKv);
+V8_WEAK_STUB(_ZN2v817ValueDeserializer19TransferArrayBufferEjNS_5LocalINS_11ArrayBufferEEE);
+V8_WEAK_STUB(_ZN2v817ValueDeserializer25TransferSharedArrayBufferEjNS_5LocalINS_17SharedArrayBufferEEE);
+V8_WEAK_STUB(_ZN2v817ValueDeserializer27SetSupportsLegacyWireFormatEb);
+V8_WEAK_STUB(_ZN2v817ValueDeserializer8Delegate14ReadHostObjectEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v817ValueDeserializer8Delegate19GetWasmModuleFromIdEPNS_7IsolateEj);
+V8_WEAK_STUB(_ZN2v817ValueDeserializer8Delegate22GetSharedValueConveyorEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v817ValueDeserializer8Delegate26GetSharedArrayBufferFromIdEPNS_7IsolateEj);
+V8_WEAK_STUB(_ZN2v817ValueDeserializer9ReadValueENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v817ValueDeserializerC1EPNS_7IsolateEPKhm);
+V8_WEAK_STUB(_ZN2v817ValueDeserializerC1EPNS_7IsolateEPKhmPNS0_8DelegateE);
+V8_WEAK_STUB(_ZN2v817ValueDeserializerC2EPNS_7IsolateEPKhm);
+V8_WEAK_STUB(_ZN2v817ValueDeserializerC2EPNS_7IsolateEPKhmPNS0_8DelegateE);
+V8_WEAK_STUB(_ZN2v817ValueDeserializerD1Ev);
+V8_WEAK_STUB(_ZN2v817ValueDeserializerD2Ev);
+V8_WEAK_STUB(_ZN2v818CompiledWasmModule15GetWireBytesRefEv);
+V8_WEAK_STUB(_ZN2v818CompiledWasmModule9SerializeEv);
+V8_WEAK_STUB(_ZN2v818CompiledWasmModuleC1ESt10shared_ptrINS_8internal4wasm12NativeModuleEEPKcm);
+V8_WEAK_STUB(_ZN2v818CompiledWasmModuleC2ESt10shared_ptrINS_8internal4wasm12NativeModuleEEPKcm);
+V8_WEAK_STUB(_ZN2v818DictionaryTemplate11NewInstanceENS_5LocalINS_7ContextEEENS_10MemorySpanINS_10MaybeLocalINS_5ValueEEEEE);
+V8_WEAK_STUB(_ZN2v818DictionaryTemplate3NewEPNS_7IsolateENS_10MemorySpanIKSt17basic_string_viewIcSt11char_traitsIcEEEE);
+V8_WEAK_STUB(_ZN2v818DictionaryTemplate9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v818EmbedderStateScopeC1EPNS_7IsolateENS_5LocalINS_7ContextEEENS_16EmbedderStateTagE);
+V8_WEAK_STUB(_ZN2v818EmbedderStateScopeC2EPNS_7IsolateENS_5LocalINS_7ContextEEENS_16EmbedderStateTagE);
+V8_WEAK_STUB(_ZN2v818EmbedderStateScopeD1Ev);
+V8_WEAK_STUB(_ZN2v818EmbedderStateScopeD2Ev);
+V8_WEAK_STUB(_ZN2v818HeapCodeStatisticsC1Ev);
+V8_WEAK_STUB(_ZN2v818HeapCodeStatisticsC2Ev);
+V8_WEAK_STUB(_ZN2v818PropertyDescriptor14set_enumerableEb);
+V8_WEAK_STUB(_ZN2v818PropertyDescriptor16set_configurableEb);
+V8_WEAK_STUB(_ZN2v818PropertyDescriptorC1ENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v818PropertyDescriptorC1ENS_5LocalINS_5ValueEEES3_);
+V8_WEAK_STUB(_ZN2v818PropertyDescriptorC1ENS_5LocalINS_5ValueEEEb);
+V8_WEAK_STUB(_ZN2v818PropertyDescriptorC1Ev);
+V8_WEAK_STUB(_ZN2v818PropertyDescriptorC2ENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v818PropertyDescriptorC2ENS_5LocalINS_5ValueEEES3_);
+V8_WEAK_STUB(_ZN2v818PropertyDescriptorC2ENS_5LocalINS_5ValueEEEb);
+V8_WEAK_STUB(_ZN2v818PropertyDescriptorC2Ev);
+V8_WEAK_STUB(_ZN2v818PropertyDescriptorD1Ev);
+V8_WEAK_STUB(_ZN2v818PropertyDescriptorD2Ev);
+V8_WEAK_STUB(_ZN2v819CpuProfilingOptionsC1ENS_16CpuProfilingModeEjiNS_10MaybeLocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v819CpuProfilingOptionsC2ENS_16CpuProfilingModeEjiNS_10MaybeLocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v819HeapSpaceStatisticsC1Ev);
+V8_WEAK_STUB(_ZN2v819HeapSpaceStatisticsC2Ev);
+V8_WEAK_STUB(_ZN2v819RegisteredExtension13UnregisterAllEv);
+V8_WEAK_STUB(_ZN2v819RegisteredExtension8RegisterESt10unique_ptrINS_9ExtensionESt14default_deleteIS2_EE);
+V8_WEAK_STUB(_ZN2v819RegisteredExtensionC1ESt10unique_ptrINS_9ExtensionESt14default_deleteIS2_EE);
+V8_WEAK_STUB(_ZN2v819RegisteredExtensionC2ESt10unique_ptrINS_9ExtensionESt14default_deleteIS2_EE);
+V8_WEAK_STUB(_ZN2v819ResourceConstraints17ConfigureDefaultsEmm);
+V8_WEAK_STUB(_ZN2v819ResourceConstraints29ConfigureDefaultsFromHeapSizeEmm);
+V8_WEAK_STUB(_ZN2v819SharedValueConveyorC1EOS0_);
+V8_WEAK_STUB(_ZN2v819SharedValueConveyorC1EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v819SharedValueConveyorC2EOS0_);
+V8_WEAK_STUB(_ZN2v819SharedValueConveyorC2EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v819SharedValueConveyorD1Ev);
+V8_WEAK_STUB(_ZN2v819SharedValueConveyorD2Ev);
+V8_WEAK_STUB(_ZN2v819SharedValueConveyoraSEOS0_);
+V8_WEAK_STUB(_ZN2v819UnboundModuleScript12GetSourceURLEv);
+V8_WEAK_STUB(_ZN2v819UnboundModuleScript19GetSourceMappingURLEv);
+V8_WEAK_STUB(_ZN2v820HeapObjectStatisticsC1Ev);
+V8_WEAK_STUB(_ZN2v820HeapObjectStatisticsC2Ev);
+V8_WEAK_STUB(_ZN2v821MeasureMemoryDelegate7DefaultEPNS_7IsolateENS_5LocalINS_7ContextEEENS3_INS_7Promise8ResolverEEENS_17MeasureMemoryModeE);
+V8_WEAK_STUB(_ZN2v822SharedMemoryStatisticsC1Ev);
+V8_WEAK_STUB(_ZN2v822SharedMemoryStatisticsC2Ev);
+V8_WEAK_STUB(_ZN2v823ThreadIsolatedAllocator37SetDefaultPermissionsForSignalHandlerEv);
+V8_WEAK_STUB(_ZN2v824EscapableHandleScopeBase10EscapeSlotEPm);
+V8_WEAK_STUB(_ZN2v824EscapableHandleScopeBaseC1EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v824EscapableHandleScopeBaseC2EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v829TryHandleWebAssemblyTrapPosixEiP9siginfo_tPv);
+V8_WEAK_STUB(_ZN2v82V810GetVersionEv);
+V8_WEAK_STUB(_ZN2v82V810InitializeEi);
+V8_WEAK_STUB(_ZN2v82V813InitializeICUEPKc);
+V8_WEAK_STUB(_ZN2v82V815DisposePlatformEv);
+V8_WEAK_STUB(_ZN2v82V816SetEntropySourceEPFbPhmE);
+V8_WEAK_STUB(_ZN2v82V818InitializePlatformEPNS_8PlatformE);
+V8_WEAK_STUB(_ZN2v82V818SetFlagsFromStringEPKc);
+V8_WEAK_STUB(_ZN2v82V818SetFlagsFromStringEPKcm);
+V8_WEAK_STUB(_ZN2v82V819SetSnapshotDataBlobEPNS_11StartupDataE);
+V8_WEAK_STUB(_ZN2v82V821SetDcheckErrorHandlerEPFvPKciS2_E);
+V8_WEAK_STUB(_ZN2v82V823SetFlagsFromCommandLineEPiPPcb);
+V8_WEAK_STUB(_ZN2v82V825GetSharedMemoryStatisticsEPNS_22SharedMemoryStatisticsE);
+V8_WEAK_STUB(_ZN2v82V827SetFatalMemoryErrorCallbackEPFvPKcRKNS_10OOMDetailsEE);
+V8_WEAK_STUB(_ZN2v82V828EnableWebAssemblyTrapHandlerEb);
+V8_WEAK_STUB(_ZN2v82V828InitializeICUDefaultLocationEPKcS2_);
+V8_WEAK_STUB(_ZN2v82V829InitializeExternalStartupDataEPKc);
+V8_WEAK_STUB(_ZN2v82V832SetReturnAddressLocationResolverEPFmmE);
+V8_WEAK_STUB(_ZN2v82V837InitializeExternalStartupDataFromFileEPKc);
+V8_WEAK_STUB(_ZN2v82V87DisposeEv);
+V8_WEAK_STUB(_ZN2v835TryToCopyAndConvertArrayToCppBufferILj196608EiEEbNS_5LocalINS_5ArrayEEEPT0_j);
+V8_WEAK_STUB(_ZN2v835TryToCopyAndConvertArrayToCppBufferILj262144EjEEbNS_5LocalINS_5ArrayEEEPT0_j);
+V8_WEAK_STUB(_ZN2v835TryToCopyAndConvertArrayToCppBufferILj458752EfEEbNS_5LocalINS_5ArrayEEEPT0_j);
+V8_WEAK_STUB(_ZN2v835TryToCopyAndConvertArrayToCppBufferILj524288EdEEbNS_5LocalINS_5ArrayEEEPT0_j);
+V8_WEAK_STUB(_ZN2v837GetCalleeSavedRegistersFromEntryFrameEPvPNS_13RegisterStateE);
+V8_WEAK_STUB(_ZN2v83Map3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v83Map3HasENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v83Map3NewEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_);
+V8_WEAK_STUB(_ZN2v83Map5ClearEv);
+V8_WEAK_STUB(_ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v83Map9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v83Set3AddENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v83Set3HasENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v83Set3NewEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v83Set5ClearEv);
+V8_WEAK_STUB(_ZN2v83Set6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v83Set9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v84Date3NewENS_5LocalINS_7ContextEEEd);
+V8_WEAK_STUB(_ZN2v84Date9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v84JSON5ParseENS_5LocalINS_7ContextEEENS1_INS_6StringEEE);
+V8_WEAK_STUB(_ZN2v84JSON9StringifyENS_5LocalINS_7ContextEEENS1_INS_5ValueEEENS1_INS_6StringEEE);
+V8_WEAK_STUB(_ZN2v84LoadEm);
+V8_WEAK_STUB(_ZN2v84Name15GetIdentityHashEv);
+V8_WEAK_STUB(_ZN2v84Name9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v84base10BignumDtoaEdNS0_14BignumDtoaModeEiNS0_6VectorIcEEPiS4_);
+V8_WEAK_STUB(_ZN2v84base11SharedMutex10LockSharedEv);
+V8_WEAK_STUB(_ZN2v84base11SharedMutex12UnlockSharedEv);
+V8_WEAK_STUB(_ZN2v84base11SharedMutex13LockExclusiveEv);
+V8_WEAK_STUB(_ZN2v84base11SharedMutex13TryLockSharedEv);
+V8_WEAK_STUB(_ZN2v84base11SharedMutex15UnlockExclusiveEv);
+V8_WEAK_STUB(_ZN2v84base11SharedMutex16TryLockExclusiveEv);
+V8_WEAK_STUB(_ZN2v84base11SharedMutexC1Ev);
+V8_WEAK_STUB(_ZN2v84base11SharedMutexC2Ev);
+V8_WEAK_STUB(_ZN2v84base11SharedMutexD1Ev);
+V8_WEAK_STUB(_ZN2v84base11SharedMutexD2Ev);
+V8_WEAK_STUB(_ZN2v84base11ThreadTicks11IsSupportedEv);
+V8_WEAK_STUB(_ZN2v84base11ThreadTicks3NowEv);
+V8_WEAK_STUB(_ZN2v84base12CallOnceImplEPSt6atomicIhESt8functionIFvvEE);
+V8_WEAK_STUB(_ZN2v84base12MemoryRegion12FromMapsLineEPKc);
+V8_WEAK_STUB(_ZN2v84base13DoubleToAsciiEdNS0_8DtoaModeEiNS0_6VectorIcEEPiS4_S4_);
+V8_WEAK_STUB(_ZN2v84base13FastFixedDtoaEdiNS0_6VectorIcEEPiS3_);
+V8_WEAK_STUB(_ZN2v84base13PageAllocator11RemapSharedEPvS2_m);
+V8_WEAK_STUB(_ZN2v84base13PageAllocator12ReleasePagesEPvmm);
+V8_WEAK_STUB(_ZN2v84base13PageAllocator13AllocatePagesEPvmmNS_13PageAllocator10PermissionE);
+V8_WEAK_STUB(_ZN2v84base13PageAllocator13DecommitPagesEPvm);
+V8_WEAK_STUB(_ZN2v84base13PageAllocator13RecommitPagesEPvmNS_13PageAllocator10PermissionE);
+V8_WEAK_STUB(_ZN2v84base13PageAllocator14SetPermissionsEPvmNS_13PageAllocator10PermissionE);
+V8_WEAK_STUB(_ZN2v84base13PageAllocator17GetRandomMmapAddrEv);
+V8_WEAK_STUB(_ZN2v84base13PageAllocator17SetRandomMmapSeedEl);
+V8_WEAK_STUB(_ZN2v84base13PageAllocator18DiscardSystemPagesEPvm);
+V8_WEAK_STUB(_ZN2v84base13PageAllocator19AllocateSharedPagesEmPKv);
+V8_WEAK_STUB(_ZN2v84base13PageAllocator22CanAllocateSharedPagesEv);
+V8_WEAK_STUB(_ZN2v84base13PageAllocator9FreePagesEPvm);
+V8_WEAK_STUB(_ZN2v84base13PageAllocatorC1Ev);
+V8_WEAK_STUB(_ZN2v84base13PageAllocatorC2Ev);
+V8_WEAK_STUB(_ZN2v84base14RecursiveMutex4LockEv);
+V8_WEAK_STUB(_ZN2v84base14RecursiveMutex6UnlockEv);
+V8_WEAK_STUB(_ZN2v84base14RecursiveMutex7TryLockEv);
+V8_WEAK_STUB(_ZN2v84base14RecursiveMutexC1Ev);
+V8_WEAK_STUB(_ZN2v84base14RecursiveMutexC2Ev);
+V8_WEAK_STUB(_ZN2v84base14RecursiveMutexD1Ev);
+V8_WEAK_STUB(_ZN2v84base14RecursiveMutexD2Ev);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocator10FindRegionEm);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocator10TrimRegionEmm);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocator11CheckRegionEm);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocator14AllocateRegionEPNS0_21RandomNumberGeneratorEm);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocator14AllocateRegionEm);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocator14AllocateRegionEmmm);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocator16AllocateRegionAtEmmNS1_11RegionStateE);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocator17FreeListAddRegionEPNS1_6RegionE);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocator18FreeListFindRegionEm);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocator20FreeListRemoveRegionEPNS1_6RegionE);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocator21AllocateAlignedRegionEmm);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocator5MergeESt23_Rb_tree_const_iteratorIPNS1_6RegionEES5_);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocator5SplitEPNS1_6RegionEm);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocator6IsFreeEmm);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocatorC1Emmm);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocatorC2Emmm);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocatorD1Ev);
+V8_WEAK_STUB(_ZN2v84base15RegionAllocatorD2Ev);
+V8_WEAK_STUB(_ZN2v84base15VLQBase64DecodeEPKcmPm);
+V8_WEAK_STUB(_ZN2v84base16PowersOfTenCache32GetCachedPowerForDecimalExponentEiPNS0_5DiyFpEPi);
+V8_WEAK_STUB(_ZN2v84base16PowersOfTenCache36GetCachedPowerForBinaryExponentRangeEiiPNS0_5DiyFpEPi);
+V8_WEAK_STUB(_ZN2v84base17ConditionVariable4WaitEPNS0_5MutexE);
+V8_WEAK_STUB(_ZN2v84base17ConditionVariable7WaitForEPNS0_5MutexERKNS0_9TimeDeltaE);
+V8_WEAK_STUB(_ZN2v84base17ConditionVariable9NotifyAllEv);
+V8_WEAK_STUB(_ZN2v84base17ConditionVariable9NotifyOneEv);
+V8_WEAK_STUB(_ZN2v84base17ConditionVariableC1Ev);
+V8_WEAK_STUB(_ZN2v84base17ConditionVariableC2Ev);
+V8_WEAK_STUB(_ZN2v84base17ConditionVariableD1Ev);
+V8_WEAK_STUB(_ZN2v84base17ConditionVariableD2Ev);
+V8_WEAK_STUB(_ZN2v84base17PrintCheckOperandIPKaEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS7_E5valuesrNS0_19has_output_operatorIS7_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES7_);
+V8_WEAK_STUB(_ZN2v84base17PrintCheckOperandIPKcEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS7_E5valuesrNS0_19has_output_operatorIS7_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES7_);
+V8_WEAK_STUB(_ZN2v84base17PrintCheckOperandIPKhEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS7_E5valuesrNS0_19has_output_operatorIS7_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES7_);
+V8_WEAK_STUB(_ZN2v84base17PrintCheckOperandIPaEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS6_E5valuesrNS0_19has_output_operatorIS6_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES6_);
+V8_WEAK_STUB(_ZN2v84base17PrintCheckOperandIPcEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS6_E5valuesrNS0_19has_output_operatorIS6_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES6_);
+V8_WEAK_STUB(_ZN2v84base17PrintCheckOperandIPhEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS6_E5valuesrNS0_19has_output_operatorIS6_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES6_);
+V8_WEAK_STUB(_ZN2v84base17PrintCheckOperandIaEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS5_E5valuesrNS0_19has_output_operatorIS5_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES5_);
+V8_WEAK_STUB(_ZN2v84base17PrintCheckOperandIcEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS5_E5valuesrNS0_19has_output_operatorIS5_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES5_);
+V8_WEAK_STUB(_ZN2v84base17PrintCheckOperandIhEENSt9enable_ifIXaaaantsrSt11is_functionINSt14remove_pointerIT_E4typeEE5valuentsrSt7is_enumIS5_E5valuesrNS0_19has_output_operatorIS5_NS0_18CheckMessageStreamEvEE5valueENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE4typeES5_);
+V8_WEAK_STUB(_ZN2v84base17SetDcheckFunctionEPFvPKciS2_E);
+V8_WEAK_STUB(_ZN2v84base18ContextualVariableINS_8internal19StackAllocatedCheckEKbE11ExportedTopEv);
+V8_WEAK_STUB(_ZN2v84base18ContextualVariableINS_8internal8compiler10turboshaft12PipelineDataES5_E11ExportedTopEv);
+V8_WEAK_STUB(_ZN2v84base18PosixTimezoneCache21DaylightSavingsOffsetEd);
+V8_WEAK_STUB(_ZN2v84base18SetPrintStackTraceEPFvvE);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace12FreeSubspaceEPNS0_22VirtualAddressSubspaceE);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace13AllocatePagesEmmmNS_15PagePermissionsE);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace13DecommitPagesEmm);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace13RecommitPagesEmmNS_15PagePermissionsE);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace13SetRandomSeedEl);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace15FreeGuardRegionEmm);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace15FreeSharedPagesEmm);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace16AllocateSubspaceEmmmNS_15PagePermissionsE);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace17RandomPageAddressEv);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace18DiscardSystemPagesEmm);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace18SetPagePermissionsEmmNS_15PagePermissionsE);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace19AllocateGuardRegionEmm);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace19AllocateSharedPagesEmmNS_15PagePermissionsElm);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace20CanAllocateSubspacesEv);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpace9FreePagesEmm);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpaceC1Ev);
+V8_WEAK_STUB(_ZN2v84base19VirtualAddressSpaceC2Ev);
+V8_WEAK_STUB(_ZN2v84base20BoundedPageAllocator12ReleasePagesEPvmm);
+V8_WEAK_STUB(_ZN2v84base20BoundedPageAllocator13AllocatePagesEPvmmNS_13PageAllocator10PermissionE);
+V8_WEAK_STUB(_ZN2v84base20BoundedPageAllocator13DecommitPagesEPvm);
+V8_WEAK_STUB(_ZN2v84base20BoundedPageAllocator13RecommitPagesEPvmNS_13PageAllocator10PermissionE);
+V8_WEAK_STUB(_ZN2v84base20BoundedPageAllocator14SetPermissionsEPvmNS_13PageAllocator10PermissionE);
+V8_WEAK_STUB(_ZN2v84base20BoundedPageAllocator15AllocatePagesAtEmmNS_13PageAllocator10PermissionE);
+V8_WEAK_STUB(_ZN2v84base20BoundedPageAllocator18DiscardSystemPagesEPvm);
+V8_WEAK_STUB(_ZN2v84base20BoundedPageAllocator29ReserveForSharedMemoryMappingEPvm);
+V8_WEAK_STUB(_ZN2v84base20BoundedPageAllocator9FreePagesEPvm);
+V8_WEAK_STUB(_ZN2v84base20BoundedPageAllocatorC1EPNS_13PageAllocatorEmmmNS0_22PageInitializationModeENS0_15PageFreeingModeE);
+V8_WEAK_STUB(_ZN2v84base20BoundedPageAllocatorC2EPNS_13PageAllocatorEmmmNS0_22PageInitializationModeENS0_15PageFreeingModeE);
+V8_WEAK_STUB(_ZN2v84base21PosixInitializeCommonENS0_9AbortModeEPKc);
+V8_WEAK_STUB(_ZN2v84base21PosixMemoryMappedFileD0Ev);
+V8_WEAK_STUB(_ZN2v84base21PosixMemoryMappedFileD1Ev);
+V8_WEAK_STUB(_ZN2v84base21PosixMemoryMappedFileD2Ev);
+V8_WEAK_STUB(_ZN2v84base21RandomNumberGenerator10NextDoubleEv);
+V8_WEAK_STUB(_ZN2v84base21RandomNumberGenerator10NextSampleEmm);
+V8_WEAK_STUB(_ZN2v84base21RandomNumberGenerator11MurmurHash3Em);
+V8_WEAK_STUB(_ZN2v84base21RandomNumberGenerator14NextSampleSlowEmmRKSt13unordered_setImSt4hashImESt8equal_toImESaImEE);
+V8_WEAK_STUB(_ZN2v84base21RandomNumberGenerator16SetEntropySourceEPFbPhmE);
+V8_WEAK_STUB(_ZN2v84base21RandomNumberGenerator4NextEi);
+V8_WEAK_STUB(_ZN2v84base21RandomNumberGenerator7NextIntEi);
+V8_WEAK_STUB(_ZN2v84base21RandomNumberGenerator7SetSeedEl);
+V8_WEAK_STUB(_ZN2v84base21RandomNumberGenerator9NextBytesEPvm);
+V8_WEAK_STUB(_ZN2v84base21RandomNumberGenerator9NextInt64Ev);
+V8_WEAK_STUB(_ZN2v84base21RandomNumberGeneratorC1Ev);
+V8_WEAK_STUB(_ZN2v84base21RandomNumberGeneratorC2Ev);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspace12FreeSubspaceEPS1_);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspace13AllocatePagesEmmmNS_15PagePermissionsE);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspace13DecommitPagesEmm);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspace13RecommitPagesEmmNS_15PagePermissionsE);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspace13SetRandomSeedEl);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspace15FreeGuardRegionEmm);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspace15FreeSharedPagesEmm);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspace16AllocateSubspaceEmmmNS_15PagePermissionsE);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspace17RandomPageAddressEv);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspace18DiscardSystemPagesEmm);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspace18SetPagePermissionsEmmNS_15PagePermissionsE);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspace19AllocateGuardRegionEmm);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspace19AllocateSharedPagesEmmNS_15PagePermissionsElm);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspace9FreePagesEmm);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspaceC1ENS0_23AddressSpaceReservationEPNS0_23VirtualAddressSpaceBaseENS_15PagePermissionsE);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspaceC2ENS0_23AddressSpaceReservationEPNS0_23VirtualAddressSpaceBaseENS_15PagePermissionsE);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspaceD0Ev);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspaceD1Ev);
+V8_WEAK_STUB(_ZN2v84base22VirtualAddressSubspaceD2Ev);
+V8_WEAK_STUB(_ZN2v84base23AddressSpaceReservation10FreeSharedEPvm);
+V8_WEAK_STUB(_ZN2v84base23AddressSpaceReservation13DecommitPagesEPvm);
+V8_WEAK_STUB(_ZN2v84base23AddressSpaceReservation13RecommitPagesEPvmNS0_2OS16MemoryPermissionE);
+V8_WEAK_STUB(_ZN2v84base23AddressSpaceReservation14AllocateSharedEPvmNS0_2OS16MemoryPermissionElm);
+V8_WEAK_STUB(_ZN2v84base23AddressSpaceReservation14SetPermissionsEPvmNS0_2OS16MemoryPermissionE);
+V8_WEAK_STUB(_ZN2v84base23AddressSpaceReservation18DiscardSystemPagesEPvm);
+V8_WEAK_STUB(_ZN2v84base23AddressSpaceReservation18FreeSubReservationES1_);
+V8_WEAK_STUB(_ZN2v84base23AddressSpaceReservation20CreateSubReservationEPvmNS0_2OS16MemoryPermissionE);
+V8_WEAK_STUB(_ZN2v84base23AddressSpaceReservation4FreeEPvm);
+V8_WEAK_STUB(_ZN2v84base23AddressSpaceReservation8AllocateEPvmNS0_2OS16MemoryPermissionE);
+V8_WEAK_STUB(_ZN2v84base25GetSharedLibraryAddressesEP8_IO_FILE);
+V8_WEAK_STUB(_ZN2v84base25PosixDefaultTimezoneCache13LocalTimezoneEd);
+V8_WEAK_STUB(_ZN2v84base25PosixDefaultTimezoneCache15LocalTimeOffsetEdb);
+V8_WEAK_STUB(_ZN2v84base27charToDigitDecodeForTestingEh);
+V8_WEAK_STUB(_ZN2v84base2OS10DebugBreakEv);
+V8_WEAK_STUB(_ZN2v84base2OS10FreeSharedEPvm);
+V8_WEAK_STUB(_ZN2v84base2OS10InitializeENS0_9AbortModeEPKc);
+V8_WEAK_STUB(_ZN2v84base2OS10PrintErrorEPKcz);
+V8_WEAK_STUB(_ZN2v84base2OS10RemapPagesEPKvmPvNS1_16MemoryPermissionE);
+V8_WEAK_STUB(_ZN2v84base2OS11ExitProcessEi);
+V8_WEAK_STUB(_ZN2v84base2OS11GetUserTimeEPjS2_);
+V8_WEAK_STUB(_ZN2v84base2OS11RemapSharedEPvS2_m);
+V8_WEAK_STUB(_ZN2v84base2OS11VPrintErrorEPKcSt9__va_list);
+V8_WEAK_STUB(_ZN2v84base2OS12GetLastErrorEv);
+V8_WEAK_STUB(_ZN2v84base2OS13DecommitPagesEPvm);
+V8_WEAK_STUB(_ZN2v84base2OS13RecommitPagesEPvmNS1_16MemoryPermissionE);
+V8_WEAK_STUB(_ZN2v84base2OS14AllocateSharedEPvmNS1_16MemoryPermissionElm);
+V8_WEAK_STUB(_ZN2v84base2OS14AllocateSharedEmNS1_16MemoryPermissionE);
+V8_WEAK_STUB(_ZN2v84base2OS14CommitPageSizeEv);
+V8_WEAK_STUB(_ZN2v84base2OS14HasLazyCommitsEv);
+V8_WEAK_STUB(_ZN2v84base2OS14SetPermissionsEPvmNS1_16MemoryPermissionE);
+V8_WEAK_STUB(_ZN2v84base2OS15SetDataReadOnlyEPvm);
+V8_WEAK_STUB(_ZN2v84base2OS16AllocatePageSizeEv);
+V8_WEAK_STUB(_ZN2v84base2OS16MemoryMappedFile4openEPKcNS2_8FileModeE);
+V8_WEAK_STUB(_ZN2v84base2OS16MemoryMappedFile6createEPKcmPv);
+V8_WEAK_STUB(_ZN2v84base2OS17GetGCFakeMMapFileEv);
+V8_WEAK_STUB(_ZN2v84base2OS17GetRandomMmapAddrEv);
+V8_WEAK_STUB(_ZN2v84base2OS17OpenTemporaryFileEv);
+V8_WEAK_STUB(_ZN2v84base2OS17SetRandomMmapSeedEl);
+V8_WEAK_STUB(_ZN2v84base2OS17TimeCurrentMillisEv);
+V8_WEAK_STUB(_ZN2v84base2OS18DirectorySeparatorEv);
+V8_WEAK_STUB(_ZN2v84base2OS18DiscardSystemPagesEPvm);
+V8_WEAK_STUB(_ZN2v84base2OS18GetCurrentThreadIdEv);
+V8_WEAK_STUB(_ZN2v84base2OS18SignalCodeMovingGCEv);
+V8_WEAK_STUB(_ZN2v84base2OS19CreateTimezoneCacheEv);
+V8_WEAK_STUB(_ZN2v84base2OS19GetCurrentProcessIdEv);
+V8_WEAK_STUB(_ZN2v84base2OS20GetPeakMemoryUsageKbEv);
+V8_WEAK_STUB(_ZN2v84base2OS20isDirectorySeparatorEc);
+V8_WEAK_STUB(_ZN2v84base2OS22AdjustSchedulingParamsEv);
+V8_WEAK_STUB(_ZN2v84base2OS22CanReserveAddressSpaceEv);
+V8_WEAK_STUB(_ZN2v84base2OS24ActivationFrameAlignmentEv);
+V8_WEAK_STUB(_ZN2v84base2OS25DestroySharedMemoryHandleEl);
+V8_WEAK_STUB(_ZN2v84base2OS25GetFreeMemoryRangesWithinEmmmm);
+V8_WEAK_STUB(_ZN2v84base2OS25GetSharedLibraryAddressesEv);
+V8_WEAK_STUB(_ZN2v84base2OS27FreeAddressSpaceReservationENS0_23AddressSpaceReservationE);
+V8_WEAK_STUB(_ZN2v84base2OS29CreateAddressSpaceReservationEPvmmNS1_16MemoryPermissionE);
+V8_WEAK_STUB(_ZN2v84base2OS34CreateSharedMemoryHandleForTestingEm);
+V8_WEAK_STUB(_ZN2v84base2OS4FreeEPvm);
+V8_WEAK_STUB(_ZN2v84base2OS5AbortEv);
+V8_WEAK_STUB(_ZN2v84base2OS5FOpenEPKcS3_);
+V8_WEAK_STUB(_ZN2v84base2OS5PrintEPKcz);
+V8_WEAK_STUB(_ZN2v84base2OS5SleepENS0_9TimeDeltaE);
+V8_WEAK_STUB(_ZN2v84base2OS6FPrintEP8_IO_FILEPKcz);
+V8_WEAK_STUB(_ZN2v84base2OS6RemoveEPKc);
+V8_WEAK_STUB(_ZN2v84base2OS6VPrintEPKcSt9__va_list);
+V8_WEAK_STUB(_ZN2v84base2OS7ReleaseEPvm);
+V8_WEAK_STUB(_ZN2v84base2OS7StrNCpyEPciPKcm);
+V8_WEAK_STUB(_ZN2v84base2OS7VFPrintEP8_IO_FILEPKcSt9__va_list);
+V8_WEAK_STUB(_ZN2v84base2OS8AllocateEPvmmNS1_16MemoryPermissionE);
+V8_WEAK_STUB(_ZN2v84base2OS8SNPrintFEPciPKcz);
+V8_WEAK_STUB(_ZN2v84base2OS9VSNPrintFEPciPKcSt9__va_list);
+V8_WEAK_STUB(_ZN2v84base33GetProtectionFromMemoryPermissionENS0_2OS16MemoryPermissionE);
+V8_WEAK_STUB(_ZN2v84base3CPUC1Ev);
+V8_WEAK_STUB(_ZN2v84base3CPUC2Ev);
+V8_WEAK_STUB(_ZN2v84base4Time10FromJsTimeEd);
+V8_WEAK_STUB(_ZN2v84base4Time11FromTimevalE7timeval);
+V8_WEAK_STUB(_ZN2v84base4Time12FromTimespecE8timespec);
+V8_WEAK_STUB(_ZN2v84base4Time17NowFromSystemTimeEv);
+V8_WEAK_STUB(_ZN2v84base4Time3NowEv);
+V8_WEAK_STUB(_ZN2v84base4bits11SignedDiv32Eii);
+V8_WEAK_STUB(_ZN2v84base4bits11SignedDiv64Ell);
+V8_WEAK_STUB(_ZN2v84base4bits11SignedMod32Eii);
+V8_WEAK_STUB(_ZN2v84base4bits11SignedMod64Ell);
+V8_WEAK_STUB(_ZN2v84base4bits15SignedMulHigh32Eii);
+V8_WEAK_STUB(_ZN2v84base4bits15SignedMulHigh64Ell);
+V8_WEAK_STUB(_ZN2v84base4bits17UnsignedMulHigh32Ejj);
+V8_WEAK_STUB(_ZN2v84base4bits17UnsignedMulHigh64Emm);
+V8_WEAK_STUB(_ZN2v84base4bits20SignedSaturatedAdd64Ell);
+V8_WEAK_STUB(_ZN2v84base4bits20SignedSaturatedSub64Ell);
+V8_WEAK_STUB(_ZN2v84base4bits21SignedMulHighAndAdd32Eiii);
+V8_WEAK_STUB(_ZN2v84base5DiyFp8MultiplyERKS1_);
+V8_WEAK_STUB(_ZN2v84base5Mutex4LockEv);
+V8_WEAK_STUB(_ZN2v84base5Mutex6UnlockEv);
+V8_WEAK_STUB(_ZN2v84base5Mutex7TryLockEv);
+V8_WEAK_STUB(_ZN2v84base5MutexC1Ev);
+V8_WEAK_STUB(_ZN2v84base5MutexC2Ev);
+V8_WEAK_STUB(_ZN2v84base5MutexD1Ev);
+V8_WEAK_STUB(_ZN2v84base5MutexD2Ev);
+V8_WEAK_STUB(_ZN2v84base5Stack13GetStackStartEv);
+V8_WEAK_STUB(_ZN2v84base5Stack22GetStackStartUncheckedEv);
+V8_WEAK_STUB(_ZN2v84base5Stack23GetCurrentStackPositionEv);
+V8_WEAK_STUB(_ZN2v84base5Stack29ObtainCurrentThreadStackStartEv);
+V8_WEAK_STUB(_ZN2v84base5debug10StackTraceC1EPKPKvm);
+V8_WEAK_STUB(_ZN2v84base5debug10StackTraceC1Ev);
+V8_WEAK_STUB(_ZN2v84base5debug10StackTraceC2EPKPKvm);
+V8_WEAK_STUB(_ZN2v84base5debug10StackTraceC2Ev);
+V8_WEAK_STUB(_ZN2v84base5debug10StackTraceD1Ev);
+V8_WEAK_STUB(_ZN2v84base5debug10StackTraceD2Ev);
+V8_WEAK_STUB(_ZN2v84base5debug22DisableSignalStackDumpEv);
+V8_WEAK_STUB(_ZN2v84base5debug27EnableInProcessStackDumpingEv);
+V8_WEAK_STUB(_ZN2v84base5debug8internal6itoa_rElPcmim);
+V8_WEAK_STUB(_ZN2v84base6Bignum11PlusCompareERKS1_S3_S3_);
+V8_WEAK_STUB(_ZN2v84base6Bignum12AssignBignumERKS1_);
+V8_WEAK_STUB(_ZN2v84base6Bignum12AssignUInt16Et);
+V8_WEAK_STUB(_ZN2v84base6Bignum12AssignUInt64Em);
+V8_WEAK_STUB(_ZN2v84base6Bignum13SubtractTimesERKS1_i);
+V8_WEAK_STUB(_ZN2v84base6Bignum14SubtractBignumERKS1_);
+V8_WEAK_STUB(_ZN2v84base6Bignum15AssignHexStringENS0_6VectorIKcEE);
+V8_WEAK_STUB(_ZN2v84base6Bignum15BigitsShiftLeftEi);
+V8_WEAK_STUB(_ZN2v84base6Bignum16MultiplyByUInt32Ej);
+V8_WEAK_STUB(_ZN2v84base6Bignum16MultiplyByUInt64Em);
+V8_WEAK_STUB(_ZN2v84base6Bignum17AssignPowerUInt16Eti);
+V8_WEAK_STUB(_ZN2v84base6Bignum19AssignDecimalStringENS0_6VectorIKcEE);
+V8_WEAK_STUB(_ZN2v84base6Bignum20MultiplyByPowerOfTenEi);
+V8_WEAK_STUB(_ZN2v84base6Bignum21DivideModuloIntBignumERKS1_);
+V8_WEAK_STUB(_ZN2v84base6Bignum4ZeroEv);
+V8_WEAK_STUB(_ZN2v84base6Bignum5AlignERKS1_);
+V8_WEAK_STUB(_ZN2v84base6Bignum5ClampEv);
+V8_WEAK_STUB(_ZN2v84base6Bignum6SquareEv);
+V8_WEAK_STUB(_ZN2v84base6Bignum7CompareERKS1_S3_);
+V8_WEAK_STUB(_ZN2v84base6Bignum9AddBignumERKS1_);
+V8_WEAK_STUB(_ZN2v84base6Bignum9AddUInt64Em);
+V8_WEAK_STUB(_ZN2v84base6Bignum9ShiftLeftEi);
+V8_WEAK_STUB(_ZN2v84base6BignumC1Ev);
+V8_WEAK_STUB(_ZN2v84base6BignumC2Ev);
+V8_WEAK_STUB(_ZN2v84base6StrtodENS0_6VectorIKcEEi);
+V8_WEAK_STUB(_ZN2v84base6Thread14GetThreadLocalEi);
+V8_WEAK_STUB(_ZN2v84base6Thread14SetThreadLocalEiPv);
+V8_WEAK_STUB(_ZN2v84base6Thread20CreateThreadLocalKeyEv);
+V8_WEAK_STUB(_ZN2v84base6Thread20DeleteThreadLocalKeyEi);
+V8_WEAK_STUB(_ZN2v84base6Thread4JoinEv);
+V8_WEAK_STUB(_ZN2v84base6Thread5StartEv);
+V8_WEAK_STUB(_ZN2v84base6Thread8set_nameEPKc);
+V8_WEAK_STUB(_ZN2v84base6ThreadC1ERKNS1_7OptionsE);
+V8_WEAK_STUB(_ZN2v84base6ThreadC2ERKNS1_7OptionsE);
+V8_WEAK_STUB(_ZN2v84base6ThreadD0Ev);
+V8_WEAK_STUB(_ZN2v84base6ThreadD1Ev);
+V8_WEAK_STUB(_ZN2v84base6ThreadD2Ev);
+V8_WEAK_STUB(_ZN2v84base7StrNCpyENS0_6VectorIcEEPKcm);
+V8_WEAK_STUB(_ZN2v84base7SysInfo15AddressSpaceEndEv);
+V8_WEAK_STUB(_ZN2v84base7SysInfo18NumberOfProcessorsEv);
+V8_WEAK_STUB(_ZN2v84base7SysInfo21AmountOfVirtualMemoryEv);
+V8_WEAK_STUB(_ZN2v84base7SysInfo22AmountOfPhysicalMemoryEv);
+V8_WEAK_STUB(_ZN2v84base7ieee7543cosEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7543expEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7543logEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7543powEdd);
+V8_WEAK_STUB(_ZN2v84base7ieee7543sinEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7543tanEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7544acosEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7544asinEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7544atanEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7544cbrtEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7544coshEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7544log2Ed);
+V8_WEAK_STUB(_ZN2v84base7ieee7544sinhEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7544tanhEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7545acoshEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7545asinhEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7545atan2Edd);
+V8_WEAK_STUB(_ZN2v84base7ieee7545atanhEd);
+V8_WEAK_STUB(_ZN2v84base7ieee7545expm1Ed);
+V8_WEAK_STUB(_ZN2v84base7ieee7545log10Ed);
+V8_WEAK_STUB(_ZN2v84base7ieee7545log1pEd);
+V8_WEAK_STUB(_ZN2v84base8FastDtoaEdNS0_12FastDtoaModeEiNS0_6VectorIcEEPiS4_);
+V8_WEAK_STUB(_ZN2v84base8FatalOOMENS0_7OOMTypeEPKc);
+V8_WEAK_STUB(_ZN2v84base8IsSubsetENS_15PagePermissionsES1_);
+V8_WEAK_STUB(_ZN2v84base8SNPrintFENS0_6VectorIcEEPKcz);
+V8_WEAK_STUB(_ZN2v84base9Semaphore4WaitEv);
+V8_WEAK_STUB(_ZN2v84base9Semaphore6SignalEv);
+V8_WEAK_STUB(_ZN2v84base9Semaphore7WaitForERKNS0_9TimeDeltaE);
+V8_WEAK_STUB(_ZN2v84base9SemaphoreC1Ei);
+V8_WEAK_STUB(_ZN2v84base9SemaphoreC2Ei);
+V8_WEAK_STUB(_ZN2v84base9SemaphoreD1Ev);
+V8_WEAK_STUB(_ZN2v84base9SemaphoreD2Ev);
+V8_WEAK_STUB(_ZN2v84base9TimeDelta12FromTimespecE8timespec);
+V8_WEAK_STUB(_ZN2v84base9TimeTicks16IsHighResolutionEv);
+V8_WEAK_STUB(_ZN2v84base9TimeTicks3NowEv);
+V8_WEAK_STUB(_ZN2v84base9VSNPrintFENS0_6VectorIcEEPKcSt9__va_list);
+V8_WEAK_STUB(_ZN2v84baselsERSoRKNS0_4TimeE);
+V8_WEAK_STUB(_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE);
+V8_WEAK_STUB(_ZN2v85Array3NewEPNS_7IsolateEPNS_5LocalINS_5ValueEEEm);
+V8_WEAK_STUB(_ZN2v85Array3NewEPNS_7IsolateEi);
+V8_WEAK_STUB(_ZN2v85Array7IterateENS_5LocalINS_7ContextEEEPFNS0_14CallbackResultEjNS1_INS_5ValueEEEPvES7_);
+V8_WEAK_STUB(_ZN2v85Array9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v85Int329CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v85Proxy10GetHandlerEv);
+V8_WEAK_STUB(_ZN2v85Proxy3NewENS_5LocalINS_7ContextEEENS1_INS_6ObjectEEES5_);
+V8_WEAK_STUB(_ZN2v85Proxy6RevokeEv);
+V8_WEAK_STUB(_ZN2v85Proxy9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v85Proxy9GetTargetEv);
+V8_WEAK_STUB(_ZN2v85Utils16ReportApiFailureEPKcS2_);
+V8_WEAK_STUB(_ZN2v85Utils16ReportOOMFailureEPNS_8internal7IsolateEPKcRKNS_10OOMDetailsE);
+V8_WEAK_STUB(_ZN2v85Value10InstanceOfENS_5LocalINS_7ContextEEENS1_INS_6ObjectEEE);
+V8_WEAK_STUB(_ZN2v85Value6TypeOfEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85Value9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v85debug10GetBuiltinEPNS_7IsolateENS0_7BuiltinE);
+V8_WEAK_STUB(_ZN2v85debug10WasmScript11DisassembleEPNS0_20DisassemblyCollectorEPSt6vectorIiSaIiEE);
+V8_WEAK_STUB(_ZN2v85debug10WasmScript15GetFunctionHashEi);
+V8_WEAK_STUB(_ZN2v85debug10WasmScript4CastEPNS0_6ScriptE);
+V8_WEAK_STUB(_ZN2v85debug11DisassembleENS_4base6VectorIKhEEPNS0_20DisassemblyCollectorEPSt6vectorIiSaIiEE);
+V8_WEAK_STUB(_ZN2v85debug11PrepareStepEPNS_7IsolateENS0_10StepActionE);
+V8_WEAK_STUB(_ZN2v85debug12AccessorPair14IsAccessorPairENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v85debug12AccessorPair6getterEv);
+V8_WEAK_STUB(_ZN2v85debug12AccessorPair6setterEv);
+V8_WEAK_STUB(_ZN2v85debug12AccessorPair9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v85debug12GetContextIdENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v85debug12GetInspectorEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug12SetContextIdENS_5LocalINS_7ContextEEEi);
+V8_WEAK_STUB(_ZN2v85debug12SetInspectorEPNS_7IsolateEPN12v8_inspector11V8InspectorE);
+V8_WEAK_STUB(_ZN2v85debug13BreakRightNowEPNS_7IsolateENS_4base7EnumSetINS0_11BreakReasonEiEE);
+V8_WEAK_STUB(_ZN2v85debug13ClearSteppingEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug13ScopeIterator17CreateForFunctionEPNS_7IsolateENS_5LocalINS_8FunctionEEE);
+V8_WEAK_STUB(_ZN2v85debug13ScopeIterator24CreateForGeneratorObjectEPNS_7IsolateENS_5LocalINS_6ObjectEEE);
+V8_WEAK_STUB(_ZN2v85debug14CallFunctionOnENS_5LocalINS_7ContextEEENS1_INS_8FunctionEEENS1_INS_5ValueEEEiPNS_6GlobalIS6_EEb);
+V8_WEAK_STUB(_ZN2v85debug14EphemeronTable3GetEPNS_7IsolateENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v85debug14EphemeronTable3NewEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug14EphemeronTable3SetEPNS_7IsolateENS_5LocalINS_5ValueEEES6_);
+V8_WEAK_STUB(_ZN2v85debug14EvaluateGlobalEPNS_7IsolateENS_5LocalINS_6StringEEENS0_18EvaluateGlobalModeEb);
+V8_WEAK_STUB(_ZN2v85debug14GetDebuggingIdENS_5LocalINS_8FunctionEEE);
+V8_WEAK_STUB(_ZN2v85debug14SetReturnValueEPNS_7IsolateENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v85debug15CanBreakProgramEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug15GeneratorObject11IsSuspendedEv);
+V8_WEAK_STUB(_ZN2v85debug15GeneratorObject17SuspendedLocationEv);
+V8_WEAK_STUB(_ZN2v85debug15GeneratorObject4CastENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v85debug15GeneratorObject6ScriptEv);
+V8_WEAK_STUB(_ZN2v85debug15GeneratorObject8FunctionEv);
+V8_WEAK_STUB(_ZN2v85debug15WasmValueObject17IsWasmValueObjectENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v85debug15WasmValueObject9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v85debug16GetLoadedScriptsEPNS_7IsolateERSt6vectorINS_6GlobalINS0_6ScriptEEESaIS6_EE);
+V8_WEAK_STUB(_ZN2v85debug16PropertyIterator6CreateENS_5LocalINS_7ContextEEENS2_INS_6ObjectEEEb);
+V8_WEAK_STUB(_ZN2v85debug16RemoveBreakpointEPNS_7IsolateEi);
+V8_WEAK_STUB(_ZN2v85debug16SetDebugDelegateEPNS_7IsolateEPNS0_13DebugDelegateE);
+V8_WEAK_STUB(_ZN2v85debug17DisableBreakScopeC1EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug17DisableBreakScopeC2EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug17DisableBreakScopeD1Ev);
+V8_WEAK_STUB(_ZN2v85debug17DisableBreakScopeD2Ev);
+V8_WEAK_STUB(_ZN2v85debug17GetPrivateMembersENS_5LocalINS_7ContextEEENS1_INS_6ObjectEEEiPNS_11LocalVectorINS_5ValueEEES9_);
+V8_WEAK_STUB(_ZN2v85debug18EstimatedValueSizeEPNS_7IsolateENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v85debug18GetCreationContextENS_5LocalINS_6ObjectEEE);
+V8_WEAK_STUB(_ZN2v85debug18GetCurrentPlatformEv);
+V8_WEAK_STUB(_ZN2v85debug18GetDateDescriptionENS_5LocalINS_4DateEEE);
+V8_WEAK_STUB(_ZN2v85debug18GetNextRandomInt64EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug18SetConsoleDelegateEPNS_7IsolateEPNS0_15ConsoleDelegateE);
+V8_WEAK_STUB(_ZN2v85debug18StackTraceIterator6CreateEPNS_7IsolateEi);
+V8_WEAK_STUB(_ZN2v85debug19PrepareRestartFrameEPNS_7IsolateEi);
+V8_WEAK_STUB(_ZN2v85debug20ConsoleCallArgumentsC1EPNS_8internal7IsolateERKNS2_16BuiltinArgumentsE);
+V8_WEAK_STUB(_ZN2v85debug20ConsoleCallArgumentsC1ERKNS_20FunctionCallbackInfoINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v85debug20ConsoleCallArgumentsC2EPNS_8internal7IsolateERKNS2_16BuiltinArgumentsE);
+V8_WEAK_STUB(_ZN2v85debug20ConsoleCallArgumentsC2ERKNS_20FunctionCallbackInfoINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v85debug20GetBigIntDescriptionEPNS_7IsolateENS_5LocalINS_6BigIntEEE);
+V8_WEAK_STUB(_ZN2v85debug20GetBigIntStringValueEPNS_7IsolateENS_5LocalINS_6BigIntEEE);
+V8_WEAK_STUB(_ZN2v85debug20SetBreakPointsActiveEPNS_7IsolateEb);
+V8_WEAK_STUB(_ZN2v85debug20SetTerminateOnResumeEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug21GetInternalPropertiesEPNS_7IsolateENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v85debug21GetMessageFromPromiseENS_5LocalINS_7PromiseEEE);
+V8_WEAK_STUB(_ZN2v85debug21SetAsyncEventDelegateEPNS_7IsolateEPNS0_18AsyncEventDelegateE);
+V8_WEAK_STUB(_ZN2v85debug21SetFunctionBreakpointENS_5LocalINS_8FunctionEEENS1_INS_6StringEEEPi);
+V8_WEAK_STUB(_ZN2v85debug22ChangeBreakOnExceptionEPNS_7IsolateENS0_19ExceptionBreakStateE);
+V8_WEAK_STUB(_ZN2v85debug22CompileInspectorScriptEPNS_7IsolateENS_5LocalINS_6StringEEE);
+V8_WEAK_STUB(_ZN2v85debug22ForceGarbageCollectionEPNS_7IsolateEN5cppgc18EmbedderStackStateE);
+V8_WEAK_STUB(_ZN2v85debug22GetFunctionDescriptionENS_5LocalINS_8FunctionEEE);
+V8_WEAK_STUB(_ZN2v85debug23GlobalLexicalScopeNamesENS_5LocalINS_7ContextEEEPSt6vectorINS_6GlobalINS_6StringEEESaIS7_EE);
+V8_WEAK_STUB(_ZN2v85debug23PostponeInterruptsScopeC1EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug23PostponeInterruptsScopeC2EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug23PostponeInterruptsScopeD1Ev);
+V8_WEAK_STUB(_ZN2v85debug23PostponeInterruptsScopeD2Ev);
+V8_WEAK_STUB(_ZN2v85debug24EnterDebuggingForIsolateEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug24LeaveDebuggingForIsolateEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug25ResetBlackboxedStateCacheEPNS_7IsolateENS_5LocalINS0_6ScriptEEE);
+V8_WEAK_STUB(_ZN2v85debug26CreateMessageFromExceptionEPNS_7IsolateENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v85debug26SetBreakOnNextFunctionCallEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug28ClearBreakOnNextFunctionCallEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug29NotifyDebuggerPausedEventSentEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug37RecordAsyncStackTaggingCreateTaskCallEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug6Script20RemoveWasmBreakpointEi);
+V8_WEAK_STUB(_ZN2v85debug8Coverage10ScriptDataC1EmSt10shared_ptrINS_8internal8CoverageEE);
+V8_WEAK_STUB(_ZN2v85debug8Coverage10ScriptDataC2EmSt10shared_ptrINS_8internal8CoverageEE);
+V8_WEAK_STUB(_ZN2v85debug8Coverage10SelectModeEPNS_7IsolateENS0_12CoverageModeE);
+V8_WEAK_STUB(_ZN2v85debug8Coverage14CollectPreciseEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug8Coverage17CollectBestEffortEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v85debug8LocationC1Eii);
+V8_WEAK_STUB(_ZN2v85debug8LocationC1Ev);
+V8_WEAK_STUB(_ZN2v85debug8LocationC2Eii);
+V8_WEAK_STUB(_ZN2v85debug8LocationC2Ev);
+V8_WEAK_STUB(_ZN2v86BigInt12NewFromWordsENS_5LocalINS_7ContextEEEiiPKm);
+V8_WEAK_STUB(_ZN2v86BigInt15NewFromUnsignedEPNS_7IsolateEm);
+V8_WEAK_STUB(_ZN2v86BigInt3NewEPNS_7IsolateEl);
+V8_WEAK_STUB(_ZN2v86BigInt9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v86Locker10InitializeEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86Locker8IsLockedEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86LockerD1Ev);
+V8_WEAK_STUB(_ZN2v86LockerD2Ev);
+V8_WEAK_STUB(_ZN2v86Module17InstantiateModuleENS_5LocalINS_7ContextEEEPFNS_10MaybeLocalIS0_EES3_NS1_INS_6StringEEENS1_INS_10FixedArrayEEENS1_IS0_EEE);
+V8_WEAK_STUB(_ZN2v86Module18GetModuleNamespaceEv);
+V8_WEAK_STUB(_ZN2v86Module21CreateSyntheticModuleEPNS_7IsolateENS_5LocalINS_6StringEEERKNS_10MemorySpanIKS5_EEPFNS_10MaybeLocalINS_5ValueEEENS3_INS_7ContextEEENS3_IS0_EEE);
+V8_WEAK_STUB(_ZN2v86Module22GetUnboundModuleScriptEv);
+V8_WEAK_STUB(_ZN2v86Module24SetSyntheticModuleExportEPNS_7IsolateENS_5LocalINS_6StringEEENS3_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86Module31GetStalledTopLevelAwaitMessagesEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86Module8EvaluateENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v86Module9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v86Number3NewEPNS_7IsolateEd);
+V8_WEAK_STUB(_ZN2v86Number9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v86Object10GetIsolateEv);
+V8_WEAK_STUB(_ZN2v86Object10GetPrivateENS_5LocalINS_7ContextEEENS1_INS_7PrivateEEE);
+V8_WEAK_STUB(_ZN2v86Object10HasPrivateENS_5LocalINS_7ContextEEENS1_INS_7PrivateEEE);
+V8_WEAK_STUB(_ZN2v86Object10SetPrivateENS_5LocalINS_7ContextEEENS1_INS_7PrivateEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86Object11SetAccessorENS_5LocalINS_7ContextEEENS1_INS_4NameEEEPFvS5_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS5_NS1_IS7_EERKNS6_IvEEENS_10MaybeLocalIS7_EENS_13AccessControlENS_17PropertyAttributeENS_14SideEffectTypeESN_);
+V8_WEAK_STUB(_ZN2v86Object12GetPrototypeEv);
+V8_WEAK_STUB(_ZN2v86Object12SetPrototypeENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86Object13DeletePrivateENS_5LocalINS_7ContextEEENS1_INS_7PrivateEEE);
+V8_WEAK_STUB(_ZN2v86Object14CallAsFunctionENS_5LocalINS_7ContextEEENS1_INS_5ValueEEEiPS5_);
+V8_WEAK_STUB(_ZN2v86Object14DefinePropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEERNS_18PropertyDescriptorE);
+V8_WEAK_STUB(_ZN2v86Object14HasOwnPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEE);
+V8_WEAK_STUB(_ZN2v86Object14HasOwnPropertyENS_5LocalINS_7ContextEEEj);
+V8_WEAK_STUB(_ZN2v86Object14PreviewEntriesEPb);
+V8_WEAK_STUB(_ZN2v86Object15GetIdentityHashEv);
+V8_WEAK_STUB(_ZN2v86Object16GetPropertyNamesENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v86Object16GetPropertyNamesENS_5LocalINS_7ContextEEENS_17KeyCollectionModeENS_14PropertyFilterENS_11IndexFilterENS_17KeyConversionModeE);
+V8_WEAK_STUB(_ZN2v86Object16SetInternalFieldEiNS_5LocalINS_4DataEEE);
+V8_WEAK_STUB(_ZN2v86Object17CallAsConstructorENS_5LocalINS_7ContextEEEiPNS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86Object17DefineOwnPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEENS1_INS_5ValueEEENS_17PropertyAttributeE);
+V8_WEAK_STUB(_ZN2v86Object17SetIntegrityLevelENS_5LocalINS_7ContextEEENS_14IntegrityLevelE);
+V8_WEAK_STUB(_ZN2v86Object18CreateDataPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86Object18CreateDataPropertyENS_5LocalINS_7ContextEEEjNS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86Object18GetConstructorNameEv);
+V8_WEAK_STUB(_ZN2v86Object18GetCreationContextEv);
+V8_WEAK_STUB(_ZN2v86Object19GetOwnPropertyNamesENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v86Object19GetOwnPropertyNamesENS_5LocalINS_7ContextEEENS_14PropertyFilterENS_17KeyConversionModeE);
+V8_WEAK_STUB(_ZN2v86Object19ObjectProtoToStringENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v86Object19SetAccessorPropertyENS_5LocalINS_4NameEEENS1_INS_8FunctionEEES5_NS_17PropertyAttributeE);
+V8_WEAK_STUB(_ZN2v86Object19SetLazyDataPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEEPFvS5_RKNS_20PropertyCallbackInfoINS_5ValueEEEENS1_IS7_EENS_17PropertyAttributeENS_14SideEffectTypeESF_);
+V8_WEAK_STUB(_ZN2v86Object20GetRealNamedPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEE);
+V8_WEAK_STUB(_ZN2v86Object20HasRealNamedPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEE);
+V8_WEAK_STUB(_ZN2v86Object20SlowGetInternalFieldEi);
+V8_WEAK_STUB(_ZN2v86Object21GetPropertyAttributesENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86Object21SetNativeDataPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEEPFvS5_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS5_NS1_IS7_EERKNS6_IvEEESD_NS_17PropertyAttributeENS_14SideEffectTypeESK_);
+V8_WEAK_STUB(_ZN2v86Object22HasRealIndexedPropertyENS_5LocalINS_7ContextEEEj);
+V8_WEAK_STUB(_ZN2v86Object24GetOwnPropertyDescriptorENS_5LocalINS_7ContextEEENS1_INS_4NameEEE);
+V8_WEAK_STUB(_ZN2v86Object25GetCreationContextCheckedEv);
+V8_WEAK_STUB(_ZN2v86Object28FindInstanceInPrototypeChainENS_5LocalINS_16FunctionTemplateEEE);
+V8_WEAK_STUB(_ZN2v86Object28HasRealNamedCallbackPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEE);
+V8_WEAK_STUB(_ZN2v86Object30GetRealNamedPropertyAttributesENS_5LocalINS_7ContextEEENS1_INS_4NameEEE);
+V8_WEAK_STUB(_ZN2v86Object32SetAlignedPointerInInternalFieldEiPv);
+V8_WEAK_STUB(_ZN2v86Object33SetAlignedPointerInInternalFieldsEiPiPPv);
+V8_WEAK_STUB(_ZN2v86Object36GetRealNamedPropertyInPrototypeChainENS_5LocalINS_7ContextEEENS1_INS_4NameEEE);
+V8_WEAK_STUB(_ZN2v86Object38SlowGetAlignedPointerFromInternalFieldEPNS_7IsolateEi);
+V8_WEAK_STUB(_ZN2v86Object38SlowGetAlignedPointerFromInternalFieldEi);
+V8_WEAK_STUB(_ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86Object3GetENS_5LocalINS_7ContextEEEj);
+V8_WEAK_STUB(_ZN2v86Object3HasENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86Object3HasENS_5LocalINS_7ContextEEEj);
+V8_WEAK_STUB(_ZN2v86Object3NewEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86Object3NewEPNS_7IsolateENS_5LocalINS_5ValueEEEPNS3_INS_4NameEEEPS5_m);
+V8_WEAK_STUB(_ZN2v86Object3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_);
+V8_WEAK_STUB(_ZN2v86Object3SetENS_5LocalINS_7ContextEEEjNS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86Object46GetRealNamedPropertyAttributesInPrototypeChainENS_5LocalINS_7ContextEEENS1_INS_4NameEEE);
+V8_WEAK_STUB(_ZN2v86Object50GetAlignedPointerFromEmbedderDataInCreationContextEi);
+V8_WEAK_STUB(_ZN2v86Object5CloneEv);
+V8_WEAK_STUB(_ZN2v86Object6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86Object6DeleteENS_5LocalINS_7ContextEEEj);
+V8_WEAK_STUB(_ZN2v86Object9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v86RegExp21NewWithBacktrackLimitENS_5LocalINS_7ContextEEENS1_INS_6StringEEENS0_5FlagsEj);
+V8_WEAK_STUB(_ZN2v86RegExp3NewENS_5LocalINS_7ContextEEENS1_INS_6StringEEENS0_5FlagsE);
+V8_WEAK_STUB(_ZN2v86RegExp4ExecENS_5LocalINS_7ContextEEENS1_INS_6StringEEE);
+V8_WEAK_STUB(_ZN2v86RegExp9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v86Script15GetResourceNameEv);
+V8_WEAK_STUB(_ZN2v86Script16GetUnboundScriptEv);
+V8_WEAK_STUB(_ZN2v86Script3RunENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v86Script3RunENS_5LocalINS_7ContextEEENS1_INS_4DataEEE);
+V8_WEAK_STUB(_ZN2v86Script7CompileENS_5LocalINS_7ContextEEENS1_INS_6StringEEEPNS_12ScriptOriginE);
+V8_WEAK_STUB(_ZN2v86String11NewFromUtf8EPNS_7IsolateEPKcNS_13NewStringTypeEi);
+V8_WEAK_STUB(_ZN2v86String12MakeExternalEPNS0_22ExternalStringResourceE);
+V8_WEAK_STUB(_ZN2v86String12MakeExternalEPNS0_29ExternalOneByteStringResourceE);
+V8_WEAK_STUB(_ZN2v86String14NewFromOneByteEPNS_7IsolateEPKhNS_13NewStringTypeEi);
+V8_WEAK_STUB(_ZN2v86String14NewFromTwoByteEPNS_7IsolateEPKtNS_13NewStringTypeEi);
+V8_WEAK_STUB(_ZN2v86String18NewExternalOneByteEPNS_7IsolateEPNS0_29ExternalOneByteStringResourceE);
+V8_WEAK_STUB(_ZN2v86String18NewExternalTwoByteEPNS_7IsolateEPNS0_22ExternalStringResourceE);
+V8_WEAK_STUB(_ZN2v86String18NewFromUtf8LiteralEPNS_7IsolateEPKcNS_13NewStringTypeEi);
+V8_WEAK_STUB(_ZN2v86String22ExternalStringResource15UpdateDataCacheEv);
+V8_WEAK_STUB(_ZN2v86String29ExternalOneByteStringResource15UpdateDataCacheEv);
+V8_WEAK_STUB(_ZN2v86String5ValueC1EPNS_7IsolateENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86String5ValueC2EPNS_7IsolateENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86String5ValueD1Ev);
+V8_WEAK_STUB(_ZN2v86String5ValueD2Ev);
+V8_WEAK_STUB(_ZN2v86String6ConcatEPNS_7IsolateENS_5LocalIS0_EES4_);
+V8_WEAK_STUB(_ZN2v86String9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v86String9Utf8ValueC1EPNS_7IsolateENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86String9Utf8ValueC2EPNS_7IsolateENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v86String9Utf8ValueD1Ev);
+V8_WEAK_STUB(_ZN2v86String9Utf8ValueD2Ev);
+V8_WEAK_STUB(_ZN2v86Symbol10GetReplaceEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86Symbol11GetIteratorEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86Symbol14GetHasInstanceEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86Symbol14GetToPrimitiveEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86Symbol14GetToStringTagEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86Symbol14GetUnscopablesEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86Symbol16GetAsyncIteratorEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86Symbol21GetIsConcatSpreadableEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86Symbol3ForEPNS_7IsolateENS_5LocalINS_6StringEEE);
+V8_WEAK_STUB(_ZN2v86Symbol3NewEPNS_7IsolateENS_5LocalINS_6StringEEE);
+V8_WEAK_STUB(_ZN2v86Symbol6ForApiEPNS_7IsolateENS_5LocalINS_6StringEEE);
+V8_WEAK_STUB(_ZN2v86Symbol8GetMatchEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86Symbol8GetSplitEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86Symbol9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v86Symbol9GetSearchEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v86Uint329CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v86bigint10RightShiftENS0_8RWDigitsENS0_6DigitsEi);
+V8_WEAK_STUB(_ZN2v86bigint10RightShiftENS0_8RWDigitsENS0_6DigitsEmRKNS0_15RightShiftStateE);
+V8_WEAK_STUB(_ZN2v86bigint11AsUintN_NegENS0_8RWDigitsENS0_6DigitsEi);
+V8_WEAK_STUB(_ZN2v86bigint11AsUintN_PosENS0_8RWDigitsENS0_6DigitsEi);
+V8_WEAK_STUB(_ZN2v86bigint11SubtractOneENS0_8RWDigitsENS0_6DigitsE);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl10FromStringENS0_8RWDigitsEPNS0_21FromStringAccumulatorE);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl11MultiplyFFTENS0_8RWDigitsENS0_6DigitsES3_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl12DivideSingleENS0_8RWDigitsEPmNS0_6DigitsEm);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl12InvertNewtonENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl12ToStringImplEPcPiNS0_6DigitsEibb);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl13DivideBarrettENS0_8RWDigitsES2_NS0_6DigitsES3_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl13DivideBarrettENS0_8RWDigitsES2_NS0_6DigitsES3_S3_S2_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl13KaratsubaMainENS0_8RWDigitsENS0_6DigitsES3_S2_i);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl14InvertBasecaseENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl14KaratsubaChunkENS0_8RWDigitsENS0_6DigitsES3_S2_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl14KaratsubaStartENS0_8RWDigitsENS0_6DigitsES3_S2_i);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl14MultiplySingleENS0_8RWDigitsENS0_6DigitsEm);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl15FromStringLargeENS0_8RWDigitsEPNS0_21FromStringAccumulatorE);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl16DivideSchoolbookENS0_8RWDigitsES2_NS0_6DigitsES3_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl16MultiplyToomCookENS0_8RWDigitsENS0_6DigitsES3_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl17FromStringClassicENS0_8RWDigitsEPNS0_21FromStringAccumulatorE);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl17MultiplyKaratsubaENS0_8RWDigitsENS0_6DigitsES3_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl18MultiplySchoolbookENS0_8RWDigitsENS0_6DigitsES3_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl20get_and_clear_statusEv);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl21DivideBurnikelZieglerENS0_8RWDigitsES2_NS0_6DigitsES3_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl24FromStringBasePowerOfTwoENS0_8RWDigitsEPNS0_21FromStringAccumulatorE);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl6DivideENS0_8RWDigitsENS0_6DigitsES3_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl6InvertENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl6ModuloENS0_8RWDigitsENS0_6DigitsES3_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl8MultiplyENS0_8RWDigitsENS0_6DigitsES3_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl8ToStringEPcPiNS0_6DigitsEib);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImpl9Toom3MainENS0_8RWDigitsENS0_6DigitsES3_);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImplC1EPNS0_8PlatformE);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImplC2EPNS0_8PlatformE);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImplD1Ev);
+V8_WEAK_STUB(_ZN2v86bigint13ProcessorImplD2Ev);
+V8_WEAK_STUB(_ZN2v86bigint14SubtractSignedENS0_8RWDigitsENS0_6DigitsEbS2_b);
+V8_WEAK_STUB(_ZN2v86bigint16BitwiseOr_NegNegENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint16BitwiseOr_PosNegENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint16BitwiseOr_PosPosENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint17AddAndReturnCarryENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint17BitwiseAnd_NegNegENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint17BitwiseAnd_PosNegENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint17BitwiseAnd_PosPosENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint17BitwiseXor_NegNegENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint17BitwiseXor_PosNegENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint17BitwiseXor_PosPosENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint18AsIntNResultLengthENS0_6DigitsEbi);
+V8_WEAK_STUB(_ZN2v86bigint18ProductGreaterThanEmmmm);
+V8_WEAK_STUB(_ZN2v86bigint18SubAndReturnBorrowENS0_8RWDigitsENS0_6DigitsE);
+V8_WEAK_STUB(_ZN2v86bigint20AddAndReturnOverflowENS0_8RWDigitsENS0_6DigitsE);
+V8_WEAK_STUB(_ZN2v86bigint20ToStringResultLengthENS0_6DigitsEib);
+V8_WEAK_STUB(_ZN2v86bigint23RightShift_ResultLengthENS0_6DigitsEbmPNS0_15RightShiftStateE);
+V8_WEAK_STUB(_ZN2v86bigint23SubtractAndReturnBorrowENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint24AsUintN_Pos_ResultLengthENS0_6DigitsEi);
+V8_WEAK_STUB(_ZN2v86bigint3AddENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint6AddOneENS0_8RWDigitsENS0_6DigitsE);
+V8_WEAK_STUB(_ZN2v86bigint6AsIntNENS0_8RWDigitsENS0_6DigitsEbi);
+V8_WEAK_STUB(_ZN2v86bigint8SubtractENS0_8RWDigitsENS0_6DigitsES2_);
+V8_WEAK_STUB(_ZN2v86bigint9AddSignedENS0_8RWDigitsENS0_6DigitsEbS2_b);
+V8_WEAK_STUB(_ZN2v86bigint9LeftShiftENS0_8RWDigitsENS0_6DigitsEi);
+V8_WEAK_STUB(_ZN2v86bigint9LeftShiftENS0_8RWDigitsENS0_6DigitsEm);
+V8_WEAK_STUB(_ZN2v86bigint9Processor10FromStringENS0_8RWDigitsEPNS0_21FromStringAccumulatorE);
+V8_WEAK_STUB(_ZN2v86bigint9Processor3NewEPNS0_8PlatformE);
+V8_WEAK_STUB(_ZN2v86bigint9Processor6DivideENS0_8RWDigitsENS0_6DigitsES3_);
+V8_WEAK_STUB(_ZN2v86bigint9Processor6ModuloENS0_8RWDigitsENS0_6DigitsES3_);
+V8_WEAK_STUB(_ZN2v86bigint9Processor7DestroyEv);
+V8_WEAK_STUB(_ZN2v86bigint9Processor8MultiplyENS0_8RWDigitsENS0_6DigitsES3_);
+V8_WEAK_STUB(_ZN2v86bigint9Processor8ToStringEPcPiNS0_6DigitsEib);
+V8_WEAK_STUB(_ZN2v87Boolean9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v87Context10DeepFreezeEPNS0_18DeepFreezeDelegateE);
+V8_WEAK_STUB(_ZN2v87Context10GetIsolateEv);
+V8_WEAK_STUB(_ZN2v87Context12DetachGlobalEv);
+V8_WEAK_STUB(_ZN2v87Context12FromSnapshotEPNS_7IsolateEmNS_33DeserializeInternalFieldsCallbackEPNS_22ExtensionConfigurationENS_10MaybeLocalINS_5ValueEEEPNS_14MicrotaskQueueENS_30DeserializeContextDataCallbackE);
+V8_WEAK_STUB(_ZN2v87Context15SetEmbedderDataEiNS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v87Context15SetPromiseHooksENS_5LocalINS_8FunctionEEES3_S3_S3_);
+V8_WEAK_STUB(_ZN2v87Context16GetSecurityTokenEv);
+V8_WEAK_STUB(_ZN2v87Context16NewRemoteContextEPNS_7IsolateENS_5LocalINS_14ObjectTemplateEEENS_10MaybeLocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v87Context16SetSecurityTokenENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v87Context17GetMicrotaskQueueEv);
+V8_WEAK_STUB(_ZN2v87Context17SetMicrotaskQueueEPNS_14MicrotaskQueueE);
+V8_WEAK_STUB(_ZN2v87Context19SlowGetEmbedderDataEi);
+V8_WEAK_STUB(_ZN2v87Context20BackupIncumbentScopeC1ENS_5LocalIS0_EE);
+V8_WEAK_STUB(_ZN2v87Context20BackupIncumbentScopeC2ENS_5LocalIS0_EE);
+V8_WEAK_STUB(_ZN2v87Context20BackupIncumbentScopeD1Ev);
+V8_WEAK_STUB(_ZN2v87Context20BackupIncumbentScopeD2Ev);
+V8_WEAK_STUB(_ZN2v87Context22GetExtrasBindingObjectEv);
+V8_WEAK_STUB(_ZN2v87Context23GetDataFromSnapshotOnceEm);
+V8_WEAK_STUB(_ZN2v87Context23SetAbortScriptExecutionEPFvPNS_7IsolateENS_5LocalIS0_EEE);
+V8_WEAK_STUB(_ZN2v87Context23UseDefaultSecurityTokenEv);
+V8_WEAK_STUB(_ZN2v87Context24HasTemplateLiteralObjectENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v87Context29GetNumberOfEmbedderDataFieldsEv);
+V8_WEAK_STUB(_ZN2v87Context30AllowCodeGenerationFromStringsEb);
+V8_WEAK_STUB(_ZN2v87Context31SetAlignedPointerInEmbedderDataEiPv);
+V8_WEAK_STUB(_ZN2v87Context36SetErrorMessageForWasmCodeGenerationENS_5LocalINS_6StringEEE);
+V8_WEAK_STUB(_ZN2v87Context37SlowGetAlignedPointerFromEmbedderDataEi);
+V8_WEAK_STUB(_ZN2v87Context3NewEPNS_7IsolateEPNS_22ExtensionConfigurationENS_10MaybeLocalINS_14ObjectTemplateEEENS5_INS_5ValueEEENS_33DeserializeInternalFieldsCallbackEPNS_14MicrotaskQueueENS_30DeserializeContextDataCallbackE);
+V8_WEAK_STUB(_ZN2v87Context43SetErrorMessageForCodeGenerationFromStringsENS_5LocalINS_6StringEEE);
+V8_WEAK_STUB(_ZN2v87Context4ExitEv);
+V8_WEAK_STUB(_ZN2v87Context5EnterEv);
+V8_WEAK_STUB(_ZN2v87Context6GlobalEv);
+V8_WEAK_STUB(_ZN2v87Context9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v87CppHeap13GetHeapHandleEv);
+V8_WEAK_STUB(_ZN2v87CppHeap17CollectStatisticsEN5cppgc14HeapStatistics11DetailLevelE);
+V8_WEAK_STUB(_ZN2v87CppHeap19GetAllocationHandleEv);
+V8_WEAK_STUB(_ZN2v87CppHeap24CollectGarbageForTestingEN5cppgc18EmbedderStackStateE);
+V8_WEAK_STUB(_ZN2v87CppHeap36CollectCustomSpaceStatisticsAtLastGCESt6vectorIN5cppgc16CustomSpaceIndexESaIS3_EESt10unique_ptrINS_29CustomSpaceStatisticsReceiverESt14default_deleteIS7_EE);
+V8_WEAK_STUB(_ZN2v87CppHeap41CollectGarbageInYoungGenerationForTestingEN5cppgc18EmbedderStackStateE);
+V8_WEAK_STUB(_ZN2v87CppHeap42EnableDetachedGarbageCollectionsForTestingEv);
+V8_WEAK_STUB(_ZN2v87CppHeap6CreateEPNS_8PlatformERKNS_19CppHeapCreateParamsE);
+V8_WEAK_STUB(_ZN2v87CppHeap9TerminateEv);
+V8_WEAK_STUB(_ZN2v87Integer15NewFromUnsignedEPNS_7IsolateEj);
+V8_WEAK_STUB(_ZN2v87Integer3NewEPNS_7IsolateEi);
+V8_WEAK_STUB(_ZN2v87Integer9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v87Isolate10GetCurrentEv);
+V8_WEAK_STUB(_ZN2v87Isolate10InitializeEPS0_RKNS0_12CreateParamsE);
+V8_WEAK_STUB(_ZN2v87Isolate10ThrowErrorENS_5LocalINS_6StringEEE);
+V8_WEAK_STUB(_ZN2v87Isolate11SetRAILModeENS_8RAILModeE);
+V8_WEAK_STUB(_ZN2v87Isolate12CreateParamsC1Ev);
+V8_WEAK_STUB(_ZN2v87Isolate12CreateParamsC2Ev);
+V8_WEAK_STUB(_ZN2v87Isolate12CreateParamsD1Ev);
+V8_WEAK_STUB(_ZN2v87Isolate12CreateParamsD2Ev);
+V8_WEAK_STUB(_ZN2v87Isolate12GetCodeRangeEPPvPm);
+V8_WEAK_STUB(_ZN2v87Isolate13AttachCppHeapEPNS_7CppHeapE);
+V8_WEAK_STUB(_ZN2v87Isolate13CopyCodePagesEmPNS_11MemoryRangeE);
+V8_WEAK_STUB(_ZN2v87Isolate13DetachCppHeapEv);
+V8_WEAK_STUB(_ZN2v87Isolate13MeasureMemoryESt10unique_ptrINS_21MeasureMemoryDelegateESt14default_deleteIS2_EENS_22MeasureMemoryExecutionE);
+V8_WEAK_STUB(_ZN2v87Isolate13SetStackLimitEm);
+V8_WEAK_STUB(_ZN2v87Isolate13TryGetCurrentEv);
+V8_WEAK_STUB(_ZN2v87Isolate14GetStackSampleERKNS_13RegisterStateEPPvmPNS_10SampleInfoE);
+V8_WEAK_STUB(_ZN2v87Isolate14SetEventLoggerEPFvPKciE);
+V8_WEAK_STUB(_ZN2v87Isolate14SetPromiseHookEPFvNS_15PromiseHookTypeENS_5LocalINS_7PromiseEEENS2_INS_5ValueEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate14ThrowExceptionENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v87Isolate15GetHeapProfilerEv);
+V8_WEAK_STUB(_ZN2v87Isolate15GetJSEntryStubsEv);
+V8_WEAK_STUB(_ZN2v87Isolate16ClearKeptObjectsEv);
+V8_WEAK_STUB(_ZN2v87Isolate16EnqueueMicrotaskENS_5LocalINS_8FunctionEEE);
+V8_WEAK_STUB(_ZN2v87Isolate16EnqueueMicrotaskEPFvPvES1_);
+V8_WEAK_STUB(_ZN2v87Isolate16RequestInterruptEPFvPS0_PvES2_);
+V8_WEAK_STUB(_ZN2v87Isolate17DumpAndResetStatsEv);
+V8_WEAK_STUB(_ZN2v87Isolate17GetCurrentContextEv);
+V8_WEAK_STUB(_ZN2v87Isolate17GetHeapStatisticsEPNS_14HeapStatisticsE);
+V8_WEAK_STUB(_ZN2v87Isolate18AddMessageListenerEPFvNS_5LocalINS_7MessageEEENS1_INS_5ValueEEEES5_);
+V8_WEAK_STUB(_ZN2v87Isolate18NumberOfHeapSpacesEv);
+V8_WEAK_STUB(_ZN2v87Isolate18SetCounterFunctionEPFPiPKcE);
+V8_WEAK_STUB(_ZN2v87Isolate18SetMetricsRecorderERKSt10shared_ptrINS_7metrics8RecorderEE);
+V8_WEAK_STUB(_ZN2v87Isolate18SetOOMErrorHandlerEPFvPKcRKNS_10OOMDetailsEE);
+V8_WEAK_STUB(_ZN2v87Isolate18TerminateExecutionEv);
+V8_WEAK_STUB(_ZN2v87Isolate19GetIncumbentContextEv);
+V8_WEAK_STUB(_ZN2v87Isolate19SetAllowAtomicsWaitEb);
+V8_WEAK_STUB(_ZN2v87Isolate19SetBatterySaverModeEb);
+V8_WEAK_STUB(_ZN2v87Isolate19SetMicrotasksPolicyENS_16MicrotasksPolicyE);
+V8_WEAK_STUB(_ZN2v87Isolate19UpdateLoadStartTimeEv);
+V8_WEAK_STUB(_ZN2v87Isolate20GetEmbeddedCodeRangeEPPKvPm);
+V8_WEAK_STUB(_ZN2v87Isolate20SetFatalErrorHandlerEPFvPKcS2_E);
+V8_WEAK_STUB(_ZN2v87Isolate21AddGCEpilogueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEES2_);
+V8_WEAK_STUB(_ZN2v87Isolate21AddGCEpilogueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_S2_);
+V8_WEAK_STUB(_ZN2v87Isolate21AddGCPrologueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEES2_);
+V8_WEAK_STUB(_ZN2v87Isolate21AddGCPrologueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_S2_);
+V8_WEAK_STUB(_ZN2v87Isolate21AtomicsWaitWakeHandle4WakeEv);
+V8_WEAK_STUB(_ZN2v87Isolate21ClearCachesForTestingEv);
+V8_WEAK_STUB(_ZN2v87Isolate21LowMemoryNotificationEv);
+V8_WEAK_STUB(_ZN2v87Isolate21SetUseCounterCallbackEPFvPS0_NS0_17UseCounterFeatureEE);
+V8_WEAK_STUB(_ZN2v87Isolate21SetWasmModuleCallbackEPFbRKNS_20FunctionCallbackInfoINS_5ValueEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate22GetHeapSpaceStatisticsEPNS_19HeapSpaceStatisticsEm);
+V8_WEAK_STUB(_ZN2v87Isolate22IsExecutionTerminatingEv);
+V8_WEAK_STUB(_ZN2v87Isolate22RemoveMessageListenersEPFvNS_5LocalINS_7MessageEEENS1_INS_5ValueEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate22SetAddCrashKeyCallbackEPFvNS_10CrashKeyIdERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate22SetAtomicsWaitCallbackEPFvNS0_16AtomicsWaitEventENS_5LocalINS_17SharedArrayBufferEEEmldPNS0_21AtomicsWaitWakeHandleEPvES7_);
+V8_WEAK_STUB(_ZN2v87Isolate22SetJitCodeEventHandlerENS_19JitCodeEventOptionsEPFvPKNS_12JitCodeEventEE);
+V8_WEAK_STUB(_ZN2v87Isolate22VisitExternalResourcesEPNS_23ExternalResourceVisitorE);
+V8_WEAK_STUB(_ZN2v87Isolate23GetArrayBufferAllocatorEv);
+V8_WEAK_STUB(_ZN2v87Isolate23GetDataFromSnapshotOnceEm);
+V8_WEAK_STUB(_ZN2v87Isolate23SetEmbedderRootsHandlerEPNS_20EmbedderRootsHandlerE);
+V8_WEAK_STUB(_ZN2v87Isolate23SetWasmInstanceCallbackEPFbRKNS_20FunctionCallbackInfoINS_5ValueEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate24AddCallCompletedCallbackEPFvPS0_E);
+V8_WEAK_STUB(_ZN2v87Isolate24AddNearHeapLimitCallbackEPFmPvmmES1_);
+V8_WEAK_STUB(_ZN2v87Isolate24CancelTerminateExecutionEv);
+V8_WEAK_STUB(_ZN2v87Isolate24IdleNotificationDeadlineEd);
+V8_WEAK_STUB(_ZN2v87Isolate24RemoveGCEpilogueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEE);
+V8_WEAK_STUB(_ZN2v87Isolate24RemoveGCEpilogueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_);
+V8_WEAK_STUB(_ZN2v87Isolate24RemoveGCPrologueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEE);
+V8_WEAK_STUB(_ZN2v87Isolate24RemoveGCPrologueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_);
+V8_WEAK_STUB(_ZN2v87Isolate24RestoreOriginalHeapLimitEv);
+V8_WEAK_STUB(_ZN2v87Isolate24SetPromiseRejectCallbackEPFvNS_20PromiseRejectMessageEE);
+V8_WEAK_STUB(_ZN2v87Isolate24SetWasmStreamingCallbackEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate25HasPendingBackgroundTasksEv);
+V8_WEAK_STUB(_ZN2v87Isolate26InstallConditionalFeaturesENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v87Isolate26MemoryPressureNotificationENS_19MemoryPressureLevelE);
+V8_WEAK_STUB(_ZN2v87Isolate26PerformMicrotaskCheckpointEv);
+V8_WEAK_STUB(_ZN2v87Isolate26SetCreateHistogramFunctionEPFPvPKciimE);
+V8_WEAK_STUB(_ZN2v87Isolate26SetWasmJSPIEnabledCallbackEPFbNS_5LocalINS_7ContextEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate27ContextDisposedNotificationEb);
+V8_WEAK_STUB(_ZN2v87Isolate27RemoveCallCompletedCallbackEPFvPS0_E);
+V8_WEAK_STUB(_ZN2v87Isolate27RemoveNearHeapLimitCallbackEPFmPvmmEm);
+V8_WEAK_STUB(_ZN2v87Isolate28AddBeforeCallEnteredCallbackEPFvPS0_E);
+V8_WEAK_STUB(_ZN2v87Isolate28GetEnteredOrMicrotaskContextEv);
+V8_WEAK_STUB(_ZN2v87Isolate28SetPrepareStackTraceCallbackEPFNS_10MaybeLocalINS_5ValueEEENS_5LocalINS_7ContextEEENS4_IS2_EENS4_INS_5ArrayEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate28SetWasmLoadSourceMapCallbackEPFNS_5LocalINS_6StringEEEPS0_PKcE);
+V8_WEAK_STUB(_ZN2v87Isolate29AllowJavascriptExecutionScopeC1EPS0_);
+V8_WEAK_STUB(_ZN2v87Isolate29AllowJavascriptExecutionScopeC2EPS0_);
+V8_WEAK_STUB(_ZN2v87Isolate29AllowJavascriptExecutionScopeD1Ev);
+V8_WEAK_STUB(_ZN2v87Isolate29AllowJavascriptExecutionScopeD2Ev);
+V8_WEAK_STUB(_ZN2v87Isolate29DiscardThreadSpecificMetadataEv);
+V8_WEAK_STUB(_ZN2v87Isolate29IncreaseHeapLimitForDebuggingEv);
+V8_WEAK_STUB(_ZN2v87Isolate29SetAddHistogramSampleFunctionEPFvPviE);
+V8_WEAK_STUB(_ZN2v87Isolate30AddMicrotasksCompletedCallbackEPFvPS0_PvES2_);
+V8_WEAK_STUB(_ZN2v87Isolate30NumberOfTrackedHeapObjectTypesEv);
+V8_WEAK_STUB(_ZN2v87Isolate31GetHeapObjectStatisticsAtLastGCEPNS_20HeapObjectStatisticsEm);
+V8_WEAK_STUB(_ZN2v87Isolate31IsolateInBackgroundNotificationEv);
+V8_WEAK_STUB(_ZN2v87Isolate31IsolateInForegroundNotificationEv);
+V8_WEAK_STUB(_ZN2v87Isolate31RemoveBeforeCallEnteredCallbackEPFvPS0_E);
+V8_WEAK_STUB(_ZN2v87Isolate31SuppressMicrotaskExecutionScopeC1EPS0_PNS_14MicrotaskQueueE);
+V8_WEAK_STUB(_ZN2v87Isolate31SuppressMicrotaskExecutionScopeC2EPS0_PNS_14MicrotaskQueueE);
+V8_WEAK_STUB(_ZN2v87Isolate31SuppressMicrotaskExecutionScopeD1Ev);
+V8_WEAK_STUB(_ZN2v87Isolate31SuppressMicrotaskExecutionScopeD2Ev);
+V8_WEAK_STUB(_ZN2v87Isolate32AddMessageListenerWithErrorLevelEPFvNS_5LocalINS_7MessageEEENS1_INS_5ValueEEEEiS5_);
+V8_WEAK_STUB(_ZN2v87Isolate32DisallowJavascriptExecutionScopeC1EPS0_NS1_9OnFailureE);
+V8_WEAK_STUB(_ZN2v87Isolate32DisallowJavascriptExecutionScopeC2EPS0_NS1_9OnFailureE);
+V8_WEAK_STUB(_ZN2v87Isolate32DisallowJavascriptExecutionScopeD1Ev);
+V8_WEAK_STUB(_ZN2v87Isolate32DisallowJavascriptExecutionScopeD2Ev);
+V8_WEAK_STUB(_ZN2v87Isolate32GetHeapCodeAndMetadataStatisticsEPNS_18HeapCodeStatisticsE);
+V8_WEAK_STUB(_ZN2v87Isolate32IsHeapLimitIncreasedForDebuggingEv);
+V8_WEAK_STUB(_ZN2v87Isolate33RemoveMicrotasksCompletedCallbackEPFvPS0_PvES2_);
+V8_WEAK_STUB(_ZN2v87Isolate34RequestGarbageCollectionForTestingENS0_21GarbageCollectionTypeE);
+V8_WEAK_STUB(_ZN2v87Isolate34RequestGarbageCollectionForTestingENS0_21GarbageCollectionTypeEN5cppgc18EmbedderStackStateE);
+V8_WEAK_STUB(_ZN2v87Isolate34SetAllowWasmCodeGenerationCallbackEPFbNS_5LocalINS_7ContextEEENS1_INS_6StringEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate34SetWasmAsyncResolvePromiseCallbackEPFvPS0_NS_5LocalINS_7ContextEEENS2_INS_7Promise8ResolverEEENS2_INS_5ValueEEENS_16WasmAsyncSuccessEE);
+V8_WEAK_STUB(_ZN2v87Isolate35SetAbortOnUncaughtExceptionCallbackEPFbPS0_E);
+V8_WEAK_STUB(_ZN2v87Isolate36AutomaticallyRestoreInitialHeapLimitEd);
+V8_WEAK_STUB(_ZN2v87Isolate36GetContinuationPreservedEmbedderDataEv);
+V8_WEAK_STUB(_ZN2v87Isolate36ReportExternalAllocationLimitReachedEv);
+V8_WEAK_STUB(_ZN2v87Isolate36SetContinuationPreservedEmbedderDataENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v87Isolate36SetFailedAccessCheckCallbackFunctionEPFvNS_5LocalINS_6ObjectEEENS_10AccessTypeENS1_INS_5ValueEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate37AdjustAmountOfExternalAllocatedMemoryEl);
+V8_WEAK_STUB(_ZN2v87Isolate37LocaleConfigurationChangeNotificationEv);
+V8_WEAK_STUB(_ZN2v87Isolate37SetWasmImportedStringsEnabledCallbackEPFbNS_5LocalINS_7ContextEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate38SetHostImportModuleDynamicallyCallbackEPFNS_10MaybeLocalINS_7PromiseEEENS_5LocalINS_7ContextEEENS4_INS_4DataEEENS4_INS_5ValueEEENS4_INS_6StringEEENS4_INS_10FixedArrayEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate39DateTimeConfigurationChangeNotificationENS0_17TimeZoneDetectionE);
+V8_WEAK_STUB(_ZN2v87Isolate39SetHostCreateShadowRealmContextCallbackEPFNS_10MaybeLocalINS_7ContextEEENS_5LocalIS2_EEE);
+V8_WEAK_STUB(_ZN2v87Isolate3NewERKNS0_12CreateParamsE);
+V8_WEAK_STUB(_ZN2v87Isolate41SetCaptureStackTraceForUncaughtExceptionsEbiNS_10StackTrace17StackTraceOptionsE);
+V8_WEAK_STUB(_ZN2v87Isolate41SetHostInitializeImportMetaObjectCallbackEPFvNS_5LocalINS_7ContextEEENS1_INS_6ModuleEEENS1_INS_6ObjectEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate42SetModifyCodeGenerationFromStringsCallbackEPFNS_37ModifyCodeGenerationFromStringsResultENS_5LocalINS_7ContextEEENS2_INS_5ValueEEEbE);
+V8_WEAK_STUB(_ZN2v87Isolate45SetJavaScriptCompileHintsMagicEnabledCallbackEPFbNS_5LocalINS_7ContextEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate46SetGetExternallyAllocatedMemoryInBytesCallbackEPFmvE);
+V8_WEAK_STUB(_ZN2v87Isolate46SetSharedArrayBufferConstructorEnabledCallbackEPFbNS_5LocalINS_7ContextEEEE);
+V8_WEAK_STUB(_ZN2v87Isolate4ExitEv);
+V8_WEAK_STUB(_ZN2v87Isolate5EnterEv);
+V8_WEAK_STUB(_ZN2v87Isolate6IsDeadEv);
+V8_WEAK_STUB(_ZN2v87Isolate7DisposeEv);
+V8_WEAK_STUB(_ZN2v87Isolate7IsInUseEv);
+V8_WEAK_STUB(_ZN2v87Isolate7SetIdleEb);
+V8_WEAK_STUB(_ZN2v87Isolate8AllocateEv);
+V8_WEAK_STUB(_ZN2v87Isolate9InContextEv);
+V8_WEAK_STUB(_ZN2v87Message22PrintCurrentStackTraceEPNS_7IsolateERSo);
+V8_WEAK_STUB(_ZN2v87Numeric9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v87Private3NewEPNS_7IsolateENS_5LocalINS_6StringEEE);
+V8_WEAK_STUB(_ZN2v87Private6ForApiEPNS_7IsolateENS_5LocalINS_6StringEEE);
+V8_WEAK_STUB(_ZN2v87Private9CheckCastEPNS_4DataE);
+V8_WEAK_STUB(_ZN2v87Promise12MarkAsSilentEv);
+V8_WEAK_STUB(_ZN2v87Promise13MarkAsHandledEv);
+V8_WEAK_STUB(_ZN2v87Promise4ThenENS_5LocalINS_7ContextEEENS1_INS_8FunctionEEE);
+V8_WEAK_STUB(_ZN2v87Promise4ThenENS_5LocalINS_7ContextEEENS1_INS_8FunctionEEES5_);
+V8_WEAK_STUB(_ZN2v87Promise5CatchENS_5LocalINS_7ContextEEENS1_INS_8FunctionEEE);
+V8_WEAK_STUB(_ZN2v87Promise5StateEv);
+V8_WEAK_STUB(_ZN2v87Promise6ResultEv);
+V8_WEAK_STUB(_ZN2v87Promise8Resolver10GetPromiseEv);
+V8_WEAK_STUB(_ZN2v87Promise8Resolver3NewENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v87Promise8Resolver6RejectENS_5LocalINS_7ContextEEENS2_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v87Promise8Resolver7ResolveENS_5LocalINS_7ContextEEENS2_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v87Promise8Resolver9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v87Promise9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v87metrics13LongTaskStats3GetEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v87metrics8Recorder10GetContextEPNS_7IsolateENS1_9ContextIdE);
+V8_WEAK_STUB(_ZN2v87metrics8Recorder12GetContextIdENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v87sampler11AtomicGuardC1EPSt6atomicIbEb);
+V8_WEAK_STUB(_ZN2v87sampler11AtomicGuardC2EPSt6atomicIbEb);
+V8_WEAK_STUB(_ZN2v87sampler11AtomicGuardD1Ev);
+V8_WEAK_STUB(_ZN2v87sampler11AtomicGuardD2Ev);
+V8_WEAK_STUB(_ZN2v87sampler13SignalHandler17FillRegisterStateEPvPNS_13RegisterStateE);
+V8_WEAK_STUB(_ZN2v87sampler13SignalHandler20HandleProfilerSignalEiP9siginfo_tPv);
+V8_WEAK_STUB(_ZN2v87sampler14SamplerManager10AddSamplerEPNS0_7SamplerE);
+V8_WEAK_STUB(_ZN2v87sampler14SamplerManager13RemoveSamplerEPNS0_7SamplerE);
+V8_WEAK_STUB(_ZN2v87sampler14SamplerManager8DoSampleERKNS_13RegisterStateE);
+V8_WEAK_STUB(_ZN2v87sampler14SamplerManager8instanceEv);
+V8_WEAK_STUB(_ZN2v87sampler7Sampler4StopEv);
+V8_WEAK_STUB(_ZN2v87sampler7Sampler5StartEv);
+V8_WEAK_STUB(_ZN2v87sampler7Sampler8DoSampleEv);
+V8_WEAK_STUB(_ZN2v87sampler7SamplerC1EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v87sampler7SamplerC2EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v87sampler7SamplerD0Ev);
+V8_WEAK_STUB(_ZN2v87sampler7SamplerD1Ev);
+V8_WEAK_STUB(_ZN2v87sampler7SamplerD2Ev);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue10BeginArrayEPKc);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue10BeginArrayEv);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue10SetBooleanEPKcb);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue10SetIntegerEPKci);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue10WriteCommaEv);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue12AppendDoubleEd);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue12AppendStringEPKc);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue13AppendBooleanEb);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue13AppendIntegerEi);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue13EndDictionaryEv);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue15BeginDictionaryEPKc);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue15BeginDictionaryEv);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue6CreateEv);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue8EndArrayEv);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue8SetValueEPKcPS1_);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue9SetDoubleEPKcd);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue9SetStringEPKcS3_);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValue9WriteNameEPKc);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValueC1Ev);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValueC2Ev);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValueD0Ev);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValueD1Ev);
+V8_WEAK_STUB(_ZN2v87tracing11TracedValueD2Ev);
+V8_WEAK_STUB(_ZN2v87tracing23TracingCategoryObserver14OnTraceEnabledEv);
+V8_WEAK_STUB(_ZN2v87tracing23TracingCategoryObserver15OnTraceDisabledEv);
+V8_WEAK_STUB(_ZN2v87tracing23TracingCategoryObserver5SetUpEv);
+V8_WEAK_STUB(_ZN2v87tracing23TracingCategoryObserver8TearDownEv);
+V8_WEAK_STUB(_ZN2v88DataView3NewENS_5LocalINS_11ArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v88DataView3NewENS_5LocalINS_17SharedArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v88DataView9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v88External3NewEPNS_7IsolateEPv);
+V8_WEAK_STUB(_ZN2v88External9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v88Function21FunctionProtoToStringENS_5LocalINS_7ContextEEE);
+V8_WEAK_STUB(_ZN2v88Function3NewENS_5LocalINS_7ContextEEEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS1_IS5_EEiNS_19ConstructorBehaviorENS_14SideEffectTypeE);
+V8_WEAK_STUB(_ZN2v88Function4CallENS_5LocalINS_7ContextEEENS1_INS_5ValueEEEiPS5_);
+V8_WEAK_STUB(_ZN2v88Function7SetNameENS_5LocalINS_6StringEEE);
+V8_WEAK_STUB(_ZN2v88Function9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v88Platform21SystemClockTimeMillisEv);
+V8_WEAK_STUB(_ZN2v88Template10SetPrivateENS_5LocalINS_7PrivateEEENS1_INS_4DataEEENS_17PropertyAttributeE);
+V8_WEAK_STUB(_ZN2v88Template19SetAccessorPropertyENS_5LocalINS_4NameEEENS1_INS_16FunctionTemplateEEES5_NS_17PropertyAttributeE);
+V8_WEAK_STUB(_ZN2v88Template19SetLazyDataPropertyENS_5LocalINS_4NameEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEENS1_IS5_EENS_17PropertyAttributeENS_14SideEffectTypeESD_);
+V8_WEAK_STUB(_ZN2v88Template21SetNativeDataPropertyENS_5LocalINS_4NameEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS3_NS1_IS5_EERKNS4_IvEEESB_NS_17PropertyAttributeENS_13AccessControlENS_14SideEffectTypeESJ_);
+V8_WEAK_STUB(_ZN2v88Template21SetNativeDataPropertyENS_5LocalINS_4NameEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS3_NS1_IS5_EERKNS4_IvEEESB_NS_17PropertyAttributeENS_14SideEffectTypeESI_);
+V8_WEAK_STUB(_ZN2v88Template21SetNativeDataPropertyENS_5LocalINS_6StringEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS3_NS1_IS5_EERKNS4_IvEEESB_NS_17PropertyAttributeENS_13AccessControlENS_14SideEffectTypeESJ_);
+V8_WEAK_STUB(_ZN2v88Template21SetNativeDataPropertyENS_5LocalINS_6StringEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS3_NS1_IS5_EERKNS4_IvEEESB_NS_17PropertyAttributeENS_14SideEffectTypeESI_);
+V8_WEAK_STUB(_ZN2v88Template24SetIntrinsicDataPropertyENS_5LocalINS_4NameEEENS_9IntrinsicENS_17PropertyAttributeE);
+V8_WEAK_STUB(_ZN2v88Template3SetENS_5LocalINS_4NameEEENS1_INS_4DataEEENS_17PropertyAttributeE);
+V8_WEAK_STUB(_ZN2v88TryCatch10SetVerboseEb);
+V8_WEAK_STUB(_ZN2v88TryCatch10StackTraceENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v88TryCatch13ResetInternalEv);
+V8_WEAK_STUB(_ZN2v88TryCatch17SetCaptureMessageEb);
+V8_WEAK_STUB(_ZN2v88TryCatch5ResetEv);
+V8_WEAK_STUB(_ZN2v88TryCatch7ReThrowEv);
+V8_WEAK_STUB(_ZN2v88TryCatchC1EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v88TryCatchC2EPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v88TryCatchD1Ev);
+V8_WEAK_STUB(_ZN2v88TryCatchD2Ev);
+V8_WEAK_STUB(_ZN2v88TryCatchdaEPvm);
+V8_WEAK_STUB(_ZN2v88TryCatchdlEPvm);
+V8_WEAK_STUB(_ZN2v88TryCatchnaEm);
+V8_WEAK_STUB(_ZN2v88TryCatchnwEm);
+V8_WEAK_STUB(_ZN2v88Unlocker10InitializeEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v88UnlockerD1Ev);
+V8_WEAK_STUB(_ZN2v88UnlockerD2Ev);
+V8_WEAK_STUB(_ZN2v88Unwinder17TryUnwindV8FramesERKNS_12JSEntryStubsEmPKNS_11MemoryRangeEPNS_13RegisterStateEPKv);
+V8_WEAK_STUB(_ZN2v88Unwinder8PCIsInV8EmPKNS_11MemoryRangeEPv);
+V8_WEAK_STUB(_ZN2v88platform12RunIdleTasksEPNS_8PlatformEPNS_7IsolateEd);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobState10DidRunTaskEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobState11JobDelegate9GetTaskIdEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobState11JobDelegateD1Ev);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobState11JobDelegateD2Ev);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobState13AcquireTaskIdEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobState13CancelAndWaitEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobState13ReleaseTaskIdEh);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobState14UpdatePriorityENS_12TaskPriorityE);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobState15CanRunFirstTaskEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobState15CancelAndDetachEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobState18CallOnWorkerThreadENS_12TaskPriorityESt10unique_ptrINS_4TaskESt14default_deleteIS4_EE);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobState25NotifyConcurrencyIncreaseEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobState4JoinEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobState8IsActiveEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobStateC1EPNS_8PlatformESt10unique_ptrINS_7JobTaskESt14default_deleteIS5_EENS_12TaskPriorityEm);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobStateC2EPNS_8PlatformESt10unique_ptrINS_7JobTaskESt14default_deleteIS5_EENS_12TaskPriorityEm);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobStateD0Ev);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobStateD1Ev);
+V8_WEAK_STUB(_ZN2v88platform15DefaultJobStateD2Ev);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform12RunIdleTasksEPNS_7IsolateEd);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform13CreateJobImplENS_12TaskPriorityESt10unique_ptrINS_7JobTaskESt14default_deleteIS4_EERKNS_14SourceLocationE);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform15PumpMessageLoopEPNS_7IsolateENS0_19MessageLoopBehaviorE);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform16GetPageAllocatorEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform16IdleTasksEnabledEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform20GetStackTracePrinterEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform20GetTracingControllerEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform20SetTracingControllerESt10unique_ptrINS_17TracingControllerESt14default_deleteIS3_EE);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform21NotifyIsolateShutdownEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform21NumberOfWorkerThreadsEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform22CurrentClockTimeMillisEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform23GetForegroundTaskRunnerEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform25SetTimeFunctionForTestingEPFdvE);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform26GetThreadIsolatedAllocatorEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform26PostTaskOnWorkerThreadImplENS_12TaskPriorityESt10unique_ptrINS_4TaskESt14default_deleteIS4_EERKNS_14SourceLocationE);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform27MonotonicallyIncreasingTimeEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform33PostDelayedTaskOnWorkerThreadImplENS_12TaskPriorityESt10unique_ptrINS_4TaskESt14default_deleteIS4_EEdRKNS_14SourceLocationE);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatform37EnsureBackgroundTaskRunnerInitializedEv);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatformC1EiNS0_15IdleTaskSupportESt10unique_ptrINS_17TracingControllerESt14default_deleteIS4_EENS0_12PriorityModeE);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatformC2EiNS0_15IdleTaskSupportESt10unique_ptrINS_17TracingControllerESt14default_deleteIS4_EENS0_12PriorityModeE);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatformD0Ev);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatformD1Ev);
+V8_WEAK_STUB(_ZN2v88platform15DefaultPlatformD2Ev);
+V8_WEAK_STUB(_ZN2v88platform15PumpMessageLoopEPNS_8PlatformEPNS_7IsolateENS0_19MessageLoopBehaviorE);
+V8_WEAK_STUB(_ZN2v88platform16DefaultJobHandle14UpdatePriorityENS_12TaskPriorityE);
+V8_WEAK_STUB(_ZN2v88platform16DefaultJobHandle15CancelAndDetachEv);
+V8_WEAK_STUB(_ZN2v88platform16DefaultJobHandle4JoinEv);
+V8_WEAK_STUB(_ZN2v88platform16DefaultJobHandle6CancelEv);
+V8_WEAK_STUB(_ZN2v88platform16DefaultJobHandle8IsActiveEv);
+V8_WEAK_STUB(_ZN2v88platform16DefaultJobHandleC1ESt10shared_ptrINS0_15DefaultJobStateEE);
+V8_WEAK_STUB(_ZN2v88platform16DefaultJobHandleC2ESt10shared_ptrINS0_15DefaultJobStateEE);
+V8_WEAK_STUB(_ZN2v88platform16DefaultJobHandleD0Ev);
+V8_WEAK_STUB(_ZN2v88platform16DefaultJobHandleD1Ev);
+V8_WEAK_STUB(_ZN2v88platform16DefaultJobHandleD2Ev);
+V8_WEAK_STUB(_ZN2v88platform16DelayedTaskQueue10TryGetNextEv);
+V8_WEAK_STUB(_ZN2v88platform16DelayedTaskQueue13AppendDelayedESt10unique_ptrINS_4TaskESt14default_deleteIS3_EEd);
+V8_WEAK_STUB(_ZN2v88platform16DelayedTaskQueue23PopTaskFromDelayedQueueEd);
+V8_WEAK_STUB(_ZN2v88platform16DelayedTaskQueue27MonotonicallyIncreasingTimeEv);
+V8_WEAK_STUB(_ZN2v88platform16DelayedTaskQueue6AppendESt10unique_ptrINS_4TaskESt14default_deleteIS3_EE);
+V8_WEAK_STUB(_ZN2v88platform16DelayedTaskQueue9TerminateEv);
+V8_WEAK_STUB(_ZN2v88platform16DelayedTaskQueueC1EPFdvE);
+V8_WEAK_STUB(_ZN2v88platform16DelayedTaskQueueC2EPFdvE);
+V8_WEAK_STUB(_ZN2v88platform16DelayedTaskQueueD1Ev);
+V8_WEAK_STUB(_ZN2v88platform16DelayedTaskQueueD2Ev);
+V8_WEAK_STUB(_ZN2v88platform18NewDefaultPlatformEiNS0_15IdleTaskSupportENS0_21InProcessStackDumpingESt10unique_ptrINS_17TracingControllerESt14default_deleteIS4_EENS0_12PriorityModeE);
+V8_WEAK_STUB(_ZN2v88platform19NewDefaultJobHandleEPNS_8PlatformENS_12TaskPriorityESt10unique_ptrINS_7JobTaskESt14default_deleteIS5_EEm);
+V8_WEAK_STUB(_ZN2v88platform21NotifyIsolateShutdownEPNS_8PlatformEPNS_7IsolateE);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner12PostTaskImplESt10unique_ptrINS_4TaskESt14default_deleteIS3_EERKNS_14SourceLocationE);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner12RunTaskScopeC1ESt10shared_ptrIS1_E);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner12RunTaskScopeC2ESt10shared_ptrIS1_E);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner12RunTaskScopeD1Ev);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner12RunTaskScopeD2Ev);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner14PostTaskLockedESt10unique_ptrINS_4TaskESt14default_deleteIS3_EENS1_11NestabilityERKNS_4base9LockGuardINS8_5MutexELNS8_12NullBehaviorE0EEE);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner16IdleTasksEnabledEv);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner16PopTaskFromQueueENS0_19MessageLoopBehaviorE);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner16PostIdleTaskImplESt10unique_ptrINS_8IdleTaskESt14default_deleteIS3_EERKNS_14SourceLocationE);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner17WaitForTaskLockedERKNS_4base9LockGuardINS2_5MutexELNS2_12NullBehaviorE0EEE);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner19PostDelayedTaskImplESt10unique_ptrINS_4TaskESt14default_deleteIS3_EEdRKNS_14SourceLocationE);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner20PopTaskFromIdleQueueEv);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner21PostDelayedTaskLockedESt10unique_ptrINS_4TaskESt14default_deleteIS3_EEdNS1_11NestabilityERKNS_4base9LockGuardINS8_5MutexELNS8_12NullBehaviorE0EEE);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner23MoveExpiredDelayedTasksERKNS_4base9LockGuardINS2_5MutexELNS2_12NullBehaviorE0EEE);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner23PostNonNestableTaskImplESt10unique_ptrINS_4TaskESt14default_deleteIS3_EERKNS_14SourceLocationE);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner27MonotonicallyIncreasingTimeEv);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner29PopTaskFromDelayedQueueLockedERKNS_4base9LockGuardINS2_5MutexELNS2_12NullBehaviorE0EEEPNS1_11NestabilityE);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner30PostNonNestableDelayedTaskImplESt10unique_ptrINS_4TaskESt14default_deleteIS3_EEdRKNS_14SourceLocationE);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunner9TerminateEv);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunnerC1ENS0_15IdleTaskSupportEPFdvE);
+V8_WEAK_STUB(_ZN2v88platform27DefaultForegroundTaskRunnerC2ENS0_15IdleTaskSupportEPFdvE);
+V8_WEAK_STUB(_ZN2v88platform30DefaultThreadIsolatedAllocator4FreeEPv);
+V8_WEAK_STUB(_ZN2v88platform30DefaultThreadIsolatedAllocator8AllocateEm);
+V8_WEAK_STUB(_ZN2v88platform30DefaultThreadIsolatedAllocatorC1Ev);
+V8_WEAK_STUB(_ZN2v88platform30DefaultThreadIsolatedAllocatorC2Ev);
+V8_WEAK_STUB(_ZN2v88platform30DefaultThreadIsolatedAllocatorD0Ev);
+V8_WEAK_STUB(_ZN2v88platform30DefaultThreadIsolatedAllocatorD1Ev);
+V8_WEAK_STUB(_ZN2v88platform30DefaultThreadIsolatedAllocatorD2Ev);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunner12PostTaskImplESt10unique_ptrINS_4TaskESt14default_deleteIS3_EERKNS_14SourceLocationE);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunner12WorkerThread3RunEv);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunner12WorkerThread6NotifyEv);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunner12WorkerThreadC1EPS1_NS_4base6Thread8PriorityE);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunner12WorkerThreadC2EPS1_NS_4base6Thread8PriorityE);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunner12WorkerThreadD0Ev);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunner12WorkerThreadD1Ev);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunner12WorkerThreadD2Ev);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunner16IdleTasksEnabledEv);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunner16PostIdleTaskImplESt10unique_ptrINS_8IdleTaskESt14default_deleteIS3_EERKNS_14SourceLocationE);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunner19PostDelayedTaskImplESt10unique_ptrINS_4TaskESt14default_deleteIS3_EEdRKNS_14SourceLocationE);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunner27MonotonicallyIncreasingTimeEv);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunner9TerminateEv);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunnerC1EjPFdvENS_4base6Thread8PriorityE);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunnerC2EjPFdvENS_4base6Thread8PriorityE);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunnerD0Ev);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunnerD1Ev);
+V8_WEAK_STUB(_ZN2v88platform30DefaultWorkerThreadsTaskRunnerD2Ev);
+V8_WEAK_STUB(_ZN2v88platform32NewSingleThreadedDefaultPlatformENS0_15IdleTaskSupportENS0_21InProcessStackDumpingESt10unique_ptrINS_17TracingControllerESt14default_deleteIS4_EE);
+V8_WEAK_STUB(_ZN2v88platform7tracing11TraceBuffer27CreateTraceBufferRingBufferEmPNS1_11TraceWriterE);
+V8_WEAK_STUB(_ZN2v88platform7tracing11TraceConfig19AddIncludedCategoryEPKc);
+V8_WEAK_STUB(_ZN2v88platform7tracing11TraceConfig24CreateDefaultTraceConfigEv);
+V8_WEAK_STUB(_ZN2v88platform7tracing11TraceObject10InitializeEcPKhPKcS6_mmiPS6_S4_PKmPSt10unique_ptrINS_24ConvertableToTraceFormatESt14default_deleteISB_EEjll);
+V8_WEAK_STUB(_ZN2v88platform7tracing11TraceObject14UpdateDurationEll);
+V8_WEAK_STUB(_ZN2v88platform7tracing11TraceObject20InitializeForTestingEcPKhPKcS6_mmiPS6_S4_PKmPSt10unique_ptrINS_24ConvertableToTraceFormatESt14default_deleteISB_EEjiillmm);
+V8_WEAK_STUB(_ZN2v88platform7tracing11TraceObjectD1Ev);
+V8_WEAK_STUB(_ZN2v88platform7tracing11TraceObjectD2Ev);
+V8_WEAK_STUB(_ZN2v88platform7tracing11TraceWriter21CreateJSONTraceWriterERSo);
+V8_WEAK_STUB(_ZN2v88platform7tracing11TraceWriter21CreateJSONTraceWriterERSoRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE);
+V8_WEAK_STUB(_ZN2v88platform7tracing15JSONTraceWriter14AppendArgValueEPNS_24ConvertableToTraceFormatE);
+V8_WEAK_STUB(_ZN2v88platform7tracing15JSONTraceWriter14AppendArgValueEhNS1_11TraceObject8ArgValueE);
+V8_WEAK_STUB(_ZN2v88platform7tracing15JSONTraceWriter16AppendTraceEventEPNS1_11TraceObjectE);
+V8_WEAK_STUB(_ZN2v88platform7tracing15JSONTraceWriter5FlushEv);
+V8_WEAK_STUB(_ZN2v88platform7tracing15JSONTraceWriterC1ERSo);
+V8_WEAK_STUB(_ZN2v88platform7tracing15JSONTraceWriterC1ERSoRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE);
+V8_WEAK_STUB(_ZN2v88platform7tracing15JSONTraceWriterC2ERSo);
+V8_WEAK_STUB(_ZN2v88platform7tracing15JSONTraceWriterC2ERSoRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE);
+V8_WEAK_STUB(_ZN2v88platform7tracing15JSONTraceWriterD0Ev);
+V8_WEAK_STUB(_ZN2v88platform7tracing15JSONTraceWriterD1Ev);
+V8_WEAK_STUB(_ZN2v88platform7tracing15JSONTraceWriterD2Ev);
+V8_WEAK_STUB(_ZN2v88platform7tracing16TraceBufferChunk13AddTraceEventEPm);
+V8_WEAK_STUB(_ZN2v88platform7tracing16TraceBufferChunk5ResetEj);
+V8_WEAK_STUB(_ZN2v88platform7tracing16TraceBufferChunkC1Ej);
+V8_WEAK_STUB(_ZN2v88platform7tracing16TraceBufferChunkC2Ej);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingController10InitializeEPNS1_11TraceBufferE);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingController11StopTracingEv);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingController12StartTracingEPNS1_11TraceConfigE);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingController13AddTraceEventEcPKhPKcS6_mmiPS6_S4_PKmPSt10unique_ptrINS_24ConvertableToTraceFormatESt14default_deleteISB_EEj);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingController20GetCategoryGroupNameEPKh);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingController21AddTraceStateObserverEPNS_17TracingController18TraceStateObserverE);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingController23GetCategoryGroupEnabledEPKc);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingController24RemoveTraceStateObserverEPNS_17TracingController18TraceStateObserverE);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingController24UpdateTraceEventDurationEPKhPKcm);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingController26AddTraceEventWithTimestampEcPKhPKcS6_mmiPS6_S4_PKmPSt10unique_ptrINS_24ConvertableToTraceFormatESt14default_deleteISB_EEjl);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingController28CurrentTimestampMicrosecondsEv);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingController30UpdateCategoryGroupEnabledFlagEm);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingController31CurrentCpuTimestampMicrosecondsEv);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingController31UpdateCategoryGroupEnabledFlagsEv);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingControllerC1Ev);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingControllerC2Ev);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingControllerD0Ev);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingControllerD1Ev);
+V8_WEAK_STUB(_ZN2v88platform7tracing17TracingControllerD2Ev);
+V8_WEAK_STUB(_ZN2v88platform7tracing21TraceBufferRingBuffer13AddTraceEventEPm);
+V8_WEAK_STUB(_ZN2v88platform7tracing21TraceBufferRingBuffer16GetEventByHandleEm);
+V8_WEAK_STUB(_ZN2v88platform7tracing21TraceBufferRingBuffer5FlushEv);
+V8_WEAK_STUB(_ZN2v88platform7tracing21TraceBufferRingBufferC1EmPNS1_11TraceWriterE);
+V8_WEAK_STUB(_ZN2v88platform7tracing21TraceBufferRingBufferC2EmPNS1_11TraceWriterE);
+V8_WEAK_STUB(_ZN2v89CFunctionC1EPKvPKNS_13CFunctionInfoE);
+V8_WEAK_STUB(_ZN2v89CFunctionC2EPKvPKNS_13CFunctionInfoE);
+V8_WEAK_STUB(_ZN2v89CodeEvent10GetCommentEv);
+V8_WEAK_STUB(_ZN2v89CodeEvent11GetCodeSizeEv);
+V8_WEAK_STUB(_ZN2v89CodeEvent11GetCodeTypeEv);
+V8_WEAK_STUB(_ZN2v89CodeEvent13GetScriptLineEv);
+V8_WEAK_STUB(_ZN2v89CodeEvent13GetScriptNameEv);
+V8_WEAK_STUB(_ZN2v89CodeEvent15GetFunctionNameEv);
+V8_WEAK_STUB(_ZN2v89CodeEvent15GetScriptColumnEv);
+V8_WEAK_STUB(_ZN2v89CodeEvent19GetCodeStartAddressEv);
+V8_WEAK_STUB(_ZN2v89CodeEvent20GetCodeEventTypeNameENS_13CodeEventTypeE);
+V8_WEAK_STUB(_ZN2v89CodeEvent27GetPreviousCodeStartAddressEv);
+V8_WEAK_STUB(_ZN2v89Exception10RangeErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v89Exception11SyntaxErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v89Exception13CreateMessageEPNS_7IsolateENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v89Exception13GetStackTraceENS_5LocalINS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v89Exception13WasmLinkErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v89Exception14ReferenceErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v89Exception16WasmCompileErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v89Exception16WasmRuntimeErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v89Exception5ErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v89Exception9TypeErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE);
+V8_WEAK_STUB(_ZN2v89ExtensionC1EPKcS2_iPS2_i);
+V8_WEAK_STUB(_ZN2v89ExtensionC2EPKcS2_iPS2_i);
+V8_WEAK_STUB(_ZN2v89Int8Array3NewENS_5LocalINS_11ArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v89Int8Array3NewENS_5LocalINS_17SharedArrayBufferEEEmm);
+V8_WEAK_STUB(_ZN2v89Int8Array9CheckCastEPNS_5ValueE);
+V8_WEAK_STUB(_ZN2v89Signature3NewEPNS_7IsolateENS_5LocalINS_16FunctionTemplateEEE);
+V8_WEAK_STUB(_ZN2v89Signature9CheckCastEPNS_4DataE);
 
-__attribute__((weak)) void* _ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_(void) { V8_UNIMPLEMENTED(); }
+V8_WEAK_STUB(_ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_);
+V8_WEAK_STUB(_ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_);
 
-__attribute__((weak)) void* _ZN2v88internal35IsolateFromNeverReadOnlySpaceObjectEm(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* node_module_register(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* node_api_create_external_string_latin1(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* node_api_create_external_string_utf16(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* node_api_create_syntax_error(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* node_api_symbol_for(void) { V8_UNIMPLEMENTED(); }
-__attribute__((weak)) void* node_api_throw_syntax_error(void) { V8_UNIMPLEMENTED(); }
+V8_WEAK_STUB(_ZN2v88internal35IsolateFromNeverReadOnlySpaceObjectEm);
+V8_WEAK_STUB(node_module_register);
+V8_WEAK_STUB(node_api_create_external_string_latin1);
+V8_WEAK_STUB(node_api_create_external_string_utf16);
+V8_WEAK_STUB(node_api_create_syntax_error);
+V8_WEAK_STUB(node_api_symbol_for);
+V8_WEAK_STUB(node_api_throw_syntax_error);
 }
 #endif

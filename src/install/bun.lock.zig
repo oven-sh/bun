@@ -31,6 +31,8 @@ const invalid_package_id = Install.invalid_package_id;
 const Npm = Install.Npm;
 const ExtractTarball = @import("./extract_tarball.zig");
 const Integrity = @import("./integrity.zig").Integrity;
+const Meta = BinaryLockfile.Package.Meta;
+const Negatable = Npm.Negatable;
 
 /// A property key in the `packages` field of the lockfile
 pub const PkgPath = struct {
@@ -175,7 +177,7 @@ pub const PkgPath = struct {
             if (maybe_at.? == 0) {
                 // scoped package, find next '/' and '@' if it exists
                 maybe_at = strings.indexOfChar(remain[1..], '@');
-                slash = 1 + (strings.indexOfChar(remain[slash + 1 ..], '/') orelse {
+                slash += 1 + (strings.indexOfChar(remain[slash + 1 ..], '/') orelse {
                     if (maybe_at != null) return error.InvalidPackageKey;
                     this.i = @intCast(this.input.len);
                     return remain;
@@ -583,6 +585,10 @@ pub const Stringifier = struct {
 
                             try writePackageDeps(writer, pkg_deps, buf);
 
+                            try writer.writeAll(", ");
+
+                            try writeCpuAndOsAndLibc(writer, &pkg_meta);
+
                             try writer.print(", \"{}\"]", .{pkg_meta.integrity});
                         },
                         .local_tarball => {
@@ -592,6 +598,10 @@ pub const Stringifier = struct {
                             });
 
                             try writePackageDeps(writer, pkg_deps, buf);
+
+                            try writer.writeAll(", ");
+
+                            try writeCpuAndOsAndLibc(writer, &pkg_meta);
 
                             try writer.print(", \"{}\"]", .{pkg_meta.integrity});
                         },
@@ -603,6 +613,10 @@ pub const Stringifier = struct {
 
                             try writePackageDeps(writer, pkg_deps, buf);
 
+                            try writer.writeAll(", ");
+
+                            try writeCpuAndOsAndLibc(writer, &pkg_meta);
+
                             try writer.print(", \"{}\"]", .{pkg_meta.integrity});
                         },
                         .symlink => {
@@ -612,6 +626,10 @@ pub const Stringifier = struct {
                             });
 
                             try writePackageDeps(writer, pkg_deps, buf);
+
+                            try writer.writeAll(", ");
+
+                            try writeCpuAndOsAndLibc(writer, &pkg_meta);
 
                             try writer.print(", \"{}\"]", .{pkg_meta.integrity});
                         },
@@ -630,6 +648,10 @@ pub const Stringifier = struct {
                             });
 
                             try writePackageDeps(writer, pkg_deps, buf);
+
+                            try writer.writeAll(", ");
+
+                            try writeCpuAndOsAndLibc(writer, &pkg_meta);
 
                             // TODO(dylan-conway): delete placeholder
                             try writer.print(", \"{s}\"]", .{
@@ -658,6 +680,10 @@ pub const Stringifier = struct {
 
                             try writePackageDeps(writer, pkg_deps, buf);
 
+                            try writer.writeAll(", ");
+
+                            try writeCpuAndOsAndLibc(writer, &pkg_meta);
+
                             try writer.print(", \"{}\"]", .{pkg_meta.integrity});
                         },
                         else => unreachable,
@@ -676,6 +702,41 @@ pub const Stringifier = struct {
 
         try buffered_writer.flush();
         return writer_buf.list.items;
+    }
+
+    /// writes a one line object with os, cpu, and libc fields
+    fn writeCpuAndOsAndLibc(
+        writer: anytype,
+        meta: *const Meta,
+    ) OOM!void {
+        try writer.writeByte('{');
+
+        if (meta.os != .all) {
+            try writer.writeAll(
+                \\"os": 
+            );
+            try Negatable(Npm.OperatingSystem).toJson(meta.os, writer);
+            try writer.writeAll(", ");
+        }
+
+        if (meta.arch != .all) {
+            try writer.writeAll(
+                \\"cpu": 
+            );
+            try Negatable(Npm.Architecture).toJson(meta.arch, writer);
+            try writer.writeAll(", ");
+        }
+
+        // TODO(dylan-conway)
+        // if (meta.libc != .all) {
+        //     try writer.writeAll(
+        //         \\"libc": [
+        //     );
+        //     try Negatable(Npm.Libc).toJson(meta.libc, writer);
+        //     try writer.writeAll("], ");
+        // }
+
+        try writer.writeByte('}');
     }
 
     /// Writes a single line object.
@@ -1231,6 +1292,30 @@ pub fn parseIntoBinaryLockfile(
 
                     pkg.dependencies = .{ .off = off, .len = len };
                     pkg.resolutions = .{ .off = off, .len = len };
+                },
+                else => {},
+            }
+
+            // cpu, os, and libc
+            switch (res.tag) {
+                .folder, .local_tarball, .remote_tarball, .symlink, .npm, .git, .github => {
+                    const os_cpu_libc_obj = pkg_info.at(i);
+                    i += 1;
+                    if (!os_cpu_libc_obj.isObject()) {
+                        try log.addError(source, os_cpu_libc_obj.loc, "Expected an object");
+                        return error.InvalidPackageInfo;
+                    }
+
+                    if (os_cpu_libc_obj.get("os")) |os| {
+                        pkg.meta.os = try Negatable(Npm.OperatingSystem).fromJson(allocator, os);
+                    }
+                    if (os_cpu_libc_obj.get("cpu")) |arch| {
+                        pkg.meta.arch = try Negatable(Npm.Architecture).fromJson(allocator, arch);
+                    }
+                    // TODO(dylan-conway)
+                    // if (os_cpu_libc_obj.get("libc")) |libc| {
+                    //     pkg.meta.libc = Negatable(Npm.Libc).fromJson(allocator, libc);
+                    // }
                 },
                 else => {},
             }

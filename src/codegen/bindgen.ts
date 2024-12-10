@@ -33,7 +33,7 @@ import {
   Func,
 } from "./bindgen-lib-internal";
 import assert from "node:assert";
-import { argParse, writeIfNotChanged } from "./helpers";
+import { argParse, readdirRecursiveWithExclusionsAndExtensionsSync, writeIfNotChanged } from "./helpers";
 import { type IntegerTypeKind } from "bindgen";
 
 // arg parsing
@@ -812,11 +812,8 @@ function emitComplexZigDecoder(w: CodeWriter, prefix: string, type: TypeImpl, ch
 // BEGIN MAIN CODE GENERATION
 
 // Search for all .bind.ts files
-const unsortedFiles = new Bun.Glob("**/*.bind.ts").scanSync({
-  onlyFiles: true,
-  absolute: true,
-  cwd: src,
-});
+const unsortedFiles = readdirRecursiveWithExclusionsAndExtensionsSync(src, ["node_modules", ".git"], [".bind.ts"]);
+
 // Sort for deterministic output
 for (const fileName of [...unsortedFiles].sort()) {
   const zigFile = path.relative(src, fileName.replace(/\.bind\.ts$/, ".zig"));

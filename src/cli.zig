@@ -1481,7 +1481,7 @@ pub const Command = struct {
             bake_debug_dump_server: bool = false,
             bake_debug_disable_minify: bool = false,
 
-            env_behavior: Api.DotEnvBehavior = if (!FeatureFlags.breaking_changes_1_2) .load_all else .disable,
+            env_behavior: Api.DotEnvBehavior = .disable,
             env_prefix: []const u8 = "",
         };
 

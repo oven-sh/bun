@@ -1568,7 +1568,11 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
         {
             char cwd[PATH_MAX] = { 0 };
-            getcwd(cwd, PATH_MAX);
+
+            if (getcwd(cwd, PATH_MAX) == nullptr) {
+                cwd[0] = '.';
+                cwd[1] = '\0';
+            }
 
             header->putDirect(vm, JSC::Identifier::fromString(vm, "cwd"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(cwd), strlen(cwd) })), 0);
         }
@@ -1584,7 +1588,9 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         {
             // uname
             struct utsname buf;
-            uname(&buf);
+            if (uname(&buf) != 0) {
+                memset(&buf, 0, sizeof(buf));
+            }
 
             header->putDirect(vm, JSC::Identifier::fromString(vm, "osName"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(buf.sysname), strlen(buf.sysname) })), 0);
             header->putDirect(vm, JSC::Identifier::fromString(vm, "osRelease"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(buf.release), strlen(buf.release) })), 0);
@@ -1596,7 +1602,9 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         {
             // TODO: use HOSTNAME_MAX
             char host[1024] = { 0 };
-            gethostname(host, 1024);
+            if (gethostname(host, 1024) != 0) {
+                host[0] = '0';
+            }
 
             header->putDirect(vm, JSC::Identifier::fromString(vm, "host"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(host), strlen(host) })), 0);
         }

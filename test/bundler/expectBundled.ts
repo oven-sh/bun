@@ -210,6 +210,7 @@ export interface BundlerTestInput {
   // pass subprocess.env
   env?: Record<string, any>;
   nodePaths?: string[];
+  dotenv?: "inline" | "disable" | string;
 
   // assertion options
 
@@ -400,8 +401,10 @@ function expectBundled(
   dryRun = false,
   ignoreFilter = false,
 ): Promise<BundlerTestRef> | BundlerTestRef {
-  if (!new Error().stack!.includes('test/bundler/')) {
-    throw new Error(`All bundler tests must be placed in ./test/bundler/ so that regressions can be quickly detected locally via the 'bun test bundler' command`);
+  if (!new Error().stack!.includes("test/bundler/")) {
+    throw new Error(
+      `All bundler tests must be placed in ./test/bundler/ so that regressions can be quickly detected locally via the 'bun test bundler' command`,
+    );
   }
 
   var { expect, it, test } = testForFile(currentFile ?? callerSourceOrigin());
@@ -449,6 +452,7 @@ function expectBundled(
     experimentalCss,
     onAfterBundle,
     outdir,
+    dotenv,
     outfile,
     outputPaths,
     plugins,
@@ -548,6 +552,9 @@ function expectBundled(
   }
   if (ESBUILD && skipOnEsbuild) {
     return testRef(id, opts);
+  }
+  if (ESBUILD && dotenv) {
+    throw new Error("dotenv not implemented in esbuild");
   }
   if (dryRun) {
     return testRef(id, opts);
@@ -695,6 +702,7 @@ function expectBundled(
               jsx.factory && ["--jsx-factory", jsx.factory],
               jsx.fragment && ["--jsx-fragment", jsx.fragment],
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
+              dotenv && ["--env", dotenv],
               // metafile && `--manifest=${metafile}`,
               sourceMap && `--sourcemap=${sourceMap}`,
               entryNaming && entryNaming !== "[dir]/[name].[ext]" && [`--entry-naming`, entryNaming],
@@ -1029,6 +1037,10 @@ function expectBundled(
           experimentalCss,
           drop,
         } as BuildConfig;
+
+        if (dotenv) {
+          buildConfig.env = dotenv as any;
+        }
 
         if (conditions?.length) {
           buildConfig.conditions = conditions;

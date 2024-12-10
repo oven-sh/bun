@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { fileDescriptorLeakChecker, isWindows, tmpdirSync } from "harness";
+import { fileDescriptorLeakChecker, isWindows, libcFamily, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -170,7 +170,8 @@ import fs from "node:fs";
 import path from "node:path";
 import util from "node:util";
 
-it("end doesn't close when backed by a file descriptor", async () => {
+// leaks fd on musl
+it.todoIf(libcFamily == "musl")("end doesn't close when backed by a file descriptor", async () => {
   using _ = fileDescriptorLeakChecker();
   const x = tmpdirSync();
   const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");

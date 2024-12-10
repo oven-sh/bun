@@ -313,6 +313,7 @@ it(
         const contents = readFileSync(root, "utf-8");
         rmSync(root);
         writeFileSync(root, contents);
+        Bun.sleepSync(100);
       }
 
       var str = "";
@@ -370,13 +371,10 @@ it(
       async function onReload() {
         const contents = readFileSync(root, "utf-8");
         rmSync(root + ".tmpfile", { force: true });
-        await 1;
         writeFileSync(root + ".tmpfile", contents);
-        await 1;
         rmSync(root);
-        await 1;
         renameSync(root + ".tmpfile", root);
-        await 1;
+        await Bun.sleep(100);
       }
 
       var str = "";
@@ -440,6 +438,7 @@ throw new Error('0');`,
 ${comment_spam}
 ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
       );
+      Bun.sleepSync(100);
     }
     let str = "";
     outer: for await (const chunk of runner.stderr) {
@@ -520,6 +519,7 @@ throw new Error('0');`,
 // etc etc
 ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
       );
+      Bun.sleepSync(100);
     }
     let str = "";
     outer: for await (const chunk of runner.stderr) {

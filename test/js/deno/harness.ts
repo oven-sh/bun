@@ -93,60 +93,69 @@ export function createDenoTest(path: string, defaultTimeout = 5000) {
   // Deno's assertions implemented using expect().
   // https://github.com/denoland/deno/blob/main/cli/tests/unit/test_util.ts
 
-  const assert = (condition: unknown, message?: string) => {
+  const handleError = (message: string | undefined, cb: () => void) => {
+    try {
+      cb();
+    } catch (error) {
+      console.error(message);
+      throw error;
+    }
+  };
+
+  const assert = (condition: unknown, message?: string) => handleError(message, () => {
     expect(condition).toBeTruthy();
-  };
+  });
 
-  const assertFalse = (condition: unknown, message?: string) => {
+  const assertFalse = (condition: unknown, message?: string) => handleError(message, () => {
     expect(condition).toBeFalsy();
-  };
+  });
 
-  const assertEquals = (actual: unknown, expected: unknown, message?: string) => {
+  const assertEquals = (actual: unknown, expected: unknown, message?: string) => handleError(message, () => {
     expect(actual).toEqual(expected);
-  };
+  });
 
-  const assertExists = (value: unknown, message?: string) => {
+  const assertExists = (value: unknown, message?: string) => handleError(message, () => {
     expect(value).toBeDefined();
-  };
+  });
 
-  const assertNotEquals = (actual: unknown, expected: unknown, message?: string) => {
+  const assertNotEquals = (actual: unknown, expected: unknown, message?: string) => handleError(message, () => {
     expect(actual).not.toEqual(expected);
-  };
+  });
 
-  const assertStrictEquals = (actual: unknown, expected: unknown, message?: string) => {
+  const assertStrictEquals = (actual: unknown, expected: unknown, message?: string) => handleError(message, () => {
     expect(actual).toStrictEqual(expected);
-  };
+  });
 
-  const assertNotStrictEquals = (actual: unknown, expected: unknown, message?: string) => {
+  const assertNotStrictEquals = (actual: unknown, expected: unknown, message?: string) => handleError(message, () => {
     expect(actual).not.toStrictEqual(expected);
-  };
+  });
 
-  const assertAlmostEquals = (actual: unknown, expected: number, epsilon: number = 1e-7, message?: string) => {
+  const assertAlmostEquals = (actual: unknown, expected: number, epsilon: number = 1e-7, message?: string) => handleError(message, () => {
     if (typeof actual === "number") {
       // TODO: toBeCloseTo()
       expect(Math.abs(actual - expected)).toBeLessThanOrEqual(epsilon);
     } else {
       expect(typeof actual).toBe("number");
     }
-  };
+  });
 
-  const assertInstanceOf = (actual: unknown, expected: unknown, message?: string) => {
+  const assertInstanceOf = (actual: unknown, expected: unknown, message?: string) => handleError(message, () => {
     expect(actual).toBeInstanceOf(expected);
-  };
+  });
 
-  const assertNotInstanceOf = (actual: unknown, expected: unknown, message?: string) => {
+  const assertNotInstanceOf = (actual: unknown, expected: unknown, message?: string) => handleError(message, () => {
     expect(actual).not.toBeInstanceOf(expected);
-  };
+  });
 
-  const assertStringIncludes = (actual: unknown, expected: string, message?: string) => {
+  const assertStringIncludes = (actual: unknown, expected: string, message?: string) => handleError(message, () => {
     if (typeof actual === "string") {
       expect(actual).toContain(expected);
     } else {
       expect(typeof actual).toBe("string");
     }
-  };
+  });
 
-  const assertArrayIncludes = (actual: unknown, expected: unknown[], message?: string) => {
+  const assertArrayIncludes = (actual: unknown, expected: unknown[], message?: string) => handleError(message, () => {
     if (Array.isArray(actual)) {
       for (const value of expected) {
         expect(actual).toContain(value);
@@ -154,25 +163,25 @@ export function createDenoTest(path: string, defaultTimeout = 5000) {
     } else {
       expect(Array.isArray(actual)).toBe(true);
     }
-  };
+  });
 
-  const assertMatch = (actual: unknown, expected: RegExp, message?: string) => {
+  const assertMatch = (actual: unknown, expected: RegExp, message?: string) => handleError(message, () => {
     if (typeof actual === "string") {
       expect(expected.test(actual)).toBe(true);
     } else {
       expect(typeof actual).toBe("string");
     }
-  };
+  });
 
-  const assertNotMatch = (actual: unknown, expected: RegExp, message?: string) => {
+  const assertNotMatch = (actual: unknown, expected: RegExp, message?: string) => handleError(message, () => {
     if (typeof actual === "string") {
       expect(expected.test(actual)).toBe(false);
     } else {
       expect(typeof actual).toBe("string");
     }
-  };
+  });
 
-  const assertObjectMatch = (actual: unknown, expected: Record<PropertyKey, unknown>, message?: string) => {
+  const assertObjectMatch = (actual: unknown, expected: Record<PropertyKey, unknown>, message?: string) => handleError(message, () => {
     if (typeof actual === "object") {
       // TODO: toMatchObject()
       if (actual !== null) {
@@ -190,9 +199,9 @@ export function createDenoTest(path: string, defaultTimeout = 5000) {
     } else {
       expect(typeof actual).toBe("object");
     }
-  };
+  });
 
-  const assertThrows = (fn: () => void, message?: string) => {
+  const assertThrows = (fn: () => void, message?: string) => handleError(message, () => {
     try {
       fn();
     } catch (error) {
@@ -200,9 +209,9 @@ export function createDenoTest(path: string, defaultTimeout = 5000) {
       return;
     }
     throw new Error("Expected an error to be thrown");
-  };
+  });
 
-  const assertRejects = async (fn: () => Promise<unknown>, message?: string) => {
+  const assertRejects = async (fn: () => Promise<unknown>, message?: string) => handleError(message, async () => {
     try {
       await fn();
     } catch (error) {
@@ -210,7 +219,7 @@ export function createDenoTest(path: string, defaultTimeout = 5000) {
       return;
     }
     throw new Error("Expected an error to be thrown");
-  };
+  });
 
   const equal = (a: unknown, b: unknown) => {
     return deepEquals(a, b);

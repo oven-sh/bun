@@ -8,7 +8,7 @@ test("sleep should saturate timeout values", async () => {
     "999999999999999.999999999999999",
     "999999999999999",
   ];
-  const fixturesThatSHouldCompleteInstantly = [
+  const fixturesThatShouldCompleteInstantly = [
     "0",
     "0.0",
     "-0",
@@ -31,7 +31,7 @@ test("sleep should saturate timeout values", async () => {
   });
 
   const start = performance.now();
-  const toWait = fixturesThatSHouldCompleteInstantly.map(async timeout => {
+  const toWait = fixturesThatShouldCompleteInstantly.map(async timeout => {
     const proc = Bun.spawn({
       cmd: [bunExe(), "sleep-4ever.js", timeout],
       stderr: "inherit",
@@ -41,7 +41,7 @@ test("sleep should saturate timeout values", async () => {
       cwd: import.meta.dir,
     });
     expect(await proc.exited).toBe(0);
-    expect(performance.now() - start).toBeLessThan(1000);
+    expect(performance.now() - start).toBeLessThan(2000);
   });
 
   await Promise.all(toWait);

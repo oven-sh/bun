@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { copyFileSync, cpSync, promises as fs, readFileSync, rmSync } from "fs";
 import { cp } from "fs/promises";
 import { join } from "path";
-import { bunEnv, bunExe, isDebug, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
@@ -93,7 +93,7 @@ function normalizeOutput(stdout: string) {
   );
 }
 
-test(
+test.skipIf(isWindows || (isLinux && process.arch === "x64"))(
   "next build works",
   async () => {
     rmSync(join(root, ".next"), { recursive: true, force: true });

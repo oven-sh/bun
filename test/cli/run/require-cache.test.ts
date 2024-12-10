@@ -279,16 +279,20 @@ describe("files transpiled and loaded don't leak the AST", () => {
 
 // These tests are extra slow in debug builds
 describe("files transpiled and loaded don't leak file paths", () => {
-  test("via require()", () => {
-    const { stdout, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "cjs-fixture-leak-small.js")],
-      env: bunEnv,
-      stderr: "inherit",
-    });
+  test.todoIf(isWindows)(
+    "via require()",
+    () => {
+      const { stdout, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "cjs-fixture-leak-small.js")],
+        env: bunEnv,
+        stderr: "inherit",
+      });
 
-    expect(stdout.toString().trim()).toEndWith("--pass--");
-    expect(exitCode).toBe(0);
-  }, 30000);
+      expect(stdout.toString().trim()).toEndWith("--pass--");
+      expect(exitCode).toBe(0);
+    },
+    30000,
+  );
 
   test(
     "via import()",

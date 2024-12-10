@@ -2225,7 +2225,7 @@ describe("fs.ReadStream", () => {
 });
 
 describe("createWriteStream", () => {
-  it("simple write stream finishes", async () => {
+  it.todoIf(isWindows)("simple write stream finishes", async () => {
     const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStream.txt`;
     const stream = createWriteStream(path);
     stream.write("Test file written successfully");

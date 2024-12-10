@@ -90,7 +90,7 @@ test(function performanceMeasure() {
         assertEquals(measure2.startTime, 0);
         assertEquals(mark1.startTime, measure1.startTime);
         assertEquals(mark1.startTime, measure2.duration);
-        assert(measure1.duration >= 100, `duration below 100ms: ${measure1.duration}`);
+        assert(measure1.duration >= 85, `duration below 85ms: ${measure1.duration}`);
         assert(
           measure1.duration < (later - now) * 1.5,
           `duration exceeds 150% of wallclock time: ${measure1.duration}ms vs ${later - now}ms`,

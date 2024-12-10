@@ -1359,7 +1359,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
 /**
  * @brief `Bun.deepMatch(a, b)`
- * 
+ *
  * @note
  * The sets recording already visited properties (`seenObjProperties` and
  * `seenSubsetProperties`) aren not needed when both `enableAsymmetricMatchers`
@@ -1375,7 +1375,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
  * @param Scope
  * @param replacePropsWithAsymmetricMatchers
  * @param isMatchingObjectContaining
- * 
+ *
  * @return true
  * @return false
  */

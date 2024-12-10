@@ -1,7 +1,7 @@
 #pragma once
 #include "wtf/Compiler.h"
 #include "wtf/text/OrdinalNumber.h"
-#include "JavaScriptCore/JSCJSValue.h" 
+#include "JavaScriptCore/JSCJSValue.h"
 #include <set>
 
 #ifndef HEADERS_HANDWRITTEN

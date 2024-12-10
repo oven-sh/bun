@@ -465,12 +465,17 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
           // Add and later remove a noop error handler to catch synchronous
           // errors.
           if (stream.listenerCount("error") === 0) stream.once("error", noop);
-
           stream.write(string, errorHandler);
         } catch (e) {
           // Console is a debugging utility, so it swallowing errors is not
           // desirable even in edge cases such as low stack space.
-          // if (isStackOverflowError(e)) throw e;
+          if (
+            e != null &&
+            typeof e === "object" &&
+            e.name === "RangeError" &&
+            e.message === "Maximum call stack size exceeded."
+          )
+            throw e;
           // Sorry, there's no proper way to pass along the error here.
         } finally {
           stream.removeListener("error", noop);

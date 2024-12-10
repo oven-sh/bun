@@ -2575,7 +2575,7 @@ pub const ModuleLoader = struct {
                     .is_commonjs_module = file.module_format == .cjs,
                 };
             }
-        } else if (is_allowed_to_use_internal_testing_apis) {
+        } else if (is_allowed_to_use_internal_testing_apis or Environment.isDebug) {
             if (internal_modules.getWithEql(specifier, bun.String.eqlComptime)) |tag| {
                 return jsSyntheticModule(tag, specifier);
             }

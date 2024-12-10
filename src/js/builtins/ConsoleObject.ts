@@ -601,7 +601,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     clear() {
       // It only makes sense to clear if _stdout is a TTY.
       // Otherwise, do nothing.
-      if (this._stdout.isTTY && process.env.TERM !== "dumb") {
+      if (this._stdout.isTTY && process.env[["TE", "RM"].join("")] !== "dumb") {
         this._stdout.write("\x1B[2J\x1B[3J\x1B[H");
       }
     },

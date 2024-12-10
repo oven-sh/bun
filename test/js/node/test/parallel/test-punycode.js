@@ -24,10 +24,7 @@
 'use strict';
 const common = require('../common');
 
-const punycodeWarning =
-  'The `punycode` module is deprecated. Please use a userland alternative ' +
-  'instead.';
-//common.expectWarning('DeprecationWarning', punycodeWarning, 'DEP0040');
+// In Node, there's a deprecation warning check here, but we don't print one.
 
 const punycode = require('punycode');
 const assert = require('assert');

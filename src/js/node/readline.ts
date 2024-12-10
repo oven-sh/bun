@@ -2321,19 +2321,21 @@ var _Interface = class Interface extends InterfaceConstructor {
         // falls through
         default:
           if (typeof s === "string" && s) {
-            var nextMatch = RegExpPrototypeExec.$call(lineEnding, s);
-            if (nextMatch !== null) {
+            // Erase state of previous searches.
+            lineEnding.lastIndex = 0;
+            var nextMatch;
+            // Keep track of the end of the last match.
+            var lastIndex = 0;
+            while ((nextMatch = RegExpPrototypeExec.$call(lineEnding, s)) !== null) {
               this[kInsertString](StringPrototypeSlice.$call(s, 0, nextMatch.index));
-              var { lastIndex } = lineEnding;
-              while ((nextMatch = RegExpPrototypeExec.$call(lineEnding, s)) !== null) {
-                this[kLine]();
-                this[kInsertString](StringPrototypeSlice.$call(s, lastIndex, nextMatch.index));
-                ({ lastIndex } = lineEnding);
-              }
-              if (lastIndex === s.length) this[kLine]();
-            } else {
-              this[kInsertString](s);
+              ({ lastIndex } = lineEnding);
+              this[kLine]();
+              // Restore lastIndex as the call to kLine could have mutated it.
+              lineEnding.lastIndex = lastIndex;
             }
+            // This ensures that the last line is written if it doesn't end in a newline.
+            // Note that the last line may be the first line, in which case this still works.
+            this[kInsertString](StringPrototypeSlice.$call(s, lastIndex));
           }
       }
     }

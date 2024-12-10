@@ -140,8 +140,6 @@ out.write = err.write = (d) => {};
       });
     },
     {
-      message: 'The "options.inspectOptions" property must be of type object.' +
-               common.invalidArgTypeHelper(inspectOptions),
       code: 'ERR_INVALID_ARG_TYPE'
     }
   );

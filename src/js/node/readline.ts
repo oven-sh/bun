@@ -1430,8 +1430,7 @@ var _Interface = class Interface extends InterfaceConstructor {
     return this[kPrompt];
   }
 
-  [kSetRawMode](flag) {
-    const mode = flag + 0;
+  [kSetRawMode](mode) {
     const wasInRawMode = this.input.isRaw;
 
     var setRawMode = this.input.setRawMode;

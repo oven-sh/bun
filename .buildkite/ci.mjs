@@ -18,7 +18,6 @@ import {
   isBuildkite,
   isBuildManual,
   isFork,
-  isMacOS,
   isMainBranch,
   isMergeQueue,
   parseBoolean,

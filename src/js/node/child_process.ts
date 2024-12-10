@@ -22,18 +22,20 @@ var BufferIsEncoding = Buffer.isEncoding;
 var kEmptyObject = ObjectCreate(null);
 var signals = OsModule.constants.signals;
 
-var ArrayPrototypePush = Array.prototype.push;
 var ArrayPrototypeJoin = Array.prototype.join;
 var ArrayPrototypeMap = Array.prototype.map;
 var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
+const ArrayPrototypeFilter = Array.prototype.filter;
+const ArrayPrototypeSort = Array.prototype.sort;
+const StringPrototypeToUpperCase = String.prototype.toUpperCase;
+const ArrayPrototypePush = Array.prototype.push;
 
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
 
-var StringPrototypeToUpperCase = String.prototype.toUpperCase;
 var StringPrototypeIncludes = String.prototype.includes;
 var StringPrototypeSlice = String.prototype.slice;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
@@ -967,13 +969,38 @@ function normalizeSpawnArguments(file, args, options) {
   }
 
   const env = options.env || process.env;
-  const envPairs = env;
+  const envPairs = {};
 
   // // process.env.NODE_V8_COVERAGE always propagates, making it possible to
   // // collect coverage for programs that spawn with white-listed environment.
   // copyProcessEnvToEnv(env, "NODE_V8_COVERAGE", options.env);
 
-  // TODO: Windows env support here...
+  let envKeys: string[] = [];
+  for (const key in env) {
+    ArrayPrototypePush.$call(envKeys, key);
+  }
+
+  if (process.platform === "win32") {
+    // On Windows env keys are case insensitive. Filter out duplicates, keeping only the first one (in lexicographic order)
+    const sawKey = new Set();
+    envKeys = ArrayPrototypeFilter.$call(ArrayPrototypeSort.$call(envKeys), key => {
+      const uppercaseKey = StringPrototypeToUpperCase.$call(key);
+      if (sawKey.has(uppercaseKey)) {
+        return false;
+      }
+      sawKey.add(uppercaseKey);
+      return true;
+    });
+  }
+
+  for (const key of envKeys) {
+    const value = env[key];
+    if (value !== undefined) {
+      validateArgumentNullCheck(key, `options.env['${key}']`);
+      validateArgumentNullCheck(value, `options.env['${key}']`);
+      envPairs[key] = value;
+    }
+  }
 
   return {
     // Make a shallow copy so we don't clobber the user's options object.

@@ -21,16 +21,27 @@
 
 'use strict';
 const common = require('../common');
-if (common.isWindows) return; // TODO: BUN
-const assert = require('assert');
-const fixtures = require('../common/fixtures');
 
-const content =
-  require(fixtures.path('json-with-directory-name-module',
-                        'module-stub',
-                        'one-trailing-slash',
-                        'two',
-                        'three.js'));
+// Make sure the deletion event gets reported in the following scenario:
+// 1. Watch a file.
+// 2. The initial stat() goes okay.
+// 3. Something deletes the watched file.
+// 4. The second stat() fails with ENOENT.
 
-assert.notStrictEqual(content.rocko, 'artischocko');
-assert.strictEqual(content, 'hello from module-stub!');
+// The second stat() translates into the first 'change' event but a logic error
+// stopped it from getting emitted.
+// https://github.com/nodejs/node-v0.x-archive/issues/4027
+
+const fs = require('fs');
+
+const tmpdir = require('../common/tmpdir');
+tmpdir.refresh();
+
+const filename = tmpdir.resolve('watched');
+fs.writeFileSync(filename, 'quis custodiet ipsos custodes');
+
+fs.watchFile(filename, { interval: 50 }, common.mustCall(function(curr, prev) {
+  fs.unwatchFile(filename);
+}));
+
+fs.unlinkSync(filename);

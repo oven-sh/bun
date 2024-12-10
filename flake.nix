@@ -181,8 +181,10 @@
           # Generic CI shell that defaults to x64
           ci = pkgs.mkShell {
             buildInputs = with pkgs; [
-              # Include the x64 build environment tools by default
-              buildEnvX64
+              # Include architecture-specific build environment tools
+              (if stdenv.hostPlatform.isAarch64 
+               then buildEnvArm64
+               else buildEnvX64)
             ];
           };
         };

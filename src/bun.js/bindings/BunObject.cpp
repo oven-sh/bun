@@ -32,6 +32,7 @@
 #include "wtf/text/ASCIILiteral.h"
 #include "BunObject+exports.h"
 #include "ErrorCode.h"
+#include "GeneratedBunObject.h"
 
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookup);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolve);
@@ -325,7 +326,7 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     }
     auto* bunShell = shell.getObject();
 
-    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, BunObject_callback_braces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, Generated::BunObject::jsBraces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     return bunShell;
@@ -597,7 +598,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     fetch                                         constructBunFetchObject                                              ReadOnly|DontDelete|PropertyCallback
     file                                           BunObject_callback_file                                               DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                                DontDelete|Function 1
-    gc                                             BunObject_callback_gc                                               DontDelete|Function 1
+    gc                                             Generated::BunObject::jsGc                                          DontDelete|Function 1
     generateHeapSnapshot                           BunObject_callback_generateHeapSnapshot                             DontDelete|Function 1
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
@@ -643,7 +644,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stderr                                         BunObject_getter_wrap_stderr                                        DontDelete|PropertyCallback
     stdin                                          BunObject_getter_wrap_stdin                                         DontDelete|PropertyCallback
     stdout                                         BunObject_getter_wrap_stdout                                        DontDelete|PropertyCallback
-    stringWidth                                    BunObject_callback_stringWidth                                      DontDelete|Function 2
+    stringWidth                                    Generated::BunObject::jsStringWidth                                 DontDelete|Function 2
     unsafe                                         BunObject_getter_wrap_unsafe                                        DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1

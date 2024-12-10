@@ -11102,7 +11102,7 @@ pub const PackageManager = struct {
                 defer manager.allocator.free(package_json_source.contents);
 
                 initializeStore();
-                const json = JSON.parsePackageJSONUTF8AlwaysDecode(&package_json_source, manager.log, manager.allocator) catch |err| {
+                const json = JSON.parsePackageJSONUTF8(&package_json_source, manager.log, manager.allocator) catch |err| {
                     manager.log.print(Output.errorWriter()) catch {};
                     Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), package_json_source.path.prettyDir() });
                     Global.crash();
@@ -11515,7 +11515,7 @@ pub const PackageManager = struct {
                 defer manager.allocator.free(package_json_source.contents);
 
                 initializeStore();
-                const json = JSON.parsePackageJSONUTF8AlwaysDecode(&package_json_source, manager.log, manager.allocator) catch |err| {
+                const json = JSON.parsePackageJSONUTF8(&package_json_source, manager.log, manager.allocator) catch |err| {
                     manager.log.print(Output.errorWriter()) catch {};
                     Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), package_json_source.path.prettyDir() });
                     Global.crash();

@@ -308,7 +308,7 @@ pub fn loadFromCwd(
 
     if (lockfile_format == .text) {
         const source = logger.Source.initPathString("bun.lock", buf);
-        const json = JSON.parseUTF8(&source, log, allocator) catch |err| {
+        const json = JSON.parsePackageJSONUTF8(&source, log, allocator) catch |err| {
             return .{
                 .err = .{
                     .step = .parse_file,
@@ -359,7 +359,7 @@ pub fn loadFromCwd(
                 };
 
                 const source = logger.Source.initPathString("bun.lock", text_lockfile_bytes);
-                const json = JSON.parseUTF8(&source, log, allocator) catch |err| {
+                const json = JSON.parsePackageJSONUTF8(&source, log, allocator) catch |err| {
                     Output.panic("failed to print valid json from binary lockfile: {s}", .{@errorName(err)});
                 };
 
@@ -2302,7 +2302,7 @@ pub fn getPackageID(
     return null;
 }
 
-pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !void {
+pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) OOM!void {
     const gpe = try this.package_index.getOrPut(name_hash);
 
     if (gpe.found_existing) {
@@ -2345,12 +2345,12 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !v
     }
 }
 
-pub fn appendPackage(this: *Lockfile, package_: Lockfile.Package) !Lockfile.Package {
+pub fn appendPackage(this: *Lockfile, package_: Lockfile.Package) OOM!Lockfile.Package {
     const id: PackageID = @truncate(this.packages.len);
     return try appendPackageWithID(this, package_, id);
 }
 
-fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: PackageID) !Lockfile.Package {
+fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: PackageID) OOM!Lockfile.Package {
     defer {
         if (comptime Environment.allow_assert) {
             assert(this.getPackageID(package_.name_hash, null, &package_.resolution) != null);
@@ -4106,7 +4106,7 @@ pub const Package = extern struct {
         comptime features: Features,
     ) !void {
         initializeStore();
-        const json = JSON.parsePackageJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
+        const json = JSON.parsePackageJSONUTF8(&source, log, allocator) catch |err| {
             log.print(Output.errorWriter()) catch {};
             Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
             Global.crash();

@@ -547,7 +547,7 @@ pub fn migrateNPMLockfile(
                 } else .false,
 
                 .integrity = if (pkg.get("integrity")) |integrity|
-                    try Integrity.parse(
+                    Integrity.parse(
                         integrity.asString(this.allocator) orelse
                             return error.InvalidNPMLockfile,
                     )

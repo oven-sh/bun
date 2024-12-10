@@ -1973,7 +1973,7 @@ pub const PackageManifest = struct {
 
                                 if (dist.expr.asProperty("integrity")) |shasum| {
                                     if (shasum.expr.asString(allocator)) |shasum_str| {
-                                        package_version.integrity = Integrity.parse(shasum_str) catch Integrity{};
+                                        package_version.integrity = Integrity.parse(shasum_str);
                                         if (package_version.integrity.tag.isSupported()) break :integrity;
                                     }
                                 }

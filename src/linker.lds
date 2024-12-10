@@ -3,7 +3,6 @@ BUN_1.1 {
 	napi*;
 	node_api_*;
 	node_module_register;
-	_ZN2v8*;
 
 	uv_os_getpid;
 	uv_os_getppid;
@@ -12,6 +11,10 @@ BUN_1.1 {
 		v8::*;
 		node::*;
 	};
+
+	_ZN2v8*;
+	_ZN4node*;
+
     local:
 	*;
 };

@@ -3108,7 +3108,7 @@ var require_readable = __commonJS({
         state.flowing = !state.readableListening;
         resume(this, state);
       }
-      state[kPaused] = false;
+      state.paused = false;
       return this;
     };
     function resume(stream, state) {

@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     oven-sh/boringssl
   COMMIT
-    8e6976ec4b562be8945ba2a2b5ed0b10ce244eff
+    914b005ef3ece44159dca0ffad74eb42a9f6679f
 )
 
 register_cmake_command(

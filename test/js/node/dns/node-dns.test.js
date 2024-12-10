@@ -365,7 +365,7 @@ describe("dns.reverse", () => {
     ["2606:4700:4700::1001", "one.one.one.one"],
     ["1.1.1.1", "one.one.one.one"],
   ];
-  it.each(inputs)("%s", (ip, expected) => {
+  it.each(inputs)("%s <- %s", (ip, expected) => {
     const { promise, resolve, reject } = Promise.withResolvers();
     dns.reverse(ip, (err, hostnames) => {
       try {

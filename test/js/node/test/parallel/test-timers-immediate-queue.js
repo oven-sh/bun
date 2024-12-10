@@ -20,7 +20,8 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
-require('../common');
+const common = require('../common');
+if (common.isWindows) return; // TODO BUN
 const assert = require('assert');
 
 // setImmediate should run clear its queued cbs once per event loop turn

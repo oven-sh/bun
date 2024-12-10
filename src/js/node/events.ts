@@ -346,6 +346,7 @@ EventEmitterPrototype.listenerCount = function listenerCount(type) {
   if (!events) return 0;
   return events[type]?.length ?? 0;
 };
+Object.defineProperty(EventEmitterPrototype.listenerCount, "name", { value: "listenerCount" });
 
 EventEmitterPrototype.eventNames = function eventNames() {
   return this._eventsCount > 0 ? Reflect.ownKeys(this._events) : [];
@@ -612,6 +613,7 @@ function listenerCount(emitter, type) {
 
   return jsEventTargetGetEventListenersCount(emitter, type);
 }
+Object.defineProperty(listenerCount, "name", { value: "listenerCount" });
 
 function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
   if (typeof emitter.removeListener === "function") {

@@ -52,6 +52,10 @@ const integrationTimeout = 5 * 60_000;
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
   options: {
+    ["node-tests"]: {
+      type: "boolean",
+      default: false,
+    },
     ["exec-path"]: {
       type: "string",
       default: "bun",
@@ -949,9 +953,13 @@ async function getVendorTests(cwd) {
  * @returns {string[]}
  */
 function getRelevantTests(cwd) {
-  const tests = getTests(cwd);
+  let tests = getTests(cwd);
   const availableTests = [];
   const filteredTests = [];
+
+  if (options["node-tests"]) {
+    tests = tests.filter(testPath => testPath.includes("js/node/test/parallel/"));
+  }
 
   const isMatch = (testPath, filter) => {
     return testPath.replace(/\\/g, "/").includes(filter);

@@ -37,7 +37,7 @@ extern "C" void bun_warn_avx_missing(const char* url)
     strcpy(buf, str);
     strcpy(buf + len, url);
     strcpy(buf + len + strlen(url), "\n\0");
-    write(STDERR_FILENO, buf, strlen(buf));
+    [[maybe_unused]] auto _ = write(STDERR_FILENO, buf, strlen(buf));
 }
 #endif
 

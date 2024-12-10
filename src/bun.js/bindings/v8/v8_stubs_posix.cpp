@@ -1,7 +1,7 @@
 #include "v8.h"
 
 #define V8_WEAK_STUB(name) \
-    __attribute__((weak)) void* name(void) { V8_UNIMPLEMENTED(); }
+    __attribute__((weak)) __attribute__((used)) void* name(void) { V8_UNIMPLEMENTED(); }
 
 #if OS(LINUX) || OS(MACOS)
 extern "C" {

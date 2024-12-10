@@ -570,20 +570,19 @@ $ FOO=bar BAZ=123 bun build ./index.tsx --outdir ./out --env inline
 
 {% /codetabs %}
 
-For example, given the following environment variables:
+For the input below:
 
-```bash
-$ FOO=bar BAZ=123
+```js#input.js
+console.log(process.env.FOO);
+console.log(process.env.BAZ);
 ```
 
 The generated bundle will contain the following code:
 
-```js
+```js#output.js
 console.log("bar");
 console.log("123");
 ```
-
-By default, this is enabled in Bun v1.1.x and lower. In Bun v1.2.x and higher (and has always been), but this will be disabled by default. Sorry for the confusion.
 
 #### `env: "PUBLIC_*"` (prefix)
 
@@ -631,7 +630,7 @@ console.log(process.env.BAZ);
 
 #### `env: "disable"`
 
-Disables environment variable injection entirely. This will be the default in Bun v1.2.x and higher.
+Disables environment variable injection entirely.
 
 For example, given the following environment variables:
 

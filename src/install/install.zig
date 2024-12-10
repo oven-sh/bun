@@ -211,6 +211,7 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
 pub const PackageID = u32;
 pub const DependencyID = u32;
 pub const invalid_package_id = std.math.maxInt(PackageID);
+pub const invalid_dependency_id = std.math.maxInt(DependencyID);
 
 pub const ExternalStringList = ExternalSlice(ExternalString);
 pub const VersionSlice = ExternalSlice(Semver.Version);
@@ -4491,7 +4492,7 @@ pub const PackageManager = struct {
             if (this.lockfile.package_index.get(name_hash)) |index| {
                 const resolutions: []Resolution = this.lockfile.packages.items(.resolution);
                 switch (index) {
-                    .PackageID => |existing_id| {
+                    .id => |existing_id| {
                         if (existing_id < resolutions.len) {
                             const existing_resolution = resolutions[existing_id];
                             if (this.resolutionSatisfiesDependency(existing_resolution, version)) {
@@ -4524,7 +4525,7 @@ pub const PackageManager = struct {
                             }
                         }
                     },
-                    .PackageIDMultiple => |list| {
+                    .ids => |list| {
                         for (list.items) |existing_id| {
                             if (existing_id < resolutions.len) {
                                 const existing_resolution = resolutions[existing_id];
@@ -4860,8 +4861,8 @@ pub const PackageManager = struct {
             .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
                 const dep = dependency;
                 const pkg_id = switch (this.lockfile.package_index.get(dep.name_hash) orelse @panic("Package not found")) {
-                    .PackageID => |p| p,
-                    .PackageIDMultiple => |ps| ps.items[0], // TODO is this correct
+                    .id => |p| p,
+                    .ids => |ps| ps.items[0], // TODO is this correct
                 };
                 const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
                 const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
@@ -4915,8 +4916,8 @@ pub const PackageManager = struct {
             .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
                 const dep = this.lockfile.buffers.dependencies.items[dependency_id];
                 const pkg_id = switch (this.lockfile.package_index.get(dep.name_hash) orelse @panic("Package not found")) {
-                    .PackageID => |p| p,
-                    .PackageIDMultiple => |ps| ps.items[0], // TODO is this correct
+                    .id => |p| p,
+                    .ids => |ps| ps.items[0], // TODO is this correct
                 };
                 const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
                 const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
@@ -11130,8 +11131,8 @@ pub const PackageManager = struct {
                     );
                     Global.crash();
                 }) {
-                    .PackageID => |id| lockfile.packages.get(id),
-                    .PackageIDMultiple => |ids| id: {
+                    .id => |id| lockfile.packages.get(id),
+                    .ids => |ids| id: {
                         for (ids.items) |id| {
                             const pkg = lockfile.packages.get(id);
                             const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
@@ -11543,8 +11544,8 @@ pub const PackageManager = struct {
                     );
                     Global.crash();
                 }) {
-                    .PackageID => |id| lockfile.packages.get(id),
-                    .PackageIDMultiple => |ids| brk: {
+                    .id => |id| lockfile.packages.get(id),
+                    .ids => |ids| brk: {
                         for (ids.items) |id| {
                             const pkg = lockfile.packages.get(id);
                             const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;

@@ -345,7 +345,7 @@ pub const PackageManagerCommand = struct {
                 const resolutions = slice.items(.resolution);
                 const root_deps = slice.items(.dependencies)[0];
 
-                Output.println("{s} node_modules ({d})", .{ path, dependencies.len });
+                Output.println("{s} node_modules ({d})", .{ path, lockfile.buffers.hoisted_dependencies.items.len });
                 const string_bytes = lockfile.buffers.string_bytes.items;
                 const sorted_dependencies = try ctx.allocator.alloc(DependencyID, root_deps.len);
                 defer ctx.allocator.free(sorted_dependencies);

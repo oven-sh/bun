@@ -33,6 +33,8 @@ const ExtractTarball = @import("./extract_tarball.zig");
 const Integrity = @import("./integrity.zig").Integrity;
 const Meta = BinaryLockfile.Package.Meta;
 const Negatable = Npm.Negatable;
+const DependencyID = Install.DependencyID;
+const invalid_dependency_id = Install.invalid_dependency_id;
 
 /// A property key in the `packages` field of the lockfile
 pub const PkgPath = struct {
@@ -211,13 +213,16 @@ pub const PkgPath = struct {
         };
     }
 
-    pub const IdMap = struct {
+    pub const Map = struct {
         root: Node,
 
+        const Nodes = bun.StringArrayHashMapUnmanaged(Node);
+
         pub const Node = struct {
-            id: PackageID,
-            parent: ?*const Node,
-            nodes: bun.StringArrayHashMapUnmanaged(Node),
+            pkg_id: PackageID,
+            dep_id: DependencyID,
+            parent: ?*Node,
+            nodes: Nodes,
 
             pub fn deinit(this: *Node, allocator: std.mem.Allocator) void {
                 for (this.nodes.values()) |*node| {
@@ -228,17 +233,18 @@ pub const PkgPath = struct {
             }
         };
 
-        pub fn init() IdMap {
+        pub fn init() Map {
             return .{
                 .root = .{
-                    .id = 0,
+                    .pkg_id = 0,
+                    .dep_id = BinaryLockfile.Tree.root_dep_id,
                     .parent = null,
                     .nodes = .{},
                 },
             };
         }
 
-        pub fn deinit(this: *IdMap, allocator: std.mem.Allocator) void {
+        pub fn deinit(this: *Map, allocator: std.mem.Allocator) void {
             for (this.root.nodes.values()) |*node| {
                 node.deinit(allocator);
             }
@@ -249,7 +255,7 @@ pub const PkgPath = struct {
             DuplicatePackagePath,
         };
 
-        pub fn insert(this: *IdMap, allocator: std.mem.Allocator, pkg_path: string, id: PackageID) InsertError!void {
+        pub fn insert(this: *Map, allocator: std.mem.Allocator, pkg_path: string, id: PackageID) InsertError!void {
             var iter = PkgPath.iterator(pkg_path);
 
             var parent: ?*Node = null;
@@ -261,7 +267,8 @@ pub const PkgPath = struct {
                     // deduplication.
                     entry.key_ptr.* = try allocator.dupe(u8, name);
                     entry.value_ptr.* = .{
-                        .id = invalid_package_id,
+                        .pkg_id = invalid_package_id,
+                        .dep_id = invalid_dependency_id,
                         .parent = parent,
                         .nodes = .{},
                     };
@@ -275,14 +282,14 @@ pub const PkgPath = struct {
                 return error.InvalidPackageKey;
             }
 
-            if (curr.id != invalid_package_id) {
+            if (curr.pkg_id != invalid_package_id) {
                 return error.DuplicatePackagePath;
             }
 
-            curr.id = id;
+            curr.pkg_id = id;
         }
 
-        pub fn get(this: *IdMap, pkg_path: string) error{InvalidPackageKey}!?*Node {
+        pub fn get(this: *Map, pkg_path: string) error{InvalidPackageKey}!?*Node {
             var iter = iterator(pkg_path);
             var curr: *Node = &this.root;
             while (try iter.next()) |name| {
@@ -291,6 +298,92 @@ pub const PkgPath = struct {
 
             return curr;
         }
+
+        pub fn iterate(this: *const Map, allocator: std.mem.Allocator) OOM!Map.Iterator {
+            var tree_buf: std.ArrayListUnmanaged(Map.Iterator.TreeInfo) = .{};
+            try tree_buf.append(allocator, .{
+                .nodes = this.root.nodes,
+                .pkg_id = 0,
+                .dep_id = BinaryLockfile.Tree.root_dep_id,
+                .id = 0,
+                .parent_id = BinaryLockfile.Tree.invalid_id,
+            });
+            return .{
+                .tree_buf = tree_buf,
+                .deps_buf = .{},
+            };
+        }
+
+        /// Breadth-first iterator
+        pub const Iterator = struct {
+            tree_buf: std.ArrayListUnmanaged(TreeInfo),
+
+            deps_buf: std.ArrayListUnmanaged(DependencyID),
+
+            pub const TreeInfo = struct {
+                // name: String,
+                nodes: Nodes,
+                pkg_id: PackageID,
+                dep_id: DependencyID,
+                id: BinaryLockfile.Tree.Id,
+                parent_id: BinaryLockfile.Tree.Id,
+            };
+
+            pub const Next = struct {
+                id: BinaryLockfile.Tree.Id,
+                parent_id: BinaryLockfile.Tree.Id,
+                dep_id: DependencyID,
+                dep_ids: []const DependencyID,
+            };
+
+            pub fn deinit(this: *Map.Iterator, allocator: std.mem.Allocator) void {
+                this.tree_buf.deinit(allocator);
+                this.deps_buf.deinit(allocator);
+            }
+
+            pub fn next(this: *Map.Iterator, allocator: std.mem.Allocator) OOM!?Next {
+                if (this.tree_buf.items.len == 0) {
+                    return null;
+                }
+
+                this.deps_buf.clearRetainingCapacity();
+
+                var next_id = this.tree_buf.getLast().id + 1;
+
+                // TODO(dylan-conway): try doubly linked list
+                const tree = this.tree_buf.orderedRemove(0);
+
+                for (tree.nodes.values()) |node| {
+                    if (node.nodes.count() > 0) {
+                        try this.tree_buf.append(allocator, .{
+                            .nodes = node.nodes,
+                            .id = next_id,
+                            .parent_id = tree.id,
+                            .pkg_id = node.pkg_id,
+                            .dep_id = node.dep_id,
+                        });
+                        next_id += 1;
+                    }
+
+                    try this.deps_buf.append(allocator, node.dep_id);
+                }
+
+                return .{
+                    .id = tree.id,
+                    .parent_id = tree.parent_id,
+                    .dep_id = tree.dep_id,
+                    .dep_ids = this.deps_buf.items,
+                };
+
+                // return tree;
+                //     .dep_id = tree.dep_id,
+                //     .pkg_id = tree.pkg_id,
+                //     .id = tree.tree_id,
+                //     .parent_id = tree.parent_id,
+                //     .nodes = tree.nodes,
+                // };
+            }
+        };
     };
 };
 
@@ -1144,8 +1237,8 @@ pub fn parseIntoBinaryLockfile(
         return error.InvalidWorkspaceObject;
     }
 
-    var id_map = PkgPath.IdMap.init();
-    defer id_map.deinit(allocator);
+    var pkg_map = PkgPath.Map.init();
+    defer pkg_map.deinit(allocator);
 
     if (root.get("packages")) |pkgs_expr| {
         if (!pkgs_expr.isObject()) {
@@ -1153,26 +1246,12 @@ pub fn parseIntoBinaryLockfile(
             return error.InvalidPackagesObject;
         }
 
-        for (pkgs_expr.data.e_object.properties.slice(), 1..) |prop, _pkg_id| {
-            const pkg_id: PackageID = @intCast(_pkg_id);
+        for (pkgs_expr.data.e_object.properties.slice()) |prop| {
             const key = prop.key.?;
             const value = prop.value.?;
 
             const pkg_path = key.asString(allocator) orelse {
                 try log.addError(source, key.loc, "Expected a string");
-                return error.InvalidPackageKey;
-            };
-
-            id_map.insert(allocator, pkg_path, pkg_id) catch |err| {
-                switch (err) {
-                    error.OutOfMemory => |oom| return oom,
-                    error.DuplicatePackagePath => {
-                        try log.addError(source, key.loc, "Duplicate package path");
-                    },
-                    error.InvalidPackageKey => {
-                        try log.addError(source, key.loc, "Invalid package path");
-                    },
-                }
                 return error.InvalidPackageKey;
             };
 
@@ -1339,13 +1418,24 @@ pub fn parseIntoBinaryLockfile(
             pkg.name_hash = name_hash;
             pkg.resolution = res;
 
-            pkg.meta.id = pkg_id;
-
             // set later
             pkg.bin = .{};
             pkg.scripts = .{};
 
-            try lockfile.packages.append(allocator, pkg);
+            const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
+
+            pkg_map.insert(allocator, pkg_path, pkg_id) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => |oom| return oom,
+                    error.DuplicatePackagePath => {
+                        try log.addError(source, key.loc, "Duplicate package path");
+                    },
+                    error.InvalidPackageKey => {
+                        try log.addError(source, key.loc, "Invalid package path");
+                    },
+                }
+                return error.InvalidPackageKey;
+            };
         }
 
         try lockfile.buffers.resolutions.ensureTotalCapacity(allocator, lockfile.buffers.dependencies.items.len);
@@ -1371,15 +1461,13 @@ pub fn parseIntoBinaryLockfile(
             for (pkg_deps[0].begin()..pkg_deps[0].end()) |dep_id| {
                 const dep = lockfile.buffers.dependencies.items[dep_id];
 
-                if (id_map.root.nodes.get(dep.name.slice(string_buf.bytes.items))) |dep_node| {
-                    lockfile.buffers.resolutions.items[dep_id] = dep_node.id;
+                if (pkg_map.root.nodes.get(dep.name.slice(string_buf.bytes.items))) |dep_node| {
+                    lockfile.buffers.resolutions.items[dep_id] = dep_node.pkg_id;
                 }
             }
         }
 
-        for (pkgs_expr.data.e_object.properties.slice(), 1..) |prop, _pkg_id| {
-            const pkg_id: PackageID = @intCast(_pkg_id);
-
+        for (pkgs_expr.data.e_object.properties.slice()) |prop| {
             const key = prop.key.?;
             const value = prop.value.?;
 
@@ -1389,22 +1477,57 @@ pub fn parseIntoBinaryLockfile(
             const pkg_info = value.data.e_array.items;
             _ = pkg_info;
 
-            const id_node = try id_map.get(pkg_path) orelse {
+            const pkg_map_entry = try pkg_map.get(pkg_path) orelse {
                 return error.InvalidPackagesObject;
             };
 
+            const pkg_id = pkg_map_entry.pkg_id;
+
             // find resolutions. iterate up to root through the pkg path.
-            deps: for (pkg_deps[pkg_id].begin()..pkg_deps[pkg_id].end()) |dep_id| {
+            deps: for (pkg_deps[pkg_id].begin()..pkg_deps[pkg_id].end()) |_dep_id| {
+                const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = lockfile.buffers.dependencies.items[dep_id];
 
-                var curr: ?*const PkgPath.IdMap.Node = id_node;
+                var curr: ?*PkgPath.Map.Node = pkg_map_entry;
                 while (curr) |node| {
-                    if (node.nodes.get(dep.name.slice(string_buf.bytes.items))) |dep_node| {
-                        lockfile.buffers.resolutions.items[dep_id] = dep_node.id;
+                    if (node.nodes.getPtr(dep.name.slice(string_buf.bytes.items))) |dep_node| {
+
+                        // it doesn't matter which dependency is assigned to this node. the dependency
+                        // id will only be used for getting the dependency name
+                        dep_node.dep_id = dep_id;
+                        lockfile.buffers.resolutions.items[dep_id] = dep_node.pkg_id;
+
                         continue :deps;
                     }
-                    curr = node.parent orelse if (curr != &id_map.root) &id_map.root else null;
+                    curr = node.parent orelse if (curr != &pkg_map.root) &pkg_map.root else null;
                 }
+            }
+        }
+
+        {
+            // ids are assigned, now flatten into `lockfile.buffers.trees` and `lockfile.buffers.hoisted_dependencies`
+            var tree_iter = try pkg_map.iterate(allocator);
+            defer tree_iter.deinit(allocator);
+            var tree_id: BinaryLockfile.Tree.Id = 0;
+            while (try tree_iter.next(allocator)) |tree| {
+                bun.debugAssert(tree_id == tree.id);
+                const deps_off: u32 = @intCast(lockfile.buffers.hoisted_dependencies.items.len);
+                const deps_len: u32 = @intCast(tree.dep_ids.len);
+                try lockfile.buffers.hoisted_dependencies.appendSlice(allocator, tree.dep_ids);
+                try lockfile.buffers.trees.append(
+                    allocator,
+                    .{
+                        ._dependency_id = tree.dep_id,
+                        .id = tree_id,
+                        .parent = tree.parent_id,
+                        .dependencies = .{
+                            .off = deps_off,
+                            .len = deps_len,
+                        },
+                    },
+                );
+
+                tree_id += 1;
             }
         }
     }

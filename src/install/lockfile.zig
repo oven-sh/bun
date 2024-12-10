@@ -77,6 +77,7 @@ const ExternalStringMap = Install.ExternalStringMap;
 const Features = Install.Features;
 const initializeStore = Install.initializeStore;
 const invalid_package_id = Install.invalid_package_id;
+const invalid_dependency_id = Install.invalid_dependency_id;
 const Origin = Install.Origin;
 const PackageID = Install.PackageID;
 const PackageInstall = Install.PackageInstall;
@@ -410,7 +411,13 @@ pub const InstallResult = struct {
 
 pub const Tree = struct {
     id: Id = invalid_id,
-    dependency_id: DependencyID = invalid_package_id,
+
+    // Should not be used for anything other than name
+    // through `folderName()`. There is not guarentee a dependency
+    // id chosen for a tree node is the same behavior or has the
+    // same version literal for packages hoisted.
+    dependency_id: DependencyID = invalid_dependency_id,
+
     parent: Id = invalid_id,
     dependencies: Lockfile.DependencyIDSlice = .{},
 
@@ -419,6 +426,12 @@ pub const Tree = struct {
     pub const Slice = ExternalSlice(Tree);
     pub const List = std.ArrayListUnmanaged(Tree);
     pub const Id = u32;
+
+    pub fn folderName(this: *const Tree, deps: []const Dependency, buf: string) string {
+        const dep_id = this.dependency_id;
+        if (dep_id == invalid_dependency_id) return "";
+        return deps[dep_id].name.slice(buf);
+    }
 
     pub fn toExternal(this: Tree) External {
         var out = External{};
@@ -590,7 +603,7 @@ pub const Tree = struct {
                 }
 
                 const id = depth_buf[depth_buf_len];
-                const name = dependencies[trees[id].dependency_id].name.slice(buf);
+                const name = trees[id].folderName(dependencies, buf);
                 @memcpy(path_buf[path_written..][0..name.len], name);
                 path_written += name.len;
 
@@ -716,7 +729,6 @@ pub const Tree = struct {
                 try next.hoistDependency(
                     true,
                     pid,
-                    dep_id,
                     &dependency,
                     dependency_lists,
                     trees,
@@ -752,7 +764,6 @@ pub const Tree = struct {
         this: *Tree,
         comptime as_defined: bool,
         package_id: PackageID,
-        dependency_id: DependencyID,
         dependency: *const Dependency,
         dependency_lists: []Lockfile.DependencyIDList,
         trees: []Tree,
@@ -820,7 +831,6 @@ pub const Tree = struct {
             const id = trees[this.parent].hoistDependency(
                 false,
                 package_id,
-                dependency_id,
                 dependency,
                 dependency_lists,
                 trees,
@@ -834,7 +844,7 @@ pub const Tree = struct {
     }
 };
 
-/// This conditonally clones the lockfile with root packages marked as non-resolved
+/// This conditionally clones the lockfile with root packages marked as non-resolved
 /// that do not satisfy `Features`. The package may still end up installed even
 /// if it was e.g. in "devDependencies" and its a production install. In that case,
 /// it would be installed because another dependency or transient dependency needed it.
@@ -999,6 +1009,7 @@ pub fn getWorkspacePkgIfWorkspaceDep(this: *const Lockfile, id: DependencyID) Pa
 }
 
 /// Does this tree id belong to a workspace (including workspace root)?
+/// TODO(dylan-conway) fix!
 pub fn isWorkspaceTreeId(this: *const Lockfile, id: Tree.Id) bool {
     return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspaceOnly();
 }
@@ -2273,7 +2284,7 @@ pub fn getPackageID(
     const buf = this.buffers.string_bytes.items;
 
     switch (entry) {
-        .PackageID => |id| {
+        .id => |id| {
             if (comptime Environment.allow_assert) assert(id < resolutions.len);
 
             if (resolutions[id].eql(resolution, buf, buf)) {
@@ -2284,7 +2295,7 @@ pub fn getPackageID(
                 if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
             }
         },
-        .PackageIDMultiple => |ids| {
+        .ids => |ids| {
             for (ids.items) |id| {
                 if (comptime Environment.allow_assert) assert(id < resolutions.len);
 
@@ -2302,6 +2313,70 @@ pub fn getPackageID(
     return null;
 }
 
+/// Appends `pkg` to `this.packages` if a duplicate isn't found
+pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!PackageID {
+    const entry = try this.package_index.getOrPut(pkg.name_hash);
+
+    if (!entry.found_existing) {
+        const new_id: PackageID = @intCast(this.packages.len);
+        pkg.meta.id = new_id;
+        try this.packages.append(this.allocator, pkg.*);
+        entry.value_ptr.* = .{ .id = new_id };
+        return new_id;
+    }
+
+    const resolutions = this.packages.items(.resolution);
+
+    return switch (entry.value_ptr.*) {
+        .id => |existing_id| {
+            if (pkg.resolution.eql(&resolutions[existing_id], buf, buf)) {
+                pkg.meta.id = existing_id;
+                return existing_id;
+            }
+
+            const new_id: PackageID = @intCast(this.packages.len);
+            pkg.meta.id = new_id;
+            try this.packages.append(this.allocator, pkg.*);
+
+            var ids = try PackageIDList.initCapacity(this.allocator, 8);
+            ids.items.len = 2;
+
+            ids.items[0..2].* = if (pkg.resolution.order(&resolutions[existing_id], buf, buf) == .gt)
+                .{ new_id, existing_id }
+            else
+                .{ existing_id, new_id };
+
+            entry.value_ptr.* = .{
+                .ids = ids,
+            };
+
+            return new_id;
+        },
+        .ids => |*existing_ids| {
+            for (existing_ids.items) |existing_id| {
+                if (pkg.resolution.eql(&resolutions[existing_id], buf, buf)) {
+                    pkg.meta.id = existing_id;
+                    return existing_id;
+                }
+            }
+
+            const new_id: PackageID = @intCast(this.packages.len);
+            pkg.meta.id = new_id;
+            try this.packages.append(this.allocator, pkg.*);
+
+            for (existing_ids.items, 0..) |existing_id, i| {
+                if (pkg.resolution.order(&resolutions[existing_id], buf, buf) == .gt) {
+                    try existing_ids.insert(this.allocator, i, new_id);
+                }
+            }
+
+            try existing_ids.append(this.allocator, new_id);
+
+            return new_id;
+        },
+    };
+}
+
 pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) OOM!void {
     const gpe = try this.package_index.getOrPut(name_hash);
 
@@ -2309,7 +2384,7 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) OO
         const index: *PackageIndex.Entry = gpe.value_ptr;
 
         switch (index.*) {
-            .PackageID => |existing_id| {
+            .id => |existing_id| {
                 var ids = try PackageIDList.initCapacity(this.allocator, 8);
                 ids.items.len = 2;
 
@@ -2322,10 +2397,10 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) OO
                     .{ existing_id, id };
 
                 index.* = .{
-                    .PackageIDMultiple = ids,
+                    .ids = ids,
                 };
             },
-            .PackageIDMultiple => |*existing_ids| {
+            .ids => |*existing_ids| {
                 const resolutions = this.packages.items(.resolution);
                 const buf = this.buffers.string_bytes.items;
 
@@ -2341,7 +2416,7 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) OO
             },
         }
     } else {
-        gpe.value_ptr.* = .{ .PackageID = id };
+        gpe.value_ptr.* = .{ .id = id };
     }
 }
 
@@ -2521,12 +2596,12 @@ pub const StringBuilder = struct {
 pub const PackageIndex = struct {
     pub const Map = std.HashMap(PackageNameHash, PackageIndex.Entry, IdentityContext(PackageNameHash), 80);
     pub const Entry = union(Tag) {
-        PackageID: PackageID,
-        PackageIDMultiple: PackageIDList,
+        id: PackageID,
+        ids: PackageIDList,
 
         pub const Tag = enum(u8) {
-            PackageID = 0,
-            PackageIDMultiple = 1,
+            id = 0,
+            ids = 1,
         };
     };
 };
@@ -2541,7 +2616,7 @@ pub const OverrideMap = struct {
     map: std.ArrayHashMapUnmanaged(PackageNameHash, Dependency, ArrayIdentityContext.U64, false) = .{},
 
     /// In the future, this `get` function should handle multi-level resolutions. This is difficult right
-    /// now because given a Dependency ID, there is no fast way to trace it to it's package.
+    /// now because given a Dependency ID, there is no fast way to trace it to its package.
     ///
     /// A potential approach is to add another buffer to the lockfile that maps Dependency ID to Package ID,
     /// and from there `OverrideMap.map` can have a union as the value, where the union is between "override all"
@@ -6623,7 +6698,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
 
     switch (version.tag) {
         .npm => switch (entry) {
-            .PackageID => |id| {
+            .id => |id| {
                 const resolutions = this.packages.items(.resolution);
 
                 if (comptime Environment.allow_assert) assert(id < resolutions.len);
@@ -6631,7 +6706,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
                     return id;
                 }
             },
-            .PackageIDMultiple => |ids| {
+            .ids => |ids| {
                 const resolutions = this.packages.items(.resolution);
 
                 for (ids.items) |id| {
@@ -6861,14 +6936,14 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         while (iter.next()) |it| {
             const entry: PackageIndex.Entry = it.value_ptr.*;
             const first_id = switch (entry) {
-                .PackageID => |id| id,
-                .PackageIDMultiple => |ids| ids.items[0],
+                .id => |id| id,
+                .ids => |ids| ids.items[0],
             };
             const name = this.packages.items(.name)[first_id].slice(sb);
             try w.objectField(name);
             switch (entry) {
-                .PackageID => |id| try w.write(id),
-                .PackageIDMultiple => |ids| {
+                .id => |id| try w.write(id),
+                .ids => |ids| {
                     try w.beginArray();
                     for (ids.items) |id| {
                         try w.write(id);

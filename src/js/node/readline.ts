@@ -1652,6 +1652,7 @@ var _Interface = class Interface extends InterfaceConstructor {
       if (this[kLine_buffer]) {
         string = this[kLine_buffer] + string;
         this[kLine_buffer] = null;
+        lineEnding.lastIndex = 0; // Start the search from the beginning of the string.
         newPartContainsEnding = RegExpPrototypeExec.$call(lineEnding, string);
       }
       this[kSawReturnAt] = StringPrototypeEndsWith.$call(string, "\r") ? DateNow() : 0;

@@ -387,6 +387,7 @@ function* emitKeys(stream) {
     var keyCtrl = false;
     var keyMeta = false;
     var keyShift = false;
+    var keyCode = {};
 
     // var key = {
     //   sequence: null,
@@ -776,6 +777,8 @@ function* emitKeys(stream) {
           keyName = "undefined";
           break;
       }
+
+      keyCode.code = code;
     } else if (ch === "\r") {
       // carriage return
       keyName = "return";
@@ -829,6 +832,7 @@ function* emitKeys(stream) {
         ctrl: keyCtrl,
         meta: keyMeta,
         shift: keyShift,
+        ...keyCode,
       });
     } else if (charLengthAt(s, 0) === s.length) {
       /* Single unnamed character, e.g. "." */
@@ -838,6 +842,7 @@ function* emitKeys(stream) {
         ctrl: keyCtrl,
         meta: keyMeta,
         shift: keyShift,
+        ...keyCode,
       });
     }
     /* Unrecognized or broken escape sequence, don't emit anything */

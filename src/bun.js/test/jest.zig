@@ -834,7 +834,7 @@ pub const DescribeScope = struct {
     done: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
-    run_todo: bool = false,
+    run_todo: bool,
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -1835,6 +1835,7 @@ inline fn createScope(
             .parent = parent,
             .file_id = parent.file_id,
             .tag = tag_to_use,
+            .run_todo = parent.run_todo,
         };
 
         return scope.run(globalThis, function, &.{});
@@ -2113,6 +2114,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     .parent = parent,
                     .file_id = parent.file_id,
                     .tag = tag,
+                    .run_todo = parent.run_todo,
                 };
 
                 const ret = scope.run(globalThis, function, function_args);

@@ -533,6 +533,9 @@ function getTestBunStep(platform, options = {}) {
   }
 
   const depends = [];
+  if (dryRun) {
+    depends.push(`${getImageKey(platform)}-build-image`);
+  }
   if (!buildId) {
     depends.push(`${getTargetKey(platform)}-build-bun`);
   }

@@ -2274,6 +2274,7 @@ for (const backend of ["api", "cli"] as const) {
       `,
       },
       target: "browser",
+      backend,
       capture: ["process.env.ARBITRARY"],
       env: {
         ARBITRARY: "secret environment stuff!",

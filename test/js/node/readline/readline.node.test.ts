@@ -4,12 +4,10 @@ import { EventEmitter } from "node:events";
 import readline from "node:readline";
 import { PassThrough, Writable } from "node:stream";
 const { beforeEach, describe, it, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
-
-var {
+const {
   CSI,
   utils: { getStringWidth, stripVTControlCharacters },
-  // @ts-ignore
-} = readline[Symbol.for("__BUN_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__")];
+} = require("internal/readline/utils");
 
 // ----------------------------------------------------------------------------
 // Helpers

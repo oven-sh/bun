@@ -230,6 +230,7 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
+        clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs are completely unsupported.") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -774,6 +775,10 @@ pub const Arguments = struct {
                     } };
 
                 bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            }
+
+            if (args.flag("--expose-internals")) {
+                bun.JSC.ModuleLoader.is_allowed_to_use_internal_testing_apis = true;
             }
         }
 

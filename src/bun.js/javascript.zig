@@ -1244,14 +1244,14 @@ pub const VirtualMachine = struct {
         return this.bundler.getPackageManager();
     }
 
-    pub fn garbageCollect(this: *const VirtualMachine, sync: bool) JSValue {
+    pub fn garbageCollect(this: *const VirtualMachine, sync: bool) usize {
         @setCold(true);
         Global.mimalloc_cleanup(false);
         if (sync)
             return this.global.vm().runGC(true);
 
         this.global.vm().collectAsync();
-        return JSValue.jsNumber(this.global.vm().heapSize());
+        return this.global.vm().heapSize();
     }
 
     pub inline fn autoGarbageCollect(this: *const VirtualMachine) void {
@@ -2563,6 +2563,12 @@ pub const VirtualMachine = struct {
                 return;
             } else {
                 return error.ModuleNotFound;
+            }
+        } else if (ModuleLoader.is_allowed_to_use_internal_testing_apis or Environment.isDebug) {
+            if (JSC.internal_modules.get(specifier) != null) {
+                ret.result = null;
+                ret.path = specifier;
+                return;
             }
         }
 

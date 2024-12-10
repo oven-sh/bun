@@ -1,6 +1,6 @@
-#include <node.h>
-
-#include <napi.h>
+#include "napi_with_version.h"
+#include "utils.h"
+#include "wrap_tests.h"
 
 #include <array>
 #include <cassert>
@@ -28,23 +28,6 @@ napi_value fail_fmt(napi_env env, const char *fmt, ...) {
   vsnprintf(buf, sizeof(buf), fmt, args);
   va_end(args);
   return fail(env, buf);
-}
-
-napi_value ok(napi_env env) {
-  napi_value result;
-  napi_get_undefined(env, &result);
-  return result;
-}
-
-static void run_gc(const Napi::CallbackInfo &info) {
-  info[0].As<Napi::Function>().Call(0, nullptr);
-}
-
-// calls napi_typeof and asserts it returns napi_ok
-static napi_valuetype get_typeof(napi_env env, napi_value value) {
-  napi_valuetype result;
-  assert(napi_typeof(env, value, &result) == napi_ok);
-  return result;
 }
 
 napi_value test_issue_7685(const Napi::CallbackInfo &info) {
@@ -595,33 +578,6 @@ napi_value was_finalize_called(const Napi::CallbackInfo &info) {
   return ret;
 }
 
-static const char *napi_valuetype_to_string(napi_valuetype type) {
-  switch (type) {
-  case napi_undefined:
-    return "undefined";
-  case napi_null:
-    return "null";
-  case napi_boolean:
-    return "boolean";
-  case napi_number:
-    return "number";
-  case napi_string:
-    return "string";
-  case napi_symbol:
-    return "symbol";
-  case napi_object:
-    return "object";
-  case napi_function:
-    return "function";
-  case napi_external:
-    return "external";
-  case napi_bigint:
-    return "bigint";
-  default:
-    return "unknown";
-  }
-}
-
 // calls a function (the sole argument) which must throw. catches and returns
 // the thrown error
 napi_value call_and_get_exception(const Napi::CallbackInfo &info) {
@@ -1013,47 +969,6 @@ static napi_value try_add_tag(const Napi::CallbackInfo &info) {
   return Napi::Boolean::New(env, status == napi_ok);
 }
 
-// try_wrap(value: any, num: number): bool
-// wraps value in a C++ object corresponding to the number num
-// true if success
-static napi_value try_wrap(const Napi::CallbackInfo &info) {
-  Napi::Env env = info.Env();
-  napi_value value = info[0];
-  napi_value js_num = info[1];
-  double c_num;
-  assert(napi_get_value_double(env, js_num, &c_num) == napi_ok);
-
-  napi_status status = napi_wrap(
-      env, value, reinterpret_cast<void *>(new double{c_num}),
-      [](napi_env env, void *data, void *hint) {
-        (void)env;
-        (void)hint;
-        delete reinterpret_cast<double *>(data);
-      },
-      nullptr, nullptr);
-
-  napi_value js_result;
-  assert(napi_get_boolean(env, status == napi_ok, &js_result) == napi_ok);
-  return js_result;
-}
-
-// try_unwrap(any): number|undefined
-static napi_value try_unwrap(const Napi::CallbackInfo &info) {
-  Napi::Env env = info.Env();
-  napi_value value = info[0];
-
-  double *wrapped;
-  napi_status status =
-      napi_unwrap(env, value, reinterpret_cast<void **>(&wrapped));
-  napi_value result;
-  if (status == napi_ok) {
-    assert(napi_create_double(env, *wrapped, &result) == napi_ok);
-  } else {
-    assert(napi_get_undefined(env, &result) == napi_ok);
-  }
-  return result;
-}
-
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -1120,8 +1035,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("add_tag", Napi::Function::New(env, add_tag));
   exports.Set("try_add_tag", Napi::Function::New(env, try_add_tag));
   exports.Set("check_tag", Napi::Function::New(env, check_tag));
-  exports.Set("try_wrap", Napi::Function::New(env, try_wrap));
-  exports.Set("try_unwrap", Napi::Function::New(env, try_unwrap));
+
+  napitests::register_wrap_tests(env, exports);
 
   return exports;
 }

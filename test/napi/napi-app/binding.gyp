@@ -10,7 +10,7 @@
                     "AdditionalOptions": ["/std:c++20"],
                 },
             },
-            "sources": ["main.cpp"],
+            "sources": ["main.cpp", "wrap_tests.cpp"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
             "libraries": [],
             "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],

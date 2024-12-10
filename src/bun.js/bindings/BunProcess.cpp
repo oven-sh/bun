@@ -434,7 +434,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         // as we are going to call `dlsym()` on it later to get the plugin implementation.
         const char** pointer_to_plugin_name = (const char**)dlsym(handle, "BUN_PLUGIN_NAME");
 #elif OS(WINDOWS)
-        const char** pointer_to_plugin_name = (const char**)GetProcAddressA(handle, "BUN_PLUGIN_NAME");
+        const char** pointer_to_plugin_name = (const char**)GetProcAddress(handle, "BUN_PLUGIN_NAME");
 #endif
         if (pointer_to_plugin_name) {
             // TODO: think about the finalizer here

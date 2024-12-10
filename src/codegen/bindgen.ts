@@ -58,7 +58,11 @@ function resolveVariantStrategies(vari: Variant, name: string) {
     const abiType = !isNullable && arg.type.canDirectlyMapToCAbi();
     if (abiType) {
       arg.loweringStrategy = {
-        type: cAbiTypeInfo(abiType)[0] > 8 ? "c-abi-pointer" : "c-abi-value",
+        // This does not work in release builds, possibly due to a Zig 0.13 bug
+        // regarding by-value extern structs in C functions.
+        // type: cAbiTypeInfo(abiType)[0] > 8 ? "c-abi-pointer" : "c-abi-value",
+        // Always pass an argument by-pointer for now.
+        type: abiType === "*anyopaque" || abiType === "*JSGlobalObject" ? "c-abi-value" : "c-abi-pointer",
         abiType,
       };
       continue;

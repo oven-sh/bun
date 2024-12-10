@@ -534,7 +534,7 @@ function getTestBunStep(platform, options = {}) {
   }
 
   const depends = [];
-  if (dryRun && !isMacOS) {
+  if (dryRun && os !== "darwin") {
     depends.push(`${getImageKey(platform)}-build-image`);
   }
   if (!buildId) {

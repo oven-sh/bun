@@ -27,7 +27,6 @@ public:
         Yarr::RegularExpression regex;
         WTF::Lock lock {};
 
-
         FilterRegExp(FilterRegExp&& other)
             : m_pattern(WTFMove(other.m_pattern))
             , regex(WTFMove(other.regex))

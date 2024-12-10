@@ -297,7 +297,6 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
             OnBeforeParseResult__reset(onBeforeParseResult);
         }
 
-
         if (filters[i].match(vm, path)) {
             Bun::NapiExternal* external = callbacks[i].external;
             if (external) {

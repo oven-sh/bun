@@ -24,7 +24,7 @@ export const gc = fn({
 
 export const StringWidthOptions = t.dictionary({
   countAnsiEscapeCodes: t.boolean.default(false),
-  ambiguousIsNarrow: t.boolean.default(false),
+  ambiguousIsNarrow: t.boolean.default(true),
 });
 
 export const stringWidth = fn({

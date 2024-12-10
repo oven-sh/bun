@@ -493,6 +493,7 @@ list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
   ${CWD}/root.zig
   ${CWD}/root_wasm.zig
+  ${BUN_BINDGEN_ZIG_OUTPUTS}
 )
 
 set(BUN_ZIG_GENERATED_SOURCES

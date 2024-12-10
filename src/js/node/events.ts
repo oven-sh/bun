@@ -273,6 +273,7 @@ EventEmitterPrototype.once = function once(type, fn) {
   this.addListener(type, bound);
   return this;
 };
+Object.defineProperty(EventEmitterPrototype.once, "name", { value: "once" });
 
 EventEmitterPrototype.prependOnceListener = function prependOnceListener(type, fn) {
   checkListener(fn);
@@ -393,6 +394,7 @@ function once(emitter, type, options = kEmptyObject) {
 
   return promise;
 }
+Object.defineProperty(once, "name", { value: "once" });
 
 const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype);
 function createIterResult(value, done) {
@@ -543,6 +545,8 @@ function on(emitter, event, options = kEmptyObject) {
     return Promise.resolve(doneResult);
   }
 }
+Object.defineProperty(on, "name", { value: "on" });
+
 function listenersController() {
   const listeners = [];
 

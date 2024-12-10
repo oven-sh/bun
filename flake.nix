@@ -23,7 +23,7 @@
           arm64 = {
             dir = "bun-linux-aarch64";
             url = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v1.1.38/bun-linux-aarch64.zip";
-            sha256 = "sha256-ph2lNX4o1Jd/zNSFH+1i/02j6jOFMAXH3ZPayAvFOTI=";
+            sha256 = "sha256-iE+uoF4+18shNqlPM19WfbqXwxC2CG72RS8++KGXkH4=";
           };
         };
         overlays = [ (import rust-overlay) ];

@@ -142,6 +142,9 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const { inspect, formatWithOptions, stripVTControlCharacters } = require("node:util");
   const { isBuffer } = require("node:buffer");
 
+  const { validateObject, validateInteger, validateArray } = require("internal/validators");
+  const kMaxGroupIndentation = 1000;
+
   const StringPrototypeIncludes = String.prototype.includes;
   const RegExpPrototypeSymbolReplace = RegExp.prototype[Symbol.replace];
   const ArrayPrototypeUnshift = Array.prototype.unshift;
@@ -304,11 +307,11 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     }
 
     if (groupIndentation !== undefined) {
-      // validateInteger(groupIndentation, "groupIndentation", 0, kMaxGroupIndentation);
+      validateInteger(groupIndentation, "groupIndentation", 0, kMaxGroupIndentation);
     }
 
     if (inspectOptions !== undefined) {
-      // validateObject(inspectOptions, "options.inspectOptions");
+      validateObject(inspectOptions, "options.inspectOptions");
 
       if (inspectOptions.colors !== undefined && options.colorMode !== undefined) {
         // throw new ERR_INCOMPATIBLE_OPTION_PAIR("options.inspectOptions.color", "colorMode");
@@ -649,7 +652,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     // https://console.spec.whatwg.org/#table
     table(tabularData, properties) {
       if (properties !== undefined) {
-        // validateArray(properties, "properties");
+        validateArray(properties, "properties");
       }
 
       if (tabularData === null || typeof tabularData !== "object") return this.log(tabularData);

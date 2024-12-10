@@ -14,9 +14,6 @@ pub const io_mode = .blocking;
 comptime {
     bun.assert(builtin.target.cpu.arch.endian() == .little);
 }
-comptime {
-    _ = @import("./v8_stubs.zig");
-}
 
 extern fn bun_warn_avx_missing(url: [*:0]const u8) void;
 pub extern "C" var _environ: ?*anyopaque;

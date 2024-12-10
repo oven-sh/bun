@@ -40,8 +40,8 @@ void Bun__LifecycleAgentStopPreventingExit(Inspector::InspectorLifecycleAgent* a
 InspectorLifecycleAgent::InspectorLifecycleAgent(JSC::JSGlobalObject& globalObject)
     : InspectorAgentBase("LifecycleReporter"_s)
     , m_globalObject(globalObject)
-    , m_backendDispatcher(LifecycleReporterBackendDispatcher::create(m_globalObject.inspectorController().backendDispatcher(), this))
     , m_frontendDispatcher(makeUnique<LifecycleReporterFrontendDispatcher>(const_cast<FrontendRouter&>(m_globalObject.inspectorController().frontendRouter())))
+    , m_backendDispatcher(LifecycleReporterBackendDispatcher::create(m_globalObject.inspectorController().backendDispatcher(), this))
 {
 }
 

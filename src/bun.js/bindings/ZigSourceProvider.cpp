@@ -252,7 +252,7 @@ void SourceProvider::freeSourceCode()
 
 void SourceProvider::updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&,
     CodeSpecializationKind kind,
-    const UnlinkedFunctionCodeBlock* codeBlock)
+    const UnlinkedFunctionCodeBlock* codeBlock) const
 {
     // if (!m_resolvedSource.bytecodecache_fd || !m_cachedBytecode)
     return;
@@ -263,7 +263,7 @@ void SourceProvider::updateCache(const UnlinkedFunctionExecutable* executable, c
         m_cachedBytecode->addFunctionUpdate(executable, kind, *cachedBytecode);
 }
 
-void SourceProvider::cacheBytecode(const BytecodeCacheGenerator& generator)
+void SourceProvider::cacheBytecode(const BytecodeCacheGenerator& generator) const
 {
     // if (!m_resolvedSource.bytecodecache_fd)
     return;
@@ -275,7 +275,7 @@ void SourceProvider::cacheBytecode(const BytecodeCacheGenerator& generator)
         m_cachedBytecode->addGlobalUpdate(*update);
 }
 
-void SourceProvider::commitCachedBytecode()
+void SourceProvider::commitCachedBytecode() const
 {
     // if (!m_resolvedSource.bytecodecache_fd || !m_cachedBytecode || !m_cachedBytecode->hasUpdates())
     return;

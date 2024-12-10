@@ -51,9 +51,9 @@ public:
     };
 
     void updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&,
-        CodeSpecializationKind kind, const UnlinkedFunctionCodeBlock* codeBlock);
-    void cacheBytecode(const BytecodeCacheGenerator& generator);
-    void commitCachedBytecode();
+        CodeSpecializationKind kind, const UnlinkedFunctionCodeBlock* codeBlock) const final;
+    void cacheBytecode(const BytecodeCacheGenerator& generator) const final;
+    void commitCachedBytecode() const final;
     bool isBytecodeCacheEnabled() const;
     void readOrGenerateByteCodeCache(JSC::VM& vm, const JSC::SourceCode& sourceCode);
     ResolvedSource m_resolvedSource;
@@ -73,7 +73,7 @@ private:
     }
 
     Zig::GlobalObject* m_globalObject;
-    RefPtr<JSC::CachedBytecode> m_cachedBytecode;
+    mutable RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     Ref<WTF::StringImpl> m_source;
     unsigned m_hash = 0;
 };

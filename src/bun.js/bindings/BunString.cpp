@@ -117,10 +117,10 @@ BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     WTF::String str = value.toWTFString(globalObject);
     if (UNLIKELY(str.isNull())) {
-        return { BunStringTag::Dead };
+        return { BunStringTag::Dead, { ZigStringEmpty } };
     }
     if (UNLIKELY(str.length() == 0)) {
-        return { BunStringTag::Empty };
+        return { BunStringTag::Empty, { ZigStringEmpty } };
     }
 
     auto impl = str.releaseImpl();
@@ -147,10 +147,10 @@ BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto str = value.toWTFString(globalObject);
     if (UNLIKELY(str.isNull())) {
-        return { BunStringTag::Dead };
+        return { BunStringTag::Dead, { ZigStringEmpty } };
     }
     if (UNLIKELY(str.length() == 0)) {
-        return { BunStringTag::Empty };
+        return { BunStringTag::Empty, { ZigStringEmpty } };
     }
 
     StringImpl* impl = str.impl();
@@ -163,21 +163,21 @@ BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 BunString toString(WTF::String& wtfString)
 {
     if (wtfString.isEmpty())
-        return { BunStringTag::Empty };
+        return { BunStringTag::Empty, { ZigStringEmpty } };
 
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
 }
 BunString toString(const WTF::String& wtfString)
 {
     if (wtfString.isEmpty())
-        return { BunStringTag::Empty };
+        return { BunStringTag::Empty, { ZigStringEmpty } };
 
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
 }
 BunString toString(WTF::StringImpl* wtfString)
 {
     if (wtfString->isEmpty())
-        return { BunStringTag::Empty };
+        return { BunStringTag::Empty, { ZigStringEmpty } };
 
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
 }
@@ -185,7 +185,7 @@ BunString toString(WTF::StringImpl* wtfString)
 BunString toStringRef(WTF::String& wtfString)
 {
     if (wtfString.isEmpty())
-        return { BunStringTag::Empty };
+        return { BunStringTag::Empty, { ZigStringEmpty } };
 
     wtfString.impl()->ref();
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
@@ -193,7 +193,7 @@ BunString toStringRef(WTF::String& wtfString)
 BunString toStringRef(const WTF::String& wtfString)
 {
     if (wtfString.isEmpty())
-        return { BunStringTag::Empty };
+        return { BunStringTag::Empty, { ZigStringEmpty } };
 
     wtfString.impl()->ref();
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
@@ -201,7 +201,7 @@ BunString toStringRef(const WTF::String& wtfString)
 BunString toStringRef(WTF::StringImpl* wtfString)
 {
     if (wtfString->isEmpty())
-        return { BunStringTag::Empty };
+        return { BunStringTag::Empty, { ZigStringEmpty } };
 
     wtfString->ref();
 
@@ -229,7 +229,7 @@ extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
     UChar* ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (UNLIKELY(!impl)) {
-        return { .tag = BunStringTag::Dead };
+        return { BunStringTag::Dead, { Zig::ZigStringEmpty } };
     }
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
@@ -240,7 +240,7 @@ extern "C" BunString BunString__fromLatin1Unitialized(size_t length)
     LChar* ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (UNLIKELY(!impl)) {
-        return { .tag = BunStringTag::Dead };
+        return { BunStringTag::Dead, { Zig::ZigStringEmpty } };
     }
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
@@ -253,7 +253,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
         UChar* ptr;
         auto impl = WTF::StringImpl::tryCreateUninitialized(static_cast<unsigned int>(u16Length), ptr);
         if (UNLIKELY(!impl)) {
-            return { .tag = BunStringTag::Dead };
+            return { BunStringTag::Dead, { Zig::ZigStringEmpty } };
         }
         RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(bytes, length, ptr) == u16Length);
         impl->ref();
@@ -262,7 +262,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
 
     auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(bytes), length });
     if (UNLIKELY(str.isNull())) {
-        return { .tag = BunStringTag::Dead };
+        return { BunStringTag::Dead, { Zig::ZigStringEmpty } };
     }
     str.impl()->ref();
     return Bun::toString(str);
@@ -274,7 +274,7 @@ extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
     LChar* ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (UNLIKELY(!impl)) {
-        return { .tag = BunStringTag::Dead };
+        return { BunStringTag::Dead, { Zig::ZigStringEmpty } };
     }
     memcpy(ptr, bytes, length);
 
@@ -289,7 +289,7 @@ extern "C" BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t 
     LChar* ptr = nullptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(outLength, ptr);
     if (UNLIKELY(!impl)) {
-        return { BunStringTag::Dead };
+        return { BunStringTag::Dead, { Zig::ZigStringEmpty } };
     }
 
     size_t latin1_length = simdutf::convert_valid_utf16le_to_latin1(bytes, length, reinterpret_cast<char*>(ptr));
@@ -303,7 +303,7 @@ extern "C" BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
     UChar* ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (UNLIKELY(!impl)) {
-        return { .tag = BunStringTag::Dead };
+        return { BunStringTag::Dead, { Zig::ZigStringEmpty } };
     }
     memcpy(ptr, bytes, length * sizeof(char16_t));
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
@@ -434,14 +434,14 @@ extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlob
     auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     auto str = value.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, { BunStringTag::Dead });
+    RETURN_IF_EXCEPTION(throwScope, (BunString { BunStringTag::Dead, { Zig::ZigStringEmpty } }));
     if (str.isEmpty()) {
-        return { BunStringTag::Dead };
+        return { BunStringTag::Dead, { Zig::ZigStringEmpty } };
     }
 
     auto url = WTF::URL(str);
     if (!url.isValid() || url.isEmpty())
-        return { BunStringTag::Dead };
+        return { BunStringTag::Dead, { Zig::ZigStringEmpty } };
 
     return Bun::toStringRef(url.string());
 }
@@ -451,7 +451,7 @@ extern "C" BunString URL__getHref(BunString* input)
     auto&& str = input->toWTFString();
     auto url = WTF::URL(str);
     if (!url.isValid() || url.isEmpty())
-        return { BunStringTag::Dead };
+        return { BunStringTag::Dead, { Zig::ZigStringEmpty } };
 
     return Bun::toStringRef(url.string());
 }
@@ -461,7 +461,7 @@ extern "C" BunString URL__pathFromFileURL(BunString* input)
     auto&& str = input->toWTFString();
     auto url = WTF::URL(str);
     if (!url.isValid() || url.isEmpty())
-        return { BunStringTag::Dead };
+        return { BunStringTag::Dead, { Zig::ZigStringEmpty } };
 
     return Bun::toStringRef(url.fileSystemPath());
 }
@@ -472,7 +472,7 @@ extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr
     auto relative = relativeStr->toWTFString();
     auto url = WTF::URL(WTF::URL(base), relative);
     if (!url.isValid() || url.isEmpty())
-        return { BunStringTag::Dead };
+        return { BunStringTag::Dead, { Zig::ZigStringEmpty } };
 
     return Bun::toStringRef(url.string());
 }

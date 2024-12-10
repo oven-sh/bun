@@ -90,13 +90,13 @@ private:
     void finishCreation(JSC::VM& vm);
     GlobalInternals(JSC::VM& vm, JSC::Structure* structure, Zig::GlobalObject* globalObject)
         : Base(vm, structure)
+        , m_globalObject(globalObject)
         , m_currentHandleScope(nullptr)
         , m_undefinedValue(Oddball::Kind::kUndefined)
         , m_nullValue(Oddball::Kind::kNull)
         , m_trueValue(Oddball::Kind::kTrue)
         , m_falseValue(Oddball::Kind::kFalse)
         , m_isolate(this)
-        , m_globalObject(globalObject)
     {
     }
 };

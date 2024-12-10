@@ -78,7 +78,7 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
-    const CFFIFunction function() const { return m_function; }
+    inline CFFIFunction function() const { return m_function; }
 
 #if OS(WINDOWS)
 
@@ -86,14 +86,14 @@ public:
 
 #endif
 
-    void* dataPtr;
+    void* dataPtr = nullptr;
 
 private:
     JSFFIFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, CFFIFunction&&);
     void finishCreation(VM&, NativeExecutable*, unsigned length, const String& name);
     DECLARE_VISIT_CHILDREN;
 
-    CFFIFunction m_function;
+    CFFIFunction m_function = nullptr;
 };
 
 } // namespace JSC

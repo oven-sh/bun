@@ -12,10 +12,10 @@ namespace WTF {
 class String;
 }
 
-typedef struct ZigString {
+struct ZigString {
     const unsigned char* ptr;
     size_t len;
-} ZigString;
+};
 
 #ifndef __cplusplus
 typedef uint8_t BunStringTag;
@@ -30,10 +30,10 @@ class StringImpl;
 class String;
 }
 
-typedef union BunStringImpl {
+union BunStringImpl {
     ZigString zig;
     WTF::StringImpl* wtf;
-} BunStringImpl;
+};
 
 enum class BunStringTag : uint8_t {
     Dead = 0,
@@ -44,7 +44,7 @@ enum class BunStringTag : uint8_t {
 };
 #endif
 
-typedef struct BunString {
+struct BunString {
     BunStringTag tag;
     BunStringImpl impl;
 
@@ -67,30 +67,29 @@ typedef struct BunString {
 
     // This one usually will clone the raw bytes.
     WTF::String toWTFString() const;
+};
 
-} BunString;
-
-typedef struct ZigErrorType {
+struct ZigErrorType {
     ZigErrorCode code;
     void* ptr;
-} ZigErrorType;
-typedef union ErrorableZigStringResult {
+};
+union ErrorableZigStringResult {
     ZigString value;
     ZigErrorType err;
-} ErrorableZigStringResult;
-typedef struct ErrorableZigString {
+};
+struct ErrorableZigString {
     ErrorableZigStringResult result;
     bool success;
-} ErrorableZigString;
-typedef union ErrorableStringResult {
+};
+union ErrorableStringResult {
     BunString value;
     ZigErrorType err;
-} ErrorableStringResult;
-typedef struct ErrorableString {
+};
+struct ErrorableString {
     ErrorableStringResult result;
     bool success;
-} ErrorableString;
-typedef struct ResolvedSource {
+};
+struct ResolvedSource {
     BunString specifier;
     BunString source_code;
     BunString source_url;
@@ -103,25 +102,25 @@ typedef struct ResolvedSource {
     bool already_bundled;
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;
-} ResolvedSource;
+};
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
-typedef union ErrorableResolvedSourceResult {
+union ErrorableResolvedSourceResult {
     ResolvedSource value;
     ZigErrorType err;
-} ErrorableResolvedSourceResult;
-typedef struct ErrorableResolvedSource {
+};
+struct ErrorableResolvedSource {
     ErrorableResolvedSourceResult result;
     bool success;
-} ErrorableResolvedSource;
+};
 
-typedef struct SystemError {
+struct SystemError {
     int errno_;
     BunString code;
     BunString message;
     BunString path;
     BunString syscall;
     int fd;
-} SystemError;
+};
 
 typedef void* ArrayBufferSink;
 
@@ -143,7 +142,7 @@ const ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
 extern "C" void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 
-typedef struct ZigStackFramePosition {
+struct ZigStackFramePosition {
     int32_t line_zero_based;
     int32_t column_zero_based;
     int32_t byte_position;
@@ -156,17 +155,17 @@ typedef struct ZigStackFramePosition {
     {
         return OrdinalNumber::fromZeroBasedInt(this->line_zero_based);
     }
-} ZigStackFramePosition;
+};
 
-typedef struct ZigStackFrame {
+struct ZigStackFrame {
     BunString function_name;
     BunString source_url;
     ZigStackFramePosition position;
     ZigStackFrameCode code_type;
     bool remapped;
-} ZigStackFrame;
+};
 
-typedef struct ZigStackTrace {
+struct ZigStackTrace {
     BunString* source_lines_ptr;
     OrdinalNumber* source_lines_numbers;
     uint8_t source_lines_len;
@@ -174,9 +173,9 @@ typedef struct ZigStackTrace {
     ZigStackFrame* frames_ptr;
     uint8_t frames_len;
     JSC::SourceProvider* referenced_source_provider;
-} ZigStackTrace;
+};
 
-typedef struct ZigException {
+struct ZigException {
     unsigned char code;
     uint16_t runtime_type;
     int errno_;
@@ -189,7 +188,7 @@ typedef struct ZigException {
     void* exception;
     bool remapped;
     int fd;
-} ZigException;
+};
 
 typedef uint8_t JSErrorCode;
 const JSErrorCode JSErrorCodeError = 0;
@@ -254,10 +253,10 @@ const ReadableEvent ReadableEventUser = 254;
 
 #ifndef STRING_POINTER
 #define STRING_POINTER
-typedef struct StringPointer {
+struct StringPointer {
     uint32_t off;
     uint32_t len;
-} StringPointer;
+};
 #endif
 
 typedef void WebSocketHTTPClient;
@@ -268,9 +267,7 @@ typedef void WebSocketClientTLS;
 #ifndef __cplusplus
 typedef struct Bun__ArrayBuffer Bun__ArrayBuffer;
 typedef struct Uint8Array_alias Uint8Array_alias;
-#endif
-
-#ifdef __cplusplus
+#else
 
 extern "C" void Bun__WTFStringImpl__deref(WTF::StringImpl* impl);
 extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl);
@@ -298,7 +295,7 @@ BunString toStringView(WTF::StringView view);
 
 using Uint8Array_alias = JSC::JSUint8Array;
 
-typedef struct {
+struct Bun__ArrayBuffer {
     char* ptr;
     size_t offset;
     size_t len;
@@ -306,7 +303,7 @@ typedef struct {
     uint8_t cell_type;
     int64_t _value;
     bool shared;
-} Bun__ArrayBuffer;
+};
 
 #include "SyntheticModuleType.h"
 

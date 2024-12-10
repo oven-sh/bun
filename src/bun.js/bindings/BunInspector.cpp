@@ -16,9 +16,9 @@ public:
     using BunInspectorSocket = uWS::WebSocket<isSSL, true, BunInspectorConnection*>;
 
     BunInspectorConnection(BunInspectorSocket* ws, JSC::JSGlobalObject* globalObject)
-        : ws(ws)
+        : pendingMessages()
         , globalObject(globalObject)
-        , pendingMessages()
+        , ws(ws)
     {
     }
 

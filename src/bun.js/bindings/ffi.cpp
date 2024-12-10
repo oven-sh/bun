@@ -1,12 +1,13 @@
 #include "root.h"
 
-typedef struct FFIFields {
+struct FFIFields {
     uint32_t JSArrayBufferView__offsetOfLength;
     uint32_t JSArrayBufferView__offsetOfByteOffset;
     uint32_t JSArrayBufferView__offsetOfVector;
     uint32_t JSCell__offsetOfType;
-} FFIFields;
-extern "C" FFIFields Bun__FFI__offsets = { 0 };
+};
+
+FFIFields Bun__FFI__offsets = { 0, 0, 0, 0 };
 
 extern "C" void Bun__FFI__ensureOffsetsAreLoaded()
 {

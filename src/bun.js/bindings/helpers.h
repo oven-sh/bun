@@ -206,11 +206,10 @@ static const JSC::JSValue toJSStringValueGC(ZigString str, JSC::JSGlobalObject* 
     return JSC::JSValue(toJSStringGC(str, global));
 }
 
-static const ZigString ZigStringEmpty = ZigString { (unsigned char*)"", 0 };
-static const unsigned char __dot_char = '.';
-static const ZigString ZigStringCwd = ZigString { &__dot_char, 1 };
-static const BunString BunStringCwd = BunString { BunStringTag::StaticZigString, ZigStringCwd };
-static const BunString BunStringEmpty = BunString { BunStringTag::Empty, nullptr };
+static const ZigString ZigStringEmpty = ZigString { reinterpret_cast<const unsigned char*>(""), 0 };
+static const ZigString ZigStringCwd = ZigString { reinterpret_cast<const unsigned char*>("."), 1 };
+static const BunString BunStringCwd = BunString { BunStringTag::StaticZigString, { ZigStringCwd } };
+static const BunString BunStringEmpty = BunString { BunStringTag::Empty, { ZigStringEmpty } };
 
 static const unsigned char* taggedUTF16Ptr(const UChar* ptr)
 {

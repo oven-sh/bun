@@ -31,7 +31,7 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, scope,
             serialized.releaseException());
-        RELEASE_AND_RETURN(scope, { 0 });
+        RELEASE_AND_RETURN(scope, (SerializedValueSlice { nullptr, 0, nullptr }));
     }
 
     auto serializedValue = serialized.releaseReturnValue();

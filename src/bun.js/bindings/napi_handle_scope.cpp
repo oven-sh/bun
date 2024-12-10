@@ -118,8 +118,8 @@ void NapiHandleScope::close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl
 }
 
 NapiHandleScope::NapiHandleScope(Zig::GlobalObject* globalObject)
-    : m_globalObject(globalObject)
-    , m_impl(NapiHandleScope::open(globalObject, false))
+    : m_impl(NapiHandleScope::open(globalObject, false))
+    , m_globalObject(globalObject)
 {
 }
 

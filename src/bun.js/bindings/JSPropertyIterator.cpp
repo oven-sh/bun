@@ -18,8 +18,8 @@ using namespace JSC;
 class JSPropertyIterator {
 public:
     JSPropertyIterator(JSC::VM& m_vm, RefPtr<JSC::PropertyNameArrayData> m_properties)
-        : vm(m_vm)
-        , properties(m_properties)
+        : properties(m_properties)
+        , vm(m_vm)
     {
     }
 

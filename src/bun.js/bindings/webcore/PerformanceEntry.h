@@ -44,9 +44,9 @@ class PerformanceEntry : public RefCounted<PerformanceEntry> {
 public:
     virtual ~PerformanceEntry();
 
-    const String& name() const { return m_name; }
-    const double startTime() const { return m_startTime; }
-    const double duration() const { return m_duration; }
+    inline const String& name() const { return m_name; }
+    inline double startTime() const { return m_startTime; }
+    inline double duration() const { return m_duration; }
 
     enum class Type : uint8_t {
         Navigation = 1 << 0,

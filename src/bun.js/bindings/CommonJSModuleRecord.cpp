@@ -34,6 +34,7 @@
 #include "JavaScriptCore/Synchronousness.h"
 #include "JavaScriptCore/JSCast.h"
 #include <JavaScriptCore/JSMapInlines.h>
+#include "helpers.h"
 #include "root.h"
 #include "JavaScriptCore/SourceCode.h"
 #include "headers-handwritten.h"
@@ -1028,7 +1029,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 
     BunString specifierStr = Bun::toString(specifier);
     BunString referrerStr = Bun::toString(referrer);
-    BunString typeAttributeStr = { BunStringTag::Dead };
+    BunString typeAttributeStr = { BunStringTag::Dead, { ZigStringEmpty } };
     String typeAttribute = String();
 
     // We need to be able to wire in the "type" import attribute from bundled code..

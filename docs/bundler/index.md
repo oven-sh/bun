@@ -546,6 +546,114 @@ export type ImportKind =
 
 By design, the manifest is a simple JSON object that can easily be serialized or written to disk. It is also compatible with esbuild's [`metafile`](https://esbuild.github.io/api/#metafile) format. -->
 
+### `env`
+
+Controls how environment variables are handled during bundling. Internally, this uses `define` to inject environment variables into the bundle, but makes it easier to specify the environment variables to inject.
+
+#### `env: "inline"`
+
+Injects environment variables into the bundled output by converting `process.env.FOO` references to string literals containing the actual environment variable values.
+
+{% codetabs group="a" %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  env: "inline",
+})
+```
+
+```bash#CLI
+$ FOO=bar BAZ=123 bun build ./index.tsx --outdir ./out --env inline
+```
+
+{% /codetabs %}
+
+For example, given the following environment variables:
+
+```bash
+$ FOO=bar BAZ=123
+```
+
+The generated bundle will contain the following code:
+
+```js
+console.log("bar");
+console.log("123");
+```
+
+By default, this is enabled in Bun v1.1.x and lower. In Bun v1.2.x and higher (and has always been), but this will be disabled by default. Sorry for the confusion.
+
+#### `env: "PUBLIC_*"` (prefix)
+
+Inlines environment variables matching the given prefix (the part before the `*` character), replacing `process.env.FOO` with the actual environment variable value. This is useful for selectively inlining environment variables for things like public-facing URLs or client-side tokens, without worrying about injecting private credentials into output bundles.
+
+{% codetabs group="a" %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+
+  // Inline all env vars that start with "ACME_PUBLIC_"
+  env: "ACME_PUBLIC_*",
+})
+```
+
+```bash#CLI
+$ FOO=bar BAZ=123 ACME_PUBLIC_URL=https://acme.com bun build ./index.tsx --outdir ./out --env 'ACME_PUBLIC_*'
+```
+
+{% /codetabs %}
+
+For example, given the following environment variables:
+
+```bash
+$ FOO=bar BAZ=123 ACME_PUBLIC_URL=https://acme.com
+```
+
+And source code:
+
+```ts#index.tsx
+console.log(process.env.FOO);
+console.log(process.env.ACME_PUBLIC_URL);
+console.log(process.env.BAZ);
+```
+
+The generated bundle will contain the following code:
+
+```js
+console.log(process.env.FOO);
+console.log("https://acme.com");
+console.log(process.env.BAZ);
+```
+
+#### `env: "disable"`
+
+Disables environment variable injection entirely. This will be the default in Bun v1.2.x and higher.
+
+For example, given the following environment variables:
+
+```bash
+$ FOO=bar BAZ=123 ACME_PUBLIC_URL=https://acme.com
+```
+
+And source code:
+
+```ts#index.tsx
+console.log(process.env.FOO);
+console.log(process.env.ACME_PUBLIC_URL);
+console.log(process.env.BAZ);
+```
+
+The generated bundle will contain the following code:
+
+```js
+console.log(process.env.FOO);
+console.log(process.env.BAZ);
+```
+
 ### `sourcemap`
 
 Specifies the type of sourcemap to generate.

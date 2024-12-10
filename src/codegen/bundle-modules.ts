@@ -81,9 +81,9 @@ for (let i = 0; i < moduleList.length; i++) {
   try {
     let input = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
 
-    // NOTE: internal modules are parsed as functions who return the default export. `module.export` is not yet supported.g
+    // NOTE: internal modules are parsed as functions. They must use ESM to export and require to import.
     // TODO: Bother @paperdave and have him check for module.exports, and create/return a module object if detected.
-    if (!input.includes("export default")) {
+    if (!/\bexport\s+(?:function|class|const|default|{)/.test(input)) {
       if (input.includes("module.exports")) {
         throw new Error("Cannot use CommonJS module.exports in ESM modules. Use `export default { ... }` instead.");
       } else {

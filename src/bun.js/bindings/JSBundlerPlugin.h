@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bun-native-bundler-plugin-api/bundler_plugin.h"
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -10,7 +11,7 @@
 typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginOnResolveAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
-typedef void (*JSBundlerPluginNativeOnBeforeParseCallback)(void*, void*);
+typedef void (*JSBundlerPluginNativeOnBeforeParseCallback)(const OnBeforeParseArguments*, OnBeforeParseResult*);
 
 namespace Bun {
 
@@ -22,18 +23,14 @@ public:
     /// Therefore, we need a mutex to synchronize access.
     class FilterRegExp {
     public:
-        Yarr::RegularExpression regex;
         String m_pattern;
+        Yarr::RegularExpression regex;
         WTF::Lock lock {};
 
-        FilterRegExp(Yarr::RegularExpression regex)
-            : regex(regex)
-        {
-        }
 
         FilterRegExp(FilterRegExp&& other)
-            : m_pattern(other.m_pattern)
-            , regex(other.regex)
+            : m_pattern(WTFMove(other.m_pattern))
+            , regex(WTFMove(other.regex))
         {
         }
 
@@ -98,7 +95,7 @@ public:
         PerNamespaceCallbackList fileCallbacks = {};
         Vector<PerNamespaceCallbackList> namespaceCallbacks = {};
 
-        int call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, void* onBeforeParseArgs, void* onBeforeParseResult);
+        int call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult);
         void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, const char* name, NapiExternal* external);
 
         Vector<FilterRegExp>* group(const String& namespaceStr, unsigned& index)

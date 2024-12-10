@@ -280,6 +280,7 @@ use std::{
     borrow::Cow,
     cell::UnsafeCell,
     ffi::{c_char, c_void},
+    marker::PhantomData,
     str::Utf8Error,
     sync::PoisonError,
 };
@@ -400,9 +401,10 @@ impl<Guard> From<PoisonError<Guard>> for Error {
 ///
 /// To initialize this struct, see the `from_raw` method.
 pub struct OnBeforeParse<'a> {
-    args_raw: &'a sys::OnBeforeParseArguments,
+    pub args_raw: *mut sys::OnBeforeParseArguments,
     result_raw: *mut sys::OnBeforeParseResult,
     compilation_context: *mut SourceCodeContext,
+    __phantom: PhantomData<&'a ()>,
 }
 
 impl<'a> OnBeforeParse<'a> {
@@ -424,10 +426,10 @@ impl<'a> OnBeforeParse<'a> {
     /// }
     /// ```
     pub fn from_raw(
-        args: &'a sys::OnBeforeParseArguments,
+        args: *mut sys::OnBeforeParseArguments,
         result: *mut sys::OnBeforeParseResult,
     ) -> PluginResult<Self> {
-        if args.__struct_size < std::mem::size_of::<sys::OnBeforeParseArguments>()
+        if unsafe { (*args).__struct_size } < std::mem::size_of::<sys::OnBeforeParseArguments>()
             || unsafe { (*result).__struct_size } < std::mem::size_of::<sys::OnBeforeParseResult>()
         {
             let message = "This plugin is not compatible with the current version of Bun.";
@@ -435,8 +437,8 @@ impl<'a> OnBeforeParse<'a> {
                 __struct_size: std::mem::size_of::<sys::BunLogOptions>(),
                 message_ptr: message.as_ptr(),
                 message_len: message.len(),
-                path_ptr: args.path_ptr,
-                path_len: args.path_len,
+                path_ptr: unsafe { (*args).path_ptr },
+                path_len: unsafe { (*args).path_len },
                 source_line_text_ptr: std::ptr::null(),
                 source_line_text_len: 0,
                 level: BunLogLevel::BUN_LOG_LEVEL_ERROR as i8,
@@ -456,15 +458,21 @@ impl<'a> OnBeforeParse<'a> {
             args_raw: args,
             result_raw: result,
             compilation_context: std::ptr::null_mut() as *mut _,
+            __phantom: Default::default(),
         })
     }
 
     pub fn path(&self) -> PluginResult<Cow<'_, str>> {
-        get_from_raw_str(self.args_raw.path_ptr, self.args_raw.path_len)
+        unsafe { get_from_raw_str((*self.args_raw).path_ptr, (*self.args_raw).path_len) }
     }
 
     pub fn namespace(&self) -> PluginResult<Cow<'_, str>> {
-        get_from_raw_str(self.args_raw.namespace_ptr, self.args_raw.namespace_len)
+        unsafe {
+            get_from_raw_str(
+                (*self.args_raw).namespace_ptr,
+                (*self.args_raw).namespace_len,
+            )
+        }
     }
 
     /// Get the external object from the `OnBeforeParse` arguments.
@@ -516,11 +524,12 @@ impl<'a> OnBeforeParse<'a> {
     /// };
     /// ```
     pub unsafe fn external<T: 'static + Sync>(&self) -> PluginResult<Option<&'static T>> {
-        if self.args_raw.external.is_null() {
+        if unsafe { (*self.args_raw).external.is_null() } {
             return Ok(None);
         }
 
-        let external: *mut TaggedObject<T> = self.args_raw.external as *mut TaggedObject<T>;
+        let external: *mut TaggedObject<T> =
+            unsafe { (*self.args_raw).external as *mut TaggedObject<T> };
 
         unsafe {
             if (*external).type_id != TypeId::of::<T>() {
@@ -536,11 +545,12 @@ impl<'a> OnBeforeParse<'a> {
     /// This is unsafe as you must ensure that no other invocation of the plugin
     /// simultaneously holds a mutable reference to the external.
     pub unsafe fn external_mut<T: 'static + Sync>(&mut self) -> PluginResult<Option<&mut T>> {
-        if self.args_raw.external.is_null() {
+        if unsafe { (*self.args_raw).external.is_null() } {
             return Ok(None);
         }
 
-        let external: *mut TaggedObject<T> = self.args_raw.external as *mut TaggedObject<T>;
+        let external: *mut TaggedObject<T> =
+            unsafe { (*self.args_raw).external as *mut TaggedObject<T> };
 
         unsafe {
             if (*external).type_id != TypeId::of::<T>() {
@@ -557,7 +567,10 @@ impl<'a> OnBeforeParse<'a> {
     /// source code contains invalid UTF-8.
     pub fn input_source_code(&self) -> PluginResult<Cow<'_, str>> {
         let fetch_result = unsafe {
-            ((*self.result_raw).fetchSourceCode.unwrap())(self.args_raw, self.result_raw)
+            ((*self.result_raw).fetchSourceCode.unwrap())(
+                self.args_raw as *const _,
+                self.result_raw,
+            )
         };
 
         if fetch_result != 0 {
@@ -639,8 +652,8 @@ impl<'a> OnBeforeParse<'a> {
         let mut log_options = log_from_message_and_level(
             message,
             level,
-            self.args_raw.path_ptr,
-            self.args_raw.path_len,
+            unsafe { (*self.args_raw).path_ptr },
+            unsafe { (*self.args_raw).path_len },
         );
         unsafe {
             ((*self.result_raw).log.unwrap())(self.args_raw, &mut log_options);

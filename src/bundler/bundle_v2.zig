@@ -4016,7 +4016,8 @@ pub const ParseTask = struct {
         const OnBeforeParseResultWrapper = struct {
             original_source: ?[]const u8 = null,
             loader: Loader,
-            impl: OnBeforeParseResult,
+            check: if (bun.Environment.isDebug) u32 else u0 = if (bun.Environment.isDebug) 42069 else 0, // Value to ensure OnBeforeParseResult is wrapped in this struct
+            result: OnBeforeParseResult,
         };
 
         const OnBeforeParseResult = extern struct {
@@ -4025,7 +4026,7 @@ pub const ParseTask = struct {
             source_len: usize = 0,
             loader: Loader,
 
-            fetch_source_code_fn: *const fn (*const OnBeforeParseArguments, *OnBeforeParseResult) callconv(.C) i32 = &fetchSourceCode,
+            fetch_source_code_fn: *const fn (*OnBeforeParseArguments, *OnBeforeParseResult) callconv(.C) i32 = &fetchSourceCode,
 
             user_context: ?*anyopaque = null,
             free_user_context: ?*const fn (?*anyopaque) callconv(.C) void = null,
@@ -4034,9 +4035,15 @@ pub const ParseTask = struct {
                 args_: ?*OnBeforeParseArguments,
                 log_options_: ?*BunLogOptions,
             ) callconv(.C) void = &BunLogOptions.logFn,
+
+            pub fn getWrapper(result: *OnBeforeParseResult) *OnBeforeParseResultWrapper {
+                const wrapper: *OnBeforeParseResultWrapper = @fieldParentPtr("result", result);
+                bun.debugAssert(wrapper.check == 42069);
+                return wrapper;
+            }
         };
 
-        pub fn fetchSourceCode(args: *const OnBeforeParseArguments, result: *OnBeforeParseResult) callconv(.C) i32 {
+        pub fn fetchSourceCode(args: *OnBeforeParseArguments, result: *OnBeforeParseResult) callconv(.C) i32 {
             debug("fetchSourceCode", .{});
             const this = args.context;
             if (this.log.errors > 0 or this.deferred_error != null or this.should_continue_running.* != 1) {
@@ -4067,9 +4074,21 @@ pub const ParseTask = struct {
             result.source_len = entry.contents.len;
             result.free_user_context = null;
             result.user_context = null;
-            const wrapper: *OnBeforeParseResultWrapper = @fieldParentPtr("impl", result);
+            const wrapper: *OnBeforeParseResultWrapper = result.getWrapper();
             wrapper.original_source = entry.contents;
             return 0;
+        }
+
+        pub export fn OnBeforeParseResult__reset(this: *OnBeforeParseResult) void {
+            const wrapper = this.getWrapper();
+            this.loader = wrapper.loader;
+            if (wrapper.original_source) |src| {
+                this.source_ptr = src.ptr;
+                this.source_len = src.len;
+            } else {
+                this.source_ptr = null;
+                this.source_len = 0;
+            }
         }
 
         pub export fn OnBeforeParsePlugin__isDone(this: *OnBeforeParsePlugin) i32 {
@@ -4082,7 +4101,7 @@ pub const ParseTask = struct {
             // But, we must check that they actually modified it
             // since fetching the source stores it inside `result.source_ptr`
             if (result.source_ptr != null) {
-                const wrapper: *OnBeforeParseResultWrapper = @fieldParentPtr("impl", result);
+                const wrapper: *OnBeforeParseResultWrapper = result.getWrapper();
                 return @intFromBool(result.source_ptr.? != wrapper.original_source.?.ptr);
             }
 
@@ -4100,10 +4119,14 @@ pub const ParseTask = struct {
                 args.namespace_ptr = this.file_path.namespace.ptr;
                 args.namespace_len = this.file_path.namespace.len;
             }
-            var result = OnBeforeParseResult{
+            var wrapper = OnBeforeParseResultWrapper{
                 .loader = this.loader.*,
+                .result = OnBeforeParseResult{
+                    .loader = this.loader.*,
+                },
             };
-            this.result = &result;
+
+            this.result = &wrapper.result;
             const count = plugin.callOnBeforeParsePlugins(
                 this,
                 if (bun.strings.eqlComptime(this.file_path.namespace, "file"))
@@ -4113,15 +4136,15 @@ pub const ParseTask = struct {
 
                 &bun.String.init(this.file_path.text),
                 &args,
-                &result,
+                &wrapper.result,
                 this.should_continue_running,
             );
             if (comptime Environment.enable_logs)
                 debug("callOnBeforeParsePlugins({s}:{s}) = {d}", .{ this.file_path.namespace, this.file_path.text, count });
             if (count > 0) {
                 if (this.deferred_error) |err| {
-                    if (result.free_user_context) |free_user_context| {
-                        free_user_context(result.user_context);
+                    if (wrapper.result.free_user_context) |free_user_context| {
+                        free_user_context(wrapper.result.user_context);
                     }
 
                     return err;
@@ -4129,7 +4152,7 @@ pub const ParseTask = struct {
 
                 // If the plugin sets the `free_user_context` function pointer, it _must_ set the `user_context` pointer.
                 // Otherwise this is just invalid behavior.
-                if (result.user_context == null and result.free_user_context != null) {
+                if (wrapper.result.user_context == null and wrapper.result.free_user_context != null) {
                     var msg = Logger.Msg{ .data = .{ .location = null, .text = bun.default_allocator.dupe(
                         u8,
                         "Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field.",
@@ -4141,27 +4164,27 @@ pub const ParseTask = struct {
                 }
 
                 if (this.log.errors > 0) {
-                    if (result.free_user_context) |free_user_context| {
-                        free_user_context(result.user_context);
+                    if (wrapper.result.free_user_context) |free_user_context| {
+                        free_user_context(wrapper.result.user_context);
                     }
 
                     return error.SyntaxError;
                 }
 
-                if (result.source_ptr) |ptr| {
-                    if (result.free_user_context != null) {
+                if (wrapper.result.source_ptr) |ptr| {
+                    if (wrapper.result.free_user_context != null) {
                         this.task.external = CacheEntry.External{
-                            .ctx = result.user_context,
-                            .function = result.free_user_context,
+                            .ctx = wrapper.result.user_context,
+                            .function = wrapper.result.free_user_context,
                         };
                     }
                     from_plugin.* = true;
-                    this.loader.* = result.loader;
+                    this.loader.* = wrapper.result.loader;
                     return CacheEntry{
-                        .contents = ptr[0..result.source_len],
+                        .contents = ptr[0..wrapper.result.source_len],
                         .external = .{
-                            .ctx = result.user_context,
-                            .function = result.free_user_context,
+                            .ctx = wrapper.result.user_context,
+                            .function = wrapper.result.free_user_context,
                         },
                     };
                 }

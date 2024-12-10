@@ -38,6 +38,7 @@
 namespace Bun {
 
 extern "C" int OnBeforeParsePlugin__isDone(void* context);
+extern "C" void OnBeforeParseResult__reset(OnBeforeParseResult* result);
 #define WRAP_BUNDLER_PLUGIN(argName) jsDoubleNumber(bitwise_cast<double>(reinterpret_cast<uintptr_t>(argName)))
 #define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(bitwise_cast<uintptr_t>(callFrame->argument(0).asDouble()))
 
@@ -66,7 +67,9 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
         index = namespaces.size() - 1;
     }
 
-    nsGroup->append(FilterRegExp(filter->pattern(), filter->flags()));
+    auto pattern = filter->pattern();
+    auto filter_regexp = FilterRegExp(pattern, filter->flags());
+    nsGroup->append(WTFMove(filter_regexp));
 }
 
 static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, const BunString* namespaceStr, const BunString* path)
@@ -242,11 +245,9 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
             index = namespaces.size() - 1;
         }
 
-        Yarr::RegularExpression&& regex = Yarr::RegularExpression(
-            StringView(filter->pattern()),
-            filter->flags());
-
-        nsGroup->append(FilterRegExp { regex });
+        auto pattern = filter->pattern();
+        auto filter_regexp = FilterRegExp(pattern, filter->flags());
+        nsGroup->append(WTFMove(filter_regexp));
     }
 
     if (index == std::numeric_limits<unsigned>::max()) {
@@ -273,7 +274,7 @@ bool BundlerPlugin::FilterRegExp::match(JSC::VM& vm, const String& path)
 
 extern "C" void CrashHandler__setInsideNativePlugin(const char* plugin_name);
 
-int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, void* onBeforeParseArgs, void* onBeforeParseResult)
+int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult)
 {
     unsigned index = 0;
     auto* groupPtr = this->group(namespaceStr->toWTFString(BunString::ZeroCopy), index);
@@ -292,12 +293,17 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
     const WTF::String& path = pathString->toWTFString(BunString::ZeroCopy);
     for (size_t i = 0, total = callbacks.size(); i < total && *shouldContinue; ++i) {
 
-        // Need to lock the mutex to access the regular expression
+        if (i > 0) {
+            OnBeforeParseResult__reset(onBeforeParseResult);
+        }
+
 
         if (filters[i].match(vm, path)) {
             Bun::NapiExternal* external = callbacks[i].external;
             if (external) {
-                ((OnBeforeParseArguments*)(onBeforeParseArgs))->external = external->value();
+                onBeforeParseArgs->external = external->value();
+            } else {
+                onBeforeParseArgs->external = nullptr;
             }
 
             JSBundlerPluginNativeOnBeforeParseCallback callback = callbacks[i].callback;
@@ -645,7 +651,7 @@ extern "C" int JSBundlerPlugin__callOnBeforeParsePlugins(
     const BunString* namespaceStr,
     const BunString* pathString,
     OnBeforeParseArguments* onBeforeParseArgs,
-    void* onBeforeParseResult,
+    OnBeforeParseResult* onBeforeParseResult,
     int* shouldContinue)
 {
     return plugin->plugin.onBeforeParse.call(plugin->vm(), &plugin->plugin, shouldContinue, bunContextPtr, namespaceStr, pathString, onBeforeParseArgs, onBeforeParseResult);

@@ -14,29 +14,19 @@ pub fn bun(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let output = quote! {
         #[no_mangle]
         pub unsafe extern "C" fn #fn_name(
-            args_raw: *const bun_native_plugin::sys::OnBeforeParseArguments,
+            args_raw: *mut bun_native_plugin::sys::OnBeforeParseArguments,
             result: *mut bun_native_plugin::sys::OnBeforeParseResult,
         ) {
             fn #inner_fn_name(handle: &mut bun_native_plugin::OnBeforeParse) -> Result<()>  {
                 #fn_block
             }
 
-            let args = unsafe { &*args_raw };
-
-            let args_path = (*args_raw).path_ptr;
-            let args_path_len = (*args_raw).path_len;
+            let args_path = unsafe { (*args_raw).path_ptr };
+            let args_path_len = unsafe { (*args_raw).path_len };
             let result_pointer = result;
 
-            // let mut handle = match bun_native_plugin::OnBeforeParse::from_raw(args, result) {
-            //     Ok(handle) => handle,
-            //     Err(_) => return,
-            // };
-            // if let Err(e) = #inner_fn_name(&mut handle) {
-            //     handle.log_error(&format!("{:?}", e));
-            // }
-
             let result = std::panic::catch_unwind(|| {
-                let mut handle = match bun_native_plugin::OnBeforeParse::from_raw(args, result) {
+                let mut handle = match bun_native_plugin::OnBeforeParse::from_raw(args_raw, result) {
                     Ok(handle) => handle,
                     Err(_) => return,
                 };

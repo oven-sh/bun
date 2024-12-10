@@ -8,7 +8,7 @@ NapiExternal::~NapiExternal()
     if (m_finalizer) {
         // We cannot call globalObject() here because it is in a finalizer.
         // https://github.com/oven-sh/bun/issues/13001#issuecomment-2290022312
-        reinterpret_cast<napi_finalize>(m_finalizer)(m_env, m_value, m_finalizerHint);
+        m_finalizer(m_env, m_value, m_finalizerHint);
     }
 }
 

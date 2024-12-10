@@ -12,7 +12,8 @@ Local<External> External::New(Isolate* isolate, void* value)
     auto globalObject = isolate->globalObject();
     auto& vm = globalObject->vm();
     auto structure = globalObject->NapiExternalStructure();
-    Bun::NapiExternal* val = Bun::NapiExternal::create(vm, structure, value, nullptr, nullptr, nullptr);
+    // nullptr napi_env -- this is OK when there is no finalizer
+    Bun::NapiExternal* val = Bun::NapiExternal::create(vm, structure, nullptr, value, nullptr, nullptr);
     return isolate->currentHandleScope()->createLocal<External>(vm, val);
 }
 

@@ -1010,7 +1010,7 @@ extern "C" void napi_module_register(napi_module* mod)
     auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
 
     // TODO: think about the finalizer here
-    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr);
+    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), env, meta, nullptr, nullptr);
 
     bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     ASSERT(success);
@@ -2404,7 +2404,7 @@ extern "C" napi_status napi_create_external(napi_env env, void* data,
     JSC::VM& vm = globalObject->vm();
 
     auto* structure = globalObject->NapiExternalStructure();
-    JSValue value = Bun::NapiExternal::create(vm, structure, data, finalize_hint, env, reinterpret_cast<void*>(finalize_cb));
+    JSValue value = Bun::NapiExternal::create(vm, structure, env, data, finalize_hint, finalize_cb);
     JSC::EnsureStillAliveScope ensureStillAlive(value);
     *result = toNapi(value, globalObject);
     return napi_ok;

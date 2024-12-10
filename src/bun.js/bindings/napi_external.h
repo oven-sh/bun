@@ -52,35 +52,35 @@ public:
     }
 
     // env is needed only if a finalizer is passed, otherwise it may be null
-    static NapiExternal* create(JSC::VM& vm, JSC::Structure* structure, void* value, void* finalizer_hint, napi_env env, void* finalizer)
+    static NapiExternal* create(JSC::VM& vm, JSC::Structure* structure, napi_env env, void* value, void* finalizer_hint, napi_finalize finalizer)
     {
-        NapiExternal* accessor = new (NotNull, JSC::allocateCell<NapiExternal>(vm)) NapiExternal(vm, structure);
+        NapiExternal* external = new (NotNull, JSC::allocateCell<NapiExternal>(vm)) NapiExternal(vm, structure);
 
-        accessor->finishCreation(vm, value, finalizer_hint, env, finalizer);
+        external->finishCreation(vm, env, value, finalizer_hint, finalizer);
 
 #if BUN_DEBUG
         if (auto* callFrame = vm.topCallFrame) {
             auto origin = callFrame->callerSourceOrigin(vm);
-            accessor->sourceOriginURL = origin.string();
+            external->sourceOriginURL = origin.string();
 
             std::unique_ptr<Vector<StackFrame>> stackTrace = makeUnique<Vector<StackFrame>>();
-            vm.interpreter.getStackTrace(accessor, *stackTrace, 0, 20);
+            vm.interpreter.getStackTrace(external, *stackTrace, 0, 20);
             if (!stackTrace->isEmpty()) {
                 for (auto& frame : *stackTrace) {
                     if (frame.hasLineAndColumnInfo()) {
                         LineColumn lineColumn = frame.computeLineAndColumn();
-                        accessor->sourceOriginLine = lineColumn.line;
-                        accessor->sourceOriginColumn = lineColumn.column;
+                        external->sourceOriginLine = lineColumn.line;
+                        external->sourceOriginColumn = lineColumn.column;
                         break;
                     }
                 }
             }
         }
 #endif
-        return accessor;
+        return external;
     }
 
-    void finishCreation(JSC::VM& vm, void* value, void* finalizer_hint, napi_env env, void* finalizer)
+    void finishCreation(JSC::VM& vm, napi_env env, void* value, void* finalizer_hint, napi_finalize finalizer)
     {
         Base::finishCreation(vm);
         m_value = value;
@@ -95,7 +95,7 @@ public:
 
     void* m_value = nullptr;
     void* m_finalizerHint = nullptr;
-    void* m_finalizer = nullptr;
+    napi_finalize m_finalizer = nullptr;
     napi_env m_env = nullptr;
 
 #if BUN_DEBUG

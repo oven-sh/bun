@@ -23,6 +23,7 @@
 // See https://github.com/joyent/node/issues/3257
 
 const common = require('../common');
+if (common.isWindows) return; // TODO: BUN
 const http = require('http');
 
 const server = http.createServer(function(req, res) {

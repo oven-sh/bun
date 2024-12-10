@@ -29,12 +29,12 @@ import {
   getLoggedInUserCount,
   getShell,
   getWindowsExitReason,
-  isArm64,
   isBuildkite,
   isCI,
   isGithubAction,
   isMacOS,
   isWindows,
+  isX64,
   printEnvironment,
   startGroup,
   tmpdir,
@@ -207,22 +207,24 @@ async function runTests() {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
             args: [title],
-            timeout: spawnTimeout,
+            timeout: 10_000,
             env: {
               FORCE_COLOR: "0",
             },
             stdout: chunk => pipeTestStdout(process.stdout, chunk),
             stderr: chunk => pipeTestStdout(process.stderr, chunk),
           });
+          const mb = 1024 ** 3;
+          const stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
           return {
             testPath: title,
-            ok,
+            ok: ok,
             status: ok ? "pass" : "fail",
-            error,
+            error: error,
             errors: [],
             tests: [],
-            stdout,
-            stdoutPreview: "",
+            stdout: stdout,
+            stdoutPreview: stdoutPreview,
           };
         });
         continue;
@@ -793,13 +795,18 @@ function isJavaScriptTest(path) {
  * @returns {boolean}
  */
 function isTest(path) {
-  if (path.startsWith("js/node/test/parallel/") && isMacOS && isArm64) return true;
+  if (path.replaceAll(sep, "/").startsWith("js/node/test/parallel/") && targetDoesRunNodeTests()) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
   return isTestStrict(path);
 }
 
 function isTestStrict(path) {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
+}
+
+function targetDoesRunNodeTests() {
+  if (isMacOS && isX64) return false;
+  return true;
 }
 
 /**
@@ -1318,7 +1325,7 @@ function reportAnnotationToBuildKite({ label, content, style = "error", priority
   const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
   const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
-  let errorMessage = `<details><summary><a><code>${label}</code></a> - annotation error on ${platform}</summary>`;
+  let errorMessage = `<details><summary><code>${label}</code> - annotation error on ${platform}</summary>`;
   if (stderr) {
     errorMessage += `\n\n\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\`\n\n</details>\n\n`;
   }

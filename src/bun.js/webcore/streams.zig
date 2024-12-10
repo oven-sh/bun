@@ -3462,7 +3462,7 @@ pub const FileSink = struct {
         // TODO: this should be concurrent.
         var isatty: ?bool = null;
         var is_nonblocking_tty = false;
-        var fd = switch (switch (options.input_path) {
+        const fd = switch (switch (options.input_path) {
             .path => |path| bun.sys.openA(path.slice(), options.flags(), options.mode),
             .fd => |fd_| brk: {
                 if (comptime Environment.isPosix and FeatureFlags.nonblocking_stdout_and_stderr_on_posix) {

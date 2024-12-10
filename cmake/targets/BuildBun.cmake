@@ -777,35 +777,22 @@ if(NOT WIN32)
     endif()
 
     target_compile_options(${bun} PUBLIC
-      -Werror=return-type
-      -Werror=return-stack-address
-      -Werror=implicit-function-declaration
-      -Werror=uninitialized
-      -Werror=conditional-uninitialized
-      -Werror=suspicious-memaccess
-      -Werror=int-conversion
-      -Werror=nonnull
-      -Werror=move
-      -Werror=sometimes-uninitialized
-      -Werror=unused
+      -Wall
+      -Wextra
       -Wno-unused-function
       -Wno-nullability-completeness
+      -Wno-unused-parameter
+      -Wno-sign-compare
       -Werror
     )
   else()
     # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
     target_compile_options(${bun} PUBLIC ${LTO_FLAG}
-      -Werror=return-type
-      -Werror=return-stack-address
-      -Werror=implicit-function-declaration
-      -Werror=uninitialized
-      -Werror=conditional-uninitialized
-      -Werror=suspicious-memaccess
-      -Werror=int-conversion
-      -Werror=nonnull
-      -Werror=move
-      -Werror=sometimes-uninitialized
+      -Wall
+      -Wextra
       -Wno-nullability-completeness
+      -Wno-unused-parameter
+      -Wno-sign-compare
       -Werror
     )
   endif()

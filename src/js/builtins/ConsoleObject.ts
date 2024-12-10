@@ -292,14 +292,10 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     } = options;
 
     if (!stdout || typeof stdout.write !== "function") {
-      const err = new TypeError("stdout is not a writable stream");
-      err.code = "ERR_CONSOLE_WRITABLE_STREAM";
-      throw err;
+      throw $ERR_CONSOLE_WRITABLE_STREAM("stdout is not a writable stream");
     }
     if (!stderr || typeof stderr.write !== "function") {
-      const err = new TypeError("stderr is not a writable stream");
-      err.code = "ERR_CONSOLE_WRITABLE_STREAM";
-      throw err;
+      throw $ERR_CONSOLE_WRITABLE_STREAM("stderr is not a writable stream");
     }
 
     if (typeof colorMode !== "boolean" && colorMode !== "auto") {
@@ -316,11 +312,9 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       validateObject(inspectOptions, "options.inspectOptions");
 
       if (inspectOptions.colors !== undefined && options.colorMode !== undefined) {
-        const err = new TypeError(
+        throw $ERR_INCOMPATIBLE_OPTION_PAIR(
           'Option "options.inspectOptions.color" cannot be used in combination with option "colorMode"',
         );
-        err.code = "ERR_INCOMPATIBLE_OPTION_PAIR";
-        throw err;
       }
       optionsMap.set(this, inspectOptions);
     }

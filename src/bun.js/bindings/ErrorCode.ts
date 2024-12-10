@@ -46,12 +46,16 @@ export default [
   ["ERR_UNKNOWN_SIGNAL", TypeError, "TypeError"],
   ["ERR_SOCKET_BAD_PORT", RangeError, "RangeError"],
   ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
+  ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError, "TypeError"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],
   ["ERR_BODY_ALREADY_USED", Error, "Error"],
   ["ERR_STREAM_WRAP", Error, "Error"],
   ["ERR_BORINGSSL", Error, "Error"],
+
+  // Console
+  ["ERR_CONSOLE_WRITABLE_STREAM", TypeError, "TypeError"],
 
   //NET
   ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION", Error, "Error"],

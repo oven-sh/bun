@@ -16,7 +16,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
@@ -33,7 +32,6 @@
       "args": ["test", "--only", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
         "BUN_DEBUG_jest": "1",
@@ -56,7 +54,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
@@ -73,7 +70,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "0",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -90,7 +86,6 @@
       "args": ["test", "--watch", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -107,7 +102,6 @@
       "args": ["test", "--hot", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -124,7 +118,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -147,7 +140,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -187,7 +179,6 @@
       "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
         "BUN_DEBUG_IncrementalGraph": "1",
@@ -207,7 +198,6 @@
       "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "0",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
@@ -223,7 +213,6 @@
       "args": ["run", "--watch", "${fileBasename}"],
       "cwd": "${fileDirname}",
       "env": {
-        "FORCE_COLOR": "1",
         // "BUN_DEBUG_DEBUGGER": "1",
         // "BUN_DEBUG_INTERNAL_DEBUGGER": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -242,7 +231,6 @@
       "args": ["run", "--hot", "${fileBasename}"],
       "cwd": "${fileDirname}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
@@ -303,7 +291,6 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -320,7 +307,6 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
@@ -337,7 +323,6 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -354,7 +339,6 @@
       "args": ["test", "--watch", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -371,7 +355,6 @@
       "args": ["test", "--hot", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -388,7 +371,6 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -411,7 +393,6 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -435,7 +416,6 @@
       "args": ["exec", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
@@ -452,7 +432,6 @@
       "args": ["test"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
@@ -468,7 +447,6 @@
       "args": ["test"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
@@ -484,7 +462,6 @@
       "args": ["test"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
         "BUN_INSPECT": "ws://localhost:0/",
@@ -506,7 +483,6 @@
       "args": ["install"],
       "cwd": "${fileDirname}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
@@ -522,7 +498,6 @@
       "args": ["test/runner.node.mjs"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
@@ -542,10 +517,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -572,10 +543,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -600,10 +567,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -630,10 +593,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "0",
         },
@@ -658,10 +617,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -696,10 +651,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -736,10 +687,6 @@
       "cwd": "${fileDirname}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -765,10 +712,6 @@
       "cwd": "${fileDirname}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -790,10 +733,6 @@
       "cwd": "${fileDirname}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -814,10 +753,6 @@
       "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -848,10 +783,6 @@
       "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -884,10 +815,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -912,10 +839,6 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -942,10 +865,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "0",
         },
@@ -970,10 +889,6 @@
       "args": ["test", "--watch", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -1000,10 +915,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -1028,10 +939,6 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -1066,10 +973,6 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -1106,10 +1009,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -1132,10 +1031,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -1156,10 +1051,6 @@
       "args": ["test"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -1185,10 +1076,6 @@
       "args": ["test"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -1223,10 +1110,6 @@
       "args": ["test/runner.node.mjs"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",

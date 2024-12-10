@@ -1,3 +1,5 @@
+process.emitWarning("These APIs are for internal testing only. Do not use them.", "internal/test/binding");
+
 function internalBinding(name: string) {
   switch (name) {
     case "async_wrap":

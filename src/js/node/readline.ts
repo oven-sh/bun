@@ -27,6 +27,8 @@
 // ----------------------------------------------------------------------------
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
+const { CSI } = require("internal/readline/utils");
+const { kClearLine, kClearScreenDown, kClearToLineBeginning, kClearToLineEnd } = CSI;
 
 const {
   validateFunction,
@@ -313,23 +315,6 @@ class AbortError extends Error {
 // ----------------------------------------------------------------------------
 // Section: Utils
 // ----------------------------------------------------------------------------
-
-function CSI(strings, ...args) {
-  var ret = `${kEscape}[`;
-  for (var n = 0; n < strings.length; n++) {
-    ret += strings[n];
-    if (n < args.length) ret += args[n];
-  }
-  return ret;
-}
-
-var kClearLine, kClearScreenDown, kClearToLineBeginning, kClearToLineEnd;
-
-CSI.kEscape = kEscape;
-CSI.kClearLine = kClearLine = CSI`2K`;
-CSI.kClearScreenDown = kClearScreenDown = CSI`0J`;
-CSI.kClearToLineBeginning = kClearToLineBeginning = CSI`1K`;
-CSI.kClearToLineEnd = kClearToLineEnd = CSI`0K`;
 
 function charLengthLeft(str: string, i: number) {
   if (i <= 0) return 0;

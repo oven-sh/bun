@@ -2564,6 +2564,12 @@ pub const VirtualMachine = struct {
             } else {
                 return error.ModuleNotFound;
             }
+        } else if (ModuleLoader.is_allowed_to_use_internal_testing_apis) {
+            if (JSC.internal_modules.get(specifier) != null) {
+                ret.result = null;
+                ret.path = specifier;
+                return;
+            }
         }
 
         const is_special_source = strings.eqlComptime(source, main_file_name) or js_ast.Macro.isMacroPath(source);

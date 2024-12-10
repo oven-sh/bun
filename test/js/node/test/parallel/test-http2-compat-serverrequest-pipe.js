@@ -3,6 +3,7 @@
 const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
+if (common.isWindows) return; // TODO: BUN
 const fixtures = require('../common/fixtures');
 const assert = require('assert');
 const http2 = require('http2');

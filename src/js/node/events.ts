@@ -72,12 +72,14 @@ EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   this._maxListeners = n;
   return this;
 };
+Object.defineProperty(EventEmitterPrototype.setMaxListeners, "name", { value: "setMaxListeners" });
 
 EventEmitterPrototype.constructor = EventEmitter;
 
 EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
   return this?._maxListeners ?? defaultMaxListeners;
 };
+Object.defineProperty(EventEmitterPrototype.getMaxListeners, "name", { value: "getMaxListeners" });
 
 function emitError(emitter, args) {
   var { _events: events } = emitter;
@@ -591,6 +593,7 @@ function setMaxListeners(n = defaultMaxListeners, ...eventTargets) {
     defaultMaxListeners = n;
   }
 }
+Object.defineProperty(setMaxListeners, "name", { value: "setMaxListeners" });
 
 const jsEventTargetGetEventListenersCount = $newCppFunction(
   "JSEventTarget.cpp",
@@ -659,6 +662,7 @@ const eventTargetMaxListenersSymbol = Symbol("EventTarget.maxListeners");
 function getMaxListeners(emitterOrTarget) {
   return emitterOrTarget?.[eventTargetMaxListenersSymbol] ?? emitterOrTarget?._maxListeners ?? defaultMaxListeners;
 }
+Object.defineProperty(getMaxListeners, "name", { value: "getMaxListeners" });
 
 // Copy-pasta from Node.js source code
 function addAbortListener(signal, listener) {

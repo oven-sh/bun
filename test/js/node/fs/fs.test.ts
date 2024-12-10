@@ -2729,18 +2729,8 @@ it("fstatSync(decimal)", () => {
   expect(() => fstatSync(eval("-1.0"))).toThrow();
   expect(() => fstatSync(eval("Infinity"))).toThrow();
   expect(() => fstatSync(eval("-Infinity"))).toThrow();
-  expect(() =>
-    fstatSync(
-      // > max int32 is not valid in most C APIs still.
-      2147483647 + 1,
-    ),
-  ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
-  expect(() =>
-    fstatSync(
-      // max int32 is a valid fd
-      2147483647,
-    ),
-  ).toThrow(expect.objectContaining({ code: "EBADF" }));
+  expect(() => fstatSync(2147483647 + 1)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" })); // > max int32 is not valid in most C APIs still.
+  expect(() => fstatSync(2147483647)).toThrow(expect.objectContaining({ code: "EBADF" })); // max int32 is a valid fd
 });
 
 it("fstat on a large file", () => {

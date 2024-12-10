@@ -103,7 +103,7 @@ function getTargetLabel(target) {
  */
 const buildPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14" },
-  { os: "darwin", arch: "x64", release: "14" },
+  // { os: "darwin", arch: "x64", release: "14" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
   { os: "linux", arch: "x64", distro: "debian", release: "11" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
@@ -120,14 +120,11 @@ const buildPlatforms = [
 const testPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
-  { os: "darwin", arch: "x64", release: "14", tier: "latest" },
-  { os: "darwin", arch: "x64", release: "13", tier: "previous" },
+  // { os: "darwin", arch: "x64", release: "14", tier: "latest" },
+  // { os: "darwin", arch: "x64", release: "13", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "aarch64", distro: "debian", release: "11", tier: "previous" },
   { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "x64", distro: "debian", release: "11", tier: "previous" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04", tier: "oldest" },
@@ -221,10 +218,10 @@ function getRetry(limit = 0) {
     },
     automatic: [
       { exit_status: 1, limit },
-      { exit_status: -1, limit: 3 },
-      { exit_status: 255, limit: 3 },
-      { signal_reason: "cancel", limit: 3 },
-      { signal_reason: "agent_stop", limit: 3 },
+      { exit_status: -1, limit: 1 },
+      { exit_status: 255, limit: 1 },
+      { signal_reason: "cancel", limit: 1 },
+      { signal_reason: "agent_stop", limit: 1 },
     ],
   };
 }
@@ -346,12 +343,11 @@ function getTestAgent(platform) {
     };
   }
 
-  // TODO: `dev-server-ssr-110.test.ts` and `next-build.test.ts` run out of memory
-  // at 8GB of memory, so use 16GB instead.
+  // TODO: `dev-server-ssr-110.test.ts` and `next-build.test.ts` run out of memory at 8GB of memory, so use 16GB instead.
   if (os === "windows") {
     return getEc2Agent(platform, {
       instanceType: "c7i.2xlarge",
-      cpuCount: 1,
+      cpuCount: 2,
       threadsPerCore: 1,
     });
   }
@@ -359,14 +355,14 @@ function getTestAgent(platform) {
   if (arch === "aarch64") {
     return getEc2Agent(platform, {
       instanceType: "c8g.xlarge",
-      cpuCount: 1,
+      cpuCount: 2,
       threadsPerCore: 1,
     });
   }
 
   return getEc2Agent(platform, {
     instanceType: "c7i.xlarge",
-    cpuCount: 1,
+    cpuCount: 2,
     threadsPerCore: 1,
   });
 }

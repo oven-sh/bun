@@ -2006,6 +2006,18 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8).len + prefix.len :0];
 }
 
+pub fn toNTMaxPath(buf: []u8, utf8: []const u8) [:0]const u8 {
+    if (!std.fs.path.isAbsoluteWindows(utf8) or utf8.len <= 260) {
+        @memcpy(buf[0..utf8.len], utf8);
+        buf[utf8.len] = 0;
+        return buf[0..utf8.len :0];
+    }
+
+    const prefix = bun.windows.nt_maxpath_prefix_u8;
+    buf[0..prefix.len].* = prefix;
+    return buf[0 .. toPathNormalized(buf[prefix.len..], utf8).len + prefix.len :0];
+}
+
 pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]const u16 {
     wbuf[0..bun.windows.nt_object_prefix.len].* = bun.windows.nt_object_prefix;
     @memcpy(wbuf[bun.windows.nt_object_prefix.len..][0..utf16.len], utf16);
@@ -2051,6 +2063,18 @@ pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 
     return toWPath(wbuf, path_to_use);
 }
+pub fn toPathNormalized(buf: []u8, utf8: []const u8) [:0]const u8 {
+    var renormalized: bun.PathBuffer = undefined;
+
+    var path_to_use = normalizeSlashesOnly(&renormalized, utf8, '\\');
+
+    // is there a trailing slash? Let's remove it before converting to UTF-16
+    if (path_to_use.len > 3 and bun.path.isSepAny(path_to_use[path_to_use.len - 1])) {
+        path_to_use = path_to_use[0 .. path_to_use.len - 1];
+    }
+
+    return toPath(buf, path_to_use);
+}
 
 pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash: u8) []const u8 {
     comptime bun.unsafeAssert(desired_slash == '/' or desired_slash == '\\');
@@ -2088,6 +2112,9 @@ pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 
 pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPathMaybeDir(wbuf, utf8, false);
+}
+pub fn toPath(buf: []u8, utf8: []const u8) [:0]const u8 {
+    return toPathMaybeDir(buf, utf8, false);
 }
 
 pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
@@ -2135,6 +2162,19 @@ pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash
     wbuf[result.count] = 0;
 
     return wbuf[0..result.count :0];
+}
+pub fn toPathMaybeDir(buf: []u8, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u8 {
+    bun.unsafeAssert(buf.len > 0);
+
+    var len = utf8.len;
+    @memcpy(buf[0..len], utf8[0..len]);
+
+    if (add_trailing_lash and len > 0 and buf[len - 1] != '\\') {
+        buf[len] = '\\';
+        len += 1;
+    }
+    buf[len] = 0;
+    return buf[0..len :0];
 }
 
 pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {

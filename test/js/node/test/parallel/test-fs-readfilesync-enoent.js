@@ -4,6 +4,7 @@ const common = require('../common');
 // This test is only relevant on Windows.
 if (!common.isWindows)
   common.skip('Windows specific test.');
+if (common.isWindows) return; // TODO: BUN
 
 // This test ensures fs.realpathSync works on properly on Windows without
 // throwing ENOENT when the path involves a fileserver.

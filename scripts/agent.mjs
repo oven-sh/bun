@@ -192,10 +192,6 @@ Environment=NIX_PATH=/nix/var/nix/profiles/per-user/root/channels
       "experiment": "normalised-upload-paths,resolve-commit-after-checkout,agent-api",
     };
 
-    if (isLinux && isNixInstalled()) {
-      options["env-path"] = "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh";
-    }
-
     let ephemeral;
     if (cloud) {
       const jobId = await getCloudMetadataTag("buildkite:job-uuid");

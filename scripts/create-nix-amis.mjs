@@ -29,7 +29,6 @@ async function main() {
   }
 
   const architecture = parseArch(arch);
-  const flakeTarget = architecture === "arm64" ? "arm64" : "x64";
 
   // Read the required files
   let agentScript, flakeContent, utilsContent;
@@ -184,7 +183,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable buildkite-agent
 
 cd /var/lib/buildkite-agent/bun
-sudo -u buildkite-agent bash -c "source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && nix develop .#ci-${flakeTarget} -c echo 'Build environment ready for ${release} - ${architecture}'"
+sudo -u buildkite-agent bash -c "source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && nix develop .#ci -c echo 'Build environment ready for ${release} - ${architecture}'"
 `;
 
   // Write user data to a temporary file

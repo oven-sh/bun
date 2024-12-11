@@ -1201,10 +1201,9 @@ async function main() {
     rdp: !!args["rdp"] || !!args["vnc"],
     sshKeys,
     userData: args["user-data"] ? readFile(args["user-data"]) : undefined,
-    // isDockerImage: !!args["docker"],
   };
 
-  let { detached, bootstrap, ci, os, arch, distro, release, features, isDockerImage } = options;
+  let { detached, bootstrap, ci, os, arch, distro, release, features } = options;
 
   let name = `${os}-${arch}-${release}`;
   if (distro) {
@@ -1220,7 +1219,7 @@ async function main() {
       import.meta.dirname,
       os === "windows"
         ? "bootstrap.ps1"
-        : isDockerImage && os === "linux" && distro === "amazonlinux"
+        : features?.includes("docker")
           ? "../.buildkite/Dockerfile-bootstrap.sh"
           : "bootstrap.sh",
     );
@@ -1238,7 +1237,7 @@ async function main() {
       await spawnSafe($`${npx} esbuild ${entryPath} --bundle --platform=node --format=esm --outfile=${agentPath}`);
     }
 
-    if (isDockerImage) {
+    if (features?.includes("docker")) {
       dockerfilePath = resolve(import.meta.dirname, "../.buildkite/Dockerfile");
 
       if (!existsSync(dockerfilePath)) {
@@ -1334,7 +1333,7 @@ async function main() {
           await machine.spawnSafe(["powershell", remotePath, ...args], { stdio: "inherit" });
         });
       } else {
-        if (!isDockerImage) {
+        if (!features?.includes("docker")) {
           const remotePath = "/tmp/bootstrap.sh";
           const args = ci ? ["--ci"] : [];
           for (const feature of features || []) {
@@ -1367,7 +1366,7 @@ async function main() {
         const remotePath = "C:\\buildkite-agent\\agent.mjs";
         await startGroup("Installing agent...", async () => {
           await machine.upload(agentPath, remotePath);
-          if (cloud.name === "docker" || isDockerImage) {
+          if (cloud.name === "docker" || features?.includes("docker")) {
             return;
           }
           await machine.spawnSafe(["node", remotePath, "install"], { stdio: "inherit" });

@@ -198,14 +198,14 @@ WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
         auto name = JSC::getCalculatedDisplayName(vm, cell->getObject());
         if (catchScope.exception()) {
             catchScope.clearException();
-            name = "Function"_s;
+            name = ""_s;
         }
 
         if (!name.isNull() && name.length() > 0) {
             return makeString("[Function: "_s, name, ']');
         }
 
-        return "Function"_s;
+        return "[Function: (anonymous)]"_s;
         break;
     }
 
@@ -261,12 +261,12 @@ WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue val
         auto name = JSC::getCalculatedDisplayName(vm, cell->getObject());
         if (scope.exception()) {
             scope.clearException();
-            name = "Function"_s;
+            name = String(""_s);
         }
         if (!name.isNull() && name.length() > 0) {
             return makeString("function "_s, name);
         }
-        return "function"_s;
+        return String("function"_s);
     }
     if (value.isObject()) {
         auto constructor = value.get(globalObject, vm.propertyNames->constructor);
@@ -388,7 +388,7 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
     auto input = JSValueToStringSafe(globalObject, val_input);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, range, ". Received: "_s, input);
+    return makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, range, ". Received "_s, input);
 }
 
 }

@@ -59,8 +59,8 @@ const settings = {
     sleepFactor: 1.25,
     /** Max time to sleep between retries. */
     maxSleepTime: 100,
-  }
-}
+  },
+};
 
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
@@ -178,11 +178,11 @@ async function runTests() {
 
     const isVendor = title.startsWith("vendor");
     reportResult(
-        result,
-        title,
-        "error",
-        /* buildkite */ isVendor ? { testPath: title } : {},
-        /* fmt to md */ { priority: isVendor ? 5 : undefined }
+      result,
+      title,
+      "error",
+      /* buildkite */ isVendor ? { testPath: title } : {},
+      /* fmt to md */ { priority: isVendor ? 5 : undefined },
     );
 
     if (options["bail"] && !result.ok) {
@@ -198,11 +198,8 @@ async function runTests() {
    */
   const runTestWithRetry = async (label, fn) => {
     const { maxSleepTime, initialSleepTime, sleepFactor } = settings.flakey;
-    /** @param {number} retry */
-    const sleepTime = (retry) = Math.min(
-      maxSleepTime,
-      initialSleepTime * Math.pow(sleepFactor, retry)
-    );
+    /** @type {(retry: number) => number} retry */
+    const sleepTime = retry => Math.min(maxSleepTime, initialSleepTime * Math.pow(sleepFactor, retry));
     const sleep = ms => new Promise(resolves => setTimeout(resolves, ms));
 
     if (!retryLimit) return startGroup(label, fn); // short circuit early
@@ -216,11 +213,11 @@ async function runTests() {
       try {
         result = await startGroup(attemptLabel, fn);
         if (result.ok) break;
-          // warn about flakey tests. Don't report on last attemp
+        // warn about flakey tests. Don't report on last attemp
         else if (attempt < retryLimit - 1) {
-            reportResult(result, label, "warning", { testPath: label });
-            // wait a bit between retries. e.g. flake may happen b/c disk is busy.
-            await sleep(sleepTime(attempt));
+          reportResult(result, label, "warning", { testPath: label });
+          // wait a bit between retries. e.g. flake may happen b/c disk is busy.
+          await sleep(sleepTime(attempt));
         }
       } catch (error) {
         console.error("this should not have happened");

@@ -36,11 +36,11 @@ const { getEventListeners, EventEmitter } = require('events');
   deepStrictEqual(getEventListeners(target, 'baz'), [fn1]);
 }
 
-// {
-//   throws(() => {
-//     getEventListeners('INVALID_EMITTER');
-//   }, /ERR_INVALID_ARG_TYPE/);
-// }
+{
+  throws(() => {
+    getEventListeners('INVALID_EMITTER');
+  }, /ERR_INVALID_ARG_TYPE/);
+}
 // {
 //   // Test weak listeners
 //   const target = new EventTarget();

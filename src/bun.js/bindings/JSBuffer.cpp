@@ -754,17 +754,12 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
     auto& vm = JSC::getVM(lexicalGlobalObject);
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (callFrame->argumentCount() < 1) {
-        return constructBufferEmpty(lexicalGlobalObject);
-    }
 
-    auto arrayValue = callFrame->uncheckedArgument(0);
-    auto array = JSC::jsDynamicCast<JSC::JSArray*>(arrayValue);
-    if (!array) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Argument must be an array"_s);
-        return {};
-    }
+    auto listValue = callFrame->argument(0);
 
+    Bun::V::validateArray(throwScope, lexicalGlobalObject, listValue, jsString(vm, String("list"_s)), jsUndefined());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto array = JSC::jsDynamicCast<JSC::JSArray*>(listValue);
     size_t arrayLength = array->length();
     if (arrayLength < 1) {
         RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
@@ -789,8 +784,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
 
         auto* typedArray = JSC::jsDynamicCast<JSC::JSUint8Array*>(element);
         if (!typedArray) {
-            throwTypeError(lexicalGlobalObject, throwScope, "Buffer.concat expects Uint8Array"_s);
-            return {};
+            return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, makeString("list["_s, i, "]"_s), "Buffer or Uint8Array"_s, element);
         }
 
         if (UNLIKELY(typedArray->isDetached())) {
@@ -838,7 +832,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
 
     size_t remain = byteLength;
     auto* head = outBuffer->typedVector();
-    const int arrayLengthI = arrayLength;
+    const int arrayLengthI = args.size();
     for (int i = 0; i < arrayLengthI && remain > 0; i++) {
         auto* typedArray = JSC::jsCast<JSC::JSUint8Array*>(args.at(i));
         size_t length = std::min(remain, typedArray->length());

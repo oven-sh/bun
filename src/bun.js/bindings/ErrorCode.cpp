@@ -217,11 +217,98 @@ WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
     return arg.toWTFStringForConsole(globalObject);
 }
 
+WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    if (value.isNull()) {
+        return String("null"_s);
+    }
+    if (value.isUndefined()) {
+        return String("undefined"_s);
+    }
+    if (value.isBigInt()) {
+        auto str = value.toStringOrNull(globalObject);
+        if (!str) return {};
+        return makeString("type bigint ("_s, str->getString(globalObject), "n)"_s);
+    }
+    if (value.isNumber()) {
+        double d = value.asNumber();
+        double infinity = std::numeric_limits<double>::infinity();
+        if (value == 0) return (1 / d == -infinity) ? String("type number (-0)"_s) : String("type number (0)"_s);
+        if (d != d) return String("type number (NaN)"_s);
+        if (d == infinity) return String("type number (Infinity)"_s);
+        if (d == -infinity) return String("type number (-Infinity)"_s);
+        auto str = value.toStringOrNull(globalObject);
+        if (!str) return {};
+        return makeString("type number ("_s, str->getString(globalObject), ")"_s);
+    }
+    if (value.isBoolean()) {
+        return value.asBoolean() ? String("type boolean (true)"_s) : String("type boolean (false)"_s);
+    }
+    if (value.isSymbol()) {
+        auto cell = value.asCell();
+        auto symbol = jsCast<Symbol*>(cell);
+        auto result = symbol->tryGetDescriptiveString();
+        auto description = result.has_value() ? result.value() : String(""_s);
+        return makeString("type boolean (Symbol("_s, description, "))"_s);
+    }
+    if (value.isCallable()) {
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_CATCH_SCOPE(vm);
+        auto cell = value.asCell();
+        auto name = JSC::getCalculatedDisplayName(vm, cell->getObject());
+        if (scope.exception()) {
+            scope.clearException();
+            name = "Function"_s;
+        }
+        if (!name.isNull() && name.length() > 0) {
+            return makeString("function "_s, name);
+        }
+        return "function"_s;
+    }
+    if (value.isObject()) {
+        auto constructor = value.get(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (constructor.toBoolean(globalObject)) {
+            auto name = constructor.get(globalObject, vm.propertyNames->name);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto str = name.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            return makeString("an instance of "_s, str->getString(globalObject));
+        }
+        // return `${lazyInternalUtilInspect().inspect(value, { depth: -1 })}`;
+        auto str = JSValueToStringSafe(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, {});
+        return str;
+    }
+    if (value.isString()) {
+        auto str = value.toString(globalObject)->getString(globalObject);
+        if (str.length() > 28) {
+            str = str.substring(0, 25);
+            str = makeString(str, "..."_s);
+            if (!str.contains('\'')) {
+                return makeString("type string ('"_s, str, "')"_s);
+            }
+        }
+        //       return `type string (${JSONStringify(value)})`;
+        str = JSValueToStringSafe(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, {});
+        return makeString("type string ("_s, str, ")"_s);
+    }
+
+    //       value = lazyInternalUtilInspect().inspect(value, { colors: false });
+    auto str = JSValueToStringSafe(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    return str;
+}
+
 namespace Message {
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, const StringView& expected_type, JSValue actual_value)
 {
-    auto actual_value_string = JSValueToStringSafe(globalObject, actual_value);
+    auto actual_value_string = determineSpecificType(globalObject, actual_value);
     RETURN_IF_EXCEPTION(scope, {});
 
     return makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received "_s, actual_value_string);
@@ -231,7 +318,7 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
 {
     WTF::StringBuilder result;
 
-    auto actual_value_string = JSValueToStringSafe(globalObject, actual_value);
+    auto actual_value_string = determineSpecificType(globalObject, actual_value);
     RETURN_IF_EXCEPTION(scope, {});
 
     result.append("The "_s);
@@ -327,7 +414,7 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     auto ty_first_char = expected_type[0];
     auto ty_kind = ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of"_s : "of type"_s;
 
-    auto actual_value = JSValueToStringSafe(globalObject, val_actual_value);
+    auto actual_value = determineSpecificType(globalObject, val_actual_value);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto message = makeString("The \""_s, arg_name, "\" "_s, arg_kind, " must be "_s, ty_kind, " "_s, expected_type, ". Received "_s, actual_value);
@@ -347,7 +434,7 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     auto ty_first_char = expected_type[0];
     auto ty_kind = ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of"_s : "of type"_s;
 
-    auto actual_value = JSValueToStringSafe(globalObject, val_actual_value);
+    auto actual_value = determineSpecificType(globalObject, val_actual_value);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto message = makeString("The \""_s, arg_name, "\" "_s, arg_kind, " must be "_s, ty_kind, " "_s, expected_type, ". Received "_s, actual_value);

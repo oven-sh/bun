@@ -5,7 +5,7 @@ test("match does not throw when matching", () => {
 });
 
 test("match throws when argument is not string", () => {
-  expect(() => assert.match(123, /pass/)).toThrow('The "actual" argument must be of type string. Received type number');
+  expect(() => assert.match(123, /pass/)).toThrow('The "string" argument must be of type string. Received type number');
 });
 
 test("match throws when not matching", () => {

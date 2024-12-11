@@ -204,8 +204,14 @@ function getImageLabel(platform) {
  * @returns {string}
  */
 function getImageName(platform, dryRun) {
-  const { os, arch, distro, release } = platform;
-  const name = distro ? `${os}-${arch}-${distro}-${release}` : `${os}-${arch}-${release}`;
+  const { os, arch, distro, release, features } = platform;
+  let name = `${os}-${arch}-${release}`;
+  if (distro) {
+    name += `-${distro}`;
+  }
+  if (features?.length) {
+    name += `-with-${features.join("-")}`;
+  }
   if (dryRun) {
     return `${name}-build-${getBuildNumber()}`;
   }

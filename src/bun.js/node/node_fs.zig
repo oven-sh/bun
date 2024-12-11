@@ -5785,7 +5785,7 @@ pub const NodeFS = struct {
         defer _ = Syscall.close(fd);
 
         switch (this.mkdirRecursiveOSPath(dest, Arguments.Mkdir.DefaultMode, false)) {
-            .err => |err| return Maybe(Return.Cp){ .err = err.withPath(dest) },
+            .err => |err| return Maybe(Return.Cp){ .err = err },
             .result => {},
         }
 
@@ -6181,7 +6181,7 @@ pub const NodeFS = struct {
                 return ret.success;
             } else {
                 const handle = switch (bun.sys.openatWindows(bun.invalid_fd, src, bun.O.RDONLY)) {
-                    .err => |err| return .{ .err = err.withPath(src) },
+                    .err => |err| return .{ .err = err },
                     .result => |src_fd| src_fd,
                 };
                 var wbuf: bun.WPathBuffer = undefined;

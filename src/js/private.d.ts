@@ -173,3 +173,8 @@ declare function $newZigFunction<T = (...args: any) => any>(
   symbol: string,
   argCount: number,
 ): T;
+/**
+ * @param filename - The basename of the `.bind.ts` file.
+ * @param symbol - The name of the function to call.
+ */
+declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol: string): T;

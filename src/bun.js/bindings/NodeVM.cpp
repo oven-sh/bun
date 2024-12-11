@@ -1,5 +1,6 @@
 #include "root.h"
 #include "JavaScriptCore/ExecutableInfo.h"
+#include "JavaScriptCore/WriteBarrierInlines.h"
 
 #include "BunClientData.h"
 #include "NodeVM.h"
@@ -28,9 +29,199 @@
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include <JavaScriptCore/Completion.h>
+#include "JavaScriptCore/LazyClassStructureInlines.h"
 
-namespace WebCore {
-using namespace JSC;
+#include "JavaScriptCore/JSCInlines.h"
+
+namespace Bun {
+using namespace WebCore;
+
+class NodeVMScriptConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+
+    static NodeVMScriptConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::JSObject* prototype);
+
+    DECLARE_EXPORT_INFO;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, Base::StructureFlags), info());
+    }
+
+private:
+    NodeVMScriptConstructor(JSC::VM& vm, JSC::Structure* structure);
+
+    void finishCreation(JSC::VM&, JSC::JSObject* prototype);
+};
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMScriptConstructor, JSC::InternalFunction);
+
+class NodeVMScript final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+
+    static NodeVMScript* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::SourceCode source);
+
+    DECLARE_EXPORT_INFO;
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<NodeVMScript, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForNodeVMScript.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeVMScript = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForNodeVMScript.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeVMScript = std::forward<decltype(space)>(space); });
+    }
+
+    static void destroy(JSC::JSCell*);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSObject* createPrototype(VM& vm, JSGlobalObject* globalObject);
+
+    const JSC::SourceCode& source() const { return m_source; }
+
+    DECLARE_VISIT_CHILDREN;
+    mutable JSC::WriteBarrier<JSC::DirectEvalExecutable> m_cachedDirectExecutable;
+
+private:
+    JSC::SourceCode m_source;
+
+    NodeVMScript(JSC::VM& vm, JSC::Structure* structure, JSC::SourceCode source)
+        : Base(vm, structure)
+        , m_source(source)
+    {
+    }
+
+    void finishCreation(JSC::VM&);
+};
+
+NodeVMGlobalObject::NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure)
+    : Base(vm, structure)
+{
+}
+
+template<typename, JSC::SubspaceAccess mode> JSC::GCClient::IsoSubspace* NodeVMGlobalObject::subspaceFor(JSC::VM& vm)
+{
+    if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+        return nullptr;
+    return WebCore::subspaceForImpl<NodeVMGlobalObject, WebCore::UseCustomHeapCellType::Yes>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForNodeVMGlobalObject.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeVMGlobalObject = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForNodeVMGlobalObject.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeVMGlobalObject = std::forward<decltype(space)>(space); },
+        [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForNodeVMGlobalObject; });
+}
+
+NodeVMGlobalObject* NodeVMGlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
+{
+    auto* cell = new (NotNull, JSC::allocateCell<NodeVMGlobalObject>(vm)) NodeVMGlobalObject(vm, structure);
+    cell->finishCreation(vm);
+    return cell;
+}
+
+Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototype)
+{
+    return JSC::Structure::create(vm, nullptr, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags), info());
+}
+
+void NodeVMGlobalObject::finishCreation(JSC::VM&)
+{
+    Base::finishCreation(vm());
+}
+
+void NodeVMGlobalObject::destroy(JSCell* cell)
+{
+    static_cast<NodeVMGlobalObject*>(cell)->~NodeVMGlobalObject();
+}
+
+NodeVMGlobalObject::~NodeVMGlobalObject()
+{
+}
+
+void NodeVMGlobalObject::setContextifiedObject(JSC::JSObject* contextifiedObject)
+{
+    m_contextifiedObject.set(vm(), this, contextifiedObject);
+    // this->resetPrototype(vm(), JSValue(contextifiedObject));
+}
+
+void NodeVMGlobalObject::clearContextifiedObject()
+{
+    m_contextifiedObject.clear();
+}
+
+bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
+
+    if (thisObject->m_contextifiedObject) {
+        auto* contextifiedObject = thisObject->m_contextifiedObject.get();
+        ASSERT(contextifiedObject);
+
+        PropertySlot otherSlot(contextifiedObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        auto* otherGlobalObject = contextifiedObject->globalObject();
+        if (contextifiedObject->getPropertySlot(otherGlobalObject, propertyName, otherSlot)) {
+            slot.setThisValue(contextifiedObject);
+            return contextifiedObject->put(contextifiedObject, contextifiedObject->globalObject(), propertyName, value, slot);
+        }
+
+        PropertySlot thisSlot(globalObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        if (!globalObject->getOwnPropertySlot(globalObject, globalObject, propertyName, thisSlot)) {
+            slot.setThisValue(contextifiedObject);
+            return contextifiedObject->put(contextifiedObject, otherGlobalObject, propertyName, value, slot);
+        }
+    }
+
+    return Base::put(cell, globalObject, propertyName, value, slot);
+}
+
+bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+{
+    auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
+    if (thisObject->m_contextifiedObject) {
+        if (thisObject->m_contextifiedObject->getOwnPropertySlot(thisObject->m_contextifiedObject.get(), globalObject, propertyName, slot)) {
+            return true;
+        }
+    }
+    return Base::getOwnPropertySlot(cell, globalObject, propertyName, slot);
+}
+
+bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
+    if (thisObject->m_contextifiedObject) {
+        auto* contextifiedObject = thisObject->m_contextifiedObject.get();
+        auto& vm = thisObject->vm();
+        PropertySlot slot(contextifiedObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        auto* otherGlobalObject = contextifiedObject->globalObject();
+        if (contextifiedObject->getOwnPropertySlot(contextifiedObject, otherGlobalObject, propertyName, slot)) {
+            return contextifiedObject->defineOwnProperty(contextifiedObject, otherGlobalObject, propertyName, descriptor, shouldThrow);
+        }
+
+        PropertySlot thisSlot(globalObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        if (!globalObject->getOwnPropertySlot(globalObject, globalObject, propertyName, thisSlot)) {
+            return contextifiedObject->defineOwnProperty(contextifiedObject, otherGlobalObject, propertyName, descriptor, shouldThrow);
+        }
+    }
+
+    return Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow);
+}
+
+DEFINE_VISIT_CHILDREN(NodeVMGlobalObject);
+
+template<typename Visitor>
+void NodeVMGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    Base::visitChildren(cell, visitor);
+    auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
+    visitor.append(thisObject->m_contextifiedObject);
+}
 
 class ScriptOptions {
 public:
@@ -133,10 +324,9 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     return JSValue::encode(JSValue(script));
 }
 
-static JSC::EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScript* script, JSObject* globalThis, JSScope* scope, JSValue optionsArg)
+static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg)
 {
     auto& vm = globalObject->vm();
-
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSC::DirectEvalExecutable* executable = nullptr;
 
@@ -145,16 +335,16 @@ static JSC::EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScri
     }
 
     if (executable == nullptr) {
-        // Note: it accepts a JSGlobalObject, but it just reads stuff from JSC::VM.
         executable = JSC::DirectEvalExecutable::create(
-            globalObject, script->source(), NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
-            false, false, EvalContextType::None, nullptr, nullptr);
+            globalObject, script->source(), TaintedByWithScopeLexicallyScopedFeature, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
+            false, false, EvalContextType::FunctionEvalContext, nullptr, nullptr);
         RETURN_IF_EXCEPTION(throwScope, {});
         script->m_cachedDirectExecutable.set(vm, script, executable);
     }
 
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
-    JSValue result = vm.interpreter.executeEval(executable, globalObject, scope);
+    globalObject->resetPrototype(vm, contextifiedObject);
+    JSValue result = vm.interpreter.executeEval(executable, globalObject, globalObject->globalScope());
     if (UNLIKELY(catchScope.exception())) {
         auto returnedException = catchScope.exception();
         catchScope.clearException();
@@ -209,25 +399,20 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
     JSObject* context = asObject(contextArg);
 
     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    JSValue scopeVal = zigGlobalObject->vmModuleContextMap()->get(context);
-    if (UNLIKELY(scopeVal.isUndefined())) {
-        throwVMTypeError(globalObject, scope, "context parameter must be a contextified object"_s);
-        return {};
-    }
-    JSScope* jsScope = jsDynamicCast<JSScope*>(scopeVal);
-    if (UNLIKELY(!jsScope)) {
+    JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
+    if (UNLIKELY(scopeValue.isUndefined())) {
         throwVMTypeError(globalObject, scope, "context parameter must be a contextified object"_s);
         return {};
     }
 
-    JSGlobalProxy* globalProxy = jsDynamicCast<JSGlobalProxy*>(context->getPrototypeDirect());
-    if (!globalProxy) {
+    NodeVMGlobalObject* nodeVmGlobalObject = jsDynamicCast<NodeVMGlobalObject*>(scopeValue);
+    if (!nodeVmGlobalObject) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         throwVMTypeError(globalObject, scope, "context parameter must be a contextified object"_s);
         return {};
     }
 
-    return runInContext(globalProxy->target(), script, context, jsScope, args.at(1));
+    return runInContext(nodeVmGlobalObject, script, context, args.at(1));
 }
 
 JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -254,12 +439,9 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
         return {};
     }
 
-    // we don't care about options for now
-
     ScriptOptions options;
     {
         bool didThrow = false;
-
         if (auto scriptOptions = ScriptOptions::fromJS(globalObject, optionsObjectValue, didThrow)) {
             options = scriptOptions.value();
         }
@@ -267,37 +449,54 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
             return JSValue::encode({});
         }
     }
+
     SourceCode source(
-        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)), options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset)),
-        options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
+        JSC::StringSourceProvider::create(
+            sourceString,
+            JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)),
+            options.filename,
+            JSC::SourceTaintedOrigin::Untainted,
+            TextPosition(options.lineOffset, options.columnOffset)),
+        options.lineOffset.zeroBasedInt(),
+        options.columnOffset.zeroBasedInt());
 
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSObject* context = asObject(contextObjectValue);
+
     auto* targetContext = NodeVMGlobalObject::create(
-        vm, zigGlobal->NodeVMGlobalObjectStructure());
+        vm,
+        zigGlobal->NodeVMGlobalObjectStructure());
+
+    targetContext->setContextifiedObject(context);
 
     auto* executable = JSC::DirectEvalExecutable::create(
-        targetContext, source, NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
-        false, false, EvalContextType::None, nullptr, nullptr);
+        targetContext,
+        source,
+        TaintedByWithScopeLexicallyScopedFeature,
+        DerivedContextType::None,
+        NeedsClassFieldInitializer::No,
+        PrivateBrandRequirement::None,
+        false,
+        false,
+        EvalContextType::FunctionEvalContext,
+        nullptr,
+        nullptr);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
-    auto proxy = JSGlobalProxy::create(vm, proxyStructure);
-    proxy->setTarget(vm, targetContext);
-    context->setPrototypeDirect(vm, proxy);
-
-    JSScope* contextScope = JSWithScope::create(vm, targetContext, targetContext->globalScope(), context);
-
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
-    JSValue result = vm.interpreter.executeEval(executable, targetContext, contextScope);
+    EnsureStillAliveScope ensureStillAlive(context);
+    auto* scopeObject = JSWithScope::create(vm, targetContext, targetContext->globalScope(), context);
+    targetContext->setGlobalScopeExtension(scopeObject);
+    JSValue result = vm.interpreter.executeEval(executable, targetContext, scopeObject);
     if (UNLIKELY(catchScope.exception())) {
         auto returnedException = catchScope.exception();
         catchScope.clearException();
+        targetContext->clearGlobalScopeExtension();
         JSC::throwException(globalObject, throwScope, returnedException);
+        return {};
     }
-
+    targetContext->clearGlobalScopeExtension();
     RETURN_IF_EXCEPTION(throwScope, {});
-
     return JSValue::encode(result);
 }
 
@@ -331,14 +530,14 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
         options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
 
     auto* executable = JSC::DirectEvalExecutable::create(
-        globalObject, source, NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
-        false, false, EvalContextType::None, nullptr, nullptr);
+        globalObject, source, TaintedByWithScopeLexicallyScopedFeature, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
+        false, false, EvalContextType::FunctionEvalContext, nullptr, nullptr);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    JSObject* context = asObject(JSC::constructEmptyObject(globalObject));
-    JSScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
-    JSValue result = vm.interpreter.executeEval(executable, globalObject, contextScope);
+    JSObject* context = asObject(JSC::constructEmptyObject(globalObject));
+    auto* withScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
+    JSValue result = vm.interpreter.executeEval(executable, globalObject, withScope);
     if (UNLIKELY(catchScope.exception())) {
         auto returnedException = catchScope.exception();
         catchScope.clearException();
@@ -382,13 +581,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     auto* targetContext = NodeVMGlobalObject::create(
         vm, zigGlobal->NodeVMGlobalObjectStructure());
 
-    auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
-    auto proxy = JSGlobalProxy::create(vm, proxyStructure);
-    proxy->setTarget(vm, targetContext);
-    context->setPrototypeDirect(vm, proxy);
-
-    JSScope* contextScope = JSWithScope::create(vm, targetContext, targetContext->globalScope(), context);
-    return runInContext(globalObject, script, targetContext, contextScope, callFrame->argument(0));
+    return runInContext(targetContext, script, context, callFrame->argument(0));
 }
 JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -403,10 +596,9 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
         return throwVMTypeError(globalObject, throwScope, "Script.prototype.runInThisContext can only be called on a Script object"_s);
     }
 
-    JSObject* context = asObject(JSC::constructEmptyObject(globalObject));
-    JSWithScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
-
-    return runInContext(globalObject, script, globalObject->globalThis(), contextScope, callFrame->argument(1));
+    // JSObject* context = asObject(JSC::constructEmptyObject(globalObject));
+    return {};
+    // return runInContext(globalObject, script, globalObject, context, callFrame->argument(1));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
@@ -435,7 +627,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue contextArg = callFrame->argument(0);
-
     if (contextArg.isEmpty() || contextArg.isUndefinedOrNull()) {
         contextArg = JSC::constructEmptyObject(globalObject);
     }
@@ -443,19 +634,15 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     if (!contextArg.isObject()) {
         return throwVMTypeError(globalObject, scope, "parameter to createContext must be an object"_s);
     }
+
     JSObject* context = asObject(contextArg);
     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+
     auto* targetContext = NodeVMGlobalObject::create(
-        vm, zigGlobalObject->NodeVMGlobalObjectStructure());
+        vm,
+        zigGlobalObject->NodeVMGlobalObjectStructure());
 
-    auto proxyStructure = zigGlobalObject->globalProxyStructure();
-    auto proxy = JSGlobalProxy::create(vm, proxyStructure);
-    proxy->setTarget(vm, targetContext);
-    context->setPrototypeDirect(vm, proxy);
-
-    JSScope* contextScope = JSWithScope::create(vm, targetContext, targetContext->globalScope(), context);
-
-    zigGlobalObject->vmModuleContextMap()->set(vm, context, contextScope);
+    zigGlobalObject->vmModuleContextMap()->set(vm, context, targetContext);
 
     return JSValue::encode(context);
 }
@@ -515,6 +702,29 @@ static const struct HashTableValue scriptPrototypeTableValues[] = {
     { "runInThisContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInThisContext, 2 } },
     { "sourceMapURL"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetSourceMapURL, nullptr } },
 };
+
+// NodeVMGlobalObject* NodeVMGlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
+// {
+//     auto* obj = new (NotNull, allocateCell<NodeVMGlobalObject>(vm)) NodeVMGlobalObject(vm, structure);
+//     obj->finishCreation(vm);
+//     return obj;
+// }
+
+// void NodeVMGlobalObject::finishCreation(VM& vm, JSObject* context)
+// {
+//     Base::finishCreation(vm);
+//     // We don't need to store the context anymore since we use proxies
+// }
+
+// DEFINE_VISIT_CHILDREN(NodeVMGlobalObject);
+
+// template<typename Visitor>
+// void NodeVMGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+// {
+//     Base::visitChildren(cell, visitor);
+//     // auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
+//     // visitor.append(thisObject->m_proxyTarget);
+// }
 
 const ClassInfo NodeVMScriptPrototype::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScriptPrototype) };
 const ClassInfo NodeVMScript::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScript) };
@@ -581,10 +791,6 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
-} // namespace WebCore
-
-namespace Bun {
-
 JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -605,6 +811,27 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInThisContext"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "runInThisContext"_s, vmModuleRunInThisContext, ImplementationVisibility::Public), 0);
     return obj;
+}
+
+void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
+{
+    globalObject->m_NodeVMScriptClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto prototype = NodeVMScript::createPrototype(init.vm, init.global);
+            auto* structure = NodeVMScript::createStructure(init.vm, init.global, prototype);
+            auto* constructorStructure = NodeVMScriptConstructor::createStructure(
+                init.vm, init.global, init.global->m_functionPrototype.get());
+            auto* constructor = NodeVMScriptConstructor::create(
+                init.vm, init.global, constructorStructure, prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    globalObject->m_cachedNodeVMGlobalObjectStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(createNodeVMGlobalObjectStructure(init.vm));
+        });
 }
 
 } // namespace Bun

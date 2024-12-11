@@ -214,7 +214,7 @@ append_to_path() {
 	fi
 
 	append_to_profile "export PATH=\"$path:\$PATH\""
-	# export PATH="$path:$PATH"
+	export PATH="$path:$PATH"
 }
 
 move_to_bin() {
@@ -526,6 +526,24 @@ check_ulimit() {
 	if [ -f "$systemctl" ]; then
 		execute_sudo "$systemctl" daemon-reload
 	fi
+
+	# Configure dpkg and apt for faster operation in CI environments
+	if [ "$ci" = "1" ] && [ "$pm" = "apt" ]; then
+		dpkg_conf="/etc/dpkg/dpkg.cfg.d/01-ci-options"
+		execute_sudo create_directory "$(dirname "$dpkg_conf")"
+		append_file "$dpkg_conf" "force-unsafe-io"
+		append_file "$dpkg_conf" "no-debsig"
+
+		apt_conf="/etc/apt/apt.conf.d/99-ci-options" 
+		execute_sudo create_directory "$(dirname "$apt_conf")"
+		append_file "$apt_conf" 'Acquire::Languages "none";'
+		append_file "$apt_conf" 'Acquire::GzipIndexes "true";'
+		append_file "$apt_conf" 'Acquire::CompressionTypes::Order:: "gz";'
+		append_file "$apt_conf" 'APT::Get::Install-Recommends "false";'
+		append_file "$apt_conf" 'APT::Get::Install-Suggests "false";'
+		append_file "$apt_conf" 'Dpkg::Options { "--force-confdef"; "--force-confold"; }'
+	fi
+
 }
 
 package_manager() {
@@ -922,7 +940,7 @@ install_gcc() {
 	install_packages \
 		"gcc-$gcc_version" \
 		"g++-$gcc_version" \
-		"libgcc-$gcc_version-dev" \ 
+		"libgcc-$gcc_version-dev" \
 		"libstdc++-$gcc_version-dev" \
 		libasan6 \
 		libubsan1 \
@@ -948,6 +966,18 @@ install_gcc() {
 		;;
 	esac
 
+	llvm_v="18"
+
+	append_to_profile "CC=clang-${llvm_v}"
+	append_to_profile "CXX=clang++-${llvm_v}"
+	append_to_profile "AR=llvm-ar-${llvm_v}"
+	append_to_profile "RANLIB=llvm-ranlib-${llvm_v}"
+	append_to_profile "LD=lld-${llvm_v}"
+	append_to_profile "LD_LIBRARY_PATH=/usr/lib/gcc/${arch_triplet}/${gcc_version}:/usr/lib/${arch_triplet}"
+	append_to_profile "LIBRARY_PATH=/usr/lib/gcc/${arch_triplet}/${gcc_version}:/usr/lib/${arch_triplet}"
+	append_to_profile "CPLUS_INCLUDE_PATH=/usr/include/c++/${gcc_version}:/usr/include/${arch_triplet}/c++/${gcc_version}"
+	append_to_profile "C_INCLUDE_PATH=/usr/lib/gcc/${arch_triplet}/${gcc_version}/include"
+
 	gcc_path="/usr/lib/gcc/$arch_path/$gcc_version"
 	create_directory "$gcc_path"
 	execute_sudo ln -sf /usr/lib/$arch_path/libstdc++.so.6 "$gcc_path/libstdc++.so.6"
@@ -956,6 +986,16 @@ install_gcc() {
 	append_file "$ld_conf_path" "$gcc_path"
 	append_file "$ld_conf_path" "/usr/lib/$arch_path"
 	execute_sudo ldconfig
+
+	execute_sudo ln -sf $(which clang-${llvm_v}) /usr/bin/clang
+	execute_sudo ln -sf $(which clang+${llvm_v}) /usr/bin/clang++
+	execute_sudo ln -sf $(which lld-${llvm_v}) /usr/bin/lld
+	execute_sudo ln -sf $(which lldb-${llvm_v}) /usr/bin/lldb
+	execute_sudo ln -sf $(which clangd-${llvm_v}) /usr/bin/clangd
+	execute_sudo ln -sf $(which llvm-ar-${llvm_v}) /usr/bin/llvm-ar
+	execute_sudo ln -sf $(which ld.lld-${llvm_v}) /usr/bin/ld
+	execute_sudo ln -sf $(which clang) /usr/bin/cc
+	execute_sudo ln -sf $(which clang++) /usr/bin/c++
 }
 
 install_ccache() {

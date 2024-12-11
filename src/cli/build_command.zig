@@ -211,6 +211,9 @@ pub const BuildCommand = struct {
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_bundler.options.transform_only = ctx.bundler_options.transform_only;
 
+        this_bundler.options.env.behavior = ctx.bundler_options.env_behavior;
+        this_bundler.options.env.prefix = ctx.bundler_options.env_prefix;
+
         try this_bundler.configureDefines();
         this_bundler.configureLinker();
 

@@ -671,7 +671,7 @@ _bun() {
     cmd)
         local -a scripts_list
         IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes i))
-        scripts="scripts:scripts:(($scripts_list))"
+        scripts="scripts:scripts:((${scripts_list//:/\\\\:}))"
         IFS=$'\n' files_list=($(SHELL=zsh bun getcompletes j))
 
         main_commands=(
@@ -871,8 +871,8 @@ _bun_run_param_script_completion() {
     IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes s))
     IFS=$'\n' bins=($(SHELL=zsh bun getcompletes b))
 
-    _alternative "scripts:scripts:(($scripts_list))"
-    _alternative "bin:bin:(($bins))"
+    _alternative "scripts:scripts:((${scripts_list//:/\\\\:}))"
+    _alternative "bin:bin:((${bins//:/\\\\:}))"
     _alternative "files:file:_files -g '*.(js|ts|jsx|tsx|wasm)'"
 }
 

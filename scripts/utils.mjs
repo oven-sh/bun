@@ -25,6 +25,7 @@ export const isLinux = process.platform === "linux";
 export const isPosix = isMacOS || isLinux;
 
 export const isArm64 = process.arch === "arm64";
+export const isX64 = process.arch === "x64";
 
 /**
  * @param {string} name

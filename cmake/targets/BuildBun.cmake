@@ -318,13 +318,13 @@ register_command(
   TARGET
     bun-bake-codegen
   COMMENT
-    "Bundling Kit Runtime"
+    "Bundling Bake Runtime"
   COMMAND
     ${BUN_EXECUTABLE}
       run
       ${BUN_BAKE_RUNTIME_CODEGEN_SCRIPT}
         --debug=${DEBUG}
-        --codegen_root=${CODEGEN_PATH}
+        --codegen-root=${CODEGEN_PATH}
   SOURCES
     ${BUN_BAKE_RUNTIME_SOURCES}
     ${BUN_BAKE_RUNTIME_CODEGEN_SOURCES}
@@ -332,6 +332,39 @@ register_command(
   OUTPUTS
     ${CODEGEN_PATH}/bake_empty_file
     ${BUN_BAKE_RUNTIME_OUTPUTS}
+)
+
+set(BUN_BINDGEN_SCRIPT ${CWD}/src/codegen/bindgen.ts)
+
+file(GLOB_RECURSE BUN_BINDGEN_SOURCES ${CONFIGURE_DEPENDS}
+  ${CWD}/src/**/*.bind.ts
+)
+
+set(BUN_BINDGEN_CPP_OUTPUTS
+  ${CODEGEN_PATH}/GeneratedBindings.cpp
+)
+
+set(BUN_BINDGEN_ZIG_OUTPUTS
+  ${CWD}/src/bun.js/bindings/GeneratedBindings.zig
+)
+
+register_command(
+  TARGET
+    bun-binding-generator
+  COMMENT
+    "Processing \".bind.ts\" files"
+  COMMAND
+    ${BUN_EXECUTABLE}
+      run
+      ${BUN_BINDGEN_SCRIPT}
+        --debug=${DEBUG}
+        --codegen-root=${CODEGEN_PATH}
+  SOURCES
+    ${BUN_BINDGEN_SOURCES}
+    ${BUN_BINDGEN_SCRIPT}
+  OUTPUTS
+    ${BUN_BINDGEN_CPP_OUTPUTS}
+    ${BUN_BINDGEN_ZIG_OUTPUTS}
 )
 
 set(BUN_JS_SINK_SCRIPT ${CWD}/src/codegen/generate-jssink.ts)
@@ -384,7 +417,6 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
 )
-
 
 macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
   set(_tmp)
@@ -461,6 +493,7 @@ list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
   ${CWD}/root.zig
   ${CWD}/root_wasm.zig
+  ${BUN_BINDGEN_ZIG_OUTPUTS}
 )
 
 set(BUN_ZIG_GENERATED_SOURCES
@@ -481,7 +514,6 @@ else()
 endif()
 
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
-
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
@@ -606,6 +638,7 @@ list(APPEND BUN_CPP_SOURCES
   ${BUN_JS_SINK_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
   ${BUN_OBJECT_LUT_OUTPUTS}
+  ${BUN_BINDGEN_CPP_OUTPUTS}
 )
 
 if(WIN32)

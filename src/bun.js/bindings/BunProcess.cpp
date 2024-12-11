@@ -1092,6 +1092,11 @@ Process::~Process()
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
 {
+#if OS(WINDOWS)
+    // Raising SIGABRT is handled in the CRT in windows, calling _exit() with ambiguous code "3" by default.
+    // This adjustment to the abort behavior gives a more sane exit code on abort, by calling _exit directly with code 134.
+    _exit(134);
+#endif
     abort();
 }
 
@@ -2032,7 +2037,7 @@ static JSValue constructPid(VM& vm, JSObject* processObject)
 static JSValue constructPpid(VM& vm, JSObject* processObject)
 {
 #if OS(WINDOWS)
-    return jsNumber(0);
+    return jsNumber(uv_os_getppid());
 #else
     return jsNumber(getppid());
 #endif
@@ -2119,24 +2124,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
         throwSystemError(throwScope, globalObject, "getgroups"_s, errno);
         return {};
     }
-
-    gid_t egid = getegid();
-    JSArray* groups = constructEmptyArray(globalObject, nullptr, static_cast<unsigned int>(ngroups));
+    JSArray* groups = constructEmptyArray(globalObject, nullptr, ngroups);
     Vector<gid_t> groupVector(ngroups);
-    getgroups(1, &egid);
-    bool needsEgid = true;
+    getgroups(ngroups, groupVector.data());
     for (unsigned i = 0; i < ngroups; i++) {
-        auto current = groupVector[i];
-        if (current == needsEgid) {
-            needsEgid = false;
-        }
-
-        groups->putDirectIndex(globalObject, i, jsNumber(current));
+        groups->putDirectIndex(globalObject, i, jsNumber(groupVector[i]));
     }
-
-    if (needsEgid)
-        groups->push(globalObject, jsNumber(egid));
-
     return JSValue::encode(groups);
 }
 #endif

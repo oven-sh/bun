@@ -229,7 +229,6 @@ pub extern fn JSC__JSValue__bigIntSum(arg0: *bindings.JSGlobalObject, arg1: JSC_
 pub extern fn JSC__JSValue__getClassName(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getErrorsProperty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__getIfPropertyExistsFromPath(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSValue__getIfPropertyExistsImpl(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]const u8, arg3: u32) JSC__JSValue;
 pub extern fn JSC__JSValue__getLengthIfPropertyExistsInternal(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) f64;
 pub extern fn JSC__JSValue__getNameProperty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getPrototype(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
@@ -321,7 +320,7 @@ pub extern fn JSC__VM__notifyNeedShellTimeoutCheck(arg0: *bindings.VM) void;
 pub extern fn JSC__VM__notifyNeedTermination(arg0: *bindings.VM) void;
 pub extern fn JSC__VM__notifyNeedWatchdogCheck(arg0: *bindings.VM) void;
 pub extern fn JSC__VM__releaseWeakRefs(arg0: *bindings.VM) void;
-pub extern fn JSC__VM__runGC(arg0: *bindings.VM, arg1: bool) JSC__JSValue;
+pub extern fn JSC__VM__runGC(arg0: *bindings.VM, arg1: bool) usize;
 pub extern fn JSC__VM__setControlFlowProfiler(arg0: *bindings.VM, arg1: bool) void;
 pub extern fn JSC__VM__setExecutionForbidden(arg0: *bindings.VM, arg1: bool) void;
 pub extern fn JSC__VM__setExecutionTimeLimit(arg0: *bindings.VM, arg1: f64) void;

@@ -66,19 +66,7 @@ grant_to_user() {
 
 	chown="$(require chown)"
 	execute_sudo "$chown" -R "$user:$group" "$path"
-	if ! [ "$user" = "$current_user" ] || ! [ "$group" = "$current_group" ]; then
-		execute_sudo "$chown" -R "$current_user:$current_group" "$path"
-	fi
-}
-
-grant_to_everyone() {
-	path="$1"
-	if ! [ -f "$path" ] && ! [ -d "$path" ]; then
-		error "Could not find file or directory: \"$path\""
-	fi
-
-	chmod="$(require chmod)"
-	execute_sudo "$chmod" 777 "$path"
+	execute_sudo chmod -R 777 "$path"
 }
 
 which() {
@@ -142,7 +130,7 @@ create_directory() {
 create_tmp_directory() {
 	mktemp="$(require mktemp)"
 	path="$(execute "$mktemp" -d)"
-	grant_to_everyone "$path"	
+	grant_to_user "$path"	
 	print "$path"
 }
 
@@ -202,7 +190,7 @@ download_file() {
 	file_tmp_path="$file_tmp_dir/$(basename "$file_url")"
 
 	fetch "$file_url" >"$file_tmp_path"
-	grant_to_everyone "$file_tmp_path"
+	grant_to_user "$file_tmp_path"
 	
 	print "$file_tmp_path"
 }

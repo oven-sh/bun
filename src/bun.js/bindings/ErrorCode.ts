@@ -46,6 +46,7 @@ export default [
   ["ERR_UNKNOWN_SIGNAL", TypeError, "TypeError"],
   ["ERR_SOCKET_BAD_PORT", RangeError, "RangeError"],
   ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
+  ["ERR_INVALID_URI", URIError, "URIError"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],

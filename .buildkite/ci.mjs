@@ -105,9 +105,9 @@ function getTargetLabel(target) {
 const buildPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14" },
   { os: "darwin", arch: "x64", release: "14" },
-  { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", docker: true },
-  { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", docker: true },
-  { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", docker: true },
+  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "18.04", features: ["gcc-13"] },
+  { os: "linux", arch: "x64", distro: "ubuntu", release: "18.04", features: ["gcc-13"] },
+  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "18.04", features: ["gcc-13"] },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },

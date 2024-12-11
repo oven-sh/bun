@@ -347,16 +347,16 @@ fn JSONLikeParser_(
     };
 }
 
-// This is a special JSON parser that stops as soon as it finds
+// This is a special JSON parser that stops as soon as it finds combinations of
 // {
 //    "name": "NAME_IN_HERE",
 //    "version": "VERSION_IN_HERE",
+//    "bin": ... or "directories": { "bin": ... }
 // }
-// and then returns the name and version.
-// More precisely, it stops as soon as it finds a top-level "name" and "version" property which are strings
-// In most cases, it should perform zero heap allocations because it does not create arrays or objects (It just skips them)
-//
-// New with text lockfile: binary information isn't stored in the lockfile anymore, so we read it if possible
+// and then returns the name, version, and bin
+// More precisely, it stops as soon as it finds a top-level "name" and "version" (and/or "bin").
+// In most cases, it should perform zero heap allocations because it does not create arrays or objects (It just skips them).
+// If searching for "bin", objects are only created if the key is top level "bin". "bin" within "directories" can only be a string.
 pub const PackageJSONVersionChecker = struct {
     const Lexer = js_lexer.NewLexer(opts);
 

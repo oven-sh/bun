@@ -62,18 +62,7 @@ values;`,
       }`,
     };
 
-    const getTempBaseDir = () => {
-      if (process.platform === "win32") {
-        // Windows does not like us using `C:\Windows\Temp` as a temp directory
-        // because it breaks compiling with visual studio.
-        const thepath = path.join(process.cwd(), ".tmp", "bun-test");
-        fs.mkdirSync(path.join(process.cwd(), ".tmp", "bun-test"), { recursive: true });
-        return thepath;
-      }
-      return os.tmpdir();
-    };
-
-    tempdir = fs.mkdtempSync(join(fs.realpathSync(getTempBaseDir()), "native-plugins_"));
+    tempdir = tempDirWithFiles("native-plugins", files);
 
     await makeTree(tempdir, files);
     outdir = path.join(tempdir, "dist");

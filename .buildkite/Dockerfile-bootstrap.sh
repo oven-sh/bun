@@ -93,6 +93,7 @@ docker buildx build \
     --tag buildkite:latest \
     --target buildkite \
     -f .buildkite/Dockerfile \
+    --load \
     . || {
     echo "error: Docker build failed"
     exit 1

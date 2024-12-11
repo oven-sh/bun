@@ -231,6 +231,7 @@ async function eventTargetAbortSignalBefore() {
   });
 }
 
+// TODO: unskip
 // async function eventTargetAbortSignalBeforeEvenWhenSignalPropagationStopped() {
 //   const et = new EventTarget();
 //   const ac = new AbortController();

@@ -392,6 +392,7 @@ pub const PackageManagerCommand = struct {
             }
             const load_lockfile = @import("../install/migration.zig").detectAndLoadOtherLockfile(
                 pm.lockfile,
+                bun.FD.cwd(),
                 pm,
                 ctx.allocator,
                 pm.log,

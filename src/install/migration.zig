@@ -39,6 +39,7 @@ const debug = Output.scoped(.migrate, false);
 
 pub fn detectAndLoadOtherLockfile(
     this: *Lockfile,
+    dir: bun.FD,
     manager: *Install.PackageManager,
     allocator: Allocator,
     log: *logger.Log,
@@ -48,7 +49,7 @@ pub fn detectAndLoadOtherLockfile(
 
     npm: {
         var timer = std.time.Timer.start() catch unreachable;
-        const lockfile = File.open("package-lock.json", bun.O.RDONLY, 0).unwrap() catch break :npm;
+        const lockfile = File.openat(dir, "package-lock.json", bun.O.RDONLY, 0).unwrap() catch break :npm;
         defer lockfile.close();
         var lockfile_path_buf: bun.PathBuffer = undefined;
         const lockfile_path = bun.getFdPathZ(lockfile.handle, &lockfile_path_buf) catch break :npm;

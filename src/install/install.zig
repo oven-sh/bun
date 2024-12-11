@@ -15174,6 +15174,11 @@ pub const bun_install_js_bindings = struct {
         const cwd = try args[0].toSliceOrNull(globalObject);
         defer cwd.deinit();
 
+        var dir = bun.openDirAbsolute(cwd.slice()) catch |err| {
+            return globalObject.throw("failed to open: {s}, '{s}'", .{ @errorName(err), cwd.slice() });
+        };
+        defer dir.close();
+
         const lockfile_path = Path.joinAbsStringZ(cwd.slice(), &[_]string{"bun.lockb"}, .auto);
 
         var lockfile: Lockfile = undefined;
@@ -15185,14 +15190,14 @@ pub const bun_install_js_bindings = struct {
         // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
         const manager = globalObject.bunVM().bundler.resolver.getPackageManager();
 
-        const load_result: Lockfile.LoadResult = lockfile.loadFromCwd(manager, allocator, &log, true);
+        const load_result: Lockfile.LoadResult = lockfile.loadFromDir(bun.toFD(dir), manager, allocator, &log, true);
 
         switch (load_result) {
             .err => |err| {
-                return globalObject.throw("failed to load lockfile: {s}, \"{s}\"", .{ @errorName(err.value), lockfile_path });
+                return globalObject.throw("failed to load lockfile: {s}, '{s}'", .{ @errorName(err.value), lockfile_path });
             },
             .not_found => {
-                return globalObject.throw("lockfile not found: \"{s}\"", .{lockfile_path});
+                return globalObject.throw("lockfile not found: '{s}'", .{lockfile_path});
             },
             .ok => {},
         }

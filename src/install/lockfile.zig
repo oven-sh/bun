@@ -252,10 +252,21 @@ pub fn loadFromCwd(
     log: *logger.Log,
     comptime attempt_loading_from_other_lockfile: bool,
 ) LoadResult {
+    return loadFromDir(this, bun.FD.cwd(), manager, allocator, log, attempt_loading_from_other_lockfile);
+}
+
+pub fn loadFromDir(
+    this: *Lockfile,
+    dir: bun.FD,
+    manager: ?*PackageManager,
+    allocator: Allocator,
+    log: *logger.Log,
+    comptime attempt_loading_from_other_lockfile: bool,
+) LoadResult {
     if (comptime Environment.allow_assert) assert(FileSystem.instance_loaded);
 
     var lockfile_format: LoadResult.LockfileFormat = .text;
-    const file = File.open("bun.lock", bun.O.RDONLY, 0).unwrap() catch |text_open_err| file: {
+    const file = File.openat(dir, "bun.lock", bun.O.RDONLY, 0).unwrap() catch |text_open_err| file: {
         if (text_open_err != error.ENOENT) {
             return .{ .err = .{
                 .step = .open_file,
@@ -267,7 +278,7 @@ pub fn loadFromCwd(
 
         lockfile_format = .binary;
 
-        break :file File.open("bun.lockb", bun.O.RDONLY, 0).unwrap() catch |binary_open_err| {
+        break :file File.openat(dir, "bun.lockb", bun.O.RDONLY, 0).unwrap() catch |binary_open_err| {
             if (binary_open_err != error.ENOENT) {
                 return .{ .err = .{
                     .step = .open_file,
@@ -281,6 +292,7 @@ pub fn loadFromCwd(
                 if (manager) |pm| {
                     const migrate_result = migration.detectAndLoadOtherLockfile(
                         this,
+                        dir,
                         pm,
                         allocator,
                         log,

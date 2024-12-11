@@ -743,6 +743,10 @@ function(register_cmake_command)
     list(APPEND MAKE_EFFECTIVE_ARGS --fresh)
   endif()
 
+  if(CMAKE_TOOLCHAIN_FILE)
+    list(APPEND MAKE_EFFECTIVE_ARGS --toolchain=${CMAKE_TOOLCHAIN_FILE})
+  endif()
+
   register_command(
     COMMENT "Configuring ${MAKE_TARGET}"
     TARGET configure-${MAKE_TARGET}

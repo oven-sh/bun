@@ -224,7 +224,7 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     auto actual_value_string = JSValueToStringSafe(globalObject, actual_value);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received: "_s, actual_value_string);
+    return makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received "_s, actual_value_string);
 }
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, ArgList expected_types, JSValue actual_value)
@@ -234,14 +234,23 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     auto actual_value_string = JSValueToStringSafe(globalObject, actual_value);
     RETURN_IF_EXCEPTION(scope, {});
 
-    result.append("The \""_s, arg_name, "\" argument must be of type "_s);
+    result.append("The "_s);
+
+    if (arg_name.contains(' ')) {
+        result.append(arg_name);
+    } else {
+        result.append("\""_s);
+        result.append(arg_name);
+        result.append("\" argument"_s);
+    }
+    result.append(" must be of type "_s);
 
     unsigned length = expected_types.size();
     if (length == 1) {
         result.append(expected_types.at(0).toWTFString(globalObject));
     } else if (length == 2) {
         result.append(expected_types.at(0).toWTFString(globalObject));
-        result.append(" or "_s);
+        result.append(", or "_s);
         result.append(expected_types.at(1).toWTFString(globalObject));
     } else {
         for (unsigned i = 0; i < length - 1; i++) {
@@ -250,11 +259,11 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
             JSValue expected_type = expected_types.at(i);
             result.append(expected_type.toWTFString(globalObject));
         }
-        result.append(" or "_s);
+        result.append(", or "_s);
         result.append(expected_types.at(length - 1).toWTFString(globalObject));
     }
 
-    result.append(". Received: "_s, actual_value_string);
+    result.append(". Received "_s, actual_value_string);
 
     return result.toString();
 }
@@ -298,6 +307,12 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
 }
 
 namespace ERR {
+
+JSC::EncodedJSValue throwCode(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ErrorCode code, const WTF::String& message)
+{
+    throwScope.throwException(globalObject, createError(globalObject, code, message));
+    return {};
+}
 
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& val_arg_name, const WTF::String& val_expected_type, JSC::JSValue val_actual_value)
 {

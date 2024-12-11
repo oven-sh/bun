@@ -3,8 +3,10 @@
 $constructor;
 export function from(items) {
   if ($isUndefinedOrNull(items)) {
-    throw new TypeError(
-      "The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object.",
+    throw $ERR_INVALID_ARG_TYPE(
+      "first argument",
+      ["string", "Buffer", "ArrayBuffer", "Array", "Array-like Object"],
+      items,
     );
   }
 

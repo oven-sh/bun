@@ -75,6 +75,8 @@ enum Bound {
 
 namespace ERR {
 
+JSC::EncodedJSValue throwCode(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ErrorCode code, const WTF::String& message);
+
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& val_arg_name, const WTF::String& val_expected_type, JSC::JSValue val_actual_value);
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue val_arg_name, const WTF::String& val_expected_type, JSC::JSValue val_actual_value);
 JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, size_t lower, size_t upper, JSC::JSValue actual);

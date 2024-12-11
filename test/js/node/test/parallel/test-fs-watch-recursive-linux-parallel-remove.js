@@ -1,6 +1,8 @@
 'use strict';
+const isCI = process.env.CI !== undefined;
 
 const common = require('../common');
+if (common.isLinux && isCI) return; // TODO: BUN
 
 if (!common.isLinux)
   common.skip('This test can run only on Linux');

@@ -1656,6 +1656,8 @@ pub const BundleV2 = struct {
                 },
                 completion.env,
             );
+            bundler.options.env.behavior = config.env_behavior;
+            bundler.options.env.prefix = config.env_prefix.slice();
 
             bundler.options.entry_points = config.entry_points.keys();
             bundler.options.jsx = config.jsx;

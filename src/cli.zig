@@ -231,6 +231,7 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
+        clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs are completely unsupported.") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -289,6 +290,7 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
         clap.parseParam("--server-components              (EXPERIMENTAL) Enable server components") catch unreachable,
+        clap.parseParam("--env <inline|prefix*|disable>    Inline environment variables into the bundle as process.env.${name}. Defaults to 'inline'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'. To disable, use 'disable'. In Bun v1.2+, the default is 'disable'.") catch unreachable,
     } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
         clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
         clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
@@ -775,6 +777,10 @@ pub const Arguments = struct {
 
                 bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             }
+
+            if (args.flag("--expose-internals")) {
+                bun.JSC.ModuleLoader.is_allowed_to_use_internal_testing_apis = true;
+            }
         }
 
         if (opts.port != null and opts.origin == null) {
@@ -848,6 +854,24 @@ pub const Arguments = struct {
                     opts.packages = .external;
                 } else {
                     Output.prettyErrorln("<r><red>error<r>: Invalid packages setting: \"{s}\"", .{packages});
+                    Global.crash();
+                }
+            }
+
+            if (args.option("--env")) |env| {
+                if (strings.indexOfChar(env, '*')) |asterisk| {
+                    if (asterisk == 0) {
+                        ctx.bundler_options.env_behavior = .load_all;
+                    } else {
+                        ctx.bundler_options.env_behavior = .prefix;
+                        ctx.bundler_options.env_prefix = env[0..asterisk];
+                    }
+                } else if (strings.eqlComptime(env, "inline") or strings.eqlComptime(env, "1")) {
+                    ctx.bundler_options.env_behavior = .load_all;
+                } else if (strings.eqlComptime(env, "disable") or strings.eqlComptime(env, "0")) {
+                    ctx.bundler_options.env_behavior = .load_all_without_inlining;
+                } else {
+                    Output.prettyErrorln("<r><red>error<r>: Expected 'env' to be 'inline', 'disable', or a prefix with a '*' character", .{});
                     Global.crash();
                 }
             }
@@ -1462,6 +1486,9 @@ pub const Command = struct {
             bake: bool = false,
             bake_debug_dump_server: bool = false,
             bake_debug_disable_minify: bool = false,
+
+            env_behavior: Api.DotEnvBehavior = .disable,
+            env_prefix: []const u8 = "",
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

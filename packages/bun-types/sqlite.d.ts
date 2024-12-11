@@ -1127,7 +1127,7 @@ declare module "bun:sqlite" {
    *
    * @since Bun v1.1.14
    */
-  interface Changes {
+  export interface Changes {
     /**
      * The number of rows changed by the last `run` or `exec` call.
      */

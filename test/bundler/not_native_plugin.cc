@@ -5,6 +5,13 @@
 #include <cstring>
 #include <node_api.h>
 
+#ifdef _WIN32
+#define BUN_PLUGIN_EXPORT __declspec(dllexport)
+#else
+#define BUN_PLUGIN_EXPORT
+#endif
+
+BUN_PLUGIN_EXPORT const char *BUN_PLUGIN_NAME = "not_native_plugin";
 
 napi_value HelloWorld(napi_env env, napi_callback_info info) {
     napi_value result;

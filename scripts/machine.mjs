@@ -1313,7 +1313,7 @@ async function main() {
         const remotePath = "/tmp/bootstrap.sh";
         const args = ci ? ["--ci"] : [];
         for (const feature of features || []) {
-          args.push(`--feature=${feature}`);
+          args.push(`--${feature}`);
         }
         await startGroup("Running bootstrap...", async () => {
           await machine.upload(bootstrapPath, remotePath);

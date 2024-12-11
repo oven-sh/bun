@@ -73,7 +73,7 @@ values;`,
 
     const base_tempdir = fs.mkdtempSync(join(fs.realpathSync(getTempBaseDir()), "native-plugins_"));
 
-    tempdir = makeTree(base_tempdir, files);
+    tempdir = await makeTree(base_tempdir, files);
     outdir = path.join(tempdir, "dist");
 
     console.log("tempdir", tempdir);

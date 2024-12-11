@@ -177,12 +177,16 @@ function getPlatformLabel(platform) {
  * @returns {string}
  */
 function getImageKey(platform) {
-  const { os, arch, distro, release } = platform;
+  const { os, arch, distro, release, features } = platform;
   const version = release.replace(/\./g, "");
+  let key = `${os}-${arch}-${version}`;
   if (distro) {
-    return `${os}-${arch}-${distro}-${version}`;
+    key += `-${distro}`;
   }
-  return `${os}-${arch}-${version}`;
+  if (features?.length) {
+    key += `-with-${features.join("-")}`;
+  }
+  return key;
 }
 
 /**

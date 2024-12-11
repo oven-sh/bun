@@ -1286,12 +1286,6 @@ clean_system() {
 	for path in $tmp_paths; do
 		execute_sudo rm -rf "$path"/*
 	done
-
-	case "$pm" in
-	apt | apk | yum | dnf | brew)
-		package_manager clean
-		;;
-	esac
 }
 
 main() {

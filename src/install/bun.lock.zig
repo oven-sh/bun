@@ -237,7 +237,7 @@ pub const PkgPath = struct {
             return .{
                 .root = .{
                     .pkg_id = 0,
-                    .dep_id = BinaryLockfile.Tree.root_dep_id,
+                    .dep_id = invalid_dependency_id,
                     .parent = null,
                     .nodes = .{},
                 },
@@ -332,7 +332,7 @@ pub const PkgPath = struct {
             pub const Next = struct {
                 id: BinaryLockfile.Tree.Id,
                 parent_id: BinaryLockfile.Tree.Id,
-                dep_id: DependencyID,
+                tree_dep_id: DependencyID,
                 dep_ids: []const DependencyID,
             };
 
@@ -371,7 +371,7 @@ pub const PkgPath = struct {
                 return .{
                     .id = tree.id,
                     .parent_id = tree.parent_id,
-                    .dep_id = tree.dep_id,
+                    .tree_dep_id = tree.dep_id,
                     .dep_ids = this.deps_buf.items,
                 };
 
@@ -854,17 +854,25 @@ pub const Stringifier = struct {
         // }
 
         if (meta.os != .all) {
-            any = true;
+            if (any) {
+                try writer.writeByte(',');
+            } else {
+                any = true;
+            }
             try writer.writeAll(
-                \\, "os": 
+                \\ "os": 
             );
             try Negatable(Npm.OperatingSystem).toJson(meta.os, writer);
         }
 
         if (meta.arch != .all) {
-            any = true;
+            if (any) {
+                try writer.writeByte(',');
+            } else {
+                any = true;
+            }
             try writer.writeAll(
-                \\, "cpu": 
+                \\ "cpu": 
             );
             try Negatable(Npm.Architecture).toJson(meta.arch, writer);
         }
@@ -1420,10 +1428,12 @@ pub fn parseIntoBinaryLockfile(
             pkg_resolutions[0] = Resolution.init(.{ .root = {} });
             pkg_metas[0].origin = .local;
 
-            for (pkg_deps[0].begin()..pkg_deps[0].end()) |dep_id| {
+            for (pkg_deps[0].begin()..pkg_deps[0].end()) |_dep_id| {
+                const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = lockfile.buffers.dependencies.items[dep_id];
 
-                if (pkg_map.root.nodes.get(dep.name.slice(string_buf.bytes.items))) |dep_node| {
+                if (pkg_map.root.nodes.getPtr(dep.name.slice(string_buf.bytes.items))) |dep_node| {
+                    dep_node.dep_id = dep_id;
                     lockfile.buffers.resolutions.items[dep_id] = dep_node.pkg_id;
                 }
             }
@@ -1479,7 +1489,7 @@ pub fn parseIntoBinaryLockfile(
                 try lockfile.buffers.trees.append(
                     allocator,
                     .{
-                        .dependency_id = tree.dep_id,
+                        .dependency_id = tree.tree_dep_id,
                         .id = tree_id,
                         .parent = tree.parent_id,
                         .dependencies = .{

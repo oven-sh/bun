@@ -43,7 +43,7 @@ const b_files = [
   },
   {
     name: "export merge",
-    value: `export * from "./a_no_value.ts"; export * from "./a_with_value.ts`,
+    value: `export * from "./a_no_value.ts"; export * from "./a_with_value.ts"`,
   },
 ];
 const c_files = [

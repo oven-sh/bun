@@ -14202,28 +14202,28 @@ pub const PackageManager = struct {
             .err => |cause| {
                 if (log_level != .silent) {
                     switch (cause.step) {
-                        .open_file => Output.prettyError("<r><red>error<r> opening lockfile:<r> {s}\n<r>", .{
-                            @errorName(cause.value),
+                        .open_file => Output.err(cause.value, "failed to open lockfile: '{s}'", .{
+                            cause.lockfile_path,
                         }),
-                        .parse_file => Output.prettyError("<r><red>error<r> parsing lockfile:<r> {s}\n<r>", .{
-                            @errorName(cause.value),
+                        .parse_file => Output.err(cause.value, "failed to parse lockfile: '{s}'", .{
+                            cause.lockfile_path,
                         }),
-                        .read_file => Output.prettyError("<r><red>error<r> reading lockfile:<r> {s}\n<r>", .{
-                            @errorName(cause.value),
+                        .read_file => Output.err(cause.value, "failed to read lockfile: '{s}'", .{
+                            cause.lockfile_path,
                         }),
-                        .migrating => Output.prettyError("<r><red>error<r> migrating lockfile:<r> {s}\n<r>", .{
-                            @errorName(cause.value),
+                        .migrating => Output.err(cause.value, "failed to migrate lockfile: '{s}'", .{
+                            cause.lockfile_path,
                         }),
                     }
 
-                    if (manager.options.enable.fail_early) {
-                        Output.prettyError("<b><red>failed to load lockfile<r>\n", .{});
-                    } else {
-                        Output.prettyError("<b><red>ignoring lockfile<r>\n", .{});
+                    if (!manager.options.enable.fail_early) {
+                        Output.printErrorln("", .{});
+                        Output.warn("Ignoring lockfile", .{});
                     }
 
                     if (ctx.log.errors > 0) {
                         try manager.log.print(Output.errorWriter());
+                        manager.log.reset();
                     }
                     Output.flush();
                 }

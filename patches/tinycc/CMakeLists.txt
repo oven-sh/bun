@@ -29,7 +29,6 @@ endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU")
   add_compile_options(
-    -fheinous-gnu-extensions
     -Wno-string-plus-int
     -Wno-deprecated-declarations
   )

@@ -239,7 +239,7 @@ pub const TextEncoder = struct {
 };
 
 comptime {
-    if (!JSC.is_bindgen) {
+    if (Environment.export_cpp_apis) {
         _ = TextEncoder.TextEncoder__encode8;
         _ = TextEncoder.TextEncoder__encode16;
         _ = TextEncoder.TextEncoder__encodeInto8;

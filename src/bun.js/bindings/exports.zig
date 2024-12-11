@@ -12,7 +12,6 @@ const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const NewGlobalObject = JSC.NewGlobalObject;
 const JSGlobalObject = JSC.JSGlobalObject;
-const is_bindgen: bool = false;
 const ZigString = JSC.ZigString;
 const string = bun.string;
 const JSValue = JSC.JSValue;
@@ -390,7 +389,7 @@ pub const Process = extern struct {
     });
 
     comptime {
-        if (!is_bindgen) {
+        if (Environment.export_cpp_apis) {
             @export(getTitle, .{
                 .name = Export[0].symbol_name,
             });
@@ -946,7 +945,7 @@ pub const HTTPDebugSSLServerRequestContext = JSC.API.DebugHTTPSServer.RequestCon
 pub const BodyValueBuffererContext = JSC.WebCore.BodyValueBufferer;
 pub const TestScope = @import("../test/jest.zig").TestScope;
 comptime {
-    if (!is_bindgen) {
+    if (Environment.export_cpp_apis) {
         WebSocketHTTPClient.shim.ref();
         WebSocketHTTPSClient.shim.ref();
         WebSocketClient.shim.ref();

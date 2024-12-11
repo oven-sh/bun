@@ -7122,9 +7122,11 @@ pub const ScriptExecutionStatus = enum(i32) {
 };
 
 comptime {
-    // this file is gennerated, but cant be placed in the build/debug/codegen folder
-    // because zig will complain about outside-of-module stuff
-    _ = @import("./GeneratedJS2Native.zig");
+    if (bun.Environment.export_cpp_apis) {
+        // this file is gennerated, but cant be placed in the build/debug/codegen folder
+        // because zig will complain about outside-of-module stuff
+        _ = @import("./GeneratedJS2Native.zig");
+    }
 }
 
 // Error's cannot be created off of the main thread. So we use this to store the

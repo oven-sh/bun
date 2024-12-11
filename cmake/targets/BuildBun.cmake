@@ -358,7 +358,8 @@ register_command(
       run
       ${BUN_BINDGEN_SCRIPT}
         --debug=${DEBUG}
-        --codegen-root=${CODEGEN_PATH}
+        "--codegen-root=${CODEGEN_PATH}"
+        "--zig=${ZIG_EXECUTABLE}"
   SOURCES
     ${BUN_BINDGEN_SOURCES}
     ${BUN_BINDGEN_SCRIPT}

@@ -3,7 +3,7 @@
 // various footguns in JavaScript, C++, and the bindings generator to
 // always produce correct code, or bail with an error.
 import { expect } from "bun:test";
-import type { FuncOptions, Type, t } from "./bindgen-lib";
+import type { FnOptions, Type, t } from "./bindgen-lib";
 import * as path from "node:path";
 import assert from "node:assert";
 
@@ -18,6 +18,19 @@ export let typeHashToReachableType = new Map<string, TypeImpl>();
 export let typeHashToStruct = new Map<string, Struct>();
 export let typeHashToNamespace = new Map<string, string>();
 export let structHashToSelf = new Map<string, Struct>();
+export let zigEnums = new Map<string, ZigEnum>();
+
+export interface ZigEnum {
+  file: string;
+  snapshot: string;
+  name: string;
+  tag: CAbiType;
+  resolved: boolean;
+  variants: {
+    name: string;
+    value: number | bigint;
+  }[];
+}
 
 /** String literal */
 export const str = (v: any) => JSON.stringify(v);
@@ -63,6 +76,7 @@ interface TypeDataDefs {
   zigEnum: {
     file: string;
     impl: string;
+    snapshot: string;
   };
   stringEnum: string[];
   oneOf: TypeImpl[];
@@ -75,6 +89,7 @@ interface Flags {
   required?: boolean;
   nullable?: boolean;
   default?: any;
+  exported?: boolean;
   range?: ["clamp" | "enforce", bigint, bigint] | ["clamp" | "enforce", "abi", "abi"];
 }
 
@@ -108,11 +123,15 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     this.kind = kind;
     this.data = data;
     this.flags = flags;
-    this.ownerFile = path.basename(stackTraceFileName(snapshotCallerLocation()), ".bind.ts");
+    this.ownerFile = path.relative(src, stackTraceFileName(snapshotCallerLocation()));
   }
 
   isVirtualArgument() {
     return this.kind === "globalObject" || this.kind === "zigVirtualMachine";
+  }
+
+  ownerFileBasename() {
+    return path.basename(this.ownerFile, ".bind.ts");
   }
 
   hash() {
@@ -199,7 +218,9 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "stringEnum":
         return cAbiTypeForEnum(this.data.length);
       case "zigEnum":
-        throw new Error("TODO");
+        const zigEnum = zigEnums.get(this.hash());
+        assert(zigEnum && zigEnum.resolved, "enum was not resolved");
+        return zigEnum.tag;
       case "undefined":
         return "u0";
       case "oneOf": // `union(enum)`
@@ -231,11 +252,12 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         typeHashToStruct.set(this.hash(), existing);
         return existing;
       }
+      case "customZig":
       case "sequence": {
         return null;
       }
       default: {
-        throw new Error("unexpected: " + (kind satisfies never));
+        throw new Error("unexpected: " + kind);
       }
     }
   }
@@ -247,7 +269,16 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     const hash = this.hash();
     const existing = typeHashToReachableType.get(hash);
     if (existing) return (this.nameDeduplicated = existing.nameDeduplicated ??= this.#generateName());
-    return (this.nameDeduplicated = `anon_${this.kind}_${hash}`);
+    return (this.nameDeduplicated = `bindgen_${this.kind}_${hash}`);
+  }
+
+  publicName() {
+    switch (this.kind) {
+      case "zigEnum":
+        return this.data.impl.split(".").pop();
+      default:
+        return this.name();
+    }
   }
 
   cppInternalName() {
@@ -256,7 +287,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     const namespace = typeHashToNamespace.get(this.hash());
     if (cAbiType) {
       if (typeof cAbiType === "string") {
-        return cAbiType;
+        return cAbiTypeName(cAbiType);
       }
     }
     return namespace ? `${namespace}${name}` : name;
@@ -280,7 +311,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
   }
 
   #generateName() {
-    return `bindgen_${this.ownerFile}_${this.hash()}`;
+    return `bindgen_${this.ownerFileBasename()}_${this.hash()}`;
   }
 
   /**
@@ -302,7 +333,11 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     if (!this.lowersToNamedType()) return;
     const hash = this.hash();
     const existing = typeHashToReachableType.get(hash);
-    this.nameDeduplicated ??= existing?.name() ?? `anon_${this.kind}_${hash}`;
+    this.nameDeduplicated ??=
+      existing?.name() ??
+      (this.kind === "zigEnum"
+        ? `Zig${pascal(path.basename(this.data.file, ".zig").replaceAll(".", "_"))}${pascal(this.data.impl.replaceAll(".", "_"))}`
+        : `bindgen_${this.kind}_${hash}`);
     if (!existing) typeHashToReachableType.set(hash, this);
 
     switch (this.kind) {
@@ -324,6 +359,19 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
           type.markReachable();
         }
         break;
+      case "zigEnum": {
+        const hash = this.hash();
+        if (zigEnums.has(hash)) return;
+        zigEnums.set(hash, {
+          file: this.data.file,
+          name: this.data.impl,
+          snapshot: this.data.snapshot,
+          tag: "u32",
+          variants: [],
+          resolved: false,
+        });
+        break;
+      }
     }
   }
 
@@ -644,6 +692,7 @@ export interface Func {
   snapshot: string;
   zigFile: string;
   variants: Variant[];
+  className: string;
 }
 
 export interface Variant {
@@ -718,6 +767,7 @@ export type ReturnStrategy =
 export interface File {
   functions: Func[];
   typedefs: TypeDef[];
+  anonTypedefs: TypeImpl[];
 }
 
 export interface TypeDef {
@@ -725,14 +775,14 @@ export interface TypeDef {
   type: TypeImpl;
 }
 
-export function registerFunction(opts: FuncOptions) {
+export function registerFunction(opts: FnOptions) {
   const snapshot = snapshotCallerLocation();
   const filename = stackTraceFileName(snapshot);
   expect(filename).toEndWith(".bind.ts");
   const zigFile = path.relative(src, filename.replace(/\.bind\.ts$/, ".zig"));
   let file = files.get(zigFile);
   if (!file) {
-    file = { functions: [], typedefs: [] };
+    file = { functions: [], typedefs: [], anonTypedefs: [] };
     files.set(zigFile, file);
   }
   const variants: Variant[] = [];
@@ -764,6 +814,7 @@ export function registerFunction(opts: FuncOptions) {
     snapshot,
     zigFile,
     variants,
+    className: opts.className ?? "",
   };
   allFunctions.push(func);
   file.functions.push(func);
@@ -796,7 +847,7 @@ function validateVariant(variant: any) {
   return { minRequiredArgs };
 }
 
-function snapshotCallerLocation(): string {
+export function snapshotCallerLocation(): string {
   const stack = new Error().stack!;
   const lines = stack.split("\n");
   let i = 1;
@@ -874,8 +925,8 @@ export function cAbiTypeName(type: CAbiType) {
     {
       "*anyopaque": "void*",
       "*JSGlobalObject": "JSC::JSGlobalObject*",
-      "JSValue": "JSValue",
-      "JSValue.MaybeException": "JSValue",
+      "JSValue": "JSC::EncodedJSValue",
+      "JSValue.MaybeException": "JSC::EncodedJSValue",
       "bool": "bool",
       "u8": "uint8_t",
       "u16": "uint16_t",

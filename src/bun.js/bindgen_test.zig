@@ -1,10 +1,16 @@
 //! This namespace is used to test binding generator
 const gen = bun.gen.bindgen_test;
 
+pub const SampleEnum = enum {
+    hello,
+    world,
+};
+
 pub fn getBindgenTestFunctions(global: *JSC.JSGlobalObject) JSC.JSValue {
     return global.createObjectFromStruct(.{
         .add = gen.createAddCallback(global),
         .requiredAndOptionalArg = gen.createRequiredAndOptionalArgCallback(global),
+        .customDeserializer = gen.createCustomDeserializerCallback(global),
     }).toJS();
 }
 
@@ -29,6 +35,22 @@ pub fn requiredAndOptionalArg(a: bool, b: ?usize, c: i32, d: ?u8) i32 {
         math_result = -math_result;
     }
     return math_result;
+}
+
+pub fn customDeserializer(
+    a: JSC.Node.StringOrBuffer,
+    b: JSC.ArrayBuffer,
+    c: SampleEnum,
+    d: ?JSC.Node.StringOrBuffer,
+) i32 {
+    return @intCast(std.math.clamp(
+        a.slice().len +|
+            b.slice().len +|
+            (if (d) |buf| buf.slice().len else 42) +|
+            @intFromEnum(c),
+        std.math.minInt(i32),
+        std.math.maxInt(i32),
+    ));
 }
 
 const std = @import("std");

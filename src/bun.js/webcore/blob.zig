@@ -646,11 +646,13 @@ pub const Blob = struct {
     }
 
     comptime {
-        _ = Blob__dupeFromJS;
-        _ = Blob__destroy;
-        _ = Blob__dupe;
-        _ = Blob__setAsFile;
-        _ = Blob__getFileNameString;
+        if (Environment.export_cpp_apis) {
+            _ = Blob__dupeFromJS;
+            _ = Blob__destroy;
+            _ = Blob__dupe;
+            _ = Blob__setAsFile;
+            _ = Blob__getFileNameString;
+        }
     }
 
     pub fn writeFormatForSize(is_jdom_file: bool, size: usize, writer: anytype, comptime enable_ansi_colors: bool) !void {

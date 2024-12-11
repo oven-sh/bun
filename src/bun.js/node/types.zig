@@ -1754,13 +1754,15 @@ pub fn StatType(comptime Big: bool) type {
         }
 
         comptime {
-            _ = isBlockDevice_WithoutTypeChecks;
-            _ = isCharacterDevice_WithoutTypeChecks;
-            _ = isDirectory_WithoutTypeChecks;
-            _ = isFIFO_WithoutTypeChecks;
-            _ = isFile_WithoutTypeChecks;
-            _ = isSocket_WithoutTypeChecks;
-            _ = isSymbolicLink_WithoutTypeChecks;
+            if (Environment.export_cpp_apis) {
+                _ = isBlockDevice_WithoutTypeChecks;
+                _ = isCharacterDevice_WithoutTypeChecks;
+                _ = isDirectory_WithoutTypeChecks;
+                _ = isFIFO_WithoutTypeChecks;
+                _ = isFile_WithoutTypeChecks;
+                _ = isSocket_WithoutTypeChecks;
+                _ = isSymbolicLink_WithoutTypeChecks;
+            }
         }
     };
 }
@@ -2154,5 +2156,7 @@ pub const Process = struct {
 };
 
 comptime {
-    std.testing.refAllDecls(Process);
+    if (Environment.export_cpp_apis) {
+        std.testing.refAllDecls(Process);
+    }
 }

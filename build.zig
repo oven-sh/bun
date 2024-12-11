@@ -151,7 +151,8 @@ pub fn getCpuModel(os: OperatingSystem, arch: Arch) ?Target.Query.CpuModel {
 }
 
 pub fn build(b: *Build) !void {
-    std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
+    if (!(b.option(bool, "no-compiler-info", "") orelse false))
+        std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
 
     b.zig_lib_dir = b.zig_lib_dir orelse b.path("vendor/zig/lib");
 
@@ -329,16 +330,17 @@ pub fn build(b: *Build) !void {
     }
 
     // zig build enum-extractor
-    {
-        // const step = b.step("enum-extractor", "Extract enum definitions (invoked by a code generator)");
-        // const exe = b.addExecutable(.{
-        //     .name = "enum_extractor",
-        //     .root_source_file = b.path("./src/generated_enum_extractor.zig"),
-        //     .target = b.graph.host,
-        //     .optimize = .Debug,
-        // });
-        // const run = b.addRunArtifact(exe);
-        // step.dependOn(&run.step);
+    if (exists(b.pathFromRoot("src/generated_enum_extractor.zig"))) {
+        const step = b.step("enum-extractor", "Extract enum definitions (invoked by 'bindgen.ts')");
+        const exe = b.addExecutable(.{
+            .name = "enum_extractor",
+            .root_source_file = b.path("./src/generated_enum_extractor.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        });
+        exe.root_module.addImport("build_options", build_options.buildOptionsModule(b));
+        const run = b.addRunArtifact(exe);
+        step.dependOn(&run.step);
     }
 }
 
@@ -555,7 +557,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
 
 fn validateGeneratedPath(path: []const u8) void {
     if (!exists(path)) {
-        std.debug.panic(
+        std.log.warn(
             \\Generated file '{s}' is missing!
             \\
             \\Make sure to use CMake and Ninja, or pass a manual codegen folder with '-Dgenerated-code=...'

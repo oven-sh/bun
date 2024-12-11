@@ -1,6 +1,6 @@
-import { t, fn } from "bindgen";
+import { t, Fn } from "bindgen";
 
-export const add = fn({
+export const add = Fn({
   args: {
     global: t.globalObject,
     a: t.i32,
@@ -9,12 +9,22 @@ export const add = fn({
   ret: t.i32,
 });
 
-export const requiredAndOptionalArg = fn({
+export const requiredAndOptionalArg = Fn({
   args: {
     a: t.boolean,
     b: t.usize.optional,
     c: t.i32.enforceRange(0, 100).default(42),
     d: t.u8.optional,
+  },
+  ret: t.i32,
+});
+
+export const customDeserializer = Fn({
+  args: {
+    a: t.StringOrBuffer,
+    b: t.ArrayBuffer,
+    c: t.zigEnum("bindgen_test.zig", "SampleEnum"),
+    d: t.StringOrBuffer.optional,
   },
   ret: t.i32,
 });

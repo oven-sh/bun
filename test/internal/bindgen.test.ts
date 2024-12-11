@@ -1,3 +1,4 @@
+import { it, expect } from "bun:test";
 import { bindgen } from "bun:internal-for-testing";
 
 it("bindgen add example", () => {
@@ -62,9 +63,30 @@ it("optional arguments / default arguments", () => {
 });
 
 it("custom enforceRange boundaries", () => {
+  expect(() => bindgen.requiredAndOptionalArg()).toThrow("Not enough arguments");
   expect(bindgen.requiredAndOptionalArg(false, 0, 5)).toBe(5);
   expect(() => bindgen.requiredAndOptionalArg(false, 0, -1)).toThrow("Value -1 is outside the range [0, 100]");
   expect(() => bindgen.requiredAndOptionalArg(false, 0, 101)).toThrow("Value 101 is outside the range [0, 100]");
   expect(bindgen.requiredAndOptionalArg(false, 0, 100)).toBe(100);
   expect(bindgen.requiredAndOptionalArg(false, 0, 0)).toBe(0);
+});
+
+it("custom deserializers / zigEnum / StringOrBuffer / ArrayBuffer", () => {
+  expect(() => bindgen.customDeserializer()).toThrow("Not enough arguments");
+  const ab4 = new ArrayBuffer(4);
+  const ab2 = new ArrayBuffer(2);
+  expect(bindgen.customDeserializer(ab4, ab4, "hello")).toBe(50);
+  expect(bindgen.customDeserializer(ab2, ab4, "hello")).toBe(48);
+  expect(bindgen.customDeserializer(ab2, ab2, "hello")).toBe(46);
+  expect(bindgen.customDeserializer(ab2, ab2, "world")).toBe(47);
+  // expect(() => bindgen.customDeserializer(null, ab4, "hello")).toThrow(
+  //   'Argument 3 (\'c\') to bindgen_test.customDeserializer must be one of: "hello", "world"',
+  // );
+  expect(() => bindgen.customDeserializer(ab4, ab4, undefined)).toThrow(
+    'Argument 3 (\'c\') to bindgen_test.customDeserializer must be one of: "hello", "world"',
+  );
+  expect(() => bindgen.customDeserializer(ab4, ab4, undefined)).toThrow({
+    code: "ERR_INVALID_ARG_TYPE",
+    message: `Argument 3 ('c') to bindgen_test.customDeserializer must be one of: "hello", "world"`,
+  });
 });

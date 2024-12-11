@@ -82,8 +82,8 @@ RUN for f in /usr/lib/llvm-${LLVM_VERSION}/bin/*; do ln -sf "$f" /usr/bin; done 
    && ln -sf /usr/bin/clang /usr/bin/cc \
    && ln -sf /usr/bin/clang++ /usr/bin/c++
 
-ENV CC="clang-${LLVM_VERSION}" \
-   CXX="clang++-${LLVM_VERSION}" \
+ENV CC="clang" \
+   CXX="clang++" \
    AR="llvm-ar-${LLVM_VERSION}" \
    RANLIB="llvm-ranlib-${LLVM_VERSION}" \
    LD="lld-${LLVM_VERSION}"
@@ -146,6 +146,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && rustup default nightly
 
 ENV PATH=/root/.cargo/bin:$PATH
+
+ENV LLVM_VERSION=${REPORTED_LLVM_VERSION}
+
 
 RUN --mount=type=tmpfs,target=/workspace/bun/build \
     ls -la \

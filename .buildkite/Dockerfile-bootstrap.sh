@@ -27,7 +27,7 @@ fi
 
 # Install Docker
 dnf update -y
-dnf install -y docker
+dnf install -y ddocker
 
 systemctl enable docker
 systemctl start docker || {
@@ -98,13 +98,10 @@ docker buildx build \
     exit 1
 }
 
-# Create but don't start the container
+# Create container to ensure image is cached in AMI
 docker container create \
     --name buildkite \
     --restart=unless-stopped \
-    --network host \
-    -v /var/run/docker.sock:/var/run/docker.sock \
-    -v /tmp:/tmp \
     buildkite:latest || {
     echo "error: failed to create buildkite container"
     exit 1

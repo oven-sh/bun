@@ -788,13 +788,9 @@ install_bun() {
 	bun_tmpdir="$(dirname "$bun_zip")"
 	execute "$unzip" -o "$bun_zip" -d "$bun_tmpdir"
 
-	bun_path="/opt/bun"
-	create_directory "$bun_path/bin"
-	execute mv "$bun_tmpdir/$bun_triplet/bun" "$bun_path/bin/bun"
-	execute ln -sf "$bun_path/bin/bun" "$bun_path/bin/bunx"
-
-	append_to_path "$bun_path/bin"
-	append_to_profile "export BUN_INSTALL=$bun_path"
+	move_to_bin "$bun_tmpdir/$bun_triplet/bun"
+	bun_path="$(require bun)"
+	execute ln -sf "$bun_path" "$(dirname "$bun_path")/bunx"
 }
 
 install_cmake() {

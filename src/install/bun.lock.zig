@@ -679,11 +679,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.folder.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDeps(writer, pkg_deps, buf, &optional_peers_buf);
-
-                            try writer.writeAll(", ");
-
-                            try writeCpuAndOsAndLibc(writer, &pkg_meta);
+                            try writePackageDepsAndMeta(writer, pkg_deps, &pkg_meta, buf, &optional_peers_buf);
 
                             try writer.print(", \"{}\"]", .{pkg_meta.integrity});
                         },
@@ -693,11 +689,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.local_tarball.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDeps(writer, pkg_deps, buf, &optional_peers_buf);
-
-                            try writer.writeAll(", ");
-
-                            try writeCpuAndOsAndLibc(writer, &pkg_meta);
+                            try writePackageDepsAndMeta(writer, pkg_deps, &pkg_meta, buf, &optional_peers_buf);
 
                             try writer.print(", \"{}\"]", .{pkg_meta.integrity});
                         },
@@ -707,11 +699,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.remote_tarball.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDeps(writer, pkg_deps, buf, &optional_peers_buf);
-
-                            try writer.writeAll(", ");
-
-                            try writeCpuAndOsAndLibc(writer, &pkg_meta);
+                            try writePackageDepsAndMeta(writer, pkg_deps, &pkg_meta, buf, &optional_peers_buf);
 
                             try writer.print(", \"{}\"]", .{pkg_meta.integrity});
                         },
@@ -721,11 +709,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.symlink.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDeps(writer, pkg_deps, buf, &optional_peers_buf);
-
-                            try writer.writeAll(", ");
-
-                            try writeCpuAndOsAndLibc(writer, &pkg_meta);
+                            try writePackageDepsAndMeta(writer, pkg_deps, &pkg_meta, buf, &optional_peers_buf);
 
                             try writer.print(", \"{}\"]", .{pkg_meta.integrity});
                         },
@@ -743,11 +727,7 @@ pub const Stringifier = struct {
                                     res.value.npm.url.slice(buf),
                             });
 
-                            try writePackageDeps(writer, pkg_deps, buf, &optional_peers_buf);
-
-                            try writer.writeAll(", ");
-
-                            try writeCpuAndOsAndLibc(writer, &pkg_meta);
+                            try writePackageDepsAndMeta(writer, pkg_deps, &pkg_meta, buf, &optional_peers_buf);
 
                             // TODO(dylan-conway): delete placeholder
                             try writer.print(", \"{}\"]", .{
@@ -762,7 +742,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(workspace_path, .{ .quote = false }),
                             });
 
-                            try writePackageDeps(writer, pkg_deps, buf, &optional_peers_buf);
+                            try writePackageDepsAndMeta(writer, pkg_deps, &pkg_meta, buf, &optional_peers_buf);
 
                             try writer.writeByte(']');
                         },
@@ -773,11 +753,7 @@ pub const Stringifier = struct {
                                 repo.fmt(if (comptime tag == .git) "git+" else "github:", buf),
                             });
 
-                            try writePackageDeps(writer, pkg_deps, buf, &optional_peers_buf);
-
-                            try writer.writeAll(", ");
-
-                            try writeCpuAndOsAndLibc(writer, &pkg_meta);
+                            try writePackageDepsAndMeta(writer, pkg_deps, &pkg_meta, buf, &optional_peers_buf);
 
                             try writer.print(", \"{}\"]", .{pkg_meta.integrity});
                         },
@@ -799,46 +775,12 @@ pub const Stringifier = struct {
         return writer_buf.list.items;
     }
 
-    /// writes a one line object with os, cpu, and libc fields
-    fn writeCpuAndOsAndLibc(
-        writer: anytype,
-        meta: *const Meta,
-    ) OOM!void {
-        try writer.writeByte('{');
-
-        if (meta.os != .all) {
-            try writer.writeAll(
-                \\"os": 
-            );
-            try Negatable(Npm.OperatingSystem).toJson(meta.os, writer);
-            try writer.writeAll(", ");
-        }
-
-        if (meta.arch != .all) {
-            try writer.writeAll(
-                \\"cpu": 
-            );
-            try Negatable(Npm.Architecture).toJson(meta.arch, writer);
-            try writer.writeAll(", ");
-        }
-
-        // TODO(dylan-conway)
-        // if (meta.libc != .all) {
-        //     try writer.writeAll(
-        //         \\"libc": [
-        //     );
-        //     try Negatable(Npm.Libc).toJson(meta.libc, writer);
-        //     try writer.writeAll("], ");
-        // }
-
-        try writer.writeByte('}');
-    }
-
     /// Writes a single line object.
-    /// { "devDependencies": { "one": "1.1.1", "two": "2.2.2" } }
-    fn writePackageDeps(
+    /// { "devDependencies": { "one": "1.1.1", "two": "2.2.2" }, "os": "none" }
+    fn writePackageDepsAndMeta(
         writer: anytype,
         deps: []const Dependency,
+        meta: *const Meta,
         buf: string,
         optional_peers_buf: *std.ArrayList(String),
     ) OOM!void {
@@ -900,6 +842,31 @@ pub const Stringifier = struct {
             }
 
             try writer.writeByte(']');
+        }
+
+        // TODO(dylan-conway)
+        // if (meta.libc != .all) {
+        //     try writer.writeAll(
+        //         \\"libc": [
+        //     );
+        //     try Negatable(Npm.Libc).toJson(meta.libc, writer);
+        //     try writer.writeAll("], ");
+        // }
+
+        if (meta.os != .all) {
+            any = true;
+            try writer.writeAll(
+                \\, "os": 
+            );
+            try Negatable(Npm.OperatingSystem).toJson(meta.os, writer);
+        }
+
+        if (meta.arch != .all) {
+            any = true;
+            try writer.writeAll(
+                \\, "cpu": 
+            );
+            try Negatable(Npm.Architecture).toJson(meta.arch, writer);
         }
 
         if (any) {
@@ -1358,77 +1325,36 @@ pub fn parseIntoBinaryLockfile(
                 }
             }
 
-            switch (res.tag) {
-                .npm => {},
-                .workspace => {
-                    // if (pkg_info.len < 2) {
-                    //     try log.addError(source, value.loc, "Missing workspace version");
-                    //     return error.InvalidPackageInfo;
-                    // }
-
-                    // i += 1;
-                    // const version_expr = pkg_info.at(i);
-                    // const version_str = version_expr.asString(allocator) orelse {
-                    //     try log.addError(source, version_expr.loc, "Expected a string");
-                    //     return error.InvalidPackageInfo;
-                    // };
-                    // if (version_str.len == 0) {
-                    //     // workspace does not have a version
-                    // } else {
-                    //     const version = try string_buf.append(version_str);
-                    //     const parsed = Semver.Version.parse(version.sliced(string_buf.bytes.items));
-                    //     if (!parsed.valid or (parsed.version.major == null or parsed.version.minor == null or parsed.version.patch == null)) {
-                    //         try log.addError(source, version_expr.loc, "Invalid workspace version");
-                    //         return error.InvalidSemver;
-                    //     }
-
-                    //     lockfile.workspace_versions.put(allocator, name_hash, parsed.version.min());
-                    // }
-                },
-                else => {},
-            }
-
             var pkg: BinaryLockfile.Package = .{};
 
-            // dependencies
+            // dependencies, os, cpu, libc
             switch (res.tag) {
                 .npm, .folder, .git, .github, .local_tarball, .remote_tarball, .symlink, .workspace => {
-                    const deps_obj = pkg_info.at(i);
+                    const deps_os_cpu_libc_obj = pkg_info.at(i);
                     i += 1;
-                    if (!deps_obj.isObject()) {
-                        try log.addError(source, deps_obj.loc, "Expected an object");
+                    if (!deps_os_cpu_libc_obj.isObject()) {
+                        try log.addError(source, deps_os_cpu_libc_obj.loc, "Expected an object");
                         return error.InvalidPackageInfo;
                     }
 
                     // TODO(dylan-conway): maybe sort this. behavior is already sorted, but names are not
-                    const off, const len = try parseAppendDependencies(lockfile, allocator, deps_obj, &string_buf, log, source, &optional_peers_buf);
+                    const off, const len = try parseAppendDependencies(lockfile, allocator, deps_os_cpu_libc_obj, &string_buf, log, source, &optional_peers_buf);
 
                     pkg.dependencies = .{ .off = off, .len = len };
                     pkg.resolutions = .{ .off = off, .len = len };
-                },
-                else => {},
-            }
 
-            // cpu, os, and libc
-            switch (res.tag) {
-                .folder, .local_tarball, .remote_tarball, .symlink, .npm, .git, .github => {
-                    const os_cpu_libc_obj = pkg_info.at(i);
-                    i += 1;
-                    if (!os_cpu_libc_obj.isObject()) {
-                        try log.addError(source, os_cpu_libc_obj.loc, "Expected an object");
-                        return error.InvalidPackageInfo;
+                    if (res.tag != .workspace) {
+                        if (deps_os_cpu_libc_obj.get("os")) |os| {
+                            pkg.meta.os = try Negatable(Npm.OperatingSystem).fromJson(allocator, os);
+                        }
+                        if (deps_os_cpu_libc_obj.get("cpu")) |arch| {
+                            pkg.meta.arch = try Negatable(Npm.OperatingSystem).fromJson(allocator, arch);
+                        }
+                        // TODO(dylan-conway)
+                        // if (os_cpu_libc_obj.get("libc")) |libc| {
+                        //     pkg.meta.libc = Negatable(Npm.Libc).fromJson(allocator, libc);
+                        // }
                     }
-
-                    if (os_cpu_libc_obj.get("os")) |os| {
-                        pkg.meta.os = try Negatable(Npm.OperatingSystem).fromJson(allocator, os);
-                    }
-                    if (os_cpu_libc_obj.get("cpu")) |arch| {
-                        pkg.meta.arch = try Negatable(Npm.Architecture).fromJson(allocator, arch);
-                    }
-                    // TODO(dylan-conway)
-                    // if (os_cpu_libc_obj.get("libc")) |libc| {
-                    //     pkg.meta.libc = Negatable(Npm.Libc).fromJson(allocator, libc);
-                    // }
                 },
                 else => {},
             }

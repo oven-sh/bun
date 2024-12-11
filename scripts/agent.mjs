@@ -141,7 +141,7 @@ async function doBuildkiteAgent(action) {
       shell = `"${cmd}" /S /C`;
     } else {
       const sh = which("sh", { required: true });
-      shell = `${sh} -e -c`;
+      shell = `${sh} -elc`;
     }
 
     const flags = ["enable-job-log-tmpfile", "no-feature-reporting"];

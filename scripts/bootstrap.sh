@@ -45,16 +45,16 @@ execute_as_user() {
 
 	if [ "$sudo" = "1" ] || [ "$can_sudo" = "1" ]; then
 		if [ -f "$(which sudo)" ]; then
-			execute sudo -n -u "$user" "$sh" -c "$*"
+			execute sudo -n -u "$user" "$sh" -lc "$*"
 		elif [ -f "$(which doas)" ]; then
-			execute doas -u "$user" "$sh" -c "$*"
+			execute doas -u "$user" "$sh" -lc "$*"
 		elif [ -f "$(which su)" ]; then
-			execute su -s "$sh" "$user" -c "$*"
+			execute su -s "$sh" "$user" -lc "$*"
 		else
-			execute "$sh" -c "$*"
+			execute "$sh" -lc "$*"
 		fi
 	else
-		execute "$sh" -c "$*"
+		execute "$sh" -lc "$*"
 	fi
 }
 
@@ -621,7 +621,7 @@ install_brew() {
 
 	bash="$(require bash)"
 	script=$(download_file "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh")
-	execute_as_user "$bash" -c "NONINTERACTIVE=1 $script"
+	execute_as_user "$bash" -lc "NONINTERACTIVE=1 $script"
 
 	case "$arch" in
 	x64)
@@ -981,7 +981,7 @@ install_rust() {
 
 		sh="$(require sh)"
 		rustup_script=$(download_file "https://sh.rustup.rs")
-		execute "$sh" -c "RUSTUP_HOME=$rust_home CARGO_HOME=$rust_home $rustup_script -y --no-modify-path"
+		execute "$sh" -lc "$rustup_script -y --no-modify-path"
 		append_to_path "$rust_home/bin"
 		;;
 	esac
@@ -1067,7 +1067,7 @@ install_osxcross() {
 	bash="$(require bash)"
 	execute_sudo ln -sf "$(which clang-$(llvm_version))" /usr/bin/clang
 	execute_sudo ln -sf "$(which clang++-$(llvm_version))" /usr/bin/clang++
-	execute_sudo "$bash" -c "UNATTENDED=1 TARGET_DIR='$osxcross_path' $osxcross_build_path/build.sh"
+	execute_sudo "$bash" -lc "UNATTENDED=1 TARGET_DIR='$osxcross_path' $osxcross_build_path/build.sh"
 
 	execute_sudo rm -rf "$osxcross_build_path"
 	grant_to_user "$osxcross_path"

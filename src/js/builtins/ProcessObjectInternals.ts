@@ -67,26 +67,17 @@ export function getStdinStream(fd) {
   const native = Bun.stdin.stream();
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  var readerRef;
 
   var shouldUnref = false;
 
   function ref() {
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
-    // TODO: remove this. likely we are dereferencing the stream
-    // when there is still more data to be read.
-    readerRef ??= setInterval(() => {}, 1 << 30);
     shouldUnref = false;
   }
 
   function unref() {
     $debug("unref();");
-    if (readerRef) {
-      clearInterval(readerRef);
-      readerRef = undefined;
-      $debug("cleared timeout");
-    }
     if (reader) {
       try {
         reader.releaseLock();
@@ -222,6 +213,7 @@ export function getStdinStream(fd) {
   stream._readableState.reading = false;
 
   stream.on("pause", () => {
+    $debug('on("pause");');
     process.nextTick(() => {
       if (!stream.readableFlowing) {
         stream._readableState.reading = false;
@@ -230,6 +222,7 @@ export function getStdinStream(fd) {
   });
 
   stream.on("close", () => {
+    $debug('on("close");');
     if (!stream_destroyed) {
       stream_destroyed = true;
       process.nextTick(() => {

@@ -41,12 +41,13 @@ const {
   validateBoolean,
   validateInteger,
   validateUint32,
+  validateNumber,
 } = require("internal/validators");
 
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectValues = Object.values;
-const PromiseReject = Promise.reject;
+const PromiseReject = Promise.reject.bind(Promise);
 
 var isWritable;
 
@@ -276,11 +277,17 @@ class ERR_USE_AFTER_CLOSE extends NodeError {
   }
 }
 
+// Node uses an AbortError that isn't exactly the same as the DOMException
+// to make usage of the error in userland and readable-stream easier.
+// It is a regular error with `.code` and `.name`.
 class AbortError extends Error {
-  code;
-  constructor() {
-    super("The operation was aborted");
+  constructor(message = "The operation was aborted", options = undefined) {
+    if (options !== undefined && typeof options !== "object") {
+      throw $ERR_INVALID_ARG_TYPE("options", "Object", options);
+    }
+    super(message, options);
     this.code = "ABORT_ERR";
+    this.name = "AbortError";
   }
 }
 
@@ -1274,9 +1281,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
     historySize = kHistorySize;
   }
 
-  if (typeof historySize !== "number" || NumberIsNaN(historySize) || historySize < 0) {
-    throw new ERR_INVALID_ARG_VALUE("historySize", historySize);
-  }
+  validateNumber(historySize, "historySize", 0);
 
   // Backwards compat; check the isTTY prop of the output stream
   //  when `terminal` was not specified
@@ -2865,21 +2870,21 @@ var PromisesInterface = class Interface extends _Interface {
         return PromiseReject(new AbortError(undefined, { cause: signal.reason }));
       }
     }
-    const { promise, resolve, reject } = $newPromiseCapability(Promise);
-    var cb = resolve;
-    if (options?.signal) {
-      var onAbort = () => {
-        this[kQuestionCancel]();
-        reject(new AbortError(undefined, { cause: signal.reason }));
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      cb = answer => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(answer);
-      };
-    }
-    this[kQuestion](query, cb);
-    return promise;
+    return new Promise((resolve, reject) => {
+      var cb = resolve;
+      if (options?.signal) {
+        var onAbort = () => {
+          this[kQuestionCancel]();
+          reject(new AbortError(undefined, { cause: signal.reason }));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        cb = answer => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(answer);
+        };
+      }
+      this[kQuestion](query, cb);
+    });
   }
 };
 

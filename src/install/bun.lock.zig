@@ -1348,7 +1348,7 @@ pub fn parseIntoBinaryLockfile(
                             pkg.meta.os = try Negatable(Npm.OperatingSystem).fromJson(allocator, os);
                         }
                         if (deps_os_cpu_libc_obj.get("cpu")) |arch| {
-                            pkg.meta.arch = try Negatable(Npm.OperatingSystem).fromJson(allocator, arch);
+                            pkg.meta.arch = try Negatable(Npm.Architecture).fromJson(allocator, arch);
                         }
                         // TODO(dylan-conway)
                         // if (os_cpu_libc_obj.get("libc")) |libc| {

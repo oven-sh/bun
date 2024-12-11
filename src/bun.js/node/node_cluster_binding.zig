@@ -126,7 +126,7 @@ pub const InternalMsgHolder = struct {
 
         if (try message.get(globalThis, "ack")) |p| {
             if (!p.isUndefined()) {
-                const ack = p.toInt32();
+                const ack = p.numberToInt32Clamp();
                 if (this.callbacks.getEntry(ack)) |entry| {
                     var cbstrong = entry.value_ptr.*;
                     if (cbstrong.get()) |callback| {
@@ -223,7 +223,7 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
 
     if (try message.get(globalThis, "ack")) |p| {
         if (!p.isUndefined()) {
-            const ack = p.toInt32();
+            const ack = p.numberToInt32Clamp();
             if (ipc_data.internal_msg_queue.callbacks.getEntry(ack)) |entry| {
                 var cbstrong = entry.value_ptr.*;
                 defer cbstrong.clear();

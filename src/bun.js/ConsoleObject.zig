@@ -704,7 +704,7 @@ pub const FormatOptions = struct {
         if (arg1.isObject()) {
             if (try arg1.getTruthy(globalThis, "depth")) |opt| {
                 if (opt.isInt32()) {
-                    const arg = opt.toInt32();
+                    const arg = opt.asInt32();
                     if (arg < 0) {
                         return globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
                     }
@@ -733,7 +733,7 @@ pub const FormatOptions = struct {
             if (arguments.len > 0) {
                 var depthArg = arg1;
                 if (depthArg.isInt32()) {
-                    const arg = depthArg.toInt32();
+                    const arg = depthArg.asInt32();
                     if (arg < 0) {
                         return globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
                     }
@@ -2552,7 +2552,7 @@ pub const Formatter = struct {
             },
             .Map => {
                 const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
-                const length = length_value.toInt32();
+                const length = length_value.numberToInt32Clamp();
 
                 const prev_quote_strings = this.quote_strings;
                 this.quote_strings = true;
@@ -2656,7 +2656,7 @@ pub const Formatter = struct {
             },
             .Set => {
                 const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
-                const length = length_value.toInt32();
+                const length = length_value.numberToInt32Clamp();
 
                 const prev_quote_strings = this.quote_strings;
                 this.quote_strings = true;

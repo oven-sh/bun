@@ -1358,7 +1358,7 @@ pub const FFI = struct {
 
         if (try value.getTruthy(global, "returns")) |ret_value| brk: {
             if (ret_value.isAnyInt()) {
-                const int = ret_value.toInt32();
+                const int = ret_value.numberToInt32Clamp();
                 switch (int) {
                     0...ABIType.max => {
                         return_type = @as(ABIType, @enumFromInt(int));

@@ -251,7 +251,10 @@ pub const All = struct {
         globalThis.bunVM().timer.last_id +%= 1;
 
         const interval: i32 = @max(
-            countdown.coerce(i32, globalThis),
+            if (std.math.isInf(countdown.getNumber() orelse 0.0)) // 0.0 is finite so that we don't treat non-numeric values as infinity
+                0
+            else
+                countdown.coerce(i32, globalThis),
             // It must be 1 at minimum or setTimeout(cb, 0) will seemingly hang
             1,
         );
@@ -276,7 +279,11 @@ pub const All = struct {
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
         const interval: i32 = @max(
-            countdown.coerce(i32, globalThis),
+            if (std.math.isInf(countdown.getNumber() orelse 0.0)) // 0.0 is finite so that we don't treat non-numeric values as infinity
+                0
+            else
+                countdown.coerce(i32, globalThis),
+            // It must be 1 at minimum or setTimeout(cb, 0) will seemingly hang
             1,
         );
         return set(id, globalThis, wrappedCallback, interval, arguments, true) catch

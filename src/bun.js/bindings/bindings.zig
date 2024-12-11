@@ -3451,7 +3451,7 @@ pub const JSGlobalObject = opaque {
         const max = range.max;
 
         if (value.isInt32()) {
-            const int = value.toInt32();
+            const int = value.asInt32();
             if (always_allow_zero and int == 0) {
                 return 0;
             }
@@ -4059,6 +4059,7 @@ pub const JSValue = enum(i64) {
         return cppFn("coerceToDouble", .{ this, globalObject });
     }
 
+    /// May execute JavaScript and throw an exception if `this` is an object.
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
             ZigString => this.getZigString(globalThis),
@@ -4099,15 +4100,15 @@ pub const JSValue = enum(i64) {
             u32 => toU32(this),
             u16 => toU16(this),
             c_uint => @as(c_uint, @intCast(toU32(this))),
-            c_int => @as(c_int, @intCast(toInt32(this))),
+            c_int => @as(c_int, @intCast(numberToInt32Clamp(this))),
             ?AnyPromise => asAnyPromise(this),
             u52 => @as(u52, @truncate(@as(u64, @intCast(@max(this.toInt64(), 0))))),
             i52 => @as(i52, @truncate(@as(i52, @intCast(this.toInt64())))),
             u64 => toUInt64NoTruncate(this),
             u8 => @as(u8, @truncate(toU32(this))),
-            i16 => @as(i16, @truncate(toInt32(this))),
-            i8 => @as(i8, @truncate(toInt32(this))),
-            i32 => @as(i32, @truncate(toInt32(this))),
+            i16 => @as(i16, @truncate(numberToInt32Clamp(this))),
+            i8 => @as(i8, @truncate(numberToInt32Clamp(this))),
+            i32 => @as(i32, @truncate(numberToInt32Clamp(this))),
             i64 => this.toInt64(),
             bool => this.toBoolean(),
             else => @compileError("Not implemented yet"),
@@ -5811,24 +5812,22 @@ pub const JSValue = enum(i64) {
         return coerceJSValueDoubleTruncatingTT(i52, i64, this.asNumber());
     }
 
-    pub fn toInt32(this: JSValue) i32 {
+    /// Asserts this is an i32 or a double.
+    /// If this is a double, NaN is converted to zero, and other values are truncated and clamped
+    /// to i32 range. Infinities are clamped to the minimum and maximum values of i32.
+    ///
+    /// This may not be the behavior you want, because it doesn't match JavaScript's coercion to i32
+    /// (value >> 0)
+    pub fn numberToInt32Clamp(this: JSValue) i32 {
+        if (comptime bun.Environment.allow_assert) {
+            bun.assert(this.isNumber()); // use coerce() instead
+        }
+
         if (this.isInt32()) {
             return asInt32(this);
         }
 
-        if (this.getNumber()) |num| {
-            return coerceJSValueDoubleTruncatingT(i32, num);
-        }
-
-        if (comptime bun.Environment.allow_assert) {
-            bun.assert(!this.isString()); // use coerce() instead
-            bun.assert(!this.isCell()); // use coerce() instead
-        }
-
-        // TODO: this shouldn't be reachable.
-        return cppFn("toInt32", .{
-            this,
-        });
+        return coerceJSValueDoubleTruncatingT(i32, this.getNumber().?);
     }
 
     pub fn asInt32(this: JSValue) i32 {
@@ -5845,11 +5844,11 @@ pub const JSValue = enum(i64) {
 
     pub fn asFileDescriptor(this: JSValue) bun.FileDescriptor {
         bun.assert(this.isNumber());
-        return bun.FDImpl.fromUV(this.toInt32()).encode();
+        return bun.FDImpl.fromUV(this.numberToInt32Clamp()).encode();
     }
 
     pub inline fn toU16(this: JSValue) u16 {
-        return @as(u16, @truncate(@max(this.toInt32(), 0)));
+        return @as(u16, @truncate(@max(this.numberToInt32Clamp(), 0)));
     }
 
     pub inline fn toU32(this: JSValue) u32 {

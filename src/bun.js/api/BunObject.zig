@@ -550,7 +550,7 @@ pub fn registerMacro(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     if (arguments.len != 2 or !arguments[0].isNumber()) {
         return globalObject.throwInvalidArguments("Internal error registering macros: invalid args", .{});
     }
-    const id = arguments[0].toInt32();
+    const id = arguments[0].numberToInt32Clamp();
     if (id == -1 or id == 0) {
         return globalObject.throwInvalidArguments("Internal error registering macros: invalid id", .{});
     }

@@ -1311,7 +1311,7 @@ pub const JestPrettyFormat = struct {
                 },
                 .Map => {
                     const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
-                    const length = length_value.toInt32();
+                    const length = length_value.numberToInt32Clamp();
 
                     const prev_quote_strings = this.quote_strings;
                     this.quote_strings = true;
@@ -1339,7 +1339,7 @@ pub const JestPrettyFormat = struct {
                 },
                 .Set => {
                     const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
-                    const length = length_value.toInt32();
+                    const length = length_value.numberToInt32Clamp();
 
                     const prev_quote_strings = this.quote_strings;
                     this.quote_strings = true;
@@ -2053,8 +2053,8 @@ pub const JestPrettyFormat = struct {
             const number_value = expect.ExpectCloseTo.numberValueGetCached(value) orelse return true;
             const digits_value = expect.ExpectCloseTo.digitsValueGetCached(value) orelse return true;
 
-            const number = number_value.toInt32();
-            const digits = digits_value.toInt32();
+            const number = number_value.numberToInt32Clamp();
+            const digits = digits_value.numberToInt32Clamp();
 
             printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
             if (matcher.flags.not) {

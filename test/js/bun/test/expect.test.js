@@ -2694,6 +2694,21 @@ describe("expect()", () => {
     expect(o).toContainAnyValues([20.5]);
   });
 
+  test("toBeArrayOfSize", () => {
+    expect([]).toBeArrayOfSize(0);
+    expect([1, 2, 3]).toBeArrayOfSize(3);
+    // holes
+    expect(new Array(3)).toBeArrayOfSize(3);
+    const nonContiguous = [1];
+    nonContiguous[5] = 2;
+    expect(nonContiguous).toBeArrayOfSize(6);
+    // array-likes
+    expect(new Uint8Array([1, 2, 3])).not.toBeArrayOfSize(3);
+    expect({ 0: 1, 1: 2, 2: 3 }).not.toBeArrayOfSize(3);
+    // size exceeds i32 range
+    expect(new Array(2 ** 31)).toBeArrayOfSize(2 ** 31);
+  });
+
   test("toBeTruthy()", () => {
     expect("test").toBeTruthy();
     expect(true).toBeTruthy();

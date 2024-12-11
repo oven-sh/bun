@@ -2112,11 +2112,11 @@ pub const Expect = struct {
         var pass = false;
 
         if (value.isBigInt32()) {
-            pass = value.toInt32() & 1 == 1;
+            pass = value.numberToInt32Clamp() & 1 == 1;
         } else if (value.isBigInt()) {
             pass = value.toInt64() & 1 == 1;
         } else if (value.isInt32()) {
-            const _value = value.toInt32();
+            const _value = value.numberToInt32Clamp();
             pass = @mod(_value, 2) == 1;
         } else if (value.isAnyInt()) {
             const _value = value.toInt64();
@@ -3024,7 +3024,7 @@ pub const Expect = struct {
         incrementExpectCallCounter();
 
         const not = this.flags.not;
-        var pass = value.jsType().isArray() and @as(i32, @intCast(value.getLength(globalThis))) == size.toInt32();
+        var pass = value.jsType().isArray() and value.getLength(globalThis) == size.toInt64();
 
         if (not) pass = !pass;
         if (pass) return .undefined;

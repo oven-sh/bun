@@ -1374,7 +1374,7 @@ pub const PostgresSQLConnection = struct {
         defer password_str.deref();
         const database_str = arguments[4].toBunString(globalObject);
         defer database_str.deref();
-        const ssl_mode: SSLMode = switch (arguments[5].toInt32()) {
+        const ssl_mode: SSLMode = switch (arguments[5].numberToInt32Clamp()) {
             0 => .disable,
             1 => .prefer,
             2 => .require,

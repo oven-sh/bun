@@ -14,7 +14,7 @@ pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     }
 
     const err_value = arguments[0];
-    const err_int = err_value.toInt32();
+    const err_int = err_value.numberToInt32Clamp();
 
     if (err_int == -4095) return bun.String.static("EOF").toJS(globalThis);
     if (err_int == -4094) return bun.String.static("UNKNOWN").toJS(globalThis);

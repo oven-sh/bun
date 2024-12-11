@@ -415,7 +415,7 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
+                response.init.status_code = @as(u16, @intCast(@min(@max(0, init.numberToInt32Clamp()), std.math.maxInt(u16))));
             } else {
                 if (Response.Init.init(globalThis, init) catch |err| if (err == error.JSError) return .zero else null) |_init| {
                     response.init = _init;
@@ -466,7 +466,7 @@ pub const Response = struct {
 
             if (args.nextEat()) |init| {
                 if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                    response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
+                    response.init.status_code = @as(u16, @intCast(@min(@max(0, init.numberToInt32Clamp()), std.math.maxInt(u16))));
                 } else {
                     if (Response.Init.init(globalThis, init) catch |err|
                         if (err == error.JSError) return .zero else null) |_init|

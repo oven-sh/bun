@@ -8384,7 +8384,7 @@ pub const Macro = struct {
                     },
 
                     .Integer => {
-                        return Expr.init(E.Number, E.Number{ .value = @as(f64, @floatFromInt(value.toInt32())) }, this.caller.loc);
+                        return Expr.init(E.Number, E.Number{ .value = @as(f64, @floatFromInt(value.numberToInt32Clamp())) }, this.caller.loc);
                     },
                     .Double => {
                         return Expr.init(E.Number, E.Number{ .value = value.asNumber() }, this.caller.loc);

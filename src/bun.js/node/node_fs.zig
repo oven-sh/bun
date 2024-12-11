@@ -1515,7 +1515,7 @@ pub const Arguments = struct {
                 if (!uid_value.isNumber()) {
                     return ctx.throwInvalidArgumentTypeValue("uid", "number", uid_value);
                 }
-                break :brk @as(uid_t, @intCast(uid_value.toInt32()));
+                break :brk @as(uid_t, @intCast(uid_value.numberToInt32Clamp()));
             };
 
             const gid: gid_t = brk: {
@@ -1527,7 +1527,7 @@ pub const Arguments = struct {
                 if (!gid_value.isNumber()) {
                     return ctx.throwInvalidArgumentTypeValue("gid", "number", gid_value);
                 }
-                break :brk @as(gid_t, @intCast(gid_value.toInt32()));
+                break :brk @as(gid_t, @intCast(gid_value.numberToInt32Clamp()));
             };
 
             return Chown{ .path = path, .uid = uid, .gid = gid };
@@ -1556,7 +1556,7 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
-                break :brk @as(uid_t, @intCast(uid_value.toInt32()));
+                break :brk @as(uid_t, @intCast(uid_value.numberToInt32Clamp()));
             };
 
             const gid: gid_t = brk: {
@@ -1565,7 +1565,7 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
-                break :brk @as(gid_t, @intCast(gid_value.toInt32()));
+                break :brk @as(gid_t, @intCast(gid_value.numberToInt32Clamp()));
             };
 
             return Fchown{ .fd = fd, .uid = uid, .gid = gid };
@@ -2741,7 +2741,7 @@ pub const Arguments = struct {
                     }
 
                     if (try arg.get(ctx, "bufferSize")) |buffer_size_| {
-                        buffer_size = buffer_size_.toInt32();
+                        buffer_size = buffer_size_.numberToInt32Clamp();
                         if (buffer_size < 0) {
                             return ctx.throwInvalidArguments("bufferSize must be > 0", .{});
                         }

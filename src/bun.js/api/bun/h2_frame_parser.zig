@@ -337,7 +337,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
 
         if (try options.get(globalObject, "headerTableSize")) |headerTableSize| {
             if (headerTableSize.isNumber()) {
-                const headerTableSizeValue = headerTableSize.toInt32();
+                const headerTableSizeValue = headerTableSize.numberToInt32Clamp();
                 if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
                     return globalObject.throw("Expected headerTableSize to be a number between 0 and 2^32-1", .{});
                 }
@@ -354,7 +354,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
 
         if (try options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
             if (initialWindowSize.isNumber()) {
-                const initialWindowSizeValue = initialWindowSize.toInt32();
+                const initialWindowSizeValue = initialWindowSize.numberToInt32Clamp();
                 if (initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
                     return globalObject.throw("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
                 }
@@ -365,7 +365,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
 
         if (try options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
             if (maxFrameSize.isNumber()) {
-                const maxFrameSizeValue = maxFrameSize.toInt32();
+                const maxFrameSizeValue = maxFrameSize.numberToInt32Clamp();
                 if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
                     return globalObject.throw("Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{});
                 }
@@ -376,7 +376,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
 
         if (try options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
             if (maxConcurrentStreams.isNumber()) {
-                const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
+                const maxConcurrentStreamsValue = maxConcurrentStreams.numberToInt32Clamp();
                 if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
                     return globalObject.throw("Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{});
                 }
@@ -387,7 +387,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
 
         if (try options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
             if (maxHeaderListSize.isNumber()) {
-                const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
+                const maxHeaderListSizeValue = maxHeaderListSize.numberToInt32Clamp();
                 if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
                     return globalObject.throw("Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{});
                 }
@@ -398,7 +398,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
 
         if (try options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
             if (maxHeaderSize.isNumber()) {
-                const maxHeaderSizeValue = maxHeaderSize.toInt32();
+                const maxHeaderSizeValue = maxHeaderSize.numberToInt32Clamp();
                 if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
                     return globalObject.throw("Expected maxHeaderSize to be a number between 0 and 2^32-1", .{});
                 }
@@ -423,7 +423,7 @@ fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
         if (try options.get(globalObject, "headerTableSize")) |headerTableSize| {
             if (headerTableSize.isNumber()) {
-                const headerTableSizeValue = headerTableSize.toInt32();
+                const headerTableSizeValue = headerTableSize.numberToInt32Clamp();
                 if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
                     return globalObject.throw("Expected headerTableSize to be a number between 0 and 2^32-1", .{});
                 }
@@ -443,7 +443,7 @@ fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
         if (try options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
             if (initialWindowSize.isNumber()) {
-                const initialWindowSizeValue = initialWindowSize.toInt32();
+                const initialWindowSizeValue = initialWindowSize.numberToInt32Clamp();
                 if (initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
                     return globalObject.throw("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
                 }
@@ -455,7 +455,7 @@ fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
         if (try options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
             if (maxFrameSize.isNumber()) {
-                const maxFrameSizeValue = maxFrameSize.toInt32();
+                const maxFrameSizeValue = maxFrameSize.numberToInt32Clamp();
                 if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
                     return globalObject.throw("Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{});
                 }
@@ -467,7 +467,7 @@ fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
         if (try options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
             if (maxConcurrentStreams.isNumber()) {
-                const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
+                const maxConcurrentStreamsValue = maxConcurrentStreams.numberToInt32Clamp();
                 if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
                     return globalObject.throw("Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{});
                 }
@@ -479,7 +479,7 @@ fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
         if (try options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
             if (maxHeaderListSize.isNumber()) {
-                const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
+                const maxHeaderListSizeValue = maxHeaderListSize.numberToInt32Clamp();
                 if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
                     return globalObject.throw("Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{});
                 }
@@ -491,7 +491,7 @@ fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
         if (try options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
             if (maxHeaderSize.isNumber()) {
-                const maxHeaderSizeValue = maxHeaderSize.toInt32();
+                const maxHeaderSizeValue = maxHeaderSize.numberToInt32Clamp();
                 if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
                     return globalObject.throw("Expected maxHeaderSize to be a number between 0 and 2^32-1", .{});
                 }
@@ -2322,7 +2322,7 @@ pub const H2FrameParser = struct {
 
         if (try options.get(globalObject, "headerTableSize")) |headerTableSize| {
             if (headerTableSize.isNumber()) {
-                const headerTableSizeValue = headerTableSize.toInt32();
+                const headerTableSizeValue = headerTableSize.numberToInt32Clamp();
                 if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
                     return globalObject.throw("Expected headerTableSize to be a number between 0 and 2^32-1", .{});
                 }
@@ -2342,7 +2342,7 @@ pub const H2FrameParser = struct {
 
         if (try options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
             if (initialWindowSize.isNumber()) {
-                const initialWindowSizeValue = initialWindowSize.toInt32();
+                const initialWindowSizeValue = initialWindowSize.numberToInt32Clamp();
                 if (initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
                     return globalObject.throw("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
                 }
@@ -2354,7 +2354,7 @@ pub const H2FrameParser = struct {
 
         if (try options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
             if (maxFrameSize.isNumber()) {
-                const maxFrameSizeValue = maxFrameSize.toInt32();
+                const maxFrameSizeValue = maxFrameSize.numberToInt32Clamp();
                 if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
                     return globalObject.throw("Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{});
                 }
@@ -2366,7 +2366,7 @@ pub const H2FrameParser = struct {
 
         if (try options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
             if (maxConcurrentStreams.isNumber()) {
-                const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
+                const maxConcurrentStreamsValue = maxConcurrentStreams.numberToInt32Clamp();
                 if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
                     return globalObject.throw("Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{});
                 }
@@ -2378,7 +2378,7 @@ pub const H2FrameParser = struct {
 
         if (try options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
             if (maxHeaderListSize.isNumber()) {
-                const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
+                const maxHeaderListSizeValue = maxHeaderListSize.numberToInt32Clamp();
                 if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
                     return globalObject.throw("Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{});
                 }
@@ -2390,7 +2390,7 @@ pub const H2FrameParser = struct {
 
         if (try options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
             if (maxHeaderSize.isNumber()) {
-                const maxHeaderSizeValue = maxHeaderSize.toInt32();
+                const maxHeaderSizeValue = maxHeaderSize.numberToInt32Clamp();
                 if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
                     return globalObject.throw("Expected maxHeaderSize to be a number between 0 and 2^32-1", .{});
                 }
@@ -2444,7 +2444,7 @@ pub const H2FrameParser = struct {
         if (!error_code_arg.isNumber()) {
             return globalObject.throw("Expected errorCode to be a number", .{});
         }
-        const errorCode = error_code_arg.toInt32();
+        const errorCode = error_code_arg.numberToInt32Clamp();
         if (errorCode < 1 and errorCode > 13) {
             return globalObject.throw("invalid errorCode", .{});
         }
@@ -2456,7 +2456,7 @@ pub const H2FrameParser = struct {
                 if (!last_stream_arg.isNumber()) {
                     return globalObject.throw("Expected lastStreamId to be a number", .{});
                 }
-                const id = last_stream_arg.toInt32();
+                const id = last_stream_arg.numberToInt32Clamp();
                 if (id < 0 and id > MAX_STREAM_ID) {
                     return globalObject.throw("Expected lastStreamId to be a number between 1 and 2147483647", .{});
                 }
@@ -3434,7 +3434,7 @@ pub const H2FrameParser = struct {
             if (try options.get(globalObject, "parent")) |parent_js| {
                 if (parent_js.isNumber() or parent_js.isInt32()) {
                     has_priority = true;
-                    parent = parent_js.toInt32();
+                    parent = parent_js.numberToInt32Clamp();
                     if (parent <= 0 or parent > MAX_STREAM_ID) {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
@@ -3448,7 +3448,7 @@ pub const H2FrameParser = struct {
             if (try options.get(globalObject, "weight")) |weight_js| {
                 if (weight_js.isNumber() or weight_js.isInt32()) {
                     has_priority = true;
-                    weight = weight_js.toInt32();
+                    weight = weight_js.numberToInt32Clamp();
                     if (weight < 1 or weight > 256) {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);

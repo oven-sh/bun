@@ -790,7 +790,7 @@ install_bun() {
 
 	move_to_bin "$bun_tmpdir/$bun_triplet/bun"
 	bun_path="$(require bun)"
-	execute ln -sf "$bun_path" "$(dirname "$bun_path")/bunx"
+	execute_sudo ln -sf "$bun_path" "$(dirname "$bun_path")/bunx"
 }
 
 install_cmake() {

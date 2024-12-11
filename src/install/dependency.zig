@@ -265,7 +265,7 @@ pub inline fn isRemoteTarball(dependency: string) bool {
 }
 
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
-pub fn splitNameAndVersion(str: string) struct { string, ?string } {
+pub fn splitNameAndMaybeVersion(str: string) struct { string, ?string } {
     if (strings.indexOfChar(str, '@')) |at_index| {
         if (at_index != 0) {
             return .{ str[0..at_index], if (at_index + 1 < str.len) str[at_index + 1 ..] else null };
@@ -277,6 +277,14 @@ pub fn splitNameAndVersion(str: string) struct { string, ?string } {
     }
 
     return .{ str, null };
+}
+
+pub fn splitNameAndVersion(str: string) error{MissingVersion}!struct { string, string } {
+    const name, const version = splitNameAndMaybeVersion(str);
+    return .{
+        name,
+        version orelse return error.MissingVersion,
+    };
 }
 
 pub fn unscopedPackageName(name: []const u8) []const u8 {
@@ -1373,6 +1381,10 @@ pub const Behavior = packed struct(u8) {
 
     pub inline fn eq(lhs: Behavior, rhs: Behavior) bool {
         return @as(u8, @bitCast(lhs)) == @as(u8, @bitCast(rhs));
+    }
+
+    pub inline fn includes(lhs: Behavior, rhs: Behavior) bool {
+        return @as(u8, @bitCast(lhs)) & @as(u8, @bitCast(rhs)) != 0;
     }
 
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {

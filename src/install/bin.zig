@@ -17,6 +17,9 @@ const string = bun.string;
 const Install = @import("./install.zig");
 const PackageInstall = Install.PackageInstall;
 const Dependency = @import("./dependency.zig");
+const OOM = bun.OOM;
+const JSON = bun.JSON;
+const Lockfile = Install.Lockfile;
 
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
@@ -25,10 +28,15 @@ const Dependency = @import("./dependency.zig");
 /// - map where keys are names of the binaries and values are file paths to the binaries
 pub const Bin = extern struct {
     tag: Tag = Tag.none,
-    _padding_tag: [3]u8 = .{0} ** 3,
+    unset: u8 = 0,
+    _padding_tag: [2]u8 = .{0} ** 2,
 
     // Largest member must be zero initialized
     value: Value = Value{ .map = ExternalStringList{} },
+
+    pub fn isUnset(this: *const Bin) bool {
+        return this.unset != 0;
+    }
 
     pub fn count(this: *const Bin, buf: []const u8, extern_strings: []const ExternalString, comptime StringBuilder: type, builder: StringBuilder) u32 {
         switch (this.tag) {
@@ -56,18 +64,21 @@ pub const Bin = extern struct {
             .none => {
                 return Bin{
                     .tag = .none,
+                    .unset = this.unset,
                     .value = Value.init(.{ .none = {} }),
                 };
             },
             .file => {
                 return Bin{
                     .tag = .file,
+                    .unset = this.unset,
                     .value = Value.init(.{ .file = builder.append(String, this.value.file.slice(buf)) }),
                 };
             },
             .named_file => {
                 return Bin{
                     .tag = .named_file,
+                    .unset = this.unset,
                     .value = Value.init(
                         .{
                             .named_file = [2]String{
@@ -81,6 +92,7 @@ pub const Bin = extern struct {
             .dir => {
                 return Bin{
                     .tag = .dir,
+                    .unset = this.unset,
                     .value = Value.init(.{ .dir = builder.append(String, this.value.dir.slice(buf)) }),
                 };
             },
@@ -91,12 +103,137 @@ pub const Bin = extern struct {
 
                 return Bin{
                     .tag = .map,
+                    .unset = this.unset,
                     .value = Value.init(.{ .map = ExternalStringList.init(all_extern_strings, extern_strings_slice) }),
                 };
             },
         }
 
         unreachable;
+    }
+
+    pub fn cloneAppend(this: *const Bin, this_buf: string, this_extern_strings: []const ExternalString, lockfile: *Lockfile) OOM!Bin {
+        var string_buf = lockfile.stringBuf();
+        defer string_buf.apply(lockfile);
+
+        const cloned: Bin = .{
+            .tag = this.tag,
+            .unset = this.unset,
+
+            .value = switch (this.tag) {
+                .none => Value.init(.{ .none = {} }),
+                .file => Value.init(.{
+                    .file = try string_buf.append(this.value.file.slice(this_buf)),
+                }),
+                .named_file => Value.init(.{ .named_file = .{
+                    try string_buf.append(this.value.named_file[0].slice(this_buf)),
+                    try string_buf.append(this.value.named_file[1].slice(this_buf)),
+                } }),
+                .dir => Value.init(.{
+                    .dir = try string_buf.append(this.value.dir.slice(this_buf)),
+                }),
+                .map => map: {
+                    const off = lockfile.buffers.extern_strings.items.len;
+                    for (this.value.map.get(this_extern_strings)) |extern_string| {
+                        try lockfile.buffers.extern_strings.append(
+                            lockfile.allocator,
+                            try string_buf.appendExternal(extern_string.slice(this_buf)),
+                        );
+                    }
+                    const new = lockfile.buffers.extern_strings.items[off..];
+                    break :map Value.init(.{
+                        .map = ExternalStringList.init(lockfile.buffers.extern_strings.items, new),
+                    });
+                },
+            },
+        };
+
+        return cloned;
+    }
+
+    /// Used for packages read from text lockfile.
+    pub fn parseAppend(
+        allocator: std.mem.Allocator,
+        bin_expr: JSON.Expr,
+        buf: *String.Buf,
+        extern_strings: *std.ArrayListUnmanaged(ExternalString),
+    ) OOM!Bin {
+        switch (bin_expr.data) {
+            .e_object => |obj| {
+                switch (obj.properties.len) {
+                    0 => {},
+                    1 => {
+                        const bin_name = obj.properties.ptr[0].key.?.asString(allocator) orelse return .{};
+                        const value = obj.properties.ptr[0].value.?.asString(allocator) orelse return .{};
+
+                        return .{
+                            .tag = .named_file,
+                            .value = .{
+                                .named_file = .{
+                                    try buf.append(bin_name),
+                                    try buf.append(value),
+                                },
+                            },
+                        };
+                    },
+                    else => {
+                        const current_len = extern_strings.items.len;
+                        const num_props: usize = obj.properties.len * 2;
+                        try extern_strings.ensureTotalCapacityPrecise(
+                            allocator,
+                            current_len + num_props,
+                        );
+                        var new = extern_strings.items.ptr[current_len .. current_len + num_props];
+                        extern_strings.items.len += num_props;
+
+                        var i: usize = 0;
+                        for (obj.properties.slice()) |bin_prop| {
+                            const key = bin_prop.key.?;
+                            const value = bin_prop.value.?;
+                            const key_str = key.asString(allocator) orelse return .{};
+                            const value_str = value.asString(allocator) orelse return .{};
+                            new[i] = try buf.appendExternal(key_str);
+                            i += 1;
+                            new[i] = try buf.appendExternal(value_str);
+                            i += 1;
+                        }
+                        if (comptime Environment.allow_assert) {
+                            bun.assert(i == new.len);
+                        }
+                        return .{
+                            .tag = .map,
+                            .value = .{
+                                .map = ExternalStringList.init(extern_strings.items, new),
+                            },
+                        };
+                    },
+                }
+            },
+            .e_string => |str| {
+                if (str.data.len > 0) {
+                    return .{
+                        .tag = .file,
+                        .value = .{
+                            .file = try buf.append(str.data),
+                        },
+                    };
+                }
+            },
+            else => {},
+        }
+        return .{};
+    }
+
+    pub fn parseAppendFromDirectories(allocator: std.mem.Allocator, bin_expr: JSON.Expr, buf: *String.Buf) OOM!Bin {
+        if (bin_expr.asString(allocator)) |bin_str| {
+            return .{
+                .tag = .dir,
+                .value = .{
+                    .dir = try buf.append(bin_str),
+                },
+            };
+        }
+        return .{};
     }
 
     pub fn init() Bin {

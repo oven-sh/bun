@@ -44,11 +44,10 @@ pub const OutdatedCommand = struct {
     }
 
     fn outdated(ctx: Command.Context, original_cwd: string, manager: *PackageManager, comptime log_level: PackageManager.Options.LogLevel) !void {
-        const load_lockfile_result = manager.lockfile.loadFromDisk(
+        const load_lockfile_result = manager.lockfile.loadFromCwd(
             manager,
             manager.allocator,
             manager.log,
-            manager.options.lockfile_path,
             true,
         );
 

@@ -1201,7 +1201,7 @@ async function main() {
     rdp: !!args["rdp"] || !!args["vnc"],
     sshKeys,
     userData: args["user-data"] ? readFile(args["user-data"]) : undefined,
-    isDockerImage: !!args["docker"],
+    // isDockerImage: !!args["docker"],
   };
 
   let { detached, bootstrap, ci, os, arch, distro, release, features, isDockerImage } = options;

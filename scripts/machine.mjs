@@ -1205,7 +1205,14 @@ async function main() {
   };
 
   let { detached, bootstrap, ci, os, arch, distro, release, features, isDockerImage } = options;
-  const name = distro ? `${os}-${arch}-${distro}-${release}` : `${os}-${arch}-${release}`;
+
+  let name = `${os}-${arch}-${release}`;
+  if (distro) {
+    name += `-${distro}`;
+  }
+  if (features?.length) {
+    name += `-with-${features.join("-")}`;
+  }
 
   let bootstrapPath, agentPath, dockerfilePath;
   if (bootstrap) {

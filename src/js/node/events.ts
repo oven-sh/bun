@@ -273,6 +273,7 @@ EventEmitterPrototype.once = function once(type, fn) {
   this.addListener(type, bound);
   return this;
 };
+Object.defineProperty(EventEmitterPrototype.once, "name", { value: "once" });
 
 EventEmitterPrototype.prependOnceListener = function prependOnceListener(type, fn) {
   checkListener(fn);
@@ -345,6 +346,7 @@ EventEmitterPrototype.listenerCount = function listenerCount(type) {
   if (!events) return 0;
   return events[type]?.length ?? 0;
 };
+Object.defineProperty(EventEmitterPrototype.listenerCount, "name", { value: "listenerCount" });
 
 EventEmitterPrototype.eventNames = function eventNames() {
   return this._eventsCount > 0 ? Reflect.ownKeys(this._events) : [];
@@ -393,6 +395,7 @@ function once(emitter, type, options = kEmptyObject) {
 
   return promise;
 }
+Object.defineProperty(once, "name", { value: "once" });
 
 const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype);
 function createIterResult(value, done) {
@@ -543,6 +546,8 @@ function on(emitter, event, options = kEmptyObject) {
     return Promise.resolve(doneResult);
   }
 }
+Object.defineProperty(on, "name", { value: "on" });
+
 function listenersController() {
   const listeners = [];
 
@@ -608,6 +613,7 @@ function listenerCount(emitter, type) {
 
   return jsEventTargetGetEventListenersCount(emitter, type);
 }
+Object.defineProperty(listenerCount, "name", { value: "listenerCount" });
 
 function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
   if (typeof emitter.removeListener === "function") {

@@ -2374,6 +2374,7 @@ function getCloud(name) {
  * @typedef {"linux" | "darwin" | "windows"} Os
  * @typedef {"aarch64" | "x64"} Arch
  * @typedef {"macos" | "windowsserver" | "debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
+ * @typedef {"osxcross" | "gcc-13"} Feature
  */
 
 /**
@@ -2383,6 +2384,7 @@ function getCloud(name) {
  * @property {Distro} distro
  * @property {string} release
  * @property {string} [eol]
+ * @property {Feature[]} [features]
  */
 
 /**
@@ -2416,6 +2418,7 @@ function getCloud(name) {
  * @property {Arch} arch
  * @property {Distro} distro
  * @property {string} [release]
+ * @property {Feature[]} [features]
  * @property {string} [name]
  * @property {string} [instanceType]
  * @property {string} [imageId]
@@ -2464,6 +2467,7 @@ async function main() {
       "detached": { type: "boolean" },
       "tag": { type: "string", multiple: true },
       "ci": { type: "boolean" },
+      "feature": { type: "string", multiple: true },
       "rdp": { type: "boolean" },
       "vnc": { type: "boolean" },
       "authorized-user": { type: "string", multiple: true },
@@ -2501,6 +2505,7 @@ async function main() {
     arch: parseArch(args["arch"]),
     distro: args["distro"],
     release: args["release"],
+    features: args["feature"],
     name: args["name"],
     instanceType: args["instance-type"],
     imageId: args["image-id"],
@@ -2517,7 +2522,7 @@ async function main() {
     sshKeys,
   };
 
-  const { detached, bootstrap, ci, os, arch, distro, release } = options;
+  const { detached, bootstrap, ci, os, arch, distro, release, features } = options;
   const name = distro ? `${os}-${arch}-${distro}-${release}` : `${os}-${arch}-${release}`;
 
   let bootstrapPath, agentPath;
@@ -2627,6 +2632,9 @@ async function main() {
       } else {
         const remotePath = "/tmp/bootstrap.sh";
         const args = ci ? ["--ci"] : [];
+        for (const feature of features || []) {
+          args.push(`--${feature}`);
+        }
         await startGroup("Running bootstrap...", async () => {
           await machine.upload(bootstrapPath, remotePath);
           await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });

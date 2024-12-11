@@ -140,7 +140,11 @@ const testPlatforms = [
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20", tier: "latest" },
+  { os: "windows", arch: "x64", release: "2025", tier: "latest" },
+  { os: "windows", arch: "x64", release: "2022", tier: "previous" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
+  { os: "windows", arch: "x64", release: "2025", baseline: true, tier: "latest" },
+  { os: "windows", arch: "x64", release: "2022", baseline: true, tier: "previous" },
   { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
 ];
 
@@ -1050,19 +1054,17 @@ async function getPipeline(options = {}) {
     );
   }
 
-  if (!isMainBranch()) {
-    const { skipTests, forceTests, unifiedTests, testFiles } = options;
-    if (!skipTests || forceTests) {
-      steps.push(
-        ...testPlatforms
-          .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
-          .map(target => ({
-            key: getTargetKey(target),
-            group: getTargetLabel(target),
-            steps: [getTestBunStep(target, { unifiedTests, testFiles, buildId })],
-          })),
-      );
-    }
+  const { skipTests, forceTests, unifiedTests, testFiles } = options;
+  if (!skipTests || forceTests) {
+    steps.push(
+      ...testPlatforms
+        .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
+        .map(target => ({
+          key: getTargetKey(target),
+          group: getTargetLabel(target),
+          steps: [getTestBunStep(target, { unifiedTests, testFiles, buildId })],
+        })),
+    );
   }
 
   if (isMainBranch()) {

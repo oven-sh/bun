@@ -105,12 +105,24 @@ WORKDIR /workspace
 FROM --platform=$BUILDPLATFORM base as buildkite
 ARG BUILDKITE_AGENT_TAGS
 
-RUN curl -sL https://raw.githubusercontent.com/buildkite/agent/master/install.sh | bash -s -- "3.50.3" \
-   && useradd -r -m -d /var/lib/buildkite-agent buildkite-agent \
-   && mkdir -p /etc/buildkite-agent \
-   && chown -R buildkite-agent:buildkite-agent /etc/buildkite-agent && mkdir -p /var/lib/buildkite-agent/cache/bun
 
-COPY --chown=buildkite-agent:buildkite-agent ../scripts/agent.mjs /var/bun/scripts/
+# Install Rust nightly
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \ 
+    && export PATH=$HOME/.cargo/bin:$PATH \
+    && rustup install nightly \
+    && rustup default nightly
+
+
+RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64"; fi) && \
+    echo "Downloading buildkite-cli-v3.4.1/bk_3.4.1_linux_$ARCH.deb from https://github.com/buildkite/cli/releases/download/v3.4.1/bk_3.4.1_linux_$ARCH.deb" && \
+    curl -fsSL https://github.com/buildkite/cli/releases/download/v3.4.1/bk_3.4.1_linux_$ARCH.deb -o /tmp/bk.deb && \
+    dpkg -i /tmp/bk.deb
+
+RUN useradd -r -m -d /var/lib/buildkite-agent buildkite-agent \
+    && mkdir -p /etc/buildkite-agent \
+    && chown -R buildkite-agent:buildkite-agent /etc/buildkite-agent && mkdir -p /var/lib/buildkite-agent/cache/bun
+
+COPY --chown=buildkite-agent:buildkite-agent ../*/agent.mjs /var/bun/scripts/
 
 ENV BUN_INSTALL_CACHE=/var/lib/buildkite-agent/cache/bun
 ENV BUILDKITE_AGENT_TAGS=${BUILDKITE_AGENT_TAGS}
@@ -119,11 +131,6 @@ ENV BUILDKITE_AGENT_TAGS=${BUILDKITE_AGENT_TAGS}
 WORKDIR /var/bun/scripts
 USER buildkite-agent
 
-# Install Rust nightly
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \ 
-    && export PATH=$HOME/.cargo/bin:$PATH \
-    && rustup install nightly \
-    && rustup default nightly
 
 ENV PATH=/root/.cargo/bin:$PATH
 

@@ -577,9 +577,6 @@ function getBuildImageStep(platform, dryRun) {
     "--authorized-org=oven-sh",
     docker ? "--docker" : "",
   ];
-  for (const feature of features || []) {
-    command.push(`--feature=${feature}`);
-  }
 
   return {
     key: `${getImageKey(platform)}-build-image`,

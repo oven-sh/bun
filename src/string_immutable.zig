@@ -6096,7 +6096,7 @@ pub fn isFullWidthCodepointType(comptime T: type, cp: T) bool {
     };
 }
 
-pub fn isAmgiguousCodepointType(comptime T: type, cp: T) bool {
+pub fn isAmbiguousCodepointType(comptime T: type, cp: T) bool {
     return switch (cp) {
         0xA1,
         0xA4,
@@ -6338,7 +6338,7 @@ pub fn visibleCodepointWidthType(comptime T: type, cp: T, ambiguousAsWide: bool)
     if (isFullWidthCodepointType(T, cp)) {
         return 2;
     }
-    if (ambiguousAsWide and isAmgiguousCodepointType(T, cp)) {
+    if (ambiguousAsWide and isAmbiguousCodepointType(T, cp)) {
         return 2;
     }
 

@@ -293,6 +293,11 @@ check_operating_system() {
 		fi
 		;;
 	esac
+
+	nodearch="$arch"
+	if [ "$arch" = "aarch64" ]; then
+		nodearch="arm64"
+	fi
 }
 
 check_inside_docker() {
@@ -588,6 +593,10 @@ install_common_software() {
 		install_packages \
 			dnf-plugins-core
 		;;
+	apk)
+		install_packages \
+			minisign
+		;;
 	esac
 
 	case "$distro" in
@@ -657,7 +666,12 @@ install_nodejs() {
 
 	case "$pm" in
 	apk)
-		install_packages nodejs npm
+		node_tar_url="http://mirrors.nektro.net/nodejs/release/v$(nodejs_version_exact)/node-v$(nodejs_version_exact)-linux-$nodearch-musl.tar.xz"
+		node_tar_file=$(download_file "$node_tar_url")
+		node_tar_minisgn=$(download_file "$node_tar_url.minisig")
+		execute mv "$node_tar_minisgn" "$(dirname $node_tar_file)"
+		execute minisign -Vm "$node_tar_file" -P RWSbSU2slSJU1eCLS8MhjPRg0+yT47pqyoupglip88N2gogeBDxiQmbi
+		execute tar -xJf "$node_tar_file" -C /usr/local --strip-components=1 --no-same-owner
 		;;
 	*)
 		install_packages nodejs

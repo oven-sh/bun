@@ -23,4 +23,9 @@ Local<Array> Array::New(Isolate* isolate, Local<Value>* elements, size_t length)
     return isolate->currentHandleScope()->createLocal<Array>(isolate->vm(), array);
 }
 
+uint32_t Array::Length() const
+{
+    return jsCast<JSArray*>(this->localToJSValue())->length();
+}
+
 } // namespace v8

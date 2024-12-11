@@ -11,6 +11,10 @@ BUN_1.1 {
 		v8::*;
 		node::*;
 	};
+
+	_ZN2v8*;
+	_ZN4node*;
+
     local:
 	*;
 };

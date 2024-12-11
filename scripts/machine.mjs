@@ -1154,6 +1154,7 @@ async function main() {
       "no-bootstrap": { type: "boolean" },
       "buildkite-token": { type: "string" },
       "tailscale-authkey": { type: "string" },
+      "docker": { type: "boolean" },
     },
   });
 
@@ -1200,14 +1201,22 @@ async function main() {
     rdp: !!args["rdp"] || !!args["vnc"],
     sshKeys,
     userData: args["user-data"] ? readFile(args["user-data"]) : undefined,
+    isDockerImage: !!args["docker"],
   };
 
-  const { detached, bootstrap, ci, os, arch, distro, release, features } = options;
+  let { detached, bootstrap, ci, os, arch, distro, release, features, isDockerImage } = options;
   const name = distro ? `${os}-${arch}-${distro}-${release}` : `${os}-${arch}-${release}`;
 
-  let bootstrapPath, agentPath;
+  let bootstrapPath, agentPath, dockerfilePath;
   if (bootstrap) {
-    bootstrapPath = resolve(import.meta.dirname, os === "windows" ? "bootstrap.ps1" : "bootstrap.sh");
+    bootstrapPath = resolve(
+      import.meta.dirname,
+      os === "windows"
+        ? "bootstrap.ps1"
+        : isDockerImage && os === "linux" && distro === "amazonlinux"
+          ? "../.buildkite/Dockerfile-bootstrap.sh"
+          : "bootstrap.sh",
+    );
     if (!existsSync(bootstrapPath)) {
       throw new Error(`Script not found: ${bootstrapPath}`);
     }
@@ -1220,6 +1229,14 @@ async function main() {
       const tmpPath = mkdtempSync(join(tmpdir(), "agent-"));
       agentPath = join(tmpPath, "agent.mjs");
       await spawnSafe($`${npx} esbuild ${entryPath} --bundle --platform=node --format=esm --outfile=${agentPath}`);
+    }
+
+    if (isDockerImage) {
+      dockerfilePath = resolve(import.meta.dirname, "../.buildkite/Dockerfile");
+
+      if (!existsSync(dockerfilePath)) {
+        throw new Error(`Dockerfile not found: ${dockerfilePath}`);
+      }
     }
   }
 
@@ -1310,15 +1327,31 @@ async function main() {
           await machine.spawnSafe(["powershell", remotePath, ...args], { stdio: "inherit" });
         });
       } else {
-        const remotePath = "/tmp/bootstrap.sh";
-        const args = ci ? ["--ci"] : [];
-        for (const feature of features || []) {
-          args.push(`--${feature}`);
+        if (!isDockerImage) {
+          const remotePath = "/tmp/bootstrap.sh";
+          const args = ci ? ["--ci"] : [];
+          for (const feature of features || []) {
+            args.push(`--${feature}`);
+          }
+          await startGroup("Running bootstrap...", async () => {
+            await machine.upload(bootstrapPath, remotePath);
+            await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });
+          });
+        } else if (dockerfilePath) {
+          const remotePath = "/tmp/bootstrap.sh";
+
+          await startGroup("Running Docker bootstrap...", async () => {
+            await machine.upload(bootstrapPath, remotePath);
+            console.log("Uploaded bootstrap.sh");
+            await machine.upload(dockerfilePath, "/tmp/Dockerfile");
+            console.log("Uploaded Dockerfile");
+            await machine.upload(agentPath, "/tmp/agent.mjs");
+            console.log("Uploaded agent.mjs");
+            agentPath = "";
+            bootstrapPath = "";
+            await machine.spawnSafe(["sudo", "bash", remotePath], { stdio: "inherit", cwd: "/tmp" });
+          });
         }
-        await startGroup("Running bootstrap...", async () => {
-          await machine.upload(bootstrapPath, remotePath);
-          await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });
-        });
       }
     }
 
@@ -1327,7 +1360,7 @@ async function main() {
         const remotePath = "C:\\buildkite-agent\\agent.mjs";
         await startGroup("Installing agent...", async () => {
           await machine.upload(agentPath, remotePath);
-          if (cloud.name === "docker") {
+          if (cloud.name === "docker" || isDockerImage) {
             return;
           }
           await machine.spawnSafe(["node", remotePath, "install"], { stdio: "inherit" });

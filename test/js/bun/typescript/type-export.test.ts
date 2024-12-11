@@ -16,6 +16,15 @@ const a_file = `
 
   export const my_only = "3";
 `;
+const a_no_value = `
+  export type my_string = "1";
+  export type my_value = "2";
+  export const my_only = "3";
+`;
+const a_with_value = `
+  export type my_string = "1";
+  export const my_value = "2";
+`;
 const b_files = [
   {
     name: "export from",
@@ -31,6 +40,10 @@ const b_files = [
   {
     name: "export star",
     value: `export * from "./a.ts";`,
+  },
+  {
+    name: "export merge",
+    value: `export * from "./a_no_value.ts"; export * from "./a_with_value.ts`,
   },
 ];
 const c_files = [
@@ -53,6 +66,9 @@ for (const b_file of b_files) {
           "a.ts": a_file,
           "b.ts": b_file.value,
           "c.ts": c_file.value,
+
+          "a_no_value.ts": a_no_value,
+          "a_with_value.ts": a_with_value,
         });
 
         const runAndVerify = (filename: string) => {

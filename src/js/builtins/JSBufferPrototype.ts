@@ -499,6 +499,8 @@ export function writeFloatBE(this: BufferExt, value, offset) {
 
 export function writeDoubleLE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  value = +value;
+  require("internal/buffer").checkBounds(this, offset, 7);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setFloat64(offset, value, true);
   return offset + 8;
@@ -506,6 +508,8 @@ export function writeDoubleLE(this: BufferExt, value, offset) {
 
 export function writeDoubleBE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  value = +value;
+  require("internal/buffer").checkBounds(this, offset, 7);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setFloat64(offset, value, false);
   return offset + 8;

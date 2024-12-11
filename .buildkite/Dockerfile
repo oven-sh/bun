@@ -25,8 +25,7 @@ RUN echo "Acquire::Queue-Mode \"host\";" > /etc/apt/apt.conf.d/99-apt-queue-mode
     && echo "Acquire::Timeout \"120\";" >> /etc/apt/apt.conf.d/99-apt-timeout.conf \
     && echo "Acquire::Retries \"3\";" >> /etc/apt/apt.conf.d/99-apt-retries.conf \
     && echo "APT::Install-Recommends \"false\";" >> /etc/apt/apt.conf.d/99-apt-install-recommends.conf \
-    && echo "APT::Install-Suggests \"false\";" >> /etc/apt/apt.conf.d/99-apt-install-suggests.conf \
-    && echo "Acquire::Pipeline::Depth \"5\";" >> /etc/apt/apt.conf.d/99-apt-pipeline-depth.conf
+    && echo "APT::Install-Suggests \"false\";" >> /etc/apt/apt.conf.d/99-apt-install-suggests.conf
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
    wget curl git python3 python3-pip ninja-build \
@@ -149,9 +148,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
 ENV PATH=/root/.cargo/bin:$PATH
 
 RUN --mount=type=tmpfs,target=/workspace/bun/build \
-    && ls -la \
+    ls -la \
     && bun run build:release \
     && mkdir -p /target \
     && cp -r /workspace/bun/build/release/bun /target/bun
-
-

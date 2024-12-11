@@ -13370,7 +13370,10 @@ pub const PackageManager = struct {
 
             if (bin_finder.has_found_bin) {
                 var string_buf = this.lockfile.stringBuf();
-                defer string_buf.apply(this.lockfile);
+                defer {
+                    string_buf.apply(this.lockfile);
+                    this.fixCachedLockfilePackageSlices();
+                }
 
                 return switch (bin_finder.found_bin) {
                     .bin => |bin| try Bin.parseAppend(this.lockfile.allocator, bin, &string_buf, &this.lockfile.buffers.extern_strings),

@@ -211,6 +211,8 @@ export function readBigUInt64BE(this: BufferExt, offset) {
 
 export function writeInt8(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  value = +value;
+  require("internal/buffer").check_int8(this, value, offset, -0x80, 0x7f);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setInt8(offset, value);
   return offset + 1;
@@ -219,13 +221,7 @@ export function writeInt8(this: BufferExt, value, offset) {
 export function writeUInt8(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
-  const min = 0;
-  const max = 0xff;
-  const { validateNumber, ERR_OUT_OF_RANGE, boundsError } = require("internal/buffer");
-  validateNumber(offset, "offset");
-  if (value > max || value < min) throw ERR_OUT_OF_RANGE("value", `>= ${min} and <= ${max}`, value);
-  if (this[offset] === undefined) boundsError(offset, this.length - 1);
-
+  require("internal/buffer").check_int8(this, value, offset, 0, 0xff);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setUint8(offset, value);
   return offset + 1;
@@ -233,6 +229,8 @@ export function writeUInt8(this: BufferExt, value, offset) {
 
 export function writeInt16LE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  value = +value;
+  require("internal/buffer").check_int16(this, value, offset, -0x8000, 0x7fff);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setInt16(offset, value, true);
   return offset + 2;
@@ -240,6 +238,8 @@ export function writeInt16LE(this: BufferExt, value, offset) {
 
 export function writeInt16BE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  value = +value;
+  require("internal/buffer").check_int16(this, value, offset, -0x8000, 0x7fff);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setInt16(offset, value, false);
   return offset + 2;
@@ -249,7 +249,6 @@ export function writeUInt16LE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
   require("internal/buffer").check_int16(this, value, offset, 0, 0xffff);
-
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setUint16(offset, value, true);
   return offset + 2;
@@ -259,7 +258,6 @@ export function writeUInt16BE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
   require("internal/buffer").check_int16(this, value, offset, 0, 0xffff);
-
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setUint16(offset, value, false);
   return offset + 2;
@@ -267,6 +265,8 @@ export function writeUInt16BE(this: BufferExt, value, offset) {
 
 export function writeInt32LE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  value = +value;
+  require("internal/buffer").check_int32(this, value, offset, -0x80000000, 0x7fffffff);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setInt32(offset, value, true);
   return offset + 4;
@@ -274,6 +274,8 @@ export function writeInt32LE(this: BufferExt, value, offset) {
 
 export function writeInt32BE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  value = +value;
+  require("internal/buffer").check_int32(this, value, offset, -0x80000000, 0x7fffffff);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setInt32(offset, value, false);
   return offset + 4;
@@ -283,7 +285,6 @@ export function writeUInt32LE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
   require("internal/buffer").check_int32(this, value, offset, 0, 0xffffffff);
-
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setUint32(offset, value, true);
   return offset + 4;
@@ -293,7 +294,6 @@ export function writeUInt32BE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
   value = +value;
   require("internal/buffer").check_int32(this, value, offset, 0, 0xffffffff);
-
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setUint32(offset, value, false);
   return offset + 4;
@@ -301,31 +301,38 @@ export function writeUInt32BE(this: BufferExt, value, offset) {
 
 export function writeIntLE(this: BufferExt, value, offset, byteLength) {
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
+  value = +value;
 
   switch (byteLength) {
     case 1: {
+      require("internal/buffer").check_int8(this, value, offset, -0x80, 0x7f);
       view.setInt8(offset, value);
       break;
     }
     case 2: {
+      require("internal/buffer").check_int16(this, value, offset, -0x8000, 0x7fff);
       view.setInt16(offset, value, true);
       break;
     }
     case 3: {
+      require("internal/buffer").check_int24(this, value, offset, -0x800000, 0x7fffff);
       view.setUint16(offset, value & 0xffff, true);
       view.setInt8(offset + 2, Math.floor(value * 2 ** -16));
       break;
     }
     case 4: {
+      require("internal/buffer").check_int32(this, value, offset, -0x80000000, 0x7fffffff);
       view.setInt32(offset, value, true);
       break;
     }
     case 5: {
+      require("internal/buffer").check_int40(this, value, offset, -0x8000000000, 0x7fffffffff);
       view.setUint32(offset, value | 0, true);
       view.setInt8(offset + 4, Math.floor(value * 2 ** -32));
       break;
     }
     case 6: {
+      require("internal/buffer").check_int48(this, value, offset, -0x800000000000, 0x7fffffffffff);
       view.setUint32(offset, value | 0, true);
       view.setInt16(offset + 4, Math.floor(value * 2 ** -32), true);
       break;
@@ -339,31 +346,38 @@ export function writeIntLE(this: BufferExt, value, offset, byteLength) {
 
 export function writeIntBE(this: BufferExt, value, offset, byteLength) {
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
+  value = +value;
 
   switch (byteLength) {
     case 1: {
+      require("internal/buffer").check_int8(this, value, offset, -0x80, 0x7f);
       view.setInt8(offset, value);
       break;
     }
     case 2: {
+      require("internal/buffer").check_int16(this, value, offset, -0x8000, 0x7fff);
       view.setInt16(offset, value, false);
       break;
     }
     case 3: {
+      require("internal/buffer").check_int24(this, value, offset, -0x800000, 0x7fffff);
       view.setUint16(offset + 1, value & 0xffff, false);
       view.setInt8(offset, Math.floor(value * 2 ** -16));
       break;
     }
     case 4: {
+      require("internal/buffer").check_int32(this, value, offset, -0x80000000, 0x7fffffff);
       view.setInt32(offset, value, false);
       break;
     }
     case 5: {
+      require("internal/buffer").check_int40(this, value, offset, -0x8000000000, 0x7fffffffff);
       view.setUint32(offset + 1, value | 0, false);
       view.setInt8(offset, Math.floor(value * 2 ** -32));
       break;
     }
     case 6: {
+      require("internal/buffer").check_int48(this, value, offset, -0x800000000000, 0x7fffffffffff);
       view.setUint32(offset + 2, value | 0, false);
       view.setInt16(offset, Math.floor(value * 2 ** -32), false);
       break;

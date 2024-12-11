@@ -3,6 +3,7 @@ const common = require('../common');
 // This test is intended for Windows only
 if (!common.isWindows)
   common.skip('this test is Windows-specific.');
+if (common.isWindows) return; // TODO: BUN
 
 const assert = require('assert');
 

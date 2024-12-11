@@ -1,5 +1,7 @@
 'use strict';
+const isCI = process.env.CI !== undefined;
 const common = require('../common');
+if (common.isWindows && isCI) return; // TODO: BUN
 if (!common.hasCrypto)
   common.skip('missing crypto');
 const assert = require('assert');

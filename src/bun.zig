@@ -11,7 +11,7 @@ const bun = @This();
 
 pub const Environment = @import("env.zig");
 
-pub const use_mimalloc = !Environment.isTest;
+pub const use_mimalloc = true;
 
 pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
@@ -114,6 +114,12 @@ pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
 pub const bun_js = @import("./bun_js.zig");
+
+/// All functions and interfaces provided from Bun's `bindgen` utility.
+pub const gen = @import("bun.js/bindings/GeneratedBindings.zig");
+comptime {
+    _ = &gen; // reference bindings
+}
 
 /// Copied from Zig std.trait
 pub const trait = @import("./trait.zig");
@@ -1275,7 +1281,7 @@ pub const SignalCode = enum(u8) {
         return @enumFromInt(std.mem.asBytes(&value)[0]);
     }
 
-    // This wrapper struct is lame, what if bun's color formatter was more versitile
+    // This wrapper struct is lame, what if bun's color formatter was more versatile
     const Fmt = struct {
         signal: SignalCode,
         enable_ansi_colors: bool,
@@ -2758,8 +2764,6 @@ pub const MakePath = struct {
                 @ptrCast(component.path))
             else
                 try w.sliceToPrefixedFileW(self.fd, component.path);
-            const is_last = it.peekNext() == null;
-            _ = is_last; // autofix
             var result = makeOpenDirAccessMaskW(self, sub_path_w.span().ptr, access_mask, .{
                 .no_follow = no_follow,
                 .create_disposition = w.FILE_OPEN_IF,

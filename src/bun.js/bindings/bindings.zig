@@ -6327,7 +6327,7 @@ pub const VM = extern struct {
         });
     }
 
-    pub fn runGC(vm: *VM, sync: bool) JSValue {
+    pub fn runGC(vm: *VM, sync: bool) usize {
         return cppFn("runGC", .{
             vm,
             sync,

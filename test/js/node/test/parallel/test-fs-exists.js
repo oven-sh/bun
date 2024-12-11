@@ -22,24 +22,35 @@
 'use strict';
 const common = require('../common');
 const assert = require('assert');
-const net = require('net');
+const fs = require('fs');
+const f = __filename;
 
-const sockets = [];
+assert.throws(() => fs.exists(f), { code: 'ERR_INVALID_ARG_TYPE' });
+assert.throws(() => fs.exists(), { code: 'ERR_INVALID_ARG_TYPE' });
+assert.throws(() => fs.exists(f, {}), { code: 'ERR_INVALID_ARG_TYPE' });
 
-const server = net.createServer(function(c) {
-  c.on('close', common.mustCall());
-
-  sockets.push(c);
-
-  if (sockets.length === 2) {
-    assert.strictEqual(server.close(), server);
-    sockets.forEach((c) => c.destroy());
-  }
-});
-
-server.on('close', common.mustCall());
-
-assert.strictEqual(server, server.listen(0, () => {
-  net.createConnection(server.address().port);
-  net.createConnection(server.address().port);
+fs.exists(f, common.mustCall(function(y) {
+  assert.strictEqual(y, true);
 }));
+
+fs.exists(`${f}-NO`, common.mustCall(function(y) {
+  assert.strictEqual(y, false);
+}));
+
+// If the path is invalid, fs.exists will still invoke the callback with false
+// instead of throwing errors
+fs.exists(new URL('https://foo'), common.mustCall(function(y) {
+  assert.strictEqual(y, false);
+}));
+
+fs.exists({}, common.mustCall(function(y) {
+  assert.strictEqual(y, false);
+}));
+
+assert(fs.existsSync(f));
+assert(!fs.existsSync(`${f}-NO`));
+
+// fs.existsSync() never throws
+assert(!fs.existsSync());
+assert(!fs.existsSync({}));
+assert(!fs.existsSync(new URL('https://foo')));

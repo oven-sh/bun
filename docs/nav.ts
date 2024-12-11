@@ -402,6 +402,9 @@ export default {
     page("project/building-windows", "Building Windows", {
       description: "Learn how to setup a development environment for contributing to the Windows build of Bun.",
     }),
+    page("project/bindgen", "Bindgen", {
+      description: "About the bindgen code generator",
+    }),
     page("project/licensing", "License", {
       description: `Bun is a MIT-licensed project with a large number of statically-linked dependencies with various licenses.`,
     }),

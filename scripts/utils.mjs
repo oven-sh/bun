@@ -25,6 +25,7 @@ export const isLinux = process.platform === "linux";
 export const isPosix = isMacOS || isLinux;
 
 export const isArm64 = process.arch === "arm64";
+export const isX64 = process.arch === "x64";
 
 /**
  * @param {string} name
@@ -2208,7 +2209,7 @@ export async function waitForPort(options) {
   return cause;
 }
 /**
- * @returns {Promise<number | undefined>}
+ * @returns {Promise<number>}
  */
 export async function getCanaryRevision() {
   if (isPullRequest() || isFork()) {

@@ -22,35 +22,39 @@
 'use strict';
 require('../common');
 const assert = require('assert');
+const fs = require('fs');
+const fixtures = require('../common/fixtures');
+const tmpdir = require('../common/tmpdir');
 
-// setImmediate should run clear its queued cbs once per event loop turn
-// but immediates queued while processing the current queue should happen
-// on the next turn of the event loop.
+const fn = fixtures.path('elipses.txt');
+tmpdir.refresh();
 
-// hit should be the exact same size of QUEUE, if we're letting things
-// recursively add to the immediate QUEUE hit will be > QUEUE
-
-let ticked = false;
-
-let hit = 0;
-const QUEUE = 10;
-
-function run() {
-  if (hit === 0) {
-    setTimeout(() => { ticked = true; }, 1);
-    const now = Date.now();
-    while (Date.now() - now < 2);
-  }
-
-  if (ticked) return;
-
-  hit += 1;
-  setImmediate(run);
+const s = fs.readFileSync(fn, 'utf8');
+for (let i = 0; i < s.length; i++) {
+  assert.strictEqual(s[i], '\u2026');
 }
+assert.strictEqual(s.length, 10000);
 
-for (let i = 0; i < QUEUE; i++)
-  setImmediate(run);
+// Test file permissions set for readFileSync() in append mode.
+{
+  const expectedMode = 0o666 & ~process.umask();
 
-process.on('exit', function() {
-  assert.strictEqual(hit, QUEUE);
-});
+  for (const test of [
+    { },
+    { encoding: 'ascii' },
+    { encoding: 'base64' },
+    { encoding: 'hex' },
+    { encoding: 'latin1' },
+    { encoding: 'uTf8' }, // case variation
+    { encoding: 'utf16le' },
+    { encoding: 'utf8' },
+  ]) {
+    const opts = { ...test, flag: 'a+' };
+    const file = tmpdir.resolve(`testReadFileSyncAppend${opts.encoding ?? ''}.txt`);
+    const variant = `for '${file}'`;
+
+    const content = fs.readFileSync(file, opts);
+    assert.strictEqual(opts.encoding ? content : content.toString(), '', `file contents ${variant}`);
+    assert.strictEqual(fs.statSync(file).mode & 0o777, expectedMode, `file permissions ${variant}`);
+  }
+}

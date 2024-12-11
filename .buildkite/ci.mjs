@@ -11,6 +11,7 @@ import {
   getBuildkiteEmoji,
   getBuildMetadata,
   getBuildNumber,
+  getCanaryRevision,
   getCommitMessage,
   getEmoji,
   getEnv,
@@ -43,7 +44,6 @@ import {
  * @property {Arch} arch
  * @property {Abi} [abi]
  * @property {boolean} [baseline]
- * @property {boolean} [canary]
  * @property {Profile} [profile]
  */
 
@@ -91,7 +91,6 @@ function getTargetLabel(target) {
  * @property {Arch} arch
  * @property {Abi} [abi]
  * @property {boolean} [baseline]
- * @property {boolean} [canary]
  * @property {Profile} [profile]
  * @property {Distro} [distro]
  * @property {string} release
@@ -103,7 +102,7 @@ function getTargetLabel(target) {
  */
 const buildPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14" },
-  { os: "darwin", arch: "x64", release: "14" },
+  // { os: "darwin", arch: "x64", release: "14" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
   { os: "linux", arch: "x64", distro: "debian", release: "11" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
@@ -120,14 +119,11 @@ const buildPlatforms = [
 const testPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
-  { os: "darwin", arch: "x64", release: "14", tier: "latest" },
-  { os: "darwin", arch: "x64", release: "13", tier: "previous" },
+  // { os: "darwin", arch: "x64", release: "14", tier: "latest" },
+  // { os: "darwin", arch: "x64", release: "13", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "aarch64", distro: "debian", release: "11", tier: "previous" },
   { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "x64", distro: "debian", release: "11", tier: "previous" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04", tier: "oldest" },
@@ -140,11 +136,7 @@ const testPlatforms = [
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20", tier: "latest" },
-  { os: "windows", arch: "x64", release: "2025", tier: "latest" },
-  { os: "windows", arch: "x64", release: "2022", tier: "previous" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
-  { os: "windows", arch: "x64", release: "2025", baseline: true, tier: "latest" },
-  { os: "windows", arch: "x64", release: "2022", baseline: true, tier: "previous" },
   { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
 ];
 
@@ -202,13 +194,15 @@ function getImageLabel(platform) {
 
 /**
  * @param {Platform} platform
- * @param {boolean} [dryRun]
+ * @param {PipelineOptions} options
  * @returns {string}
  */
-function getImageName(platform, dryRun) {
+function getImageName(platform, options) {
   const { os, arch, distro, release } = platform;
+  const { buildImages, publishImages } = options;
   const name = distro ? `${os}-${arch}-${distro}-${release}` : `${os}-${arch}-${release}`;
-  if (dryRun) {
+
+  if (buildImages && !publishImages) {
     return `${name}-build-${getBuildNumber()}`;
   }
   return `${name}-v${getBootstrapVersion(os)}`;
@@ -225,10 +219,10 @@ function getRetry(limit = 0) {
     },
     automatic: [
       { exit_status: 1, limit },
-      { exit_status: -1, limit: 3 },
-      { exit_status: 255, limit: 3 },
-      { signal_reason: "cancel", limit: 3 },
-      { signal_reason: "agent_stop", limit: 3 },
+      { exit_status: -1, limit: 1 },
+      { exit_status: 255, limit: 1 },
+      { signal_reason: "cancel", limit: 1 },
+      { signal_reason: "agent_stop", limit: 1 },
     ],
   };
 }
@@ -263,12 +257,13 @@ function getPriority() {
 
 /**
  * @param {Platform} platform
- * @param {Ec2Options} options
+ * @param {PipelineOptions} options
+ * @param {Ec2Options} ec2Options
  * @returns {Agent}
  */
-function getEc2Agent(platform, options) {
+function getEc2Agent(platform, options, ec2Options) {
   const { os, arch, abi, distro, release } = platform;
-  const { instanceType, cpuCount, threadsPerCore } = options;
+  const { instanceType, cpuCount, threadsPerCore } = ec2Options;
   return {
     os,
     arch,
@@ -279,7 +274,7 @@ function getEc2Agent(platform, options) {
     // https://github.com/oven-sh/robobun/blob/d46c07e0ac5ac0f9ffe1012f0e98b59e1a0d387a/src/robobun.ts#L1707
     robobun: true,
     robobun2: true,
-    "image-name": getImageName(platform),
+    "image-name": getImageName(platform, options),
     "instance-type": instanceType,
     "cpu-count": cpuCount,
     "threads-per-core": threadsPerCore,
@@ -289,9 +284,10 @@ function getEc2Agent(platform, options) {
 
 /**
  * @param {Platform} platform
+ * @param {PipelineOptions} options
  * @returns {string}
  */
-function getCppAgent(platform) {
+function getCppAgent(platform, options) {
   const { os, arch } = platform;
 
   if (os === "darwin") {
@@ -302,7 +298,7 @@ function getCppAgent(platform) {
     };
   }
 
-  return getEc2Agent(platform, {
+  return getEc2Agent(platform, options, {
     instanceType: arch === "aarch64" ? "c8g.16xlarge" : "c7i.16xlarge",
     cpuCount: 32,
     threadsPerCore: 1,
@@ -311,9 +307,10 @@ function getCppAgent(platform) {
 
 /**
  * @param {Platform} platform
+ * @param {PipelineOptions} options
  * @returns {Agent}
  */
-function getZigAgent(platform) {
+function getZigAgent(platform, options) {
   const { arch } = platform;
 
   return {
@@ -327,6 +324,7 @@ function getZigAgent(platform) {
   //     distro: "debian",
   //     release: "11",
   //   },
+  //   options,
   //   {
   //     instanceType: arch === "aarch64" ? "c8g.2xlarge" : "c7i.2xlarge",
   //     cpuCount: 4,
@@ -337,9 +335,10 @@ function getZigAgent(platform) {
 
 /**
  * @param {Platform} platform
+ * @param {PipelineOptions} options
  * @returns {Agent}
  */
-function getTestAgent(platform) {
+function getTestAgent(platform, options) {
   const { os, arch } = platform;
 
   if (os === "darwin") {
@@ -350,27 +349,26 @@ function getTestAgent(platform) {
     };
   }
 
-  // TODO: `dev-server-ssr-110.test.ts` and `next-build.test.ts` run out of memory
-  // at 8GB of memory, so use 16GB instead.
+  // TODO: `dev-server-ssr-110.test.ts` and `next-build.test.ts` run out of memory at 8GB of memory, so use 16GB instead.
   if (os === "windows") {
-    return getEc2Agent(platform, {
+    return getEc2Agent(platform, options, {
       instanceType: "c7i.2xlarge",
-      cpuCount: 1,
+      cpuCount: 2,
       threadsPerCore: 1,
     });
   }
 
   if (arch === "aarch64") {
-    return getEc2Agent(platform, {
+    return getEc2Agent(platform, options, {
       instanceType: "c8g.xlarge",
-      cpuCount: 1,
+      cpuCount: 2,
       threadsPerCore: 1,
     });
   }
 
-  return getEc2Agent(platform, {
+  return getEc2Agent(platform, options, {
     instanceType: "c7i.xlarge",
-    cpuCount: 1,
+    cpuCount: 2,
     threadsPerCore: 1,
   });
 }
@@ -381,16 +379,20 @@ function getTestAgent(platform) {
 
 /**
  * @param {Target} target
+ * @param {PipelineOptions} options
  * @returns {Record<string, string | undefined>}
  */
-function getBuildEnv(target) {
-  const { profile, baseline, canary, abi } = target;
+function getBuildEnv(target, options) {
+  const { profile, baseline, abi } = target;
   const release = !profile || profile === "release";
+  const { canary } = options;
+  const revision = typeof canary === "number" ? canary : 1;
 
   return {
     CMAKE_BUILD_TYPE: release ? "Release" : profile === "debug" ? "Debug" : "RelWithDebInfo",
     ENABLE_BASELINE: baseline ? "ON" : "OFF",
-    ENABLE_CANARY: canary ? "ON" : "OFF",
+    ENABLE_CANARY: revision > 0 ? "ON" : "OFF",
+    CANARY_REVISION: revision,
     ENABLE_ASSERTIONS: release ? "OFF" : "ON",
     ENABLE_LOGS: release ? "OFF" : "ON",
     ABI: abi === "musl" ? "musl" : undefined,
@@ -399,34 +401,36 @@ function getBuildEnv(target) {
 
 /**
  * @param {Platform} platform
+ * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildVendorStep(platform) {
+function getBuildVendorStep(platform, options) {
   return {
     key: `${getTargetKey(platform)}-build-vendor`,
     label: `${getTargetLabel(platform)} - build-vendor`,
-    agents: getCppAgent(platform),
+    agents: getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform),
+    env: getBuildEnv(platform, options),
     command: "bun run build:ci --target dependencies",
   };
 }
 
 /**
  * @param {Platform} platform
+ * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildCppStep(platform) {
+function getBuildCppStep(platform, options) {
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
-    agents: getCppAgent(platform),
+    agents: getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {
       BUN_CPP_ONLY: "ON",
-      ...getBuildEnv(platform),
+      ...getBuildEnv(platform, options),
     },
     command: "bun run build:ci --target bun",
   };
@@ -450,26 +454,28 @@ function getBuildToolchain(target) {
 
 /**
  * @param {Platform} platform
+ * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildZigStep(platform) {
+function getBuildZigStep(platform, options) {
   const toolchain = getBuildToolchain(platform);
   return {
     key: `${getTargetKey(platform)}-build-zig`,
     label: `${getTargetLabel(platform)} - build-zig`,
-    agents: getZigAgent(platform),
+    agents: getZigAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform),
+    env: getBuildEnv(platform, options),
     command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
   };
 }
 
 /**
  * @param {Platform} platform
+ * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getLinkBunStep(platform) {
+function getLinkBunStep(platform, options) {
   return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
@@ -478,12 +484,12 @@ function getLinkBunStep(platform) {
       `${getTargetKey(platform)}-build-cpp`,
       `${getTargetKey(platform)}-build-zig`,
     ],
-    agents: getCppAgent(platform),
+    agents: getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {
       BUN_LINK_ONLY: "ON",
-      ...getBuildEnv(platform),
+      ...getBuildEnv(platform, options),
     },
     command: "bun run build:ci --target bun",
   };
@@ -491,16 +497,17 @@ function getLinkBunStep(platform) {
 
 /**
  * @param {Platform} platform
+ * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildBunStep(platform) {
+function getBuildBunStep(platform, options) {
   return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
-    agents: getCppAgent(platform),
+    agents: getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform),
+    env: getBuildEnv(platform, options),
     command: "bun run build:ci",
   };
 }
@@ -514,12 +521,13 @@ function getBuildBunStep(platform) {
 
 /**
  * @param {Platform} platform
- * @param {TestOptions} [options]
+ * @param {PipelineOptions} options
+ * @param {TestOptions} [testOptions]
  * @returns {Step}
  */
-function getTestBunStep(platform, options = {}) {
+function getTestBunStep(platform, options, testOptions = {}) {
   const { os } = platform;
-  const { buildId, unifiedTests, testFiles } = options;
+  const { buildId, unifiedTests, testFiles } = testOptions;
 
   const args = [`--step=${getTargetKey(platform)}-build-bun`];
   if (buildId) {
@@ -538,7 +546,7 @@ function getTestBunStep(platform, options = {}) {
     key: `${getPlatformKey(platform)}-test-bun`,
     label: `${getPlatformLabel(platform)} - test-bun`,
     depends_on: depends,
-    agents: getTestAgent(platform),
+    agents: getTestAgent(platform, options),
     cancel_on_build_failing: isMergeQueue(),
     retry: getRetry(),
     soft_fail: isMainBranch() ? true : [{ exit_status: 2 }],
@@ -552,12 +560,13 @@ function getTestBunStep(platform, options = {}) {
 
 /**
  * @param {Platform} platform
- * @param {boolean} [dryRun]
+ * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildImageStep(platform, dryRun) {
+function getBuildImageStep(platform, options) {
   const { os, arch, distro, release } = platform;
-  const action = dryRun ? "create-image" : "publish-image";
+  const { publishImages } = options;
+  const action = publishImages ? "publish-image" : "create-image";
   const command = [
     "node",
     "./scripts/machine.mjs",
@@ -586,10 +595,14 @@ function getBuildImageStep(platform, dryRun) {
 }
 
 /**
- * @param {Platform[]} [buildPlatforms]
+ * @param {Platform[]} buildPlatforms
+ * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getReleaseStep(buildPlatforms) {
+function getReleaseStep(buildPlatforms, options) {
+  const { canary } = options;
+  const revision = typeof canary === "number" ? canary : 1;
+
   return {
     key: "release",
     label: getBuildkiteEmoji("rocket"),
@@ -597,6 +610,9 @@ function getReleaseStep(buildPlatforms) {
       queue: "test-darwin",
     },
     depends_on: buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
+    env: {
+      CANARY: revision,
+    },
     command: ".buildkite/scripts/upload-release.sh",
   };
 }
@@ -686,7 +702,7 @@ function getReleaseStep(buildPlatforms) {
  * @property {string | boolean} [forceTests]
  * @property {string | boolean} [buildImages]
  * @property {string | boolean} [publishImages]
- * @property {boolean} [canary]
+ * @property {number} [canary]
  * @property {Profile[]} [buildProfiles]
  * @property {Platform[]} [buildPlatforms]
  * @property {Platform[]} [testPlatforms]
@@ -904,6 +920,7 @@ async function getPipelineOptions() {
     return;
   }
 
+  const canary = await getCanaryRevision();
   const buildPlatformsMap = new Map(buildPlatforms.map(platform => [getTargetKey(platform), platform]));
   const testPlatformsMap = new Map(testPlatforms.map(platform => [getPlatformKey(platform), platform]));
 
@@ -926,7 +943,7 @@ async function getPipelineOptions() {
     const buildPlatformKeys = parseArray(options["build-platforms"]);
     const testPlatformKeys = parseArray(options["test-platforms"]);
     return {
-      canary: parseBoolean(options["canary"]),
+      canary: parseBoolean(options["canary"]) ? canary : 0,
       skipBuilds: parseBoolean(options["skip-builds"]),
       forceBuilds: parseBoolean(options["force-builds"]),
       skipTests: parseBoolean(options["skip-tests"]),
@@ -960,10 +977,11 @@ async function getPipelineOptions() {
     return false;
   };
 
+  const isCanary =
+    !parseBoolean(getEnv("RELEASE", false) || "false") &&
+    !/\[(release|build release|release build)\]/i.test(commitMessage);
   return {
-    canary:
-      !parseBoolean(getEnv("RELEASE", false) || "false") &&
-      !/\[(release|build release|release build)\]/i.test(commitMessage),
+    canary: isCanary ? canary : 0,
     skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),
@@ -1009,7 +1027,7 @@ async function getPipeline(options = {}) {
     steps.push({
       key: "build-images",
       group: getBuildkiteEmoji("aws"),
-      steps: [...imagePlatforms.values()].map(platform => getBuildImageStep(platform, !publishImages)),
+      steps: [...imagePlatforms.values()].map(platform => getBuildImageStep(platform, options)),
     });
   }
 
@@ -1033,42 +1051,43 @@ async function getPipeline(options = {}) {
         .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
         .map(target => {
           const imageKey = getImageKey(target);
-          const imagePlatform = imagePlatforms.get(imageKey);
 
           return getStepWithDependsOn(
             {
               key: getTargetKey(target),
               group: getTargetLabel(target),
               steps: unifiedBuilds
-                ? [getBuildBunStep(target)]
+                ? [getBuildBunStep(target, options)]
                 : [
-                    getBuildVendorStep(target),
-                    getBuildCppStep(target),
-                    getBuildZigStep(target),
-                    getLinkBunStep(target),
+                    getBuildVendorStep(target, options),
+                    getBuildCppStep(target, options),
+                    getBuildZigStep(target, options),
+                    getLinkBunStep(target, options),
                   ],
             },
-            imagePlatform ? `${imageKey}-build-image` : undefined,
+            imagePlatforms.has(imageKey) ? `${imageKey}-build-image` : undefined,
           );
         }),
     );
   }
 
-  const { skipTests, forceTests, unifiedTests, testFiles } = options;
-  if (!skipTests || forceTests) {
-    steps.push(
-      ...testPlatforms
-        .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
-        .map(target => ({
-          key: getTargetKey(target),
-          group: getTargetLabel(target),
-          steps: [getTestBunStep(target, { unifiedTests, testFiles, buildId })],
-        })),
-    );
+  if (!isMainBranch()) {
+    const { skipTests, forceTests, unifiedTests, testFiles } = options;
+    if (!skipTests || forceTests) {
+      steps.push(
+        ...testPlatforms
+          .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
+          .map(target => ({
+            key: getTargetKey(target),
+            group: getTargetLabel(target),
+            steps: [getTestBunStep(target, options, { unifiedTests, testFiles, buildId })],
+          })),
+      );
+    }
   }
 
   if (isMainBranch()) {
-    steps.push(getReleaseStep(buildPlatforms));
+    steps.push(getReleaseStep(buildPlatforms, options));
   }
 
   /** @type {Map<string, GroupStep>} */

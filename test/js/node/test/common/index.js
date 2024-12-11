@@ -879,7 +879,7 @@ function runWithInvalidFD(func) {
 // A helper function to simplify checking for ERR_INVALID_ARG_TYPE output.
 function invalidArgTypeHelper(input) {
   if (input == null) {
-    return ` Received ${input}`;
+    return ` Received: ${input}`;
   }
   if (typeof input === 'function') {
     return ` Received function ${input.name}`;
@@ -890,11 +890,14 @@ function invalidArgTypeHelper(input) {
     }
     return ` Received ${inspect(input, { depth: -1 })}`;
   }
+  if (typeof input === 'string') {
+    return ` Received: "${input}"`;
+  }
 
   let inspected = inspect(input, { colors: false });
   if (inspected.length > 28) { inspected = `${inspected.slice(inspected, 0, 25)}...`; }
 
-  return ` Received type ${typeof input} (${inspected})`;
+  return ` Received: ${inspected}`;
 }
 
 function skipIfDumbTerminal() {

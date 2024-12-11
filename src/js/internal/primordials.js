@@ -76,10 +76,10 @@ const StringIterator = uncurryThis(String.prototype[Symbol.iterator]);
 const StringIteratorPrototype = Reflect.getPrototypeOf(StringIterator(""));
 const ArrayPrototypeForEach = uncurryThis(Array.prototype.forEach);
 
-function ErrorCaptureStackTrace(targetObject) {
-  const stack = new Error().stack;
+function ErrorCaptureStackTrace(targetObject, maybeStartStackFn) {
+  Error.captureStackTrace(targetObject, maybeStartStackFn);
   // Remove the second line, which is this function
-  targetObject.stack = stack.replace(/.*\n.*/, "$1");
+  targetObject.stack = targetObject.stack.replace(/.*\n.*/, "$1");
 }
 
 const arrayProtoPush = Array.prototype.push;
@@ -94,6 +94,7 @@ export default {
   ArrayPrototypeFlat: uncurryThis(Array.prototype.flat),
   ArrayPrototypeFilter: uncurryThis(Array.prototype.filter),
   ArrayPrototypeForEach,
+  ArrayPrototypeFill: uncurryThis(Array.prototype.fill),
   ArrayPrototypeIncludes: uncurryThis(Array.prototype.includes),
   ArrayPrototypeIndexOf: uncurryThis(Array.prototype.indexOf),
   ArrayPrototypeJoin: uncurryThis(Array.prototype.join),
@@ -110,10 +111,16 @@ export default {
   DatePrototypeGetTime: uncurryThis(Date.prototype.getTime),
   DatePrototypeToISOString: uncurryThis(Date.prototype.toISOString),
   DatePrototypeToString: uncurryThis(Date.prototype.toString),
+  Error,
   ErrorCaptureStackTrace,
   ErrorPrototypeToString: uncurryThis(Error.prototype.toString),
   FunctionPrototypeToString: uncurryThis(Function.prototype.toString),
+  FunctionPrototypeCall: uncurryThis(Function.prototype["call"]),
   JSONStringify: JSON.stringify,
+  MapPrototypeDelete: uncurryThis(Map.prototype.delete),
+  MapPrototypeGet: uncurryThis(Map.prototype.get),
+  MapPrototypeHas: uncurryThis(Map.prototype.has),
+  MapPrototypeSet: uncurryThis(Map.prototype.set),
   MapPrototypeGetSize: getGetter(Map, "size"),
   MapPrototypeEntries: uncurryThis(Map.prototype.entries),
   MapPrototypeValues: uncurryThis(Map.prototype.values),
@@ -144,10 +151,13 @@ export default {
   ObjectIs: Object.is,
   ObjectKeys: Object.keys,
   ObjectPrototypeHasOwnProperty: uncurryThis(Object.prototype.hasOwnProperty),
+  ObjectPrototypeIsPrototypeOf: uncurryThis(Object.prototype.isPrototypeOf),
   ObjectPrototypePropertyIsEnumerable: uncurryThis(Object.prototype.propertyIsEnumerable),
   ObjectPrototypeToString: uncurryThis(Object.prototype.toString),
   ObjectSeal: Object.seal,
   ObjectSetPrototypeOf: Object.setPrototypeOf,
+  ReflectApply: Reflect["apply"],
+  ReflectHas: Reflect.has,
   ReflectOwnKeys: Reflect.ownKeys,
   RegExp,
   RegExpPrototypeExec: uncurryThis(RegExp.prototype.exec),
@@ -172,12 +182,21 @@ export default {
       }
     },
   ),
+  SafeWeakSet: makeSafe(
+    WeakSet,
+    class SafeWeakSet extends WeakSet {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
   DatePrototypeGetMilliseconds: uncurryThis(Date.prototype.getMilliseconds),
   DatePrototypeToUTCString: uncurryThis(Date.prototype.toUTCString),
   SetPrototypeGetSize: getGetter(Set, "size"),
   SetPrototypeEntries: uncurryThis(Set.prototype.entries),
   SetPrototypeValues: uncurryThis(Set.prototype.values),
   String,
+  StringPrototypeAt: uncurryThis(String.prototype.at),
   StringPrototypeCharCodeAt: uncurryThis(String.prototype.charCodeAt),
   StringPrototypeCodePointAt: uncurryThis(String.prototype.codePointAt),
   StringPrototypeEndsWith: uncurryThis(String.prototype.endsWith),

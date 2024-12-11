@@ -17,9 +17,11 @@ export default [
   ["ERR_INVALID_ARG_VALUE", TypeError, "TypeError"],
   ["ERR_INVALID_PROTOCOL", TypeError, "TypeError"],
   ["ERR_INVALID_THIS", TypeError, "TypeError"],
+  ["ERR_INVALID_RETURN_VALUE", TypeError, "TypeError"],
   ["ERR_IPC_CHANNEL_CLOSED", Error, "Error"],
   ["ERR_IPC_DISCONNECTED", Error, "Error"],
   ["ERR_MISSING_ARGS", TypeError, "TypeError"],
+  ["ERR_AMBIGUOUS_ARGUMENT", TypeError, "TypeError"],
   ["ERR_OUT_OF_RANGE", RangeError, "RangeError"],
   ["ERR_PARSE_ARGS_INVALID_OPTION_VALUE", TypeError, "TypeError"],
   ["ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL", TypeError, "TypeError"],
@@ -46,6 +48,7 @@ export default [
   ["ERR_UNKNOWN_SIGNAL", TypeError, "TypeError"],
   ["ERR_SOCKET_BAD_PORT", RangeError, "RangeError"],
   ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
+  ["ERR_UNAVAILABLE_DURING_EXIT", Error, "Error"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],

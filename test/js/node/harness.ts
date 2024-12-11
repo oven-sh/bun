@@ -262,3 +262,123 @@ export function createTest(path: string) {
 declare namespace Bun {
   function jest(path: string): typeof import("bun:test");
 }
+
+if (Bun.main.includes("node/test/parallel")) {
+  function createMockNodeTestModule() {
+
+    interface TestError extends Error {
+      testStack: string[];
+    }
+    type Context = {
+      filename: string;
+      testStack: string[];
+      failures: Error[];
+      successes: number;
+      addFailure(err: unknown): TestError;
+      recordSuccess(): void;
+    }
+    const contexts: Record</* requiring file */ string, Context> = {}
+
+    // @ts-ignore
+    let activeSuite: Context = undefined;
+
+    function createContext(key: string): Context {
+      return {
+        filename: key, // duplicate for ease-of-use
+        // entered each time describe, it, etc is called
+        testStack: [],
+        failures: [],
+        successes: 0,
+        addFailure(err: unknown) {
+          const error: TestError = (err instanceof Error ? err : new Error(err as any)) as any;
+          error.testStack = this.testStack;
+          const testMessage = `Test failed: ${this.testStack.join(" > ")}`;
+          error.message = testMessage + "\n" + error.message;
+          if (!error.stack) Error.captureStackTrace(error);
+
+          this.failures.push(error);
+          console.error(error);
+          return error;
+        },
+        recordSuccess() {
+          const fullname = this.testStack.join(" > ");
+          console.log("✅ Test passed:", fullname);
+          this.successes++;
+        }
+      }
+    }
+
+    function getContext() {
+      const key: string = Bun.main;// module.parent?.filename ?? require.main?.filename ?? __filename;
+      activeSuite = (contexts[key] ??= createContext(key));
+      return activeSuite
+    }
+
+    function test(label: string | Function, fn?: Function | undefined) {
+      if (typeof fn !== "function" && typeof label === "function") {
+        fn = label;
+        label = fn.name;
+      }
+      if (typeof label !== "string" && typeof fn !== "function") {
+        throw new TypeError(`First argument to test() must be a string or a function. Got ${typeof label}, ${typeof fn}`);
+      }
+      const ctx = getContext();
+      if (!ctx) throw new Error("invarian violation: test context is undefined.");
+      try {
+        ctx.testStack.push(label as string);
+        const res = fn();
+        if (res instanceof Promise) {
+          throw new Error("test() does not support async functions right now.");
+          process.exit(1);
+        }
+        ctx.recordSuccess();
+      } catch (err) {
+        ctx.addFailure(err);
+      } finally {
+        ctx.testStack.pop();
+      }
+    }
+
+    function describe(labelOrFn: string | Function, maybeFn?: Function) {
+      const [label, fn] = (typeof labelOrFn == "function" ? [labelOrFn.name, labelOrFn] : [labelOrFn, maybeFn]);
+      if (typeof fn !== "function") throw new TypeError("Second argument to describe() must be a function.");
+
+      getContext().testStack.push(label);
+      try {
+        fn();
+      } catch (e) {
+        getContext().addFailure(e);
+        throw e
+      } finally {
+        getContext().testStack.pop();
+      }
+
+      const failures = getContext().failures.length;
+      const successes = getContext().successes;
+      console.error(`describe("${label}") finished with ${successes} passed and ${failures} failed tests.`);
+      if (failures > 0) {
+        throw new Error(`${failures} tests failed.`);
+      }
+
+    }
+
+    return {
+      test,
+      describe,
+    }
+
+  }
+
+  require.cache["node:test"] ??= {
+    exports: createMockNodeTestModule(),
+    loaded: true,
+    isPreloading: false,
+    id: "node:test",
+    parent: require.main,
+    filename: "node:test",
+    children: [],
+    path: "node:test",
+    paths: [],
+    require,
+  };
+}

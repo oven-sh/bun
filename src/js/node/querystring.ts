@@ -141,7 +141,7 @@ var require_src = __commonJS((exports, module) => {
       ++i2;
       var c2;
       if (i2 < str.length) c2 = str.charCodeAt(i2) & 1023;
-      else throw new URIError("URI malformed");
+      else throw $ERR_INVALID_URI("URI malformed");
       lastPos = i2 + 1;
       c = 65536 + (((c & 1023) << 10) | c2);
       out +=

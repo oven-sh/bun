@@ -66,7 +66,9 @@ values;`,
       if (process.platform === "win32") {
         // Windows does not like us using `C:\Windows\Temp` as a temp directory
         // because it breaks compiling with visual studio.
-        return path.join(process.cwd(), ".tmp", "bun-test");
+        const thepath = path.join(process.cwd(), ".tmp", "bun-test");
+        fs.mkdtempSync(thepath);
+        return thepath;
       }
       return os.tmpdir();
     };

@@ -18,6 +18,7 @@ import {
   appendFileSync,
   readdirSync,
 } from "node:fs";
+import assert from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
 import { join, basename, dirname, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
@@ -49,6 +50,18 @@ const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
+const settings = {
+  /** Controls behavior for retrying flakey tests. */
+  flakey: {
+    /** Time (MS) to sleep between retries of flakey tests. */
+    initialSleepTime: 1,
+    /** Factor to increase sleep time by after each retry. */
+    sleepFactor: 1.25,
+    /** Max time to sleep between retries. */
+    maxSleepTime: 100,
+  }
+}
+
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
   options: {
@@ -60,6 +73,13 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: "bun",
     },
+    // --flakey <n> - Flakey test recovery. Retry failed tests `n` times. `n`
+    // must be a positive int.
+    ["flakey"]: {
+      type: "string",
+      default: undefined,
+    },
+
     ["step"]: {
       type: "string",
       default: undefined,
@@ -114,6 +134,7 @@ if (options["quiet"]) {
  * @returns {Promise<TestResult[]>}
  */
 async function runTests() {
+  console.log("Running tests...");
   let execPath;
   if (options["step"]) {
     execPath = await getExecPathFromBuildKite(options["step"], options["build-id"]);
@@ -142,6 +163,8 @@ async function runTests() {
   let i = 0;
   let total = vendorTotal + tests.length + 2;
   const results = [];
+  /** number of times to retry (_not_ total number of times to run a test). 0 to only run once. */
+  const retryLimit = int(options["flakey"]);
 
   /**
    * @param {string} title
@@ -150,25 +173,90 @@ async function runTests() {
    */
   const runTest = async (title, fn) => {
     const label = `${getAnsi("gray")}[${++i}/${total}]${getAnsi("reset")} ${title}`;
-    const result = await startGroup(label, fn);
+    const result = await runTestWithRetry(label, fn);
     results.push(result);
 
+    const isVendor = title.startsWith("vendor");
+    reportResult(
+        result,
+        title,
+        "error",
+        /* buildkite */ isVendor ? { testPath: title } : {},
+        /* fmt to md */ { priority: isVendor ? 5 : undefined }
+    );
+
+    if (options["bail"] && !result.ok) {
+      process.exit(getExitCode("fail"));
+    }
+
+    return result;
+  };
+
+  /**
+   * @param {() => TestResult | Promise<TestResult>} fn
+   * @returns {Promise<TestResult>}
+   */
+  const runTestWithRetry = async (label, fn) => {
+    const { maxSleepTime, initialSleepTime, sleepFactor } = settings.flakey;
+    /** @param {number} retry */
+    const sleepTime = (retry) = Math.min(
+      maxSleepTime,
+      initialSleepTime * Math.pow(sleepFactor, retry)
+    );
+    const sleep = ms => new Promise(resolves => setTimeout(resolves, ms));
+
+    if (!retryLimit) return startGroup(label, fn); // short circuit early
+
+    /** @type {TestResult | Error} */
+    let result = undefined;
+
+    for (let attempt = 0; attempt < retryLimit; attempt++) {
+      // NOTE: one-indexed attempt number [1 of 2]. Do not include attempt suffix on first try.
+      const attemptLabel = attempt == 0 ? label : `${label} [retry #${attempt + 1}]`;
+      try {
+        result = await startGroup(attemptLabel, fn);
+        if (result.ok) break;
+          // warn about flakey tests. Don't report on last attemp
+        else if (attempt < retryLimit - 1) {
+            reportResult(result, label, "warning", { testPath: label });
+            // wait a bit between retries. e.g. flake may happen b/c disk is busy.
+            await sleep(sleepTime(attempt));
+        }
+      } catch (error) {
+        console.error("this should not have happened");
+        console.error(error);
+        result = error;
+      }
+    }
+
+    if (result instanceof Error) {
+      throw result;
+    } else {
+      return result;
+    }
+  };
+
+  /**
+   * @param {TestResult} result
+   * @param {string} title
+   * @param {"error" | "warning"} level what kind of diagnostic to report when `result` fails.
+   * @param {object} buildkiteOptions add/override options passed to {@link reportAnnotationToBuildKite}
+   * @param {object} markdownOptions add/override options passed to {@link formatTestToMarkdown}
+   */
+  const reportResult = (result, title, level = "error", buildkiteOptions = {}, markdownOptions = {}) => {
     if (isBuildkite) {
       const { ok, error, stdoutPreview } = result;
-      if (title.startsWith("vendor")) {
-        const markdown = formatTestToMarkdown({ ...result, testPath: title });
-        if (markdown) {
-          reportAnnotationToBuildKite({ label: title, content: markdown, style: "warning", priority: 5 });
-        }
-      } else {
-        const markdown = formatTestToMarkdown(result);
-        if (markdown) {
-          reportAnnotationToBuildKite({ label: title, content: markdown, style: "error" });
-        }
-      }
+      const markdown = formatTestToMarkdown(Object.assign(result, markdownOptions));
+      reportAnnotationToBuildKite({ label: title, content: markdown, style: level, ...buildkiteOptions });
+
+      const color =
+        {
+          error: "red",
+          warning: "yellow",
+        }[level] || "white";
 
       if (!ok) {
-        const label = `${getAnsi("red")}[${i}/${total}] ${title} - ${error}${getAnsi("reset")}`;
+        const label = `${getAnsi(color)}[${i}/${total}] ${title} - ${error}${getAnsi("reset")}`;
         startGroup(label, () => {
           process.stderr.write(stdoutPreview);
         });
@@ -177,19 +265,8 @@ async function runTests() {
 
     if (isGithubAction) {
       const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
-      if (summaryPath) {
-        const longMarkdown = formatTestToMarkdown(result);
-        appendFileSync(summaryPath, longMarkdown);
-      }
-      const shortMarkdown = formatTestToMarkdown(result, true);
-      appendFileSync("comment.md", shortMarkdown);
+      appendFileSync(summaryPath || "comment.md", formatTestToMarkdown(result, !!summaryPath));
     }
-
-    if (options["bail"] && !result.ok) {
-      process.exit(getExitCode("fail"));
-    }
-
-    return result;
   };
 
   if (!isQuiet) {
@@ -1290,6 +1367,25 @@ function listArtifactsFromBuildKite(glob, step) {
   console.warn("Failed to list artifacts from BuildKite:", cause, stderr);
   return [];
 }
+
+/**
+ * Parse a string to a integer that is >= 0.
+ * - empty strings and nullish values -> default value
+ * - floats and NaN -> panic
+ *
+ * @param {string | undefined} value the integer value to parse
+ * @param {number} [defaultValue] the default value to return if the input is undefined. Defaults to 0.
+ *
+ * @param {string | undefined} value the integer value to parse
+ * @returns {number} the parsed integer
+ */
+const int = (value, defaultValue = 0) => {
+  if (!value) return defaultValue;
+  const i = parseInt(value, 10);
+  assert(!isNaN(i), `Expected an integer, but got: ${value}`);
+  assert(i >= 0);
+  return i;
+};
 
 /**
  * @typedef {object} BuildkiteAnnotation

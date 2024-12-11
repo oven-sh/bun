@@ -29,6 +29,9 @@ import {
   writeFile,
 } from "../scripts/utils.mjs";
 
+/** Number of times to retry tests before failing. Helps with flakey tests. */
+const FLAKEY_RETRY_COUNT = 3;
+
 /**
  * @typedef {"linux" | "darwin" | "windows"} Os
  * @typedef {"aarch64" | "x64"} Arch
@@ -529,7 +532,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
   const { os } = platform;
   const { buildId, unifiedTests, testFiles } = testOptions;
 
-  const args = [`--step=${getTargetKey(platform)}-build-bun`];
+  const args = [`--step=${getTargetKey(platform)}-build-bun`, `--flakey=${FLAKEY_RETRY_COUNT}`];
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }

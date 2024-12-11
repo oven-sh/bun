@@ -3,7 +3,7 @@
 // An agent that starts buildkite-agent and runs others services.
 
 import { join } from "node:path";
-import { existsSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import {
   isWindows,
   getOs,
@@ -20,18 +20,9 @@ import {
   getEnv,
   writeFile,
   spawnSafe,
-  spawn,
   mkdir,
-  isLinux,
 } from "./utils.mjs";
 import { parseArgs } from "node:util";
-
-/**
- * @returns {boolean}
- */
-function isNixInstalled() {
-  return existsSync("/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh");
-}
 
 /**
  * @param {"install" | "start"} action
@@ -76,12 +67,6 @@ async function doBuildkiteAgent(action) {
 
     if (isOpenRc()) {
       const servicePath = "/etc/init.d/buildkite-agent";
-      let nixEnv = "";
-
-      if (isNixInstalled()) {
-        nixEnv = `. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh;`;
-      }
-
       const service = `#!/sbin/openrc-run
         name="buildkite-agent"
         description="Buildkite Agent"
@@ -96,41 +81,22 @@ async function doBuildkiteAgent(action) {
           --stdout ${escape(agentLogPath)} \\
           --stderr ${escape(agentLogPath)}"
 
-        start_pre() {
-          # Source Nix environment if it exists
-          ${nixEnv}
-        }
-
         depend() {
           need net
           use dns logger
-          ${nixEnv ? "use nix-daemon" : ""}
         }
       `;
       writeFile(servicePath, service, { mode: 0o755 });
-      writeFile(`/etc/conf.d/buildkite-agent`, `rc_ulimit="-n 262144"`);
       await spawnSafe(["rc-update", "add", "buildkite-agent", "default"], { stdio: "inherit", privileged: true });
     }
 
     if (isSystemd()) {
       const servicePath = "/etc/systemd/system/buildkite-agent.service";
-      let nix = "";
-
-      if (isNixInstalled()) {
-        nix = `
-# Source Nix environment if it exists
-ExecStartPre=/bin/sh -c '. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
-Environment=PATH=/nix/var/nix/profiles/default/bin:${process.env.PATH.replaceAll(" ", "\\ ")}
-Environment=NIX_PATH=/nix/var/nix/profiles/per-user/root/channels
-        `;
-      }
-
       const service = `
         [Unit]
         Description=Buildkite Agent
         After=syslog.target
         After=network-online.target
-        ${nix ? "Wants=nix-daemon.service" : ""}
 
         [Service]
         Type=simple
@@ -139,8 +105,6 @@ Environment=NIX_PATH=/nix/var/nix/profiles/per-user/root/channels
         RestartSec=5
         Restart=on-failure
         KillMode=process
-
-        ${nix}
 
         [Journal]
         Storage=persistent

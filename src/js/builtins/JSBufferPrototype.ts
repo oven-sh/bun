@@ -260,11 +260,17 @@ export function readUIntBE(this: BufferExt, offset, byteLength) {
 }
 
 export function readFloatLE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/buffer").validateInteger(offset, "offset");
+  if (!(offset >= 0 && offset < (this.length - offset) / 4)) require("internal/buffer").boundsError(offset, this.length - 4); // prettier-ignore
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getFloat32(offset, true);
 }
 
 export function readFloatBE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/buffer").validateInteger(offset, "offset");
+  if (!(offset >= 0 && offset < (this.length - offset) / 4)) require("internal/buffer").boundsError(offset, this.length - 4); // prettier-ignore
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getFloat32(offset, false);
 }

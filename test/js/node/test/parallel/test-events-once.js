@@ -8,6 +8,7 @@ const {
   fail,
   rejects,
   strictEqual,
+  throws,
 } = require('assert');
 
 async function onceAnEvent() {
@@ -27,7 +28,7 @@ async function onceAnEventWithInvalidOptions() {
   const ee = new EventEmitter();
 
   await Promise.all([1, 'hi', null, false, () => {}, Symbol(), 1n].map((options) => {
-    return rejects((async () => once(ee, 'myevent', options))(), {
+    return throws(() => once(ee, 'myevent', options), {
       code: 'ERR_INVALID_ARG_TYPE',
     });
   }));
@@ -149,7 +150,7 @@ async function onceWithEventTargetError() {
 
 async function onceWithInvalidEventEmmiter() {
   const ac = new AbortController();
-  return rejects((async () => once(ac, 'myevent'))(), {
+  return throws(() => once(ac, 'myevent'), {
     code: 'ERR_INVALID_ARG_TYPE',
   });
 }
@@ -168,12 +169,12 @@ async function abortSignalBefore() {
   const abortedSignal = AbortSignal.abort();
 
   await Promise.all([1, {}, 'hi', null, false].map((signal) => {
-    return rejects((async () => once(ee, 'foo', { signal }))(), {
+    return throws(() => once(ee, 'foo', { signal }), {
       code: 'ERR_INVALID_ARG_TYPE',
     });
   }));
 
-  return rejects((async () => once(ee, 'foo', { signal: abortedSignal }))(), {
+  return throws(() => once(ee, 'foo', { signal: abortedSignal }), {
     name: 'AbortError',
   });
 }
@@ -182,7 +183,7 @@ async function abortSignalAfter() {
   const ee = new EventEmitter();
   const ac = new AbortController();
   ee.on('error', common.mustNotCall());
-  const r = rejects((async () => once(ee, 'foo', { signal: ac.signal }))(), {
+  const r = rejects(once(ee, 'foo', { signal: ac.signal }), {
     name: 'AbortError',
   });
   process.nextTick(() => ac.abort());
@@ -215,29 +216,29 @@ async function abortSignalRemoveListener() {
   }
 }
 
-// async function eventTargetAbortSignalBefore() {
-//   const et = new EventTarget();
-//   const abortedSignal = AbortSignal.abort();
+async function eventTargetAbortSignalBefore() {
+  const et = new EventTarget();
+  const abortedSignal = AbortSignal.abort();
 
-//   await Promise.all([1, {}, 'hi', null, false].map((signal) => {
-//     return rejects((async () => once(et, 'foo', { signal }))(), {
-//       code: 'ERR_INVALID_ARG_TYPE',
-//     });
-//   }));
+  await Promise.all([1, {}, 'hi', null, false].map((signal) => {
+    return throws(() => once(et, 'foo', { signal }), {
+      code: 'ERR_INVALID_ARG_TYPE',
+    });
+  }));
 
-//   return rejects((async () => once(et, 'foo', { signal: abortedSignal }))(), {
-//     name: 'AbortError',
-//   });
-// }
+  return throws(() => once(et, 'foo', { signal: abortedSignal }), {
+    name: 'AbortError',
+  });
+}
 
 // async function eventTargetAbortSignalBeforeEvenWhenSignalPropagationStopped() {
 //   const et = new EventTarget();
 //   const ac = new AbortController();
 //   const { signal } = ac;
 //   signal.addEventListener('abort', (e) => e.stopImmediatePropagation(), { once: true });
-
+  
 //   process.nextTick(() => ac.abort());
-//   return rejects((async () => once(et, 'foo', { signal }))(), {
+//   return rejects(once(et, 'foo', { signal }), {
 //     name: 'AbortError',
 //   });
 // }
@@ -245,7 +246,7 @@ async function abortSignalRemoveListener() {
 async function eventTargetAbortSignalAfter() {
   const et = new EventTarget();
   const ac = new AbortController();
-  const r = rejects((async () => once(et, 'foo', { signal: ac.signal }))(), {
+  const r = rejects(once(et, 'foo', { signal: ac.signal }), {
     name: 'AbortError',
   });
   process.nextTick(() => ac.abort());
@@ -278,7 +279,7 @@ Promise.all([
   abortSignalAfter(),
   abortSignalAfterEvent(),
   abortSignalRemoveListener(),
-  // eventTargetAbortSignalBefore(),
+  eventTargetAbortSignalBefore(),
   // eventTargetAbortSignalBeforeEvenWhenSignalPropagationStopped(),
   eventTargetAbortSignalAfter(),
   eventTargetAbortSignalAfterEvent(),

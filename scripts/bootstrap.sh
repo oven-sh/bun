@@ -973,10 +973,10 @@ install_gcc() {
 	append_to_profile "export AR=llvm-ar-${llvm_v}"
 	append_to_profile "export RANLIB=llvm-ranlib-${llvm_v}"
 	append_to_profile "export LD=lld-${llvm_v}"
-	append_to_profile "export LD_LIBRARY_PATH=/usr/lib/gcc/${arch_triplet}/${gcc_version}:/usr/lib/${arch_triplet}"
-	append_to_profile "export LIBRARY_PATH=/usr/lib/gcc/${arch_triplet}/${gcc_version}:/usr/lib/${arch_triplet}"
-	append_to_profile "export CPLUS_INCLUDE_PATH=/usr/include/c++/${gcc_version}:/usr/include/${arch_triplet}/c++/${gcc_version}"
-	append_to_profile "export C_INCLUDE_PATH=/usr/lib/gcc/${arch_triplet}/${gcc_version}/include"
+	append_to_profile "export LD_LIBRARY_PATH=/usr/lib/gcc/${arch_path}/${gcc_version}:/usr/lib/${arch_path}"
+	append_to_profile "export LIBRARY_PATH=/usr/lib/gcc/${arch_path}/${gcc_version}:/usr/lib/${arch_path}"
+	append_to_profile "export CPLUS_INCLUDE_PATH=/usr/include/c++/${gcc_version}:/usr/include/${arch_path}/c++/${gcc_version}"
+	append_to_profile "export C_INCLUDE_PATH=/usr/lib/gcc/${arch_path}/${gcc_version}/include"
 
 	gcc_path="/usr/lib/gcc/$arch_path/$gcc_version"
 	create_directory "$gcc_path"
@@ -987,13 +987,13 @@ install_gcc() {
 	append_file "$ld_conf_path" "/usr/lib/$arch_path"
 	execute_sudo ldconfig
 
-	execute_sudo ln -sf $(which clang-${llvm_v}) /usr/bin/clang
-	execute_sudo ln -sf $(which clang+${llvm_v}) /usr/bin/clang++
-	execute_sudo ln -sf $(which lld-${llvm_v}) /usr/bin/lld
-	execute_sudo ln -sf $(which lldb-${llvm_v}) /usr/bin/lldb
-	execute_sudo ln -sf $(which clangd-${llvm_v}) /usr/bin/clangd
-	execute_sudo ln -sf $(which llvm-ar-${llvm_v}) /usr/bin/llvm-ar
-	execute_sudo ln -sf $(which ld.lld-${llvm_v}) /usr/bin/ld
+	execute_sudo ln -sf $(which clang-$llvm_v) /usr/bin/clang
+	execute_sudo ln -sf $(which clang++-$llvm_v) /usr/bin/clang++
+	execute_sudo ln -sf $(which lld-$llvm_v) /usr/bin/lld
+	execute_sudo ln -sf $(which lldb-$llvm_v) /usr/bin/lldb
+	execute_sudo ln -sf $(which clangd-$llvm_v) /usr/bin/clangd
+	execute_sudo ln -sf $(which llvm-ar-$llvm_v) /usr/bin/llvm-ar
+	execute_sudo ln -sf $(which ld.lld-$llvm_v) /usr/bin/ld
 	execute_sudo ln -sf $(which clang) /usr/bin/cc
 	execute_sudo ln -sf $(which clang++) /usr/bin/c++
 }

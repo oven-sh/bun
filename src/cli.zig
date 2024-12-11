@@ -46,6 +46,8 @@ pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 const OOM = bun.OOM;
 
+export var Bun__Node__ZeroFillBuffers = false;
+
 pub const Cli = struct {
     pub const CompileTarget = @import("./compile_target.zig");
     var wait_group: sync.WaitGroup = undefined;
@@ -231,6 +233,7 @@ pub const Arguments = struct {
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
         clap.parseParam("--expose-internals                Expose internals used for testing Bun itself. Usage of these APIs are completely unsupported.") catch unreachable,
+        clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -779,6 +782,9 @@ pub const Arguments = struct {
 
             if (args.flag("--expose-internals")) {
                 bun.JSC.ModuleLoader.is_allowed_to_use_internal_testing_apis = true;
+            }
+            if (args.flag("--zero-fill-buffers")) {
+                Bun__Node__ZeroFillBuffers = true;
             }
         }
 

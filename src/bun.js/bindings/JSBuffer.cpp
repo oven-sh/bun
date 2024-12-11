@@ -77,6 +77,8 @@
 // #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 
+extern bool Bun__Node__ZeroFillBuffers;
+
 using namespace JSC;
 using namespace WebCore;
 
@@ -431,6 +433,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JS
     size_t length = lengthValue.toLength(lexicalGlobalObject);
     auto result = allocBufferUnsafe(lexicalGlobalObject, length);
     RETURN_IF_EXCEPTION(throwScope, {});
+    if (Bun__Node__ZeroFillBuffers) memset(result->typedVector(), 0, length);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 

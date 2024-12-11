@@ -81,4 +81,6 @@ export default [
   ["ERR_HTTP2_SOCKET_UNBOUND", Error, "Error"],
   ["ERR_HTTP2_ERROR", Error, "Error"],
   ["ERR_HTTP2_OUT_OF_STREAMS", Error, "Error"],
+  ["ERR_SCRIPT_EXECUTION_TIMEOUT", Error, "Error"],
+  ["ERR_SCRIPT_EXECUTION_INTERRUPTED", Error, "Error"],
 ] as ErrorCodeMapping;

@@ -42,7 +42,6 @@ pub const UntrustedCommand = struct {
         try pm.updateLockfileIfNeeded(load_lockfile);
 
         const packages = pm.lockfile.packages.slice();
-        const metas: []Lockfile.Package.Meta = packages.items(.meta);
         const scripts: []Lockfile.Package.Scripts = packages.items(.scripts);
         const resolutions: []Install.Resolution = packages.items(.resolution);
         const buf = pm.lockfile.buffers.string_bytes.items;
@@ -59,10 +58,8 @@ pub const UntrustedCommand = struct {
             // called alias because a dependency name is not always the package name
             const alias = dep.name.slice(buf);
 
-            if (metas[package_id].hasInstallScript()) {
-                if (!pm.lockfile.hasTrustedDependency(alias)) {
-                    try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
-                }
+            if (!pm.lockfile.hasTrustedDependency(alias)) {
+                try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
             }
         }
 
@@ -203,7 +200,6 @@ pub const TrustCommand = struct {
 
         const buf = pm.lockfile.buffers.string_bytes.items;
         const packages = pm.lockfile.packages.slice();
-        const metas: []Lockfile.Package.Meta = packages.items(.meta);
         const resolutions: []Install.Resolution = packages.items(.resolution);
         const scripts: []Lockfile.Package.Scripts = packages.items(.scripts);
 
@@ -216,10 +212,8 @@ pub const TrustCommand = struct {
 
             const alias = dep.name.slice(buf);
 
-            if (metas[package_id].hasInstallScript()) {
-                if (!pm.lockfile.hasTrustedDependency(alias)) {
-                    try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
-                }
+            if (!pm.lockfile.hasTrustedDependency(alias)) {
+                try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
             }
         }
 

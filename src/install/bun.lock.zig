@@ -1408,7 +1408,7 @@ pub fn parseIntoBinaryLockfile(
             };
         }
 
-        try lockfile.buffers.resolutions.ensureTotalCapacity(allocator, lockfile.buffers.dependencies.items.len);
+        try lockfile.buffers.resolutions.ensureTotalCapacityPrecise(allocator, lockfile.buffers.dependencies.items.len);
         lockfile.buffers.resolutions.expandToCapacity();
         @memset(lockfile.buffers.resolutions.items, invalid_package_id);
 

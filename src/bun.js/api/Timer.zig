@@ -250,15 +250,19 @@ pub const All = struct {
         const id = globalThis.bunVM().timer.last_id;
         globalThis.bunVM().timer.last_id +%= 1;
 
-        const interval: i32 = @max(
-            countdown.coerce(i32, globalThis),
-            // It must be 1 at minimum or setTimeout(cb, 0) will seemingly hang
-            1,
-        );
+        // TODO: this is wrong as it clears exceptions
+        const countdown_double = countdown.coerceToDouble(globalThis);
+
+        const countdown_int: i32 = if (!std.math.isFinite(countdown_double))
+            1
+        else if (countdown_double < std.math.minInt(i32) or countdown_double > std.math.maxInt(i32))
+            1
+        else
+            @max(1, @as(i32, @intFromFloat(countdown_double)));
 
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
 
-        return set(id, globalThis, wrappedCallback, interval, arguments, false) catch
+        return set(id, globalThis, wrappedCallback, countdown_int, arguments, false) catch
             return JSValue.jsUndefined();
     }
     pub fn setInterval(
@@ -275,11 +279,17 @@ pub const All = struct {
 
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
-        const interval: i32 = @max(
-            countdown.coerce(i32, globalThis),
-            1,
-        );
-        return set(id, globalThis, wrappedCallback, interval, arguments, true) catch
+        // TODO: this is wrong as it clears exceptions
+        const countdown_double = countdown.coerceToDouble(globalThis);
+
+        const countdown_int: i32 = if (!std.math.isFinite(countdown_double))
+            1
+        else if (countdown_double < std.math.minInt(i32) or countdown_double > std.math.maxInt(i32))
+            1
+        else
+            @max(1, @as(i32, @intFromFloat(countdown_double)));
+
+        return set(id, globalThis, wrappedCallback, countdown_int, arguments, true) catch
             return JSValue.jsUndefined();
     }
 

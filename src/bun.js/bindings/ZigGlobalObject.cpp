@@ -1585,13 +1585,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
 {
     JSC::VM& vm = globalObject->vm();
 
-    if (callFrame->argumentCount() == 0) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope, "clearInterval requires 1 argument (a number)"_s);
-        return {};
-    }
-
-    JSC::JSValue num = callFrame->argument(0);
+    JSC::JSValue timer_or_num = callFrame->argument(0);
 
 #ifdef BUN_DEBUG
     /** View the file name of the JS file that called this function
@@ -1604,7 +1598,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
     }
 #endif
 
-    return Bun__Timer__clearInterval(globalObject, JSC::JSValue::encode(num));
+    return Bun__Timer__clearInterval(globalObject, JSC::JSValue::encode(timer_or_num));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
@@ -1612,13 +1606,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
 {
     JSC::VM& vm = globalObject->vm();
 
-    if (callFrame->argumentCount() == 0) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope, "clearTimeout requires 1 argument (a number)"_s);
-        return {};
-    }
-
-    JSC::JSValue num = callFrame->argument(0);
+    JSC::JSValue timer_or_num = callFrame->argument(0);
 
 #ifdef BUN_DEBUG
     /** View the file name of the JS file that called this function
@@ -1631,7 +1619,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
     }
 #endif
 
-    return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(num));
+    return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(timer_or_num));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionStructuredClone,

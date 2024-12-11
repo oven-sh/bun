@@ -6843,7 +6843,7 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Depend
             try w.write(info.name.slice(sb));
 
             try w.objectField("version");
-            try w.print("{}", .{info.version.fmt(sb)});
+            try w.print("\"{}\"", .{info.version.fmt(sb)});
         },
         .dist_tag => {
             try w.beginObject();
@@ -7002,7 +7002,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             );
 
             try w.objectField("path");
-            try w.print("{}", .{bun.fmt.fmtPath(u8, relative_path, .{ .path_sep = .posix })});
+            try w.print("\"{}\"", .{bun.fmt.fmtPath(u8, relative_path, .{ .path_sep = .posix })});
 
             try w.objectField("depth");
             try w.write(depth);
@@ -7076,10 +7076,10 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 try w.write(@tagName(res.tag));
 
                 try w.objectField("value");
-                try w.print("{s}", .{res.fmt(sb, .posix)});
+                try w.print("\"{s}\"", .{res.fmt(sb, .posix)});
 
                 try w.objectField("resolved");
-                try w.print("{}", .{res.fmtURL(sb)});
+                try w.print("\"{}\"", .{res.fmtURL(sb)});
             }
 
             try w.objectField("dependencies");
@@ -7118,7 +7118,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
 
             try w.objectField("integrity");
             if (pkg.meta.integrity.tag != .unknown) {
-                try w.print("{}", .{pkg.meta.integrity});
+                try w.print("\"{}\"", .{pkg.meta.integrity});
             } else {
                 try w.write(null);
             }
@@ -7201,7 +7201,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
 
         for (this.workspace_versions.keys(), this.workspace_versions.values()) |k, v| {
             try w.objectField(std.fmt.bufPrintIntToSlice(&buf, k, 10, .lower, .{}));
-            try w.print("{}", .{v.fmt(sb)});
+            try w.print("\"{}\"", .{v.fmt(sb)});
         }
     }
 }

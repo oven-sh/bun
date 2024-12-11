@@ -159,8 +159,8 @@ void NodeVMGlobalObject::clearContextifiedObject()
 
 bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
-    if (!propertyName.isSymbol())
-        printf("put called for %s\n", propertyName.publicName()->utf8().data());
+    // if (!propertyName.isSymbol())
+    //     printf("put called for %s\n", propertyName.publicName()->utf8().data());
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
 
     if (thisObject->m_contextifiedObject) {
@@ -180,8 +180,8 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
 
 bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
-    if (!propertyName.isSymbol())
-        printf("getOwnPropertySlot called for %s\n", propertyName.publicName()->utf8().data());
+    // if (!propertyName.isSymbol())
+    //     printf("getOwnPropertySlot called for %s\n", propertyName.publicName()->utf8().data());
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
     if (thisObject->m_contextifiedObject) {
         auto* contextifiedObject = thisObject->m_contextifiedObject.get();
@@ -198,8 +198,8 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
 
 bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
-    if (!propertyName.isSymbol())
-        printf("defineOwnProperty called for %s\n", propertyName.publicName()->utf8().data());
+    // if (!propertyName.isSymbol())
+    //     printf("defineOwnProperty called for %s\n", propertyName.publicName()->utf8().data());
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
     if (!thisObject->m_contextifiedObject) {
         return Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow);

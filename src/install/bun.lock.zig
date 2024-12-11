@@ -663,6 +663,9 @@ pub const Stringifier = struct {
                     // git         -> [ "name@git+repo", deps..., ... ]
                     // github      -> [ "name@github:user/repo", deps..., ... ]
 
+                    var optional_peers_buf = std.ArrayList(String).init(allocator);
+                    defer optional_peers_buf.deinit();
+
                     switch (res.tag) {
                         .root => {
                             try writer.print("[\"{}@root:\"]", .{
@@ -676,7 +679,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.folder.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDeps(writer, pkg_deps, buf);
+                            try writePackageDeps(writer, pkg_deps, buf, &optional_peers_buf);
 
                             try writer.writeAll(", ");
 
@@ -690,7 +693,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.local_tarball.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDeps(writer, pkg_deps, buf);
+                            try writePackageDeps(writer, pkg_deps, buf, &optional_peers_buf);
 
                             try writer.writeAll(", ");
 
@@ -704,7 +707,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.remote_tarball.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDeps(writer, pkg_deps, buf);
+                            try writePackageDeps(writer, pkg_deps, buf, &optional_peers_buf);
 
                             try writer.writeAll(", ");
 
@@ -718,7 +721,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(res.value.symlink.slice(buf), .{ .quote = false }),
                             });
 
-                            try writePackageDeps(writer, pkg_deps, buf);
+                            try writePackageDeps(writer, pkg_deps, buf, &optional_peers_buf);
 
                             try writer.writeAll(", ");
 
@@ -740,7 +743,7 @@ pub const Stringifier = struct {
                                     res.value.npm.url.slice(buf),
                             });
 
-                            try writePackageDeps(writer, pkg_deps, buf);
+                            try writePackageDeps(writer, pkg_deps, buf, &optional_peers_buf);
 
                             try writer.writeAll(", ");
 
@@ -760,7 +763,7 @@ pub const Stringifier = struct {
                                 bun.fmt.formatJSONStringUTF8(workspace_path, .{ .quote = false }),
                             });
 
-                            try writePackageDeps(writer, pkg_deps, buf);
+                            try writePackageDeps(writer, pkg_deps, buf, &optional_peers_buf);
 
                             try writer.writeByte(']');
                         },
@@ -771,7 +774,7 @@ pub const Stringifier = struct {
                                 repo.fmt(if (comptime tag == .git) "git+" else "github:", buf),
                             });
 
-                            try writePackageDeps(writer, pkg_deps, buf);
+                            try writePackageDeps(writer, pkg_deps, buf, &optional_peers_buf);
 
                             try writer.writeAll(", ");
 
@@ -838,7 +841,10 @@ pub const Stringifier = struct {
         writer: anytype,
         deps: []const Dependency,
         buf: string,
+        optional_peers_buf: *std.ArrayList(String),
     ) OOM!void {
+        defer optional_peers_buf.clearRetainingCapacity();
+
         try writer.writeByte('{');
 
         var any = false;
@@ -848,6 +854,13 @@ pub const Stringifier = struct {
             var first = true;
             for (deps) |dep| {
                 if (!dep.behavior.includes(group_behavior)) continue;
+
+                if (dep.behavior.isOptionalPeer()) {
+                    // only write to "peerDependencies"
+                    if (group_behavior.isOptional()) continue;
+
+                    try optional_peers_buf.append(dep.name);
+                }
 
                 if (first) {
                     if (any) {
@@ -869,6 +882,25 @@ pub const Stringifier = struct {
             if (!first) {
                 try writer.writeAll(" }");
             }
+        }
+
+        if (optional_peers_buf.items.len > 0) {
+            bun.debugAssert(any);
+            try writer.writeAll(
+                \\, "optionalPeers": [
+            );
+
+            for (optional_peers_buf.items, 0..) |optional_peer, i| {
+                try writer.print(
+                    \\"{s}{s}{s}",
+                , .{
+                    if (i != 0) "," else "",
+                    optional_peer.slice(buf),
+                    if (i != optional_peers_buf.items.len) " " else "",
+                });
+            }
+
+            try writer.writeByte(']');
         }
 
         if (any) {
@@ -1210,6 +1242,9 @@ pub fn parseIntoBinaryLockfile(
         }
     }
 
+    var optional_peers_buf: std.AutoHashMapUnmanaged(u64, void) = .{};
+    defer optional_peers_buf.deinit(allocator);
+
     if (maybe_root_pkg) |root_pkg| {
         // TODO(dylan-conway): maybe sort this. behavior is already sorted, but names are not
         const maybe_name = if (root_pkg.get("name")) |name| name.asString(allocator) orelse {
@@ -1217,7 +1252,7 @@ pub fn parseIntoBinaryLockfile(
             return error.InvalidWorkspaceObject;
         } else null;
 
-        const off, const len = try parseAppendDependencies(lockfile, allocator, &root_pkg, &string_buf, log, source);
+        const off, const len = try parseAppendDependencies(lockfile, allocator, &root_pkg, &string_buf, log, source, &optional_peers_buf);
 
         var pkg: BinaryLockfile.Package = .{};
         pkg.meta.id = 0;
@@ -1367,7 +1402,7 @@ pub fn parseIntoBinaryLockfile(
                     }
 
                     // TODO(dylan-conway): maybe sort this. behavior is already sorted, but names are not
-                    const off, const len = try parseAppendDependencies(lockfile, allocator, deps_obj, &string_buf, log, source);
+                    const off, const len = try parseAppendDependencies(lockfile, allocator, deps_obj, &string_buf, log, source, &optional_peers_buf);
 
                     pkg.dependencies = .{ .off = off, .len = len };
                     pkg.resolutions = .{ .off = off, .len = len };
@@ -1419,7 +1454,9 @@ pub fn parseIntoBinaryLockfile(
             pkg.resolution = res;
 
             // set later
-            pkg.bin = .{};
+            pkg.bin = .{
+                .unset = 1,
+            };
             pkg.scripts = .{};
 
             const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
@@ -1533,6 +1570,7 @@ pub fn parseIntoBinaryLockfile(
     }
 
     lockfile.buffers.string_bytes = string_buf.bytes.moveToUnmanaged();
+    lockfile.string_pool = string_buf.pool;
 }
 
 fn parseAppendDependencies(
@@ -1542,7 +1580,26 @@ fn parseAppendDependencies(
     buf: *String.Buf,
     log: *logger.Log,
     source: *const logger.Source,
+    optional_peers_buf: *std.AutoHashMapUnmanaged(u64, void),
 ) ParseError!struct { u32, u32 } {
+    defer optional_peers_buf.clearRetainingCapacity();
+
+    if (obj.get("optionalPeers")) |optional_peers| {
+        if (!optional_peers.isArray()) {
+            try log.addError(source, optional_peers.loc, "Expected an array");
+            return error.InvalidPackageInfo;
+        }
+
+        for (optional_peers.data.e_array.items.slice()) |item| {
+            const name_hash = try item.asStringHash(allocator, String.Builder.stringHash) orelse {
+                try log.addError(source, item.loc, "Expected a string");
+                return error.InvalidPackageInfo;
+            };
+
+            try optional_peers_buf.put(allocator, name_hash, {});
+        }
+    }
+
     const off = lockfile.buffers.dependencies.items.len;
     inline for (workspace_dependency_groups) |dependency_group| {
         const group_name, const group_behavior = dependency_group;
@@ -1572,7 +1629,7 @@ fn parseAppendDependencies(
                 const version = try buf.append(version_str);
                 const version_sliced = version.sliced(buf.bytes.items);
 
-                const dep: Dependency = .{
+                var dep: Dependency = .{
                     .name = name.value,
                     .name_hash = name.hash,
                     .behavior = group_behavior,
@@ -1589,6 +1646,10 @@ fn parseAppendDependencies(
                         return error.InvalidDependencyVersion;
                     },
                 };
+
+                if (dep.behavior.isPeer() and optional_peers_buf.contains(name.hash)) {
+                    dep.behavior.optional = true;
+                }
 
                 try lockfile.buffers.dependencies.append(allocator, dep);
             }

@@ -53,8 +53,11 @@ pub const Resolution = extern struct {
             return Resolution.init(.{ .workspace = try string_buf.append(workspace) });
         }
 
+        if (strings.withoutPrefixIfPossibleComptime(res_str, "file:")) |folder| {
+            return Resolution.init(.{ .folder = try string_buf.append(folder) });
+        }
+
         return switch (Dependency.Version.Tag.infer(res_str)) {
-            .folder => Resolution.init(.{ .folder = try string_buf.append(res_str) }),
             .git => Resolution.init(.{ .git = try Repository.parseAppendGit(res_str, string_buf) }),
             .github => Resolution.init(.{ .github = try Repository.parseAppendGithub(res_str, string_buf) }),
             .tarball => {
@@ -92,6 +95,7 @@ pub const Resolution = extern struct {
             // covered above
             .workspace => error.UnexpectedResolution,
             .symlink => error.UnexpectedResolution,
+            .folder => error.UnexpectedResolution,
 
             // should not happen
             .dist_tag => error.UnexpectedResolution,

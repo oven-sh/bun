@@ -2447,6 +2447,13 @@ pub inline fn stringBuilder(this: *Lockfile) Lockfile.StringBuilder {
     };
 }
 
+pub fn stringBuf(this: *Lockfile) String.Buf {
+    return .{
+        .bytes = this.buffers.string_bytes.toManaged(this.allocator),
+        .pool = this.string_pool,
+    };
+}
+
 pub const Scratch = struct {
     pub const DuplicateCheckerMap = std.HashMap(PackageNameHash, logger.Loc, IdentityContext(PackageNameHash), 80);
     pub const DependencyQueue = std.fifo.LinearFifo(DependencySlice, .Dynamic);
@@ -3215,7 +3222,7 @@ pub const Package = extern struct {
                     .first_index = @intCast(first_index),
                     .total = total,
                     .cwd = allocator.dupeZ(u8, cwd) catch bun.outOfMemory(),
-                    .package_name = package_name,
+                    .package_name = lockfile.allocator.dupe(u8, package_name) catch bun.outOfMemory(),
                 };
             }
 
@@ -6551,7 +6558,7 @@ pub const Serializer = struct {
 
         lockfile.scratch = Lockfile.Scratch.init(allocator);
         lockfile.package_index = PackageIndex.Map.initContext(allocator, .{});
-        lockfile.string_pool = StringPool.initContext(allocator, .{});
+        lockfile.string_pool = StringPool.init(allocator);
         try lockfile.package_index.ensureTotalCapacity(@as(u32, @truncate(lockfile.packages.len)));
 
         if (!has_workspace_name_hashes) {

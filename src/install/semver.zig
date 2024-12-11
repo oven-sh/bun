@@ -14,6 +14,7 @@ const JSC = bun.JSC;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const OOM = bun.OOM;
 const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
+const Lockfile = bun.install.Lockfile;
 
 /// String type that stores either an offset/length into an external buffer or a string inline directly
 pub const String = extern struct {
@@ -46,6 +47,11 @@ pub const String = extern struct {
                 .bytes = std.ArrayList(u8).init(allocator),
                 .pool = Builder.StringPool.init(allocator),
             };
+        }
+
+        pub fn apply(this: *Buf, lockfile: *Lockfile) void {
+            lockfile.buffers.string_bytes = this.bytes.moveToUnmanaged();
+            lockfile.string_pool = this.pool;
         }
 
         pub fn append(this: *Buf, str: string) OOM!String {

@@ -1051,7 +1051,7 @@ install_docker() {
 
 macos_sdk_version() {
 	# https://github.com/alexey-lysiuk/macos-sdk/releases
-	print "13.3"
+	print "14.5"
 }
 
 install_osxcross() {

@@ -584,7 +584,7 @@ function getBuildImageStep(platform, dryRun) {
     "--authorized-org=oven-sh",
   ];
   for (const feature of features || []) {
-    command.push(`--feature=${feature}`);
+    command.push(`--${feature}`);
   }
 
   return {

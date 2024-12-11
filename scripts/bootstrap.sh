@@ -937,7 +937,7 @@ install_gcc() {
 
 	execute_sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
 	execute_sudo apt update -y
-	install_packages \
+	execute_sudo apt install -y \
 		"gcc-$gcc_version" \
 		"g++-$gcc_version" \
 		"libgcc-$gcc_version-dev" \

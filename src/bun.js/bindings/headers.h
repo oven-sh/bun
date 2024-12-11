@@ -426,7 +426,7 @@ CPP_DECL void JSC__VM__notifyNeedShellTimeoutCheck(JSC__VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedTermination(JSC__VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedWatchdogCheck(JSC__VM* arg0);
 CPP_DECL void JSC__VM__releaseWeakRefs(JSC__VM* arg0);
-CPP_DECL JSC__JSValue JSC__VM__runGC(JSC__VM* arg0, bool arg1);
+CPP_DECL size_t JSC__VM__runGC(JSC__VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__setControlFlowProfiler(JSC__VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__setExecutionForbidden(JSC__VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__setExecutionTimeLimit(JSC__VM* arg0, double arg1);

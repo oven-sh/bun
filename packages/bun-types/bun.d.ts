@@ -1553,6 +1553,26 @@ declare module "bun" {
      * https://nodejs.org/api/packages.html#exports
      */
     conditions?: Array<string> | string;
+
+    /**
+     * Controls how environment variables are handled during bundling.
+     *
+     * Can be one of:
+     * - `"inline"`: Injects environment variables into the bundled output by converting `process.env.FOO`
+     *   references to string literals containing the actual environment variable values
+     * - `"disable"`: Disables environment variable injection entirely
+     * - A string ending in `*`: Inlines environment variables that match the given prefix.
+     *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
+     *
+     * @example
+     * ```ts
+     * Bun.build({
+     *   env: "MY_PUBLIC_*",
+     *   entrypoints: ["src/index.ts"],
+     * })
+     * ```
+     */
+    env?: "inline" | "disable" | `${string}*`;
     minify?:
       | boolean
       | {
@@ -3899,7 +3919,7 @@ declare module "bun" {
      * The namespace of the importer.
      */
     namespace: string;
-    /** 
+    /**
      * The directory to perform file-based resolutions in.
      */
     resolveDir: string;

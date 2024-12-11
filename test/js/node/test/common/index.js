@@ -384,6 +384,57 @@ if (global.Storage) {
   );
 }
 
+if (global.Bun) {
+  knownGlobals.push(
+    global.addEventListener,
+    global.alert,
+    global.confirm,
+    global.dispatchEvent,
+    global.postMessage,
+    global.prompt,
+    global.removeEventListener,
+    global.reportError,
+    global.Bun,
+    global.File,
+    global.process,
+    global.Blob,
+    global.Buffer,
+    global.BuildError,
+    global.BuildMessage,
+    global.HTMLRewriter,
+    global.Request,
+    global.ResolveError,
+    global.ResolveMessage,
+    global.Response,
+    global.TextDecoder,
+    global.AbortSignal,
+    global.BroadcastChannel,
+    global.CloseEvent,
+    global.DOMException,
+    global.ErrorEvent,
+    global.Event,
+    global.EventTarget,
+    global.FormData,
+    global.Headers,
+    global.MessageChannel,
+    global.MessageEvent,
+    global.MessagePort,
+    global.PerformanceEntry,
+    global.PerformanceObserver,
+    global.PerformanceObserverEntryList,
+    global.PerformanceResourceTiming,
+    global.PerformanceServerTiming,
+    global.PerformanceTiming,
+    global.TextEncoder,
+    global.URL,
+    global.URLSearchParams,
+    global.WebSocket,
+    global.Worker,
+    global.onmessage,
+    global.onerror
+  );
+}
+
 function allowGlobals(...allowlist) {
   knownGlobals = knownGlobals.concat(allowlist);
 }

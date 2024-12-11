@@ -559,7 +559,7 @@ function getTestBunStep(platform, options = {}) {
  * @returns {Step}
  */
 function getBuildImageStep(platform, dryRun) {
-  const { os, arch, distro, release, docker } = platform;
+  const { os, arch, distro, release, features } = platform;
 
   const action = dryRun ? "create-image" : "publish-image";
 
@@ -575,8 +575,10 @@ function getBuildImageStep(platform, dryRun) {
     "--cloud=aws",
     "--ci",
     "--authorized-org=oven-sh",
-    docker ? "--docker" : "",
   ];
+  for (const feature of features || []) {
+    command.push(`--feature=${feature}`);
+  }
 
   return {
     key: `${getImageKey(platform)}-build-image`,

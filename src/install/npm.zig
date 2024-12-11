@@ -578,6 +578,11 @@ pub fn Negatable(comptime T: type) type {
                 return;
             }
 
+            if (strings.eqlComptime(str, "none")) {
+                this.had_unrecognized_values = true;
+                return;
+            }
+
             const is_not = str[0] == '!';
             const offset: usize = @intFromBool(is_not);
 
@@ -619,9 +624,9 @@ pub fn Negatable(comptime T: type) type {
         /// writes to a one line json array with a trailing comma and space, or writes a string
         pub fn toJson(field: T, writer: anytype) @TypeOf(writer).Error!void {
             if (field == .none) {
-                // [] means everything, so unrecognized value for now
+                // [] means everything, so unrecognized value
                 try writer.writeAll(
-                    \\"oops"
+                    \\"none"
                 );
                 return;
             }

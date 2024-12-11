@@ -163,19 +163,30 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     //     printf("put called for %s\n", propertyName.publicName()->utf8().data());
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
 
-    if (thisObject->m_contextifiedObject) {
-        auto* contextifiedObject = thisObject->m_contextifiedObject.get();
-
-        // Otherwise define property directly with default attributes
-        return contextifiedObject->put(
-            contextifiedObject,
-            globalObject,
-            propertyName,
-            value,
-            slot);
+    if (!thisObject->m_contextifiedObject) {
+        return Base::put(cell, globalObject, propertyName, value, slot);
     }
 
-    return false;
+    auto* sandbox = thisObject->m_contextifiedObject.get();
+
+    bool isContextualStore = slot.thisValue() != globalObject;
+
+    if (slot.type() == JSC::PutPropertySlot::NewProperty && !) {
+    }
+
+    if (isContextualStore && slot.isStrictMode()) {
+    }
+
+    bool isFunction = value.isCallable();
+    bool isFunction = value.isCallable();
+
+    bool isDeclared = isDeclaredOnGlobalProxy || isDeclaredOnSandbox;
+
+    if (slot.isStrictMode() && !isDeclared && !isFunction) {
+        return Base::put(cell, globalObject, propertyName, value, slot);
+    }
+
+    return sandbox->put(sandbox, globalObject, propertyName, value, slot);
 }
 
 bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)

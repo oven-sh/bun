@@ -1147,7 +1147,7 @@ async function main() {
       "ci": { type: "boolean" },
       "rdp": { type: "boolean" },
       "vnc": { type: "boolean" },
-      "feature-flags": { type: "string", multiple: true },
+      "feature": { type: "string", multiple: true },
       "user-data": { type: "string" },
       "authorized-user": { type: "string", multiple: true },
       "authorized-org": { type: "string", multiple: true },

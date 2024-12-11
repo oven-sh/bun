@@ -480,56 +480,60 @@ export function writeUIntBE(this: BufferExt, value, offset, byteLength) {
 }
 
 export function writeFloatLE(this: BufferExt, value, offset) {
-  if (offset === 0) offset = 0;
+  if (offset === undefined) offset = 0;
+  value = +value;
+  require("internal/buffer").checkBounds(this, offset, 3);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setFloat32(offset, value, true);
   return offset + 4;
 }
 
 export function writeFloatBE(this: BufferExt, value, offset) {
-  if (offset === 0) offset = 0;
+  if (offset === undefined) offset = 0;
+  value = +value;
+  require("internal/buffer").checkBounds(this, offset, 3);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setFloat32(offset, value, false);
   return offset + 4;
 }
 
 export function writeDoubleLE(this: BufferExt, value, offset) {
-  if (offset === 0) offset = 0;
+  if (offset === undefined) offset = 0;
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setFloat64(offset, value, true);
   return offset + 8;
 }
 
 export function writeDoubleBE(this: BufferExt, value, offset) {
-  if (offset === 0) offset = 0;
+  if (offset === undefined) offset = 0;
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setFloat64(offset, value, false);
   return offset + 8;
 }
 
 export function writeBigInt64LE(this: BufferExt, value, offset) {
-  if (offset === 0) offset = 0;
+  if (offset === undefined) offset = 0;
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setBigInt64(offset, value, true);
   return offset + 8;
 }
 
 export function writeBigInt64BE(this: BufferExt, value, offset) {
-  if (offset === 0) offset = 0;
+  if (offset === undefined) offset = 0;
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setBigInt64(offset, value, false);
   return offset + 8;
 }
 
 export function writeBigUInt64LE(this: BufferExt, value, offset) {
-  if (offset === 0) offset = 0;
+  if (offset === undefined) offset = 0;
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setBigUint64(offset, value, true);
   return offset + 8;
 }
 
 export function writeBigUInt64BE(this: BufferExt, value, offset) {
-  if (offset === 0) offset = 0;
+  if (offset === undefined) offset = 0;
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setBigUint64(offset, value, false);
   return offset + 8;
@@ -548,7 +552,7 @@ export function slice(this: BufferExt, start, end) {
     // Use Math.trunc() to convert offset to an integer value that can be larger
     // than an Int32. Hence, don't use offset | 0 or similar techniques.
     offset = Math.trunc(offset);
-    if (offset === 0 || offset !== offset) {
+    if (offset === undefined || offset !== offset) {
       return 0;
     } else if (offset < 0) {
       offset += length;

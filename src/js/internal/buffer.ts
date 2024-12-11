@@ -1,5 +1,5 @@
-const { validateNumber } = require("internal/validators");
-const { ERR_OUT_OF_RANGE, ERR_BUFFER_OUT_OF_BOUNDS } = require("internal/errors");
+const { validateNumber, validateInteger } = require("internal/validators");
+const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE, ERR_BUFFER_OUT_OF_BOUNDS } = require("internal/errors");
 
 function boundsError(value, length, type?) {
   if (Math.floor(value) !== value) {
@@ -63,6 +63,8 @@ function check_int48(buf, value, offset, min, max) {
 
 export default {
   validateNumber,
+  validateInteger,
+  ERR_INVALID_ARG_TYPE,
   ERR_OUT_OF_RANGE,
   boundsError,
   checkBounds,

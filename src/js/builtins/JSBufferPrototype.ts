@@ -19,6 +19,9 @@ export function readInt8(this: BufferExt, offset) {
 }
 
 export function readUInt8(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/buffer").validateInteger(offset, "offset");
+  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 1);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getUint8(offset);
 }
@@ -34,11 +37,17 @@ export function readInt16BE(this: BufferExt, offset) {
 }
 
 export function readUInt16LE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/buffer").validateInteger(offset, "offset");
+  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 2);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getUint16(offset, true);
 }
 
 export function readUInt16BE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/buffer").validateInteger(offset, "offset");
+  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 2);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getUint16(offset, false);
 }
@@ -54,11 +63,17 @@ export function readInt32BE(this: BufferExt, offset) {
 }
 
 export function readUInt32LE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/buffer").validateInteger(offset, "offset");
+  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 4);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getUint32(offset, true);
 }
 
 export function readUInt32BE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/buffer").validateInteger(offset, "offset");
+  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 4);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getUint32(offset, false);
 }
@@ -120,7 +135,22 @@ export function readIntBE(this: BufferExt, offset, byteLength) {
 }
 
 export function readUIntLE(this: BufferExt, offset, byteLength) {
+  const { ERR_INVALID_ARG_TYPE, validateInteger, boundsError } = require("internal/buffer");
+  if (offset === undefined) throw ERR_INVALID_ARG_TYPE("offset", "number", offset);
+
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
+
+  switch (byteLength) {
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+    case 5:
+    case 6:
+      validateInteger(offset, "offset");
+      if (!(offset >= 0 && offset < this.length)) boundsError(offset, this.length - byteLength);
+      break;
+  }
   switch (byteLength) {
     case 1: {
       return view.getUint8(offset);
@@ -141,11 +171,26 @@ export function readUIntLE(this: BufferExt, offset, byteLength) {
       return view.getUint16(offset + 4, true) * 2 ** 32 + view.getUint32(offset, true);
     }
   }
-  throw new RangeError("byteLength must be >= 1 and <= 6");
+  boundsError(byteLength, 6, "byteLength");
 }
 
 export function readUIntBE(this: BufferExt, offset, byteLength) {
+  const { ERR_INVALID_ARG_TYPE, validateInteger, boundsError } = require("internal/buffer");
+  if (offset === undefined) throw ERR_INVALID_ARG_TYPE("offset", "number", offset);
+
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
+
+  switch (byteLength) {
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+    case 5:
+    case 6:
+      validateInteger(offset, "offset");
+      if (!(offset >= 0 && offset < this.length)) boundsError(offset, this.length - byteLength);
+      break;
+  }
   switch (byteLength) {
     case 1: {
       return view.getUint8(offset);
@@ -166,7 +211,7 @@ export function readUIntBE(this: BufferExt, offset, byteLength) {
       return view.getUint16(offset, false) * 2 ** 32 + view.getUint32(offset + 2, false);
     }
   }
-  throw new RangeError("byteLength must be >= 1 and <= 6");
+  boundsError(byteLength, 6, "byteLength");
 }
 
 export function readFloatLE(this: BufferExt, offset) {

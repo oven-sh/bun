@@ -27,7 +27,10 @@
 // ----------------------------------------------------------------------------
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
-const { CSI, utils: { getStringWidth, stripVTControlCharacters } } = require("internal/readline/utils");
+const {
+  CSI,
+  utils: { getStringWidth, stripVTControlCharacters },
+} = require("internal/readline/utils");
 const { kClearLine, kClearScreenDown, kClearToLineBeginning, kClearToLineEnd } = CSI;
 
 const {
@@ -39,7 +42,6 @@ const {
   validateInteger,
   validateUint32,
 } = require("internal/validators");
-
 
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
@@ -1699,7 +1701,7 @@ var _Interface = class Interface extends InterfaceConstructor {
 
     // Apply/show completions.
     var completionsWidth = ArrayPrototypeMap.$call(completions, e => getStringWidth(e));
-    var width = MathMax.$apply(completionsWidth) + 2; // 2 space padding
+    var width = MathMax.$apply(null, completionsWidth) + 2; // 2 space padding
     var maxColumns = MathFloor(this.columns / width) || 1;
     if (maxColumns === Infinity) {
       maxColumns = 1;

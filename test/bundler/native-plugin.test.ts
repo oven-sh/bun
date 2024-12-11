@@ -4,8 +4,10 @@ import path, { dirname, join, resolve } from "path";
 import source from "./native_plugin.cc" with { type: "file" };
 import notAPlugin from "./not_native_plugin.cc" with { type: "file" };
 import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, makeTree, tempDirWithFiles } from "harness";
 import { itBundled } from "bundler/expectBundled";
+import os from "os";
+import fs from "fs";
 
 describe("native-plugins", async () => {
   const cwd = process.cwd();
@@ -60,7 +62,18 @@ values;`,
       }`,
     };
 
-    tempdir = tempDirWithFiles("native-plugins", files);
+    const getTempBaseDir = () => {
+      if (process.platform === "win32") {
+        // Windows does not like us using `C:\Windows\Temp` as a temp directory
+        // because it breaks compiling with visual studio.
+        return path.join(process.cwd(), ".tmp", "bun-test");
+      }
+      return os.tmpdir();
+    };
+
+    const base_tempdir = fs.mkdtempSync(join(fs.realpathSync(getTempBaseDir()), "native-plugins_"));
+
+    tempdir = makeTree(base_tempdir, files);
     outdir = path.join(tempdir, "dist");
 
     console.log("tempdir", tempdir);

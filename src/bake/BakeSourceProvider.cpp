@@ -122,7 +122,7 @@ extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* 
     origin,
     WTFMove(string),
     WTF::TextPosition(),
-    JSC::SourceProviderSourceType::Module
+    JSC::SourceProviderSourceType::BunTranspiledModule
   ));
   
   global->moduleLoader()->provideFetch(global, key, sourceCode);

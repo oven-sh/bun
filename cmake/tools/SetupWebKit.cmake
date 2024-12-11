@@ -28,6 +28,8 @@ if(WEBKIT_LOCAL)
       ${WEBKIT_PATH}
       ${WEBKIT_PATH}/JavaScriptCore/Headers/JavaScriptCore
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
+      ${WEBKIT_PATH}/JavaScriptCore/DerivedSources/inspector
+      ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders/JavaScriptCore
       ${WEBKIT_PATH}/bmalloc/Headers
       ${WEBKIT_PATH}/WTF/Headers
     )

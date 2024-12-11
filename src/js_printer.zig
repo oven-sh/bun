@@ -691,6 +691,7 @@ fn NewPrinter(
         prev_reg_exp_end: i32 = -1,
         call_target: ?Expr.Data = null,
         writer: Writer,
+        contains_import_meta: bool = false,
 
         has_printed_bundled_import_statement: bool = false,
         imported_module_ids: std.ArrayList(u32),
@@ -1003,6 +1004,7 @@ fn NewPrinter(
                     printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(__filename)"), "globalThis.Bun.jest(__filename)");
                 },
                 else => {
+                    p.contains_import_meta = true;
                     printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path)"), "globalThis.Bun.jest(import.meta.path)");
                 },
             }
@@ -1685,12 +1687,14 @@ fn NewPrinter(
                             if (module_type == .cjs) {
                                 p.print("Promise.resolve(globalThis.Bun.jest(__filename))");
                             } else {
+                                p.contains_import_meta = true;
                                 p.print("Promise.resolve(globalThis.Bun.jest(import.meta.path))");
                             }
                         } else if (record.kind == .require) {
                             if (module_type == .cjs) {
                                 p.print("globalThis.Bun.jest(__filename)");
                             } else {
+                                p.contains_import_meta = true;
                                 p.print("globalThis.Bun.jest(import.meta.path)");
                             }
                         }
@@ -1837,6 +1841,7 @@ fn NewPrinter(
                 }
 
                 if (module_type == .esm and is_bun_platform) {
+                    p.contains_import_meta = true;
                     p.print("import.meta.require");
                 } else if (p.options.require_ref) |ref| {
                     p.printSymbol(ref);
@@ -2065,6 +2070,7 @@ fn NewPrinter(
                         p.print(".importMeta()");
                     } else if (!p.options.import_meta_ref.isValid()) {
                         // Most of the time, leave it in there
+                        p.contains_import_meta = true;
                         p.print("import.meta");
                     } else {
                         // Note: The bundler will not hit this code path. The bundler will replace
@@ -2089,6 +2095,7 @@ fn NewPrinter(
                             p.printSpaceBeforeIdentifier();
                             p.addSourceMapping(expr.loc);
                         }
+                        p.contains_import_meta = true;
                         p.print("import.meta.main");
                     } else {
                         bun.assert(p.options.module_type != .internal_bake_dev);
@@ -2278,6 +2285,7 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .esm and is_bun_platform) {
+                        p.contains_import_meta = true;
                         p.print("import.meta.require.main");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
@@ -2291,6 +2299,7 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .esm and is_bun_platform) {
+                        p.contains_import_meta = true;
                         p.print("import.meta.require");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
@@ -2303,6 +2312,7 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .esm and is_bun_platform) {
+                        p.contains_import_meta = true;
                         p.print("import.meta.require.resolve");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
@@ -2332,6 +2342,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
 
                     if (p.options.module_type == .esm and is_bun_platform) {
+                        p.contains_import_meta = true;
                         p.print("import.meta.require.resolve");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
@@ -4324,6 +4335,7 @@ fn NewPrinter(
                                 p.printSymbol(s.namespace_ref);
                                 p.@"print = "();
 
+                                p.contains_import_meta = true;
                                 p.print("import.meta.require(");
                                 p.printImportRecordPath(record);
                                 p.print(")");
@@ -5841,6 +5853,44 @@ pub fn printAst(
             try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
         }
     }
+
+    std.log.err("\n\n\n\n\n\n       \x1b[97mPrinting AST:\x1b(B\x1b[m", .{});
+    std.log.err("  Import Records:", .{});
+    for (tree.import_records.slice()) |record| {
+        std.log.err("  - {s}", .{record.path.text});
+    }
+    std.log.err("  Export Records:", .{});
+    for (tree.parts.slice()) |part| {
+        for (part.stmts) |stmt| {
+            switch (stmt.data) {
+                .s_export_clause,
+                .s_export_default,
+                .s_export_equals,
+                .s_export_from,
+                .s_export_star,
+                .s_lazy_export,
+                => {
+                    std.log.err("  - {s}", .{@tagName(stmt.data)});
+                },
+                .s_local => |local| {
+                    if (local.is_export) {
+                        std.log.err("  - {s} (is_export)", .{@tagName(stmt.data)});
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+    std.log.err("  Uses import.meta: {}", .{printer.contains_import_meta});
+
+    // - varDeclarations:
+    //
+    // - lexicalVariables:
+    //
+
+    // if(comptime true) {
+    //     tree
+    // }
 
     try printer.writer.done();
 

@@ -104,6 +104,9 @@ float __wrap_expf(float x) { return expf(x); }
 
 } // extern "C"
 
+extern "C" __attribute__((used)) char _libc_single_threaded = 0;
+extern "C" __attribute__((used)) char __libc_single_threaded = 0;
+
 #endif // glibc
 
 // musl

@@ -1147,6 +1147,7 @@ async function main() {
       "ci": { type: "boolean" },
       "rdp": { type: "boolean" },
       "vnc": { type: "boolean" },
+      "feature-flags": { type: "string", multiple: true },
       "user-data": { type: "string" },
       "authorized-user": { type: "string", multiple: true },
       "authorized-org": { type: "string", multiple: true },
@@ -1195,12 +1196,13 @@ async function main() {
     detached: !!args["detached"],
     bootstrap: args["no-bootstrap"] !== true,
     ci: !!args["ci"],
+    features: args["feature"],
     rdp: !!args["rdp"] || !!args["vnc"],
     sshKeys,
     userData: args["user-data"] ? readFile(args["user-data"]) : undefined,
   };
 
-  const { detached, bootstrap, ci, os, arch, distro, release } = options;
+  const { detached, bootstrap, ci, os, arch, distro, release, features } = options;
   const name = distro ? `${os}-${arch}-${distro}-${release}` : `${os}-${arch}-${release}`;
 
   let bootstrapPath, agentPath;
@@ -1310,6 +1312,9 @@ async function main() {
       } else {
         const remotePath = "/tmp/bootstrap.sh";
         const args = ci ? ["--ci"] : [];
+        for (const feature of features || []) {
+          args.push(`--feature=${feature}`);
+        }
         await startGroup("Running bootstrap...", async () => {
           await machine.upload(bootstrapPath, remotePath);
           await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });

@@ -96,7 +96,7 @@ function getTargetLabel(target) {
  * @property {Distro} [distro]
  * @property {string} release
  * @property {Tier} [tier]
- * @property {boolean} [nix]
+ * @property {string[]} [features]
  */
 
 /**
@@ -105,9 +105,9 @@ function getTargetLabel(target) {
 const buildPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14" },
   { os: "darwin", arch: "x64", release: "14" },
-  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "18.04", nix: true },
-  { os: "linux", arch: "x64", distro: "ubuntu", release: "18.04", nix: true },
-  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "18.04", nix: true },
+  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "18.04", features: ["gcc-13"] },
+  { os: "linux", arch: "x64", distro: "ubuntu", release: "18.04", features: ["gcc-13"] },
+  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "18.04", features: ["gcc-13"] },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
@@ -567,27 +567,24 @@ function getTestBunStep(platform, options = {}) {
  * @returns {Step}
  */
 function getBuildImageStep(platform, dryRun) {
-  const { os, arch, distro, release, nix } = platform;
+  const { os, arch, distro, release, features } = platform;
   const action = dryRun ? "create-image" : "publish-image";
 
   /** @type {string[]} */
-  let command;
-  if (nix) {
-    // TODO: move login into scripts/machine.mjs
-    command = ["node", "./scripts/create-nix-amis.mjs", `--release=${action}`, `--arch=${arch}`, "--cloud=aws"];
-  } else {
-    command = [
-      "node",
-      "./scripts/machine.mjs",
-      action,
-      `--os=${os}`,
-      `--arch=${arch}`,
-      distro && `--distro=${distro}`,
-      `--release=${release}`,
-      "--cloud=aws",
-      "--ci",
-      "--authorized-org=oven-sh",
-    ];
+  const command = [
+    "node",
+    "./scripts/machine.mjs",
+    action,
+    `--os=${os}`,
+    `--arch=${arch}`,
+    distro && `--distro=${distro}`,
+    `--release=${release}`,
+    "--cloud=aws",
+    "--ci",
+    "--authorized-org=oven-sh",
+  ];
+  for (const feature of features || []) {
+    command.push(`--feature=${feature}`);
   }
 
   return {

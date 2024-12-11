@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 7
+# Version: 8
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -11,15 +11,17 @@
 # increment the version comment to indicate that a new image should be built.
 # Otherwise, the existing image will be retroactively updated.
 
-pid=$$
+pid="$$"
 
 print() {
 	echo "$@"
 }
 
 error() {
-	echo "error: $@" >&2
-	kill -s TERM "$pid"
+	print "error: $@" >&2
+	if ! [ "$$" = "$pid" ]; then
+		kill -s TERM "$pid"
+	fi
 	exit 1
 }
 
@@ -39,24 +41,44 @@ execute_sudo() {
 }
 
 execute_as_user() {
+	sh="$(require sh)"
+
 	if [ "$sudo" = "1" ] || [ "$can_sudo" = "1" ]; then
 		if [ -f "$(which sudo)" ]; then
-			execute sudo -H -n -u "$user" /bin/sh -c "$*"
+			execute sudo -n -u "$user" "$sh" -c "$*"
 		elif [ -f "$(which doas)" ]; then
-			execute doas -u "$user" /bin/sh -c "$*"
+			execute doas -u "$user" "$sh" -c "$*"
 		elif [ -f "$(which su)" ]; then
-			execute su -s /bin/sh "$user" -c "$*"
+			execute su -s "$sh" "$user" -c "$*"
 		else
-			execute /bin/sh -c "$*"
+			execute "$sh" -c "$*"
 		fi
 	else
-		execute /bin/sh -c "$*"
+		execute "$sh" -c "$*"
 	fi
 }
 
 grant_to_user() {
 	path="$1"
-	execute_sudo chown -R "$user:$group" "$path"
+	if ! [ -f "$path" ] && ! [ -d "$path" ]; then
+		error "Could not find file or directory: \"$path\""
+	fi
+
+	chown="$(require chown)"
+	execute_sudo "$chown" -R "$user:$group" "$path"
+	if ! [ "$user" = "$current_user" ] || ! [ "$group" = "$current_group" ]; then
+		execute_sudo "$chown" -R "$current_user:$current_group" "$path"
+	fi
+}
+
+grant_to_everyone() {
+	path="$1"
+	if ! [ -f "$path" ] && ! [ -d "$path" ]; then
+		error "Could not find file or directory: \"$path\""
+	fi
+
+	chmod="$(require chmod)"
+	execute_sudo "$chmod" 777 "$path"
 }
 
 which() {
@@ -68,15 +90,15 @@ require() {
 	if ! [ -f "$path" ]; then
 		error "Command \"$1\" is required, but is not installed."
 	fi
-	echo "$path"
+	print "$path"
 }
 
 fetch() {
-	curl=$(which curl)
+	curl="$(which curl)"
 	if [ -f "$curl" ]; then
 		execute "$curl" -fsSL "$1"
 	else
-		wget=$(which wget)
+		wget="$(which wget)"
 		if [ -f "$wget" ]; then
 			execute "$wget" -qO- "$1"
 		else
@@ -85,149 +107,115 @@ fetch() {
 	fi
 }
 
-
-install_gcc13_ubuntu18() {
-    if ! [ "$distro" = "ubuntu" ]; then
-        return
-    fi
-    if ! { [ "$release" = "18.04" ] && [ "$arch" = "x64" ] || [ "$release" = "20.04" ] && [ "$arch" = "aarch64" ]; }; then
-        return
-    fi
-
-    print "Installing GCC 13 toolchain for Ubuntu 18.04..."
-
-    # Add the Ubuntu Toolchain PPA
-    execute_sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-    execute_sudo apt-get update
-
-    # Install GCC 13 and related packages
-    install_packages \
-        gcc-13 \
-        g++-13 \
-        libgcc-13-dev \
-        libstdc++-13-dev \
-        libasan6 \
-        libubsan1 \
-        libatomic1 \
-        libtsan0 \
-        liblsan0 \
-        libgfortran5 \
-        libc6-dev
-
-    # Set up GCC 13 as the default compiler
-    execute_sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
-        --slave /usr/bin/g++ g++ /usr/bin/g++-13 \
-        --slave /usr/bin/gcc-ar gcc-ar /usr/bin/gcc-ar-13 \
-        --slave /usr/bin/gcc-nm gcc-nm /usr/bin/gcc-nm-13 \
-        --slave /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-13
-
-    # Get system triplet dynamically
-    triplet=$(gcc -dumpmachine | sed 's/-pc-/-/') # Remove -pc- if present
-
-    # Configure library paths for Ubuntu 18.04
-    execute_sudo mkdir -p "/usr/lib/gcc/${triplet}/13"
-    execute_sudo ln -sf "/usr/lib/${triplet}/libstdc++.so.6" "/usr/lib/gcc/${triplet}/13/"
-
-    # Update library paths configuration
-    execute_sudo sh -c "echo '/usr/lib/gcc/${triplet}/13' > /etc/ld.so.conf.d/gcc-13.conf"
-    execute_sudo sh -c "echo '/usr/lib/${triplet}' >> /etc/ld.so.conf.d/gcc-13.conf"
-    execute_sudo ldconfig
-
-    # Set environment variables for the toolchain
-    # append_to_profile "export LD_LIBRARY_PATH=\"/usr/lib/gcc/${triplet}/13:/usr/lib/${triplet}:\$LD_LIBRARY_PATH\""
-    # append_to_profile "export LIBRARY_PATH=\"/usr/lib/gcc/${triplet}/13:/usr/lib/${triplet}:\$LIBRARY_PATH\""
-    # append_to_profile "export CPLUS_INCLUDE_PATH=\"/usr/include/c++/13:/usr/include/${triplet}/c++/13:\$CPLUS_INCLUDE_PATH\""
-    # append_to_profile "export C_INCLUDE_PATH=\"/usr/lib/gcc/${triplet}/13/include:\$C_INCLUDE_PATH\""
-
-    append_to_profile "CC=clang-$(llvm_version)"
-    append_to_profile "CXX=clang++-$(llvm_version)"
-    append_to_profile "AR=llvm-ar-$(llvm_version)"
-    append_to_profile "RANLIB=llvm-ranlib-$(llvm_version)"
-    append_to_profile "LD=lld-$(llvm_version)"
-    append_to_profile "LTO_FLAG=\"-flto=full -fwhole-program-vtables -fforce-emit-vtables\""
-    append_to_profile "LD_LIBRARY_PATH=/usr/lib/gcc/${triplet}/13:/usr/lib/${triplet}:\$LD_LIBRARY_PATH"
-    append_to_profile "LIBRARY_PATH=/usr/lib/gcc/${triplet}/13:/usr/lib/${triplet}:\$LIBRARY_PATH"
-    append_to_profile "CPLUS_INCLUDE_PATH=/usr/include/c++/13:/usr/include/${triplet}/c++/13:\$CPLUS_INCLUDE_PATH"
-    append_to_profile "C_INCLUDE_PATH=/usr/lib/gcc/${triplet}/13/include:\$C_INCLUDE_PATH"
-    append_to_profile "DEFAULT_CFLAGS=\"-mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1\""
-    append_to_profile "CFLAGS=\"\$DEFAULT_CFLAGS \$CFLAGS -stdlib=libstdc++\""
-    append_to_profile "CXXFLAGS=\"\$DEFAULT_CFLAGS \$CXXFLAGS -stdlib=libstdc++\""
-    append_to_profile "LDFLAGS=\"-fuse-ld=lld -L/usr/lib/gcc/x86_64-linux-gnu/13 -L/usr/lib/x86_64-linux-gnu\""
-
+compare_version() {
+	if [ "$1" = "$2" ]; then
+		print "0"
+	elif [ "$1" = "$(echo -e "$1\n$2" | sort -V | head -n1)" ]; then
+		print "-1"
+	else
+		print "1"
+	fi
 }
 
-download_file() {
-	url="$1"
-	filename="${2:-$(basename "$url")}"
-	tmp="$(execute mktemp -d)"
-	execute chmod 755 "$tmp"
+create_directory() {
+	path="$1"
+	path_dir="$path"
+	while ! [ -d "$path_dir" ]; do
+		path_dir="$(dirname "$path_dir")"
+	done
 
-	path="$tmp/$filename"
-	fetch "$url" >"$path"
-	execute chmod 644 "$path"
+	path_needs_sudo="0"
+	if ! [ -r "$path_dir" ] || ! [ -w "$path_dir" ]; then
+		path_needs_sudo="1"
+	fi
 
+	mkdir="$(require mkdir)"
+	if [ "$path_needs_sudo" = "1" ]; then
+		execute_sudo "$mkdir" -p "$path"
+	else
+		execute "$mkdir" -p "$path"
+	fi
+
+	grant_to_user "$path"
+}
+
+create_tmp_directory() {
+	mktemp="$(require mktemp)"
+	path="$(execute "$mktemp" -d)"
+	grant_to_everyone "$path"	
 	print "$path"
 }
 
-compare_version() {
-	if [ "$1" = "$2" ]; then
-		echo "0"
-	elif [ "$1" = "$(echo -e "$1\n$2" | sort -V | head -n1)" ]; then
-		echo "-1"
-	else
-		echo "1"
+create_file() {
+	path="$1"
+	path_dir="$(dirname "$path")"
+	if ! [ -d "$path_dir" ]; then
+		create_directory "$path_dir"
 	fi
+
+	path_needs_sudo="0"
+	if ! [ -r "$path" ] || ! [ -w "$path" ]; then
+		path_needs_sudo="1"
+	fi
+
+	if [ "$path_needs_sudo" = "1" ]; then
+		execute_sudo touch "$path"
+	else
+		execute touch "$path"
+	fi
+
+	content="$2"
+	if [ -n "$content" ]; then
+		append_file "$path" "$content"
+	fi
+
+	grant_to_user "$path"
 }
 
-append_to_file() {
-	file="$1"
-	content="$2"
-
-	file_needs_sudo="0"
-	if [ -f "$file" ]; then
-		if ! [ -r "$file" ] || ! [ -w "$file" ]; then
-			file_needs_sudo="1"
-		fi
-	else
-		execute_as_user mkdir -p "$(dirname "$file")"
-		execute_as_user touch "$file"
+append_file() {
+	path="$1"
+	if ! [ -f "$path" ]; then
+		create_file "$path"
 	fi
 
-	echo "$content" | while read -r line; do
-		if ! grep -q "$line" "$file"; then
-			if [ "$file_needs_sudo" = "1" ]; then
-				execute_sudo sh -c "echo '$line' >> '$file'"
+	path_needs_sudo="0"
+	if ! [ -r "$path" ] || ! [ -w "$path" ]; then
+		path_needs_sudo="1"
+	fi
+
+	content="$2"
+	print "$content" | while read -r line; do
+		if ! grep -q "$line" "$path"; then
+		  sh="$(require sh)"
+			if [ "$path_needs_sudo" = "1" ]; then
+				execute_sudo "$sh" -c "echo '$line' >> '$path'"
 			else
-				echo "$line" >>"$file"
+				execute "$sh" -c "echo '$line' >> '$path'"
 			fi
 		fi
 	done
 }
 
-append_to_file_sudo() {
-	file="$1"
-	content="$2"
+download_file() {
+	file_url="$1"
+	file_tmp_dir="$(create_tmp_directory)"
+	file_tmp_path="$file_tmp_dir/$(basename "$file_url")"
 
-	if ! [ -f "$file" ]; then
-		execute_sudo mkdir -p "$(dirname "$file")"
-		execute_sudo touch "$file"
-	fi
-
-	echo "$content" | while read -r line; do
-		if ! grep -q "$line" "$file"; then
-			echo "$line" | execute_sudo tee "$file" >/dev/null
-		fi
-	done
+	fetch "$file_url" >"$file_tmp_path"
+	grant_to_everyone "$file_tmp_path"
+	
+	print "$file_tmp_path"
 }
 
 append_to_profile() {
 	content="$1"
-	profiles=".profile"
+	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
 	for profile in $profiles; do
-		file="$home/$profile"
-		if [ "$ci" = "1" ] || [ -f "$file" ]; then
-			append_to_file "$file" "$content"
-		fi
+		for profile_path in "$current_home/$profile" "$home/$profile"; do
+			if [ "$ci" = "1" ] || [ -f "$profile_path" ]; then
+				append_file "$profile_path" "$content"
+			fi
+		done
 	done
 }
 
@@ -238,7 +226,7 @@ append_to_path() {
 	fi
 
 	append_to_profile "export PATH=\"$path:\$PATH\""
-	export PATH="$path:$PATH"
+	# export PATH="$path:$PATH"
 }
 
 move_to_bin() {
@@ -261,19 +249,22 @@ move_to_bin() {
 check_features() {
 	print "Checking features..."
 
-	case "$CI" in
-	true | 1)
-		ci=1
-		print "CI: enabled"
-		;;
-	esac
-
-	case "$@" in
-	*--ci*)
-		ci=1
-		print "CI: enabled"
-		;;
-	esac
+	for arg in "$@"; do
+		case "$arg" in
+		*--ci*)
+			ci=1
+			print "CI: enabled"
+			;;
+		*--osxcross*)
+			osxcross=1
+			print "Cross-compiling to macOS: enabled"
+			;;
+		*--gcc-13*)
+			gcc_version="13"
+			print "GCC 13: enabled"
+			;;
+		esac
+	done
 }
 
 check_operating_system() {
@@ -282,17 +273,29 @@ check_operating_system() {
 
 	os="$("$uname" -s)"
 	case "$os" in
-	Linux*) os="linux" ;;
-	Darwin*) os="darwin" ;;
-	*) error "Unsupported operating system: $os" ;;
+	Linux*)
+		os="linux"
+		;;
+	Darwin*)
+		os="darwin"
+		;;
+	*)
+		error "Unsupported operating system: $os"
+		;;
 	esac
 	print "Operating System: $os"
 
 	arch="$("$uname" -m)"
 	case "$arch" in
-	x86_64 | x64 | amd64) arch="x64" ;;
-	aarch64 | arm64) arch="aarch64" ;;
-	*) error "Unsupported architecture: $arch" ;;
+	x86_64 | x64 | amd64)
+		arch="x64"
+		;;
+	aarch64 | arm64)
+		arch="aarch64"
+		;;
+	*)
+		error "Unsupported architecture: $arch"
+		;;
 	esac
 	print "Architecture: $arch"
 
@@ -306,7 +309,7 @@ check_operating_system() {
 			abi="musl"
 			alpine="$(cat /etc/alpine-release)"
 			if [ "$alpine" ~ "_" ]; then
-				release="$(echo "$alpine" | cut -d_ -f1)-edge"
+				release="$(print "$alpine" | cut -d_ -f1)-edge"
 			else
 				release="$alpine"
 			fi
@@ -326,6 +329,7 @@ check_operating_system() {
 			distro="$("$sw_vers" -productName)"
 			release="$("$sw_vers" -productVersion)"
 		fi
+	
 		case "$arch" in
 		x64)
 			sysctl="$(which sysctl)"
@@ -348,7 +352,7 @@ check_operating_system() {
 		ldd="$(which ldd)"
 		if [ -f "$ldd" ]; then
 			ldd_version="$($ldd --version 2>&1)"
-			abi_version="$(echo "$ldd_version" | grep -o -E '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1)"
+			abi_version="$(print "$ldd_version" | grep -o -E '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1)"
 			case "$ldd_version" in
 			*musl*)
 				abi="musl"
@@ -465,6 +469,10 @@ check_user() {
 		can_sudo=1
 		print "Sudo: can be used"
 	fi
+
+	current_user="$user"
+	current_group="$group"
+	current_home="$home"
 }
 
 check_ulimit() {
@@ -476,15 +484,12 @@ check_ulimit() {
 	systemd_conf="/etc/systemd/system.conf"
 	if [ -f "$systemd_conf" ]; then
 		limits_conf="/etc/security/limits.d/99-unlimited.conf"
-		if ! [ -f "$limits_conf" ]; then
-			execute_sudo mkdir -p "$(dirname "$limits_conf")"
-			execute_sudo touch "$limits_conf"
-		fi
+		create_file "$limits_conf"
 	fi
 
 	limits="core data fsize memlock nofile rss stack cpu nproc as locks sigpending msgqueue"
 	for limit in $limits; do
-		limit_upper="$(echo "$limit" | tr '[:lower:]' '[:upper:]')"
+		limit_upper="$(print "$limit" | tr '[:lower:]' '[:upper:]')"
 
 		limit_value="unlimited"
 		case "$limit" in
@@ -496,13 +501,13 @@ check_ulimit() {
 		if [ -f "$limits_conf" ]; then
 			limit_users="root *"
 			for limit_user in $limit_users; do
-				append_to_file "$limits_conf" "$limit_user soft $limit $limit_value"
-				append_to_file "$limits_conf" "$limit_user hard $limit $limit_value"
+				append_file "$limits_conf" "$limit_user soft $limit $limit_value"
+				append_file "$limits_conf" "$limit_user hard $limit $limit_value"
 			done
 		fi
 
 		if [ -f "$systemd_conf" ]; then
-			append_to_file "$systemd_conf" "DefaultLimit$limit_upper=$limit_value"
+			append_file "$systemd_conf" "DefaultLimit$limit_upper=$limit_value"
 		fi
 	done
 
@@ -519,13 +524,13 @@ check_ulimit() {
 			esac
 			rc_ulimit="$rc_ulimit -$limit_flag $limit_value"
 		done
-		append_to_file "$rc_conf" "rc_ulimit=\"$rc_ulimit\""
+		append_file "$rc_conf" "rc_ulimit=\"$rc_ulimit\""
 	fi
 
 	pam_confs="/etc/pam.d/common-session /etc/pam.d/common-session-noninteractive"
 	for pam_conf in $pam_confs; do
 		if [ -f "$pam_conf" ]; then
-			append_to_file "$pam_conf" "session optional pam_limits.so"
+			append_file "$pam_conf" "session optional pam_limits.so"
 		fi
 	done
 
@@ -623,30 +628,12 @@ install_packages() {
 	esac
 }
 
-clean_packagemanager() {
-	case "$pm" in
-	apt)
-		package_manager autoremove
-		package_manager clean
-		;;
-	apk)
-		package_manager cache clean
-		;;
-	brew)
-		package_manager cleanup
-		;;
-	dnf)
-		package_manager clean all
-		;;
-	esac
-}
-
 install_brew() {
 	print "Installing Homebrew..."
 
 	bash="$(require bash)"
 	script=$(download_file "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh")
-	NONINTERACTIVE=1 execute_as_user "$bash" "$script"
+	execute_as_user "$bash" -c "NONINTERACTIVE=1 $script"
 
 	case "$arch" in
 	x64)
@@ -712,9 +699,9 @@ install_common_software() {
 
 	install_rosetta
 	install_nodejs
+	install_bun
 	install_tailscale
 	install_buildkite
-	install_bun
 }
 
 nodejs_version_exact() {
@@ -727,7 +714,7 @@ nodejs_version_exact() {
 }
 
 nodejs_version() {
-	echo "$(nodejs_version_exact)" | cut -d. -f1
+	print "$(nodejs_version_exact)" | cut -d. -f1
 }
 
 install_nodejs() {
@@ -763,14 +750,21 @@ install_nodejs() {
 }
 
 install_nodejs_headers() {
-	headers_tar="$(download_file "https://nodejs.org/download/release/v$(nodejs_version_exact)/node-v$(nodejs_version_exact)-headers.tar.gz")"
-	headers_dir="$(dirname "$headers_tar")"
-	execute tar -xzf "$headers_tar" -C "$headers_dir"
-	headers_include="$headers_dir/node-v$(nodejs_version_exact)/include"
-	execute_sudo cp -R "$headers_include/" "/usr"
+	nodejs_headers_tar="$(download_file "https://nodejs.org/download/release/v$(nodejs_version_exact)/node-v$(nodejs_version_exact)-headers.tar.gz")"
+	nodejs_headers_dir="$(dirname "$nodejs_headers_tar")"
+	execute tar -xzf "$nodejs_headers_tar" -C "$nodejs_headers_dir"
+
+	nodejs_headers_include="$nodejs_headers_dir/node-v$(nodejs_version_exact)/include"
+	execute_sudo cp -R "$nodejs_headers_include/" "/usr"
+}
+
+bun_version_exact() {
+	print "1.1.38"
 }
 
 install_bun() {
+	install_packages unzip
+
 	case "$pm" in
 	apk)
 		install_packages \
@@ -779,44 +773,28 @@ install_bun() {
 		;;
 	esac
 
-	bash="$(require bash)"
-	script=$(download_file "https://bun.sh/install")
-	# export BUN_INSTALL="$home/.bun"
-	# rm -rf "$BUN_INSTALL"
-	# mkdir -p "$BUN_INSTALL"
-	# chown -R "$user:$group" "$BUN_INSTALL"
-
-	version="${1:-"latest"}"
-	case "$version" in
-	latest)
-		execute_as_user "$bash" "$script"
+	case "$abi" in
+	musl)
+		bun_triplet="bun-$os-$arch-$abi"
 		;;
 	*)
-		execute_as_user "$bash" "$script" -s "$version"
+		bun_triplet="bun-$os-$arch"
 		;;
 	esac
 
-	move_to_bin "$home/.bun/bin/bun"
+	unzip="$(require unzip)"
+	bun_download_url="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/bun-v$(bun_version_exact)/$bun_triplet.zip"
+	bun_zip="$(download_file "$bun_download_url")"
+	bun_tmpdir="$(dirname "$bun_zip")"
+	execute "$unzip" -o "$bun_zip" -d "$bun_tmpdir"
 
-	# bunabi=""
-	# if [ "$abi" = "musl" ]; then
-	# 	bunabi="-musl"
-	# fi
-	# buntarget="bun-${os}-${arch}${bunabi}"
-	# sudo chown -R $user:$group $home
-	# curl -LO "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/${buntarget}.zip" --retry 5
-	# unzip ${buntarget}.zip
-	# sudo mkdir -p "$home/.bun/bin"
-	# sudo mv ${buntarget}/bun "$home/.bun/bin"
-	# sudo chmod +x $home/.bun/bin/bun
-	# sudo chown -R $user:$group $home/.bun
-	# # echo "export PATH=\$PATH:$home/.bun/bin" | sudo tee $home/.profile
-	# append_to_path "$home/.profile"
-	# export PATH=$PATH:$home/.bun/bin
+	bun_path="/opt/bun"
+	create_directory "$bun_path/bin"
+	execute mv "$bun_tmpdir/$bun_triplet/bun" "$bun_path/bin/bun"
+	execute ln -sf "$bun_path/bin/bun" "$bun_path/bin/bunx"
 
-	bun_path="$(which bun)"
-	bunx_path="$(dirname "$bun_path")/bunx"
-	execute_sudo ln -sf "$bun_path" "$bunx_path"
+	append_to_path "$bun_path/bin"
+	append_to_profile "export BUN_INSTALL=$bun_path"
 }
 
 install_cmake() {
@@ -858,17 +836,6 @@ install_rosetta() {
 install_build_essentials() {
 	case "$pm" in
 	apt)
-
-    # Install modern CMake for Ubuntu 18.04
-		if [ "$distro" = "ubuntu" ]; then
-				# Add Kitware's CMake repository
-				wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | execute_sudo tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null
-				execute_sudo apt-add-repository "deb https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main"
-				execute_sudo apt-get update
-
-				append_to_profile "export DEBIAN_FRONTEND=noninteractive"
-		fi
-
 		install_packages \
 			build-essential \
 			ninja-build \
@@ -918,11 +885,10 @@ install_build_essentials() {
 		ruby \
 		perl
 
-	# Install GCC 13 specifically for Ubuntu 18.04
-	install_gcc13_ubuntu18
-
 	install_cmake
 	install_llvm
+	install_osxcross
+	install_gcc
 	install_ccache
 	install_rust
 	install_docker
@@ -933,7 +899,7 @@ llvm_version_exact() {
 }
 
 llvm_version() {
-	echo "$(llvm_version_exact)" | cut -d. -f1
+	print "$(llvm_version_exact)" | cut -d. -f1
 }
 
 install_llvm() {
@@ -941,7 +907,7 @@ install_llvm() {
 	apt)
 		bash="$(require bash)"
 		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
-		execute_sudo "$bash" "$llvm_script" "$(llvm_version)"
+		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"
@@ -957,6 +923,55 @@ install_llvm() {
 			--repository "http://dl-cdn.alpinelinux.org/alpine/edge/community"
 		;;
 	esac
+}
+
+install_gcc() {
+	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ] || [ -z "$gcc_version" ]; then
+		return
+	fi
+
+	# Taken from WebKit's Dockerfile.
+	# https://github.com/oven-sh/WebKit/blob/816a3c02e0f8b53f8eec06b5ed911192589b51e2/Dockerfile
+
+	execute_sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
+	execute_sudo apt update -y
+	install_packages \
+		"gcc-$gcc_version" \
+		"g++-$gcc_version" \
+		"libgcc-$gcc_version-dev" \ 
+		"libstdc++-$gcc_version-dev" \
+		libasan6 \
+		libubsan1 \
+		libatomic1 \
+		libtsan0 \
+		liblsan0 \
+		libgfortran5 \
+		libc6-dev
+
+	execute_sudo update-alternatives \
+		--install /usr/bin/gcc gcc "/usr/bin/gcc-$gcc_version" 130 \
+		--slave /usr/bin/g++ g++ "/usr/bin/g++-$gcc_version" \
+		--slave /usr/bin/gcc-ar gcc-ar "/usr/bin/gcc-ar-$gcc_version" \
+		--slave /usr/bin/gcc-nm gcc-nm "/usr/bin/gcc-nm-$gcc_version" \
+		--slave /usr/bin/gcc-ranlib gcc-ranlib "/usr/bin/gcc-ranlib-$gcc_version"
+
+	case "$arch" in
+	x64)
+		arch_path="x86_64-linux-gnu"
+		;;
+	aarch64)
+		arch_path="aarch64-linux-gnu"
+		;;
+	esac
+
+	gcc_path="/usr/lib/gcc/$arch_path/$gcc_version"
+	create_directory "$gcc_path"
+	execute_sudo ln -sf /usr/lib/$arch_path/libstdc++.so.6 "$gcc_path/libstdc++.so.6"
+
+	ld_conf_path="/etc/ld.so.conf.d/gcc-$gcc_version.conf"
+	append_file "$ld_conf_path" "$gcc_path"
+	append_file "$ld_conf_path" "/usr/lib/$arch_path"
+	execute_sudo ldconfig
 }
 
 install_ccache() {
@@ -975,9 +990,23 @@ install_rust() {
 			cargo
 		;;
 	*)
+		rust_home="/opt/rust"
+		create_directory "$rust_home"
+		append_to_profile "export RUSTUP_HOME=$rust_home"
+		append_to_profile "export CARGO_HOME=$rust_home"
+
 		sh="$(require sh)"
-		script=$(download_file "https://sh.rustup.rs")
-		execute_as_user "$sh" "$script" -y
+		rustup_script=$(download_file "https://sh.rustup.rs")
+		execute "$sh" -c "RUSTUP_HOME=$rust_home CARGO_HOME=$rust_home $rustup_script -y --no-modify-path"
+		append_to_path "$rust_home/bin"
+		;;
+	esac
+
+	case "$osxcross" in
+	1)
+		rustup="$(require rustup)"
+		execute_as_user "$rustup" target add aarch64-apple-darwin
+		execute_as_user "$rustup" target add x86_64-apple-darwin
 		;;
 	esac
 }
@@ -1018,6 +1047,46 @@ install_docker() {
 			execute_sudo "$usermod" -aG docker "$user"
 		fi
 	fi
+}
+
+macos_sdk_version() {
+	# https://github.com/alexey-lysiuk/macos-sdk/releases
+	print "13.3"
+}
+
+install_osxcross() {
+	if ! [ "$os" = "linux" ] || ! [ "$osxcross" = "1" ]; then
+		return
+	fi
+
+	install_packages \
+		libssl-dev \
+		lzma-dev \
+		libxml2-dev \
+		zlib1g-dev \
+		bzip2 \
+		cpio
+
+	osxcross_path="/opt/osxcross"
+	create_directory "$osxcross_path"
+
+	osxcross_commit="29fe6dd35522073c9df5800f8cd1feb4b9a993a8"
+	osxcross_tar="$(download_file "https://github.com/tpoechtrager/osxcross/archive/$osxcross_commit.tar.gz")"
+	execute tar -xzf "$osxcross_tar" -C "$osxcross_path"
+
+	osxcross_build_path="$osxcross_path/build"
+	execute mv "$osxcross_path/osxcross-$osxcross_commit" "$osxcross_build_path"
+
+	osxcross_sdk_tar="$(download_file "https://github.com/alexey-lysiuk/macos-sdk/releases/download/$(macos_sdk_version)/MacOSX$(macos_sdk_version).tar.xz")"
+	execute mv "$osxcross_sdk_tar" "$osxcross_build_path/tarballs/MacOSX$(macos_sdk_version).sdk.tar.xz"
+
+	bash="$(require bash)"
+	execute_sudo ln -sf "$(which clang-$(llvm_version))" /usr/bin/clang
+	execute_sudo ln -sf "$(which clang++-$(llvm_version))" /usr/bin/clang++
+	execute_sudo "$bash" -c "UNATTENDED=1 TARGET_DIR='$osxcross_path' $osxcross_build_path/build.sh"
+
+	execute_sudo rm -rf "$osxcross_build_path"
+	grant_to_user "$osxcross_path"
 }
 
 install_tailscale() {
@@ -1085,14 +1154,12 @@ create_buildkite_user() {
 
 	buildkite_paths="$home /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /var/run/buildkite-agent/buildkite-agent.sock"
 	for path in $buildkite_paths; do
-		execute_sudo mkdir -p "$path"
-		execute_sudo chown -R "$user:$group" "$path"
+		create_directory "$path"
 	done
 
-	buildkite_files="/var/run/buildkite-agent/buildkite-agent.pid /var/run/buildkite-agent/.profile"
+	buildkite_files="/var/run/buildkite-agent/buildkite-agent.pid"
 	for file in $buildkite_files; do
-		execute_sudo touch "$file"
-		execute_sudo chown "$user:$group" "$file"
+		create_file "$file"
 	done
 }
 
@@ -1102,27 +1169,22 @@ install_buildkite() {
 	fi
 
 	buildkite_version="3.87.0"
-	case "$os-$arch" in
-	linux-aarch64)
-		buildkite_filename="buildkite-agent-linux-arm64-$buildkite_version.tar.gz"
+	case "$arch" in
+	aarch64)
+		buildkite_arch="arm64"
 		;;
-	linux-x64)
-		buildkite_filename="buildkite-agent-linux-amd64-$buildkite_version.tar.gz"
-		;;
-	darwin-aarch64)
-		buildkite_filename="buildkite-agent-darwin-arm64-$buildkite_version.tar.gz"
-		;;
-	darwin-x64)
-		buildkite_filename="buildkite-agent-darwin-amd64-$buildkite_version.tar.gz"
+	x64)
+		buildkite_arch="amd64"
 		;;
 	esac
-	buildkite_url="https://github.com/buildkite/agent/releases/download/v$buildkite_version/$buildkite_filename"
-	buildkite_filepath="$(download_file "$buildkite_url" "$buildkite_filename")"
-	buildkite_tmpdir="$(dirname "$buildkite_filepath")"
 
-	execute tar -xzf "$buildkite_filepath" -C "$buildkite_tmpdir"
+	buildkite_filename="buildkite-agent-$os-$buildkite_arch-$buildkite_version.tar.gz"
+	buildkite_url="https://github.com/buildkite/agent/releases/download/v$buildkite_version/$buildkite_filename"
+	buildkite_tar="$(download_file "$buildkite_url")"
+	buildkite_tmpdir="$(dirname "$buildkite_tar")"
+
+	execute tar -xzf "$buildkite_tar" -C "$buildkite_tmpdir"
 	move_to_bin "$buildkite_tmpdir/buildkite-agent"
-	execute rm -rf "$buildkite_tmpdir"
 }
 
 install_chromium() {
@@ -1213,13 +1275,23 @@ install_chromium() {
 	esac
 }
 
-shrink_filesystem() {
-	clean_packagemanager
-}
+clean_system() {
+	if ! [ "$ci" = "1" ]; then
+		return
+	fi
 
-zero_free_space() {
-	sudo dd if=/dev/zero of=/zero bs=1M || true
-	execute_sudo rm -f /zero
+	print "Cleaning system..."
+
+	tmp_paths="/tmp /var/tmp"
+	for path in $tmp_paths; do
+		execute_sudo rm -rf "$path"/*
+	done
+
+	case "$pm" in
+	apt | apk | yum | dnf | brew)
+		package_manager clean
+		;;
+	esac
 }
 
 main() {
@@ -1233,8 +1305,7 @@ main() {
 	install_common_software
 	install_build_essentials
 	install_chromium
-	shrink_filesystem
-	zero_free_space
+	clean_system
 }
 
 main "$@"

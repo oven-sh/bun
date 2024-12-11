@@ -62,6 +62,7 @@ option(BUILD_TCC "Build the tcc compiler" ON)
 
 if(BUILD_C2STR)
   if(CMAKE_CROSSCOMPILING)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/c2str)
     add_custom_target(c2str.exe
       COMMAND
         ${CMAKE_COMMAND}

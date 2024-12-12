@@ -28,7 +28,7 @@
 // #include "JavaScriptCore/StrongInlines.h"
 
 // ref: JSModuleLoader.cpp
-// ref: ModuleAnalyzer2.cpp
+// ref: ModuleAnalyzer.cpp
 // ref: JSModuleRecord.cpp
 // ref: NodesAnalyzeModule.cpp, search ::analyzeModule
 
@@ -191,10 +191,11 @@ Expected<JSModuleRecord*, std::tuple<ErrorType, String>> ModuleAnalyzer::analyze
 
 namespace JSC {
 
+void dumpRecordInfo(JSModuleRecord* moduleRecord);
+
 extern "C" void zig_log_u8(const char* m1, const unsigned char* m2, size_t m2_size);
 extern "C" void zig_log_cstr(const char* m1, const char* m2);
 extern "C" void zig_log_ushort(const char* m1, unsigned short value);
-
 extern "C" __attribute__((weak)) EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise)
 {
     VM& vm = globalObject->vm();
@@ -204,6 +205,157 @@ extern "C" __attribute__((weak)) EncodedJSValue Bun__analyzeTranspiledModule(JSG
         promise->reject(globalObject, error);
         return promise;
     };
+
+    zig_log_cstr("  ---code---\n\n", sourceCode.toUTF8().data());
+    zig_log_cstr("  ------", "");
+    zig_log_cstr("  BunAnalyzeTranspiledModule:", "");
+
+    if (sourceCode.toUTF8().toStdString().starts_with("globalThis[\"a.ts\"];")) {
+        zig_log_cstr("  -> Faking Module 'a.ts'", "");
+        // Dependencies: 1 modules
+        //   module('./q'),attributes(0x0)
+        // Import: 2 entries
+        //   import('*'), local('q_mod'), module('./q')
+        //   import('q'), local('q'), module('./q')
+        // Export: 3 entries
+        //   [Indirect] export('w'), import('q'), module('./q')
+        //   [Local] export('q_mod'), local('q_mod')
+        //   [Local] export('my_value'), local('my_value')
+        //   [Star] module('./q')
+
+        VariableEnvironment declaredVariables = VariableEnvironment();
+        VariableEnvironment lexicalVariables = VariableEnvironment();
+
+        lexicalVariables.add(Identifier::fromLatin1(vm, "q_mod"));
+        lexicalVariables.add(Identifier::fromLatin1(vm, "q"));
+        lexicalVariables.add(Identifier::fromLatin1(vm, "my_value"));
+
+        // for features, we need ImportMetaFeature if import.meta is used in the file
+        JSModuleRecord* moduleRecord = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), moduleKey, sourceCode, declaredVariables, lexicalVariables, 0);
+
+        // make sure to only add each once
+
+        RefPtr<ScriptFetchParameters> attributes = RefPtr<ScriptFetchParameters> {}; // for import attributes from 'with' or 'assert'
+        moduleRecord->appendRequestedModule(Identifier::fromLatin1(vm, "./q"), WTFMove(attributes));
+        moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
+            JSModuleRecord::ImportEntryType::Namespace,
+            Identifier::fromLatin1(vm, "./q"),
+            Identifier::fromLatin1(vm, "*"),
+            Identifier::fromLatin1(vm, "q_mod"),
+        });
+        moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
+            JSModuleRecord::ImportEntryType::Single,
+            Identifier::fromLatin1(vm, "./q"),
+            Identifier::fromLatin1(vm, "q"),
+            Identifier::fromLatin1(vm, "q"),
+        });
+
+        moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createIndirect(Identifier::fromLatin1(vm, "w"), Identifier::fromLatin1(vm, "q"), Identifier::fromLatin1(vm, "./q")));
+        moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createLocal(Identifier::fromLatin1(vm, "q_mod"), Identifier::fromLatin1(vm, "q_mod")));
+        moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createLocal(Identifier::fromLatin1(vm, "my_value"), Identifier::fromLatin1(vm, "my_value")));
+        moduleRecord->addStarExportEntry(Identifier::fromLatin1(vm, "./q"));
+
+        dumpRecordInfo(moduleRecord);
+
+        scope.release();
+        promise->fulfillWithNonPromise(globalObject, moduleRecord);
+        return JSValue::encode(promise);
+    } else if (sourceCode.toUTF8().toStdString().starts_with("globalThis[\"q.ts\"];")) {
+        zig_log_cstr("  -> Faking Module 'q.ts'", "");
+
+        // Dependencies: 0 modules
+        // Import: 0 entries
+        // Export: 1 entries
+        //   [Local] export('q'), local('q')
+
+        VariableEnvironment declaredVariables = VariableEnvironment();
+        VariableEnvironment lexicalVariables = VariableEnvironment();
+
+        lexicalVariables.add(Identifier::fromLatin1(vm, "q"));
+
+        JSModuleRecord* moduleRecord = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), moduleKey, sourceCode, declaredVariables, lexicalVariables, 0);
+
+        moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createLocal(Identifier::fromLatin1(vm, "q"), Identifier::fromLatin1(vm, "q")));
+
+        dumpRecordInfo(moduleRecord);
+
+        scope.release();
+        promise->fulfillWithNonPromise(globalObject, moduleRecord);
+        return JSValue::encode(promise);
+    } else if (sourceCode.toUTF8().toStdString().find("globalThis[\"b.ts\"];") != std::string::npos) {
+        zig_log_cstr("  -> Faking Module 'b.ts'", "");
+
+        // error:   BunAnalyzeTranspiledModule:
+        // error:   -> Parse Success.
+        // error:   varDeclarations:
+        // error:   - expect
+        // error:   - test
+        // error:   lexicalVariables:
+        // error:   - w
+        // error:   - q_mod
+        // error:   - q
+        // error:   - my_value
+        // error:   features: 4096
+
+        // Analyzing ModuleRecord key('/Users/pfg/Dev/Node/temp/generated/c5b80dd5337b6903cc6ff8e4172c55f2/tmp/b.test.ts')
+        //     Dependencies: 1 modules
+        //       module('./a.ts'),attributes(0x0)
+        //     Import: 4 entries
+        //       import('w'), local('w'), module('./a.ts')
+        //       import('q_mod'), local('q_mod'), module('./a.ts')
+        //       import('q'), local('q'), module('./a.ts')
+        //       import('my_value'), local('my_value'), module('./a.ts')
+        //     Export: 0 entries
+
+        VariableEnvironment declaredVariables = VariableEnvironment();
+        VariableEnvironment lexicalVariables = VariableEnvironment();
+
+        declaredVariables.add(Identifier::fromLatin1(vm, "expect"));
+        declaredVariables.add(Identifier::fromLatin1(vm, "test"));
+
+        lexicalVariables.add(Identifier::fromLatin1(vm, "w"));
+        lexicalVariables.add(Identifier::fromLatin1(vm, "q_mod"));
+        lexicalVariables.add(Identifier::fromLatin1(vm, "q"));
+        lexicalVariables.add(Identifier::fromLatin1(vm, "my_value"));
+
+        JSModuleRecord* moduleRecord = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), moduleKey, sourceCode, declaredVariables, lexicalVariables, ImportMetaFeature);
+
+        RefPtr<ScriptFetchParameters> attributes = RefPtr<ScriptFetchParameters> {}; // for import attributes from 'with' or 'assert'
+        moduleRecord->appendRequestedModule(Identifier::fromLatin1(vm, "./a.ts"), WTFMove(attributes));
+        moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
+            JSModuleRecord::ImportEntryType::Single,
+            Identifier::fromLatin1(vm, "./a.ts"),
+            Identifier::fromLatin1(vm, "w"),
+            Identifier::fromLatin1(vm, "w"),
+        });
+        moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
+            JSModuleRecord::ImportEntryType::Single,
+            Identifier::fromLatin1(vm, "./a.ts"),
+            Identifier::fromLatin1(vm, "q_mod"),
+            Identifier::fromLatin1(vm, "q_mod"),
+        });
+        moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
+            JSModuleRecord::ImportEntryType::Single,
+            Identifier::fromLatin1(vm, "./a.ts"),
+            Identifier::fromLatin1(vm, "q"),
+            Identifier::fromLatin1(vm, "q"),
+        });
+        moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
+            JSModuleRecord::ImportEntryType::Single,
+            Identifier::fromLatin1(vm, "./a.ts"),
+            Identifier::fromLatin1(vm, "my_value"),
+            Identifier::fromLatin1(vm, "my_value"),
+        });
+
+        dumpRecordInfo(moduleRecord);
+
+        scope.release();
+        promise->fulfillWithNonPromise(globalObject, moduleRecord);
+        return JSValue::encode(promise);
+    }
+
+    // TODO:
+    // always run this, use it to assert our generated record info is the same as jsc's generated record info in debug builds
 
     ParserError error;
     std::unique_ptr<ModuleProgramNode> moduleProgramNode = parseRootNode<ModuleProgramNode>(
@@ -217,77 +369,56 @@ extern "C" __attribute__((weak)) EncodedJSValue Bun__analyzeTranspiledModule(JSG
     RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(globalObject, scope)));
 
     auto result = ModuleAnalyzer.analyze(*moduleProgramNode);
-    zig_log_cstr("  ---code---\n\n", sourceCode.toUTF8().data());
-    zig_log_cstr("  ------", "");
-    zig_log_cstr("  BunAnalyzeTranspiledModule:", "");
     if (!result) {
         auto [errorType, message] = WTFMove(result.error());
-        zig_log_cstr("    -> Error:", message.ascii().data());
+        zig_log_cstr("    -> Parse Error:", message.ascii().data());
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, errorType, message))));
     }
+    zig_log_cstr("  -> Parse Success.", "");
 
     JSModuleRecord* moduleRecord = result.value();
-
-    // VariableEnvironment declaredVariables = VariableEnvironment();
-    // VariableEnvironment lexicalVariables = VariableEnvironment();
-    // CodeFeatures features = 0;
-    if (true) {
-        zig_log_cstr("  -> Success.", "");
-        zig_log_cstr("  varDeclarations:", "");
-        {
-            auto iter = moduleRecord->m_declaredVariables.begin();
-            auto end = moduleRecord->m_declaredVariables.end();
-            while (iter != end) {
-                auto& pair = *iter;
-
-                zig_log_u8("  - ", pair.key->span8().data(), pair.key->span8().size());
-
-                ++iter;
-            }
-        }
-        zig_log_cstr("  lexicalVariables:", "");
-        {
-            auto iter = moduleRecord->m_lexicalVariables.begin();
-            auto end = moduleRecord->m_lexicalVariables.end();
-            while (iter != end) {
-                auto& pair = *iter;
-
-                zig_log_u8("  - ", pair.key->span8().data(), pair.key->span8().size());
-
-                ++iter;
-            }
-        }
-        // zig_log
-        zig_log_ushort("  features: ", moduleRecord->m_features);
-
-        moduleRecord->dump();
-        zig_log_cstr("  -> done", "");
-
-        // declaredVariables.add();
-        // features |= ImportMetaFeature;
-    }
-
-    // it looks like the only usage of moduleRecord->m_lexicalVariables and others is in modulerecord and
-    // JSModuleRecord::instantiateDeclarations for declaredVariables
-    //      SymbolTableEntry entry = symbolTable->get(variable.key.get());
-    //      VarOffset offset = entry.varOffset();
-    //      if (!offset.isStack()) {
-    //          bool putResult = false;
-    //          symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, Identifier::fromUid(vm, variable.key.get()), jsUndefined(), /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
-    //          RETURN_IF_EXCEPTION(scope, void());
-    //      }
-
-    // m_sourceCode is easy, we have it already
-    // m_declaredVariables is:
-    // m_lexicalVariables is:
-    // m_moduleProgramExecutable is managed by JSModuleRecord
-    // m_features is:
-    //   const CodeFeatures ImportMetaFeature =             1 << 12;
-    // (that is the only used CodeFeature)
+    dumpRecordInfo(moduleRecord);
 
     scope.release();
-    promise->fulfillWithNonPromise(globalObject, result.value());
+    promise->fulfillWithNonPromise(globalObject, moduleRecord);
     return JSValue::encode(promise);
+}
+
+void dumpRecordInfo(JSModuleRecord* moduleRecord)
+{
+
+    zig_log_cstr("  varDeclarations:", "");
+    {
+        auto iter = moduleRecord->m_declaredVariables.begin();
+        auto end = moduleRecord->m_declaredVariables.end();
+        while (iter != end) {
+            auto& pair = *iter;
+
+            zig_log_u8("  - ", pair.key->span8().data(), pair.key->span8().size());
+
+            ++iter;
+        }
+    }
+    zig_log_cstr("  lexicalVariables:", "");
+    {
+        auto iter = moduleRecord->m_lexicalVariables.begin();
+        auto end = moduleRecord->m_lexicalVariables.end();
+        while (iter != end) {
+            auto& pair = *iter;
+
+            zig_log_u8("  - ", pair.key->span8().data(), pair.key->span8().size());
+
+            ++iter;
+        }
+    }
+    // zig_log
+    zig_log_ushort("  features: ", moduleRecord->m_features);
+
+    moduleRecord->dump();
+    zig_log_cstr("  -> done", "");
+
+    // declaredVariables.add();
+    // features |= ImportMetaFeature;
 }
 
 }

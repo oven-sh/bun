@@ -18,3 +18,12 @@ export fn zig_log_ushort(m1: [*:0]const u8, value: c_ushort) void {
 //     _ = sourceCode;
 //     @panic("TODO analyzeTranspiledModule");
 // }
+
+const ModuleInfo = struct {
+    // requested_modules
+    // imports
+    // exports
+    // declared_variables
+    // lexical_variables
+    // features
+};

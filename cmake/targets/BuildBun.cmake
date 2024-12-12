@@ -900,6 +900,7 @@ if(LINUX)
       -Wl,--wrap=fcntl64
     )
   endif()
+  endif()
 
   if(NOT ABI STREQUAL "musl")
     target_link_options(${bun} PUBLIC

@@ -4256,6 +4256,15 @@ pub const JSValue = enum(i64) {
 
         return buf[0..@as(usize, @intCast(count))];
     }
+    extern fn JSC__JSValue__DateNowISOString(*JSGlobalObject, f64) JSValue;
+    pub fn getDateNowISOString(globalObject: *JSC.JSGlobalObject, buf: *[28]u8) []const u8 {
+        const count = JSC__JSValue__DateNowISOString(globalObject, buf);
+        if (count < 0) {
+            return "";
+        }
+
+        return buf[0..@as(usize, @intCast(count))];
+    }
 
     /// Return the pointer to the wrapped object only if it is a direct instance of the type.
     /// If the object does not match the type, return null.
@@ -4315,6 +4324,7 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__dateInstanceFromNumber(*JSGlobalObject, f64) JSValue;
+
     pub fn fromDateNumber(globalObject: *JSGlobalObject, value: f64) JSValue {
         JSC.markBinding(@src());
         return JSC__JSValue__dateInstanceFromNumber(globalObject, value);

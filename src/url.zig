@@ -93,6 +93,10 @@ pub const URL = struct {
         return strings.eqlComptime(this.protocol, "https");
     }
 
+    pub inline fn isS3(this: *const URL) bool {
+        return strings.eqlComptime(this.protocol, "s3");
+    }
+
     pub inline fn isHTTP(this: *const URL) bool {
         return strings.eqlComptime(this.protocol, "http");
     }

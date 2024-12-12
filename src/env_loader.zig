@@ -17,6 +17,7 @@ const Fs = @import("./fs.zig");
 const URL = @import("./url.zig").URL;
 const Api = @import("./api/schema.zig").Api;
 const which = @import("./which.zig").which;
+const s3 = @import("./s3.zig");
 
 const DotEnvFileSuffix = enum {
     development,
@@ -44,6 +45,8 @@ pub const Loader = struct {
 
     did_load_process: bool = false,
     reject_unauthorized: ?bool = null,
+
+    aws_credentials: ?s3.AWSCredentials = null,
 
     pub fn iterator(this: *const Loader) Map.HashTable.Iterator {
         return this.map.iterator();
@@ -112,6 +115,40 @@ pub const Loader = struct {
         }
     }
 
+    pub fn getAWSCredentials(this: *Loader) s3.AWSCredentials {
+        if (this.aws_credentials) |credentials| {
+            return credentials;
+        }
+
+        var accessKeyId: []const u8 = "";
+        var secretAccessKey: []const u8 = "";
+        var region: []const u8 = "";
+
+        if (this.get("AWS_ACCESS_KEY_ID")) |access_key| {
+            accessKeyId = access_key;
+        } else if (this.get("S3_ACCESS_KEY_ID")) |access_key| {
+            accessKeyId = access_key;
+        }
+        if (this.get("AWS_SECRET_ACCESS_KEY")) |access_key| {
+            secretAccessKey = access_key;
+        } else if (this.get("S3_SECRET_ACCESS_KEY")) |access_key| {
+            secretAccessKey = access_key;
+        }
+
+        if (this.get("AWS_REGION")) |region_| {
+            region = region_;
+        } else if (this.get("S3_REGION")) |region_| {
+            region = region_;
+        }
+
+        this.aws_credentials = .{
+            .accessKeyId = accessKeyId,
+            .secretAccessKey = secretAccessKey,
+            .region = region,
+        };
+
+        return this.aws_credentials.?;
+    }
     /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` or `false`.
     ///
     /// **Prefer VirtualMachine.getTLSRejectUnauthorized()** for JavaScript, as individual workers could have different settings.

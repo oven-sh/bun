@@ -55,6 +55,7 @@ const Async = bun.Async;
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("../api/bun/x509.zig");
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
+const s3 = @import("../../s3.zig");
 
 pub const Response = struct {
     const ResponseMixin = BodyMixin(@This());
@@ -2182,7 +2183,7 @@ pub const Fetch = struct {
         }
 
         const url = ZigURL.parse(url_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory());
-        if (!url.isHTTP() and !url.isHTTPS()) {
+        if (!url.isHTTP() and !url.isHTTPS() and !url.isS3()) {
             bun.default_allocator.free(url.href);
             return globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
         }
@@ -3056,8 +3057,8 @@ pub const Fetch = struct {
         }
 
         if (url.protocol.len > 0) {
-            if (!(url.isHTTP() or url.isHTTPS())) {
-                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "protocol must be http: or https:", .{}, ctx);
+            if (!(url.isHTTP() or url.isHTTPS() or url.isS3())) {
+                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "protocol must be http:, https: or s3:", .{}, ctx);
                 is_error = true;
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
@@ -3173,6 +3174,103 @@ pub const Fetch = struct {
                 }
             }
         }
+        if (url.isS3()) {
+            // get ENV config
+            var credentials = globalThis.bunVM().bundler.env.getAWSCredentials();
+            // get s3 settings from options configuration
+            var accessKeyIdSlice: ?ZigString.Slice = null;
+            var secretAccessKeySlice: ?ZigString.Slice = null;
+            var regionSlice: ?ZigString.Slice = null;
+
+            defer {
+                // cleanup s3 options
+                if (accessKeyIdSlice) |slice| slice.deinit();
+                if (secretAccessKeySlice) |slice| slice.deinit();
+                if (regionSlice) |slice| slice.deinit();
+            }
+
+            if (options_object) |options| {
+                if (try options.getTruthyComptime(globalThis, "s3")) |s3_options| {
+                    if (s3_options.isObject()) {
+                        s3_options.ensureStillAlive();
+
+                        if (try s3_options.getTruthyComptime(globalThis, "accessKeyId")) |js_value| {
+                            if (js_value.isString()) {
+                                const str = bun.String.fromJS(js_value, globalThis);
+                                defer str.deref();
+                                if (str.tag != .Empty and str.tag != .Dead) {
+                                    accessKeyIdSlice = str.toUTF8(bun.default_allocator);
+                                    credentials.accessKeyId = accessKeyIdSlice.?.slice();
+                                }
+                            }
+                        }
+                        if (try s3_options.getTruthyComptime(globalThis, "secretAccessKey")) |js_value| {
+                            if (js_value.isString()) {
+                                const str = bun.String.fromJS(js_value, globalThis);
+                                defer str.deref();
+                                if (str.tag != .Empty and str.tag != .Dead) {
+                                    secretAccessKeySlice = str.toUTF8(bun.default_allocator);
+                                    credentials.secretAccessKey = secretAccessKeySlice.?.slice();
+                                }
+                            }
+                        }
+                        if (try s3_options.getTruthyComptime(globalThis, "region")) |js_value| {
+                            if (js_value.isString()) {
+                                const str = bun.String.fromJS(js_value, globalThis);
+                                defer str.deref();
+                                if (str.tag != .Empty and str.tag != .Dead) {
+                                    regionSlice = str.toUTF8(bun.default_allocator);
+                                    credentials.region = regionSlice.?.slice();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // TODO: should we generate the content hash? presigned never uses content-hash, maybe only if a extra option is passed to avoid the cost
+            var result = credentials.s3Request(url.hostname, url.path, method, null) catch |sign_err| {
+                switch (sign_err) {
+                    error.InvalidMethod => {
+                        const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "method must be GET, PUT, DELETE when using s3 protocol", .{}, ctx);
+                        is_error = true;
+                        return JSPromise.rejectedPromiseValue(globalThis, err);
+                    },
+                    error.InvalidPath => {
+                        const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "invalid s3 bucket, key combination", .{}, ctx);
+                        is_error = true;
+                        return JSPromise.rejectedPromiseValue(globalThis, err);
+                    },
+                    else => {
+                        const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "failed to retrieve s3 content check your credentials", .{}, ctx);
+                        is_error = true;
+                        return JSPromise.rejectedPromiseValue(globalThis, err);
+                    },
+                }
+            };
+            defer result.deinit();
+            if (proxy) |proxy_| {
+                // proxy and url are in the same buffer lets replace it
+                const old_buffer = url_proxy_buffer;
+                defer allocator.free(old_buffer);
+                var buffer = allocator.alloc(u8, result.url.len + proxy_.href.len) catch bun.outOfMemory();
+                bun.copy(u8, buffer[0..result.url.len], result.url);
+                bun.copy(u8, buffer[proxy_.href.len..], proxy_.href);
+                url_proxy_buffer = buffer;
+
+                url = ZigURL.parse(url_proxy_buffer[0..result.url.len]);
+                proxy = ZigURL.parse(url_proxy_buffer[result.url.len..]);
+            } else {
+                // replace headers and url of the request
+                allocator.free(url_proxy_buffer);
+                url_proxy_buffer = result.url;
+                url = ZigURL.parse(result.url);
+                result.url = ""; // fetch now owns this
+            }
+            if (headers) |*headers_| {
+                headers_.deinit();
+            }
+            headers = Headers.fromPicoHttpHeaders(&result.headers, allocator) catch bun.outOfMemory();
+        }
 
         // Only create this after we have validated all the input.
         // or else we will leak it
@@ -3273,6 +3371,45 @@ pub const Headers = struct {
     pub const Options = struct {
         body: ?*const AnyBlob = null,
     };
+
+    pub fn fromPicoHttpHeaders(headers: []picohttp.Header, allocator: std.mem.Allocator) !Headers {
+        const header_count = headers.len;
+        var result = Headers{
+            .entries = .{},
+            .buf = .{},
+            .allocator = allocator,
+        };
+
+        var buf_len: usize = 0;
+        for (headers) |header| {
+            buf_len += header.name.len + header.value.len;
+        }
+        result.entries.ensureTotalCapacity(allocator, header_count) catch bun.outOfMemory();
+        result.entries.len = headers.len;
+        result.buf.ensureTotalCapacityPrecise(allocator, buf_len) catch bun.outOfMemory();
+        result.buf.items.len = buf_len;
+        var offset: u32 = 0;
+        for (headers, 0..headers.len) |header, i| {
+            const name_offset = offset;
+            bun.copy(u8, result.buf.items[offset..][0..header.name.len], header.name);
+            offset += @truncate(header.name.len);
+            const value_offset = offset;
+            bun.copy(u8, result.buf.items[offset..][0..header.value.len], header.value);
+            offset += @truncate(header.value.len);
+
+            result.entries.set(i, .{
+                .name = .{
+                    .offset = name_offset,
+                    .length = @truncate(header.name.len),
+                },
+                .value = .{
+                    .offset = value_offset,
+                    .length = @truncate(header.value.len),
+                },
+            });
+        }
+        return result;
+    }
 
     pub fn from(fetch_headers_ref: ?*FetchHeaders, allocator: std.mem.Allocator, options: Options) !Headers {
         var header_count: u32 = 0;

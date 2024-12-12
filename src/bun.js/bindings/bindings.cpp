@@ -1675,9 +1675,9 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 
             StringView nameView = StringView(std::span { reinterpret_cast<const char*>(header.name.ptr), header.name.len });
 
-            LChar* data = nullptr;
+            std::span<LChar> data;
             auto value = String::createUninitialized(header.value.len, data);
-            memcpy(data, header.value.ptr, header.value.len);
+            memcpy(data.data(), header.value.ptr, header.value.len);
 
             HTTPHeaderName name;
 
@@ -1709,10 +1709,10 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 
     for (const auto& header : req) {
         StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(header.first.data()), header.first.length() });
-        LChar* data = nullptr;
+        std::span<LChar> data;
         auto value = String::createUninitialized(header.second.length(), data);
         if (header.second.length() > 0)
-            memcpy(data, header.second.data(), header.second.length());
+            memcpy(data.data(), header.second.data(), header.second.length());
 
         HTTPHeaderName name;
 
@@ -4199,7 +4199,9 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
         // It is key to not clone this data because source code strings are large.
         // Usage of toStringView (non-owning) is safe as we ref the provider.
         provider->ref();
-        ASSERT(*referenced_source_provider == nullptr);
+        if (*referenced_source_provider != nullptr) {
+            (*referenced_source_provider)->deref();
+        }
         *referenced_source_provider = provider;
         source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
         source_line_numbers[0] = location.line();

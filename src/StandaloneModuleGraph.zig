@@ -439,6 +439,11 @@ pub const StandaloneModuleGraph = struct {
 
         const cleanup = struct {
             pub fn toClean(name: [:0]const u8, fd: bun.FileDescriptor) void {
+                // Ensure we own the file
+                if (Environment.isPosix) {
+                    // Make the file writable so we can delete it
+                    _ = Syscall.fchmod(fd, 0o777);
+                }
                 _ = Syscall.close(fd);
                 _ = Syscall.unlink(name);
             }

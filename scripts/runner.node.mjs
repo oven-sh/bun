@@ -182,7 +182,7 @@ async function runTests() {
       title,
       "error",
       /* buildkite */ isVendor ? { testPath: title } : {},
-      /* fmt to md */ { priority: isVendor ? 5 : undefined },
+      /* fmt to md */ isVendor ? { priority: isVendor } : {},
     );
 
     if (options["bail"] && !result.ok) {
@@ -206,22 +206,28 @@ async function runTests() {
 
     /** @type {TestResult | Error} */
     let result = undefined;
+    /** @type {TestResult | undefined} */
+    let lastFailedResult = undefined;
 
     for (let attempt = 0; attempt < retryLimit; attempt++) {
       // NOTE: one-indexed attempt number [1 of 2]. Do not include attempt suffix on first try.
       const attemptLabel = attempt == 0 ? label : `${label} [retry #${attempt + 1}]`;
       try {
         result = await startGroup(attemptLabel, fn);
-        if (result.ok) break;
-        // warn about flakey tests. Don't report on last attemp
-        else if (attempt < retryLimit - 1) {
-          reportResult(result, label, "warning", { testPath: label });
-          // wait a bit between retries. e.g. flake may happen b/c disk is busy.
-          await sleep(sleepTime(attempt));
+        if (result.ok) {
+          // we only warn about the last flakey test to avoid log spam.
+          if (lastFailedResult) {
+            reportResult(result, label, "warning", { testPath: label });
+          }
+          break;
         }
+
+        lastFailedResult = result;
+        // Wait a bit between retries. e.g. flake may happen b/c disk is busy.
+        if (attempt < retryLimit - 1) await sleep(sleepTime(attempt));
       } catch (error) {
-        console.error("this should not have happened");
-        console.error(error);
+        // NOTE: since we don't store this to lastFailedResult, flakes that
+        // throw an error won't be warned about if they succeed on retry.
         result = error;
       }
     }

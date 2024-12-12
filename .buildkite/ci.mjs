@@ -211,7 +211,7 @@ function getImageName(platform, options) {
   const { os } = platform;
   const { buildImages, publishImages } = options;
 
-  const name = getImageBasename(platform);
+  const name = getImageKey(platform);
 
   if (buildImages && !publishImages) {
     return `${name}-build-${getBuildNumber()}`;

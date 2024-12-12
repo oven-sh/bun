@@ -73,6 +73,20 @@ pub extern "c" fn fclonefileat(c_int, c_int, [*:0]const u8, uint32_t: c_int) c_i
 // int clonefile(const char * src, const char * dst, int flags);
 pub extern "c" fn clonefile(src: [*:0]const u8, dest: [*:0]const u8, flags: c_int) c_int;
 
+pub const lstat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "lstat64" });
+};
+
+pub const fstat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "fstat64" });
+};
+pub const stat = blk: {
+    const T = *const fn ([*c]const u8, [*c]std.c.Stat) callconv(.C) c_int;
+    break :blk @extern(T, .{ .name = "stat64" });
+};
+
 // pub fn stat_absolute(path: [:0]const u8) StatError!Stat {
 //     if (builtin.os.tag == .windows) {
 //         var io_status_block: windows.IO_STATUS_BLOCK = undefined;

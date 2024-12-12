@@ -16,7 +16,7 @@ export function setBigUint64(this: BufferExt, offset, value, le) {
 export function readInt8(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
-  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 1);
+  if (!(offset >= 0 && offset <= this.length - 1)) require("internal/buffer").boundsError(offset, this.length - 1);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getInt8(offset);
 }
@@ -24,7 +24,7 @@ export function readInt8(this: BufferExt, offset) {
 export function readUInt8(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
-  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 1);
+  if (!(offset >= 0 && offset <= this.length - 1)) require("internal/buffer").boundsError(offset, this.length - 1);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getUint8(offset);
 }
@@ -32,7 +32,7 @@ export function readUInt8(this: BufferExt, offset) {
 export function readInt16LE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
-  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 2);
+  if (!(offset >= 0 && offset <= this.length - 2)) require("internal/buffer").boundsError(offset, this.length - 2);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getInt16(offset, true);
 }
@@ -40,7 +40,7 @@ export function readInt16LE(this: BufferExt, offset) {
 export function readInt16BE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
-  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 2);
+  if (!(offset >= 0 && offset <= this.length - 2)) require("internal/buffer").boundsError(offset, this.length - 2);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getInt16(offset, false);
 }
@@ -48,7 +48,7 @@ export function readInt16BE(this: BufferExt, offset) {
 export function readUInt16LE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
-  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 2);
+  if (!(offset >= 0 && offset <= this.length - 2)) require("internal/buffer").boundsError(offset, this.length - 2);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getUint16(offset, true);
 }
@@ -56,7 +56,7 @@ export function readUInt16LE(this: BufferExt, offset) {
 export function readUInt16BE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
-  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 2);
+  if (!(offset >= 0 && offset <= this.length - 2)) require("internal/buffer").boundsError(offset, this.length - 2);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getUint16(offset, false);
 }
@@ -64,7 +64,7 @@ export function readUInt16BE(this: BufferExt, offset) {
 export function readInt32LE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
-  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 4);
+  if (!(offset >= 0 && offset <= this.length - 4)) require("internal/buffer").boundsError(offset, this.length - 4);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getInt32(offset, true);
 }
@@ -72,7 +72,7 @@ export function readInt32LE(this: BufferExt, offset) {
 export function readInt32BE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
-  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 4);
+  if (!(offset >= 0 && offset <= this.length - 4)) require("internal/buffer").boundsError(offset, this.length - 4);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getInt32(offset, false);
 }
@@ -80,7 +80,7 @@ export function readInt32BE(this: BufferExt, offset) {
 export function readUInt32LE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
-  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 4);
+  if (!(offset >= 0 && offset <= this.length - 4)) require("internal/buffer").boundsError(offset, this.length - 4);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getUint32(offset, true);
 }
@@ -88,7 +88,7 @@ export function readUInt32LE(this: BufferExt, offset) {
 export function readUInt32BE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
-  if (!(offset >= 0 && offset < this.length)) require("internal/buffer").boundsError(offset, this.length - 4);
+  if (!(offset >= 0 && offset <= this.length - 4)) require("internal/buffer").boundsError(offset, this.length - 4);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getUint32(offset, false);
 }
@@ -107,7 +107,7 @@ export function readIntLE(this: BufferExt, offset, byteLength) {
     case 5:
     case 6:
       validateInteger(offset, "offset");
-      if (!(offset >= 0 && offset < this.length)) boundsError(offset, this.length - byteLength);
+      if (!(offset >= 0 && offset <= this.length - byteLength)) boundsError(offset, this.length - byteLength);
       break;
   }
   switch (byteLength) {
@@ -150,7 +150,7 @@ export function readIntBE(this: BufferExt, offset, byteLength) {
     case 5:
     case 6:
       validateInteger(offset, "offset");
-      if (!(offset >= 0 && offset < this.length)) boundsError(offset, this.length - byteLength);
+      if (!(offset >= 0 && offset <= this.length - byteLength)) boundsError(offset, this.length - byteLength);
       break;
   }
   switch (byteLength) {
@@ -193,7 +193,7 @@ export function readUIntLE(this: BufferExt, offset, byteLength) {
     case 5:
     case 6:
       validateInteger(offset, "offset");
-      if (!(offset >= 0 && offset < this.length)) boundsError(offset, this.length - byteLength);
+      if (!(offset >= 0 && offset <= this.length - byteLength)) boundsError(offset, this.length - byteLength);
       break;
   }
   switch (byteLength) {
@@ -233,7 +233,7 @@ export function readUIntBE(this: BufferExt, offset, byteLength) {
     case 5:
     case 6:
       validateInteger(offset, "offset");
-      if (!(offset >= 0 && offset < this.length)) boundsError(offset, this.length - byteLength);
+      if (!(offset >= 0 && offset <= this.length - byteLength)) boundsError(offset, this.length - byteLength);
       break;
   }
   switch (byteLength) {
@@ -262,7 +262,7 @@ export function readUIntBE(this: BufferExt, offset, byteLength) {
 export function readFloatLE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
-  if (!(offset >= 0 && offset < (this.length - offset) / 4)) require("internal/buffer").boundsError(offset, this.length - 4); // prettier-ignore
+  if (!(offset >= 0 && offset <= this.length - 4)) require("internal/buffer").boundsError(offset, this.length - 4); // prettier-ignore
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getFloat32(offset, true);
 }
@@ -270,7 +270,7 @@ export function readFloatLE(this: BufferExt, offset) {
 export function readFloatBE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
-  if (!(offset >= 0 && offset < (this.length - offset) / 4)) require("internal/buffer").boundsError(offset, this.length - 4); // prettier-ignore
+  if (!(offset >= 0 && offset <= this.length - 4)) require("internal/buffer").boundsError(offset, this.length - 4); // prettier-ignore
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getFloat32(offset, false);
 }
@@ -278,7 +278,7 @@ export function readFloatBE(this: BufferExt, offset) {
 export function readDoubleLE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
-  if (!(offset >= 0 && offset < (this.length - offset) / 8)) require("internal/buffer").boundsError(offset, this.length - 8); // prettier-ignore
+  if (!(offset >= 0 && offset <= this.length - 8)) require("internal/buffer").boundsError(offset, this.length - 8); // prettier-ignore
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getFloat64(offset, true);
 }
@@ -286,7 +286,7 @@ export function readDoubleLE(this: BufferExt, offset) {
 export function readDoubleBE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
-  if (!(offset >= 0 && offset < (this.length - offset) / 8)) require("internal/buffer").boundsError(offset, this.length - 8); // prettier-ignore
+  if (!(offset >= 0 && offset <= this.length - 8)) require("internal/buffer").boundsError(offset, this.length - 8); // prettier-ignore
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getFloat64(offset, false);
 }

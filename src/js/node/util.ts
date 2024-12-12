@@ -147,7 +147,13 @@ var inherits = function inherits(ctor, superCtor) {
   if (superCtor.prototype === undefined) {
     throw ERR_INVALID_ARG_TYPE("superCtor.prototype", "object", superCtor.prototype);
   }
-  ctor.super_ = superCtor;
+  Object.defineProperty(ctor, "super_", {
+    // @ts-expect-error
+    __proto__: null,
+    value: superCtor,
+    writable: true,
+    configurable: true,
+  });
   Object.setPrototypeOf(ctor.prototype, superCtor.prototype);
 };
 var _extend = function (origin, add) {

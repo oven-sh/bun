@@ -21,11 +21,11 @@ function defineCustomPromisifyArgs(target, args) {
 }
 
 var promisify = function promisify(original) {
-  if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
+  if (typeof original !== "function") throw $ERR_INVALID_ARG_TYPE("original", "function", original);
   const custom = original[kCustomPromisifiedSymbol];
   if (custom) {
     if (typeof custom !== "function") {
-      throw new TypeError('The "util.promisify.custom" argument must be of type Function');
+      throw $ERR_INVALID_ARG_TYPE("util.promisify.custom", "function", custom);
     }
     // ensure that we don't create another promisified function wrapper
     return defineCustomPromisify(custom, custom);
@@ -45,10 +45,10 @@ var promisify = function promisify(original) {
 
           if (callbackArgs !== undefined && values.length > 0) {
             if (!Array.isArray(callbackArgs)) {
-              throw new TypeError('The "customPromisifyArgs" argument must be of type Array');
+              throw $ERR_INVALID_ARG_TYPE("customPromisifyArgs", "callbackArgs", callbackArgs);
             }
             if (callbackArgs.length !== values.length) {
-              throw new Error("Mismatched length in promisify callback args");
+              throw $ERR_INVALID_ARG_TYPE("Mismatched length in promisify callback args", "callbackArgs", callbackArgs);
             }
             const result = {};
             for (let i = 0; i < callbackArgs.length; i++) {

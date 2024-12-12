@@ -43,17 +43,26 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
 };
 
+const ciEnv = { ...bunEnv };
+
 if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
 }
 
 for (let key in bunEnv) {
   if (bunEnv[key] === undefined) {
+    delete ciEnv[key];
     delete bunEnv[key];
   }
 
   if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") {
+    delete ciEnv[key];
     delete bunEnv[key];
+  }
+
+  if (key.startsWith("BUILDKITE")) {
+    delete bunEnv[key];
+    delete process.env[key];
   }
 }
 
@@ -185,7 +194,7 @@ export function bunRun(file: string, env?: Record<string, string>) {
   const result = Bun.spawnSync([bunExe(), file], {
     cwd: path.dirname(file),
     env: {
-      ...bunEnv,
+      ...ciEnv,
       NODE_ENV: undefined,
       ...env,
     },

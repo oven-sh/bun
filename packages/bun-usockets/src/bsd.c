@@ -304,17 +304,19 @@ static LIBUS_SOCKET_DESCRIPTOR win32_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd)
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
+/* Libuv will set windows sockets as non-blocking */
 #ifndef _WIN32
-    /* Libuv will set windows sockets as non-blocking */
-    int flags = fcntl(fd, F_GETFL, 0);
+    if (LIKELY(fd != LIBUS_SOCKET_ERROR)) {
+        int flags = fcntl(fd, F_GETFL, 0);
 
-    // F_GETFL supports O_NONBLCOK
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        // F_GETFL supports O_NONBLCOK
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
-    flags = fcntl(fd, F_GETFD, 0);
+        flags = fcntl(fd, F_GETFD, 0);
 
-    // F_GETFD supports FD_CLOEXEC
-    fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+        // F_GETFD supports FD_CLOEXEC
+        fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+    }
 #endif
 
     return fd;

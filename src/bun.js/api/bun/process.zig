@@ -1408,8 +1408,11 @@ pub fn spawnProcessPosix(
                     std.posix.AF.UNIX,
                     std.posix.SOCK.STREAM,
                     0,
-                    .nonblocking,
+                    if (ipc == .ipc) .nonblocking else .blocking,
                 ).unwrap();
+
+                if (!options.sync and ipc == .buffer)
+                    try bun.sys.setNonblocking(fds[0]).unwrap();
 
                 try to_close_at_end.append(fds[1]);
                 try to_close_on_error.append(fds[0]);

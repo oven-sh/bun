@@ -38,8 +38,9 @@ const resolveTests = [
       // - It caused a regression (issue #56002) and was reverted in #56088
       // - This behavior did _not_ land in even-numbered versions
       // If node decides to adopt this, we need to revisit these tests
-    //  [['\\\\.\\PHYSICALDRIVE0'], '\\\\.\\PHYSICALDRIVE0'],
-    //  [['\\\\?\\PHYSICALDRIVE0'], '\\\\?\\PHYSICALDRIVE0'],
+      // 
+      //  [['\\\\.\\PHYSICALDRIVE0'], '\\\\.\\PHYSICALDRIVE0'],
+      //  [['\\\\?\\PHYSICALDRIVE0'], '\\\\?\\PHYSICALDRIVE0'],
      [['\\\\.\\PHYSICALDRIVE0'], '\\\\.\\PHYSICALDRIVE0\\'],
      [['\\\\?\\PHYSICALDRIVE0'], '\\\\?\\PHYSICALDRIVE0\\'],
     ],

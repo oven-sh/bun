@@ -481,7 +481,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       value: function (stream) {
         let color = this[kColorMode];
         if (color === "auto") {
-          if (process.env[["FORCE_", "COLOR"].join("")] !== undefined) {
+          if (Bun.env["FORCE_COLOR"] !== undefined) {
             color = Bun.enableANSIColors;
           } else {
             color = stream.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true);
@@ -604,7 +604,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     clear() {
       // It only makes sense to clear if _stdout is a TTY.
       // Otherwise, do nothing.
-      if (this._stdout.isTTY && process.env[["TE", "RM"].join("")] !== "dumb") {
+      if (this._stdout.isTTY && Bun.env["TERM"] !== "dumb") {
         this._stdout.write("\x1B[2J\x1B[3J\x1B[H");
       }
     },

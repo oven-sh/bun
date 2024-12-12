@@ -2237,7 +2237,7 @@ export async function waitForPort(options) {
   return cause;
 }
 /**
- * @returns {Promise<number | undefined>}
+ * @returns {Promise<number>}
  */
 export async function getCanaryRevision() {
   if (isPullRequest() || isFork()) {

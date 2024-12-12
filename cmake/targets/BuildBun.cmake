@@ -576,6 +576,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
 
+# hand written cpp source files. Full list of "source" code (including codegen) is in BUN_CPP_SOURCES
 file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/io/*.cpp
   ${CWD}/src/bun.js/modules/*.cpp
@@ -632,6 +633,7 @@ register_command(
 list(APPEND BUN_CPP_SOURCES
   ${BUN_C_SOURCES}
   ${BUN_CXX_SOURCES}
+  ${BUN_ERROR_CODE_OUTPUTS}
   ${VENDOR_PATH}/picohttpparser/picohttpparser.c
   ${NODEJS_HEADERS_PATH}/include/node/node_version.h
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}

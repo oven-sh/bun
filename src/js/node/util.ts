@@ -4,6 +4,7 @@ const types = require("node:util/types");
 const utl = require("internal/util/inspect");
 const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE } = require("internal/errors");
 const { promisify } = require("internal/promisify");
+const { validateString, validateBoolean, validateOneOf } = require("internal/validators");
 
 const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
 
@@ -206,21 +207,67 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
-function styleText(format, text) {
-  if (typeof text !== "string") {
-    const e = new Error(`The text argument must be of type string. Received type ${typeof text}`);
-    e.code = "ERR_INVALID_ARG_TYPE";
-    throw e;
+/**
+ * @param {string | string[]} format
+ * @param {string} text
+ * @param {object} [options={}]
+ * @param {boolean} [options.validateStream=true] - Whether to validate the stream.
+ * @param {Stream} [options.stream=process.stdout] - The stream used for validation.
+ * @returns {string}
+ */
+function styleText(format, text, { validateStream = true, stream = process.stdout } = {}) {
+  validateString(text, "text");
+  validateBoolean(validateStream, "options.validateStream");
+
+  if (validateStream) {
+    if (!$isReadableStream(stream) && !$isWritableStream(stream) && !isNodeStream(stream)) {
+      throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
+    }
   }
+
+  if (Array.isArray(format)) {
+    let left = "";
+    let right = "";
+    for (const key of format) {
+      const formatCodes = inspect.colors[key];
+      if (formatCodes == null) {
+        validateOneOf(key, "format", Object.keys(inspect.colors));
+      }
+      left += `\x1b[${formatCodes[0]}m`;
+      right = `\x1b[${formatCodes[1]}m${right}`;
+    }
+
+    return `${left}${text}${right}`;
+  }
+
   const formatCodes = inspect.colors[format];
   if (formatCodes == null) {
-    const e = new Error(
-      `The value "${typeof format === "symbol" ? format.description : format}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,
-    );
-    e.code = "ERR_INVALID_ARG_VALUE";
-    throw e;
+    validateOneOf(format, "format", Object.keys(inspect.colors));
   }
-  return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
+
+  // Check colorize only after validating arg type and value
+  if (validateStream && (!stream || !shouldColorize(stream))) {
+    return text;
+  }
+
+  return `\x1b[${formatCodes[0]}m${text}\x1b[${formatCodes[1]}m`;
+}
+
+function isNodeStream(obj) {
+  return (
+    obj &&
+    (obj._readableState ||
+      obj._writableState ||
+      (typeof obj.write === "function" && typeof obj.on === "function") ||
+      (typeof obj.pipe === "function" && typeof obj.on === "function"))
+  );
+}
+
+function shouldColorize(stream) {
+  if (process.env[["FORCE_", "COLOR"].join("")] !== undefined) {
+    return typeof process.stdout.getColorDepth === "function" ? process.stdout.getColorDepth() > 2 : true;
+  }
+  return stream?.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true);
 }
 
 function getSystemErrorName(err: any) {

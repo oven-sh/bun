@@ -37,8 +37,10 @@ pub const Snapshots = struct {
     pub const InlineSnapshotToWrite = struct {
         line: c_ulong,
         col: c_ulong,
-        value: []const u8,
+        value: []const u8, // owned by Snapshots.allocator
         has_matchers: bool,
+        is_added: bool,
+        kind: []const u8, // static lifetime
 
         fn lessThanFn(_: void, a: InlineSnapshotToWrite, b: InlineSnapshotToWrite) bool {
             if (a.line < b.line) return true;
@@ -53,6 +55,18 @@ pub const Snapshots = struct {
         file: std.fs.File,
     };
 
+    pub fn addCount(this: *Snapshots, expect: *Expect, hint: []const u8) !struct { []const u8, usize } {
+        this.total += 1;
+        const snapshot_name = try expect.getSnapshotName(this.allocator, hint);
+        const count_entry = try this.counts.getOrPut(snapshot_name);
+        if (count_entry.found_existing) {
+            this.allocator.free(snapshot_name);
+            count_entry.value_ptr.* += 1;
+            return .{ count_entry.key_ptr.*, count_entry.value_ptr.* };
+        }
+        count_entry.value_ptr.* = 1;
+        return .{ count_entry.key_ptr.*, count_entry.value_ptr.* };
+    }
     pub fn getOrPut(this: *Snapshots, expect: *Expect, target_value: []const u8, hint: string) !?string {
         switch (try this.getSnapshotFile(expect.testScope().?.describe.file_id)) {
             .result => {},
@@ -65,21 +79,7 @@ pub const Snapshots = struct {
             },
         }
 
-        const snapshot_name = try expect.getSnapshotName(this.allocator, hint);
-        this.total += 1;
-
-        const count_entry = try this.counts.getOrPut(snapshot_name);
-        const counter = brk: {
-            if (count_entry.found_existing) {
-                this.allocator.free(snapshot_name);
-                count_entry.value_ptr.* += 1;
-                break :brk count_entry.value_ptr.*;
-            }
-            count_entry.value_ptr.* = 1;
-            break :brk count_entry.value_ptr.*;
-        };
-
-        const name = count_entry.key_ptr.*;
+        const name, const counter = try this.addCount(expect, hint);
 
         var counter_string_buf = [_]u8{0} ** 32;
         const counter_string = try std.fmt.bufPrint(&counter_string_buf, "{d}", .{counter});
@@ -276,7 +276,7 @@ pub const Snapshots = struct {
                 inline_snapshot_dbg("Finding byte for {}/{}", .{ ils.line, ils.col });
                 const byte_offset_add = logger.Source.lineColToByteOffset(file_text[last_byte..], last_line, last_col, ils.line, ils.col) orelse {
                     inline_snapshot_dbg("-> Could not find byte", .{});
-                    try log.addErrorFmt(&source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Could not find byte for line/column: {d}/{d}", .{ ils.line, ils.col });
+                    try log.addErrorFmt(&source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Ln {d}, Col {d} not found", .{ ils.line, ils.col });
                     continue;
                 };
 
@@ -296,7 +296,7 @@ pub const Snapshots = struct {
                         },
                         else => {},
                     };
-                    const fn_name = "toMatchInlineSnapshot";
+                    const fn_name = ils.kind;
                     if (!bun.strings.startsWith(file_text[next_start..], fn_name)) {
                         try log.addErrorFmt(&source, .{ .start = @intCast(next_start) }, arena, "Failed to update inline snapshot: Could not find 'toMatchInlineSnapshot' here", .{});
                         continue;
@@ -400,6 +400,8 @@ pub const Snapshots = struct {
                 try result_text.appendSlice("`");
                 try bun.js_printer.writePreQuotedString(ils.value, @TypeOf(result_text_writer), result_text_writer, '`', false, false, .utf8);
                 try result_text.appendSlice("`");
+
+                if (ils.is_added) Jest.runner.?.snapshots.added += 1;
             }
 
             // commit the last segment

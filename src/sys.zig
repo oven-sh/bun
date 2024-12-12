@@ -249,6 +249,7 @@ pub const Tag = enum(u8) {
     pipe,
     try_write,
     socketpair,
+    setsockopt,
 
     uv_spawn,
     uv_pipe,
@@ -751,9 +752,16 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
 
 const fnctl_int = if (Environment.isLinux) usize else c_int;
 pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: fnctl_int) Maybe(fnctl_int) {
-    const result = fcntl_symbol(fd.cast(), cmd, arg);
-    if (Maybe(fnctl_int).errnoSys(result, .fcntl)) |err| return err;
-    return .{ .result = @intCast(result) };
+    while (true) {
+        const result = fcntl_symbol(fd.cast(), cmd, arg);
+        if (Maybe(fnctl_int).errnoSys(result, .fcntl)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return .{ .result = @intCast(result) };
+    }
+
+    unreachable;
 }
 
 pub fn getErrno(rc: anytype) bun.C.E {
@@ -2306,6 +2314,132 @@ pub fn mmapFile(path: [:0]const u8, flags: std.c.MAP, wanted_size: ?usize, offse
     }
 
     return .{ .result = map };
+}
+
+pub fn setCloseOnExec(fd: bun.FileDescriptor) Maybe(void) {
+    switch (fcntl(fd, std.posix.F.GETFD, 0)) {
+        .result => |fl| {
+            switch (fcntl(fd, std.posix.F.SETFD, fl | std.posix.FD_CLOEXEC)) {
+                .result => {},
+                .err => |err| return .{ .err = err },
+            }
+        },
+        .err => |err| return .{ .err = err },
+    }
+
+    return .{ .result = {} };
+}
+
+pub fn setsockopt(fd: bun.FileDescriptor, level: c_int, optname: u32, value: i32) Maybe(i32) {
+    while (true) {
+        const rc = syscall.setsockopt(fd.cast(), level, optname, &value, @sizeOf(i32));
+        if (Maybe(i32).errnoSys(rc, .setsockopt)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            log("setsockopt() = {d} {s}", .{ err.err.errno, err.err.name() });
+            return err;
+        }
+        log("setsockopt({d}, {d}, {d}) = {d}", .{ fd.cast(), level, optname, rc });
+        return .{ .result = @intCast(rc) };
+    }
+
+    unreachable;
+}
+
+pub fn setNoSigpipe(fd: bun.FileDescriptor) Maybe(void) {
+    if (comptime Environment.isMac) {
+        return switch (setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, 1)) {
+            .result => .{ .result = {} },
+            .err => |err| .{ .err = err },
+        };
+    }
+
+    return .{ .result = {} };
+}
+
+const socketpair_t = if (Environment.isLinux) i32 else c_uint;
+
+/// libc socketpair() except it defaults to:
+/// - SOCK_CLOEXEC on Linux
+/// - SO_NOSIGPIPE on macOS
+///
+/// On POSIX it otherwise makes it do O_CLOEXEC.
+pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: enum { blocking, nonblocking }) Maybe([2]bun.FileDescriptor) {
+    if (comptime !Environment.isPosix) @compileError("linux only!");
+
+    var fds_i: [2]syscall.fd_t = .{ 0, 0 };
+
+    if (comptime Environment.isLinux) {
+        while (true) {
+            const nonblock_flag: i32 = if (nonblocking_status == .nonblocking) linux.SOCK.NONBLOCK else 0;
+            const rc = std.os.linux.socketpair(domain, socktype | linux.SOCK.CLOEXEC | nonblock_flag, protocol, &fds_i);
+            if (Maybe([2]bun.FileDescriptor).errnoSys(rc, .socketpair)) |err| {
+                if (err.getErrno() == .INTR) continue;
+
+                log("socketpair() = {d} {s}", .{ err.err.errno, err.err.name() });
+                return err;
+            }
+
+            break;
+        }
+    } else {
+        while (true) {
+            const err = libc.socketpair(domain, socktype, protocol, &fds_i);
+
+            if (Maybe([2]bun.FileDescriptor).errnoSys(err, .socketpair)) |err2| {
+                if (err2.getErrno() == .INTR) continue;
+                log("socketpair() = {d} {s}", .{ err2.err.errno, err2.err.name() });
+                return err2;
+            }
+
+            break;
+        }
+
+        const err: ?Syscall.Error = err: {
+
+            // Set O_CLOEXEC first.
+            inline for (0..2) |i| {
+                switch (setCloseOnExec(bun.toFD(fds_i[i]))) {
+                    .err => |err| break :err err,
+                    .result => {},
+                }
+            }
+
+            if (comptime Environment.isMac) {
+                inline for (0..2) |i| {
+                    switch (setNoSigpipe(bun.toFD(fds_i[i]))) {
+                        .err => |err| break :err err,
+                        else => {},
+                    }
+                }
+            }
+
+            if (nonblocking_status == .nonblocking) {
+                inline for (0..2) |i| {
+                    switch (setNonblocking(bun.toFD(fds_i[i]))) {
+                        .err => |err| break :err err,
+                        .result => {},
+                    }
+                }
+            }
+
+            break :err null;
+        };
+
+        // On any error after socketpair(), we need to close it.
+        if (err) |errr| {
+            inline for (0..2) |i| {
+                _ = close(bun.toFD(fds_i[i]));
+            }
+
+            log("socketpair() = {d} {s}", .{ errr.errno, errr.name() });
+
+            return .{ .err = errr };
+        }
+    }
+
+    log("socketpair() = [{d} {d}]", .{ fds_i[0], fds_i[1] });
+
+    return Maybe([2]bun.FileDescriptor){ .result = .{ bun.toFD(fds_i[0]), bun.toFD(fds_i[1]) } };
 }
 
 pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {

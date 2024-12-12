@@ -6330,7 +6330,7 @@ pub const VM = extern struct {
         });
     }
 
-    pub fn runGC(vm: *VM, sync: bool) JSValue {
+    pub fn runGC(vm: *VM, sync: bool) usize {
         return cppFn("runGC", .{
             vm,
             sync,
@@ -6669,19 +6669,19 @@ pub const CallFrame = opaque {
         return value;
     }
 
-    extern fn Bun__CallFrame__getCallerSrcLoc(*const CallFrame, *JSGlobalObject, *c_uint, *c_uint, *c_uint) void;
+    extern fn Bun__CallFrame__getCallerSrcLoc(*const CallFrame, *JSGlobalObject, *bun.String, *c_uint, *c_uint) void;
     pub const CallerSrcLoc = struct {
-        source_file_id: c_uint,
+        str: bun.String,
         line: c_uint,
         column: c_uint,
     };
     pub fn getCallerSrcLoc(call_frame: *const CallFrame, globalThis: *JSGlobalObject) CallerSrcLoc {
-        var source_id: c_uint = undefined;
+        var str: bun.String = undefined;
         var line: c_uint = undefined;
         var column: c_uint = undefined;
-        Bun__CallFrame__getCallerSrcLoc(call_frame, globalThis, &source_id, &line, &column);
+        Bun__CallFrame__getCallerSrcLoc(call_frame, globalThis, &str, &line, &column);
         return .{
-            .source_file_id = source_id,
+            .str = str,
             .line = line,
             .column = column,
         };

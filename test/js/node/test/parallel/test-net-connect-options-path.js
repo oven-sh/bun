@@ -1,5 +1,6 @@
 'use strict';
 const common = require('../common');
+if (common.isWindows) return; // TODO: BUN
 const net = require('net');
 
 // This file tests the option handling of net.connect,

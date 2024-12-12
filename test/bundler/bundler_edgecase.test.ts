@@ -186,18 +186,7 @@ describe("bundler", () => {
       NODE_ENV: "development",
     },
   });
-  itBundled("edgecase/ProcessEnvArbitrary", {
-    files: {
-      "/entry.js": /* js */ `
-        capture(process.env.ARBITRARY);
-      `,
-    },
-    target: "browser",
-    capture: ["process.env.ARBITRARY"],
-    env: {
-      ARBITRARY: "secret environment stuff!",
-    },
-  });
+
   itBundled("edgecase/StarExternal", {
     files: {
       "/entry.js": /* js */ `
@@ -2275,3 +2264,21 @@ describe("bundler", () => {
     },
   });
 });
+
+for (const backend of ["api", "cli"] as const) {
+  describe(`bundler_edgecase/${backend}`, () => {
+    itBundled("edgecase/ProcessEnvArbitrary", {
+      files: {
+        "/entry.js": /* js */ `
+        capture(process.env.ARBITRARY);
+      `,
+      },
+      target: "browser",
+      backend,
+      capture: ["process.env.ARBITRARY"],
+      env: {
+        ARBITRARY: "secret environment stuff!",
+      },
+    });
+  });
+}

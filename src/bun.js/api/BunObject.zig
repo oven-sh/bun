@@ -536,6 +536,19 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     return ret;
 }
 
+export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString {
+    // very stable memory address
+    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var buffered_writer = MutableString.BufferedWriter{ .context = &array };
+    const writer = buffered_writer.writer();
+
+    var formatter = ConsoleObject.Formatter{ .globalThis = globalThis };
+    writer.print("{}", .{value.toFmt(&formatter)}) catch return ZigString.Empty;
+    buffered_writer.flush() catch return ZigString.Empty;
+
+    return ZigString.init(array.slice()).withEncoding();
+}
+
 pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     const fun = JSC.createCallback(globalObject, ZigString.static("inspect"), 2, inspect);
     var str = ZigString.init("nodejs.util.inspect.custom");

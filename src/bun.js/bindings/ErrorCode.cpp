@@ -172,6 +172,9 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
     return createError(vm, globalObject, code, message);
 }
 
+// export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString
+extern "C" ZigString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
+
 WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
 {
     ASSERT(!arg.isEmpty());
@@ -214,7 +217,10 @@ WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
     }
     }
 
-    return arg.toWTFStringForConsole(globalObject);
+    // return arg.toWTFString(globalObject); // this threw an exception on `{ __proto__: null }`
+    ZigString zstring = Bun__inspect(globalObject, arg);
+    BunString bstring(BunStringTag::ZigString, BunStringImpl(zstring));
+    return bstring.toWTFString();
 }
 
 WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue value)

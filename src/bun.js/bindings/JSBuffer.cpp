@@ -2316,6 +2316,97 @@ JSC::JSObject* createBufferConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalO
 
 } // namespace WebCore
 
+JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_Array, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    throwException(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, "TODO jsFunction_BufferFrom_Array"_s));
+    return {};
+}
+JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_ArraybufferByteoffsetLength, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto argsCount = callFrame->argumentCount();
+
+    auto arrayBufferValue = callFrame->argument(0);
+    auto offsetValue = callFrame->argument(1);
+    auto lengthValue = callFrame->argument(2);
+
+    // This closely matches `new Uint8Array(buffer, byteOffset, length)` in JavaScriptCore's implementation.
+    // See Source/JavaScriptCore/runtime/JSGenericTypedArrayViewConstructorInlines.h
+    size_t offset = 0;
+    std::optional<size_t> length;
+    if (argsCount > 1) {
+
+        if (!offsetValue.isUndefined()) {
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, offsetValue, jsString(vm, String("offset"_s)), jsNumber(0), jsUndefined());
+            RETURN_IF_EXCEPTION(throwScope, {});
+            offset = offsetValue.asNumber();
+        }
+
+        if (argsCount > 2) {
+            // If the length value is present but undefined, treat it as missing.
+            if (!lengthValue.isUndefined()) {
+                length = lengthValue.toTypedArrayIndex(globalObject, "length"_s);
+                // TOOD: return Node.js error
+                RETURN_IF_EXCEPTION(throwScope, {});
+            }
+        }
+    }
+
+    auto* jsBuffer = jsCast<JSC::JSArrayBuffer*>(arrayBufferValue.asCell());
+    RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
+    if (buffer->isDetached()) {
+        // TOOD: return Node.js error
+        throwTypeError(globalObject, throwScope, "Buffer is detached"_s);
+        return {};
+    }
+    size_t byteLength = buffer->byteLength();
+    if (offset > byteLength) {
+        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, globalObject, "offset"_s);
+    }
+
+    if (!length) {
+        if (buffer->isResizableOrGrowableShared()) {
+            if (UNLIKELY(offset > byteLength)) {
+                return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, globalObject, "byteOffset"_s);
+            }
+        } else {
+            length = (byteLength - offset);
+        }
+    }
+    if (offset + length.value() > byteLength) {
+        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, globalObject, "length"_s);
+    }
+
+    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), offset, length);
+    if (UNLIKELY(!uint8Array)) {
+        throwOutOfMemoryError(globalObject, throwScope);
+        return JSC::JSValue::encode({});
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+}
+JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_Size, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto lengthValue = callFrame->argument(0);
+    Bun::V::validateNumber(throwScope, lexicalGlobalObject, lengthValue, jsString(vm, String("size"_s)), jsNumber(0), jsNumber(Bun::Buffer::kMaxLength));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    size_t length = lengthValue.toLength(lexicalGlobalObject);
+    return JSBuffer__bufferFromLength(lexicalGlobalObject, length);
+}
+JSC_DEFINE_HOST_FUNCTION(jsFunction_BufferFrom_StringEncoding, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto stringValue = callFrame->argument(0);
+    auto encodingValue = callFrame->argument(1);
+    return constructBufferFromStringAndEncoding(lexicalGlobalObject, stringValue, encodingValue);
+}
+
 static inline JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSValue newTarget, ArgList args)
 {
     VM& vm = lexicalGlobalObject->vm();
@@ -2449,9 +2540,7 @@ static inline JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexi
             if (!length) {
                 if (buffer->isResizableOrGrowableShared()) {
                     if (UNLIKELY(offset > byteLength)) {
-                        // TOOD: return Node.js error
-                        throwNodeRangeError(globalObject, throwScope, "byteOffset exceeds source ArrayBuffer byteLength"_s);
-                        return {};
+                        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, globalObject, "byteOffset"_s);
                     }
                 } else {
                     length = (byteLength - offset);

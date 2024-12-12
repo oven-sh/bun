@@ -341,9 +341,18 @@ EventEmitterPrototype.rawListeners = function rawListeners(type) {
   return handlers.slice();
 };
 
-EventEmitterPrototype.listenerCount = function listenerCount(type) {
+EventEmitterPrototype.listenerCount = function listenerCount(type, method) {
   var { _events: events } = this;
   if (!events) return 0;
+  if (method != null) {
+    var length = 0;
+    for (const handler of events[type] ?? []) {
+      if (handler === method || handler.listener === method) {
+        length++;
+      }
+    }
+    return length;
+  }
   return events[type]?.length ?? 0;
 };
 Object.defineProperty(EventEmitterPrototype.listenerCount, "name", { value: "listenerCount" });

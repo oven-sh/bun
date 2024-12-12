@@ -194,7 +194,7 @@ export function bunRun(file: string, env?: Record<string, string>) {
   const result = Bun.spawnSync([bunExe(), file], {
     cwd: path.dirname(file),
     env: {
-      ...ciEnv,
+      ...bunEnv,
       NODE_ENV: undefined,
       ...env,
     },
@@ -1331,6 +1331,7 @@ export function getSecret(name: string): string | undefined {
     const { exitCode, stdout } = spawnSync({
       cmd: ["buildkite-agent", "secret", "get", name],
       stdout: "pipe",
+      env: ciEnv,
       stderr: "inherit",
     });
     if (exitCode === 0) {

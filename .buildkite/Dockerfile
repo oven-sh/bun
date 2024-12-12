@@ -120,19 +120,15 @@ RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64";
     tar -xzf /tmp/buildkite-agent.tar.gz -C /tmp/buildkite-agent && \
     mv /tmp/buildkite-agent/buildkite-agent /usr/bin/buildkite-agent
 
-RUN useradd -r -m -d /var/lib/buildkite-agent buildkite-agent \
-    && mkdir -p /etc/buildkite-agent \
-    && chown -R buildkite-agent:buildkite-agent /etc/buildkite-agent && mkdir -p /var/lib/buildkite-agent/cache/bun
+RUN mkdir -p /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /etc/buildkite-agent /var/lib/buildkite-agent/cache/bun
 
-COPY --chown=buildkite-agent:buildkite-agent ../*/agent.mjs /var/bun/scripts/
+COPY  ../*/agent.mjs /var/bun/scripts/
 
 ENV BUN_INSTALL_CACHE=/var/lib/buildkite-agent/cache/bun
 ENV BUILDKITE_AGENT_TAGS=${BUILDKITE_AGENT_TAGS}
 
 
 WORKDIR /var/bun/scripts
-USER buildkite-agent
-
 
 ENV PATH=/root/.cargo/bin:$PATH
 

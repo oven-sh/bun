@@ -204,7 +204,7 @@ pub const All = struct {
                 now.* = timespec.now();
                 has_set_now.* = true;
             }
-            if (!timer.next.greater(now)) {
+            if (timer.next.greater(now)) {
                 return null;
             }
 

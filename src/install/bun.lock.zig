@@ -835,9 +835,9 @@ pub const Stringifier = struct {
                 try writer.print(
                     \\{s}"{s}"{s}
                 , .{
-                    if (i != 0) "," else "",
+                    if (i != 0) " " else "",
                     optional_peer.slice(buf),
-                    if (i != optional_peers_buf.items.len) " " else "",
+                    if (i != optional_peers_buf.items.len - 1) "," else "",
                 });
             }
 

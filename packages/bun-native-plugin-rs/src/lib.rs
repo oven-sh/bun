@@ -244,10 +244,11 @@
 //! Your `extern "C"` plugin function can be called _on any thread_ at _any time_ and _multiple times at once_.
 //!
 //! Therefore, you must design any state management to be threadsafe
-
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
+pub use anyhow;
+pub use bun_macro::bun;
 
 #[repr(transparent)]
 pub struct BunPluginName(*const c_char);
@@ -261,7 +262,7 @@ impl BunPluginName {
 #[macro_export]
 macro_rules! define_bun_plugin {
     ($name:expr) => {
-        pub static BUN_PLUGIN_NAME_STRING: &str = $name;
+        pub static BUN_PLUGIN_NAME_STRING: &str = concat!($name, "\0");
 
         #[no_mangle]
         pub static BUN_PLUGIN_NAME: bun_native_plugin::BunPluginName =
@@ -279,7 +280,9 @@ use std::{
     borrow::Cow,
     cell::UnsafeCell,
     ffi::{c_char, c_void},
+    marker::PhantomData,
     str::Utf8Error,
+    sync::PoisonError,
 };
 
 pub mod sys {
@@ -323,7 +326,7 @@ impl Drop for SourceCodeContext {
 pub type BunLogLevel = sys::BunLogLevel;
 pub type BunLoader = sys::BunLoader;
 
-fn get_from_raw_str<'a>(ptr: *const u8, len: usize) -> Result<Cow<'a, str>> {
+fn get_from_raw_str<'a>(ptr: *const u8, len: usize) -> PluginResult<Cow<'a, str>> {
     let slice: &'a [u8] = unsafe { std::slice::from_raw_parts(ptr, len) };
 
     // Windows allows invalid UTF-16 strings in the filesystem. These get converted to WTF-8 in Zig.
@@ -351,13 +354,41 @@ pub enum Error {
     IncompatiblePluginVersion,
     ExternalTypeMismatch,
     Unknown,
+    LockPoisoned,
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type PluginResult<T> = std::result::Result<T, Error>;
+pub type Result<T> = anyhow::Result<T>;
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        None
+    }
+
+    fn description(&self) -> &str {
+        "description() is deprecated; use Display"
+    }
+
+    fn cause(&self) -> Option<&dyn std::error::Error> {
+        self.source()
+    }
+}
 
 impl From<Utf8Error> for Error {
     fn from(value: Utf8Error) -> Self {
         Self::Utf8(value)
+    }
+}
+
+impl<Guard> From<PoisonError<Guard>> for Error {
+    fn from(_: PoisonError<Guard>) -> Self {
+        Self::LockPoisoned
     }
 }
 
@@ -370,9 +401,10 @@ impl From<Utf8Error> for Error {
 ///
 /// To initialize this struct, see the `from_raw` method.
 pub struct OnBeforeParse<'a> {
-    args_raw: &'a sys::OnBeforeParseArguments,
+    pub args_raw: *mut sys::OnBeforeParseArguments,
     result_raw: *mut sys::OnBeforeParseResult,
     compilation_context: *mut SourceCodeContext,
+    __phantom: PhantomData<&'a ()>,
 }
 
 impl<'a> OnBeforeParse<'a> {
@@ -394,10 +426,10 @@ impl<'a> OnBeforeParse<'a> {
     /// }
     /// ```
     pub fn from_raw(
-        args: &'a sys::OnBeforeParseArguments,
+        args: *mut sys::OnBeforeParseArguments,
         result: *mut sys::OnBeforeParseResult,
-    ) -> Result<Self> {
-        if args.__struct_size < std::mem::size_of::<sys::OnBeforeParseArguments>()
+    ) -> PluginResult<Self> {
+        if unsafe { (*args).__struct_size } < std::mem::size_of::<sys::OnBeforeParseArguments>()
             || unsafe { (*result).__struct_size } < std::mem::size_of::<sys::OnBeforeParseResult>()
         {
             let message = "This plugin is not compatible with the current version of Bun.";
@@ -405,8 +437,8 @@ impl<'a> OnBeforeParse<'a> {
                 __struct_size: std::mem::size_of::<sys::BunLogOptions>(),
                 message_ptr: message.as_ptr(),
                 message_len: message.len(),
-                path_ptr: args.path_ptr,
-                path_len: args.path_len,
+                path_ptr: unsafe { (*args).path_ptr },
+                path_len: unsafe { (*args).path_len },
                 source_line_text_ptr: std::ptr::null(),
                 source_line_text_len: 0,
                 level: BunLogLevel::BUN_LOG_LEVEL_ERROR as i8,
@@ -426,15 +458,21 @@ impl<'a> OnBeforeParse<'a> {
             args_raw: args,
             result_raw: result,
             compilation_context: std::ptr::null_mut() as *mut _,
+            __phantom: Default::default(),
         })
     }
 
-    pub fn path(&self) -> Result<Cow<'_, str>> {
-        get_from_raw_str(self.args_raw.path_ptr, self.args_raw.path_len)
+    pub fn path(&self) -> PluginResult<Cow<'_, str>> {
+        unsafe { get_from_raw_str((*self.args_raw).path_ptr, (*self.args_raw).path_len) }
     }
 
-    pub fn namespace(&self) -> Result<Cow<'_, str>> {
-        get_from_raw_str(self.args_raw.namespace_ptr, self.args_raw.namespace_len)
+    pub fn namespace(&self) -> PluginResult<Cow<'_, str>> {
+        unsafe {
+            get_from_raw_str(
+                (*self.args_raw).namespace_ptr,
+                (*self.args_raw).namespace_len,
+            )
+        }
     }
 
     /// Get the external object from the `OnBeforeParse` arguments.
@@ -485,12 +523,13 @@ impl<'a> OnBeforeParse<'a> {
     ///     },
     /// };
     /// ```
-    pub unsafe fn external<T: 'static + Sync>(&self) -> Result<Option<&'static T>> {
-        if self.args_raw.external.is_null() {
+    pub unsafe fn external<T: 'static + Sync>(&self) -> PluginResult<Option<&'static T>> {
+        if unsafe { (*self.args_raw).external.is_null() } {
             return Ok(None);
         }
 
-        let external: *mut TaggedObject<T> = self.args_raw.external as *mut TaggedObject<T>;
+        let external: *mut TaggedObject<T> =
+            unsafe { (*self.args_raw).external as *mut TaggedObject<T> };
 
         unsafe {
             if (*external).type_id != TypeId::of::<T>() {
@@ -505,12 +544,13 @@ impl<'a> OnBeforeParse<'a> {
     ///
     /// This is unsafe as you must ensure that no other invocation of the plugin
     /// simultaneously holds a mutable reference to the external.
-    pub unsafe fn external_mut<T: 'static + Sync>(&mut self) -> Result<Option<&mut T>> {
-        if self.args_raw.external.is_null() {
+    pub unsafe fn external_mut<T: 'static + Sync>(&mut self) -> PluginResult<Option<&mut T>> {
+        if unsafe { (*self.args_raw).external.is_null() } {
             return Ok(None);
         }
 
-        let external: *mut TaggedObject<T> = self.args_raw.external as *mut TaggedObject<T>;
+        let external: *mut TaggedObject<T> =
+            unsafe { (*self.args_raw).external as *mut TaggedObject<T> };
 
         unsafe {
             if (*external).type_id != TypeId::of::<T>() {
@@ -525,9 +565,12 @@ impl<'a> OnBeforeParse<'a> {
     ///
     /// On Windows, this function may return an `Err(Error::Utf8(...))` if the
     /// source code contains invalid UTF-8.
-    pub fn input_source_code(&self) -> Result<Cow<'_, str>> {
+    pub fn input_source_code(&self) -> PluginResult<Cow<'_, str>> {
         let fetch_result = unsafe {
-            ((*self.result_raw).fetchSourceCode.unwrap())(self.args_raw, self.result_raw)
+            ((*self.result_raw).fetchSourceCode.unwrap())(
+                self.args_raw as *const _,
+                self.result_raw,
+            )
         };
 
         if fetch_result != 0 {
@@ -587,7 +630,7 @@ impl<'a> OnBeforeParse<'a> {
     }
 
     /// Set the output loader for the current file.
-    pub fn set_output_loader(&self, loader: BunLogLevel) {
+    pub fn set_output_loader(&self, loader: BunLoader) {
         // SAFETY: We don't hand out mutable references to `result_raw` so dereferencing it is safe.
         unsafe {
             (*self.result_raw).loader = loader as u8;
@@ -606,22 +649,36 @@ impl<'a> OnBeforeParse<'a> {
 
     /// Log a message with the given level.
     pub fn log(&self, message: &str, level: BunLogLevel) {
-        let mut log_options = sys::BunLogOptions {
-            __struct_size: std::mem::size_of::<sys::BunLogOptions>(),
-            message_ptr: message.as_ptr(),
-            message_len: message.len(),
-            path_ptr: self.args_raw.path_ptr,
-            path_len: self.args_raw.path_len,
-            source_line_text_ptr: std::ptr::null(),
-            source_line_text_len: 0,
-            level: level as i8,
-            line: 0,
-            lineEnd: 0,
-            column: 0,
-            columnEnd: 0,
-        };
+        let mut log_options = log_from_message_and_level(
+            message,
+            level,
+            unsafe { (*self.args_raw).path_ptr },
+            unsafe { (*self.args_raw).path_len },
+        );
         unsafe {
             ((*self.result_raw).log.unwrap())(self.args_raw, &mut log_options);
         }
+    }
+}
+
+pub fn log_from_message_and_level(
+    message: &str,
+    level: BunLogLevel,
+    path: *const u8,
+    path_len: usize,
+) -> sys::BunLogOptions {
+    sys::BunLogOptions {
+        __struct_size: std::mem::size_of::<sys::BunLogOptions>(),
+        message_ptr: message.as_ptr(),
+        message_len: message.len(),
+        path_ptr: path as *const _,
+        path_len,
+        source_line_text_ptr: std::ptr::null(),
+        source_line_text_len: 0,
+        level: level as i8,
+        line: 0,
+        lineEnd: 0,
+        column: 0,
+        columnEnd: 0,
     }
 }

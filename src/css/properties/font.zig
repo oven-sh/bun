@@ -160,17 +160,25 @@ pub const FontStretch = union(enum) {
     percentage: Percentage,
 
     // TODO: implement this
-    // pub usingnamespace css.DeriveParse(@This());
-
-    pub fn parse(input: *css.Parser) css.Result(FontStretch) {
-        _ = input; // autofix
-        @panic(css.todo_stuff.depth);
-    }
+    pub usingnamespace css.DeriveParse(@This());
 
     pub fn toCss(this: *const FontStretch, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @panic(css.todo_stuff.depth);
+        if (dest.minify) {
+            const percentage: Percentage = this.intoPercentage();
+            return percentage.toCss(W, dest);
+        }
+
+        return switch (this.*) {
+            .percentage => |*val| val.toCss(W, dest),
+            .keyword => |*kw| kw.toCss(W, dest),
+        };
+    }
+
+    pub fn intoPercentage(this: *const FontStretch) Percentage {
+        return switch (this.*) {
+            .percentage => |*val| val.*,
+            .keyword => |*kw| kw.intoPercentage(),
+        };
     }
 
     pub fn eql(lhs: *const FontStretch, rhs: *const FontStretch) bool {
@@ -214,6 +222,21 @@ pub const FontStretchKeyword = enum {
 
     pub inline fn default() FontStretchKeyword {
         return .normal;
+    }
+
+    pub fn intoPercentage(this: *const FontStretchKeyword) Percentage {
+        const val: f32 = switch (this.*) {
+            .@"ultra-condensed" => 0.5,
+            .@"extra-condensed" => 0.625,
+            .condensed => 0.75,
+            .@"semi-condensed" => 0.875,
+            .normal => 1.0,
+            .@"semi-expanded" => 1.125,
+            .expanded => 1.25,
+            .@"extra-expanded" => 1.5,
+            .@"ultra-expanded" => 2.0,
+        };
+        return .{ .v = val };
     }
 };
 

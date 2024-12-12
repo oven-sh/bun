@@ -1050,9 +1050,7 @@ pub const SelectorParser = struct {
 
     pub fn parseFunctionalPseudoElement(this: *SelectorParser, name: []const u8, input: *css.Parser) Result(Impl.SelectorImpl.PseudoElement) {
         _ = this; // autofix
-        _ = name; // autofix
-        _ = input; // autofix
-        @panic(css.todo_stuff.depth);
+        return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unsupported_pseudo_class_or_element = name })) };
     }
 
     fn parseIsAndWhere(this: *const SelectorParser) bool {

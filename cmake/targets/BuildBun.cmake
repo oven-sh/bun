@@ -939,6 +939,7 @@ if(WIN32)
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.def)
   target_link_options(${bun} PUBLIC /DEF:${BUN_SYMBOLS_PATH})
 elseif(APPLE)
+
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.txt)
   target_link_options(${bun} PUBLIC -exported_symbols_list ${BUN_SYMBOLS_PATH})
 else()

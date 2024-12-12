@@ -205,7 +205,7 @@ function getImageLabel(platform) {
 function getImageName(platform, options) {
   const { os, arch, distro, release, features = [] } = platform;
   const { buildImages, publishImages } = options;
-  const name = distro ? `${os}-${arch}-${distro}-${release}` : `${os}-${arch}-${release}`;
+  let name = distro ? `${os}-${arch}-${distro}-${release}` : `${os}-${arch}-${release}`;
 
   if (features?.length) {
     name += `-with-${features.join("-")}`;

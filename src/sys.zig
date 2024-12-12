@@ -2372,7 +2372,7 @@ pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socket
         while (true) {
             const nonblock_flag: i32 = if (nonblocking_status == .nonblocking) linux.SOCK.NONBLOCK else 0;
             const rc = std.os.linux.socketpair(domain, socktype | linux.SOCK.CLOEXEC | nonblock_flag, protocol, &fds_i);
-            if (Maybe(void).errnoSys(rc, .socketpair)) |err| {
+            if (Maybe([2]bun.FileDescriptor).errnoSys(rc, .socketpair)) |err| {
                 if (err.getErrno() == .INTR) continue;
 
                 log("socketpair() = {d} {s}", .{ err.err.errno, err.err.name() });

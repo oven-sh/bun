@@ -2751,7 +2751,7 @@ export function getLoggedInUserCountOrDetails() {
       return 0;
     }
 
-    let message = users.length + " currently logged in users:";
+    let message = `${users.length} currently logged in users:`;
 
     for (const user of users) {
       message += `\n- ${user.username} on ${user.terminal} since ${user.datetime}${user.ip ? ` from ${user.ip}` : ""}`;

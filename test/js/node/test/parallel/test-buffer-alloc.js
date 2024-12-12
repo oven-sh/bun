@@ -1197,5 +1197,5 @@ assert.throws(() => {
 }, {
   code: 'ERR_INVALID_ARG_TYPE',
   name: 'TypeError',
-  message: `The "encoding" argument must be of type string. Received 20`,
+  message: `The "encoding" argument must be of type string. Received type number (20)`,
 });

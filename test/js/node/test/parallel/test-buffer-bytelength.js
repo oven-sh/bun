@@ -17,7 +17,8 @@ const vm = require('vm');
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
       message: 'The "string" argument must be of type string or an instance ' +
-               'of Buffer or ArrayBuffer.' + ` Received ${args[0]}`
+               'of Buffer or ArrayBuffer.' +
+               common.invalidArgTypeHelper(args[0])
     }
   );
 });

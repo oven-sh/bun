@@ -184,9 +184,9 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 \\  "mappings": "{}"
                 \\}}
             , .{
-                bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier)),
-                bun.fmt.formatJSONStringUTF8(specifier),
-                bun.fmt.formatJSONStringUTF8(source_file),
+                bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier), .{}),
+                bun.fmt.formatJSONStringUTF8(specifier, .{}),
+                bun.fmt.formatJSONStringUTF8(source_file, .{}),
                 mappings.formatVLQs(),
             });
             try bufw.flush();

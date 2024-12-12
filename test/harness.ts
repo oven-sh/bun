@@ -152,25 +152,29 @@ export type DirectoryTree = {
     | ((opts: { root: string }) => Awaitable<string | Buffer | DirectoryTree>);
 };
 
-export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
-  async function makeTree(base: string, tree: DirectoryTree) {
-    for (const [name, raw_contents] of Object.entries(tree)) {
-      const contents = typeof raw_contents === "function" ? await raw_contents({ root: base }) : raw_contents;
-      const joined = join(base, name);
-      if (name.includes("/")) {
-        const dir = dirname(name);
-        if (dir !== name && dir !== ".") {
-          fs.mkdirSync(join(base, dir), { recursive: true });
-        }
+export async function makeTree(base: string, tree: DirectoryTree) {
+  const isDirectoryTree = (value: string | DirectoryTree | Buffer): value is DirectoryTree =>
+    typeof value === "object" && value && typeof value?.byteLength === "undefined";
+
+  for (const [name, raw_contents] of Object.entries(tree)) {
+    const contents = typeof raw_contents === "function" ? await raw_contents({ root: base }) : raw_contents;
+    const joined = join(base, name);
+    if (name.includes("/")) {
+      const dir = dirname(name);
+      if (dir !== name && dir !== ".") {
+        fs.mkdirSync(join(base, dir), { recursive: true });
       }
-      if (typeof contents === "object" && contents && typeof contents?.byteLength === "undefined") {
-        fs.mkdirSync(joined);
-        makeTree(joined, contents);
-        continue;
-      }
-      fs.writeFileSync(joined, contents);
     }
+    if (isDirectoryTree(contents)) {
+      fs.mkdirSync(joined);
+      makeTree(joined, contents);
+      continue;
+    }
+    fs.writeFileSync(joined, contents);
   }
+}
+
+export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
   const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
   makeTree(base, files);
   return base;

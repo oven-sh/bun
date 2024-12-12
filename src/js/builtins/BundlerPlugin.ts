@@ -1,11 +1,4 @@
-import type {
-  BuildConfig,
-  BunPlugin,
-  OnLoadCallback,
-  OnResolveCallback,
-  PluginBuilder,
-  PluginConstraints,
-} from "bun";
+import type { BuildConfig, BunPlugin, OnLoadCallback, OnResolveCallback, PluginBuilder, PluginConstraints } from "bun";
 type AnyFunction = (...args: any[]) => any;
 
 interface BundlerPlugin {
@@ -73,8 +66,10 @@ export function runSetupFunction(
     if (map === onBeforeParsePlugins) {
       isOnBeforeParse = true;
       // TODO: how to check if it a napi module here?
-      if (!callback) {
-        throw new TypeError("onBeforeParse `napiModule` must be a Napi module");
+      if (!callback || !$isObject(callback) || !callback.$napiDlopenHandle) {
+        throw new TypeError(
+          "onBeforeParse `napiModule` must be a Napi module which exports the `BUN_PLUGIN_NAME` symbol.",
+        );
       }
 
       if (typeof symbol !== "string") {
@@ -134,7 +129,7 @@ export function runSetupFunction(
 
   const self = this;
   function onStart(callback) {
-    if(isBake) {
+    if (isBake) {
       throw new TypeError("onStart() is not supported in Bake yet");
     }
     if (!$isCallable(callback)) {
@@ -370,7 +365,14 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
   }
 }
 
-export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespace, defaultLoaderId, isServerSide: boolean) {
+export function runOnLoadPlugins(
+  this: BundlerPlugin,
+  internalID,
+  path,
+  namespace,
+  defaultLoaderId,
+  isServerSide: boolean,
+) {
   const LOADERS_MAP = $LoaderLabelToId;
   const loaderName = $LoaderIdToLabel[defaultLoaderId];
 
@@ -411,15 +413,15 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
         }
 
         var { contents, loader = defaultLoader } = result as any;
-        if ((loader as any) === 'object') {
-          if (!('exports' in result)) {
+        if ((loader as any) === "object") {
+          if (!("exports" in result)) {
             throw new TypeError('onLoad plugin returning loader: "object" must have "exports" property');
           }
           try {
             contents = JSON.stringify(result.exports);
-            loader = 'json';
+            loader = "json";
           } catch (e) {
-            throw new TypeError('When using Bun.build, onLoad plugin must return a JSON-serializable object: ' + e) ;
+            throw new TypeError("When using Bun.build, onLoad plugin must return a JSON-serializable object: " + e);
           }
         }
 

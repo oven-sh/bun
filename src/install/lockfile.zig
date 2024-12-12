@@ -425,7 +425,7 @@ pub const Tree = struct {
     id: Id = invalid_id,
 
     // Should not be used for anything other than name
-    // through `folderName()`. There is not guarentee a dependency
+    // through `folderName()`. There is not guarantee a dependency
     // id chosen for a tree node is the same behavior or has the
     // same version literal for packages hoisted.
     dependency_id: DependencyID = invalid_dependency_id,

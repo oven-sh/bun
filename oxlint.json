@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/refs/heads/main/npm/oxlint/configuration_schema.json",
   "categories": {
-    "correctness": "warn", // TODO: gradually fix bugs and turn this to error
+    "correctness": "warn" // TODO: gradually fix bugs and turn this to error
   },
   "rules": {
     "const-comparisons": "off", // TODO: there's a bug when comparing private identifiers. Re-enable once it's fixed.
@@ -13,9 +13,7 @@
     "no-empty-pattern": "error",
     "import/no-duplicates": "error",
 
-    "no-useless-escape": "off", // there's a lot of these. Should be fixed eventually.
-
-
+    "no-useless-escape": "off" // there's a lot of these. Should be fixed eventually.
   },
   "ignorePatterns": [
     "vendor",
@@ -27,21 +25,17 @@
     "test/js/node/test/fixtures", // full of JS with intentional syntax errors
     "test/regression/issue/14477/*.tsx",
     "test/js/**/*bad.js",
-    "test/bundler/transpiler/decorators.test.ts" // uses `arguments` as decorator
+    "test/bundler/transpiler/decorators.test.ts", // uses `arguments` as decorator
+    "test/bundler/native-plugin.test.ts", // parser doesn't handle import metadata
+    "test/bundler/transpiler/with-statement-works.js" // parser doesn't allow `with` statement
   ],
   "overrides": [
-    // {
-    //   "files": ["src/js/**", "packages/**"],
-    //   "rules": {
-    //     "only-used-in-recursion": "error"
-    //   }
-    // },
     {
       "files": ["test/**", "examples/**", "packages/bun-internal/test/runners/**"],
       "rules": {
         "no-unused-vars": "off",
         "no-unused-private-class-members": "off",
-        "no-unnecessary-await": "off",
+        "no-unnecessary-await": "off"
       }
     },
     {
@@ -49,7 +43,7 @@
       "rules": {
         "no-shadow-restricted-names": "off",
         "no-empty-file": "off",
-        "no-unnecessary-await": "off",
+        "no-unnecessary-await": "off"
       }
     }
   ]

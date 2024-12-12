@@ -199,7 +199,6 @@ JSC::JSValue JSStringDecoder::fillLast(JSC::VM& vm, JSC::JSGlobalObject* globalO
     RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
 }
 
-
 // This is not the exposed text
 JSC::JSValue JSStringDecoder::text(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint8_t* bufPtr, uint32_t length, uint32_t offset)
 {
@@ -347,19 +346,16 @@ JSStringDecoder::end(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint8_t* bu
     }
     case BufferEncodingType::utf8: {
         if (length == 0) {
-            RELEASE_AND_RETURN(throwScope, m_lastNeed
-                ? JSC::JSValue::decode(Bun__encoding__toString(m_lastChar, m_lastTotal - m_lastNeed, globalObject, static_cast<uint8_t>(m_encoding)))
-                : JSC::jsEmptyString(vm));
+            RELEASE_AND_RETURN(throwScope, m_lastNeed ? JSC::JSValue::decode(Bun__encoding__toString(m_lastChar, m_lastTotal - m_lastNeed, globalObject, static_cast<uint8_t>(m_encoding))) : JSC::jsEmptyString(vm));
         }
         JSString* firstHalf = write(vm, globalObject, bufPtr, length).toString(globalObject);
         RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
         RELEASE_AND_RETURN(throwScope,
             m_lastNeed
                 ? JSC::jsString(
-                    globalObject,
-                    firstHalf,
-                    jsCast<JSString*>(JSC::JSValue::decode(Bun__encoding__toString(m_lastChar, m_lastTotal - m_lastNeed, globalObject, static_cast<uint8_t>(m_encoding))))
-                )
+                      globalObject,
+                      firstHalf,
+                      jsCast<JSString*>(JSC::JSValue::decode(Bun__encoding__toString(m_lastChar, m_lastTotal - m_lastNeed, globalObject, static_cast<uint8_t>(m_encoding)))))
                 : firstHalf);
     }
     case BufferEncodingType::base64:

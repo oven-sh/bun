@@ -3574,31 +3574,16 @@ pub const Interpreter = struct {
                     pipe[0] = bun.FDImpl.fromUV(fds[0]).encode();
                     pipe[1] = bun.FDImpl.fromUV(fds[1]).encode();
                 } else {
-                    const fds: [2]bun.FileDescriptor = brk: {
-                        var fds_: [2]std.c.fd_t = undefined;
-                        const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
-                        if (rc != 0) {
-                            return bun.sys.Maybe(void).errno(bun.sys.getErrno(rc), .socketpair);
-                        }
-
-                        var before = std.c.fcntl(fds_[0], std.posix.F.GETFL);
-
-                        const result = std.c.fcntl(fds_[0], std.posix.F.SETFL, before | bun.O.CLOEXEC);
-                        if (result == -1) {
-                            _ = bun.sys.close(bun.toFD(fds_[0]));
-                            _ = bun.sys.close(bun.toFD(fds_[1]));
-                            return Maybe(void).errno(bun.sys.getErrno(result), .fcntl);
-                        }
-
-                        if (comptime bun.Environment.isMac) {
-                            // SO_NOSIGPIPE
-                            before = 1;
-                            _ = std.c.setsockopt(fds_[0], std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, &before, @sizeOf(c_int));
-                        }
-
-                        break :brk .{ bun.toFD(fds_[0]), bun.toFD(fds_[1]) };
+                    const fds: [2]bun.FileDescriptor = switch (bun.sys.socketpair(
+                        std.posix.AF.UNIX,
+                        std.posix.SOCK.STREAM,
+                        0,
+                        .blocking,
+                    )) {
+                        .result => |fds| .{ bun.toFD(fds[0]), bun.toFD(fds[1]) },
+                        .err => |err| return .{ .err = err },
                     };
-                    log("socketpair() = {{{}, {}}}", .{ fds[0], fds[1] });
+
                     pipe.* = fds;
                 }
                 set_count.* += 1;

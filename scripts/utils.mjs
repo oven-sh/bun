@@ -2688,7 +2688,7 @@ export function printEnvironment() {
 /**
  * @returns {number | undefined}
  */
-export function getLoggedInUserCount() {
+export function getLoggedInUserCountOrDetails() {
   if (isWindows) {
     const pwsh = which(["pwsh", "powershell"]);
     if (pwsh) {
@@ -2705,7 +2705,31 @@ export function getLoggedInUserCount() {
 
   const { error, stdout } = spawnSync(["who"]);
   if (!error) {
-    return stdout.split("\n").filter(line => /tty|pts/i.test(line)).length;
+    const users = stdout
+      .split("\n")
+      .filter(line => /tty|pts/i.test(line))
+      .map(line => {
+        // who output format: username terminal date/time (ip)
+        const [username, terminal, datetime, ip] = line.split(/\s+/);
+        return {
+          username,
+          terminal,
+          datetime,
+          ip: (ip || "").replace(/[()]/g, ""), // Remove parentheses from IP
+        };
+      });
+
+    if (users.length === 0) {
+      return 0;
+    }
+
+    let message = users.length + " currently logged in users:";
+
+    for (const user of users) {
+      message += `\n- ${user.username} on ${user.terminal} since ${user.datetime}${user.ip ? ` from ${user.ip}` : ""}`;
+    }
+
+    return message;
   }
 }
 

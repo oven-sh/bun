@@ -302,7 +302,7 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
 
 namespace ERR {
 
-JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::ASCIILiteral& arg_name, const WTF::ASCIILiteral& expected_type, JSC::JSValue val_actual_value)
+JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral arg_name, WTF::ASCIILiteral expected_type, JSC::JSValue val_actual_value)
 {
     auto arg_kind = String(arg_name).startsWith("options."_s) ? "property"_s : "argument"_s;
     auto ty_first_char = expected_type[0];

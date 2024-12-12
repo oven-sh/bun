@@ -1335,7 +1335,7 @@ pub const Encoder = struct {
             },
 
             .hex => {
-                return strings.decodeHexToBytes(to_ptr[0..to_len], u8, input[0..len]);
+                return strings.decodeHexToBytesTruncate(to_ptr[0..to_len], u8, input[0..len]);
             },
 
             .base64, .base64url => {
@@ -1414,7 +1414,7 @@ pub const Encoder = struct {
             },
 
             .hex => {
-                return strings.decodeHexToBytes(to[0..to_len], u16, input[0..len]);
+                return strings.decodeHexToBytesTruncate(to[0..to_len], u16, input[0..len]);
             },
 
             .base64, .base64url => {

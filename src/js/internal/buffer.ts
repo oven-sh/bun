@@ -61,6 +61,10 @@ function check_int48(buf, value, offset, min, max) {
   checkInt(value, min, max, buf, offset, 5);
 }
 
+function check_bigint64(buf, value, offset, min, max) {
+  checkInt(value, min, max, buf, offset, 7);
+}
+
 export default {
   validateNumber,
   validateInteger,
@@ -75,4 +79,5 @@ export default {
   check_int32,
   check_int40,
   check_int48,
+  check_bigint64,
 };

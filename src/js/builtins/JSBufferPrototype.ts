@@ -8,11 +8,6 @@ interface BufferExt extends Buffer {
   toString(offset: number, length: number, encoding?: BufferEncoding): string;
 }
 
-export function setBigUint64(this: BufferExt, offset, value, le) {
-  const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
-  return view.setBigUint64(offset, value, le);
-}
-
 export function readInt8(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
   require("internal/buffer").validateInteger(offset, "offset");
@@ -292,21 +287,33 @@ export function readDoubleBE(this: BufferExt, offset) {
 }
 
 export function readBigInt64LE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/buffer").validateInteger(offset, "offset");
+  if (!(offset >= 0 && offset <= this.length - 8)) require("internal/buffer").boundsError(offset, this.length - 8); // prettier-ignore
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getBigInt64(offset, true);
 }
 
 export function readBigInt64BE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/buffer").validateInteger(offset, "offset");
+  if (!(offset >= 0 && offset <= this.length - 8)) require("internal/buffer").boundsError(offset, this.length - 8); // prettier-ignore
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getBigInt64(offset, false);
 }
 
 export function readBigUInt64LE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/buffer").validateInteger(offset, "offset");
+  if (!(offset >= 0 && offset <= this.length - 8)) require("internal/buffer").boundsError(offset, this.length - 8); // prettier-ignore
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getBigUint64(offset, true);
 }
 
 export function readBigUInt64BE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/buffer").validateInteger(offset, "offset");
+  if (!(offset >= 0 && offset <= this.length - 8)) require("internal/buffer").boundsError(offset, this.length - 8); // prettier-ignore
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   return view.getBigUint64(offset, false);
 }
@@ -619,6 +626,8 @@ export function writeDoubleBE(this: BufferExt, value, offset) {
 
 export function writeBigInt64LE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  require("internal/buffer").check_bigint64(this, value, offset, -0x8000000000000000n, 0x7fffffffffffffffn);
+  if (typeof value !== "bigint") throw require("internal/buffer").ERR_INVALID_ARG_TYPE("value", "bigint", value);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setBigInt64(offset, value, true);
   return offset + 8;
@@ -626,6 +635,8 @@ export function writeBigInt64LE(this: BufferExt, value, offset) {
 
 export function writeBigInt64BE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  require("internal/buffer").check_bigint64(this, value, offset, -0x8000000000000000n, 0x7fffffffffffffffn);
+  if (typeof value !== "bigint") throw require("internal/buffer").ERR_INVALID_ARG_TYPE("value", "bigint", value);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setBigInt64(offset, value, false);
   return offset + 8;
@@ -633,6 +644,8 @@ export function writeBigInt64BE(this: BufferExt, value, offset) {
 
 export function writeBigUInt64LE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  require("internal/buffer").check_bigint64(this, value, offset, 0n, 0xffffffffffffffffn);
+  if (typeof value !== "bigint") throw require("internal/buffer").ERR_INVALID_ARG_TYPE("value", "bigint", value);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setBigUint64(offset, value, true);
   return offset + 8;
@@ -640,6 +653,8 @@ export function writeBigUInt64LE(this: BufferExt, value, offset) {
 
 export function writeBigUInt64BE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  require("internal/buffer").check_bigint64(this, value, offset, 0n, 0xffffffffffffffffn);
+  if (typeof value !== "bigint") throw require("internal/buffer").ERR_INVALID_ARG_TYPE("value", "bigint", value);
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   view.setBigUint64(offset, value, false);
   return offset + 8;

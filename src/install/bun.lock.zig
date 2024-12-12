@@ -833,7 +833,7 @@ pub const Stringifier = struct {
 
             for (optional_peers_buf.items, 0..) |optional_peer, i| {
                 try writer.print(
-                    \\"{s}{s}{s}",
+                    \\{s}"{s}"{s}
                 , .{
                     if (i != 0) "," else "",
                     optional_peer.slice(buf),

@@ -132,13 +132,9 @@ pub const TestRunner = struct {
     pub fn scheduleTimeout(this: *TestRunner, milliseconds: u32) void {
         const then = bun.timespec.msFromNow(@intCast(milliseconds));
         const vm = JSC.VirtualMachine.get();
-        if (this.event_loop_timer.state == .ACTIVE) {
-            vm.timer.remove(&this.event_loop_timer);
-        }
 
-        this.event_loop_timer.next = then;
         this.event_loop_timer.tag = .TestRunner;
-        vm.timer.insert(&this.event_loop_timer);
+        vm.timer.update(&this.event_loop_timer, &then);
     }
 
     pub fn enqueue(this: *TestRunner, task: *TestRunnerTask) void {

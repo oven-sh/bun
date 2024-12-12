@@ -27,6 +27,8 @@ const TimerHeap = heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less);
 
 pub const All = struct {
     last_id: i32 = 1,
+    lock: bun.Lock = .{},
+    thread_id: std.Thread.Id,
     timers: TimerHeap = .{
         .context = {},
     },
@@ -49,7 +51,15 @@ pub const All = struct {
         }
     } = .{},
 
+    pub fn init() @This() {
+        return .{
+            .thread_id = std.Thread.getCurrentId(),
+        };
+    }
+
     pub fn insert(this: *All, timer: *EventLoopTimer) void {
+        this.lock.lock();
+        defer this.lock.unlock();
         this.timers.insert(timer);
         timer.state = .ACTIVE;
 
@@ -59,10 +69,31 @@ pub const All = struct {
     }
 
     pub fn remove(this: *All, timer: *EventLoopTimer) void {
+        this.lock.lock();
+        defer this.lock.unlock();
         this.timers.remove(timer);
 
         timer.state = .CANCELLED;
         timer.heap = .{};
+    }
+
+    /// Remove the EventLoopTimer if necessary.
+    pub fn update(this: *All, timer: *EventLoopTimer, time: *const timespec) void {
+        this.lock.lock();
+        defer this.lock.unlock();
+        if (timer.state == .ACTIVE) {
+            this.timers.remove(timer);
+        }
+
+        timer.state = .ACTIVE;
+        if (comptime Environment.isDebug) {
+            if (&timer.next == time) {
+                @panic("timer.next == time. For threadsafety reasons, time and timer.next must always be a different pointer.");
+            }
+        }
+        timer.next = time.*;
+
+        this.timers.insert(timer);
     }
 
     fn ensureUVTimer(this: *All, vm: *VirtualMachine) void {
@@ -159,22 +190,40 @@ pub const All = struct {
         _ = &Bun__internal_drainTimers;
     }
 
-    pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
-        if (this.timers.peek() == null) {
-            return;
-        }
+    // Getting the current time is expensive on certain platforms.
+    // We don't want to call it when there are no timers.
+    // And when we do call it, we want to be sure we only call it once.
+    // and we do NOT want to hold the lock while the timer is running it's code.
+    // This function has to be thread-safe.
+    fn next(this: *All, has_set_now: *bool, now: *timespec) ?*EventLoopTimer {
+        this.lock.lock();
+        defer this.lock.unlock();
 
-        const now = &timespec.now();
-
-        while (this.timers.peek()) |t| {
-            if (t.next.greater(now)) {
-                break;
+        if (this.timers.peek()) |timer| {
+            if (!has_set_now.*) {
+                now.* = timespec.now();
+                has_set_now.* = true;
+            }
+            if (!timer.next.greater(now)) {
+                return null;
             }
 
-            assert(this.timers.deleteMin().? == t);
+            assert(this.timers.deleteMin().? == timer);
 
+            return timer;
+        }
+        return null;
+    }
+
+    pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
+        // Set in next().
+        var now: timespec = undefined;
+        // Split into a separate variable to avoid increasing the size of the timespec type.
+        var has_set_now: bool = false;
+
+        while (this.next(&has_set_now, &now)) |t| {
             switch (t.fire(
-                now,
+                &now,
                 vm,
             )) {
                 .disarm => {},
@@ -467,8 +516,7 @@ pub const TimerObject = struct {
                 switch (this.event_loop_timer.state) {
                     .FIRED => {
                         // If we didn't clear the setInterval, reschedule it starting from
-                        this.event_loop_timer.next = time_before_call;
-                        vm.timer.insert(&this.event_loop_timer);
+                        vm.timer.update(&this.event_loop_timer, &time_before_call);
 
                         if (this.has_js_ref) {
                             this.setEnableKeepingEventLoopAlive(vm, true);
@@ -478,10 +526,7 @@ pub const TimerObject = struct {
                     },
                     .ACTIVE => {
                         // The developer called timer.refresh() synchronously in the callback.
-                        vm.timer.remove(&this.event_loop_timer);
-
-                        this.event_loop_timer.next = time_before_call;
-                        vm.timer.insert(&this.event_loop_timer);
+                        vm.timer.update(&this.event_loop_timer, &time_before_call);
 
                         // Balance out the ref count.
                         // the transition from "FIRED" -> "ACTIVE" caused it to increment.
@@ -620,8 +665,7 @@ pub const TimerObject = struct {
             this.ref();
         }
 
-        this.event_loop_timer.next = now;
-        vm.timer.insert(&this.event_loop_timer);
+        vm.timer.update(&this.event_loop_timer, &now);
         this.has_cleared_timer = false;
 
         if (this.has_js_ref) {
@@ -857,6 +901,7 @@ pub const WTFTimer = struct {
     run_loop_timer: *RunLoopTimer,
     event_loop_timer: EventLoopTimer,
     repeat: bool,
+    lock: bun.Lock = .{},
 
     pub usingnamespace bun.New(@This());
 
@@ -864,7 +909,10 @@ pub const WTFTimer = struct {
         const this = WTFTimer.new(.{
             .vm = js_vm,
             .event_loop_timer = .{
-                .next = timespec.msFromNow(std.math.maxInt(i64)),
+                .next = .{
+                    .sec = std.math.maxInt(i64),
+                    .nsec = 0,
+                },
                 .tag = .WTFTimer,
                 .state = .CANCELLED,
             },
@@ -875,8 +923,17 @@ pub const WTFTimer = struct {
         return this;
     }
 
+    var auto_incrementing_integer_for_dedupe = std.atomic.Value(i64).init(0);
+
     pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
-        this.cancel();
+        if (seconds == 0) {
+            const ASAP = bun.timespec{
+                .nsec = 1024 + auto_incrementing_integer_for_dedupe.fetchAdd(1, .monotonic),
+                .sec = 1024,
+            };
+            this.vm.timer.update(&this.event_loop_timer, &ASAP);
+            return;
+        }
 
         const modf = std.math.modf(seconds);
         var interval = bun.timespec.now();
@@ -887,12 +944,13 @@ pub const WTFTimer = struct {
             interval.nsec -= std.time.ns_per_s;
         }
 
-        this.event_loop_timer.next = interval;
-        this.vm.timer.insert(&this.event_loop_timer);
+        this.vm.timer.update(&this.event_loop_timer, &interval);
         this.repeat = repeat;
     }
 
     pub fn cancel(this: *WTFTimer) void {
+        this.lock.lock();
+        defer this.lock.unlock();
         if (this.event_loop_timer.state == .ACTIVE) {
             this.vm.timer.remove(&this.event_loop_timer);
         }
@@ -934,7 +992,9 @@ pub const WTFTimer = struct {
         this.cancel();
     }
 
-    export fn WTFTimer__secondsUntilTimer(this: *const WTFTimer) f64 {
+    export fn WTFTimer__secondsUntilTimer(this: *WTFTimer) f64 {
+        this.lock.lock();
+        defer this.lock.unlock();
         if (this.event_loop_timer.state == .ACTIVE) {
             const until = this.event_loop_timer.next.duration(&bun.timespec.now());
             const sec: f64, const nsec: f64 = .{ @floatFromInt(until.sec), @floatFromInt(until.nsec) };

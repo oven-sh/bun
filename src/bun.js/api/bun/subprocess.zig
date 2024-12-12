@@ -2270,21 +2270,29 @@ pub const Subprocess = struct {
             jsc_vm.onSubprocessSpawn(subprocess.process);
         }
 
-        while (subprocess.hasPendingActivityNonThreadsafe()) {
-            if (subprocess.stdin == .buffer) {
-                subprocess.stdin.buffer.watch();
+        // We cannot release heap access while JS is running
+        {
+            const old_vm = jsc_vm.uwsLoop().internal_loop_data.jsc_vm;
+            jsc_vm.uwsLoop().internal_loop_data.jsc_vm = null;
+            defer {
+                jsc_vm.uwsLoop().internal_loop_data.jsc_vm = old_vm;
             }
+            while (subprocess.hasPendingActivityNonThreadsafe()) {
+                if (subprocess.stdin == .buffer) {
+                    subprocess.stdin.buffer.watch();
+                }
 
-            if (subprocess.stderr == .pipe) {
-                subprocess.stderr.pipe.watch();
+                if (subprocess.stderr == .pipe) {
+                    subprocess.stderr.pipe.watch();
+                }
+
+                if (subprocess.stdout == .pipe) {
+                    subprocess.stdout.pipe.watch();
+                }
+
+                jsc_vm.tick();
+                jsc_vm.eventLoop().autoTick();
             }
-
-            if (subprocess.stdout == .pipe) {
-                subprocess.stdout.pipe.watch();
-            }
-
-            jsc_vm.tick();
-            jsc_vm.eventLoop().autoTick();
         }
 
         subprocess.updateHasPendingActivity();

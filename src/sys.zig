@@ -2376,7 +2376,7 @@ pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socket
                 if (err.getErrno() == .INTR) continue;
 
                 log("socketpair() = {d} {s}", .{ err.err.errno, err.err.name() });
-                return .{ .err = err };
+                return err;
             }
 
             break;

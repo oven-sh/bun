@@ -19,7 +19,7 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Lint
-        run: oxlint --config oxlint.json --quiet --format github
+        run: bunx oxlint --config oxlint.json --quiet --format github
 
 
 

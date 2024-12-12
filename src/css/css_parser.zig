@@ -6250,13 +6250,11 @@ pub const serializer = struct {
             // We must pass finite numbers to dtoa_short
             if (std.math.isPositiveInf(value)) {
                 const output = "1e999";
-                @memcpy(buf[0..output.len], output);
-                try writer.writeAll(buf[0..output.len]);
+                try writer.writeAll(output);
                 return;
             } else if (std.math.isNegativeInf(value)) {
                 const output = "-1e999";
-                @memcpy(buf[0..output.len], output);
-                try writer.writeAll(buf[0..output.len]);
+                try writer.writeAll(output);
                 return;
             }
             // We shouldn't receive NaN here.

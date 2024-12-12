@@ -57,8 +57,38 @@ export default [
   }),
   define({
     name: "Timeout",
-    construct: false,
-    noConstructor: true,
+    construct: true,
+    finalize: true,
+    configurable: false,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      ref: {
+        fn: "doRef",
+        length: 0,
+      },
+      refresh: {
+        fn: "doRefresh",
+        length: 0,
+      },
+      unref: {
+        fn: "doUnref",
+        length: 0,
+      },
+      hasRef: {
+        fn: "hasRef",
+        length: 0,
+      },
+      ["@@toPrimitive"]: {
+        fn: "toPrimitive",
+        length: 1,
+      },
+    },
+    values: ["arguments", "callback"],
+  }),
+  define({
+    name: "Immediate",
+    construct: true,
     finalize: true,
     configurable: false,
     klass: {},

@@ -1,3 +1,6 @@
+/**
+ * @note this file patches `node:test` via the require cache.
+ */
 import { AnyFunction } from "bun";
 import { hideFromStackTrace } from "harness";
 import assertNode from "node:assert";
@@ -265,7 +268,6 @@ declare namespace Bun {
 
 if (Bun.main.includes("node/test/parallel")) {
   function createMockNodeTestModule() {
-
     interface TestError extends Error {
       testStack: string[];
     }
@@ -276,8 +278,8 @@ if (Bun.main.includes("node/test/parallel")) {
       successes: number;
       addFailure(err: unknown): TestError;
       recordSuccess(): void;
-    }
-    const contexts: Record</* requiring file */ string, Context> = {}
+    };
+    const contexts: Record</* requiring file */ string, Context> = {};
 
     // @ts-ignore
     let activeSuite: Context = undefined;
@@ -294,8 +296,6 @@ if (Bun.main.includes("node/test/parallel")) {
           error.testStack = this.testStack;
           const testMessage = `Test failed: ${this.testStack.join(" > ")}`;
           error.message = testMessage + "\n" + error.message;
-          if (!error.stack) Error.captureStackTrace(error);
-
           this.failures.push(error);
           console.error(error);
           return error;
@@ -304,43 +304,35 @@ if (Bun.main.includes("node/test/parallel")) {
           const fullname = this.testStack.join(" > ");
           console.log("✅ Test passed:", fullname);
           this.successes++;
-        }
-      }
+        },
+      };
     }
 
     function getContext() {
-      const key: string = Bun.main;// module.parent?.filename ?? require.main?.filename ?? __filename;
-      activeSuite = (contexts[key] ??= createContext(key));
-      return activeSuite
+      const key: string = Bun.main; // module.parent?.filename ?? require.main?.filename ?? __filename;
+      return (activeSuite = contexts[key] ??= createContext(key));
     }
 
-    function test(label: string | Function, fn?: Function | undefined) {
+    async function test(label: string | Function, fn?: Function | undefined) {
       if (typeof fn !== "function" && typeof label === "function") {
         fn = label;
         label = fn.name;
       }
-      if (typeof label !== "string" && typeof fn !== "function") {
-        throw new TypeError(`First argument to test() must be a string or a function. Got ${typeof label}, ${typeof fn}`);
-      }
       const ctx = getContext();
-      if (!ctx) throw new Error("invarian violation: test context is undefined.");
       try {
         ctx.testStack.push(label as string);
-        const res = fn();
-        if (res instanceof Promise) {
-          throw new Error("test() does not support async functions right now.");
-          process.exit(1);
-        }
+        await fn();
         ctx.recordSuccess();
       } catch (err) {
-        ctx.addFailure(err);
+        const error = ctx.addFailure(err);
+        throw error;
       } finally {
         ctx.testStack.pop();
       }
     }
 
     function describe(labelOrFn: string | Function, maybeFn?: Function) {
-      const [label, fn] = (typeof labelOrFn == "function" ? [labelOrFn.name, labelOrFn] : [labelOrFn, maybeFn]);
+      const [label, fn] = typeof labelOrFn == "function" ? [labelOrFn.name, labelOrFn] : [labelOrFn, maybeFn];
       if (typeof fn !== "function") throw new TypeError("Second argument to describe() must be a function.");
 
       getContext().testStack.push(label);
@@ -348,7 +340,7 @@ if (Bun.main.includes("node/test/parallel")) {
         fn();
       } catch (e) {
         getContext().addFailure(e);
-        throw e
+        throw e;
       } finally {
         getContext().testStack.pop();
       }
@@ -359,14 +351,12 @@ if (Bun.main.includes("node/test/parallel")) {
       if (failures > 0) {
         throw new Error(`${failures} tests failed.`);
       }
-
     }
 
     return {
       test,
       describe,
-    }
-
+    };
   }
 
   require.cache["node:test"] ??= {

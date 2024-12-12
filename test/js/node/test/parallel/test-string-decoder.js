@@ -201,9 +201,11 @@ assert.throws(
   }
 );
 
+// Skipped in Bun: JSC supports much larger strings, so it is extremely hard to
+// actually produce this exception.
 // if (common.enoughTestMem) {
 //   assert.throws(
-//     () => new StringDecoder().write(Buffer.alloc((42949672950) + 1).fill('a')),
+//     () => new StringDecoder().write(Buffer.alloc((process.arch === 'ia32' ? 0x18ffffe8 : 0x1fffffe8) + 1).fill('a')),
 //     {
 //       code: 'ERR_STRING_TOO_LONG',
 //     }

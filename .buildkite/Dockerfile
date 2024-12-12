@@ -31,17 +31,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    software-properties-common apt-transport-https \
    ca-certificates gnupg lsb-release unzip \
    libxml2-dev ruby ruby-dev bison gawk perl make golang \
-   && wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null \
-   && apt-add-repository "deb https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main" \
    && add-apt-repository ppa:ubuntu-toolchain-r/test \
    && apt-get update \
-   && apt-get install -y cmake gcc-13 g++-13 libgcc-13-dev libstdc++-13-dev \
+   && apt-get install -y gcc-13 g++-13 libgcc-13-dev libstdc++-13-dev \
        libasan6 libubsan1 libatomic1 libtsan0 liblsan0 \
        libgfortran5 libc6-dev \
    && wget https://apt.llvm.org/llvm.sh \
    && chmod +x llvm.sh \
    && ./llvm.sh ${LLVM_VERSION} all \
    && rm llvm.sh
+
+
+RUN --mount=type=tmpfs,target=/tmp \
+    cmake_version="3.30.5" && \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        cmake_url="https://github.com/Kitware/CMake/releases/download/v${cmake_version}/cmake-${cmake_version}-linux-aarch64.sh"; \
+    else \
+        cmake_url="https://github.com/Kitware/CMake/releases/download/v${cmake_version}/cmake-${cmake_version}-linux-x86_64.sh"; \
+    fi && \
+    wget -O /tmp/cmake.sh "$cmake_url" && \
+    sh /tmp/cmake.sh --skip-license --prefix=/usr
 
 RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
    --slave /usr/bin/g++ g++ /usr/bin/g++-13 \

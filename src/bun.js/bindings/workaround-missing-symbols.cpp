@@ -84,6 +84,13 @@ extern "C" int kill(int pid, int sig)
 __asm__(".symver expf,expf@GLIBC_2.2.5");
 #elif defined(__aarch64__)
 __asm__(".symver expf,expf@GLIBC_2.17");
+__asm__(".symver powf,powf@GLIBC_2.17");
+__asm__(".symver pow,pow@GLIBC_2.17");
+__asm__(".symver log,log@GLIBC_2.17");
+__asm__(".symver exp,exp@GLIBC_2.17");
+__asm__(".symver logf,logf@GLIBC_2.17");
+__asm__(".symver log2f,log2f@GLIBC_2.17");
+__asm__(".symver log2,log2@GLIBC_2.17");
 #endif
 
 #if defined(__x86_64__) || defined(__aarch64__)
@@ -96,13 +103,132 @@ extern "C" {
 
 float BUN_WRAP_GLIBC_SYMBOL(expf)(float);
 
+#if defined(__aarch64__)
+
+float BUN_WRAP_GLIBC_SYMBOL(powf)(float, float);
+double BUN_WRAP_GLIBC_SYMBOL(pow)(double, double);
+double BUN_WRAP_GLIBC_SYMBOL(log)(double);
+double BUN_WRAP_GLIBC_SYMBOL(exp)(double);
+float BUN_WRAP_GLIBC_SYMBOL(logf)(float);
+float BUN_WRAP_GLIBC_SYMBOL(log2f)(float);
+double BUN_WRAP_GLIBC_SYMBOL(log2)(double);
+int BUN_WRAP_GLIBC_SYMBOL(fcntl64)(int, int, ...);
+
+#endif
+
 #if defined(__x86_64__) || defined(__aarch64__)
 
 float __wrap_expf(float x) { return expf(x); }
 
+#if defined(__aarch64__)
+
+float __wrap_powf(float x, float y) { return powf(x, y); }
+double __wrap_pow(double x, double y) { return pow(x, y); }
+double __wrap_log(double x) { return log(x); }
+double __wrap_exp(double x) { return exp(x); }
+float __wrap_logf(float x) { return logf(x); }
+float __wrap_log2f(float x) { return log2f(x); }
+double __wrap_log2(double x) { return log2(x); }
+
+#endif
+
 #endif // x86_64 or aarch64
 
 } // extern "C"
+
+#if defined(__aarch64__)
+
+typedef int (*fcntl64_func)(int fd, int cmd, ...);
+
+enum arg_type {
+    NO_ARG,
+    INT_ARG,
+    PTR_ARG
+};
+
+static enum arg_type get_arg_type(int cmd)
+{
+    switch (cmd) {
+    // Commands that take no argument
+    case F_GETFD:
+    case F_GETFL:
+    case F_GETOWN:
+    case F_GETSIG:
+    case F_GETLEASE:
+    case F_GETPIPE_SZ:
+#ifdef F_GET_SEALS
+    case F_GET_SEALS:
+#endif
+        return NO_ARG;
+
+    // Commands that take an integer argument
+    case F_DUPFD:
+    case F_DUPFD_CLOEXEC:
+    case F_SETFD:
+    case F_SETFL:
+    case F_SETOWN:
+    case F_SETSIG:
+    case F_SETLEASE:
+    case F_NOTIFY:
+    case F_SETPIPE_SZ:
+#ifdef F_ADD_SEALS
+    case F_ADD_SEALS:
+#endif
+        return INT_ARG;
+
+    // Commands that take a pointer argument
+    case F_GETLK:
+    case F_SETLK:
+    case F_SETLKW:
+    case F_GETOWN_EX:
+    case F_SETOWN_EX:
+        return PTR_ARG;
+
+    default:
+        return PTR_ARG; // Default to pointer for unknown commands
+    }
+}
+
+extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
+{
+    va_list ap;
+    enum arg_type type = get_arg_type(cmd);
+
+    static fcntl64_func real_fcntl64;
+    static std::once_flag real_fcntl64_initialized;
+    std::call_once(real_fcntl64_initialized, []() {
+        real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl64");
+        if (!real_fcntl64) {
+            real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl");
+        }
+    });
+
+    switch (type) {
+    case NO_ARG:
+        return real_fcntl64(fd, cmd);
+
+    case INT_ARG: {
+        va_start(ap, cmd);
+        int arg = va_arg(ap, int);
+        va_end(ap);
+        return real_fcntl64(fd, cmd, arg);
+    }
+
+    case PTR_ARG: {
+        va_start(ap, cmd);
+        void* arg = va_arg(ap, void*);
+        va_end(ap);
+        return real_fcntl64(fd, cmd, arg);
+    }
+
+    default:
+        va_end(ap);
+        errno = EINVAL;
+        return -1;
+    }
+}
+
+#endif
 
 extern "C" __attribute__((used)) char _libc_single_threaded = 0;
 extern "C" __attribute__((used)) char __libc_single_threaded = 0;

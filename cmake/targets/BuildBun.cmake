@@ -884,8 +884,18 @@ endif()
 
 if(LINUX)
   if(NOT ABI STREQUAL "musl")
+  # on arm64
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
     target_link_options(${bun} PUBLIC
+      -Wl,--wrap=exp
       -Wl,--wrap=expf
+      -Wl,--wrap=log
+      -Wl,--wrap=log2
+      -Wl,--wrap=log2f
+      -Wl,--wrap=logf
+      -Wl,--wrap=pow
+      -Wl,--wrap=powf
+      -Wl,--wrap=fcntl64
     )
   endif()
 

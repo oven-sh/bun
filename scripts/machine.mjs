@@ -1205,10 +1205,16 @@ async function main() {
 
   let { detached, bootstrap, ci, os, arch, distro, release, features } = options;
 
-  let name = `${os}-${arch}-${release}`;
+  let name = `${os}-${arch}-${(release || "").replace(/\./g, "")}`;
+
   if (distro) {
     name += `-${distro}`;
   }
+
+  if (distro === "alpine") {
+    name += `-musl`;
+  }
+
   if (features?.length) {
     name += `-with-${features.join("-")}`;
   }

@@ -2422,17 +2422,18 @@ static inline JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexi
             std::optional<size_t> length;
             if (argsCount > 1) {
 
-                offset = args.at(1).toTypedArrayIndex(globalObject, "byteOffset"_s);
-
-                // TOOD: return Node.js error
-                RETURN_IF_EXCEPTION(throwScope, {});
+                auto offsetValue = args.at(1);
+                if (!offsetValue.isUndefined()) {
+                    Bun::V::validateInteger(throwScope, lexicalGlobalObject, offsetValue, jsString(vm, String("offset"_s)), jsNumber(0), jsUndefined());
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    offset = offsetValue.asNumber();
+                }
 
                 if (argsCount > 2) {
                     // If the length value is present but undefined, treat it as missing.
                     JSValue lengthValue = args.at(2);
                     if (!lengthValue.isUndefined()) {
                         length = lengthValue.toTypedArrayIndex(globalObject, "length"_s);
-
                         // TOOD: return Node.js error
                         RETURN_IF_EXCEPTION(throwScope, {});
                     }
@@ -2446,9 +2447,12 @@ static inline JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexi
                 throwTypeError(globalObject, throwScope, "Buffer is detached"_s);
                 return {};
             }
+            size_t byteLength = buffer->byteLength();
+            if (offset > byteLength) {
+                return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, globalObject, "offset"_s);
+            }
 
             if (!length) {
-                size_t byteLength = buffer->byteLength();
                 if (buffer->isResizableOrGrowableShared()) {
                     if (UNLIKELY(offset > byteLength)) {
                         // TOOD: return Node.js error
@@ -2458,6 +2462,9 @@ static inline JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexi
                 } else {
                     length = (byteLength - offset);
                 }
+            }
+            if (offset + length.value() > byteLength) {
+                return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, globalObject, "length"_s);
             }
 
             auto* subclassStructure = globalObject->JSBufferSubclassStructure();

@@ -22,7 +22,7 @@ const createValidate = (line, args = []) => common.mustCall((e) => {
   const rest = msg.substring(firstColon + 1);
   assert.strictEqual(path.basename(fileName), 'test-common-must-not-call.js');
   const argsInfo = args.length > 0 ?
-    `\ncalled with arguments: ${args.map(util.inspect).join(', ')}` : '';
+    `\ncalled with arguments: ${args.map(v => Bun.inspect(v)).join(', ')}` : '';
   assert.strictEqual(rest, line + argsInfo);
 });
 

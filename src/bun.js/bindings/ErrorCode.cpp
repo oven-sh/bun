@@ -251,8 +251,8 @@ WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue val
         auto cell = value.asCell();
         auto symbol = jsCast<Symbol*>(cell);
         auto result = symbol->tryGetDescriptiveString();
-        auto description = result.has_value() ? result.value() : String(""_s);
-        return makeString("type boolean (Symbol("_s, description, "))"_s);
+        auto description = result.has_value() ? result.value() : String("Symbol()"_s);
+        return makeString("type symbol ("_s, description, ")"_s);
     }
     if (value.isCallable()) {
         auto& vm = globalObject->vm();

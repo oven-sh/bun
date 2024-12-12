@@ -59,6 +59,21 @@ pub const SupportsCondition = union(enum) {
     /// An unknown condition.
     unknown: []const u8,
 
+    pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
+        switch (this.*) {
+            .not => |not| {
+                not.deinit(allocator);
+                allocator.destroy(not);
+            },
+            inline .@"and", .@"or" => |*list| {
+                css.deepDeinit(SupportsCondition, allocator, list);
+            },
+            .declaration => {},
+            .selector => {},
+            .unknown => {},
+        }
+    }
+
     pub fn eql(this: *const SupportsCondition, other: *const SupportsCondition) bool {
         return css.implementEql(SupportsCondition, this, other);
     }

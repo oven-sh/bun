@@ -86,12 +86,26 @@ if (common.isWindows) {
   assert.strictEqual(resolvedPath.toLowerCase(), process.cwd().toLowerCase());
 }
 
-// TODO
-// if (!common.isWindows) {
-//   // Test handling relative paths to be safe when process.cwd() fails.
-//   process.cwd = () => '';
-//   assert.strictEqual(process.cwd(), '');
-//   const resolved = path.resolve();
-//   const expected = '.';
-//   assert.strictEqual(resolved, expected);
-// }
+
+// Test originally was this:
+//
+//   if (!common.isWindows) {
+//     // Test handling relative paths to be safe when process.cwd() fails.
+//     process.cwd = () => '';
+//     assert.strictEqual(process.cwd(), '');
+//     const resolved = path.resolve();
+//     const expected = '.';
+//     assert.strictEqual(resolved, expected);
+//   }
+//
+// In Bun, process.cwd() doesn't affect the behavior of `path.resolve()` (it uses
+// getcwd(2)). This has the following implications:
+// 1. overriding process.cwd() has no affect on path.resolve();
+// 2. getcwd isn't affected by $CWD, so it cannot be removed that way;
+// 3. The Bun CLI caches cwd on BunProcess.m_cachedCwd at startup, so deleting
+//    it after the process starts keeps `process.cwd()` at the original value;
+// 4. If the current directory is deleted before starting bun, the CLI catches
+//    it and exits with an error code.
+//
+// Because of all this, I cannot reproduce a scenario where cwd is empty, so
+// this test is commented out.

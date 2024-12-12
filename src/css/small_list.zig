@@ -178,6 +178,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                     pub inline fn helper(comptime prefix: []const u8, pfs: *css.VendorPrefix, pfi: *const SmallList(T, 1), r: *bun.BabyList(This), alloc: Allocator) void {
                         if (pfs.contains(css.VendorPrefix.fromName(prefix))) {
                             var images = SmallList(T, 1).initCapacity(alloc, pfi.len());
+                            images.setLen(pfi.len());
                             for (images.slice_mut(), pfi.slice()) |*out, *in| {
                                 const image = in.getImage().getPrefixed(alloc, css.VendorPrefix.fromName(prefix));
                                 out.* = in.withImage(alloc, image);

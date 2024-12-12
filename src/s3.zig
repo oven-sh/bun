@@ -87,16 +87,20 @@ pub const AWSCredentials = struct {
     };
 
     pub fn s3Request(this: *const @This(), bucket: []const u8, path: []const u8, method: bun.http.Method, content_hash: ?[]const u8) !SignResult {
+        if (this.accessKeyId.len == 0 or this.secretAccessKey.len == 0) return error.MissingCredentials;
+
         const method_name = switch (method) {
             .GET => "GET",
             .POST, .PUT => "PUT",
             .DELETE => "DELETE",
+            .HEAD => "HEAD",
             else => return error.InvalidMethod,
         };
 
         if (bucket.len == 0) return error.InvalidPath;
         // if we allow path.len == 0 it will list the bucket for now we disallow
         if (path.len == 0) return error.InvalidPath;
+
         var path_buffer: [1024 + 63 + 2]u8 = undefined; // 1024 max key size and 63 max bucket name
 
         const normalizedPath = std.fmt.bufPrint(&path_buffer, "/{s}{s}", .{ bucket, if (strings.endsWith(path, "/")) path[0 .. path.len - 1] else path }) catch return error.InvalidPath;

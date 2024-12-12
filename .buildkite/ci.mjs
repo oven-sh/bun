@@ -176,7 +176,7 @@ function getPlatformLabel(platform) {
  * @returns {string}
  */
 function getImageKey(platform) {
-  const { os, arch, distro, release, features } = platform;
+  const { os, arch, distro, release, features, abi } = platform;
   const version = release.replace(/\./g, "");
   let key = `${os}-${arch}-${version}`;
   if (distro) {
@@ -185,6 +185,11 @@ function getImageKey(platform) {
   if (features?.length) {
     key += `-with-${features.join("-")}`;
   }
+
+  if (abi) {
+    key += `-${abi}`;
+  }
+
   return key;
 }
 
@@ -203,17 +208,15 @@ function getImageLabel(platform) {
  * @returns {string}
  */
 function getImageName(platform, options) {
-  const { os, arch, distro, release, features = [] } = platform;
+  const { os } = platform;
   const { buildImages, publishImages } = options;
-  let name = distro ? `${os}-${arch}-${distro}-${release}` : `${os}-${arch}-${release}`;
 
-  if (features?.length) {
-    name += `-with-${features.join("-")}`;
-  }
+  const name = getImageBasename(platform);
 
   if (buildImages && !publishImages) {
     return `${name}-build-${getBuildNumber()}`;
   }
+
   return `${name}-v${getBootstrapVersion(os)}`;
 }
 

@@ -710,7 +710,7 @@ pub const FormatOptions = struct {
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (opt.isNumber()) {
-                    const v = opt.coerce(f64, globalThis);
+                    const v = opt.coerceToDouble(globalThis);
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
@@ -739,7 +739,7 @@ pub const FormatOptions = struct {
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (depthArg.isNumber()) {
-                    const v = depthArg.coerce(f64, globalThis);
+                    const v = depthArg.coerceToDouble(globalThis);
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {

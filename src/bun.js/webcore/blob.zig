@@ -1479,7 +1479,7 @@ pub const Blob = struct {
 
                 if (try options.getTruthy(globalThis, "lastModified")) |last_modified| {
                     set_last_modified = true;
-                    blob.last_modified = last_modified.coerce(f64, globalThis);
+                    blob.last_modified = last_modified.coerceToDouble(globalThis);
                 }
             }
         }
@@ -1574,7 +1574,7 @@ pub const Blob = struct {
                     }
                 }
                 if (try opts.getTruthy(globalObject, "lastModified")) |last_modified| {
-                    blob.last_modified = last_modified.coerce(f64, globalObject);
+                    blob.last_modified = last_modified.coerceToDouble(globalObject);
                 }
             }
         }

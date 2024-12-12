@@ -1233,7 +1233,7 @@ pub fn timeLikeFromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) ?Ti
         return null;
     }
 
-    const seconds = value.coerce(f64, globalObject);
+    const seconds = value.coerceToDouble(globalObject);
     if (!std.math.isFinite(seconds)) {
         return null;
     }

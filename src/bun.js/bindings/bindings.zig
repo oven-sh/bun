@@ -4052,6 +4052,7 @@ pub const JSValue = enum(i64) {
         JSC__JSValue__forEachPropertyOrdered(this, globalObject, ctx, callback);
     }
 
+    /// Clears exceptions thrown during the coercion (e.g. by valueOf or [Symbol.toPrimitive])
     pub fn coerceToDouble(
         this: JSValue,
         globalObject: *JSC.JSGlobalObject,
@@ -4062,15 +4063,7 @@ pub const JSValue = enum(i64) {
     /// May execute JavaScript and throw an exception if `this` is an object.
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
-            ZigString => this.getZigString(globalThis),
             bool => this.toBoolean(),
-            f64 => {
-                if (this.isDouble()) {
-                    return this.asDouble();
-                }
-
-                return this.coerceToDouble(globalThis);
-            },
             i64 => {
                 return this.coerceToInt64(globalThis);
             },

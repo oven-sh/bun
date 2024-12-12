@@ -250,7 +250,7 @@ static int normalizeCompareVal(int val, size_t a_length, size_t b_length)
     return val;
 }
 
-static inline WebCore::BufferEncodingType parseEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue arg)
+static inline WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JSGlobalObject* lexicalGlobalObject, JSValue arg, bool validateUnknown)
 {
     auto arg_ = arg.toStringOrNull(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -258,6 +258,10 @@ static inline WebCore::BufferEncodingType parseEncoding(JSC::JSGlobalObject* lex
 
     std::optional<BufferEncodingType> encoded = parseEnumeration2(*lexicalGlobalObject, arg_s);
     if (UNLIKELY(!encoded)) {
+        if (validateUnknown) {
+            Bun::V::validateString(scope, lexicalGlobalObject, arg, "encoding"_s);
+            RETURN_IF_EXCEPTION(scope, WebCore::BufferEncodingType::utf8);
+        }
         Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg_s);
         return WebCore::BufferEncodingType::utf8;
     }
@@ -575,9 +579,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
             if (callFrame->argumentCount() > 2) {
                 EnsureStillAliveScope arg2 = callFrame->uncheckedArgument(2);
                 if (!arg2.value().isUndefined()) {
-                    Bun::V::validateString(scope, lexicalGlobalObject, arg2.value(), "encoding"_s);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    encoding = parseEncoding(lexicalGlobalObject, scope, arg2.value());
+                    encoding = parseEncoding(scope, lexicalGlobalObject, arg2.value(), true);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
             }
@@ -1216,9 +1218,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
     }
 
     if (!encodingValue.isUndefined() && value.isString()) {
-        Bun::V::validateString(scope, lexicalGlobalObject, encodingValue, "encoding"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-        encoding = parseEncoding(lexicalGlobalObject, scope, encodingValue);
+        encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, true);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -1336,7 +1336,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
     if (callFrame->argumentCount() > 1) {
         EnsureStillAliveScope arg1 = callFrame->uncheckedArgument(1);
         if (arg1.value().isString()) {
-            encoding = parseEncoding(lexicalGlobalObject, scope, arg1.value());
+            encoding = parseEncoding(scope, lexicalGlobalObject, arg1.value(), false);
             RETURN_IF_EXCEPTION(scope, -1);
         } else {
             auto byteOffset_ = arg1.value().toNumber(lexicalGlobalObject);
@@ -1367,9 +1367,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
             if (callFrame->argumentCount() > 2) {
                 EnsureStillAliveScope encodingValue = callFrame->uncheckedArgument(2);
                 if (!encodingValue.value().isUndefined()) {
-                    Bun::V::validateString(scope, lexicalGlobalObject, encodingValue.value(), "encoding"_s);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    encoding = parseEncoding(lexicalGlobalObject, scope, encodingValue.value());
+                    encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue.value(), false);
                     RETURN_IF_EXCEPTION(scope, -1);
                 }
             }
@@ -1650,9 +1648,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
         return jsBufferToString(vm, lexicalGlobalObject, castedThis, start, end, encoding);
 
     if (!arg1.isUndefined()) {
-        Bun::V::validateString(scope, lexicalGlobalObject, arg1, "encoding"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-        encoding = parseEncoding(lexicalGlobalObject, scope, arg1);
+        encoding = parseEncoding(scope, lexicalGlobalObject, arg1, false);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -1858,9 +1854,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
         RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, WebCore::BufferEncodingType::utf8));
     }
 
-    Bun::V::validateString(scope, lexicalGlobalObject, encodingValue, "encoding"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto encoding = parseEncoding(lexicalGlobalObject, scope, encodingValue);
+    auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
     RETURN_IF_EXCEPTION(scope, {});
 
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));

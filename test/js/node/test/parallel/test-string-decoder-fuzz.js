@@ -1,5 +1,4 @@
 'use strict';
-import { expect } from 'bun:test';
 require('../common');
 const { StringDecoder } = require('string_decoder');
 const util = require('util');
@@ -39,11 +38,11 @@ function runSingleFuzzTest() {
   strings.push(sd.end());
 
   assert.strictEqual(strings.join(''), Buffer.concat(bufs).toString(enc),
-                     `Mismatch:\n${strings}\nExpected:\n` +
+                     `Mismatch:\n${util.inspect(strings)}\n` +
                      util.inspect(bufs.map((buf) => buf.toString('hex'))) +
                      `\nfor encoding ${enc}`);
 }
 
 const start = Date.now();
-while (Date.now() - start < 1000)
+while (Date.now() - start < 10000)
   runSingleFuzzTest();

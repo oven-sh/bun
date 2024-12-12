@@ -723,7 +723,7 @@ pub const Stringifier = struct {
 
                             try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
 
-                            try writer.print(", \"{}\"]", .{pkg_meta.integrity});
+                            try writer.writeByte(']');
                         },
                         .local_tarball => {
                             try writer.print("[\"{s}@{}\", ", .{
@@ -733,7 +733,7 @@ pub const Stringifier = struct {
 
                             try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
 
-                            try writer.print(", \"{}\"]", .{pkg_meta.integrity});
+                            try writer.writeByte(']');
                         },
                         .remote_tarball => {
                             try writer.print("[\"{s}@{}\", ", .{
@@ -743,7 +743,7 @@ pub const Stringifier = struct {
 
                             try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
 
-                            try writer.print(", \"{}\"]", .{pkg_meta.integrity});
+                            try writer.writeByte(']');
                         },
                         .symlink => {
                             try writer.print("[\"{s}@link:{}\", ", .{
@@ -753,7 +753,7 @@ pub const Stringifier = struct {
 
                             try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
 
-                            try writer.print(", \"{}\"]", .{pkg_meta.integrity});
+                            try writer.writeByte(']');
                         },
                         .npm => {
                             try writer.print("[\"{s}@{}\", ", .{
@@ -771,7 +771,6 @@ pub const Stringifier = struct {
 
                             try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
 
-                            // TODO(dylan-conway): delete placeholder
                             try writer.print(", \"{}\"]", .{
                                 pkg_meta.integrity,
                             });
@@ -797,7 +796,7 @@ pub const Stringifier = struct {
 
                             try writePackageDepsAndMeta(writer, dep_id, deps_buf, pkg_deps_sort_buf.items, &pkg_meta, buf, &optional_peers_buf);
 
-                            try writer.print(", \"{}\"]", .{pkg_meta.integrity});
+                            try writer.writeByte(']');
                         },
                         else => unreachable,
                     }
@@ -1445,7 +1444,7 @@ pub fn parseIntoBinaryLockfile(
 
             // integrity
             switch (res.tag) {
-                .npm, .git, .github => {
+                .npm => {
                     const integrity_expr = pkg_info.at(i);
                     i += 1;
                     const integrity_str = integrity_expr.asString(allocator) orelse {
